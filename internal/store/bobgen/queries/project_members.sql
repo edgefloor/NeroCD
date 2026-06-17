@@ -1,0 +1,28 @@
+-- ProjectMembers
+SELECT
+    project_members.id,
+    project_members.project_id,
+    project_members.user_id,
+    users.email,
+    users.name,
+    project_members.role,
+    project_members.created_at,
+    project_members.updated_at
+FROM project_members
+JOIN users ON users.id = project_members.user_id
+ORDER BY project_members.project_id ASC, users.email ASC;
+
+-- ProjectMembersByProject
+SELECT
+    project_members.id,
+    project_members.project_id,
+    project_members.user_id,
+    users.email,
+    users.name,
+    project_members.role,
+    project_members.created_at,
+    project_members.updated_at
+FROM project_members
+JOIN users ON users.id = project_members.user_id
+WHERE project_members.project_id = $1
+ORDER BY project_members.project_id ASC, users.email ASC;

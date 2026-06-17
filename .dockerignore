@@ -1,0 +1,6 @@
+.cache/
+.git/
+artifacts/
+bin/
+nerocd-ui.png
+web/app/node_modules/

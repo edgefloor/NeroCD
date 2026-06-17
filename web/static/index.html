@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NeroCD</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="mark">N</span>
+        <div>
+          <strong>NeroCD</strong>
+          <span>Automation Control</span>
+        </div>
+      </div>
+      <nav aria-label="Primary">
+        <button class="active" data-view="overview">Overview</button>
+        <button data-view="projects">Projects</button>
+        <button data-view="runs">Runs</button>
+        <button data-view="security">Security</button>
+      </nav>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <h1>Operations</h1>
+          <p>Projects, templates, runners, approvals, and audit posture in one control plane.</p>
+        </div>
+        <div id="principal" class="principal">Loading...</div>
+      </header>
+
+      <section class="metrics" aria-label="Operational metrics">
+        <article>
+          <span>Projects</span>
+          <strong id="metric-projects">-</strong>
+        </article>
+        <article>
+          <span>Templates</span>
+          <strong id="metric-templates">-</strong>
+        </article>
+        <article>
+          <span>Approvals</span>
+          <strong id="metric-approvals">-</strong>
+        </article>
+        <article>
+          <span>Runs</span>
+          <strong id="metric-runs">-</strong>
+        </article>
+        <article>
+          <span>API</span>
+          <strong id="metric-api">...</strong>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <div class="panel wide">
+          <div class="panel-head">
+            <h2>Task Templates</h2>
+            <button id="refresh">Refresh</button>
+          </div>
+          <div id="templates" class="table"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Recent Runs</h2>
+          </div>
+          <div id="runs" class="runs"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Capabilities</h2>
+          </div>
+          <div id="capabilities" class="capabilities"></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

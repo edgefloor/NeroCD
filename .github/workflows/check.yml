@@ -1,0 +1,59 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nerocd
+          POSTGRES_PASSWORD: nerocd_dev
+          POSTGRES_DB: nerocd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nerocd -d nerocd"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+
+      - name: Run checks
+        run: make check
+
+      - name: Run PostgreSQL integration tests
+        run: make postgres-test
+        env:
+          NEROCD_TEST_DATABASE_URL: postgres://nerocd:nerocd_dev@127.0.0.1:5432/nerocd?sslmode=disable
+
+      - name: Install browser dependencies
+        run: cd web/app && bunx playwright install --with-deps chromium
+
+      - name: Run browser smoke
+        run: make browser-smoke
+
+      - name: Generate release artifacts
+        run: make release-artifacts
+
+      - name: Upload SBOM and checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-artifacts
+          path: artifacts/
