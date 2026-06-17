@@ -23,7 +23,17 @@ const allowedWebRuntimeDependencies = new Set([
   "tw-animate-css",
 ]);
 const allowedWebDevDependencies = new Set(["@playwright/test", "@tailwindcss/vite", "@types/node", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "shadcn", "tailwindcss", "typescript", "vite"]);
-const allowedGoDirectDependencies = new Set(["github.com/getkin/kin-openapi", "github.com/jackc/pgx/v5"]);
+const allowedGoDirectDependencies = new Set([
+  "github.com/aarondl/opt",
+  "github.com/getkin/kin-openapi",
+  "github.com/google/go-cmp",
+  "github.com/jackc/pgx/v5",
+  "github.com/jaswdr/faker/v2",
+  "github.com/lib/pq",
+  "github.com/stephenafamo/bob",
+  "github.com/stephenafamo/scan",
+  "github.com/wasilibs/go-pgquery",
+]);
 const requiredLockfiles = ["go.sum", "web/app/bun.lock"];
 const cdnPattern = /https?:\/\/(?:cdn|unpkg|esm\.sh|jsdelivr|cdnjs)\./i;
 const lifecycleScripts = new Set(["preinstall", "install", "postinstall", "prepare", "prepublish", "prepublishOnly"]);
@@ -145,7 +155,7 @@ async function detectGoLicense(moduleDir) {
     return "";
   }
   const content = (await readFile(join(moduleDir, licenseFile), "utf8")).toLowerCase();
-  if (content.includes("mit license")) {
+  if (content.includes("mit license") || (content.includes("permission is hereby granted, free of charge") && content.includes("the software is provided \"as is\""))) {
     return "MIT";
   }
   if (content.includes("apache license") && content.includes("version 2.0")) {

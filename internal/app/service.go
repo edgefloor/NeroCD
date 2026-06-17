@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
+	"nerocd/internal/source"
 	"nerocd/internal/store"
 )
 
@@ -915,6 +917,9 @@ func (s *Service) CreateRepository(ctx context.Context, input RepositoryInput) (
 	if url == "" {
 		return domain.Repository{}, errors.New("url is required")
 	}
+	if err := source.ValidateRepositoryURL(url); err != nil {
+		return domain.Repository{}, err
+	}
 	if err := s.requireProjectRole(ctx, principal, projectID, domain.RoleMaintainer); err != nil {
 		return domain.Repository{}, err
 	}
@@ -1517,6 +1522,11 @@ func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) 
 	}
 	if runSpec.Inputs == nil {
 		runSpec.Inputs = map[string]any{}
+	}
+	if runSpec.Repository != nil && strings.TrimSpace(runSpec.Repository.URL) != "" {
+		if err := source.ValidateRepositoryURL(runSpec.Repository.URL); err != nil {
+			return domain.RunSpec{}, fmt.Errorf("run_spec.repository.url: %w", err)
+		}
 	}
 	if runSpec.Process != nil && len(runSpec.Process.Command) == 0 {
 		return domain.RunSpec{}, errors.New("run_spec.process.command is required")

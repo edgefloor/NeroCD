@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/source"
 )
 
 func ExecuteCheckout(ctx context.Context, plan domain.CheckoutPlan, workRoot string, emit func(ProcessEvent)) (string, error) {
@@ -16,6 +17,9 @@ func ExecuteCheckout(ctx context.Context, plan domain.CheckoutPlan, workRoot str
 	repoURL := strings.TrimSpace(repository.URL)
 	if repoURL == "" {
 		return "", errors.New("checkout repository url is required")
+	}
+	if err := source.ValidateRepositoryURL(repoURL); err != nil {
+		return "", err
 	}
 	dest := strings.TrimSpace(plan.DestPath)
 	if dest == "" {

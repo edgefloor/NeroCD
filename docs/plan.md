@@ -15,7 +15,7 @@ Verified on this tree:
 - `cd web/app && bun run test` passes.
 - `cd web/app && bun run build` passes.
 - `go run ./cmd/nerocd contract` passes for 44 routes.
-- `node scripts/supply-chain-policy.mjs` passes for 453 components.
+- `node scripts/supply-chain-policy.mjs` passes for 462 components.
 - `.github/workflows/check.yml` runs `make check` plus PostgreSQL integration
   tests against a provisioned Postgres service.
 - `go run ./cmd/nerocd smoke` now exercises session login, paginated reads,
@@ -453,14 +453,39 @@ Post-MVP execution todo:
    runners, leases, approvals, artifacts, audit events, and critical run claim
    maintenance now use generated Bob model/query APIs behind the existing
    repository interfaces.
-7. Replace runner-side `map[string]any` API request/response handling with
-   typed structs.
-8. Add validation and failure-path coverage for membership, templates, runs,
+7. Done: make the supply-chain policy green again before broad feature work.
+   The direct Go dependencies are reviewed in `docs/dependency-exceptions.md`,
+   the policy allowlist matches the current direct module set, and Go MIT
+   license detection handles standard MIT text without requiring an exact
+   heading.
+8. Done: replace runner-side `map[string]any` API request/response handling
+   with typed structs for registration, heartbeat, claim, lease status, logs,
+   artifacts, and completion. Generic JSON helpers remain for smoke and
+   contract assertions that intentionally inspect arbitrary envelopes.
+9. Add validation and failure-path coverage for membership, templates, runs,
    approvals, runner tokens, and artifacts.
-9. Improve the WebUI run-log operator experience with follow/polling,
+10. Improve the WebUI run-log operator experience with follow/polling,
    terminal-state clarity, and stronger error/permission states.
-10. Automate restore drill and finish release artifact pipeline once the code
+11. Automate restore drill and finish release artifact pipeline once the code
     baseline is green.
+
+Immediate next slices:
+
+1. Done: repository source validation rejects unsafe repository URLs before
+   persistence, run-spec capture, workflow normalization, and runner checkout.
+   Blocked sources include local paths, `file://`, loopback, link-local,
+   metadata-service, private-network, and unspecified IP targets. Public
+   `https`, `http`, `ssh`, `git`, and scp-style Git hosts remain allowed.
+2. Session hardening slice: replace unsalted SHA-256 password hashes with a
+   reviewed password hashing dependency, keep legacy verification for seeded
+   users, and rehash on successful legacy login. Document the dependency-policy
+   exception in the same change.
+3. Rate-limit slice: add in-process rate limiting for session creation, runner
+   registration, runner polling/claiming, and high-impact mutations with stable
+   `429` error envelopes and contract coverage.
+4. Log-follow UI slice: add run-log polling/follow controls, terminal state
+   indicators, and explicit permission/error states around the focused run-log
+   dialog, with unit coverage for the view-model behavior.
 
 The current implementation has useful package boundaries, small repository
 interfaces, and readable service methods, but the Go code still carries several

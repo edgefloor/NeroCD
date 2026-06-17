@@ -41,6 +41,42 @@ type runtimeConfig struct {
 	databaseURL string
 }
 
+type runnerRegisterRequest struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Tags         []string `json:"tags"`
+	Capabilities []string `json:"capabilities"`
+}
+
+type runnerRegisterResponse struct {
+	Runner domain.Runner `json:"runner"`
+	Token  string        `json:"token"`
+}
+
+type runnerCompleteRequest struct {
+	LeaseID string `json:"lease_id"`
+	Status  string `json:"status"`
+}
+
+type runnerLogRequest struct {
+	RunID    string `json:"run_id"`
+	LeaseID  string `json:"lease_id"`
+	Sequence int    `json:"sequence"`
+	Stream   string `json:"stream"`
+	Message  string `json:"message"`
+}
+
+type runnerArtifactRequest struct {
+	RunID    string `json:"run_id"`
+	LeaseID  string `json:"lease_id"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Found    bool   `json:"found"`
+	Required bool   `json:"required"`
+	Size     int64  `json:"size"`
+	Kind     string `json:"kind"`
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -190,21 +226,22 @@ func runRunner(args []string) error {
 	if *token == "" {
 		return errors.New("runner requires --token or NEROCD_TOKEN")
 	}
-	registerBody := map[string]any{"id": *id, "name": *name, "tags": splitCSV(*tags), "capabilities": splitCSV(*capabilities)}
-	registered, err := postAPI(*server+"/api/v1/runners/register", registerBody, *token)
-	if err != nil {
+	registerBody := runnerRegisterRequest{ID: *id, Name: *name, Tags: splitCSV(*tags), Capabilities: splitCSV(*capabilities)}
+	var registered runnerRegisterResponse
+	if err := postAPIInto(*server+"/api/v1/runners/register", registerBody, *token, &registered); err != nil {
 		return err
 	}
-	runnerToken, ok := registered["token"].(string)
-	if !ok || runnerToken == "" {
+	runnerToken := strings.TrimSpace(registered.Token)
+	if runnerToken == "" {
 		return errors.New("runner registration did not return a runner token")
 	}
 	for {
-		if _, err := postAPI(*server+"/api/v1/runners/heartbeat", map[string]any{}, runnerToken); err != nil {
+		var heartbeat domain.Runner
+		if err := postAPIInto(*server+"/api/v1/runners/heartbeat", struct{}{}, runnerToken, &heartbeat); err != nil {
 			return err
 		}
-		claim, err := postAPI(*server+"/api/v1/runners/claim", map[string]any{}, runnerToken)
-		if err != nil {
+		var claim domain.ClaimedRun
+		if err := postAPIInto(*server+"/api/v1/runners/claim", struct{}{}, runnerToken, &claim); err != nil {
 			if strings.Contains(err.Error(), "404") {
 				if *once {
 					fmt.Println("runner registered; no matching queued run")
@@ -225,16 +262,11 @@ func runRunner(args []string) error {
 				return err
 			}
 		} else if *completeStatus != "" {
-			lease, ok := claim["lease"].(map[string]any)
-			if !ok {
-				return errors.New("claim response did not include lease")
-			}
-			leaseID, ok := lease["id"].(string)
-			if !ok || leaseID == "" {
+			if strings.TrimSpace(claim.Lease.ID) == "" {
 				return errors.New("claim response lease did not include id")
 			}
-			completed, err := postAPI(*server+"/api/v1/runners/complete", map[string]any{"lease_id": leaseID, "status": *completeStatus}, runnerToken)
-			if err != nil {
+			var completed domain.RunLease
+			if err := postAPIInto(*server+"/api/v1/runners/complete", runnerCompleteRequest{LeaseID: claim.Lease.ID, Status: *completeStatus}, runnerToken, &completed); err != nil {
 				return err
 			}
 			if err := enc.Encode(completed); err != nil {
@@ -247,18 +279,10 @@ func runRunner(args []string) error {
 	}
 }
 
-func executeClaim(server string, token string, claimPayload map[string]any, workDir string, cancelPollInterval time.Duration) error {
-	encoded, err := json.Marshal(claimPayload)
-	if err != nil {
-		return err
-	}
-	var claim domain.ClaimedRun
-	if err := json.Unmarshal(encoded, &claim); err != nil {
-		return err
-	}
+func executeClaim(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration) error {
 	if claim.PrimitivePlan.Process == nil {
 		_ = appendRunLogAPI(server, token, claim.Run.ID, claim.Lease.ID, 4, "system", "No process plan was included in the claim")
-		_, completeErr := postAPI(server+"/api/v1/runners/complete", map[string]any{"lease_id": claim.Lease.ID, "status": "failed"}, token)
+		completeErr := completeRunnerLeaseAPI(server, token, claim.Lease.ID, "failed", nil)
 		if completeErr != nil {
 			return completeErr
 		}
@@ -277,7 +301,7 @@ func executeClaim(server string, token string, claimPayload map[string]any, work
 	})
 	if err != nil {
 		emit("system", "Secret preparation failed: "+err.Error())
-		_, completeErr := postAPI(server+"/api/v1/runners/complete", map[string]any{"lease_id": claim.Lease.ID, "status": "failed"}, token)
+		completeErr := completeRunnerLeaseAPI(server, token, claim.Lease.ID, "failed", nil)
 		if completeErr != nil {
 			return completeErr
 		}
@@ -301,7 +325,7 @@ func executeClaim(server string, token string, claimPayload map[string]any, work
 		})
 		if err != nil {
 			emit("system", "Checkout failed: "+err.Error())
-			_, completeErr := postAPI(server+"/api/v1/runners/complete", map[string]any{"lease_id": claim.Lease.ID, "status": "failed"}, token)
+			completeErr := completeRunnerLeaseAPI(server, token, claim.Lease.ID, "failed", nil)
 			if completeErr != nil {
 				return completeErr
 			}
@@ -324,7 +348,7 @@ func executeClaim(server string, token string, claimPayload map[string]any, work
 	<-pollDone
 	if err != nil {
 		emit("system", "Process execution failed: "+err.Error())
-		_, completeErr := postAPI(server+"/api/v1/runners/complete", map[string]any{"lease_id": claim.Lease.ID, "status": "failed"}, token)
+		completeErr := completeRunnerLeaseAPI(server, token, claim.Lease.ID, "failed", nil)
 		if completeErr != nil {
 			return completeErr
 		}
@@ -355,8 +379,8 @@ func executeClaim(server string, token string, claimPayload map[string]any, work
 		status = "failed"
 		emit("system", "Artifact capture failed: "+err.Error())
 	}
-	completed, err := postAPI(server+"/api/v1/runners/complete", map[string]any{"lease_id": claim.Lease.ID, "status": status}, token)
-	if err != nil {
+	var completed domain.RunLease
+	if err := completeRunnerLeaseAPI(server, token, claim.Lease.ID, status, &completed); err != nil {
 		return err
 	}
 	enc := json.NewEncoder(os.Stdout)
@@ -364,9 +388,17 @@ func executeClaim(server string, token string, claimPayload map[string]any, work
 	return enc.Encode(completed)
 }
 
+func completeRunnerLeaseAPI(server string, token string, leaseID string, status string, completed *domain.RunLease) error {
+	var discard domain.RunLease
+	if completed == nil {
+		completed = &discard
+	}
+	return postAPIInto(server+"/api/v1/runners/complete", runnerCompleteRequest{LeaseID: leaseID, Status: status}, token, completed)
+}
+
 func appendArtifactAPI(server string, token string, runID string, leaseID string, name string, path string, found bool, required bool, size int64, kind string) error {
-	_, err := postAPI(server+"/api/v1/runners/artifacts", map[string]any{"run_id": runID, "lease_id": leaseID, "name": name, "path": path, "found": found, "required": required, "size": size, "kind": kind}, token)
-	return err
+	var artifact domain.ArtifactRecord
+	return postAPIInto(server+"/api/v1/runners/artifacts", runnerArtifactRequest{RunID: runID, LeaseID: leaseID, Name: name, Path: path, Found: found, Required: required, Size: size, Kind: kind}, token, &artifact)
 }
 
 func watchLeaseCancellation(ctx context.Context, server string, token string, leaseID string, interval time.Duration, emit func(string), cancel func()) <-chan struct{} {
@@ -383,14 +415,14 @@ func watchLeaseCancellation(ctx context.Context, server string, token string, le
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				payload, err := getAPI(server+"/api/v1/runners/lease?lease_id="+url.QueryEscape(leaseID), token)
+				var lease domain.RunLease
+				err := getAPIInto(server+"/api/v1/runners/lease?lease_id="+url.QueryEscape(leaseID), token, &lease)
 				if err != nil {
 					emit("Lease cancellation check failed: " + err.Error())
 					continue
 				}
-				status, _ := payload["status"].(string)
-				if status != "active" {
-					emit("Runner observed lease status " + status + "; canceling process")
+				if lease.Status != "active" {
+					emit("Runner observed lease status " + lease.Status + "; canceling process")
 					cancel()
 					return
 				}
@@ -401,8 +433,8 @@ func watchLeaseCancellation(ctx context.Context, server string, token string, le
 }
 
 func appendRunLogAPI(server string, token string, runID string, leaseID string, sequence int, stream string, message string) error {
-	_, err := postAPI(server+"/api/v1/runners/logs", map[string]any{"run_id": runID, "lease_id": leaseID, "sequence": sequence, "stream": stream, "message": message}, token)
-	return err
+	var log domain.RunLog
+	return postAPIInto(server+"/api/v1/runners/logs", runnerLogRequest{RunID: runID, LeaseID: leaseID, Sequence: sequence, Stream: stream, Message: message}, token, &log)
 }
 
 func callAPI(args []string, path string) error {
@@ -439,52 +471,66 @@ func callAPI(args []string, path string) error {
 }
 
 func postAPI(url string, body any, token string) (map[string]any, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("%s returned %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
-	}
 	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := postAPIInto(url, body, token, &result); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func getAPI(url string, token string) (map[string]any, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func postAPIInto(url string, body any, token string, result any) error {
+	payload, err := json.Marshal(body)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("%s returned %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
+		return fmt.Errorf("%s returned %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
 	}
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return err
+	}
+	return nil
+}
+
+func getAPI(url string, token string) (map[string]any, error) {
 	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := getAPIInto(url, token, &result); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func getAPIInto(url string, token string, result any) error {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("%s returned %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return err
+	}
+	return nil
 }
 
 func requireString(payload map[string]any, key string) (string, error) {
