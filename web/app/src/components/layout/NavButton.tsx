@@ -19,7 +19,7 @@ export function NavButton({
   return (
     <button
       className={cn(
-        "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors",
+        "relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors",
         "hover:bg-sidebar-panel",
         active && "bg-sidebar-panel text-foreground",
         !active && "text-sidebar-muted"
@@ -27,6 +27,9 @@ export function NavButton({
       type="button"
       onClick={onClick}
     >
+      {active && (
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[2px] rounded-full bg-primary" />
+      )}
       <Icon className={cn("h-4 w-4", active ? "text-foreground" : "text-sidebar-muted")} />
       <span className="flex-1 text-left">{item.label}</span>
       {item.key === "approvals" && pending > 0 ? (

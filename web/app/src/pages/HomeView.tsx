@@ -22,15 +22,21 @@ function HealthCard({ snapshot }: { snapshot: ApiSnapshot }) {
   const isHealthy = failed.length === 0 && pending.length === 0;
 
   return (
-    <Card>
+    <Card className={cn("overflow-hidden", !isHealthy && "border-warning/30")}>
+      <div className={cn("h-1", isHealthy ? "bg-success" : "bg-warning")} />
       <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
         <div className="space-y-2">
-          <h2 className={cn(
-            "text-2xl font-semibold tracking-tight",
-            isHealthy ? "text-success" : "text-warning"
-          )}>
-            {isHealthy ? "All Systems Green" : "Needs Attention"}
-          </h2>
+          <div className="flex items-center gap-2">
+            <span className={cn(
+              "grid h-2 w-2 place-items-center rounded-full",
+              isHealthy ? "bg-success" : "bg-warning"
+            )}>
+              <span className={cn("h-1.5 w-1.5 rounded-full", isHealthy ? "bg-success" : "bg-warning")} />
+            </span>
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">
+              {isHealthy ? "All Systems Green" : "Needs Attention"}
+            </h2>
+          </div>
           <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5" />
@@ -50,15 +56,15 @@ function HealthCard({ snapshot }: { snapshot: ApiSnapshot }) {
           <div className="grid grid-cols-3 gap-2">
             <div className="flex flex-col items-center gap-0.5 rounded-lg bg-muted/50 px-3 py-2">
               <span className="text-base font-semibold">{summary.projectCount}</span>
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Projects</span>
+              <span className="text-[10px] font-medium text-muted-foreground">Projects</span>
             </div>
             <div className="flex flex-col items-center gap-0.5 rounded-lg bg-muted/50 px-3 py-2">
               <span className="text-base font-semibold">{summary.templateCount}</span>
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Templates</span>
+              <span className="text-[10px] font-medium text-muted-foreground">Templates</span>
             </div>
             <div className="flex flex-col items-center gap-0.5 rounded-lg bg-muted/50 px-3 py-2">
               <span className="text-base font-semibold">{summary.logCount}</span>
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Logs</span>
+              <span className="text-[10px] font-medium text-muted-foreground">Logs</span>
             </div>
           </div>
         </div>
@@ -103,6 +109,10 @@ export function HomeView({
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.9fr)]">
           <SkeletonCard rows={5} />
           <SkeletonCard rows={3} />
+        </section>
+        <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <SkeletonCard rows={5} />
+          <SkeletonCard rows={4} />
         </section>
       </div>
     );

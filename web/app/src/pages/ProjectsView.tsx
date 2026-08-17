@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import type { ApiSnapshot, Project } from "@/api";
 import { archiveProject, createProject, createRepository, updateProject } from "@/api";
@@ -167,18 +168,14 @@ function ProjectForms({
       <form className="space-y-3 border-t pt-6" onSubmit={(event) => void createRepoSubmit(event)}>
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">Project</label>
-          <select
-            name="project_id"
-            className="h-9 w-full rounded-md border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-            required
-          >
+          <Select name="project_id" required>
             {snapshot.projects.length === 0 ? <option value="">No projects available</option> : null}
             {snapshot.projects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">Repository Name</label>

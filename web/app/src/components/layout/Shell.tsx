@@ -197,17 +197,17 @@ export function Shell({
                 {notice}
               </span>
             ) : null}
-            <label className="hidden h-8 min-w-56 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-sm text-muted-foreground md:flex">
+            <label className="hidden h-8 min-w-56 items-center gap-2 rounded-lg border border-border/80 bg-card px-2.5 text-sm text-muted-foreground shadow-sm md:flex">
               <Search className="h-3.5 w-3.5" />
               <input
                 ref={searchRef}
-                className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground text-sm"
+                className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground/60 text-sm"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search"
                 type="search"
               />
-              <kbd className="rounded border bg-background px-1 text-[9px] font-mono text-muted-foreground">/</kbd>
+              <kbd className="rounded border border-border/70 bg-background px-1 text-[9px] font-mono text-muted-foreground">/</kbd>
             </label>
             <div className="relative" ref={notifRef}>
               <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Notifications" onClick={() => setNotificationsOpen((open) => !open)}>
@@ -238,12 +238,12 @@ export function Shell({
         </header>
         
         {/* Page Content */}
-        <div className="mx-auto max-w-[1400px] px-4 py-6 pb-24 lg:px-6 lg:pb-8">{children}</div>
+        <div className="mx-auto max-w-[1400px] px-4 py-6 pb-24 lg:px-8 lg:py-8 lg:pb-8">{children}</div>
       </section>
 
       {/* Mobile Bottom Navigation */}
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background px-2 pb-[calc(env(safe-area-inset-bottom)+0.25rem)] pt-1 lg:hidden">
-        <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
+        <div className="mx-auto grid max-w-md grid-cols-5 gap-1">
           {navItems
             .filter((item) => item.mobile)
             .map((item) => {
@@ -253,18 +253,18 @@ export function Shell({
                 <button
                   key={item.key}
                   className={cn(
-                    "relative flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-md text-[10px] font-medium text-muted-foreground transition-colors",
-                    "hover:bg-muted",
-                    isActive && "text-foreground",
+                    "relative flex h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium text-muted-foreground transition-colors",
+                    "hover:bg-muted/70",
+                    isActive && "bg-muted text-foreground",
                   )}
                   type="button"
                   aria-current={isActive ? "page" : undefined}
                   onClick={() => setView(item.key)}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className={cn("h-4 w-4", isActive && "text-foreground")} />
                   <span className="mobile-nav-text block max-w-full truncate px-1">{item.mobileLabel ?? item.label}</span>
                   {item.key === "approvals" && pending > 0 ? (
-                    <b className="absolute right-2 top-1 h-3.5 min-w-3.5 rounded-full bg-warning px-1 text-[8px] font-bold text-warning-foreground flex items-center justify-center">
+                    <b className="absolute right-1.5 top-1.5 h-3.5 min-w-3.5 rounded-full bg-warning px-1 text-[8px] font-bold text-warning-foreground flex items-center justify-center">
                       {pending}
                     </b>
                   ) : null}

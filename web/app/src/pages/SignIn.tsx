@@ -12,18 +12,21 @@ export function SignIn({ error, onSubmit }: { error: string; onSubmit: (email: s
 
   return (
     <main className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-[400px] space-y-6">
+      <div className="w-full max-w-[360px] space-y-8">
         {/* Logo */}
-        <div className="text-center space-y-4">
+        <div className="text-center space-y-3">
           <img
             src="/logo.png"
             alt="NeroCD"
-            className="mx-auto h-64 w-64 object-contain"
+            className="mx-auto h-16 w-16 object-contain"
           />
-          <h1 className="text-xl font-semibold tracking-tight">NeroCD</h1>
+          <div>
+            <h1 className="text-lg font-semibold tracking-tight">NeroCD</h1>
+            <p className="text-sm text-muted-foreground">Automation operations platform</p>
+          </div>
         </div>
         <Card className="border shadow-sm">
-          <CardHeader className="space-y-1 pb-4">
+          <CardHeader className="pb-4">
             <CardTitle className="text-base font-semibold">Sign in</CardTitle>
           </CardHeader>
           <CardContent>

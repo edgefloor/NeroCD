@@ -3,6 +3,7 @@ import { CheckCircle2, Settings, Shield, User, Users } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import type { ApiSnapshot } from "@/api";
 import { upsertProjectMember } from "@/api";
 import type { MutateFn } from "@/hooks/useApi";
@@ -84,17 +85,13 @@ export function SettingsView({
           <form className="grid gap-3" onSubmit={(event) => void grantSubmit(event)}>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Project</label>
-              <select
-                name="project_id"
-                className="h-9 w-full rounded-md border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-                required
-              >
+              <Select name="project_id" required>
                 {snapshot.projects.map((project) => (
                   <option key={project.id} value={project.id}>
                     {project.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px]">
               <div className="space-y-1.5">
@@ -103,15 +100,11 @@ export function SettingsView({
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Role</label>
-                <select
-                  name="role"
-                  defaultValue="viewer"
-                  className="h-9 w-full rounded-md border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-                >
+                <Select name="role" defaultValue="viewer">
                   <option value="viewer">viewer</option>
                   <option value="maintainer">maintainer</option>
                   <option value="owner">owner</option>
-                </select>
+                </Select>
               </div>
             </div>
             <Button type="submit" disabled={busy === "project-member"} className="h-9">
