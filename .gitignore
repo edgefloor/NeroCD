@@ -1,6 +1,13 @@
+.DS_Store
+__MACOSX/
 .cache/
 .cachebro/
-artifacts/
+artifacts/*.json
+artifacts/*.txt
 bin/
 nerocd-ui.png
 web/app/node_modules/
+web/app/playwright-report/
+web/app/test-results/
+web/dist/*
+!web/dist/.gitkeep

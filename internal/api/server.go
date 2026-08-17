@@ -106,12 +106,18 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/runs/cancel"},
 	{Method: http.MethodGet, Path: "/api/v1/runners"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/register"},
+	{Method: http.MethodPost, Path: "/api/v1/runner-enrollments"},
+	{Method: http.MethodPost, Path: "/api/v1/runner-enrollments/revoke"},
+	{Method: http.MethodPost, Path: "/api/v1/runner-enrollments/consume"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/rotate-token"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/revoke-token"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/heartbeat"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/claim"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/renew"},
 	{Method: http.MethodGet, Path: "/api/v1/runners/lease"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/logs"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/events/batch"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/secrets/access"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/artifacts"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/complete"},
 	{Method: http.MethodGet, Path: "/api/v1/run-logs"},
@@ -160,7 +166,7 @@ func (s *Server) routes(static fs.FS) {
 
 func requiresAuth(path string) bool {
 	switch path {
-	case "/api/v1/health", "/api/v1/ready", "/api/v1/sessions":
+	case "/api/v1/health", "/api/v1/ready", "/api/v1/sessions", "/api/v1/runner-enrollments/consume":
 		return false
 	default:
 		return true
@@ -169,7 +175,7 @@ func requiresAuth(path string) bool {
 
 func requiresRunnerAuth(path string) bool {
 	switch path {
-	case "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
+	case "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
 		return true
 	default:
 		return false
@@ -260,6 +266,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnersHandler
 	case "/api/v1/runners/register":
 		return s.registerRunner
+	case "/api/v1/runner-enrollments":
+		return s.createRunnerEnrollment
+	case "/api/v1/runner-enrollments/revoke":
+		return s.revokeRunnerEnrollment
+	case "/api/v1/runner-enrollments/consume":
+		return s.consumeRunnerEnrollment
 	case "/api/v1/runners/rotate-token":
 		return s.rotateRunnerToken
 	case "/api/v1/runners/revoke-token":
@@ -268,10 +280,16 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.heartbeatRunner
 	case "/api/v1/runners/claim":
 		return s.claimRun
+	case "/api/v1/runners/renew":
+		return s.renewLease
 	case "/api/v1/runners/lease":
 		return s.runnerLease
 	case "/api/v1/runners/logs":
 		return s.appendRunLog
+	case "/api/v1/runners/events/batch":
+		return s.appendRunEvents
+	case "/api/v1/runners/secrets/access":
+		return s.authorizeSecretAccess
 	case "/api/v1/runners/artifacts":
 		return s.createArtifact
 	case "/api/v1/runners/complete":
@@ -746,6 +764,50 @@ func (s *Server) registerRunner(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, registered)
 }
 
+func (s *Server) createRunnerEnrollment(w http.ResponseWriter, r *http.Request) {
+	var req app.RunnerEnrollmentInput
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	created, err := s.app.CreateRunnerEnrollment(r.Context(), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) revokeRunnerEnrollment(w http.ResponseWriter, r *http.Request) {
+	var req app.RunnerEnrollmentRevokeInput
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	revoked, err := s.app.RevokeRunnerEnrollment(r.Context(), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, revoked)
+}
+
+func (s *Server) consumeRunnerEnrollment(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		writeError(w, auth.ErrUnauthenticated)
+		return
+	}
+	var req app.RunnerEnrollmentConsumeInput
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	consumed, err := s.app.ConsumeRunnerEnrollment(r.Context(), token, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, consumed)
+}
+
 func (s *Server) rotateRunnerToken(w http.ResponseWriter, r *http.Request) {
 	var req app.RunnerTokenInput
 	if !decodeBody(w, r, &req) {
@@ -790,8 +852,30 @@ func (s *Server) claimRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, claim)
 }
 
+func (s *Server) renewLease(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LeaseID string `json:"lease_id"`
+		Fence   string `json:"fence"`
+		Attempt int    `json:"attempt"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	lease, err := s.app.RenewLease(r.Context(), req.LeaseID, req.Fence, req.Attempt)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, lease)
+}
+
 func (s *Server) runnerLease(w http.ResponseWriter, r *http.Request) {
-	lease, err := s.app.RunnerLease(r.Context(), r.URL.Query().Get("lease_id"))
+	attempt, err := strconv.Atoi(r.URL.Query().Get("attempt"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "attempt is required"})
+		return
+	}
+	lease, err := s.app.RunnerLease(r.Context(), r.URL.Query().Get("lease_id"), attempt, r.URL.Query().Get("fence"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -812,6 +896,32 @@ func (s *Server) appendRunLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, log)
 }
 
+func (s *Server) appendRunEvents(w http.ResponseWriter, r *http.Request) {
+	var req app.RunEventBatchInput
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	ack, err := s.app.AppendRunEvents(r.Context(), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ack)
+}
+
+func (s *Server) authorizeSecretAccess(w http.ResponseWriter, r *http.Request) {
+	var req app.SecretAccessInput
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	grant, err := s.app.AuthorizeSecretAccess(r.Context(), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, grant)
+}
+
 func (s *Server) createArtifact(w http.ResponseWriter, r *http.Request) {
 	var req app.ArtifactInput
 	if !decodeBody(w, r, &req) {
@@ -827,13 +937,20 @@ func (s *Server) createArtifact(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) completeLease(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		LeaseID string `json:"lease_id"`
-		Status  string `json:"status"`
+		LeaseID       string `json:"lease_id"`
+		Status        string `json:"status"`
+		Fence         string `json:"fence"`
+		Attempt       int    `json:"attempt"`
+		CompletionKey string `json:"completion_key"`
 	}
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	lease, err := s.app.CompleteLease(r.Context(), req.LeaseID, req.Status)
+	if req.Attempt <= 0 || req.Fence == "" || strings.TrimSpace(req.CompletionKey) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "attempt, fence, and completion_key are required"})
+		return
+	}
+	lease, err := s.app.CompleteLease(r.Context(), req.LeaseID, req.Status, req.Attempt, req.Fence, req.CompletionKey)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -970,6 +1087,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
 		code = "not_found"
+	case errors.Is(err, store.ErrConflict):
+		status = http.StatusConflict
+		code = "conflict"
 	case strings.Contains(err.Error(), "required"), strings.Contains(err.Error(), "invalid"):
 		status = http.StatusBadRequest
 		code = "bad_request"

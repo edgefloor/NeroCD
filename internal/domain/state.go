@@ -101,8 +101,9 @@ const (
 )
 
 const (
-	ProviderGit = "git"
-	ProviderEnv = "env"
+	ProviderGit        = "git"
+	ProviderEnv        = "env"
+	ProviderRunnerFile = "runner_file"
 )
 
 const (

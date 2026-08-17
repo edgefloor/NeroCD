@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func newTestServer() (*Server, *store.MemoryStore) {
 	return NewServer(service, slog.Default(), web.Static()), mem
 }
 
-func TestServerServesBuiltWebDistribution(t *testing.T) {
+func TestServerServesEmbeddedApplicationShell(t *testing.T) {
 	server, _ := newTestServer()
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -36,8 +37,13 @@ func TestServerServesBuiltWebDistribution(t *testing.T) {
 		t.Fatalf("GET / returned %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `type="module"`) || !strings.Contains(body, "/assets/") {
-		t.Fatalf("GET / did not serve built Vite index.html: %q", body)
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("GET / Content-Type = %q, want HTML", contentType)
+	}
+	for _, marker := range []string{"<!doctype html>", "<title>NeroCD</title>", `type="module"`, "<body"} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("GET / did not serve a valid embedded application shell; missing %q in %q", marker, body)
+		}
 	}
 }
 
@@ -50,6 +56,42 @@ func TestProtectedRoutesRequireBearerSession(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/v1/me without token returned %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRunSecretProviderValidationRejectsUnsafeProductionBindings(t *testing.T) {
+	server, _ := newTestServer()
+	token := createTestSession(t, server)
+	tests := []struct {
+		name   string
+		secret string
+	}{
+		{name: "unsupported", secret: `{"name":"db","provider":"database","reference":"logical","target":"env:TOKEN","required":true}`},
+		{name: "unclassified_env", secret: `{"name":"env","provider":"env","reference":"TOKEN","target":"env:TOKEN","required":true}`},
+		{name: "path_reference", secret: `{"name":"file","provider":"runner_file","reference":"../host/path","target":"env:TOKEN","required":true,"version":"v1"}`},
+		{name: "host_path_reference", secret: `{"name":"file","provider":"runner_file","reference":"/etc/shadow","target":"env:TOKEN","required":true,"version":"v1"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"project_id":"proj_platform","run_spec":{"type":"shell","inputs":{},"process":{"command":["true"]},"secrets":[` + tt.secret + `]},"runner_tags":["local"]}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/runs", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("unsafe binding returned %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	validBody := `{"project_id":"proj_platform","run_spec":{"type":"shell","inputs":{},"process":{"command":["true"]},"secrets":[{"name":"database-password","provider":"runner_file","reference":"database-password","target":"env:DATABASE_PASSWORD","required":true,"version":"v1","redact_encodings":["base64","base64url","hex"]}]},"runner_tags":["local"]}`
+	validReq := httptest.NewRequest(http.MethodPost, "/api/v1/runs", strings.NewReader(validBody))
+	validReq.Header.Set("Authorization", "Bearer "+token)
+	validReq.Header.Set("Content-Type", "application/json")
+	validRec := httptest.NewRecorder()
+	server.ServeHTTP(validRec, validReq)
+	if validRec.Code != http.StatusCreated || strings.Contains(validRec.Body.String(), "/etc/") || !strings.Contains(validRec.Body.String(), `"reference":"database-password"`) {
+		t.Fatalf("safe logical binding response=%d %s", validRec.Code, validRec.Body.String())
 	}
 }
 
@@ -623,7 +665,7 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 	token := createTestSession(t, server)
 	viewerToken := createTestSessionFor(t, server, "viewer@example.local", "viewer")
 
-	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/runs", strings.NewReader(`{"project_id":"proj_platform","run_spec":{"type":"shell","inputs":{"command":"echo ok"},"process":{"command":["echo","ok"]}},"runner_tags":["local"]}`))
+	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/runs", strings.NewReader(`{"project_id":"proj_platform","run_spec":{"type":"shell","inputs":{"command":"echo ok"},"process":{"command":["echo","ok"]},"secrets":[{"name":"database-password","provider":"runner_file","reference":"database-password","target":"env:DATABASE_PASSWORD","required":true,"version":"v1","fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]},"runner_tags":["local"]}`))
 	runReq.Header.Set("Authorization", "Bearer "+token)
 	runReq.Header.Set("Content-Type", "application/json")
 	runRec := httptest.NewRecorder()
@@ -737,12 +779,32 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 		t.Fatalf("GET /api/v1/runners/lease with user token returned %d, want %d", userLeaseRec.Code, http.StatusUnauthorized)
 	}
 
-	leaseReq := httptest.NewRequest(http.MethodGet, "/api/v1/runners/lease?lease_id="+claim.Lease.ID, nil)
+	leaseReq := httptest.NewRequest(http.MethodGet, "/api/v1/runners/lease?lease_id="+claim.Lease.ID+"&attempt="+strconv.Itoa(claim.Lease.Attempt)+"&fence="+claim.Lease.Fence, nil)
 	leaseReq.Header.Set("Authorization", "Bearer "+registered.Token)
 	leaseRec := httptest.NewRecorder()
 	server.ServeHTTP(leaseRec, leaseReq)
 	if leaseRec.Code != http.StatusOK || !strings.Contains(leaseRec.Body.String(), `"status":"active"`) {
 		t.Fatalf("GET /api/v1/runners/lease did not return active lease: %d %s", leaseRec.Code, leaseRec.Body.String())
+	}
+
+	secretAccessBody := `{"access_id":"secret_access_0123456789abcdef0123456789abcdef","run_id":"` + claim.Run.ID + `","lease_id":"` + claim.Lease.ID + `","attempt":` + strconv.Itoa(claim.Lease.Attempt) + `,"fence":"` + claim.Lease.Fence + `","binding":"database-password","provider":"runner_file","version":"v1"}`
+	for attempt := 0; attempt < 2; attempt++ {
+		secretReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/secrets/access", strings.NewReader(secretAccessBody))
+		secretReq.Header.Set("Authorization", "Bearer "+registered.Token)
+		secretReq.Header.Set("Content-Type", "application/json")
+		secretRec := httptest.NewRecorder()
+		server.ServeHTTP(secretRec, secretReq)
+		if secretRec.Code != http.StatusOK || strings.Contains(secretRec.Body.String(), claim.Lease.Fence) || strings.Contains(secretRec.Body.String(), "reference") || strings.Contains(secretRec.Body.String(), "target") || strings.Contains(secretRec.Body.String(), "fingerprint") || strings.Contains(secretRec.Body.String(), strings.Repeat("a", 64)) {
+			t.Fatalf("secret access response was unsafe or failed: %d %s", secretRec.Code, secretRec.Body.String())
+		}
+	}
+	conflictSecretReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/secrets/access", strings.NewReader(strings.Replace(secretAccessBody, `"version":"v1"`, `"version":"v2"`, 1)))
+	conflictSecretReq.Header.Set("Authorization", "Bearer "+registered.Token)
+	conflictSecretReq.Header.Set("Content-Type", "application/json")
+	conflictSecretRec := httptest.NewRecorder()
+	server.ServeHTTP(conflictSecretRec, conflictSecretReq)
+	if conflictSecretRec.Code != http.StatusConflict {
+		t.Fatalf("conflicting secret access returned %d: %s", conflictSecretRec.Code, conflictSecretRec.Body.String())
 	}
 
 	badLogReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/logs", strings.NewReader(`{"run_id":"`+claim.Run.ID+`","sequence":4,"stream":"stdout","message":"ok"}`))
@@ -754,7 +816,7 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 		t.Fatalf("POST /api/v1/runners/logs without lease returned %d, want %d", badLogRec.Code, http.StatusBadRequest)
 	}
 
-	logReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/logs", strings.NewReader(`{"run_id":"`+claim.Run.ID+`","lease_id":"`+claim.Lease.ID+`","sequence":4,"stream":"stdout","message":"ok"}`))
+	logReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/logs", strings.NewReader(`{"run_id":"`+claim.Run.ID+`","lease_id":"`+claim.Lease.ID+`","attempt":`+strconv.Itoa(claim.Lease.Attempt)+`,"fence":"`+claim.Lease.Fence+`","event_key":"event_api_1","sequence":4,"stream":"stdout","message":"ok"}`))
 	logReq.Header.Set("Authorization", "Bearer "+registered.Token)
 	logReq.Header.Set("Content-Type", "application/json")
 	logRec := httptest.NewRecorder()
@@ -762,8 +824,29 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 	if logRec.Code != http.StatusCreated {
 		t.Fatalf("POST /api/v1/runners/logs returned %d: %s", logRec.Code, logRec.Body.String())
 	}
+	var firstLog domain.RunLog
+	if err := json.NewDecoder(logRec.Body).Decode(&firstLog); err != nil {
+		t.Fatal(err)
+	}
+	retryLogReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/logs", strings.NewReader(`{"run_id":"`+claim.Run.ID+`","lease_id":"`+claim.Lease.ID+`","attempt":`+strconv.Itoa(claim.Lease.Attempt)+`,"fence":"`+claim.Lease.Fence+`","event_key":"event_api_1","sequence":4,"stream":"stdout","message":"ok"}`))
+	retryLogReq.Header.Set("Authorization", "Bearer "+registered.Token)
+	retryLogReq.Header.Set("Content-Type", "application/json")
+	retryLogRec := httptest.NewRecorder()
+	server.ServeHTTP(retryLogRec, retryLogReq)
+	var retriedLog domain.RunLog
+	if retryLogRec.Code != http.StatusCreated || json.NewDecoder(retryLogRec.Body).Decode(&retriedLog) != nil || retriedLog.ID != firstLog.ID || retriedLog.Sequence != firstLog.Sequence {
+		t.Fatalf("exact log replay response = %d %s", retryLogRec.Code, retryLogRec.Body.String())
+	}
+	conflictLogReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/logs", strings.NewReader(`{"run_id":"`+claim.Run.ID+`","lease_id":"`+claim.Lease.ID+`","attempt":`+strconv.Itoa(claim.Lease.Attempt)+`,"fence":"`+claim.Lease.Fence+`","event_key":"event_api_1","sequence":4,"stream":"stdout","message":"conflict"}`))
+	conflictLogReq.Header.Set("Authorization", "Bearer "+registered.Token)
+	conflictLogReq.Header.Set("Content-Type", "application/json")
+	conflictLogRec := httptest.NewRecorder()
+	server.ServeHTTP(conflictLogRec, conflictLogReq)
+	if conflictLogRec.Code != http.StatusConflict {
+		t.Fatalf("conflicting log replay returned %d, want 409", conflictLogRec.Code)
+	}
 
-	artifactReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/artifacts", strings.NewReader(`{"run_id":"`+claim.Run.ID+`","lease_id":"`+claim.Lease.ID+`","name":"stdout","path":"stdout.txt","found":true,"required":false,"size":12,"kind":"file"}`))
+	artifactReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/artifacts", strings.NewReader(`{"run_id":"`+claim.Run.ID+`","lease_id":"`+claim.Lease.ID+`","attempt":`+strconv.Itoa(claim.Lease.Attempt)+`,"fence":"`+claim.Lease.Fence+`","name":"stdout","path":"stdout.txt","found":true,"required":false,"size":12,"kind":"file"}`))
 	artifactReq.Header.Set("Authorization", "Bearer "+registered.Token)
 	artifactReq.Header.Set("Content-Type", "application/json")
 	artifactRec := httptest.NewRecorder()
@@ -772,13 +855,42 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 		t.Fatalf("POST /api/v1/runners/artifacts returned %d: %s", artifactRec.Code, artifactRec.Body.String())
 	}
 
-	completeReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/complete", strings.NewReader(`{"lease_id":"`+claim.Lease.ID+`","status":"succeeded"}`))
+	completeReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/complete", strings.NewReader(`{"lease_id":"`+claim.Lease.ID+`","attempt":`+strconv.Itoa(claim.Lease.Attempt)+`,"fence":"`+claim.Lease.Fence+`","completion_key":"completion_api_1","status":"succeeded"}`))
 	completeReq.Header.Set("Authorization", "Bearer "+registered.Token)
 	completeReq.Header.Set("Content-Type", "application/json")
 	completeRec := httptest.NewRecorder()
 	server.ServeHTTP(completeRec, completeReq)
 	if completeRec.Code != http.StatusOK {
 		t.Fatalf("POST /api/v1/runners/complete returned %d: %s", completeRec.Code, completeRec.Body.String())
+	}
+	var firstCompletion domain.RunLease
+	if err := json.NewDecoder(completeRec.Body).Decode(&firstCompletion); err != nil {
+		t.Fatal(err)
+	}
+	retryCompleteReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/complete", strings.NewReader(`{"lease_id":"`+claim.Lease.ID+`","attempt":`+strconv.Itoa(claim.Lease.Attempt)+`,"fence":"`+claim.Lease.Fence+`","completion_key":"completion_api_1","status":"succeeded"}`))
+	retryCompleteReq.Header.Set("Authorization", "Bearer "+registered.Token)
+	retryCompleteReq.Header.Set("Content-Type", "application/json")
+	retryCompleteRec := httptest.NewRecorder()
+	server.ServeHTTP(retryCompleteRec, retryCompleteReq)
+	var retriedCompletion domain.RunLease
+	if retryCompleteRec.Code != http.StatusOK || json.NewDecoder(retryCompleteRec.Body).Decode(&retriedCompletion) != nil || firstCompletion.CompletedAt == nil || retriedCompletion.CompletedAt == nil || !firstCompletion.CompletedAt.Equal(*retriedCompletion.CompletedAt) {
+		t.Fatalf("exact completion replay response = %d %s", retryCompleteRec.Code, retryCompleteRec.Body.String())
+	}
+	conflictCompleteReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/complete", strings.NewReader(`{"lease_id":"`+claim.Lease.ID+`","attempt":`+strconv.Itoa(claim.Lease.Attempt)+`,"fence":"`+claim.Lease.Fence+`","completion_key":"completion_api_conflict","status":"failed"}`))
+	conflictCompleteReq.Header.Set("Authorization", "Bearer "+registered.Token)
+	conflictCompleteReq.Header.Set("Content-Type", "application/json")
+	conflictCompleteRec := httptest.NewRecorder()
+	server.ServeHTTP(conflictCompleteRec, conflictCompleteReq)
+	if conflictCompleteRec.Code != http.StatusConflict {
+		t.Fatalf("conflicting completion replay returned %d, want 409", conflictCompleteRec.Code)
+	}
+	staleSecretReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/secrets/access", strings.NewReader(secretAccessBody))
+	staleSecretReq.Header.Set("Authorization", "Bearer "+registered.Token)
+	staleSecretReq.Header.Set("Content-Type", "application/json")
+	staleSecretRec := httptest.NewRecorder()
+	server.ServeHTTP(staleSecretRec, staleSecretReq)
+	if staleSecretRec.Code != http.StatusNotFound {
+		t.Fatalf("terminal secret access replay returned %d, want 404: %s", staleSecretRec.Code, staleSecretRec.Body.String())
 	}
 
 	revokeReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/revoke-token", strings.NewReader(`{"runner_id":"runner_test"}`))
@@ -839,7 +951,7 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 		t.Fatalf("GET /api/v1/audit-events returned %d: %s", auditRec.Code, auditRec.Body.String())
 	}
 	auditBody := auditRec.Body.String()
-	for _, action := range []string{"runner.register", "runner.token.rotate", "runner.claim", "runner.complete", "runner.token.revoke"} {
+	for _, action := range []string{"runner.register", "runner.token.rotate", "runner.claim", "secret.access", "runner.complete", "runner.token.revoke"} {
 		if !strings.Contains(auditBody, action) {
 			t.Fatalf("audit events missing %s: %s", action, auditBody)
 		}
@@ -852,10 +964,79 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 	for _, event := range rawEvents {
 		rawActions[event.Action] = true
 	}
-	for _, action := range []string{"runner.register", "runner.heartbeat", "runner.token.rotate", "runner.claim", "runner.complete", "runner.token.revoke"} {
+	for _, action := range []string{"runner.register", "runner.heartbeat", "runner.token.rotate", "runner.claim", "secret.access", "runner.complete", "runner.token.revoke"} {
 		if !rawActions[action] {
 			t.Fatalf("persisted audit events missing %s: %#v", action, rawEvents)
 		}
+	}
+}
+
+func TestRunnerEnrollmentConsumesGeneratedCredentialIdempotently(t *testing.T) {
+	server, mem := newTestServer()
+	adminToken := createTestSession(t, server)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/runner-enrollments", strings.NewReader(`{"runner_id":"runner_enrollment_api","runner_name":"Enrollment API","tags":["linux"],"capabilities":["shell"],"ttl_seconds":600}`))
+	createReq.Header.Set("Authorization", "Bearer "+adminToken)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	server.ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create enrollment status=%d body=%s", createRec.Code, createRec.Body.String())
+	}
+	var created app.CreatedRunnerEnrollment
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(created.Token, "nce_") || created.Enrollment.TokenHash != "" || created.Enrollment.CredentialHash != nil || created.Enrollment.ConsumeRequestID != nil {
+		t.Fatalf("unsafe enrollment response: %+v", created)
+	}
+	credential := "ncr_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	credentialDigest := sha256.Sum256([]byte(credential))
+	credentialHash := hex.EncodeToString(credentialDigest[:])
+	consumeBody := `{"request_id":"enroll_consume_0123456789abcdef0123456789abcdef","credential_hash":"` + credentialHash + `"}`
+	consume := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runner-enrollments/consume", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+created.Token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	first := consume(consumeBody)
+	replayed := consume(consumeBody)
+	if first.Code != http.StatusOK || replayed.Code != http.StatusOK || first.Body.String() != replayed.Body.String() {
+		t.Fatalf("consume/replay statuses=%d/%d bodies=%s / %s", first.Code, replayed.Code, first.Body.String(), replayed.Body.String())
+	}
+	conflict := consume(strings.Replace(consumeBody, "0123456789abcdef0123456789abcdef", "1123456789abcdef0123456789abcdef", 1))
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("conflicting consume status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+	heartbeatReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/heartbeat", strings.NewReader(`{}`))
+	heartbeatReq.Header.Set("Authorization", "Bearer "+credential)
+	heartbeatReq.Header.Set("Content-Type", "application/json")
+	heartbeatRec := httptest.NewRecorder()
+	server.ServeHTTP(heartbeatRec, heartbeatReq)
+	if heartbeatRec.Code != http.StatusOK || !strings.Contains(heartbeatRec.Body.String(), `"id":"runner_enrollment_api"`) {
+		t.Fatalf("enrolled credential heartbeat status=%d body=%s", heartbeatRec.Code, heartbeatRec.Body.String())
+	}
+	audits, err := mem.ListAuditEvents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumeAudits := 0
+	for _, audit := range audits {
+		encoded, _ := json.Marshal(audit)
+		for _, forbidden := range []string{created.Token, credential, credentialHash, "enroll_consume_0123456789abcdef0123456789abcdef"} {
+			if strings.Contains(string(encoded), forbidden) {
+				t.Fatalf("audit leaked enrollment material: %s", encoded)
+			}
+		}
+		if audit.Action == "runner.enrollment.consume" {
+			consumeAudits++
+		}
+	}
+	if consumeAudits != 1 {
+		t.Fatalf("consume audit count=%d", consumeAudits)
 	}
 }
 
@@ -934,7 +1115,7 @@ func TestRunnerExecutesWorkflowStepsAcrossClaims(t *testing.T) {
 	if first.PrimitivePlan.Process == nil || strings.Join(first.PrimitivePlan.Process.Command, " ") != "echo prepare" {
 		t.Fatalf("first claim did not use prepare process plan: %#v", first.PrimitivePlan)
 	}
-	completeRunnerLease(t, server, registered.Token, first.Lease.ID, "succeeded")
+	completeRunnerLease(t, server, registered.Token, first.Lease, "succeeded")
 
 	runsReq := httptest.NewRequest(http.MethodGet, "/api/v1/runs?project_id=proj_platform", nil)
 	runsReq.Header.Set("Authorization", "Bearer "+token)
@@ -951,7 +1132,7 @@ func TestRunnerExecutesWorkflowStepsAcrossClaims(t *testing.T) {
 	if second.PrimitivePlan.Process == nil || strings.Join(second.PrimitivePlan.Process.Command, " ") != "echo execute" {
 		t.Fatalf("second claim did not use execute process plan: %#v", second.PrimitivePlan)
 	}
-	completeRunnerLease(t, server, registered.Token, second.Lease.ID, "succeeded")
+	completeRunnerLease(t, server, registered.Token, second.Lease, "succeeded")
 
 	finalReq := httptest.NewRequest(http.MethodGet, "/api/v1/runs?project_id=proj_platform", nil)
 	finalReq.Header.Set("Authorization", "Bearer "+token)
@@ -978,6 +1159,78 @@ func TestRunnerExecutesWorkflowStepsAcrossClaims(t *testing.T) {
 	}
 }
 
+func TestRunnerSecretAccessUsesOnlyCurrentWorkflowStep(t *testing.T) {
+	server, _ := newTestServer()
+	userToken := createTestSession(t, server)
+	runBody := `{
+		"project_id":"proj_platform",
+		"run_spec":{"type":"shell","process":{"command":["echo","parent"]},"secrets":[{"name":"top-secret","provider":"runner_file","reference":"top-secret","target":"env:TOP_SECRET","required":true,"version":"top-v1","fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]},
+		"workflow":{"steps":[
+			{"id":"first","name":"First","run_spec":{"type":"shell","process":{"command":["echo","first"]},"secrets":[{"name":"first-secret","provider":"runner_file","reference":"first-secret","target":"env:FIRST_SECRET","required":true,"version":"first-v1","fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}},
+			{"id":"second","name":"Second","depends_on":["first"],"run_spec":{"type":"shell","process":{"command":["echo","second"]},"secrets":[{"name":"second-secret","provider":"runner_file","reference":"second-secret","target":"env:SECOND_SECRET","required":true,"version":"second-v1","fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]}}
+		]},
+		"runner_tags":["local"]
+	}`
+	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/runs", strings.NewReader(runBody))
+	runReq.Header.Set("Authorization", "Bearer "+userToken)
+	runReq.Header.Set("Content-Type", "application/json")
+	runRec := httptest.NewRecorder()
+	server.ServeHTTP(runRec, runReq)
+	if runRec.Code != http.StatusCreated {
+		t.Fatalf("create workflow run returned %d: %s", runRec.Code, runRec.Body.String())
+	}
+
+	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/register", strings.NewReader(`{"id":"runner_secret_workflow","name":"Secret Workflow Runner","tags":["local"],"capabilities":["shell"]}`))
+	registerReq.Header.Set("Authorization", "Bearer "+userToken)
+	registerReq.Header.Set("Content-Type", "application/json")
+	registerRec := httptest.NewRecorder()
+	server.ServeHTTP(registerRec, registerReq)
+	if registerRec.Code != http.StatusCreated {
+		t.Fatalf("register workflow runner returned %d: %s", registerRec.Code, registerRec.Body.String())
+	}
+	var registered app.RegisteredRunner
+	if err := json.NewDecoder(registerRec.Body).Decode(&registered); err != nil {
+		t.Fatal(err)
+	}
+
+	access := func(claim domain.ClaimedRun, accessID, binding, provider, version string) int {
+		t.Helper()
+		body := `{"access_id":"` + accessID + `","run_id":"` + claim.Run.ID + `","lease_id":"` + claim.Lease.ID + `","attempt":` + strconv.Itoa(claim.Lease.Attempt) + `,"fence":"` + claim.Lease.Fence + `","binding":"` + binding + `","provider":"` + provider + `","version":"` + version + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/secrets/access", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+registered.Token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	first := claimRunnerRun(t, server, registered.Token)
+	if first.Run.WorkflowState.CurrentStepID != "first" {
+		t.Fatalf("first claim current step=%q", first.Run.WorkflowState.CurrentStepID)
+	}
+	if got := access(first, "secret_access_50000000000000000000000000000000", "first-secret", "runner_file", "first-v1"); got != http.StatusOK {
+		t.Fatalf("current first-step access status=%d", got)
+	}
+	if got := access(first, "secret_access_51000000000000000000000000000000", "top-secret", "runner_file", "top-v1"); got != http.StatusNotFound {
+		t.Fatalf("top-level access during workflow status=%d", got)
+	}
+	if got := access(first, "secret_access_52000000000000000000000000000000", "second-secret", "runner_file", "second-v1"); got != http.StatusNotFound {
+		t.Fatalf("other-step access status=%d", got)
+	}
+	completeRunnerLease(t, server, registered.Token, first.Lease, "succeeded")
+
+	second := claimRunnerRun(t, server, registered.Token)
+	if second.Run.WorkflowState.CurrentStepID != "second" {
+		t.Fatalf("second claim current step=%q", second.Run.WorkflowState.CurrentStepID)
+	}
+	if got := access(second, "secret_access_53000000000000000000000000000000", "first-secret", "runner_file", "first-v1"); got != http.StatusNotFound {
+		t.Fatalf("prior-step access after transition status=%d", got)
+	}
+	if got := access(second, "secret_access_54000000000000000000000000000000", "second-secret", "runner_file", "second-v1"); got != http.StatusOK {
+		t.Fatalf("current second-step access status=%d", got)
+	}
+}
+
 func claimRunnerRun(t *testing.T, server *Server, token string) domain.ClaimedRun {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/claim", strings.NewReader(`{}`))
@@ -995,9 +1248,9 @@ func claimRunnerRun(t *testing.T, server *Server, token string) domain.ClaimedRu
 	return claim
 }
 
-func completeRunnerLease(t *testing.T, server *Server, token string, leaseID string, status string) {
+func completeRunnerLease(t *testing.T, server *Server, token string, lease domain.RunLease, status string) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/complete", strings.NewReader(`{"lease_id":"`+leaseID+`","status":"`+status+`"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/complete", strings.NewReader(`{"lease_id":"`+lease.ID+`","attempt":`+strconv.Itoa(lease.Attempt)+`,"fence":"`+lease.Fence+`","completion_key":"completion_`+lease.ID+`_`+status+`","status":"`+status+`"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

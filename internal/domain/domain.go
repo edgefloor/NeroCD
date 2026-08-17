@@ -105,10 +105,15 @@ type ArtifactSpec struct {
 }
 
 type SecretBinding struct {
-	Name      string `json:"name"`
-	Provider  string `json:"provider"`
-	Reference string `json:"reference"`
-	Target    string `json:"target"`
+	Name            string   `json:"name"`
+	Provider        string   `json:"provider"`
+	Reference       string   `json:"reference"`
+	Target          string   `json:"target"`
+	Required        bool     `json:"required"`
+	Version         string   `json:"version,omitempty"`
+	Fingerprint     string   `json:"fingerprint,omitempty"`
+	RedactEncodings []string `json:"redact_encodings,omitempty"`
+	Classification  string   `json:"classification,omitempty"`
 }
 
 type Workflow struct {
@@ -162,6 +167,30 @@ type Runner struct {
 	LastHeartbeatAt time.Time `json:"last_heartbeat_at"`
 }
 
+// RunnerEnrollment contains only non-secret enrollment state. Hashes required
+// by the persistence boundary are never serialized by API responses or audits.
+type RunnerEnrollment struct {
+	ID               string     `json:"id"`
+	TokenHash        string     `json:"-"`
+	RunnerID         string     `json:"runner_id"`
+	RunnerName       string     `json:"runner_name"`
+	Tags             []string   `json:"tags"`
+	Capabilities     []string   `json:"capabilities"`
+	CreatedBy        string     `json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	UsedAt           *time.Time `json:"used_at,omitempty"`
+	ConsumeRequestID *string    `json:"-"`
+	CredentialHash   *string    `json:"-"`
+}
+
+type RunnerEnrollmentConsume struct {
+	TokenHash      string
+	RequestID      string
+	CredentialHash string
+}
+
 type RunLease struct {
 	ID          string     `json:"id"`
 	RunID       string     `json:"run_id"`
@@ -170,6 +199,11 @@ type RunLease struct {
 	ExpiresAt   time.Time  `json:"expires_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	// Attempt is a monotonically increasing execution generation for a run.
+	Attempt int `json:"attempt"`
+	// Fence is an opaque, per-attempt capability. Every runner mutation carries it.
+	Fence         string `json:"fence"`
+	CompletionKey string `json:"-"`
 }
 
 type ClaimedRun struct {
@@ -179,12 +213,16 @@ type ClaimedRun struct {
 }
 
 type RunLog struct {
-	ID        string    `json:"id"`
-	RunID     string    `json:"run_id"`
-	Sequence  int       `json:"sequence"`
-	Stream    string    `json:"stream"`
-	Message   string    `json:"message"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	RunID             string    `json:"run_id"`
+	Sequence          int       `json:"sequence"`
+	Stream            string    `json:"stream"`
+	Message           string    `json:"message"`
+	CreatedAt         time.Time `json:"created_at"`
+	EventKey          string    `json:"event_key,omitempty"`
+	LeaseID           string    `json:"lease_id,omitempty"`
+	Attempt           int       `json:"attempt,omitempty"`
+	RequestedSequence int       `json:"requested_sequence,omitempty"`
 }
 
 type ArtifactRecord struct {
@@ -258,6 +296,33 @@ type AuditEvent struct {
 	TargetID  string         `json:"target_id"`
 	Metadata  map[string]any `json:"metadata"`
 	CreatedAt time.Time      `json:"created_at"`
+}
+
+// SecretAccessRequest is the complete safe metadata used to authorize one
+// runner-local secret read. Reference, target, value and raw fence are
+// deliberately absent from the resulting audit record and response.
+type SecretAccessRequest struct {
+	AccessID    string
+	RunnerID    string
+	RunID       string
+	LeaseID     string
+	Attempt     int
+	Fence       string
+	Binding     string
+	Provider    string
+	Version     string
+	RequestedAt time.Time
+}
+
+type SecretAccessGrant struct {
+	AccessID     string    `json:"access_id"`
+	RunID        string    `json:"run_id"`
+	LeaseID      string    `json:"lease_id"`
+	Attempt      int       `json:"attempt"`
+	Binding      string    `json:"binding"`
+	Provider     string    `json:"provider"`
+	Version      string    `json:"version,omitempty"`
+	AuthorizedAt time.Time `json:"authorized_at"`
 }
 
 type Capability struct {

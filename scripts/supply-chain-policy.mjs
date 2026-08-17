@@ -24,15 +24,10 @@ const allowedWebRuntimeDependencies = new Set([
 ]);
 const allowedWebDevDependencies = new Set(["@playwright/test", "@tailwindcss/vite", "@types/node", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "shadcn", "tailwindcss", "typescript", "vite"]);
 const allowedGoDirectDependencies = new Set([
-  "github.com/aarondl/opt",
   "github.com/getkin/kin-openapi",
-  "github.com/google/go-cmp",
   "github.com/jackc/pgx/v5",
-  "github.com/jaswdr/faker/v2",
-  "github.com/lib/pq",
-  "github.com/stephenafamo/bob",
-  "github.com/stephenafamo/scan",
-  "github.com/wasilibs/go-pgquery",
+  "github.com/sqlc-dev/sqlc",
+  "golang.org/x/sys",
 ]);
 const requiredLockfiles = ["go.sum", "web/app/bun.lock"];
 const cdnPattern = /https?:\/\/(?:cdn|unpkg|esm\.sh|jsdelivr|cdnjs)\./i;

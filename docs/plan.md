@@ -448,10 +448,10 @@ Post-MVP execution todo:
 4. Done: make lease completion transactional across lease, run status, workflow
    advancement, completion log, and audit writes.
 5. Done: replace comma-joined PostgreSQL arrays with native typed scanning.
-6. Done: migrate PostgreSQL store SQL through `github.com/stephenafamo/bob`.
+6. Done: migrate PostgreSQL store SQL to native pgx and checked-in sqlc queries.
    Store CRUD, JSON-heavy run/template paths, identity/session/API-token paths,
    runners, leases, approvals, artifacts, audit events, and critical run claim
-   maintenance now use generated Bob model/query APIs behind the existing
+   maintenance now use generated sqlc query APIs behind the existing
    repository interfaces.
 7. Done: make the supply-chain policy green again before broad feature work.
    The direct Go dependencies are reviewed in `docs/dependency-exceptions.md`,
@@ -476,10 +476,11 @@ Immediate next slices:
    Blocked sources include local paths, `file://`, loopback, link-local,
    metadata-service, private-network, and unspecified IP targets. Public
    `https`, `http`, `ssh`, `git`, and scp-style Git hosts remain allowed.
-2. Session hardening slice: replace unsalted SHA-256 password hashes with a
-   reviewed password hashing dependency, keep legacy verification for seeded
-   users, and rehash on successful legacy login. Document the dependency-policy
-   exception in the same change.
+2. Session hardening slice: replace unsalted SHA-256 Local User password hashes
+   with bcrypt-only hashes. Update memory and PostgreSQL seed users in the same
+   slice, reject legacy password hash prefixes instead of migrating them, and
+   document the dependency-policy exception. Existing non-password SHA-256
+   fingerprints and checksums are out of scope.
 3. Rate-limit slice: add in-process rate limiting for session creation, runner
    registration, runner polling/claiming, and high-impact mutations with stable
    `429` error envelopes and contract coverage.
@@ -513,45 +514,22 @@ runtime drift.
 - Fix and de-flake runner process stream tests before treating `go test ./...`
   as a green baseline again.
 
-Explore `github.com/stephenafamo/bob` as a database-first SQL toolkit rather
-than a wholesale Active Record rewrite. Bob should be piloted behind the current
-repository interfaces, starting with a low-risk store slice before touching
-lease claiming or workflow transitions.
-
-- Evaluate Bob code generation against the existing migration schema and
-  PostgreSQL integration tests.
-- Store-wide SQL execution now goes through Bob-aware database and transaction
-  wrappers, so existing `$n` placeholders are normalized through
-  `psql.RawQuery` before reaching `database/sql`.
-- Bob generator output is now checked in under `internal/store/bobgen` for
-  schema metadata, models, factories, database error helpers, and named SQL
-  queries. Regenerate it with `make bobgen` against a migrated PostgreSQL schema
-  via `PSQL_DSN`.
-- Generated Bob adoption now covers PostgreSQL projects, project members,
-  repositories, access keys, inventories, users, sessions, API tokens,
-  templates, runs, runners, leases, logs, artifacts, approvals, and audit
-  events, with explicit adapters back to domain structs.
-- Critical run-claim behavior is generated-query/model backed while preserving
-  transaction boundaries, lease expiry requeueing, stale-runner marking,
-  `FOR UPDATE` queued-run locking, and sequence-producing run-log inserts.
-- Compare Bob against the current hand-written `database/sql` store for compile
-  safety, nullable field handling, Postgres arrays, JSON columns, query
-  readability, and test fixture support.
-- Next Bob-specific cleanup is no longer migration coverage; it is ergonomics:
-  reduce adapter boilerplate where it is genuinely repetitive, and use Bob
-  factories to improve store test fixtures.
+Use sqlc as the database-first query generator rather than a wholesale Active
+Record rewrite. Checked-in query wrappers under `internal/store/sqlcgen` are
+generated from repository migrations and owned SQL with `go tool sqlc generate`.
+The PostgreSQL repository uses native pgx pooling and transactions, explicit
+domain adapters, and narrowly reviewed handwritten transaction orchestration for
+lease authority, bounded claiming, workflow transitions, and shared log
+ordering. Regeneration is schema-server independent and deterministic.
 
 Definition of done:
 
 - Domain state strings have named constants and tests cover invalid transitions.
 - `go test ./...` is green locally and in CI.
 - The store layer no longer relies on comma-joined PostgreSQL arrays.
-- At least one PostgreSQL store slice is implemented or prototyped with Bob, and
-  the team has a clear adopt/decline decision before broader migration. Current
-  decision: adopt Bob as the store SQL toolkit. Use query builders for low-risk
-  CRUD slices, route existing raw SQL through Bob during migration, and adopt
-  generated models/factories/queries behind repository interfaces in follow-up
-  slices.
+- PostgreSQL store query wrappers are generated by sqlc. Native pgx transactions
+  retain the repository's atomic authority transitions and lock ordering while
+  generated queries cover the stable CRUD and pagination surface.
 
 ## 11. Expand Enterprise Surface
 

@@ -6,15 +6,10 @@ This file is the review register for top-level dependencies. New top-level Go or
 
 | Dependency | Scope | License | Justification |
 | --- | --- | --- | --- |
-| `github.com/aarondl/opt` | Generated store code | BSD-3-Clause | Nullable value helper emitted by Bob's generated schema metadata. It is checked in as part of the generated PostgreSQL store boundary and avoids hand-maintaining nullable column descriptors. |
 | `github.com/getkin/kin-openapi` | Dev/check | MIT | Loads and validates `openapi.yaml` during the contract check so API route, auth, request body, and response metadata are derived from a real OpenAPI parser instead of ad hoc YAML scanning. |
-| `github.com/google/go-cmp` | Dev/test | BSD-3-Clause | Used by generated Bob query tests for precise structural diffs in SQL/query output assertions. |
-| `github.com/jackc/pgx/v5` | Runtime | MIT | PostgreSQL driver for the server database adapter. It is maintained, widely used in Go services, and avoids adding an ORM layer. |
-| `github.com/jaswdr/faker/v2` | Generated test fixtures | MIT | Fixture data generator used by Bob-generated factories and query tests; it keeps generated store tests deterministic without adding application runtime behavior. |
-| `github.com/lib/pq` | Runtime/store | MIT | Provides PostgreSQL array and driver value helpers used by the current PostgreSQL store and Bob-generated models while array handling is migrated behind generated adapters. |
-| `github.com/stephenafamo/bob` | Runtime/store and codegen | MIT | Adopted SQL toolkit for PostgreSQL query builders, generated models, generated factories, and named queries behind the repository interfaces. |
-| `github.com/stephenafamo/scan` | Runtime/store | MIT | Row scanning abstraction required by Bob-generated queries and the store wrappers that adapt generated query results back to domain structs. |
-| `github.com/wasilibs/go-pgquery` | Generated query tests | Apache-2.0 | PostgreSQL parser used by Bob-generated query tests to compare SQL structure rather than brittle raw strings. |
+| `github.com/jackc/pgx/v5` | Runtime/store | MIT | Native PostgreSQL protocol, pooling, transactions, arrays, nullable values, and JSON transport for the repository implementation without an ORM or compatibility adapter. |
+| `github.com/sqlc-dev/sqlc` | Dev/code generation | MIT | Version 1.24.0 is pinned as a Go tool and runs inside the digest-pinned Go 1.25.7 Debian image declared in the Makefile. The supported Linux compiler environment makes checked-in pgx query generation portable and deterministic without making sqlc a runtime dependency or domain-model source. |
+| `golang.org/x/sys` | Runtime/runner | BSD-3-Clause | Provides the narrow Unix `openat`, `O_NOFOLLOW`, ownership/mode inspection, atomic rename, and directory fsync primitives required for a symlink-resistant, crash-consistent runner journal without storing bearer credentials. |
 
 ## Frontend
 

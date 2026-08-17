@@ -2,12 +2,30 @@ package store
 
 import (
 	"context"
-	"fmt"
+	"crypto/rand"
+	"encoding/hex"
+	"sort"
 	"sync"
 	"time"
 
 	"nerocd/internal/domain"
 )
+
+// Claiming examines at most this many candidates per request. Workflow
+// readiness lives in Go, so bounded keyset scans retain that exact behavior
+// without allowing an incompatible queue prefix to starve later work.
+const (
+	claimCandidateBatchSize  = 32
+	claimCandidateMaxBatches = 8
+	claimCandidateLimit      = claimCandidateBatchSize * claimCandidateMaxBatches
+)
+
+type memoryClaimCursor struct {
+	claimOrderAt time.Time
+	runID        string
+}
+
+func stringPointer(value string) *string { return &value }
 
 type Page struct {
 	Limit   int
@@ -63,6 +81,9 @@ type RunRepository interface {
 	UpdateRunWorkflowState(context.Context, string, domain.WorkflowState) (domain.TaskRun, error)
 	CreateRunLog(context.Context, domain.RunLog) error
 	CreateArtifact(context.Context, domain.ArtifactRecord) error
+	CreateRunLogForLease(context.Context, domain.RunLog, string, string, int, string, time.Time) (domain.RunLog, error)
+	CreateRunLogsForLease(context.Context, []domain.RunLog, string, string, string, int, string, time.Time) ([]domain.RunLog, error)
+	CreateArtifactForLease(context.Context, domain.ArtifactRecord, string, int, string, time.Time) error
 }
 
 type RunnerRepository interface {
@@ -72,10 +93,17 @@ type RunnerRepository interface {
 	GetRunnerByTokenHash(context.Context, string) (domain.Runner, error)
 	HeartbeatRunner(context.Context, string, time.Time) (domain.Runner, error)
 	ClaimRun(context.Context, string, time.Time, time.Duration) (domain.ClaimedRun, error)
-	CompleteLease(context.Context, string, string, string, time.Time) (domain.RunLease, error)
-	CompleteLeaseRequest(context.Context, string, string, string, time.Time, string, *time.Time, *domain.WorkflowState, []domain.RunLog, domain.AuditEvent) (domain.RunLease, error)
+	ExpireLeases(context.Context, time.Time) error
+	RenewLease(context.Context, string, string, string, int, time.Time, time.Duration) (domain.RunLease, error)
+	CompleteLeaseRequest(context.Context, string, string, string, int, string, string, time.Time, string, *time.Time, *domain.WorkflowState, []domain.RunLog, domain.AuditEvent) (domain.RunLease, error)
+	CancelRunRequest(context.Context, string, time.Time, domain.RunLog, domain.AuditEvent) (domain.TaskRun, error)
 	ActiveLeaseForRun(context.Context, string) (domain.RunLease, error)
 	GetLeaseForRunner(context.Context, string, string) (domain.RunLease, error)
+	GetLeaseForCompletion(context.Context, string, string, int, string) (domain.RunLease, error)
+	AuthorizeSecretAccess(context.Context, domain.SecretAccessRequest) (domain.SecretAccessGrant, error)
+	CreateRunnerEnrollment(context.Context, domain.RunnerEnrollment, domain.AuditEvent) (domain.RunnerEnrollment, error)
+	RevokeRunnerEnrollment(context.Context, string, domain.AuditEvent) (domain.RunnerEnrollment, error)
+	ConsumeRunnerEnrollment(context.Context, domain.RunnerEnrollmentConsume, domain.AuditEvent) (domain.Runner, error)
 }
 
 type UserRepository interface {
@@ -121,7 +149,11 @@ type MemoryStore struct {
 	projectMembers       []domain.ProjectMember
 	runs                 []domain.TaskRun
 	runners              []domain.Runner
+	runnerEnrollments    []domain.RunnerEnrollment
 	leases               []domain.RunLease
+	claimCursors         map[string]memoryClaimCursor
+	claimOrderByRun      map[string]time.Time
+	nextAttemptByRun     map[string]int
 	logs                 []domain.RunLog
 	artifacts            []domain.ArtifactRecord
 	approvals            []domain.Approval
@@ -172,6 +204,9 @@ func NewMemoryStore() *MemoryStore {
 			{ID: "apr_002", RunID: "run_002", Status: domain.ApprovalPending, RequestedBy: "usr_bootstrap", CreatedAt: now.Add(-5 * time.Minute)},
 		},
 		tokenHashBySessionID: map[string]string{},
+		claimCursors:         map[string]memoryClaimCursor{},
+		claimOrderByRun:      map[string]time.Time{},
+		nextAttemptByRun:     map[string]int{},
 		logs: []domain.RunLog{
 			{ID: "log_001", RunID: "run_001", Sequence: 1, Stream: domain.LogStdout, Message: "Initializing OpenTofu working directory", CreatedAt: now.Add(-22 * time.Minute)},
 			{ID: "log_002", RunID: "run_001", Sequence: 2, Stream: domain.LogStdout, Message: "Plan completed with no destructive changes", CreatedAt: now.Add(-21 * time.Minute)},
@@ -505,6 +540,10 @@ func (s *MemoryStore) ListArtifactsPage(ctx context.Context, runID string, page 
 func (s *MemoryStore) CreateRun(_ context.Context, run domain.TaskRun) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.claimOrderByRun == nil {
+		s.claimOrderByRun = make(map[string]time.Time)
+	}
+	s.claimOrderByRun[run.ID] = run.StartedAt
 	s.runs = append([]domain.TaskRun{run}, s.runs...)
 	return run, nil
 }
@@ -512,6 +551,10 @@ func (s *MemoryStore) CreateRun(_ context.Context, run domain.TaskRun) (domain.T
 func (s *MemoryStore) CreateRunRequest(_ context.Context, run domain.TaskRun, log domain.RunLog, approval *domain.Approval, audit domain.AuditEvent) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.claimOrderByRun == nil {
+		s.claimOrderByRun = make(map[string]time.Time)
+	}
+	s.claimOrderByRun[run.ID] = run.StartedAt
 	s.runs = append([]domain.TaskRun{run}, s.runs...)
 	s.logs = append(s.logs, log)
 	if approval != nil {
@@ -528,6 +571,12 @@ func (s *MemoryStore) UpdateRunStatus(_ context.Context, id string, status strin
 		if run.ID == id {
 			run.Status = status
 			run.FinishedAt = finishedAt
+			if status == domain.RunQueued {
+				if s.claimOrderByRun == nil {
+					s.claimOrderByRun = make(map[string]time.Time)
+				}
+				s.claimOrderByRun[run.ID] = time.Now().UTC()
+			}
 			s.runs[i] = run
 			return run, nil
 		}
@@ -559,18 +608,84 @@ func (s *MemoryStore) ListRunners(context.Context) ([]domain.Runner, error) {
 func (s *MemoryStore) RegisterRunner(_ context.Context, runner domain.Runner) (domain.Runner, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.runners {
-		if s.runners[i].ID == runner.ID {
-			runner.RegisteredAt = s.runners[i].RegisteredAt
-			if runner.TokenHash == "" {
-				runner.TokenHash = s.runners[i].TokenHash
-			}
-			s.runners[i] = runner
-			return runner, nil
+	for _, existing := range s.runners {
+		if existing.ID == runner.ID {
+			return domain.Runner{}, ErrConflict
 		}
 	}
 	s.runners = append(s.runners, runner)
 	return runner, nil
+}
+
+func (s *MemoryStore) CreateRunnerEnrollment(_ context.Context, enrollment domain.RunnerEnrollment, audit domain.AuditEvent) (domain.RunnerEnrollment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.runnerEnrollments {
+		if existing.ID == enrollment.ID || existing.TokenHash == enrollment.TokenHash || existing.RunnerID == enrollment.RunnerID {
+			return domain.RunnerEnrollment{}, ErrConflict
+		}
+	}
+	s.runnerEnrollments = append(s.runnerEnrollments, enrollment)
+	s.auditEvents = append(s.auditEvents, audit)
+	return enrollment, nil
+}
+
+func (s *MemoryStore) RevokeRunnerEnrollment(_ context.Context, enrollmentID string, audit domain.AuditEvent) (domain.RunnerEnrollment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	for i, enrollment := range s.runnerEnrollments {
+		if enrollment.ID != enrollmentID || enrollment.RevokedAt != nil || enrollment.UsedAt != nil {
+			continue
+		}
+		enrollment.RevokedAt = &now
+		s.runnerEnrollments[i] = enrollment
+		s.auditEvents = append(s.auditEvents, audit)
+		return enrollment, nil
+	}
+	return domain.RunnerEnrollment{}, ErrNotFound
+}
+
+func (s *MemoryStore) ConsumeRunnerEnrollment(_ context.Context, consume domain.RunnerEnrollmentConsume, audit domain.AuditEvent) (domain.Runner, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	for i, enrollment := range s.runnerEnrollments {
+		if enrollment.TokenHash != consume.TokenHash {
+			continue
+		}
+		if enrollment.UsedAt != nil {
+			if enrollment.ConsumeRequestID == nil || enrollment.CredentialHash == nil || *enrollment.ConsumeRequestID != consume.RequestID || *enrollment.CredentialHash != consume.CredentialHash {
+				return domain.Runner{}, ErrConflict
+			}
+			for _, registered := range s.runners {
+				if registered.ID == enrollment.RunnerID && registered.TokenHash == consume.CredentialHash {
+					return registered, nil
+				}
+			}
+			return domain.Runner{}, ErrConflict
+		}
+		if enrollment.RevokedAt != nil || !enrollment.ExpiresAt.After(now) {
+			return domain.Runner{}, ErrNotFound
+		}
+		for _, registered := range s.runners {
+			if registered.ID == enrollment.RunnerID {
+				return domain.Runner{}, ErrConflict
+			}
+		}
+		runner := domain.Runner{ID: enrollment.RunnerID, Name: enrollment.RunnerName, Tags: append([]string(nil), enrollment.Tags...), Capabilities: append([]string(nil), enrollment.Capabilities...), TokenHash: consume.CredentialHash, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}
+		s.runners = append(s.runners, runner)
+		enrollment.UsedAt = &now
+		enrollment.ConsumeRequestID = stringPointer(consume.RequestID)
+		enrollment.CredentialHash = stringPointer(consume.CredentialHash)
+		s.runnerEnrollments[i] = enrollment
+		audit.ActorID = enrollment.RunnerID
+		audit.TargetID = enrollment.RunnerID
+		audit.Metadata = map[string]any{"enrollment_id": enrollment.ID, "runner_id": enrollment.RunnerID}
+		s.auditEvents = append(s.auditEvents, audit)
+		return runner, nil
+	}
+	return domain.Runner{}, ErrNotFound
 }
 
 func (s *MemoryStore) UpdateRunnerToken(_ context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time) (domain.Runner, error) {
@@ -619,16 +734,14 @@ func (s *MemoryStore) ClaimRun(_ context.Context, runnerID string, now time.Time
 	defer s.mu.Unlock()
 	s.expireLeasesLocked(now)
 	staleBefore := now.Add(-2 * ttl)
-	for i, runner := range s.runners {
-		if runner.Status == domain.RunnerActive && runner.LastHeartbeatAt.Before(staleBefore) {
-			runner.Status = domain.RunnerStale
-			s.runners[i] = runner
-		}
-	}
 	var runner domain.Runner
 	foundRunner := false
-	for _, candidate := range s.runners {
+	for i, candidate := range s.runners {
 		if candidate.ID == runnerID {
+			if candidate.Status == domain.RunnerActive && candidate.LastHeartbeatAt.Before(staleBefore) {
+				candidate.Status = domain.RunnerStale
+				s.runners[i] = candidate
+			}
 			runner = candidate
 			foundRunner = true
 			break
@@ -637,18 +750,93 @@ func (s *MemoryStore) ClaimRun(_ context.Context, runnerID string, now time.Time
 	if !foundRunner || runner.Status != domain.RunnerActive || runner.LastHeartbeatAt.Before(now.Add(-2*ttl)) {
 		return domain.ClaimedRun{}, ErrNotFound
 	}
+	if s.claimCursors == nil {
+		s.claimCursors = make(map[string]memoryClaimCursor)
+	}
+	if s.claimOrderByRun == nil {
+		s.claimOrderByRun = make(map[string]time.Time)
+	}
+	storedCursor, hasCursor := s.claimCursors[runner.ID]
+	candidateIndexes := make([]int, 0)
 	for i, run := range s.runs {
-		if run.Status != domain.RunQueued || !covers(runner.Tags, run.RunnerTags) || !contains(runner.Capabilities, claimRunType(run)) {
+		if run.Status != domain.RunQueued {
+			continue
+		}
+		claimOrderAt, ok := s.claimOrderByRun[run.ID]
+		if !ok {
+			claimOrderAt = run.StartedAt
+			s.claimOrderByRun[run.ID] = claimOrderAt
+		}
+		if hasCursor && (claimOrderAt.Before(storedCursor.claimOrderAt) || (claimOrderAt.Equal(storedCursor.claimOrderAt) && run.ID <= storedCursor.runID)) {
+			continue
+		}
+		candidateIndexes = append(candidateIndexes, i)
+	}
+	sort.Slice(candidateIndexes, func(i, j int) bool {
+		left, right := s.runs[candidateIndexes[i]], s.runs[candidateIndexes[j]]
+		leftOrder, rightOrder := s.claimOrderByRun[left.ID], s.claimOrderByRun[right.ID]
+		if leftOrder.Equal(rightOrder) {
+			return left.ID < right.ID
+		}
+		return leftOrder.Before(rightOrder)
+	})
+	examineCount := len(candidateIndexes)
+	if examineCount > claimCandidateLimit {
+		examineCount = claimCandidateLimit
+	}
+	for _, runIndex := range candidateIndexes[:examineCount] {
+		run := s.runs[runIndex]
+		cursor := memoryClaimCursor{claimOrderAt: s.claimOrderByRun[run.ID], runID: run.ID}
+		if !covers(runner.Tags, run.RunnerTags) || !contains(runner.Capabilities, claimRunType(run)) {
+			storedCursor = cursor
 			continue
 		}
 		run.Status = domain.RunRunning
 		run.RunnerID = &runner.ID
-		s.runs[i] = run
-		lease := domain.RunLease{ID: leaseIDForRun(run.ID, now), RunID: run.ID, RunnerID: runner.ID, Status: domain.LeaseActive, ExpiresAt: now.Add(ttl), CreatedAt: now}
+		if s.nextAttemptByRun == nil {
+			s.nextAttemptByRun = make(map[string]int)
+		}
+		attempt := s.nextAttemptByRun[run.ID]
+		if attempt < 1 {
+			attempt = 1
+		}
+		leaseID, err := newLeaseToken("lease")
+		if err != nil {
+			return domain.ClaimedRun{}, err
+		}
+		fence, err := newLeaseToken("fence")
+		if err != nil {
+			return domain.ClaimedRun{}, err
+		}
+		s.nextAttemptByRun[run.ID] = attempt + 1
+		s.claimCursors[runner.ID] = cursor
+		s.runs[runIndex] = run
+		lease := domain.RunLease{ID: leaseID, RunID: run.ID, RunnerID: runner.ID, Status: domain.LeaseActive, ExpiresAt: now.Add(ttl), CreatedAt: now, Attempt: attempt, Fence: fence}
 		s.leases = append(s.leases, lease)
 		return domain.ClaimedRun{Lease: lease, Run: run, PrimitivePlan: primitivePlanForRun(run)}, nil
 	}
+	// As in PostgreSQL, a full-size page cannot prove it reached the queue tail;
+	// retain its last key so the next bounded call can confirm/reset the wrap.
+	if examineCount == claimCandidateLimit {
+		s.claimCursors[runner.ID] = storedCursor
+	} else {
+		delete(s.claimCursors, runner.ID)
+	}
 	return domain.ClaimedRun{}, ErrNotFound
+}
+
+func (s *MemoryStore) RenewLease(_ context.Context, runnerID, leaseID, fence string, attempt int, now time.Time, ttl time.Duration) (domain.RunLease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, lease := range s.leases {
+		if lease.ID != leaseID || lease.RunnerID != runnerID || lease.Fence != fence || lease.Attempt != attempt || lease.Status != domain.LeaseActive || !lease.ExpiresAt.After(now) {
+			continue
+		}
+		lease.ExpiresAt = now.Add(ttl)
+		s.leases[i] = lease
+		return lease, nil
+	}
+	return domain.RunLease{}, ErrNotFound
 }
 
 func (s *MemoryStore) expireLeasesLocked(now time.Time) {
@@ -665,44 +853,42 @@ func (s *MemoryStore) expireLeasesLocked(now time.Time) {
 				run.RunnerID = nil
 				run.FinishedAt = nil
 				s.runs[j] = run
+				if s.claimOrderByRun == nil {
+					s.claimOrderByRun = make(map[string]time.Time)
+				}
+				s.claimOrderByRun[run.ID] = now
 				break
 			}
 		}
 	}
 }
 
-func (s *MemoryStore) CompleteLease(_ context.Context, leaseID string, runnerID string, status string, completedAt time.Time) (domain.RunLease, error) {
+func (s *MemoryStore) ExpireLeases(_ context.Context, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i, lease := range s.leases {
-		if lease.ID != leaseID || lease.RunnerID != runnerID || lease.Status != domain.LeaseActive {
-			continue
-		}
-		lease.Status = status
-		lease.CompletedAt = &completedAt
-		s.leases[i] = lease
-		for j, run := range s.runs {
-			if run.ID == lease.RunID {
-				run.Status = status
-				run.FinishedAt = &completedAt
-				s.runs[j] = run
-				break
-			}
-		}
-		return lease, nil
-	}
-	return domain.RunLease{}, ErrNotFound
+	s.expireLeasesLocked(now)
+	return nil
 }
 
-func (s *MemoryStore) CompleteLeaseRequest(_ context.Context, leaseID string, runnerID string, status string, completedAt time.Time, runStatus string, finishedAt *time.Time, workflowState *domain.WorkflowState, logs []domain.RunLog, audit domain.AuditEvent) (domain.RunLease, error) {
+func (s *MemoryStore) CompleteLeaseRequest(_ context.Context, leaseID string, runnerID string, status string, attempt int, fence string, completionKey string, completedAt time.Time, runStatus string, finishedAt *time.Time, workflowState *domain.WorkflowState, logs []domain.RunLog, audit domain.AuditEvent) (domain.RunLease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, lease := range s.leases {
-		if lease.ID != leaseID || lease.RunnerID != runnerID || lease.Status != domain.LeaseActive {
+		if lease.ID != leaseID || lease.RunnerID != runnerID || lease.Attempt != attempt || lease.Fence != fence {
 			continue
+		}
+		if lease.CompletionKey != "" {
+			if lease.CompletionKey == completionKey && lease.Status == status {
+				return lease, nil
+			}
+			return domain.RunLease{}, ErrConflict
+		}
+		if lease.Status != domain.LeaseActive || !lease.ExpiresAt.After(completedAt) {
+			return domain.RunLease{}, ErrNotFound
 		}
 		lease.Status = status
 		lease.CompletedAt = &completedAt
+		lease.CompletionKey = completionKey
 		s.leases[i] = lease
 		for j, run := range s.runs {
 			if run.ID != lease.RunID {
@@ -716,6 +902,12 @@ func (s *MemoryStore) CompleteLeaseRequest(_ context.Context, leaseID string, ru
 			s.runs[j] = run
 			break
 		}
+		if runStatus == domain.RunQueued {
+			if s.claimOrderByRun == nil {
+				s.claimOrderByRun = make(map[string]time.Time)
+			}
+			s.claimOrderByRun[lease.RunID] = completedAt
+		}
 		for _, log := range logs {
 			s.createRunLogLocked(log)
 		}
@@ -725,11 +917,36 @@ func (s *MemoryStore) CompleteLeaseRequest(_ context.Context, leaseID string, ru
 	return domain.RunLease{}, ErrNotFound
 }
 
+func (s *MemoryStore) CancelRunRequest(_ context.Context, runID string, canceledAt time.Time, log domain.RunLog, audit domain.AuditEvent) (domain.TaskRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, run := range s.runs {
+		if run.ID != runID || domain.IsTerminalRunStatus(run.Status) {
+			continue
+		}
+		for j, lease := range s.leases {
+			if lease.RunID == runID && lease.Status == domain.LeaseActive {
+				lease.Status = domain.RunCanceled
+				lease.CompletedAt = &canceledAt
+				s.leases[j] = lease
+			}
+		}
+		run.Status = domain.RunCanceled
+		run.RunnerID = nil
+		run.FinishedAt = &canceledAt
+		s.runs[i] = run
+		s.createRunLogLocked(log)
+		s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+		return run, nil
+	}
+	return domain.TaskRun{}, ErrNotFound
+}
+
 func (s *MemoryStore) ActiveLeaseForRun(_ context.Context, runID string) (domain.RunLease, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, lease := range s.leases {
-		if lease.RunID == runID && lease.Status == domain.LeaseActive {
+		if lease.RunID == runID && lease.Status == domain.LeaseActive && lease.ExpiresAt.After(time.Now().UTC()) {
 			return lease, nil
 		}
 	}
@@ -740,11 +957,61 @@ func (s *MemoryStore) GetLeaseForRunner(_ context.Context, leaseID string, runne
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, lease := range s.leases {
-		if lease.ID == leaseID && lease.RunnerID == runnerID {
+		if lease.ID == leaseID && lease.RunnerID == runnerID && lease.Status == domain.LeaseActive && lease.ExpiresAt.After(time.Now().UTC()) {
 			return lease, nil
 		}
 	}
 	return domain.RunLease{}, ErrNotFound
+}
+
+func (s *MemoryStore) GetLeaseForCompletion(_ context.Context, leaseID, runnerID string, attempt int, fence string) (domain.RunLease, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, lease := range s.leases {
+		if lease.ID == leaseID && lease.RunnerID == runnerID && lease.Attempt == attempt && lease.Fence == fence {
+			return lease, nil
+		}
+	}
+	return domain.RunLease{}, ErrNotFound
+}
+
+func (s *MemoryStore) AuthorizeSecretAccess(_ context.Context, request domain.SecretAccessRequest) (domain.SecretAccessGrant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, lease := range s.leases {
+		if lease.ID != request.LeaseID || lease.RunID != request.RunID || lease.RunnerID != request.RunnerID || lease.Attempt != request.Attempt || lease.Fence != request.Fence || lease.Status != domain.LeaseActive || !lease.ExpiresAt.After(request.RequestedAt) {
+			continue
+		}
+		expected := secretAccessAudit(request, request.RequestedAt)
+		var replay *domain.AuditEvent
+		for _, existing := range s.auditEvents {
+			if existing.ID != request.AccessID {
+				continue
+			}
+			if !secretAccessAuditsEqual(existing, expected) {
+				return domain.SecretAccessGrant{}, ErrConflict
+			}
+			copy := existing
+			replay = &copy
+			break
+		}
+		var targetRun domain.TaskRun
+		for _, run := range s.runs {
+			if run.ID == request.RunID {
+				targetRun = run
+				break
+			}
+		}
+		if !runAuthorizesSecretAccess(targetRun, request) {
+			return domain.SecretAccessGrant{}, ErrNotFound
+		}
+		if replay != nil {
+			return secretAccessGrant(request, replay.CreatedAt), nil
+		}
+		s.auditEvents = append(s.auditEvents, expected)
+		return secretAccessGrant(request, expected.CreatedAt), nil
+	}
+	return domain.SecretAccessGrant{}, ErrNotFound
 }
 
 func (s *MemoryStore) CreateRunLog(_ context.Context, log domain.RunLog) error {
@@ -776,6 +1043,96 @@ func (s *MemoryStore) CreateArtifact(_ context.Context, artifact domain.Artifact
 	defer s.mu.Unlock()
 	s.artifacts = append(s.artifacts, artifact)
 	return nil
+}
+
+func (s *MemoryStore) CreateRunLogForLease(_ context.Context, log domain.RunLog, runnerID, leaseID string, attempt int, fence string, now time.Time) (domain.RunLog, error) {
+	if log.EventKey != "" {
+		logs, err := s.CreateRunLogsForLease(context.Background(), []domain.RunLog{log}, log.RunID, runnerID, leaseID, attempt, fence, now)
+		if err != nil {
+			return domain.RunLog{}, err
+		}
+		return logs[0], nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, lease := range s.leases {
+		if lease.ID == leaseID && lease.RunID == log.RunID && lease.RunnerID == runnerID && lease.Attempt == attempt && lease.Fence == fence && lease.Status == domain.LeaseActive && lease.ExpiresAt.After(now) {
+			s.createRunLogLocked(log)
+			return s.logs[len(s.logs)-1], nil
+		}
+	}
+	return domain.RunLog{}, ErrNotFound
+}
+
+func (s *MemoryStore) CreateRunLogsForLease(_ context.Context, logs []domain.RunLog, runID, runnerID, leaseID string, attempt int, fence string, now time.Time) ([]domain.RunLog, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	identityMatches := false
+	for _, lease := range s.leases {
+		if lease.ID == leaseID && lease.RunID == runID && lease.RunnerID == runnerID && lease.Attempt == attempt && lease.Fence == fence {
+			identityMatches = true
+			break
+		}
+	}
+	if !identityMatches {
+		return nil, ErrNotFound
+	}
+	results := make([]domain.RunLog, len(logs))
+	newEvents := make([]bool, len(logs))
+	hasNew := false
+	for i, log := range logs {
+		if log.RunID != runID || log.EventKey == "" || log.RequestedSequence <= 0 || log.LeaseID != leaseID || log.Attempt != attempt {
+			return nil, ErrConflict
+		}
+		found := false
+		for _, existing := range s.logs {
+			if existing.RunID != runID || existing.EventKey != log.EventKey {
+				continue
+			}
+			found = true
+			if existing.LeaseID != leaseID || existing.Attempt != attempt || existing.RequestedSequence != log.RequestedSequence || existing.Stream != log.Stream || existing.Message != log.Message {
+				return nil, ErrConflict
+			}
+			results[i] = existing
+			break
+		}
+		if !found {
+			newEvents[i] = true
+			hasNew = true
+		}
+	}
+	if hasNew {
+		authorized := false
+		for _, lease := range s.leases {
+			if lease.ID == leaseID && lease.RunID == runID && lease.RunnerID == runnerID && lease.Attempt == attempt && lease.Fence == fence && lease.Status == domain.LeaseActive && lease.ExpiresAt.After(now) {
+				authorized = true
+				break
+			}
+		}
+		if !authorized {
+			return nil, ErrNotFound
+		}
+	}
+	for i, log := range logs {
+		if !newEvents[i] {
+			continue
+		}
+		s.createRunLogLocked(log)
+		results[i] = s.logs[len(s.logs)-1]
+	}
+	return results, nil
+}
+
+func (s *MemoryStore) CreateArtifactForLease(_ context.Context, artifact domain.ArtifactRecord, runnerID string, attempt int, fence string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, lease := range s.leases {
+		if lease.ID == artifact.LeaseID && lease.RunID == artifact.RunID && lease.RunnerID == runnerID && lease.Attempt == attempt && lease.Fence == fence && lease.Status == domain.LeaseActive && lease.ExpiresAt.After(now) {
+			s.artifacts = append(s.artifacts, artifact)
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 func covers(values []string, required []string) bool {
@@ -838,8 +1195,12 @@ func primitivePlanForRun(run domain.TaskRun) domain.RunnerPrimitivePlan {
 	return plan
 }
 
-func leaseIDForRun(runID string, now time.Time) string {
-	return fmt.Sprintf("lease_%s_%d", runID, now.UnixNano())
+func newLeaseToken(prefix string) (string, error) {
+	buf := make([]byte, 18)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return prefix + "_" + hex.EncodeToString(buf), nil
 }
 
 func (s *MemoryStore) ListApprovals(_ context.Context, status string) ([]domain.Approval, error) {
@@ -866,17 +1227,27 @@ func (s *MemoryStore) ApproveRun(_ context.Context, runID string, actorID string
 	defer s.mu.Unlock()
 	for i, approval := range s.approvals {
 		if approval.RunID == runID && approval.Status == domain.ApprovalPending {
+			runIndex := -1
+			for j, run := range s.runs {
+				if run.ID == runID && run.Status == domain.RunWaitingApproval {
+					runIndex = j
+					break
+				}
+			}
+			if runIndex < 0 {
+				return domain.Approval{}, ErrNotFound
+			}
 			approval.Status = domain.ApprovalApproved
 			approval.ApprovedBy = &actorID
 			approval.ApprovedAt = &approvedAt
 			s.approvals[i] = approval
-			for j, run := range s.runs {
-				if run.ID == runID {
-					run.Status = domain.RunQueued
-					s.runs[j] = run
-					break
-				}
+			run := s.runs[runIndex]
+			run.Status = domain.RunQueued
+			s.runs[runIndex] = run
+			if s.claimOrderByRun == nil {
+				s.claimOrderByRun = make(map[string]time.Time)
 			}
+			s.claimOrderByRun[runID] = approvedAt
 			return approval, nil
 		}
 	}

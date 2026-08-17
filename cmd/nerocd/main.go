@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,13 +16,17 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nerocd/db"
 	"nerocd/internal/api"
@@ -36,9 +40,117 @@ import (
 
 const version = "0.1.0-dev"
 
+var runnerHTTPClient = &http.Client{Timeout: 5 * time.Second}
+var errLeaseAuthorityLost = errors.New("lease authority lost")
+
+// attemptSupervisor owns the cancellation boundary for a single fenced attempt.
+// Its watchdog is independent of request goroutines, so a blocked request cannot
+// let a child continue after the locally known authority deadline.
+type attemptSupervisor struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.RWMutex
+	expiry time.Time
+	margin time.Duration
+	done   chan struct{}
+}
+type leaseWatcher struct {
+	cancel context.CancelFunc
+	done   <-chan struct{}
+	once   sync.Once
+}
+type leaseRenewer struct {
+	cancel context.CancelFunc
+	done   <-chan struct{}
+	once   sync.Once
+}
+
+func (r *leaseRenewer) Stop() { r.once.Do(func() { r.cancel(); <-r.done }) }
+
+func (w *leaseWatcher) Stop() { w.once.Do(func() { w.cancel(); <-w.done }) }
+
+func newAttemptSupervisor(lease domain.RunLease) *attemptSupervisor {
+	ctx, cancel := context.WithCancel(context.Background())
+	// created_at identifies the attempt, not the latest renewal period. After a
+	// long-running lease is read during startup replay it can be many minutes old
+	// while still carrying a fresh short TTL. Base the local guard on authority
+	// remaining now so cumulative attempt age cannot cancel a valid renewal.
+	remaining := time.Until(lease.ExpiresAt)
+	margin := remaining / 5
+	if margin < time.Second {
+		margin = time.Second
+	}
+	if margin > 30*time.Second {
+		margin = 30 * time.Second
+	}
+	s := &attemptSupervisor{ctx: ctx, cancel: cancel, expiry: lease.ExpiresAt, margin: margin, done: make(chan struct{})}
+	go func() {
+		defer close(s.done)
+		for {
+			s.mu.RLock()
+			until := time.Until(s.expiry.Add(-s.margin))
+			s.mu.RUnlock()
+			if until <= 0 {
+				s.cancel()
+				return
+			}
+			t := time.NewTimer(until)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	return s
+}
+func (s *attemptSupervisor) Context() context.Context { return s.ctx }
+func (s *attemptSupervisor) RequestContext() (context.Context, context.CancelFunc, error) {
+	return s.RequestContextFrom(s.ctx)
+}
+func (s *attemptSupervisor) RequestContextFrom(parent context.Context) (context.Context, context.CancelFunc, error) {
+	if err := s.ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", errLeaseAuthorityLost, err)
+	}
+	s.mu.RLock()
+	deadline := s.expiry.Add(-s.margin)
+	s.mu.RUnlock()
+	if !deadline.After(time.Now()) {
+		s.cancel()
+		return nil, nil, fmt.Errorf("%w: %v", errLeaseAuthorityLost, context.DeadlineExceeded)
+	}
+	max := time.Now().Add(5 * time.Second)
+	if deadline.After(max) {
+		deadline = max
+	}
+	ctx, cancel := context.WithDeadline(parent, deadline)
+	return ctx, cancel, nil
+}
+func (s *attemptSupervisor) Update(lease domain.RunLease) {
+	s.mu.Lock()
+	if lease.ExpiresAt.After(s.expiry) {
+		s.expiry = lease.ExpiresAt
+	}
+	s.mu.Unlock()
+}
+func (s *attemptSupervisor) Expiry() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.expiry
+}
+func (s *attemptSupervisor) GuardDeadline() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.expiry.Add(-s.margin)
+}
+func (s *attemptSupervisor) Close() { s.cancel(); <-s.done }
+
 type runtimeConfig struct {
-	addr        string
-	databaseURL string
+	addr           string
+	databaseURL    string
+	leaseTTL       time.Duration
+	reaperInterval time.Duration
 }
 
 type runnerRegisterRequest struct {
@@ -54,8 +166,11 @@ type runnerRegisterResponse struct {
 }
 
 type runnerCompleteRequest struct {
-	LeaseID string `json:"lease_id"`
-	Status  string `json:"status"`
+	LeaseID       string `json:"lease_id"`
+	Status        string `json:"status"`
+	Attempt       int    `json:"attempt"`
+	Fence         string `json:"fence"`
+	CompletionKey string `json:"completion_key"`
 }
 
 type runnerLogRequest struct {
@@ -64,6 +179,28 @@ type runnerLogRequest struct {
 	Sequence int    `json:"sequence"`
 	Stream   string `json:"stream"`
 	Message  string `json:"message"`
+	Attempt  int    `json:"attempt"`
+	Fence    string `json:"fence"`
+	EventKey string `json:"event_key"`
+}
+
+type runnerEventRequest struct {
+	EventKey string `json:"event_key"`
+	Sequence int    `json:"sequence"`
+	Stream   string `json:"stream"`
+	Message  string `json:"message"`
+}
+
+type runnerEventBatchRequest struct {
+	RunID   string               `json:"run_id"`
+	LeaseID string               `json:"lease_id"`
+	Attempt int                  `json:"attempt"`
+	Fence   string               `json:"fence"`
+	Events  []runnerEventRequest `json:"events"`
+}
+
+type runnerEventBatchAck struct {
+	Events []domain.RunLog `json:"events"`
 }
 
 type runnerArtifactRequest struct {
@@ -75,6 +212,8 @@ type runnerArtifactRequest struct {
 	Required bool   `json:"required"`
 	Size     int64  `json:"size"`
 	Kind     string `json:"kind"`
+	Attempt  int    `json:"attempt"`
+	Fence    string `json:"fence"`
 }
 
 func main() {
@@ -127,7 +266,7 @@ func usage() error {
 
 Usage:
   nerocd server [--addr :8080]
-  nerocd runner [--server http://127.0.0.1:8080]
+  nerocd runner [--server http://127.0.0.1:8080] (--token ADMIN_TOKEN | --credential-file /run/secrets/runner-token)
   nerocd health [--addr http://127.0.0.1:8080]
   nerocd projects [--addr http://127.0.0.1:8080] [--token ncd_...]
   nerocd templates [--addr http://127.0.0.1:8080] [--token ncd_...]
@@ -158,6 +297,22 @@ func runServer(args []string) error {
 		return err
 	}
 	defer closeStore()
+	reaperCtx, stopReaper := context.WithCancel(context.Background())
+	defer stopReaper()
+	go func() {
+		ticker := time.NewTicker(cfg.reaperInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-reaperCtx.Done():
+				return
+			case <-ticker.C:
+				if err := service.ReapExpiredLeases(reaperCtx); err != nil {
+					logger.Error("lease reaper", "error", err)
+				}
+			}
+		}
+	}()
 	server := api.NewServer(service, logger, web.Static())
 
 	httpServer := &http.Server{
@@ -190,7 +345,23 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	if os.Getenv("NEROCD_REQUIRE_DATABASE") == "true" && databaseURL == "" {
 		return runtimeConfig{}, errors.New("NEROCD_REQUIRE_DATABASE=true requires NEROCD_DATABASE_URL")
 	}
-	return runtimeConfig{addr: addr, databaseURL: databaseURL}, nil
+	ttl := 2 * time.Minute
+	if raw := strings.TrimSpace(os.Getenv("NEROCD_LEASE_TTL")); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed < 5*time.Second || parsed > 10*time.Minute {
+			return runtimeConfig{}, errors.New("NEROCD_LEASE_TTL must be between 5s and 10m")
+		}
+		ttl = parsed
+	}
+	reaper := 5 * time.Second
+	if raw := strings.TrimSpace(os.Getenv("NEROCD_REAPER_INTERVAL")); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed < time.Second || parsed > time.Minute {
+			return runtimeConfig{}, errors.New("NEROCD_REAPER_INTERVAL must be between 1s and 1m")
+		}
+		reaper = parsed
+	}
+	return runtimeConfig{addr: addr, databaseURL: databaseURL, leaseTTL: ttl, reaperInterval: reaper}, nil
 }
 
 func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), error) {
@@ -199,17 +370,28 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		if err != nil {
 			return nil, nil, err
 		}
-		return app.NewService(auth.ContextProvider{}, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg), func() { _ = pg.Close() }, nil
+		service := app.NewService(auth.ContextProvider{}, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg)
+		if err := service.SetLeaseTTL(cfg.leaseTTL); err != nil {
+			_ = pg.Close()
+			return nil, nil, err
+		}
+		return service, func() { _ = pg.Close() }, nil
 	}
 
 	mem := store.NewMemoryStore()
-	return app.NewService(auth.ContextProvider{}, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem), func() {}, nil
+	service := app.NewService(auth.ContextProvider{}, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem)
+	if err := service.SetLeaseTTL(cfg.leaseTTL); err != nil {
+		return nil, nil, err
+	}
+	return service, func() {}, nil
 }
 
 func runRunner(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	server := fs.String("server", defaultAPIAddr(), "NeroCD server URL")
-	token := fs.String("token", os.Getenv("NEROCD_TOKEN"), "NeroCD bearer token")
+	token := fs.String("token", os.Getenv("NEROCD_TOKEN"), "privileged bearer token used only to register this runner")
+	credentialFile := fs.String("credential-file", os.Getenv("NEROCD_RUNNER_CREDENTIAL_FILE"), "mode-0600 file containing an already-issued dedicated runner credential; skips registration")
+	enrollmentFile := fs.String("enrollment-file", "", "mode-0600 file containing a one-time enrollment token; requires --credential-file as the durable credential destination")
 	id := fs.String("id", "runner_local", "runner id")
 	name := fs.String("name", "Local Runner", "runner name")
 	tags := fs.String("tags", "local", "comma-separated runner tags")
@@ -219,21 +401,83 @@ func runRunner(args []string) error {
 	pollInterval := fs.Duration("poll-interval", 5*time.Second, "delay between claim attempts")
 	cancelPollInterval := fs.Duration("cancel-poll-interval", time.Second, "delay between lease cancellation checks while executing")
 	workDir := fs.String("work-dir", os.TempDir(), "runner workspace root for checkouts")
+	journalDir := fs.String("journal-dir", os.Getenv("NEROCD_RUNNER_JOURNAL_DIR"), "owner-only durable runner event/completion journal directory")
+	secretRoot := fs.String("secret-root", os.Getenv("NEROCD_RUNNER_SECRET_ROOT"), "owner-only mode-0700 root for logical runner_file secrets")
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *token == "" {
-		return errors.New("runner requires --token or NEROCD_TOKEN")
+	registrationToken := strings.TrimSpace(*token)
+	credentialPath := strings.TrimSpace(*credentialFile)
+	enrollmentPath := strings.TrimSpace(*enrollmentFile)
+	if registrationToken != "" && (credentialPath != "" || enrollmentPath != "") {
+		return errors.New("runner --token registration mode is mutually exclusive with credential and enrollment files")
 	}
-	registerBody := runnerRegisterRequest{ID: *id, Name: *name, Tags: splitCSV(*tags), Capabilities: splitCSV(*capabilities)}
-	var registered runnerRegisterResponse
-	if err := postAPIInto(*server+"/api/v1/runners/register", registerBody, *token, &registered); err != nil {
-		return err
+	if enrollmentPath != "" && credentialPath == "" {
+		return errors.New("runner --enrollment-file requires --credential-file")
 	}
-	runnerToken := strings.TrimSpace(registered.Token)
-	if runnerToken == "" {
-		return errors.New("runner registration did not return a runner token")
+	var runnerToken string
+	effectiveRunnerID := strings.TrimSpace(*id)
+	if enrollmentPath != "" {
+		enrollmentToken, credential, requestID, err := prepareRunnerEnrollmentFiles(enrollmentPath, credentialPath)
+		if err != nil {
+			return err
+		}
+		credentialSum := sha256.Sum256([]byte(credential))
+		consume := app.RunnerEnrollmentConsumeInput{RequestID: requestID, CredentialHash: hex.EncodeToString(credentialSum[:])}
+		var consumed app.ConsumedRunnerEnrollment
+		var consumeErr error
+		backoff := 100 * time.Millisecond
+		for attempt := 0; attempt < 5; attempt++ {
+			consumeErr = postAPIInto(*server+"/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
+			if consumeErr == nil || classifyRunnerFailure(consumeErr) != runnerFailureTransient {
+				break
+			}
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+		if consumeErr != nil {
+			return fmt.Errorf("consume runner enrollment: %w", consumeErr)
+		}
+		if strings.TrimSpace(consumed.Runner.ID) == "" {
+			return errors.New("runner enrollment response did not include identity")
+		}
+		if err := removeRunnerEnrollmentFile(enrollmentPath); err != nil {
+			return fmt.Errorf("remove consumed enrollment file: %w", err)
+		}
+		runnerToken = credential
+		effectiveRunnerID = consumed.Runner.ID
+	} else if credentialPath != "" {
+		credential, err := readRunnerCredentialFile(credentialPath)
+		if err != nil {
+			return fmt.Errorf("runner credential file: %w", err)
+		}
+		runnerToken = credential
+	} else {
+		if registrationToken == "" {
+			return errors.New("runner requires registration --token/NEROCD_TOKEN or --credential-file/NEROCD_RUNNER_CREDENTIAL_FILE")
+		}
+		registerBody := runnerRegisterRequest{ID: *id, Name: *name, Tags: splitCSV(*tags), Capabilities: splitCSV(*capabilities)}
+		var registered runnerRegisterResponse
+		if err := postAPIInto(*server+"/api/v1/runners/register", registerBody, registrationToken, &registered); err != nil {
+			return err
+		}
+		runnerToken = strings.TrimSpace(registered.Token)
+		if runnerToken == "" {
+			return errors.New("runner registration did not return a runner token")
+		}
+	}
+	resolvedJournalDir := strings.TrimSpace(*journalDir)
+	if resolvedJournalDir == "" {
+		resolvedJournalDir = filepath.Join(*workDir, ".nerocd-journal-"+attemptMutationKey("runner", effectiveRunnerID, 1, "journal"))
+	}
+	journal, err := runner.OpenAttemptJournal(resolvedJournalDir)
+	if err != nil {
+		return fmt.Errorf("open runner journal: %w", err)
+	}
+	defer journal.Close()
+	if err := reconcileRunnerJournal(*server, runnerToken, journal); err != nil {
+		return fmt.Errorf("reconcile runner journal: %w", err)
 	}
 	for {
 		var heartbeat domain.Runner
@@ -242,7 +486,7 @@ func runRunner(args []string) error {
 		}
 		var claim domain.ClaimedRun
 		if err := postAPIInto(*server+"/api/v1/runners/claim", struct{}{}, runnerToken, &claim); err != nil {
-			if strings.Contains(err.Error(), "404") {
+			if runnerHTTPStatus(err, http.StatusNotFound) {
 				if *once {
 					fmt.Println("runner registered; no matching queued run")
 					return nil
@@ -252,24 +496,25 @@ func runRunner(args []string) error {
 			}
 			return err
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(claim); err != nil {
+		if err := printRunnerAuthorityEvent("claimed_run", claim.Run.ID, claim.Lease); err != nil {
 			return err
 		}
 		if *execute {
-			if err := executeClaim(*server, runnerToken, claim, *workDir, *cancelPollInterval); err != nil {
+			if err := executeClaimWithJournalAndSecretRoot(*server, runnerToken, claim, *workDir, *cancelPollInterval, journal, *secretRoot); err != nil {
 				return err
 			}
 		} else if *completeStatus != "" {
 			if strings.TrimSpace(claim.Lease.ID) == "" {
 				return errors.New("claim response lease did not include id")
 			}
+			supervisor := newAttemptSupervisor(claim.Lease)
 			var completed domain.RunLease
-			if err := postAPIInto(*server+"/api/v1/runners/complete", runnerCompleteRequest{LeaseID: claim.Lease.ID, Status: *completeStatus}, runnerToken, &completed); err != nil {
+			if err := journaledCompletion(supervisor, journal, *server, runnerToken, claim.Run.ID, claim.Lease, *completeStatus, &completed); err != nil {
+				supervisor.Close()
 				return err
 			}
-			if err := enc.Encode(completed); err != nil {
+			supervisor.Close()
+			if err := printRunnerAuthorityEvent("completed_run", claim.Run.ID, completed); err != nil {
 				return err
 			}
 		}
@@ -279,39 +524,145 @@ func runRunner(args []string) error {
 	}
 }
 
+func printRunnerAuthorityEvent(event, runID string, lease domain.RunLease) error {
+	return json.NewEncoder(os.Stdout).Encode(struct {
+		Event   string `json:"event"`
+		RunID   string `json:"run_id"`
+		LeaseID string `json:"lease_id"`
+		Attempt int    `json:"attempt"`
+		Status  string `json:"status,omitempty"`
+	}{Event: event, RunID: runID, LeaseID: lease.ID, Attempt: lease.Attempt, Status: lease.Status})
+}
+
 func executeClaim(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration) error {
+	journalDir := filepath.Join(workDir, ".nerocd-execute-journal-"+attemptMutationKey("lease", claim.Lease.ID, claim.Lease.Attempt, "journal"))
+	journal, err := runner.OpenAttemptJournal(journalDir)
+	if err != nil {
+		return err
+	}
+	defer journal.Close()
+	return executeClaimWithJournalAndSecretRoot(server, token, claim, workDir, cancelPollInterval, journal, os.Getenv("NEROCD_RUNNER_SECRET_ROOT"))
+}
+
+func executeClaimWithJournal(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal) error {
+	return executeClaimWithJournalAndSecretRoot(server, token, claim, workDir, cancelPollInterval, journal, os.Getenv("NEROCD_RUNNER_SECRET_ROOT"))
+}
+
+func executeClaimWithJournalAndSecretRoot(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string) error {
+	sequence := 4
+	var sequenceMu sync.Mutex
+	var supervisor *attemptSupervisor
+	var reporter *attemptReporter
+	var redactor *runner.Redactor
+	emitPersisted := func(stream string, message string) {
+		if message == "" {
+			return
+		}
+		sequenceMu.Lock()
+		currentSequence := sequence
+		sequence++
+		sequenceMu.Unlock()
+		if supervisor == nil || reporter == nil {
+			return
+		}
+		if err := reporter.Emit(stream, message, currentSequence); err != nil {
+			supervisor.cancel()
+		}
+	}
+	emit := func(stream string, message string) {
+		if redactor != nil {
+			message = redactor.RedactChunk(stream, message)
+		}
+		emitPersisted(stream, message)
+	}
+	flushRedactor := func() {
+		if redactor == nil {
+			return
+		}
+		for _, event := range redactor.Flush() {
+			emitPersisted(event.Stream, event.Message)
+		}
+	}
+	// One attempt-scoped context also governs preparation and checkout.
+	supervisor = newAttemptSupervisor(claim.Lease)
+	defer supervisor.Close()
+	processCtx, stopProcessPolling := context.WithCancel(supervisor.Context())
+	defer stopProcessPolling()
+	// Confirm authority before any secret resolution or checkout side effect.
+	var initialRenew domain.RunLease
+	preflightCtx, preflightCancel, err := supervisor.RequestContext()
+	if err != nil {
+		return err
+	}
+	defer preflightCancel()
+	if err := postAPIIntoContext(preflightCtx, server+"/api/v1/runners/renew", struct {
+		LeaseID string `json:"lease_id"`
+		Attempt int    `json:"attempt"`
+		Fence   string `json:"fence"`
+	}{claim.Lease.ID, claim.Lease.Attempt, claim.Lease.Fence}, token, &initialRenew); err != nil {
+		return fmt.Errorf("confirm lease authority: %w", err)
+	}
+	claim.Lease.ExpiresAt = initialRenew.ExpiresAt
+	supervisor.Update(initialRenew)
+	renewEvery := claim.Lease.ExpiresAt.Sub(time.Now()) / 3
+	if renewEvery <= 0 || renewEvery > 30*time.Second {
+		renewEvery = 5 * time.Second
+	}
+	renewer := startLeaseRenewer(supervisor.Context(), supervisor, server, token, claim.Lease, renewEvery)
+	defer renewer.Stop()
+	watcher := startLeaseWatcher(supervisor.Context(), server, token, claim.Lease, cancelPollInterval, supervisor.cancel)
+	defer watcher.Stop()
+	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
+	defer reporter.Stop()
 	if claim.PrimitivePlan.Process == nil {
-		_ = appendRunLogAPI(server, token, claim.Run.ID, claim.Lease.ID, 4, "system", "No process plan was included in the claim")
-		completeErr := completeRunnerLeaseAPI(server, token, claim.Lease.ID, "failed", nil)
-		if completeErr != nil {
-			return completeErr
+		if err := completeReportedAttempt(supervisor, watcher, renewer, reporter, journal, server, token, claim.Run.ID, claim.Lease, "failed", nil); err != nil {
+			return err
 		}
 		return errors.New("claimed run did not include a process plan")
 	}
-
-	sequence := 4
-	emit := func(stream string, message string) {
-		if err := appendRunLogAPI(server, token, claim.Run.ID, claim.Lease.ID, sequence, stream, message); err != nil {
-			fmt.Fprintf(os.Stderr, "append run log failed: %v\n", err)
+	preparedSecrets, err := runner.PrepareSecrets(supervisor.Context(), claim.PrimitivePlan.Secrets, secretRoot, func(_ context.Context, binding domain.SecretBinding) error {
+		accessID := attemptMutationKey("secret_access", claim.Lease.ID, claim.Lease.Attempt, strings.TrimSpace(binding.Name))
+		var grant domain.SecretAccessGrant
+		authorizeErr := retryAttemptRequest(supervisor, func(requestCtx context.Context) error {
+			return postAPIIntoContext(requestCtx, server+"/api/v1/runners/secrets/access", app.SecretAccessInput{
+				AccessID: accessID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt,
+				Fence: claim.Lease.Fence, Binding: strings.TrimSpace(binding.Name), Provider: strings.ToLower(strings.TrimSpace(binding.Provider)),
+				Version: strings.TrimSpace(binding.Version),
+			}, token, &grant)
+		})
+		if authorizeErr != nil {
+			supervisor.cancel()
+			return authorizeErr
 		}
-		sequence++
-	}
-	secretEnv, err := runner.PrepareSecrets(claim.PrimitivePlan.Secrets, func(event runner.ProcessEvent) {
-		emit(event.Stream, event.Message)
+		if grant.AccessID != accessID || grant.RunID != claim.Run.ID || grant.LeaseID != claim.Lease.ID || grant.Attempt != claim.Lease.Attempt || grant.Binding != strings.TrimSpace(binding.Name) || grant.Provider != strings.ToLower(strings.TrimSpace(binding.Provider)) || grant.Version != strings.TrimSpace(binding.Version) {
+			supervisor.cancel()
+			return errors.New("secret access acknowledgement did not match request")
+		}
+		return nil
 	})
+	if reporterErr := reporter.Err(); reporterErr != nil {
+		return reporterErr
+	}
 	if err != nil {
+		if supervisor.Context().Err() != nil {
+			return fmt.Errorf("%w: secret authorization: %v", errLeaseAuthorityLost, err)
+		}
 		emit("system", "Secret preparation failed: "+err.Error())
-		completeErr := completeRunnerLeaseAPI(server, token, claim.Lease.ID, "failed", nil)
+		completeErr := completeReportedAttempt(supervisor, watcher, renewer, reporter, journal, server, token, claim.Run.ID, claim.Lease, "failed", nil)
 		if completeErr != nil {
 			return completeErr
 		}
 		return err
 	}
-	if len(secretEnv) > 0 {
+	redactor = preparedSecrets.Redactor
+	if preparedSecrets.Count > 0 {
+		emit("system", fmt.Sprintf("Prepared %d runner secret binding(s)", preparedSecrets.Count))
+	}
+	if len(preparedSecrets.Environment) > 0 {
 		if claim.PrimitivePlan.Process.Environment == nil {
 			claim.PrimitivePlan.Process.Environment = map[string]string{}
 		}
-		for key, value := range secretEnv {
+		for key, value := range preparedSecrets.Environment {
 			claim.PrimitivePlan.Process.Environment[key] = value
 		}
 	}
@@ -320,12 +671,16 @@ func executeClaim(server string, token string, claim domain.ClaimedRun, workDir 
 		artifactRoot = workDir
 	}
 	if claim.PrimitivePlan.Checkout != nil {
-		checkoutPath, err := runner.ExecuteCheckout(context.Background(), *claim.PrimitivePlan.Checkout, workDir, func(event runner.ProcessEvent) {
+		if supervisor.Context().Err() != nil {
+			return fmt.Errorf("%w: before checkout", errLeaseAuthorityLost)
+		}
+		checkoutPath, err := runner.ExecuteCheckout(processCtx, *claim.PrimitivePlan.Checkout, workDir, func(event runner.ProcessEvent) {
 			emit(event.Stream, event.Message)
 		})
 		if err != nil {
+			flushRedactor()
 			emit("system", "Checkout failed: "+err.Error())
-			completeErr := completeRunnerLeaseAPI(server, token, claim.Lease.ID, "failed", nil)
+			completeErr := completeReportedAttempt(supervisor, watcher, renewer, reporter, journal, server, token, claim.Run.ID, claim.Lease, "failed", nil)
 			if completeErr != nil {
 				return completeErr
 			}
@@ -336,19 +691,21 @@ func executeClaim(server string, token string, claim domain.ClaimedRun, workDir 
 		}
 		artifactRoot = claim.PrimitivePlan.Process.WorkingDir
 	}
+	if supervisor.Context().Err() != nil {
+		return fmt.Errorf("%w: before process spawn", errLeaseAuthorityLost)
+	}
 	emit("system", "Runner starting process: "+strings.Join(claim.PrimitivePlan.Process.Command, " "))
-	processCtx, stopProcessPolling := context.WithCancel(context.Background())
-	pollDone := watchLeaseCancellation(processCtx, server, token, claim.Lease.ID, cancelPollInterval, func(message string) {
-		emit("system", message)
-	}, stopProcessPolling)
 	result, err := runner.ExecuteProcess(processCtx, *claim.PrimitivePlan.Process, func(event runner.ProcessEvent) {
 		emit(event.Stream, event.Message)
 	})
+	flushRedactor()
 	stopProcessPolling()
-	<-pollDone
+	if supervisor.Context().Err() != nil {
+		return fmt.Errorf("%w: %v", errLeaseAuthorityLost, supervisor.Context().Err())
+	}
 	if err != nil {
 		emit("system", "Process execution failed: "+err.Error())
-		completeErr := completeRunnerLeaseAPI(server, token, claim.Lease.ID, "failed", nil)
+		completeErr := completeReportedAttempt(supervisor, watcher, renewer, reporter, journal, server, token, claim.Run.ID, claim.Lease, "failed", nil)
 		if completeErr != nil {
 			return completeErr
 		}
@@ -366,13 +723,24 @@ func executeClaim(server string, token string, claim domain.ClaimedRun, workDir 
 	artifactResults, err := runner.CaptureArtifacts(artifactRoot, claim.PrimitivePlan.Artifacts, func(event runner.ProcessEvent) {
 		emit(event.Stream, event.Message)
 	})
+	flushRedactor()
 	for _, artifact := range artifactResults {
+		if supervisor.Context().Err() != nil || reporter.Err() != nil {
+			return fmt.Errorf("%w: before artifact reporting", errLeaseAuthorityLost)
+		}
 		kind := "file"
 		if artifact.IsDir {
 			kind = "directory"
 		}
-		if err := appendArtifactAPI(server, token, claim.Run.ID, claim.Lease.ID, artifact.Name, artifact.Path, artifact.Found, artifact.Required, artifact.Size, kind); err != nil {
-			fmt.Fprintf(os.Stderr, "append artifact failed: %v\n", err)
+		reqCtx, cancel, requestErr := supervisor.RequestContext()
+		if requestErr != nil {
+			return fmt.Errorf("%w: before artifact reporting: %v", errLeaseAuthorityLost, requestErr)
+		}
+		err := appendArtifactAPIContext(reqCtx, server, token, claim.Run.ID, claim.Lease.ID, claim.Lease.Attempt, claim.Lease.Fence, artifact.Name, artifact.Path, artifact.Found, artifact.Required, artifact.Size, kind)
+		cancel()
+		if err != nil {
+			supervisor.cancel()
+			return fmt.Errorf("%w: append artifact: %v", errLeaseAuthorityLost, err)
 		}
 	}
 	if err != nil {
@@ -380,28 +748,235 @@ func executeClaim(server string, token string, claim domain.ClaimedRun, workDir 
 		emit("system", "Artifact capture failed: "+err.Error())
 	}
 	var completed domain.RunLease
-	if err := completeRunnerLeaseAPI(server, token, claim.Lease.ID, status, &completed); err != nil {
+	if err := completeReportedAttempt(supervisor, watcher, renewer, reporter, journal, server, token, claim.Run.ID, claim.Lease, status, &completed); err != nil {
 		return err
 	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(completed)
+	return printRunnerAuthorityEvent("completed_run", claim.Run.ID, completed)
 }
 
-func completeRunnerLeaseAPI(server string, token string, leaseID string, status string, completed *domain.RunLease) error {
+func completeRunnerLeaseAPI(server string, token string, lease domain.RunLease, status string, completed *domain.RunLease) error {
+	return completeRunnerLeaseAPIContext(context.Background(), server, token, lease, status, completed)
+}
+func completeRunnerLeaseAPIContext(ctx context.Context, server string, token string, lease domain.RunLease, status string, completed *domain.RunLease) error {
 	var discard domain.RunLease
 	if completed == nil {
 		completed = &discard
 	}
-	return postAPIInto(server+"/api/v1/runners/complete", runnerCompleteRequest{LeaseID: leaseID, Status: status}, token, completed)
+	return postAPIIntoContext(ctx, server+"/api/v1/runners/complete", runnerCompleteRequest{LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence, Status: status, CompletionKey: attemptMutationKey("complete", lease.ID, lease.Attempt, status)}, token, completed)
+}
+func supervisedComplete(supervisor *attemptSupervisor, server, token string, lease domain.RunLease, status string, completed *domain.RunLease) error {
+	ctx, cancel, err := supervisor.RequestContext()
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	return completeRunnerLeaseAPIContext(ctx, server, token, lease, status, completed)
+}
+func completeAttempt(supervisor *attemptSupervisor, watcher *leaseWatcher, renewer *leaseRenewer, server, token string, lease domain.RunLease, status string, completed *domain.RunLease) error {
+	watcher.Stop()
+	renewer.Stop()
+	err := supervisedComplete(supervisor, server, token, lease, status, completed)
+	if err != nil {
+		supervisor.cancel()
+		return fmt.Errorf("%w: completion: %v", errLeaseAuthorityLost, err)
+	}
+	return nil
 }
 
-func appendArtifactAPI(server string, token string, runID string, leaseID string, name string, path string, found bool, required bool, size int64, kind string) error {
+func completeReportedAttempt(supervisor *attemptSupervisor, watcher *leaseWatcher, renewer *leaseRenewer, reporter *attemptReporter, journal *runner.AttemptJournal, server, token, runID string, lease domain.RunLease, status string, completed *domain.RunLease) error {
+	// Persist terminal intent before waiting for earlier events to drain. A crash
+	// during an outage can then replay events first and this exact completion,
+	// without ever inventing a second terminal mutation.
+	if _, err := ensureJournaledCompletion(supervisor, journal, runID, lease, status); err != nil {
+		supervisor.cancel()
+		return fmt.Errorf("%w: journal completion: %v", errLeaseAuthorityLost, err)
+	}
+	if err := reporter.WaitEmpty(supervisor.Context()); err != nil {
+		supervisor.cancel()
+		return fmt.Errorf("%w: flush before completion: %v", errLeaseAuthorityLost, err)
+	}
+	reporter.Stop()
+	watcher.Stop()
+	renewer.Stop()
+	if supervisor.Context().Err() != nil {
+		return fmt.Errorf("%w: %v", errLeaseAuthorityLost, supervisor.Context().Err())
+	}
+	if err := journaledCompletion(supervisor, journal, server, token, runID, lease, status, completed); err != nil {
+		supervisor.cancel()
+		return fmt.Errorf("%w: completion replay: %v", errLeaseAuthorityLost, err)
+	}
+	return nil
+}
+
+func journaledCompletion(supervisor *attemptSupervisor, journal *runner.AttemptJournal, server, token, runID string, lease domain.RunLease, status string, completed *domain.RunLease) error {
+	completion, err := ensureJournaledCompletion(supervisor, journal, runID, lease, status)
+	if err != nil {
+		return err
+	}
+	var discard domain.RunLease
+	if completed == nil {
+		completed = &discard
+	}
+	err = retryAttemptRequest(supervisor, func(ctx context.Context) error {
+		return postAPIIntoContext(ctx, server+"/api/v1/runners/complete", runnerCompleteRequest{
+			LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence, CompletionKey: completion.ID, Status: status,
+		}, token, completed)
+	})
+	if err != nil {
+		return err
+	}
+	return journal.AckCompletion(completion.ID)
+}
+
+func ensureJournaledCompletion(supervisor *attemptSupervisor, journal *runner.AttemptJournal, runID string, lease domain.RunLease, status string) (runner.JournalCompletion, error) {
+	var completion runner.JournalCompletion
+	for _, pending := range journal.Snapshot().Completions {
+		if pending.Attempt.RunID == runID && pending.Attempt.LeaseID == lease.ID && pending.Attempt.Attempt == lease.Attempt && pending.Attempt.Fence == lease.Fence {
+			if pending.Status != status {
+				return runner.JournalCompletion{}, runner.ErrJournalConflict
+			}
+			completion = pending
+			break
+		}
+	}
+	if completion.ID == "" {
+		id, err := runner.NewJournalID("completion")
+		if err != nil {
+			return runner.JournalCompletion{}, err
+		}
+		completion = runner.JournalCompletion{ID: id, Attempt: journalAttemptIdentity(runID, lease, supervisor), Status: status, CreatedAt: time.Now().UTC()}
+		if _, err := journal.AppendCompletion(completion); err != nil {
+			return runner.JournalCompletion{}, err
+		}
+	}
+	return completion, nil
+}
+
+func renewLeaseWhileRunning(worker context.Context, supervisor *attemptSupervisor, server, token string, lease domain.RunLease, interval time.Duration, failClosed func()) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var workers sync.WaitGroup
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			renewalDelay := boundedRenewalDelay(interval)
+			for waitWorkerInterval(worker, renewalDelay) {
+				var renewed domain.RunLease
+				err := retryWorkerRequest(worker, supervisor, func(ctx context.Context) error {
+					return postAPIIntoContext(ctx, server+"/api/v1/runners/renew", struct {
+						LeaseID string `json:"lease_id"`
+						Attempt int    `json:"attempt"`
+						Fence   string `json:"fence"`
+					}{lease.ID, lease.Attempt, lease.Fence}, token, &renewed)
+				})
+				if err != nil {
+					if worker.Err() == nil {
+						failClosed()
+					}
+					return
+				}
+				supervisor.Update(renewed)
+				renewalDelay = boundedRenewalDelay(renewed.ExpiresAt.Sub(time.Now()) / 3)
+			}
+		}()
+		go func() {
+			defer workers.Done()
+			heartbeatDelay := boundedHeartbeatDelay(interval)
+			for waitWorkerInterval(worker, heartbeatDelay) {
+				var heartbeat domain.Runner
+				err := retryWorkerRequest(worker, supervisor, func(ctx context.Context) error {
+					return postAPIIntoContext(ctx, server+"/api/v1/runners/heartbeat", struct{}{}, token, &heartbeat)
+				})
+				if err != nil {
+					if worker.Err() == nil {
+						failClosed()
+					}
+					return
+				}
+			}
+		}()
+		workers.Wait()
+	}()
+	return done
+}
+
+func boundedRenewalDelay(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return time.Second
+	}
+	if interval > 30*time.Second {
+		return 30 * time.Second
+	}
+	return interval
+}
+
+func boundedHeartbeatDelay(interval time.Duration) time.Duration {
+	interval = boundedRenewalDelay(interval)
+	if interval > 10*time.Second {
+		return 10 * time.Second
+	}
+	return interval
+}
+
+func waitWorkerInterval(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func retryWorkerRequest(worker context.Context, supervisor *attemptSupervisor, request func(context.Context) error) error {
+	backoff := 100 * time.Millisecond
+	for {
+		requestCtx, cancel, err := supervisor.RequestContextFrom(worker)
+		if err != nil {
+			if worker.Err() != nil {
+				return worker.Err()
+			}
+			return err
+		}
+		err = request(requestCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if worker.Err() != nil {
+			return worker.Err()
+		}
+		if classifyRunnerFailure(err) != runnerFailureTransient {
+			return err
+		}
+		if !waitRunnerRetry(worker, supervisor, backoff) {
+			if worker.Err() != nil {
+				return worker.Err()
+			}
+			return fmt.Errorf("%w: retry deadline: %v", errLeaseAuthorityLost, err)
+		}
+		if backoff < time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+func startLeaseRenewer(parent context.Context, supervisor *attemptSupervisor, server, token string, lease domain.RunLease, interval time.Duration) *leaseRenewer {
+	ctx, cancel := context.WithCancel(parent)
+	return &leaseRenewer{cancel: cancel, done: renewLeaseWhileRunning(ctx, supervisor, server, token, lease, interval, supervisor.cancel)}
+}
+
+func appendArtifactAPI(server string, token string, runID string, leaseID string, attempt int, fence string, name string, path string, found bool, required bool, size int64, kind string) error {
+	return appendArtifactAPIContext(context.Background(), server, token, runID, leaseID, attempt, fence, name, path, found, required, size, kind)
+}
+func appendArtifactAPIContext(ctx context.Context, server string, token string, runID string, leaseID string, attempt int, fence string, name string, path string, found bool, required bool, size int64, kind string) error {
 	var artifact domain.ArtifactRecord
-	return postAPIInto(server+"/api/v1/runners/artifacts", runnerArtifactRequest{RunID: runID, LeaseID: leaseID, Name: name, Path: path, Found: found, Required: required, Size: size, Kind: kind}, token, &artifact)
+	return postAPIIntoContext(ctx, server+"/api/v1/runners/artifacts", runnerArtifactRequest{RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence, Name: name, Path: path, Found: found, Required: required, Size: size, Kind: kind}, token, &artifact)
 }
 
-func watchLeaseCancellation(ctx context.Context, server string, token string, leaseID string, interval time.Duration, emit func(string), cancel func()) <-chan struct{} {
+func watchLeaseCancellation(ctx context.Context, server string, token string, lease domain.RunLease, interval time.Duration, emit func(string), cancel func()) <-chan struct{} {
 	done := make(chan struct{})
 	if interval <= 0 {
 		interval = time.Second
@@ -415,14 +990,19 @@ func watchLeaseCancellation(ctx context.Context, server string, token string, le
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				var lease domain.RunLease
-				err := getAPIInto(server+"/api/v1/runners/lease?lease_id="+url.QueryEscape(leaseID), token, &lease)
+				var observed domain.RunLease
+				err := getAPIIntoContext(ctx, server+"/api/v1/runners/lease?lease_id="+url.QueryEscape(lease.ID)+"&attempt="+strconv.Itoa(lease.Attempt)+"&fence="+url.QueryEscape(lease.Fence), token, &observed)
 				if err != nil {
-					emit("Lease cancellation check failed: " + err.Error())
-					continue
+					if ctx.Err() != nil {
+						return
+					}
+					if classifyRunnerFailure(err) == runnerFailureTransient {
+						continue
+					}
+					cancel()
+					return
 				}
-				if lease.Status != "active" {
-					emit("Runner observed lease status " + lease.Status + "; canceling process")
+				if observed.Status != "active" {
 					cancel()
 					return
 				}
@@ -432,9 +1012,22 @@ func watchLeaseCancellation(ctx context.Context, server string, token string, le
 	return done
 }
 
-func appendRunLogAPI(server string, token string, runID string, leaseID string, sequence int, stream string, message string) error {
+func startLeaseWatcher(parent context.Context, server, token string, lease domain.RunLease, interval time.Duration, authorityCancel func()) *leaseWatcher {
+	ctx, cancel := context.WithCancel(parent)
+	return &leaseWatcher{cancel: cancel, done: watchLeaseCancellation(ctx, server, token, lease, interval, func(string) {}, authorityCancel)}
+}
+
+func appendRunLogAPI(server string, token string, runID string, leaseID string, attempt int, fence string, sequence int, stream string, message string) error {
+	return appendRunLogAPIContext(context.Background(), server, token, runID, leaseID, attempt, fence, sequence, stream, message)
+}
+func appendRunLogAPIContext(ctx context.Context, server string, token string, runID string, leaseID string, attempt int, fence string, sequence int, stream string, message string) error {
 	var log domain.RunLog
-	return postAPIInto(server+"/api/v1/runners/logs", runnerLogRequest{RunID: runID, LeaseID: leaseID, Sequence: sequence, Stream: stream, Message: message}, token, &log)
+	return postAPIIntoContext(ctx, server+"/api/v1/runners/logs", runnerLogRequest{RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence, Sequence: sequence, Stream: stream, Message: message, EventKey: attemptMutationKey("event", leaseID, attempt, strconv.Itoa(sequence))}, token, &log)
+}
+
+func attemptMutationKey(kind, leaseID string, attempt int, discriminator string) string {
+	sum := sha256.Sum256([]byte(kind + "\x00" + leaseID + "\x00" + strconv.Itoa(attempt) + "\x00" + discriminator))
+	return kind + "_" + fmt.Sprintf("%x", sum[:16])
 }
 
 func callAPI(args []string, path string) error {
@@ -479,27 +1072,30 @@ func postAPI(url string, body any, token string) (map[string]any, error) {
 }
 
 func postAPIInto(url string, body any, token string, result any) error {
+	return postAPIIntoContext(context.Background(), url, body, token, result)
+}
+func postAPIIntoContext(ctx context.Context, url string, body any, token string, result any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := runnerHTTPClient.Do(req)
 	if err != nil {
-		return err
+		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), Err: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s returned %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
+		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), StatusCode: resp.StatusCode, Status: resp.Status, Detail: strings.TrimSpace(string(body))}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-		return err
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(result); err != nil {
+		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), Err: err}
 	}
 	return nil
 }
@@ -513,22 +1109,25 @@ func getAPI(url string, token string) (map[string]any, error) {
 }
 
 func getAPIInto(url string, token string, result any) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	return getAPIIntoContext(context.Background(), url, token, result)
+}
+func getAPIIntoContext(ctx context.Context, url string, token string, result any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := runnerHTTPClient.Do(req)
 	if err != nil {
-		return err
+		return &runnerAPIError{Method: http.MethodGet, URL: runnerRequestLabel(url), Err: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s returned %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
+		return &runnerAPIError{Method: http.MethodGet, URL: runnerRequestLabel(url), StatusCode: resp.StatusCode, Status: resp.Status, Detail: strings.TrimSpace(string(body))}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-		return err
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(result); err != nil {
+		return &runnerAPIError{Method: http.MethodGet, URL: runnerRequestLabel(url), Err: err}
 	}
 	return nil
 }
@@ -630,17 +1229,17 @@ func migrateDatabase(args []string) error {
 		return err
 	}
 
-	database, err := sql.Open("pgx", *databaseURL)
+	database, err := pgxpool.New(context.Background(), *databaseURL)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := database.PingContext(ctx); err != nil {
+	if err := database.Ping(ctx); err != nil {
 		return err
 	}
-	if _, err := database.ExecContext(ctx, `
+	if _, err := database.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version TEXT PRIMARY KEY,
 			checksum TEXT NOT NULL,
@@ -660,29 +1259,29 @@ func migrateDatabase(args []string) error {
 		}
 		checksum := sqlChecksum(content)
 		appliedChecksum := ""
-		err = database.QueryRowContext(ctx, `SELECT checksum FROM schema_migrations WHERE version = $1`, name).Scan(&appliedChecksum)
+		err = database.QueryRow(ctx, `SELECT checksum FROM schema_migrations WHERE version = $1`, name).Scan(&appliedChecksum)
 		switch {
 		case err == nil && appliedChecksum == checksum:
 			fmt.Printf("skipped %s\n", name)
 			continue
 		case err == nil && appliedChecksum != checksum:
 			return fmt.Errorf("migration %s checksum changed after it was applied", name)
-		case err != sql.ErrNoRows:
+		case err != pgx.ErrNoRows:
 			return err
 		}
-		tx, err := database.BeginTx(ctx, nil)
+		tx, err := database.Begin(ctx)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
-			_ = tx.Rollback()
+		if _, err := tx.Exec(ctx, string(content)); err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("apply %s: %w", name, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)`, name, checksum); err != nil {
-			_ = tx.Rollback()
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)`, name, checksum); err != nil {
+			_ = tx.Rollback(ctx)
 			return err
 		}
-		if err := tx.Commit(); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return err
 		}
 		fmt.Printf("applied %s\n", name)
@@ -692,7 +1291,7 @@ func migrateDatabase(args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := database.ExecContext(ctx, string(content)); err != nil {
+		if _, err := database.Exec(ctx, string(content)); err != nil {
 			return fmt.Errorf("apply seeds/dev.sql: %w", err)
 		}
 		fmt.Println("applied seeds/dev.sql")
@@ -890,18 +1489,29 @@ func smokeOperatorWorkflow(addr string, sessionToken string) error {
 		if err != nil {
 			return fmt.Errorf("claim %d lease: %w", step, err)
 		}
+		attempt, ok := lease["attempt"].(float64)
+		if !ok {
+			return errors.New("claim lease missing attempt")
+		}
+		fence, err := requireString(lease, "fence")
+		if err != nil {
+			return err
+		}
 		if _, err := postAPI(addr+"/api/v1/runners/logs", map[string]any{
 			"run_id":   runID,
 			"lease_id": leaseID,
-			"sequence": 10 + step,
-			"stream":   "stdout",
-			"message":  fmt.Sprintf("smoke step %d", step),
+			"attempt":  attempt, "fence": fence,
+			"event_key": fmt.Sprintf("smoke_%s_event_%d", suffix, step),
+			"sequence":  10 + step,
+			"stream":    "stdout",
+			"message":   fmt.Sprintf("smoke step %d", step),
 		}, runnerToken); err != nil {
 			return err
 		}
 		if _, err := postAPI(addr+"/api/v1/runners/artifacts", map[string]any{
 			"run_id":   runID,
 			"lease_id": leaseID,
+			"attempt":  attempt, "fence": fence,
 			"name":     fmt.Sprintf("smoke-step-%d", step),
 			"path":     fmt.Sprintf("smoke-step-%d.txt", step),
 			"found":    false,
@@ -913,7 +1523,9 @@ func smokeOperatorWorkflow(addr string, sessionToken string) error {
 		}
 		if _, err := postAPI(addr+"/api/v1/runners/complete", map[string]any{
 			"lease_id": leaseID,
-			"status":   "succeeded",
+			"attempt":  attempt, "fence": fence,
+			"completion_key": fmt.Sprintf("smoke_%s_completion_%d", suffix, step),
+			"status":         "succeeded",
 		}, runnerToken); err != nil {
 			return err
 		}
@@ -1151,7 +1763,7 @@ func requiresContractAuth(method string, path string) bool {
 
 func requiresContractRunnerAuth(path string) bool {
 	switch path {
-	case "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
+	case "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
 		return true
 	default:
 		return false
@@ -1206,7 +1818,7 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodGet, path: "/api/v1/templates", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/templates", body: `{"project_id":"proj_platform","name":"Contract Shell","run_spec":{"type":"shell","inputs":{"command":"echo ok"}},"runner_tags":["local"]}`, auth: true, shape: "template"},
 		{method: http.MethodGet, path: "/api/v1/runs", auth: true, shape: "list"},
-		{method: http.MethodPost, path: "/api/v1/runs", body: `{"project_id":"proj_platform","run_spec":{"type":"shell","inputs":{"command":"echo ok"},"process":{"command":["echo","ok"]},"artifacts":[{"name":"out","path":"out.txt","required":false}]},"runner_tags":["local"]}`, auth: true, shape: "run"},
+		{method: http.MethodPost, path: "/api/v1/runs", body: `{"project_id":"proj_platform","run_spec":{"type":"shell","inputs":{"command":"echo ok"},"process":{"command":["echo","ok"]},"artifacts":[{"name":"out","path":"out.txt","required":false}],"secrets":[{"name":"contract-secret","provider":"runner_file","reference":"contract-secret","target":"env:CONTRACT_SECRET","required":true,"version":"v1"}]},"runner_tags":["local"]}`, auth: true, shape: "run"},
 		{method: http.MethodPost, path: "/api/v1/runs", body: `{"template_id":"tpl_patch"}`, auth: true, shape: "run"},
 		{method: http.MethodPost, path: "/api/v1/runs/reject", body: `{"run_id":"{{reject_run_id}}"}`, auth: true, shape: "approval"},
 		{method: http.MethodGet, path: "/api/v1/runners", auth: true, shape: "list"},
@@ -1214,9 +1826,11 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodPost, path: "/api/v1/runners/rotate-token", body: `{"runner_id":"runner_contract"}`, auth: true, shape: "registered-runner"},
 		{method: http.MethodPost, path: "/api/v1/runners/heartbeat", body: `{}`, auth: true, shape: "runner"},
 		{method: http.MethodPost, path: "/api/v1/runners/claim", body: `{}`, auth: true, shape: "claim"},
-		{method: http.MethodPost, path: "/api/v1/runners/logs", body: `{"run_id":"{{run_id}}","lease_id":"{{lease_id}}","sequence":4,"stream":"stdout","message":"ok"}`, auth: true, shape: "run-log"},
-		{method: http.MethodPost, path: "/api/v1/runners/artifacts", body: `{"run_id":"{{run_id}}","lease_id":"{{lease_id}}","name":"out","path":"out.txt","found":false,"required":false,"size":0,"kind":"file"}`, auth: true, shape: "artifact"},
-		{method: http.MethodPost, path: "/api/v1/runners/complete", body: `{"lease_id":"{{lease_id}}","status":"succeeded"}`, auth: true, shape: "lease"},
+		{method: http.MethodPost, path: "/api/v1/runners/logs", body: `{"run_id":"{{run_id}}","lease_id":"{{lease_id}}","attempt":{{attempt}},"fence":"{{fence}}","event_key":"contract-event-one","sequence":4,"stream":"stdout","message":"ok"}`, auth: true, shape: "run-log"},
+		{method: http.MethodPost, path: "/api/v1/runners/events/batch", body: `{"run_id":"{{run_id}}","lease_id":"{{lease_id}}","attempt":{{attempt}},"fence":"{{fence}}","events":[{"event_key":"contract-event-two","sequence":5,"stream":"stdout","message":"batch ok"}]}`, auth: true, shape: "runner-event-ack"},
+		{method: http.MethodPost, path: "/api/v1/runners/secrets/access", body: `{"access_id":"secret_access_0123456789abcdef0123456789abcdef","run_id":"{{run_id}}","lease_id":"{{lease_id}}","attempt":{{attempt}},"fence":"{{fence}}","binding":"contract-secret","provider":"runner_file","version":"v1"}`, auth: true, shape: "secret-access"},
+		{method: http.MethodPost, path: "/api/v1/runners/artifacts", body: `{"run_id":"{{run_id}}","lease_id":"{{lease_id}}","attempt":{{attempt}},"fence":"{{fence}}","name":"out","path":"out.txt","found":false,"required":false,"size":0,"kind":"file"}`, auth: true, shape: "artifact"},
+		{method: http.MethodPost, path: "/api/v1/runners/complete", body: `{"lease_id":"{{lease_id}}","attempt":{{attempt}},"fence":"{{fence}}","completion_key":"contract-completion-one","status":"succeeded"}`, auth: true, shape: "lease"},
 		{method: http.MethodPost, path: "/api/v1/runners/revoke-token", body: `{"runner_id":"runner_contract"}`, auth: true, shape: "runner"},
 		{method: http.MethodPost, path: "/api/v1/runs", body: `{"project_id":"proj_platform","run_spec":{"type":"shell","inputs":{"command":"echo cancel"},"process":{"command":["echo","cancel"]}},"runner_tags":["local"]}`, auth: true, shape: "run"},
 		{method: http.MethodPost, path: "/api/v1/runs/cancel", body: `{"run_id":"{{cancel_run_id}}"}`, auth: true, shape: "run"},
@@ -1228,6 +1842,8 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodPost, path: "/api/v1/api-tokens/revoke", body: `{"token_id":"{{api_token_id}}"}`, auth: true, shape: "api-token"},
 	}
 	leaseID := ""
+	attempt := ""
+	fence := ""
 	runID := ""
 	rejectRunID := ""
 	cancelRunID := ""
@@ -1257,6 +1873,8 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 			tokenValue = runnerToken
 		}
 		body := strings.ReplaceAll(tc.body, "{{lease_id}}", leaseID)
+		body = strings.ReplaceAll(body, "{{attempt}}", attempt)
+		body = strings.ReplaceAll(body, "{{fence}}", fence)
 		body = strings.ReplaceAll(body, "{{run_id}}", runID)
 		body = strings.ReplaceAll(body, "{{reject_run_id}}", rejectRunID)
 		body = strings.ReplaceAll(body, "{{cancel_run_id}}", cancelRunID)
@@ -1299,6 +1917,8 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 			if !ok || leaseID == "" {
 				return fmt.Errorf("%s response lease missing id", key)
 			}
+			attempt = strconv.Itoa(int(lease["attempt"].(float64)))
+			fence, _ = lease["fence"].(string)
 			run, ok := payload["run"].(map[string]any)
 			if !ok {
 				return fmt.Errorf("%s response missing run object", key)
@@ -1528,6 +2148,25 @@ func validatePayloadShape(key string, shape string, payload map[string]any) erro
 		}
 		if _, ok := payload["sequence"].(float64); !ok {
 			return fmt.Errorf("%s response missing numeric sequence", key)
+		}
+	case "runner-event-ack":
+		events, ok := payload["events"].([]any)
+		if !ok || len(events) == 0 {
+			return fmt.Errorf("%s response missing events array", key)
+		}
+		first, ok := events[0].(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s response event is not an object", key)
+		}
+		return validatePayloadShape(key, "run-log", first)
+	case "secret-access":
+		for _, field := range []string{"access_id", "run_id", "lease_id", "binding", "provider", "authorized_at"} {
+			if err := requireString(field); err != nil {
+				return err
+			}
+		}
+		if _, ok := payload["attempt"].(float64); !ok {
+			return fmt.Errorf("%s response missing numeric attempt", key)
 		}
 	case "artifact":
 		for _, field := range []string{"id", "run_id", "lease_id", "name", "path", "kind", "created_at"} {

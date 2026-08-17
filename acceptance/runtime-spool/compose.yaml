@@ -1,0 +1,104 @@
+services:
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      POSTGRES_DB: nerocd
+      POSTGRES_USER: nerocd
+      POSTGRES_PASSWORD: runtime_spool_only
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [runtime]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nerocd -d nerocd"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+
+  server:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NEROCD_DATABASE_URL: postgres://nerocd:runtime_spool_only@postgres:5432/nerocd?sslmode=disable
+      NEROCD_REQUIRE_DATABASE: "true"
+      NEROCD_LEASE_TTL: 3m
+      NEROCD_REAPER_INTERVAL: 1s
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["nerocd migrate --seed=true && exec nerocd server --addr :8080"]
+    ports:
+      - "127.0.0.1::8080"
+    networks: [runtime]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "nerocd", "health", "--addr", "http://127.0.0.1:8080"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  proxy:
+    build:
+      context: ./proxy
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      UPSTREAM_URL: http://server:8080
+    ports:
+      - "127.0.0.1::8081"
+    networks: [runtime]
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  credential_init:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    user: "0:0"
+    profiles: ["tools"]
+    network_mode: none
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        IFS= read -r token
+        test -n "$${token}"
+        printf '%s\n' "$${token}" > /credentials/token
+        chmod 0600 /credentials/token
+        chown 10001:10001 /credentials/token
+        chmod 0700 /journal
+        chown 10001:10001 /journal /state
+    volumes:
+      - runner-credential:/credentials
+      - runner-journal:/journal
+      - fixture-state:/state
+
+  runner:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    depends_on:
+      proxy:
+        condition: service_started
+    entrypoint: ["/bin/sh", "/fixtures/runner-wrapper.sh"]
+    command: ["nerocd", "runner", "--server", "http://proxy:8081", "--credential-file", "/credentials/token", "--journal-dir", "/journal", "--id", "runner_spool", "--tags", "runtime-spool", "--capabilities", "shell", "--poll-interval", "1s", "--cancel-poll-interval", "1s", "--work-dir", "/work"]
+    read_only: true
+    tmpfs: ["/tmp", "/work"]
+    volumes:
+      - runner-credential:/credentials:ro
+      - runner-journal:/journal
+      - fixture-state:/state
+      - ./:/fixtures:ro
+    networks: [runtime]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    stop_grace_period: 2s
+
+volumes:
+  postgres-data:
+  runner-credential:
+  runner-journal:
+  fixture-state:
+
+networks:
+  runtime:
+    driver: bridge

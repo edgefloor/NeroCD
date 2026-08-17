@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -41,10 +42,20 @@ type Service struct {
 	approvals store.ApprovalRepository
 	audit     store.AuditRepository
 	registry  runner.Registry
+	leaseTTL  time.Duration
 }
 
 func NewService(authProvider auth.Provider, users store.UserRepository, sessions store.SessionRepository, apiTokens store.APITokenRepository, projects store.ProjectRepository, members store.ProjectMemberRepository, templates store.TemplateRepository, sources store.SourceRepository, runs store.RunRepository, runners store.RunnerRepository, approvals store.ApprovalRepository, audit store.AuditRepository) *Service {
-	return &Service{auth: authProvider, users: users, sessions: sessions, apiTokens: apiTokens, projects: projects, members: members, templates: templates, sources: sources, runs: runs, runners: runners, approvals: approvals, audit: audit, registry: runner.NewRegistry()}
+	return &Service{auth: authProvider, users: users, sessions: sessions, apiTokens: apiTokens, projects: projects, members: members, templates: templates, sources: sources, runs: runs, runners: runners, approvals: approvals, audit: audit, registry: runner.NewRegistry(), leaseTTL: 2 * time.Minute}
+}
+
+// SetLeaseTTL sets a bounded authority lifetime for controlled test and deployment environments.
+func (s *Service) SetLeaseTTL(ttl time.Duration) error {
+	if ttl < 5*time.Second || ttl > 10*time.Minute {
+		return errors.New("lease TTL must be between 5s and 10m")
+	}
+	s.leaseTTL = ttl
+	return nil
 }
 
 func (s *Service) CurrentPrincipal(ctx context.Context) (auth.Principal, error) {
@@ -457,6 +468,28 @@ type RunLogInput struct {
 	Sequence int    `json:"sequence"`
 	Stream   string `json:"stream"`
 	Message  string `json:"message"`
+	Attempt  int    `json:"attempt"`
+	Fence    string `json:"fence"`
+	EventKey string `json:"event_key"`
+}
+
+type RunEventInput struct {
+	EventKey string `json:"event_key"`
+	Sequence int    `json:"sequence"`
+	Stream   string `json:"stream"`
+	Message  string `json:"message"`
+}
+
+type RunEventBatchInput struct {
+	RunID   string          `json:"run_id"`
+	LeaseID string          `json:"lease_id"`
+	Attempt int             `json:"attempt"`
+	Fence   string          `json:"fence"`
+	Events  []RunEventInput `json:"events"`
+}
+
+type RunEventBatchAck struct {
+	Events []domain.RunLog `json:"events"`
 }
 
 type ArtifactInput struct {
@@ -468,6 +501,8 @@ type ArtifactInput struct {
 	Required bool   `json:"required"`
 	Size     int64  `json:"size"`
 	Kind     string `json:"kind"`
+	Attempt  int    `json:"attempt"`
+	Fence    string `json:"fence"`
 }
 
 func (s *Service) CreateArtifact(ctx context.Context, input ArtifactInput) (domain.ArtifactRecord, error) {
@@ -482,56 +517,76 @@ func (s *Service) CreateArtifact(ctx context.Context, input ArtifactInput) (doma
 	if runID == "" || leaseID == "" || name == "" || path == "" {
 		return domain.ArtifactRecord{}, errors.New("run_id, lease_id, name, and path are required")
 	}
-	lease, err := s.runners.GetLeaseForRunner(ctx, leaseID, principal.ID)
-	if err != nil {
-		return domain.ArtifactRecord{}, err
-	}
-	if lease.RunID != runID {
-		return domain.ArtifactRecord{}, auth.ErrForbidden
+	if input.Attempt <= 0 || strings.TrimSpace(input.Fence) == "" {
+		return domain.ArtifactRecord{}, errors.New("attempt and fence are required")
 	}
 	kind := strings.TrimSpace(input.Kind)
 	if kind == "" {
 		kind = domain.ArtifactFile
 	}
 	artifact := domain.ArtifactRecord{ID: mustPrefixedID("art"), RunID: runID, LeaseID: leaseID, Name: name, Path: path, Found: input.Found, Required: input.Required, Size: input.Size, Kind: kind, CreatedAt: time.Now().UTC()}
-	if err := s.runs.CreateArtifact(ctx, artifact); err != nil {
+	if err := s.runs.CreateArtifactForLease(ctx, artifact, principal.ID, input.Attempt, input.Fence, artifact.CreatedAt); err != nil {
 		return domain.ArtifactRecord{}, err
 	}
 	return artifact, nil
 }
 
 func (s *Service) AppendRunLog(ctx context.Context, input RunLogInput) (domain.RunLog, error) {
+	result, err := s.AppendRunEvents(ctx, RunEventBatchInput{RunID: input.RunID, LeaseID: input.LeaseID, Attempt: input.Attempt, Fence: input.Fence, Events: []RunEventInput{{EventKey: input.EventKey, Sequence: input.Sequence, Stream: input.Stream, Message: input.Message}}})
+	if err != nil {
+		return domain.RunLog{}, err
+	}
+	return result.Events[0], nil
+}
+
+func (s *Service) AppendRunEvents(ctx context.Context, input RunEventBatchInput) (RunEventBatchAck, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
-		return domain.RunLog{}, err
+		return RunEventBatchAck{}, err
 	}
 	runID := strings.TrimSpace(input.RunID)
-	stream := strings.TrimSpace(input.Stream)
-	if runID == "" {
-		return domain.RunLog{}, errors.New("run_id is required")
-	}
-	if input.Sequence <= 0 {
-		return domain.RunLog{}, errors.New("sequence must be greater than zero")
-	}
-	if stream != domain.LogSystem && stream != domain.LogStdout && stream != domain.LogStderr {
-		return domain.RunLog{}, errors.New("stream must be system, stdout, or stderr")
-	}
 	leaseID := strings.TrimSpace(input.LeaseID)
-	if leaseID == "" {
-		return domain.RunLog{}, errors.New("lease_id is required")
+	if runID == "" || leaseID == "" {
+		return RunEventBatchAck{}, errors.New("run_id and lease_id are required")
 	}
-	lease, err := s.runners.ActiveLeaseForRun(ctx, runID)
+	if input.Attempt <= 0 || strings.TrimSpace(input.Fence) == "" {
+		return RunEventBatchAck{}, errors.New("attempt and fence are required")
+	}
+	if len(input.Events) == 0 || len(input.Events) > 64 {
+		return RunEventBatchAck{}, errors.New("events batch must contain between 1 and 64 events")
+	}
+	totalBytes := 0
+	logs := make([]domain.RunLog, 0, len(input.Events))
+	seen := make(map[string]struct{}, len(input.Events))
+	now := time.Now().UTC()
+	for _, event := range input.Events {
+		eventKey := strings.TrimSpace(event.EventKey)
+		stream := strings.TrimSpace(event.Stream)
+		if eventKey == "" || event.Sequence <= 0 {
+			return RunEventBatchAck{}, errors.New("event_key and positive sequence are required")
+		}
+		if _, duplicate := seen[eventKey]; duplicate {
+			return RunEventBatchAck{}, errors.New("event_key is duplicated within batch")
+		}
+		seen[eventKey] = struct{}{}
+		if stream != domain.LogSystem && stream != domain.LogStdout && stream != domain.LogStderr {
+			return RunEventBatchAck{}, errors.New("stream must be system, stdout, or stderr")
+		}
+		totalBytes += len(eventKey) + len(stream) + len(event.Message)
+		if totalBytes > 256*1024 {
+			return RunEventBatchAck{}, errors.New("events batch exceeds 256 KiB")
+		}
+		logID, err := prefixedID("log")
+		if err != nil {
+			return RunEventBatchAck{}, err
+		}
+		logs = append(logs, domain.RunLog{ID: logID, RunID: runID, Sequence: event.Sequence, RequestedSequence: event.Sequence, Stream: stream, Message: event.Message, CreatedAt: now, EventKey: eventKey, LeaseID: leaseID, Attempt: input.Attempt})
+	}
+	persisted, err := s.runs.CreateRunLogsForLease(ctx, logs, runID, principal.ID, leaseID, input.Attempt, input.Fence, now)
 	if err != nil {
-		return domain.RunLog{}, err
+		return RunEventBatchAck{}, err
 	}
-	if lease.ID != leaseID {
-		return domain.RunLog{}, errors.New("lease_id is not active for run")
-	}
-	if lease.RunnerID != principal.ID {
-		return domain.RunLog{}, auth.ErrForbidden
-	}
-	log := domain.RunLog{ID: mustPrefixedID("log"), RunID: runID, Sequence: input.Sequence, Stream: stream, Message: input.Message, CreatedAt: time.Now().UTC()}
-	return log, s.runs.CreateRunLog(ctx, log)
+	return RunEventBatchAck{Events: persisted}, nil
 }
 
 func (s *Service) ListRunners(ctx context.Context) ([]domain.Runner, error) {
@@ -954,6 +1009,32 @@ type RegisteredRunner struct {
 	Token  string        `json:"token"`
 }
 
+type RunnerEnrollmentInput struct {
+	RunnerID     string   `json:"runner_id"`
+	RunnerName   string   `json:"runner_name"`
+	Tags         []string `json:"tags"`
+	Capabilities []string `json:"capabilities"`
+	TTLSeconds   int      `json:"ttl_seconds"`
+}
+
+type CreatedRunnerEnrollment struct {
+	Enrollment domain.RunnerEnrollment `json:"enrollment"`
+	Token      string                  `json:"token"`
+}
+
+type RunnerEnrollmentRevokeInput struct {
+	EnrollmentID string `json:"enrollment_id"`
+}
+
+type RunnerEnrollmentConsumeInput struct {
+	RequestID      string `json:"request_id"`
+	CredentialHash string `json:"credential_hash"`
+}
+
+type ConsumedRunnerEnrollment struct {
+	Runner domain.Runner `json:"runner"`
+}
+
 type RunnerTokenInput struct {
 	RunnerID string `json:"runner_id"`
 }
@@ -977,6 +1058,104 @@ func (s *Service) AuthenticateRunnerToken(ctx context.Context, token string) (au
 		Roles:    []string{domain.RoleRunner},
 		Provider: domain.PrincipalRunner,
 	}, nil
+}
+
+var runnerEnrollmentIDPattern = regexp.MustCompile(`^runner_[a-z0-9][a-z0-9_-]{2,62}$`)
+var enrollmentConsumeIDPattern = regexp.MustCompile(`^enroll_consume_[0-9a-f]{32}$`)
+var sha256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var enrollmentTokenPattern = regexp.MustCompile(`^nce_[0-9a-f]{64}$`)
+
+func (s *Service) CreateRunnerEnrollment(ctx context.Context, input RunnerEnrollmentInput) (CreatedRunnerEnrollment, error) {
+	principal, err := s.CurrentPrincipal(ctx)
+	if err != nil {
+		return CreatedRunnerEnrollment{}, err
+	}
+	if !isRunnerAdmin(principal) {
+		return CreatedRunnerEnrollment{}, auth.ErrForbidden
+	}
+	runnerID := strings.TrimSpace(input.RunnerID)
+	if !runnerEnrollmentIDPattern.MatchString(runnerID) {
+		return CreatedRunnerEnrollment{}, errors.New("runner_id is invalid")
+	}
+	name := strings.TrimSpace(input.RunnerName)
+	if name == "" || len(name) > 128 {
+		return CreatedRunnerEnrollment{}, errors.New("runner_name is invalid")
+	}
+	tags := normalizeTags(input.Tags)
+	capabilities := normalizeTags(input.Capabilities)
+	if len(tags) > 32 || len(capabilities) == 0 || len(capabilities) > 32 {
+		return CreatedRunnerEnrollment{}, errors.New("runner tags or capabilities are invalid")
+	}
+	for _, value := range append(append([]string(nil), tags...), capabilities...) {
+		if len(value) > 64 {
+			return CreatedRunnerEnrollment{}, errors.New("runner tags or capabilities are invalid")
+		}
+	}
+	ttl := 10 * time.Minute
+	if input.TTLSeconds != 0 {
+		ttl = time.Duration(input.TTLSeconds) * time.Second
+	}
+	if ttl < time.Minute || ttl > time.Hour {
+		return CreatedRunnerEnrollment{}, errors.New("ttl_seconds is invalid")
+	}
+	id, err := prefixedID("enroll")
+	if err != nil {
+		return CreatedRunnerEnrollment{}, err
+	}
+	token, tokenHash, err := newEnrollmentToken()
+	if err != nil {
+		return CreatedRunnerEnrollment{}, err
+	}
+	now := time.Now().UTC()
+	audit, err := s.auditEvent(ctx, principal.ID, "runner.enrollment.create", id, map[string]any{"enrollment_id": id, "runner_id": runnerID, "expires_in_seconds": int(ttl.Seconds())})
+	if err != nil {
+		return CreatedRunnerEnrollment{}, err
+	}
+	enrollment, err := s.runners.CreateRunnerEnrollment(ctx, domain.RunnerEnrollment{ID: id, TokenHash: tokenHash, RunnerID: runnerID, RunnerName: name, Tags: tags, Capabilities: capabilities, CreatedBy: principal.ID, CreatedAt: now, ExpiresAt: now.Add(ttl)}, audit)
+	if err != nil {
+		return CreatedRunnerEnrollment{}, err
+	}
+	return CreatedRunnerEnrollment{Enrollment: enrollment, Token: token}, nil
+}
+
+func (s *Service) RevokeRunnerEnrollment(ctx context.Context, input RunnerEnrollmentRevokeInput) (domain.RunnerEnrollment, error) {
+	principal, err := s.CurrentPrincipal(ctx)
+	if err != nil {
+		return domain.RunnerEnrollment{}, err
+	}
+	if !isRunnerAdmin(principal) {
+		return domain.RunnerEnrollment{}, auth.ErrForbidden
+	}
+	id := strings.TrimSpace(input.EnrollmentID)
+	if id == "" {
+		return domain.RunnerEnrollment{}, errors.New("enrollment_id is required")
+	}
+	audit, err := s.auditEvent(ctx, principal.ID, "runner.enrollment.revoke", id, map[string]any{"enrollment_id": id})
+	if err != nil {
+		return domain.RunnerEnrollment{}, err
+	}
+	return s.runners.RevokeRunnerEnrollment(ctx, id, audit)
+}
+
+func (s *Service) ConsumeRunnerEnrollment(ctx context.Context, token string, input RunnerEnrollmentConsumeInput) (ConsumedRunnerEnrollment, error) {
+	token = strings.TrimSpace(token)
+	if !enrollmentTokenPattern.MatchString(token) {
+		return ConsumedRunnerEnrollment{}, auth.ErrUnauthenticated
+	}
+	requestID := strings.TrimSpace(input.RequestID)
+	credentialHash := strings.TrimSpace(input.CredentialHash)
+	if !enrollmentConsumeIDPattern.MatchString(requestID) || !sha256HexPattern.MatchString(credentialHash) {
+		return ConsumedRunnerEnrollment{}, errors.New("request_id or credential_hash is invalid")
+	}
+	auditID, err := prefixedID("aud")
+	if err != nil {
+		return ConsumedRunnerEnrollment{}, err
+	}
+	runner, err := s.runners.ConsumeRunnerEnrollment(ctx, domain.RunnerEnrollmentConsume{TokenHash: enrollmentTokenHash(token), RequestID: requestID, CredentialHash: credentialHash}, domain.AuditEvent{ID: auditID, Action: "runner.enrollment.consume", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		return ConsumedRunnerEnrollment{}, err
+	}
+	return ConsumedRunnerEnrollment{Runner: runner}, nil
 }
 
 func (s *Service) RegisterRunner(ctx context.Context, input RunnerInput) (RegisteredRunner, error) {
@@ -1076,7 +1255,7 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
-	claim, err := s.runners.ClaimRun(ctx, principal.ID, time.Now().UTC(), 2*time.Minute)
+	claim, err := s.runners.ClaimRun(ctx, principal.ID, time.Now().UTC(), s.leaseTTL)
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
@@ -1095,7 +1274,22 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	return claim, s.writeAudit(ctx, principal.ID, "runner.claim", claim.Run.ID, map[string]any{"runner_id": claim.Lease.RunnerID, "lease_id": claim.Lease.ID})
 }
 
-func (s *Service) CompleteLease(ctx context.Context, leaseID string, status string) (domain.RunLease, error) {
+func (s *Service) RenewLease(ctx context.Context, leaseID, fence string, attempt int) (domain.RunLease, error) {
+	principal, err := s.requireRunnerPrincipal(ctx)
+	if err != nil {
+		return domain.RunLease{}, err
+	}
+	if leaseID == "" || fence == "" || attempt <= 0 {
+		return domain.RunLease{}, errors.New("lease_id, attempt, and fence are required")
+	}
+	return s.runners.RenewLease(ctx, principal.ID, leaseID, fence, attempt, time.Now().UTC(), s.leaseTTL)
+}
+
+func (s *Service) ReapExpiredLeases(ctx context.Context) error {
+	return s.runners.ExpireLeases(ctx, time.Now().UTC())
+}
+
+func (s *Service) CompleteLease(ctx context.Context, leaseID string, status string, attempt int, fence string, completionKey ...string) (domain.RunLease, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
 		return domain.RunLease{}, err
@@ -1107,9 +1301,28 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 		return domain.RunLease{}, errors.New("lease completion status is invalid")
 	}
 	leaseID = strings.TrimSpace(leaseID)
-	lease, err := s.runners.GetLeaseForRunner(ctx, leaseID, principal.ID)
+	key := ""
+	if len(completionKey) > 0 {
+		key = strings.TrimSpace(completionKey[0])
+	}
+	if key == "" {
+		return domain.RunLease{}, errors.New("completion_key is required")
+	}
+	lease, err := s.runners.GetLeaseForCompletion(ctx, leaseID, principal.ID, attempt, fence)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return domain.RunLease{}, auth.ErrForbidden
+		}
 		return domain.RunLease{}, err
+	}
+	if attempt <= 0 || fence == "" || lease.Attempt != attempt || lease.Fence != fence {
+		return domain.RunLease{}, auth.ErrForbidden
+	}
+	if lease.CompletionKey != "" {
+		if lease.CompletionKey == key && lease.Status == status {
+			return lease, nil
+		}
+		return domain.RunLease{}, store.ErrConflict
 	}
 	run, err := s.runByID(ctx, lease.RunID)
 	if err != nil {
@@ -1136,19 +1349,57 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 	if err != nil {
 		return domain.RunLease{}, err
 	}
-	return s.runners.CompleteLeaseRequest(ctx, leaseID, principal.ID, status, now, runStatus, finishedAt, workflowState, logs, audit)
+	return s.runners.CompleteLeaseRequest(ctx, leaseID, principal.ID, status, attempt, fence, key, now, runStatus, finishedAt, workflowState, logs, audit)
 }
 
-func (s *Service) RunnerLease(ctx context.Context, leaseID string) (domain.RunLease, error) {
+func (s *Service) RunnerLease(ctx context.Context, leaseID string, attempt int, fence string) (domain.RunLease, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
 		return domain.RunLease{}, err
 	}
 	leaseID = strings.TrimSpace(leaseID)
-	if leaseID == "" {
-		return domain.RunLease{}, errors.New("lease_id is required")
+	if leaseID == "" || attempt <= 0 || fence == "" {
+		return domain.RunLease{}, errors.New("lease_id, attempt, and fence are required")
 	}
-	return s.runners.GetLeaseForRunner(ctx, leaseID, principal.ID)
+	lease, err := s.runners.GetLeaseForRunner(ctx, leaseID, principal.ID)
+	if err != nil {
+		return domain.RunLease{}, err
+	}
+	if lease.Attempt != attempt || lease.Fence != fence {
+		return domain.RunLease{}, auth.ErrForbidden
+	}
+	return lease, nil
+}
+
+type SecretAccessInput struct {
+	AccessID string `json:"access_id"`
+	RunID    string `json:"run_id"`
+	LeaseID  string `json:"lease_id"`
+	Attempt  int    `json:"attempt"`
+	Fence    string `json:"fence"`
+	Binding  string `json:"binding"`
+	Provider string `json:"provider"`
+	Version  string `json:"version"`
+}
+
+func (s *Service) AuthorizeSecretAccess(ctx context.Context, input SecretAccessInput) (domain.SecretAccessGrant, error) {
+	principal, err := s.requireRunnerPrincipal(ctx)
+	if err != nil {
+		return domain.SecretAccessGrant{}, err
+	}
+	request := domain.SecretAccessRequest{
+		AccessID: strings.TrimSpace(input.AccessID), RunnerID: principal.ID,
+		RunID: strings.TrimSpace(input.RunID), LeaseID: strings.TrimSpace(input.LeaseID),
+		Attempt: input.Attempt, Fence: strings.TrimSpace(input.Fence), Binding: strings.TrimSpace(input.Binding),
+		Provider: strings.ToLower(strings.TrimSpace(input.Provider)), Version: strings.TrimSpace(input.Version), RequestedAt: time.Now().UTC(),
+	}
+	if request.AccessID == "" || request.RunID == "" || request.LeaseID == "" || request.Attempt <= 0 || request.Fence == "" || request.Binding == "" || request.Provider == "" {
+		return domain.SecretAccessGrant{}, errors.New("access_id, run_id, lease_id, attempt, fence, binding, and provider are required")
+	}
+	if err := runner.ValidateSecretAccessMetadata(request.AccessID, request.Binding, request.Provider, request.Version); err != nil {
+		return domain.SecretAccessGrant{}, err
+	}
+	return s.runners.AuthorizeSecretAccess(ctx, request)
 }
 
 func (s *Service) CreateTemplate(ctx context.Context, input TemplateInput) (domain.TaskTemplate, error) {
@@ -1367,38 +1618,19 @@ func (s *Service) CancelRun(ctx context.Context, runID string) (domain.TaskRun, 
 	if err := s.requireProjectRole(ctx, principal, targetRun.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
-	runs, err := s.runs.ListRuns(ctx, "")
-	if err != nil {
-		return domain.TaskRun{}, err
-	}
-	found := false
-	for _, run := range runs {
-		if run.ID != runID {
-			continue
-		}
-		found = true
-		if domain.IsTerminalRunStatus(run.Status) {
-			return domain.TaskRun{}, errors.New("run is already terminal")
-		}
-		break
-	}
-	if !found {
-		return domain.TaskRun{}, store.ErrNotFound
+	if domain.IsTerminalRunStatus(targetRun.Status) {
+		return domain.TaskRun{}, errors.New("run is already terminal")
 	}
 	now := time.Now().UTC()
-	if lease, err := s.runners.ActiveLeaseForRun(ctx, runID); err == nil {
-		if _, err := s.runners.CompleteLease(ctx, lease.ID, lease.RunnerID, domain.RunCanceled, now); err != nil {
-			return domain.TaskRun{}, err
-		}
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return domain.TaskRun{}, err
-	}
-	run, err := s.runs.UpdateRunStatus(ctx, runID, domain.RunCanceled, &now)
+	logID, err := prefixedID("log")
 	if err != nil {
 		return domain.TaskRun{}, err
 	}
-	_ = s.runs.CreateRunLog(ctx, domain.RunLog{ID: mustPrefixedID("log"), RunID: run.ID, Sequence: 2, Stream: domain.LogSystem, Message: "Run canceled by user", CreatedAt: now})
-	return run, s.writeAudit(ctx, principal.ID, "run.cancel", run.ID, map[string]any{"status": run.Status})
+	audit, err := s.auditEvent(ctx, principal.ID, "run.cancel", runID, map[string]any{"status": domain.RunCanceled})
+	if err != nil {
+		return domain.TaskRun{}, err
+	}
+	return s.runners.CancelRunRequest(ctx, runID, now, domain.RunLog{ID: logID, RunID: runID, Sequence: 2, Stream: domain.LogSystem, Message: "Run canceled by user", CreatedAt: now}, audit)
 }
 
 func (s *Service) RunnerPrimitivePlan(ctx context.Context, runID string) (domain.RunnerPrimitivePlan, error) {
@@ -1438,6 +1670,15 @@ func newRunnerToken() (string, string, error) {
 	return token, runnerTokenHash(token), nil
 }
 
+func newEnrollmentToken() (string, string, error) {
+	tokenHex, err := randomHex(32)
+	if err != nil {
+		return "", "", err
+	}
+	token := "nce_" + tokenHex
+	return token, enrollmentTokenHash(token), nil
+}
+
 func newAPITokenSecret() (string, string, error) {
 	tokenHex, err := randomHex(32)
 	if err != nil {
@@ -1455,6 +1696,8 @@ func sessionTokenHash(token string) string {
 func runnerTokenHash(token string) string {
 	return sessionTokenHash(token)
 }
+
+func enrollmentTokenHash(token string) string { return sessionTokenHash(token) }
 
 func apiTokenHash(token string) string {
 	return sessionTokenHash(token)
@@ -1536,10 +1779,31 @@ func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) 
 			return domain.RunSpec{}, errors.New("run_spec.artifacts require name and path")
 		}
 	}
-	for _, secret := range runSpec.Secrets {
-		if strings.TrimSpace(secret.Name) == "" || strings.TrimSpace(secret.Provider) == "" || strings.TrimSpace(secret.Reference) == "" || strings.TrimSpace(secret.Target) == "" {
-			return domain.RunSpec{}, errors.New("run_spec.secrets require name, provider, reference, and target")
+	secretNames := make(map[string]struct{}, len(runSpec.Secrets))
+	secretTargets := make(map[string]struct{}, len(runSpec.Secrets))
+	for index := range runSpec.Secrets {
+		secret := &runSpec.Secrets[index]
+		secret.Name = strings.TrimSpace(secret.Name)
+		secret.Provider = strings.ToLower(strings.TrimSpace(secret.Provider))
+		secret.Reference = strings.TrimSpace(secret.Reference)
+		secret.Target = strings.TrimSpace(secret.Target)
+		secret.Version = strings.TrimSpace(secret.Version)
+		secret.Fingerprint = strings.TrimSpace(secret.Fingerprint)
+		secret.Classification = strings.ToLower(strings.TrimSpace(secret.Classification))
+		for encodingIndex := range secret.RedactEncodings {
+			secret.RedactEncodings[encodingIndex] = strings.ToLower(strings.TrimSpace(secret.RedactEncodings[encodingIndex]))
 		}
+		if err := runner.ValidateSecretBinding(*secret); err != nil {
+			return domain.RunSpec{}, fmt.Errorf("invalid run_spec.secrets: %w", err)
+		}
+		if _, exists := secretNames[secret.Name]; exists {
+			return domain.RunSpec{}, errors.New("invalid run_spec.secrets: binding names must be unique")
+		}
+		if _, exists := secretTargets[secret.Target]; exists {
+			return domain.RunSpec{}, errors.New("invalid run_spec.secrets: binding targets must be unique")
+		}
+		secretNames[secret.Name] = struct{}{}
+		secretTargets[secret.Target] = struct{}{}
 	}
 	if runSpec.Workflow != nil {
 		workflow, err := s.normalizeWorkflow(*runSpec.Workflow)
