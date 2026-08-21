@@ -1,9 +1,15 @@
-import { ReactNode, useMemo } from "react";
+import { ReactNode, useMemo, useRef } from "react";
 import { X } from "lucide-react";
 import type { RunLog, TaskRun } from "@/api";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+let pendingOpener: HTMLElement | null = null;
+
+export function rememberTerminalLogOpener(opener: HTMLElement): void {
+  pendingOpener = opener;
+}
 
 export function TerminalLogDialog({
   run,
@@ -17,10 +23,28 @@ export function TerminalLogDialog({
   onOpenChange: (open: boolean) => void;
 }): ReactNode {
   const orderedLogs = useMemo(() => [...logs].sort((a, b) => a.sequence - b.sequence), [logs]);
+  const openerRef = useRef<HTMLElement | null>(null);
+  if (open && openerRef.current === null && pendingOpener?.isConnected) {
+    openerRef.current = pendingOpener;
+    pendingOpener = null;
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false} className="max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-4xl border-border bg-background">
+      <DialogContent
+        showCloseButton={false}
+        className="max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-4xl border-border bg-background"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          requestAnimationFrame(() => {
+            if (openerRef.current?.isConnected) {
+              openerRef.current.focus();
+              return;
+            }
+            document.querySelector<HTMLButtonElement>(`[data-run-log-trigger="${run?.id}"]`)?.focus();
+          });
+        }}
+      >
         <DialogHeader className="border-b border-border bg-muted px-4 py-3">
           <div className="flex min-w-0 items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">

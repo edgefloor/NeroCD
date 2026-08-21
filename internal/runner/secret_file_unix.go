@@ -63,53 +63,16 @@ func (r *FileSecretResolver) Close() error {
 }
 
 func (r *FileSecretResolver) Read(reference string) (string, error) {
-	if !validSecretLogicalReference(reference) {
-		return "", errors.New("runner secret reference is invalid")
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.fd < 0 {
-		return "", errors.New("runner secret resolver is closed")
-	}
-	fd, err := unix.Openat(r.fd, reference, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	contents, err := r.ReadBytes(reference)
 	if err != nil {
-		return "", os.NewSyscallError("open runner secret", err)
+		return "", err
 	}
-	file := os.NewFile(uintptr(fd), "runner-secret")
-	defer file.Close()
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
-		return "", os.NewSyscallError("fstat runner secret", err)
-	}
-	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
-		return "", errors.New("runner secret must be a regular file")
-	}
-	if int(stat.Uid) != os.Geteuid() {
-		return "", errors.New("runner secret must be owned by the runner user")
-	}
-	mode := stat.Mode & 0o7777
-	if mode != 0o400 && mode != 0o600 {
-		return "", errors.New("runner secret must have exact mode 0400 or 0600")
-	}
-	if stat.Size <= 0 {
-		return "", errors.New("runner secret is empty")
-	}
-	if stat.Size > runnerSecretMaxBytes {
-		return "", errors.New("runner secret exceeds size limit")
-	}
-	contents, err := io.ReadAll(io.LimitReader(file, runnerSecretMaxBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("read runner secret: %w", err)
-	}
-	if len(contents) > runnerSecretMaxBytes {
-		return "", errors.New("runner secret exceeds size limit")
-	}
+	// Textual environment values retain the historical newline normalization.
+	// ReadBytes deliberately does not: OpenSSH private-key parsing can require
+	// the original terminal newline and the caller owns the byte semantics.
 	contents = bytes.TrimSuffix(contents, []byte{'\n'})
 	contents = bytes.TrimSuffix(contents, []byte{'\r'})
-	if len(contents) == 0 {
-		return "", errors.New("runner secret is empty")
-	}
-	if bytes.IndexByte(contents, 0) >= 0 || !utf8.Valid(contents) {
+	if !utf8.Valid(contents) {
 		return "", errors.New("runner secret contains an unsafe value")
 	}
 	for _, value := range string(contents) {
@@ -118,6 +81,60 @@ func (r *FileSecretResolver) Read(reference string) (string, error) {
 		}
 	}
 	return string(contents), nil
+}
+
+// ReadBytes retains the same descriptor-relative, no-follow and ownership
+// checks as Read, but is suitable for attempt-local key material which
+// necessarily contains line breaks. Callers must never log its result.
+func (r *FileSecretResolver) ReadBytes(reference string) ([]byte, error) {
+	if !validSecretLogicalReference(reference) {
+		return nil, errors.New("runner secret reference is invalid")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fd < 0 {
+		return nil, errors.New("runner secret resolver is closed")
+	}
+	fd, err := unix.Openat(r.fd, reference, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, os.NewSyscallError("open runner secret", err)
+	}
+	file := os.NewFile(uintptr(fd), "runner-secret")
+	defer file.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return nil, os.NewSyscallError("fstat runner secret", err)
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		return nil, errors.New("runner secret must be a regular file")
+	}
+	if int(stat.Uid) != os.Geteuid() {
+		return nil, errors.New("runner secret must be owned by the runner user")
+	}
+	mode := stat.Mode & 0o7777
+	if mode != 0o400 && mode != 0o600 {
+		return nil, errors.New("runner secret must have exact mode 0400 or 0600")
+	}
+	if stat.Size <= 0 {
+		return nil, errors.New("runner secret is empty")
+	}
+	if stat.Size > runnerSecretMaxBytes {
+		return nil, errors.New("runner secret exceeds size limit")
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, runnerSecretMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read runner secret: %w", err)
+	}
+	if len(contents) > runnerSecretMaxBytes {
+		return nil, errors.New("runner secret exceeds size limit")
+	}
+	if len(contents) == 0 {
+		return nil, errors.New("runner secret is empty")
+	}
+	if bytes.IndexByte(contents, 0) >= 0 {
+		return nil, errors.New("runner secret contains an unsafe value")
+	}
+	return contents, nil
 }
 
 func openDirectoryNoSymlinks(root string) (int, error) {

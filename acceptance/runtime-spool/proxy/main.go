@@ -22,6 +22,14 @@ type proxyState struct {
 	dropNextEvent      bool
 	dropNextCompletion bool
 	dropNextEnrollment bool
+	dropNextProvenance bool
+	failNextRenew      bool
+	holdProvenance     bool
+	provenanceRelease  chan struct{}
+	activeProvenance   int
+	holdEventResponse  bool
+	eventRelease       chan struct{}
+	activeEventHolds   int
 	blockSecretAccess  bool
 	secretBlockRelease chan struct{}
 	blockedSecretCalls int
@@ -29,20 +37,26 @@ type proxyState struct {
 	lostEvents         int
 	lostCompletions    int
 	lostEnrollments    int
+	lostProvenance     int
+	failedRenewals     int
 	requests           map[string]int
 	trace              []string
 }
 
 type statusPayload struct {
-	Outage          bool           `json:"outage"`
-	SecretBlocked   bool           `json:"secret_access_blocked"`
-	BlockedSecrets  int            `json:"blocked_secret_access_requests"`
-	ActiveBlocks    int            `json:"active_secret_access_blocks"`
-	LostEvents      int            `json:"lost_event_responses"`
-	LostCompletions int            `json:"lost_completion_responses"`
-	LostEnrollments int            `json:"lost_enrollment_responses"`
-	Requests        map[string]int `json:"requests"`
-	Trace           []string       `json:"trace"`
+	Outage           bool           `json:"outage"`
+	SecretBlocked    bool           `json:"secret_access_blocked"`
+	BlockedSecrets   int            `json:"blocked_secret_access_requests"`
+	ActiveBlocks     int            `json:"active_secret_access_blocks"`
+	LostEvents       int            `json:"lost_event_responses"`
+	LostCompletions  int            `json:"lost_completion_responses"`
+	LostEnrollments  int            `json:"lost_enrollment_responses"`
+	LostProvenance   int            `json:"lost_provenance_responses"`
+	FailedRenewals   int            `json:"failed_renewals"`
+	HeldProvenance   int            `json:"held_provenance_requests"`
+	ActiveEventHolds int            `json:"held_event_responses"`
+	Requests         map[string]int `json:"requests"`
+	Trace            []string       `json:"trace"`
 }
 
 func main() {
@@ -72,7 +86,7 @@ func (s *proxyState) control(w http.ResponseWriter, request *http.Request) {
 		for key, value := range s.requests {
 			copyRequests[key] = value
 		}
-		_ = json.NewEncoder(w).Encode(statusPayload{Outage: s.outage, SecretBlocked: s.blockSecretAccess, BlockedSecrets: s.blockedSecretCalls, ActiveBlocks: s.activeSecretBlocks, LostEvents: s.lostEvents, LostCompletions: s.lostCompletions, LostEnrollments: s.lostEnrollments, Requests: copyRequests, Trace: append([]string(nil), s.trace...)})
+		_ = json.NewEncoder(w).Encode(statusPayload{Outage: s.outage, SecretBlocked: s.blockSecretAccess, BlockedSecrets: s.blockedSecretCalls, ActiveBlocks: s.activeSecretBlocks, LostEvents: s.lostEvents, LostCompletions: s.lostCompletions, LostEnrollments: s.lostEnrollments, LostProvenance: s.lostProvenance, FailedRenewals: s.failedRenewals, HeldProvenance: s.activeProvenance, ActiveEventHolds: s.activeEventHolds, Requests: copyRequests, Trace: append([]string(nil), s.trace...)})
 	case "/__control/outage/on":
 		s.outage = true
 		s.addTraceLocked("control:outage-on")
@@ -85,6 +99,21 @@ func (s *proxyState) control(w http.ResponseWriter, request *http.Request) {
 		s.dropNextEvent = true
 		s.addTraceLocked("control:drop-event-armed")
 		w.WriteHeader(http.StatusNoContent)
+	case "/__control/event-hold/on":
+		if !s.holdEventResponse {
+			s.holdEventResponse = true
+			s.eventRelease = make(chan struct{})
+		}
+		s.addTraceLocked("control:event-hold-on")
+		w.WriteHeader(http.StatusNoContent)
+	case "/__control/event-hold/off":
+		if s.holdEventResponse {
+			s.holdEventResponse = false
+			close(s.eventRelease)
+			s.eventRelease = nil
+		}
+		s.addTraceLocked("control:event-hold-off")
+		w.WriteHeader(http.StatusNoContent)
 	case "/__control/drop-completion":
 		s.dropNextCompletion = true
 		s.addTraceLocked("control:drop-completion-armed")
@@ -92,6 +121,29 @@ func (s *proxyState) control(w http.ResponseWriter, request *http.Request) {
 	case "/__control/drop-enrollment":
 		s.dropNextEnrollment = true
 		s.addTraceLocked("control:drop-enrollment-armed")
+		w.WriteHeader(http.StatusNoContent)
+	case "/__control/drop-provenance":
+		s.dropNextProvenance = true
+		s.addTraceLocked("control:drop-provenance-armed")
+		w.WriteHeader(http.StatusNoContent)
+	case "/__control/fail-renew":
+		s.failNextRenew = true
+		s.addTraceLocked("control:fail-renew-armed")
+		w.WriteHeader(http.StatusNoContent)
+	case "/__control/provenance-hold/on":
+		if !s.holdProvenance {
+			s.holdProvenance = true
+			s.provenanceRelease = make(chan struct{})
+		}
+		s.addTraceLocked("control:provenance-hold-on")
+		w.WriteHeader(http.StatusNoContent)
+	case "/__control/provenance-hold/off":
+		if s.holdProvenance {
+			s.holdProvenance = false
+			close(s.provenanceRelease)
+			s.provenanceRelease = nil
+		}
+		s.addTraceLocked("control:provenance-hold-off")
 		w.WriteHeader(http.StatusNoContent)
 	case "/__control/secret-block/on":
 		if !s.blockSecretAccess {
@@ -121,6 +173,32 @@ func (s *proxyState) forward(w http.ResponseWriter, request *http.Request, upstr
 	}
 	s.mu.Lock()
 	s.requests[request.URL.Path]++
+	if s.failNextRenew && request.URL.Path == "/api/v1/runners/renew" {
+		s.failNextRenew = false
+		s.failedRenewals++
+		s.addTraceLocked("transient-failure:renew")
+		s.mu.Unlock()
+		http.Error(w, "runner renewal temporarily unavailable", http.StatusBadGateway)
+		return
+	}
+	if s.holdProvenance && request.URL.Path == "/api/v1/runners/deployments/provenance" {
+		release := s.provenanceRelease
+		s.activeProvenance++
+		s.addTraceLocked("held-before-upstream:provenance")
+		s.mu.Unlock()
+		select {
+		case <-request.Context().Done():
+		case <-release:
+		}
+		s.mu.Lock()
+		s.activeProvenance--
+		if request.Context().Err() != nil {
+			s.addTraceLocked("held-client-gone:provenance")
+			s.mu.Unlock()
+			return
+		}
+		s.addTraceLocked("held-released:provenance")
+	}
 	if s.blockSecretAccess && request.URL.Path == "/api/v1/runners/secrets/access" {
 		release := s.secretBlockRelease
 		s.blockedSecretCalls++
@@ -174,6 +252,29 @@ func (s *proxyState) forward(w http.ResponseWriter, request *http.Request, upstr
 		http.Error(w, "upstream response rejected", http.StatusBadGateway)
 		return
 	}
+	// Fixture-only: retain a successfully committed event response until the
+	// gate starts a runner-only partition. This makes journal replay
+	// deterministic without exposing request contents or touching the server.
+	s.mu.Lock()
+	if s.holdEventResponse && request.URL.Path == "/api/v1/runners/events/batch" && response.StatusCode < 400 {
+		release := s.eventRelease
+		s.activeEventHolds++
+		s.addTraceLocked("held-after-upstream:events")
+		s.mu.Unlock()
+		select {
+		case <-request.Context().Done():
+		case <-release:
+		}
+		s.mu.Lock()
+		s.activeEventHolds--
+		if request.Context().Err() != nil {
+			s.addTraceLocked("held-client-gone:events")
+			s.mu.Unlock()
+			return
+		}
+		s.addTraceLocked("held-released:events")
+	}
+	s.mu.Unlock()
 
 	drop := false
 	s.mu.Lock()
@@ -198,6 +299,13 @@ func (s *proxyState) forward(w http.ResponseWriter, request *http.Request, upstr
 			s.lostEnrollments++
 			drop = true
 			s.addTraceLocked("committed-response-lost:enrollment")
+		}
+	case "/api/v1/runners/deployments/provenance":
+		if s.dropNextProvenance && response.StatusCode < 400 {
+			s.dropNextProvenance = false
+			s.lostProvenance++
+			drop = true
+			s.addTraceLocked("committed-response-lost:provenance")
 		}
 	}
 	if !drop {

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"nerocd/internal/app"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
 )
@@ -116,6 +117,67 @@ func TestAttemptReporterRetriesCommittedEventAfterLostResponse(t *testing.T) {
 	defer mu.Unlock()
 	if requests != 2 || committedKey == "" || journal.Depth() != 0 || supervisor.Context().Err() != nil {
 		t.Fatalf("requests=%d key=%q depth=%d supervisor=%v", requests, committedKey, journal.Depth(), supervisor.Context().Err())
+	}
+	retries, renewFailures := supervisor.metrics.Snapshot()
+	if retries != 1 || renewFailures != 0 {
+		t.Fatalf("event replay counters retries=%d renew_failures=%d", retries, renewFailures)
+	}
+}
+
+func TestReconcileRunnerJournalReplaysDurableProvenanceBeforeOtherTraffic(t *testing.T) {
+	lease := replayTestLease()
+	journal := openReplayTestJournal(t)
+	defer journal.Close()
+	commit := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	hash := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	digest := "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	pending := runner.JournalProvenance{ID: "provenance_stable", Attempt: journalAttemptIdentity(lease.RunID, lease, nil), DeploymentID: "deployment_replay", GitCommit: commit, ComposeHash: hash, ImageDigests: []string{digest}, ContentIdentity: commit + ":" + hash, CreatedAt: time.Now().UTC()}
+	if _, err := journal.AppendProvenance(pending); err != nil {
+		t.Fatal(err)
+	}
+	var requests []string
+	var posts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v1/runners/lease":
+			_ = json.NewEncoder(w).Encode(lease)
+		case "/api/v1/runners/deployments/plan":
+			_ = json.NewEncoder(w).Encode(domain.DeploymentPlan{DeploymentID: pending.DeploymentID, RunID: lease.RunID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence})
+		case "/api/v1/runners/deployments/provenance":
+			posts++
+			var body app.ProvenanceResolutionInput
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+				return
+			}
+			if body.ResolutionID != pending.ID || body.GitCommit != commit || body.ComposeHash != hash || len(body.ImageDigests) != 1 || body.ImageDigests[0] != digest {
+				t.Errorf("replay body changed: %#v", body)
+			}
+			if posts == 1 {
+				connection, _, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_ = connection.Close()
+				return
+			}
+			_ = json.NewEncoder(w).Encode(domain.Revision{GitCommit: commit, ComposeHash: hash, ImageDigests: []string{digest}, ContentIdentity: commit + ":" + hash})
+		default:
+			t.Errorf("unexpected request before reconciliation completed: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	if err := reconcileRunnerJournal(server.URL, "credential", journal); err != nil {
+		t.Fatal(err)
+	}
+	if posts != 2 || len(journal.Snapshot().Provenance) != 0 {
+		t.Fatalf("posts=%d pending=%#v", posts, journal.Snapshot().Provenance)
+	}
+	if len(requests) < 4 || requests[0] != "/api/v1/runners/lease" || requests[1] != "/api/v1/runners/deployments/plan" {
+		t.Fatalf("replay ordering = %v", requests)
 	}
 }
 
@@ -603,6 +665,10 @@ func TestLeaseRenewerRetriesTransientFailureWithoutCancelingAuthority(t *testing
 	renewer.Stop()
 	if supervisor.Context().Err() != nil {
 		t.Fatalf("transient retry canceled authority: %v", supervisor.Context().Err())
+	}
+	retries, renewFailures := supervisor.metrics.Snapshot()
+	if retries != 1 || renewFailures != 1 {
+		t.Fatalf("renewal counters retries=%d renew_failures=%d", retries, renewFailures)
 	}
 }
 

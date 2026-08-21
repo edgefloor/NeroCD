@@ -1,0 +1,12 @@
+FROM alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
+ARG VERSION
+ARG MODE=good
+ARG BUILD_NONCE
+RUN apk add --no-cache python3 \
+ && mkdir -p /www/cgi-bin \
+ && printf '%s\n' '#!/bin/sh' 'if [ "${MODE}" = slow ]; then sleep 15; fi' 'echo "Content-Type: text/plain"' 'echo "X-NeroCD-Revision: ${REVISION}"' 'echo' 'echo "${VERSION}"' > /www/cgi-bin/health \
+ && chmod 0555 /www/cgi-bin/health
+LABEL net.nerocd.acceptance.fixture-nonce=${BUILD_NONCE}
+ENV VERSION=${VERSION} MODE=${MODE} REVISION=fixture
+EXPOSE 8080
+CMD ["python3", "-m", "http.server", "--cgi", "8080", "--directory", "/www"]

@@ -2,8 +2,10 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/source"
 	"nerocd/internal/store/sqlcgen"
 )
 
@@ -27,8 +29,20 @@ func projectMemberListRowFromSQLC(row sqlcgen.ListProjectMembersRow) domain.Proj
 	return domain.ProjectMember{ID: row.ID, ProjectID: row.ProjectID, UserID: row.UserID, Email: row.Email, Name: row.Name, Role: row.Role, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
 
-func repositoryFromSQLC(row sqlcgen.Repository) domain.Repository {
-	return domain.Repository{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, URL: row.Url, Provider: row.Provider, DefaultRef: row.DefaultRef, CreatedAt: row.CreatedAt}
+func repositoryFromSQLC(row sqlcgen.Repository) (domain.Repository, error) {
+	var policy domain.RepositoryPolicy
+	if err := json.Unmarshal(row.RepositoryPolicy, &policy); err != nil {
+		return domain.Repository{}, err
+	}
+	if policy.Version != 1 || (policy.State != "configured" && policy.State != "legacy_unverified") {
+		return domain.Repository{}, fmt.Errorf("invalid repository policy state")
+	}
+	if policy.State == "configured" {
+		if err := (source.RepositoryPolicy{Version: policy.Version, State: policy.State, Mode: policy.Mode, AllowedSchemes: policy.AllowedSchemes, AllowedHosts: policy.AllowedHosts, AllowedCIDRs: policy.AllowedCIDRs, RedirectHosts: policy.RedirectHosts, SSHHostFingerprints: policy.SSHHostFingerprints, CredentialReferenceID: policy.CredentialReferenceID, AllowInternal: policy.AllowInternal}).ValidatePolicy(); err != nil {
+			return domain.Repository{}, err
+		}
+	}
+	return domain.Repository{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, URL: row.Url, Provider: row.Provider, DefaultRef: row.DefaultRef, Policy: policy, CreatedAt: row.CreatedAt}, nil
 }
 
 func accessKeyFromSQLC(row sqlcgen.AccessKey) domain.AccessKey {

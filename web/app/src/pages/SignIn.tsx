@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-export function SignIn({ error, onSubmit }: { error: string; onSubmit: (email: string, password: string) => Promise<void> }): ReactNode {
+export function SignIn({ error, bootstrapRequired, onSubmit }: { error: string; bootstrapRequired: boolean; onSubmit: (email: string, password: string) => Promise<void> }): ReactNode {
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -32,22 +32,22 @@ export function SignIn({ error, onSubmit }: { error: string; onSubmit: (email: s
           <CardContent>
             <form className="space-y-4" onSubmit={(event) => void submit(event)}>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Email</label>
+                <label htmlFor="sign-in-email" className="text-sm font-medium">Email</label>
                 <Input 
+                  id="sign-in-email"
                   name="email" 
                   type="email" 
-                  defaultValue="admin@example.local" 
                   autoComplete="email" 
                   required 
                   className="h-9"
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Password</label>
+                <label htmlFor="sign-in-password" className="text-sm font-medium">Password</label>
                 <Input 
+                  id="sign-in-password"
                   name="password" 
                   type="password" 
-                  defaultValue="admin" 
                   autoComplete="current-password" 
                   required 
                   className="h-9"
@@ -60,6 +60,7 @@ export function SignIn({ error, onSubmit }: { error: string; onSubmit: (email: s
                 <p className="text-sm text-destructive">{error}</p>
               ) : null}
             </form>
+            {bootstrapRequired ? <aside className="mt-5 rounded-md border border-warning/30 bg-warning/5 p-3 text-sm" role="status" aria-label="Administrator bootstrap required"><p className="font-medium">Administrator bootstrap required</p><p className="mt-1 text-muted-foreground">Run <code>nerocd bootstrap-admin</code> on the server with a strict password file or standard input, then sign in. Bootstrap is intentionally CLI-only.</p></aside> : null}
           </CardContent>
         </Card>
       </div>

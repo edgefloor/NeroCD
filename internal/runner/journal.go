@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	journalFormatVersion = 1
-	journalMaxEntries    = 8192
-	journalMaxBytes      = 8 << 20
-	journalMaxEventBytes = 256 << 10
+	journalFormatVersion      = 1
+	journalMaxEntries         = 8192
+	journalMaxBytes           = 8 << 20
+	journalMaxEventBytes      = 256 << 10
+	journalMaxProvenanceBytes = 64 << 10
 )
 
 var ErrJournalConflict = errors.New("runner journal id reused with different content")
@@ -48,15 +49,31 @@ type JournalCompletion struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
+// JournalProvenance is the complete, non-secret resolution request that must
+// survive a response loss. It deliberately contains evidence and authority,
+// never repository credentials, local workspace paths, or transport headers.
+type JournalProvenance struct {
+	ID              string          `json:"id"`
+	Attempt         AttemptIdentity `json:"attempt_authority"`
+	DeploymentID    string          `json:"deployment_id"`
+	GitCommit       string          `json:"git_commit"`
+	ComposeHash     string          `json:"compose_hash"`
+	ImageDigests    []string        `json:"image_digests"`
+	ContentIdentity string          `json:"content_identity"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
 type JournalSnapshot struct {
 	Events      []JournalEvent      `json:"events"`
 	Completions []JournalCompletion `json:"completions"`
+	Provenance  []JournalProvenance `json:"provenance"`
 }
 
 type journalState struct {
 	Version     int                 `json:"version"`
 	Events      []JournalEvent      `json:"events"`
 	Completions []JournalCompletion `json:"completions"`
+	Provenance  []JournalProvenance `json:"provenance"`
 }
 
 // AttemptJournal is an append-before-send, atomic-rewrite journal. The secure
@@ -146,6 +163,32 @@ func (j *AttemptJournal) AppendCompletion(completion JournalCompletion) (Journal
 	return completion, nil
 }
 
+func (j *AttemptJournal) AppendProvenance(provenance JournalProvenance) (JournalProvenance, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := validateJournalProvenance(provenance); err != nil {
+		return JournalProvenance{}, err
+	}
+	for _, existing := range j.state.Provenance {
+		if existing.ID != provenance.ID {
+			continue
+		}
+		if journalProvenanceEqual(existing, provenance) {
+			return existing, nil
+		}
+		return JournalProvenance{}, ErrJournalConflict
+	}
+	if j.entryCountLocked() >= journalMaxEntries {
+		return JournalProvenance{}, errors.New("runner journal entry limit reached")
+	}
+	j.state.Provenance = append(j.state.Provenance, provenance)
+	if err := j.persistLocked(); err != nil {
+		j.state.Provenance = j.state.Provenance[:len(j.state.Provenance)-1]
+		return JournalProvenance{}, err
+	}
+	return provenance, nil
+}
+
 func (j *AttemptJournal) AckEvents(ids []string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -192,6 +235,27 @@ func (j *AttemptJournal) AckCompletion(id string) error {
 	return nil
 }
 
+func (j *AttemptJournal) AckProvenance(id string) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	kept := make([]JournalProvenance, 0, len(j.state.Provenance))
+	for _, pending := range j.state.Provenance {
+		if pending.ID != id {
+			kept = append(kept, pending)
+		}
+	}
+	if len(kept) == len(j.state.Provenance) {
+		return nil
+	}
+	original := j.state.Provenance
+	j.state.Provenance = kept
+	if err := j.persistLocked(); err != nil {
+		j.state.Provenance = original
+		return err
+	}
+	return nil
+}
+
 func (j *AttemptJournal) DiscardAttempt(leaseID string, attempt int) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -207,13 +271,19 @@ func (j *AttemptJournal) DiscardAttempt(leaseID string, attempt int) error {
 			completions = append(completions, completion)
 		}
 	}
-	if len(events) == len(j.state.Events) && len(completions) == len(j.state.Completions) {
+	provenance := make([]JournalProvenance, 0, len(j.state.Provenance))
+	for _, pending := range j.state.Provenance {
+		if pending.Attempt.LeaseID != leaseID || pending.Attempt.Attempt != attempt {
+			provenance = append(provenance, pending)
+		}
+	}
+	if len(events) == len(j.state.Events) && len(completions) == len(j.state.Completions) && len(provenance) == len(j.state.Provenance) {
 		return nil
 	}
-	originalEvents, originalCompletions := j.state.Events, j.state.Completions
-	j.state.Events, j.state.Completions = events, completions
+	originalEvents, originalCompletions, originalProvenance := j.state.Events, j.state.Completions, j.state.Provenance
+	j.state.Events, j.state.Completions, j.state.Provenance = events, completions, provenance
 	if err := j.persistLocked(); err != nil {
-		j.state.Events, j.state.Completions = originalEvents, originalCompletions
+		j.state.Events, j.state.Completions, j.state.Provenance = originalEvents, originalCompletions, originalProvenance
 		return err
 	}
 	return nil
@@ -225,6 +295,7 @@ func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	return JournalSnapshot{
 		Events:      append([]JournalEvent(nil), j.state.Events...),
 		Completions: append([]JournalCompletion(nil), j.state.Completions...),
+		Provenance:  append([]JournalProvenance(nil), j.state.Provenance...),
 	}
 }
 
@@ -243,7 +314,7 @@ func NewJournalID(prefix string) (string, error) {
 }
 
 func (j *AttemptJournal) entryCountLocked() int {
-	return len(j.state.Events) + len(j.state.Completions)
+	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance)
 }
 
 func (j *AttemptJournal) persistLocked() error {
@@ -261,10 +332,10 @@ func validateJournalState(state journalState) error {
 	if state.Version != journalFormatVersion {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
-	if len(state.Events)+len(state.Completions) > journalMaxEntries {
+	if len(state.Events)+len(state.Completions)+len(state.Provenance) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
-	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions))
+	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))
 	for _, event := range state.Events {
 		if err := validateJournalEvent(event); err != nil {
 			return err
@@ -282,6 +353,38 @@ func validateJournalState(state journalState) error {
 			return errors.New("runner journal contains duplicate ids")
 		}
 		ids[completion.ID] = struct{}{}
+	}
+	for _, pending := range state.Provenance {
+		if err := validateJournalProvenance(pending); err != nil {
+			return err
+		}
+		if _, ok := ids[pending.ID]; ok {
+			return errors.New("runner journal contains duplicate ids")
+		}
+		ids[pending.ID] = struct{}{}
+	}
+	return nil
+}
+
+func validateJournalProvenance(p JournalProvenance) error {
+	if strings.TrimSpace(p.ID) == "" || strings.TrimSpace(p.DeploymentID) == "" || strings.TrimSpace(p.GitCommit) == "" || strings.TrimSpace(p.ComposeHash) == "" || strings.TrimSpace(p.ContentIdentity) != strings.TrimSpace(p.GitCommit)+":"+strings.TrimSpace(p.ComposeHash) || p.CreatedAt.IsZero() {
+		return errors.New("journal provenance requires exact authority and immutable evidence")
+	}
+	if err := validateAttemptIdentity(p.Attempt); err != nil {
+		return err
+	}
+	if len(p.ImageDigests) == 0 {
+		return errors.New("journal provenance requires image digests")
+	}
+	size := len(p.ID) + len(p.DeploymentID) + len(p.GitCommit) + len(p.ComposeHash) + len(p.ContentIdentity)
+	for i, digest := range p.ImageDigests {
+		if strings.TrimSpace(digest) == "" || (i > 0 && p.ImageDigests[i-1] >= digest) {
+			return errors.New("journal provenance image digests are invalid")
+		}
+		size += len(digest)
+	}
+	if size > journalMaxProvenanceBytes {
+		return errors.New("journal provenance exceeds transport byte limit")
 	}
 	return nil
 }
@@ -319,4 +422,16 @@ func journalEventsEqual(left, right JournalEvent) bool {
 
 func journalCompletionsEqual(left, right JournalCompletion) bool {
 	return left.ID == right.ID && left.Attempt == right.Attempt && left.Status == right.Status && left.CreatedAt.Equal(right.CreatedAt)
+}
+
+func journalProvenanceEqual(left, right JournalProvenance) bool {
+	if left.ID != right.ID || left.Attempt != right.Attempt || left.DeploymentID != right.DeploymentID || left.GitCommit != right.GitCommit || left.ComposeHash != right.ComposeHash || left.ContentIdentity != right.ContentIdentity || !left.CreatedAt.Equal(right.CreatedAt) || len(left.ImageDigests) != len(right.ImageDigests) {
+		return false
+	}
+	for i := range left.ImageDigests {
+		if left.ImageDigests[i] != right.ImageDigests[i] {
+			return false
+		}
+	}
+	return true
 }

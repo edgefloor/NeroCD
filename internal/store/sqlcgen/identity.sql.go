@@ -10,6 +10,38 @@ import (
 	"time"
 )
 
+const bootstrapComplete = `-- name: BootstrapComplete :one
+SELECT (completed_by IS NOT NULL)::boolean AS complete
+FROM identity_bootstrap_state
+WHERE singleton = TRUE
+`
+
+func (q *Queries) BootstrapComplete(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, bootstrapComplete)
+	var complete bool
+	err := row.Scan(&complete)
+	return complete, err
+}
+
+const claimBootstrapAdmin = `-- name: ClaimBootstrapAdmin :execrows
+UPDATE identity_bootstrap_state
+SET completed_by = $1, completed_at = $2
+WHERE singleton = TRUE AND completed_by IS NULL
+`
+
+type ClaimBootstrapAdminParams struct {
+	CompletedBy *string    `json:"completed_by"`
+	CompletedAt *time.Time `json:"completed_at"`
+}
+
+func (q *Queries) ClaimBootstrapAdmin(ctx context.Context, arg ClaimBootstrapAdminParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimBootstrapAdmin, arg.CompletedBy, arg.CompletedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createAPIToken = `-- name: CreateAPIToken :one
 INSERT INTO api_tokens (id, name, kind, token_hash, roles, status, created_by, created_at, expires_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -57,17 +89,48 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 	return i, err
 }
 
+const createBootstrapUser = `-- name: CreateBootstrapUser :exec
+INSERT INTO users (id, email, name, status, global_role, password_hash, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+`
+
+type CreateBootstrapUserParams struct {
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	Name         string    `json:"name"`
+	Status       string    `json:"status"`
+	GlobalRole   string    `json:"global_role"`
+	PasswordHash string    `json:"password_hash"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (q *Queries) CreateBootstrapUser(ctx context.Context, arg CreateBootstrapUserParams) error {
+	_, err := q.db.Exec(ctx, createBootstrapUser,
+		arg.ID,
+		arg.Email,
+		arg.Name,
+		arg.Status,
+		arg.GlobalRole,
+		arg.PasswordHash,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const createSession = `-- name: CreateSession :exec
-INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at, source_ip, user_agent, last_seen_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type CreateSessionParams struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	TokenHash string    `json:"token_hash"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	TokenHash  string     `json:"token_hash"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	SourceIp   string     `json:"source_ip"`
+	UserAgent  string     `json:"user_agent"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
@@ -77,6 +140,9 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 		arg.TokenHash,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+		arg.SourceIp,
+		arg.UserAgent,
+		arg.LastSeenAt,
 	)
 	return err
 }
@@ -113,23 +179,31 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashPa
 }
 
 const getPrincipalBySessionTokenHash = `-- name: GetPrincipalBySessionTokenHash :one
+WITH matched AS (
+  SELECT matched_session.user_id
+  FROM sessions AS matched_session
+  WHERE matched_session.token_hash = $1 AND matched_session.revoked_at IS NULL AND matched_session.expires_at > $2
+), touched AS (
+  UPDATE sessions AS session_row SET last_seen_at = $2
+  WHERE session_row.token_hash = $1 AND session_row.revoked_at IS NULL AND session_row.expires_at > $2
+    AND (session_row.last_seen_at IS NULL OR session_row.last_seen_at <= $3)
+  RETURNING user_id
+)
 SELECT users.id, users.email, users.name, users.status, users.global_role,
        users.password_hash, users.created_at, users.updated_at, users.archived_at
-FROM sessions
-JOIN users ON users.id = sessions.user_id
-WHERE sessions.token_hash = $1
-  AND sessions.revoked_at IS NULL
-  AND sessions.expires_at > $2
-  AND users.status = 'active'
+FROM matched
+JOIN users ON users.id = matched.user_id
+WHERE users.status = 'active'
 `
 
 type GetPrincipalBySessionTokenHashParams struct {
-	TokenHash string    `json:"token_hash"`
-	ExpiresAt time.Time `json:"expires_at"`
+	TokenHash  string     `json:"token_hash"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
 }
 
 func (q *Queries) GetPrincipalBySessionTokenHash(ctx context.Context, arg GetPrincipalBySessionTokenHashParams) (User, error) {
-	row := q.db.QueryRow(ctx, getPrincipalBySessionTokenHash, arg.TokenHash, arg.ExpiresAt)
+	row := q.db.QueryRow(ctx, getPrincipalBySessionTokenHash, arg.TokenHash, arg.ExpiresAt, arg.LastSeenAt)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -168,6 +242,52 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 	return i, err
 }
 
+const listSessions = `-- name: ListSessions :many
+SELECT id, user_id, expires_at, created_at, source_ip, user_agent, last_seen_at, revoked_at
+FROM sessions
+ORDER BY created_at DESC, id DESC
+`
+
+type ListSessionsRow struct {
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	SourceIp   string     `json:"source_ip"`
+	UserAgent  string     `json:"user_agent"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+}
+
+func (q *Queries) ListSessions(ctx context.Context) ([]ListSessionsRow, error) {
+	rows, err := q.db.Query(ctx, listSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSessionsRow{}
+	for rows.Next() {
+		var i ListSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.SourceIp,
+			&i.UserAgent,
+			&i.LastSeenAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeAPIToken = `-- name: RevokeAPIToken :one
 UPDATE api_tokens SET status = 'revoked', revoked_at = $2
 WHERE id = $1 AND revoked_at IS NULL
@@ -198,6 +318,44 @@ func (q *Queries) RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) 
 	return i, err
 }
 
+const revokeSessionByID = `-- name: RevokeSessionByID :one
+UPDATE sessions SET revoked_at = $2
+WHERE id = $1 AND revoked_at IS NULL
+RETURNING id, user_id, expires_at, created_at, source_ip, user_agent, last_seen_at, revoked_at
+`
+
+type RevokeSessionByIDParams struct {
+	ID        string     `json:"id"`
+	RevokedAt *time.Time `json:"revoked_at"`
+}
+
+type RevokeSessionByIDRow struct {
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	SourceIp   string     `json:"source_ip"`
+	UserAgent  string     `json:"user_agent"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+}
+
+func (q *Queries) RevokeSessionByID(ctx context.Context, arg RevokeSessionByIDParams) (RevokeSessionByIDRow, error) {
+	row := q.db.QueryRow(ctx, revokeSessionByID, arg.ID, arg.RevokedAt)
+	var i RevokeSessionByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.SourceIp,
+		&i.UserAgent,
+		&i.LastSeenAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const revokeSessionByTokenHash = `-- name: RevokeSessionByTokenHash :execrows
 UPDATE sessions SET revoked_at = $2
 WHERE token_hash = $1 AND revoked_at IS NULL
@@ -210,6 +368,25 @@ type RevokeSessionByTokenHashParams struct {
 
 func (q *Queries) RevokeSessionByTokenHash(ctx context.Context, arg RevokeSessionByTokenHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, revokeSessionByTokenHash, arg.TokenHash, arg.RevokedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updatePasswordHash = `-- name: UpdatePasswordHash :execrows
+UPDATE users SET password_hash = $2, updated_at = clock_timestamp()
+WHERE id = $1 AND password_hash = $3
+`
+
+type UpdatePasswordHashParams struct {
+	ID             string `json:"id"`
+	PasswordHash   string `json:"password_hash"`
+	PasswordHash_2 string `json:"password_hash_2"`
+}
+
+func (q *Queries) UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHashParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updatePasswordHash, arg.ID, arg.PasswordHash, arg.PasswordHash_2)
 	if err != nil {
 		return 0, err
 	}

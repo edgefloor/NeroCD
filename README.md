@@ -48,7 +48,44 @@ docker compose up --build
 
 This starts PostgreSQL, runs tracked migrations through `nerocd migrate`, applies development seed data, and starts the NeroCD server.
 
+### Production Compose profile
+
+`compose.production.yaml` is deliberately separate from the development stack.
+Copy `.env.production.example` outside the repository, supply a canonical
+`repository@sha256:<digest>` server image, an existing external proxy network,
+two absolute URL secret-file paths, and distinct owner/app PostgreSQL role
+names. Protect the inputs with mode `0400`; the one-shot initializer places
+the owner and app URL in separate private runtime volumes. The migrator sees
+only the owner file, the server sees only the app file, and role-init is the
+only short-lived service that sees both. Production rejects environment/argument
+database URLs, equal credentials, mutable image names, development seeding,
+and the memory store.
+
+```sh
+docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml up -d
+# Run doctor on the deployment host before `up`, with both strict secret-file
+# paths and both configured role names from the production env file available.
+NEROCD_MODE=production NEROCD_IMAGE_REF="$NEROCD_IMAGE" \
+  NEROCD_OWNER_DATABASE_URL_FILE="$NEROCD_DATABASE_URL_SECRET" \
+  NEROCD_APP_DATABASE_URL_FILE="$NEROCD_APP_DATABASE_URL_SECRET" nerocd doctor
+```
+
+The production stack publishes no database, metrics, or application host port.
+Attach only an approved reverse proxy to `NEROCD_PROXY_NETWORK`. `nerocd doctor`
+validates configuration without connecting to the database and never prints a
+secret value.
+
 Docker builds the Vite WebUI with Bun, embeds `web/dist` into the Go binary, and serves the compiled app from the NeroCD server.
+
+Development data is intentionally not embedded in that binary. To seed an
+explicit local database, provide the checked-out fixture (or your own safe
+fixture) explicitly: `NEROCD_DEV_SEED_FILE=./db/seeds/dev.sql nerocd seed-dev`.
+Production rejects `seed-dev`; initialize its first administrator exactly once
+with `nerocd bootstrap-admin --email <email> --name <name> --password-file <owner-only-file>`.
+Before that command completes, the sign-in screen intentionally offers only
+this CLI guidance. The unauthenticated `GET /api/v1/bootstrap-status` response
+is limited to `{"status":"required"}` or `{"status":"complete"}`; it never
+identifies users or exposes database state.
 
 Useful CLI commands:
 
@@ -56,7 +93,7 @@ Useful CLI commands:
 go run ./cmd/nerocd version
 go run ./cmd/nerocd health
 go run ./cmd/nerocd migrate --database-url postgres://nerocd:nerocd_dev@127.0.0.1:5432/nerocd?sslmode=disable --seed=false
-go run ./cmd/nerocd session --email admin@example.local --password admin
+go run ./cmd/nerocd session --email '<bootstrap email>' --password '<bootstrap password>'
 NEROCD_TOKEN=ncd_... go run ./cmd/nerocd projects
 NEROCD_TOKEN=ncd_... go run ./cmd/nerocd templates
 NEROCD_TOKEN=ncd_... go run ./cmd/nerocd runs
@@ -68,7 +105,18 @@ go run ./cmd/nerocd smoke
 
 `health`, `ready`, and `session` are public bootstrap routes. Other `/api/v1`
 routes require the bearer token returned by `session`; pass it with `--token` or
-`NEROCD_TOKEN`. `/metrics` exposes plain text request counters for operators.
+`NEROCD_TOKEN`. `/metrics` is deliberately not public: it requires an
+authenticated `system_admin` bearer/session credential and is reached only
+through the approved proxy network in production. API JSON requests are capped
+at 1 MiB and must be a single `application/json` document; list pages are
+bounded to 100 items (offset at most 100,000).
+
+Global administrators can use the WebUI **Operations** page or
+`GET /api/v1/operations/status` for a short, database-clock operational
+summary. It is all-or-nothing: authenticated non-admins are denied, and a
+readiness or snapshot failure returns the fixed `operations_unavailable` 503
+instead of stale or partial metrics. Raw Prometheus remains the protected
+`/metrics` endpoint; Operations intentionally shows only fixed aggregate cards.
 
 ## Build
 

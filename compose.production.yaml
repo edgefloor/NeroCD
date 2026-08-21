@@ -1,0 +1,192 @@
+services:
+  secret-init:
+    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command: ["umask 077; install -d -m 0700 /runtime-owner /runtime-app; install -m 0400 /run/secrets/owner_database_url /runtime-owner/owner_database_url; install -m 0400 /run/secrets/app_database_url /runtime-app/app_database_url; chown 10001:10001 /runtime-owner/owner_database_url /runtime-app/app_database_url /runtime-owner /runtime-app"]
+    secrets: [owner_database_url, app_database_url]
+    volumes: [runtime-owner-secrets:/runtime-owner, runtime-app-secrets:/runtime-app]
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    restart: "no"
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.25
+    logging: {driver: local, options: {max-size: 1m, max-file: "2"}}
+  pgdata-init:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command: ["install -d -m 0700 -o 70 -g 70 /var/lib/postgresql/data/pgdata /postgres-run"]
+    volumes: [postgres-data:/var/lib/postgresql/data, postgres-run:/postgres-run]
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    restart: "no"
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.25
+    logging: {driver: local, options: {max-size: 1m, max-file: "2"}}
+  backup-data-init:
+    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command: ["install -d -m 0700 -o 10001 -g 10001 /backups"]
+    volumes: [backup-data:/backups]
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    restart: "no"
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.25
+    logging: {driver: local, options: {max-size: 1m, max-file: "2"}}
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    user: "70:70"
+    environment: {POSTGRES_DB: nerocd, POSTGRES_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password, POSTGRES_HOST_AUTH_METHOD: scram-sha-256, PGDATA: /var/lib/postgresql/data/pgdata}
+    secrets: [postgres_password]
+    depends_on: {pgdata-init: {condition: service_completed_successfully}}
+    volumes: [postgres-data:/var/lib/postgresql/data, postgres-run:/var/run/postgresql]
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.50
+    logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
+    healthcheck: {test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"'], interval: 5s, timeout: 3s, retries: 12}
+  migrate:
+    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    command: [migrate, --seed=false]
+    environment: {NEROCD_MODE: production, NEROCD_IMAGE_REF: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}", NEROCD_DATABASE_CREDENTIAL: owner, NEROCD_OWNER_DATABASE_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", NEROCD_DATABASE_URL_FILE: /runtime-owner/owner_database_url}
+    depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}}
+    volumes: [runtime-owner-secrets:/runtime-owner:ro]
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: "no"
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.50
+    logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
+  role-init:
+    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    user: "10001:10001"
+    command: [provision-app-role, --owner-file, /runtime-owner/owner_database_url, --app-file, /runtime-app/app_database_url]
+    environment: {NEROCD_OWNER_DATABASE_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", NEROCD_APP_DATABASE_USER: "${NEROCD_APP_DATABASE_USER:?set application database role}"}
+    depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}, migrate: {condition: service_completed_successfully}}
+    volumes: [runtime-owner-secrets:/runtime-owner:ro, runtime-app-secrets:/runtime-app:ro]
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: "no"
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.50
+    logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
+  server:
+    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    command: [server, --addr, :8080]
+    environment: {NEROCD_MODE: production, NEROCD_IMAGE_REF: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}", NEROCD_PUBLIC_ORIGIN: "${NEROCD_PUBLIC_ORIGIN:?set HTTPS public origin}", NEROCD_TRUSTED_PROXY_CIDRS: "${NEROCD_TRUSTED_PROXY_CIDRS:-}", NEROCD_DATABASE_CREDENTIAL: app, NEROCD_APP_DATABASE_USER: "${NEROCD_APP_DATABASE_USER:?set application database role}", NEROCD_DATABASE_URL_FILE: /runtime-app/app_database_url}
+    depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}, migrate: {condition: service_completed_successfully}, role-init: {condition: service_completed_successfully}}
+    volumes: [runtime-app-secrets:/runtime-app:ro]
+    networks: [private, proxy]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    stop_grace_period: 35s
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
+    healthcheck: {test: [CMD, nerocd, ready, --addr, http://127.0.0.1:8080], interval: 10s, timeout: 3s, retries: 6}
+  probe:
+    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    profiles: [tools]
+    entrypoint: [nerocd]
+    command: [ready, --addr, http://server:8080]
+    networks: [proxy]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    logging: {driver: local, options: {max-size: 1m, max-file: "2"}}
+  database-tools:
+    # Deliberately opt-in: `docker compose --profile tools run --rm -v
+    # /secure/backups:/backups database-tools backup --output-dir /backups`.
+    # It mounts only the migration-owner credential; an operator supplies any
+    # backup destination or runner-file root as an explicit read-only/run bind.
+    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    profiles: [tools]
+    entrypoint: [nerocd]
+    command: [backup]
+    user: "10001:10001"
+    environment: {NEROCD_MODE: production, NEROCD_IMAGE_REF: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}", NEROCD_DATABASE_CREDENTIAL: owner, NEROCD_OWNER_DATABASE_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", NEROCD_DATABASE_URL_FILE: /runtime-owner/owner_database_url}
+    depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}}
+    volumes: [runtime-owner-secrets:/runtime-owner:ro]
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: "no"
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.50
+    logging: {driver: local, options: {max-size: 1m, max-file: "2"}}
+  backup-scheduler:
+    # Separate owner-only local scheduler. It is the sole service that writes
+    # the private backup volume; the API/server has no scheduler mutation.
+    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    command: [backup-scheduler, --output-dir, /backups, "--enabled=${NEROCD_BACKUP_SCHEDULE_ENABLED:-false}", --interval-seconds, "${NEROCD_BACKUP_INTERVAL_SECONDS:-86400}", --retention-count, "${NEROCD_BACKUP_RETENTION_COUNT:-7}"]
+    user: "10001:10001"
+    environment: {NEROCD_MODE: production, NEROCD_IMAGE_REF: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}", NEROCD_DATABASE_CREDENTIAL: owner, NEROCD_OWNER_DATABASE_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", NEROCD_DATABASE_URL_FILE: /runtime-owner/owner_database_url}
+    depends_on: {secret-init: {condition: service_completed_successfully}, backup-data-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}, migrate: {condition: service_completed_successfully}}
+    volumes: [runtime-owner-secrets:/runtime-owner:ro, backup-data:/backups]
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    stop_grace_period: 35s
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.50
+    logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
+secrets:
+  owner_database_url: {file: "${NEROCD_DATABASE_URL_SECRET:?set owner secret file}"}
+  app_database_url: {file: "${NEROCD_APP_DATABASE_URL_SECRET:?set app secret file}"}
+  postgres_password: {file: "${NEROCD_POSTGRES_PASSWORD_SECRET:?set secret file}"}
+volumes:
+  postgres-data: {}
+  postgres-run: {}
+  runtime-owner-secrets: {}
+  runtime-app-secrets: {}
+  backup-data: {}
+networks:
+  private: {internal: true}
+  proxy: {external: true, name: "${NEROCD_PROXY_NETWORK:?set external reverse-proxy network}"}

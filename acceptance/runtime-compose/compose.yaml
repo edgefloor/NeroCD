@@ -1,0 +1,112 @@
+services:
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment: {POSTGRES_DB: nerocd, POSTGRES_USER: nerocd, POSTGRES_PASSWORD: compose_runtime_only}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [runtime]
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U nerocd -d nerocd"], interval: 1s, timeout: 1s, retries: 30}
+  server:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    depends_on: {postgres: {condition: service_healthy}}
+    environment:
+      NEROCD_DATABASE_URL: postgres://nerocd:compose_runtime_only@postgres:5432/nerocd?sslmode=disable
+      NEROCD_DEV_SEED_FILE: /run/nerocd-dev-seed/dev.sql
+      NEROCD_REQUIRE_DATABASE: "true"
+      NEROCD_LEASE_TTL: 12s
+      NEROCD_REAPER_INTERVAL: 1s
+    entrypoint: [/bin/sh, -ec]
+    command: ["nerocd migrate && nerocd seed-dev && exec nerocd server --addr :8080"]
+    volumes:
+      - ../../db/seeds/dev.sql:/run/nerocd-dev-seed/dev.sql:ro
+    ports: ["127.0.0.1::8080"]
+    networks: [runtime]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: on-failure
+    healthcheck: {test: [CMD, nerocd, health, --addr, http://127.0.0.1:8080], interval: 1s, timeout: 2s, retries: 30}
+  proxy:
+    build: {context: ../runtime-spool/proxy}
+    environment: {UPSTREAM_URL: http://server:8080}
+    depends_on: {server: {condition: service_healthy}}
+    ports: ["127.0.0.1::8081"]
+    networks: [runtime]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  git:
+    image: ${NEROCD_GIT_IMAGE:?set NEROCD_GIT_IMAGE}
+    entrypoint: [/bin/sh, -ec]
+    command: ["sshd -t -f /git/sshd_config && exec /usr/sbin/sshd -D -e -f /git/sshd_config"]
+    volumes: [git-data:/git:ro]
+    networks: [runtime]
+    tmpfs: [/tmp, /run]
+  git_init:
+    image: ${NEROCD_GIT_IMAGE:?set NEROCD_GIT_IMAGE}
+    profiles: [tools]
+    user: "0:0"
+    network_mode: none
+    entrypoint: [/bin/sh, -ec]
+    environment: {IMAGE_A: "${NEROCD_FIXTURE_A:?set NEROCD_FIXTURE_A}", IMAGE_B: "${NEROCD_FIXTURE_B:?set NEROCD_FIXTURE_B}", IMAGE_C: "${NEROCD_FIXTURE_C:?set NEROCD_FIXTURE_C}"}
+    command:
+      - |
+        set -eu; umask 077
+        mkdir -p /git/home/.ssh /git/repo.git /git/keys /git/work /runner-secrets
+        install -d -m 0700 -o 10001 -g 10001 /runner-secrets/root
+        ssh-keygen -q -t ed25519 -N '' -f /git/keys/host; ssh-keygen -q -t ed25519 -N '' -f /git/keys/deploy
+        install -m 0400 -o 10001 -g 10001 /git/keys/deploy /runner-secrets/root/cred_git_deploy
+        cp /git/keys/deploy.pub /git/home/.ssh/authorized_keys; chmod 700 /git/home/.ssh; chmod 600 /git/home/.ssh/authorized_keys /git/keys/*
+        git init --bare /git/repo.git >/dev/null; git config --global user.email gate@local; git config --global user.name gate
+        git init /git/work >/dev/null; cd /git/work
+        make_compose() { printf 'services:\n  fixture:\n    image: %s\n    environment:\n      REVISION: $${NEROCD_DEPLOYMENT_REVISION:?server-owned revision required}\n    ports: ["127.0.0.1:18080:8080"]\n' "$1" > compose.yaml; }
+        make_compose "$${IMAGE_A}"; git add compose.yaml; git commit -qm A; git branch -M main; a_commit=$$(git rev-parse HEAD); git remote add origin /git/repo.git; git push -q origin main
+        make_compose "$${IMAGE_B}"; git add compose.yaml; git commit -qm B; git branch -f fixture-b; git reset --hard "$$a_commit" >/dev/null
+        make_compose "$${IMAGE_C}"; git add compose.yaml; git commit -qm C; git branch -f fixture-c
+        printf '# D\n' >>compose.yaml; git add compose.yaml; git commit -qm D; git branch -f fixture-d; git reset --hard "$$a_commit" >/dev/null; git push -q --force origin main fixture-b fixture-c fixture-d
+        printf 'Port 2222\nListenAddress 0.0.0.0\nHostKey /git/keys/host\nAuthorizedKeysFile /git/home/.ssh/authorized_keys\nPidFile /tmp/sshd.pid\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\nPermitRootLogin no\nAllowUsers git\n' >/git/sshd_config
+        chown -R 10002:10002 /git/home /git/repo.git; chmod 755 /git /git/repo.git
+    volumes: [git-data:/git, runner-secrets:/runner-secrets]
+  git_advance_b:
+    image: ${NEROCD_GIT_IMAGE:?set NEROCD_GIT_IMAGE}
+    profiles: [tools]
+    network_mode: none
+    entrypoint: [/bin/sh, -ec]
+    command: ["git config --global --add safe.directory /git/work; git config --global --add safe.directory /git/repo.git; cd /git/work; git push -q --force origin fixture-b:main; git --git-dir=/git/repo.git rev-parse refs/heads/main"]
+    volumes: [git-data:/git]
+  git_advance_c:
+    image: ${NEROCD_GIT_IMAGE:?set NEROCD_GIT_IMAGE}
+    profiles: [tools]
+    network_mode: none
+    entrypoint: [/bin/sh, -ec]
+    command: ["git config --global --add safe.directory /git/work; git config --global --add safe.directory /git/repo.git; cd /git/work; git push -q --force origin fixture-c:main; git --git-dir=/git/repo.git rev-parse refs/heads/main"]
+    volumes: [git-data:/git]
+  git_advance_d:
+    image: ${NEROCD_GIT_IMAGE:?set NEROCD_GIT_IMAGE}
+    profiles: [tools]
+    network_mode: none
+    entrypoint: [/bin/sh, -ec]
+    command: ["git config --global --add safe.directory /git/work; git config --global --add safe.directory /git/repo.git; cd /git/work; git push -q --force origin fixture-d:main; git --git-dir=/git/repo.git rev-parse refs/heads/main"]
+    volumes: [git-data:/git]
+  credential_init:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    profiles: [tools]
+    user: "0:0"
+    network_mode: none
+    entrypoint: [/bin/sh, -ec]
+    command: ["umask 077; IFS= read -r t; test -n \"$${t}\"; printf '%s\\n' \"$${t}\" >/credentials/token; chmod 0600 /credentials/token; chown 10001:10001 /credentials/token; install -d -m 0700 -o 10001 -g 10001 /journal /workspace /secrets/root"]
+    volumes: [runner-credential:/credentials, runner-journal:/journal, runner-workspace:/workspace, runner-secrets:/secrets]
+  runner:
+    build: {context: ., dockerfile: RunnerDockerfile, args: {BASE: "${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}", DOCKER_GID: "${NEROCD_DOCKER_GID:?set NEROCD_DOCKER_GID}"}}
+    image: ${NEROCD_RUNNER_IMAGE:?set NEROCD_RUNNER_IMAGE}
+    depends_on: {proxy: {condition: service_started}, git: {condition: service_started}}
+    entrypoint: [nerocd, runner]
+    command: [--server, http://proxy:8081, --credential-file, /credentials/token, --journal-dir, /journal, --secret-root, /secrets/root, --id, runner_compose, --tags, compose-runtime, --capabilities, compose-deploy, --poll-interval, 1s, --work-dir, /workspace]
+    environment: {NEROCD_COMPOSE_TRACE: /journal/compose-trace.log}
+    user: "10001:10001"
+    group_add: ["${NEROCD_DOCKER_GID:?set NEROCD_DOCKER_GID}"]
+    volumes: [runner-credential:/credentials:ro, runner-journal:/journal, runner-workspace:/workspace, runner-secrets:/secrets:ro, /var/run/docker.sock:/var/run/docker.sock]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [runtime]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    stop_grace_period: 2s
+volumes: {postgres-data: {}, runner-credential: {}, runner-journal: {}, runner-workspace: {}, runner-secrets: {}, git-data: {}}
+networks: {runtime: {driver: bridge}}

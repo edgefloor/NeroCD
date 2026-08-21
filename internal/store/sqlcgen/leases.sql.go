@@ -104,6 +104,20 @@ func (q *Queries) DatabaseClock(ctx context.Context) (time.Time, error) {
 	return database_time, err
 }
 
+const expireDeploymentAttemptsForRun = `-- name: ExpireDeploymentAttemptsForRun :exec
+UPDATE deployment_attempts AS deployment_attempt
+SET status='failed', finished_at=clock_timestamp()
+WHERE deployment_attempt.run_id=$1 AND deployment_attempt.status='active'
+  AND deployment_attempt.lease_id IN (
+    SELECT lease.id FROM run_leases AS lease WHERE lease.run_id=$1 AND lease.status='expired'
+  )
+`
+
+func (q *Queries) ExpireDeploymentAttemptsForRun(ctx context.Context, runID string) error {
+	_, err := q.db.Exec(ctx, expireDeploymentAttemptsForRun, runID)
+	return err
+}
+
 const getActiveLeaseForRun = `-- name: GetActiveLeaseForRun :one
 SELECT id, run_id, runner_id, status, expires_at, created_at, completed_at, attempt, fence, completion_key
 FROM run_leases

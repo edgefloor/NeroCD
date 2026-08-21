@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"nerocd/internal/app"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
 )
@@ -141,6 +142,7 @@ func (r *attemptReporter) run() {
 				r.fail(err)
 				return
 			}
+			r.supervisor.metrics.Retry()
 			if backoff < time.Second {
 				backoff *= 2
 			}
@@ -306,7 +308,39 @@ type replayAttempt struct {
 }
 
 func reconcileRunnerJournal(server, token string, journal *runner.AttemptJournal) error {
+	return reconcileRunnerJournalWithCounters(server, token, journal, &runnerOperationalCounters{})
+}
+
+func reconcileRunnerJournalWithCounters(server, token string, journal *runner.AttemptJournal, operational *runnerOperationalCounters) error {
 	snapshot := journal.Snapshot()
+	// Provenance is replayed before any renewing, heartbeating, or claiming.
+	// Its request contains immutable evidence and must survive response loss
+	// without another checkout or source-policy evaluation.
+	for _, pending := range snapshot.Provenance {
+		lease, fenced, err := probeReplayAuthority(server, token, pending.Attempt)
+		if err != nil {
+			return err
+		}
+		if fenced {
+			if err := journal.AckProvenance(pending.ID); err != nil {
+				return err
+			}
+			fmt.Printf("journal_reconciliation=stale_provenance attempt=%d\n", pending.Attempt.Attempt)
+			continue
+		}
+		if err := probeProvenancePlan(server, token, pending); err != nil {
+			return err
+		}
+		supervisor := newAttemptSupervisor(lease, operational)
+		err = replayJournalProvenance(server, token, supervisor, pending)
+		supervisor.Close()
+		if err != nil {
+			return err
+		}
+		if err := journal.AckProvenance(pending.ID); err != nil {
+			return err
+		}
+	}
 	attempts := groupReplayAttempts(snapshot)
 	for _, pending := range attempts {
 		lease, fenced, err := probeReplayAuthority(server, token, pending.authority)
@@ -322,7 +356,7 @@ func reconcileRunnerJournal(server, token string, journal *runner.AttemptJournal
 			fmt.Printf("journal_reconciliation=fenced attempt=%d\n", pending.authority.Attempt)
 			continue
 		}
-		supervisor := newAttemptSupervisor(lease)
+		supervisor := newAttemptSupervisor(lease, operational)
 		err = reconcileAttempt(server, token, supervisor, pending)
 		supervisor.Close()
 		if err != nil {
@@ -333,6 +367,39 @@ func reconcileRunnerJournal(server, token string, journal *runner.AttemptJournal
 		}
 		if err := journal.DiscardAttempt(pending.authority.LeaseID, pending.authority.Attempt); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func probeProvenancePlan(server, token string, pending runner.JournalProvenance) error {
+	ctx, cancel := context.WithTimeout(context.Background(), runnerHTTPClient.Timeout)
+	defer cancel()
+	query := url.Values{"deployment_id": {pending.DeploymentID}, "run_id": {pending.Attempt.RunID}, "lease_id": {pending.Attempt.LeaseID}, "attempt": {fmt.Sprint(pending.Attempt.Attempt)}, "fence": {pending.Attempt.Fence}}
+	var plan domain.DeploymentPlan
+	if err := getAPIIntoContext(ctx, server+"/api/v1/runners/deployments/plan?"+query.Encode(), token, &plan); err != nil {
+		return fmt.Errorf("probe provenance plan: %w", err)
+	}
+	if plan.DeploymentID != pending.DeploymentID || plan.RunID != pending.Attempt.RunID || plan.LeaseID != pending.Attempt.LeaseID || plan.Attempt != pending.Attempt.Attempt || plan.Fence != pending.Attempt.Fence {
+		return errors.New("probe provenance plan returned invalid authority")
+	}
+	return nil
+}
+
+func replayJournalProvenance(server, token string, supervisor *attemptSupervisor, pending runner.JournalProvenance) error {
+	var revision domain.Revision
+	err := retryAttemptRequest(supervisor, func(ctx context.Context) error {
+		return postAPIIntoContext(ctx, server+"/api/v1/runners/deployments/provenance", app.ProvenanceResolutionInput{DeploymentID: pending.DeploymentID, RunID: pending.Attempt.RunID, LeaseID: pending.Attempt.LeaseID, Attempt: pending.Attempt.Attempt, Fence: pending.Attempt.Fence, ResolutionID: pending.ID, GitCommit: pending.GitCommit, ComposeHash: pending.ComposeHash, ImageDigests: append([]string(nil), pending.ImageDigests...), ContentIdentity: pending.ContentIdentity}, token, &revision)
+	})
+	if err != nil {
+		return err
+	}
+	if revision.GitCommit != pending.GitCommit || revision.ComposeHash != pending.ComposeHash || revision.ContentIdentity != pending.ContentIdentity || len(revision.ImageDigests) != len(pending.ImageDigests) {
+		return errors.New("provenance acknowledgement content mismatch")
+	}
+	for i := range pending.ImageDigests {
+		if revision.ImageDigests[i] != pending.ImageDigests[i] {
+			return errors.New("provenance acknowledgement content mismatch")
 		}
 	}
 	return nil
@@ -424,6 +491,7 @@ func retryAttemptRequest(supervisor *attemptSupervisor, request func(context.Con
 		if !waitRunnerRetry(supervisor.Context(), supervisor, backoff) {
 			return fmt.Errorf("%w: replay retry deadline: %v", errLeaseAuthorityLost, err)
 		}
+		supervisor.metrics.Retry()
 		if backoff < time.Second {
 			backoff *= 2
 		}

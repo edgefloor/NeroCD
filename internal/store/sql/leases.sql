@@ -99,3 +99,11 @@ WHERE id = sqlc.arg(lease_id)
   AND runner_id = sqlc.arg(runner_id)
   AND status = 'active'
   AND expires_at > clock_timestamp();
+
+-- name: ExpireDeploymentAttemptsForRun :exec
+UPDATE deployment_attempts AS deployment_attempt
+SET status='failed', finished_at=clock_timestamp()
+WHERE deployment_attempt.run_id=$1 AND deployment_attempt.status='active'
+  AND deployment_attempt.lease_id IN (
+    SELECT lease.id FROM run_leases AS lease WHERE lease.run_id=$1 AND lease.status='expired'
+  );

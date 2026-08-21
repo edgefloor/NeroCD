@@ -28,6 +28,7 @@ func NewRegistry() Registry {
 		{Type: "terraform", Name: "Terraform", Status: "planned", Description: "Thin adapter over git checkout, process execution, artifacts, and secrets."},
 		{Type: "powershell", Name: "PowerShell", Status: "planned", Description: "Process execution through the runner process primitive."},
 		{Type: "python", Name: "Python", Status: "planned", Description: "Process execution through the runner process primitive."},
+		{Type: domain.RunTypeComposeDeploy, Name: "Compose deployment", Status: "implemented", Description: "Fenced typed Compose execution with immutable provenance, production policy, health verification, rollback, and reconciliation."},
 	}
 	registry := Registry{adapters: map[string]Adapter{}}
 	for _, adapter := range adapters {

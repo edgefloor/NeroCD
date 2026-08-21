@@ -1,10 +1,16 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"slices"
@@ -18,11 +24,1285 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nerocd/db"
+	"nerocd/internal/api"
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/observability"
 	"nerocd/internal/store"
+	"nerocd/web"
 )
+
+func TestPostgresOperationalSnapshotAggregates(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "operational_snapshot")
+	defer pg.Close()
+	baseline, err := pg.OperationalSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("baseline snapshot: %v", err)
+	}
+	if baseline.BackupScheduleStatus != "disabled" || baseline.BackupScheduleFailures != 0 {
+		t.Fatalf("baseline scheduler snapshot=%#v", baseline)
+	}
+	if _, err := database.Exec(ctx, `UPDATE backup_schedule SET enabled=true, next_run_at=clock_timestamp() + interval '90 seconds', consecutive_failures=2 WHERE singleton`); err != nil {
+		t.Fatalf("configure schedule observation: %v", err)
+	}
+
+	now := time.Now().UTC()
+	runnerID := "runner_observability"
+	if _, err := pg.RegisterRunner(ctx, domain.Runner{
+		ID: runnerID, Name: "Observability Runner", Tags: []string{}, Capabilities: []string{"shell"},
+		Status: domain.RunnerActive, RegisteredAt: now.Add(-time.Minute), LastHeartbeatAt: now.Add(-12 * time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	create := func(id string, status domain.RunStatus, started time.Time, finished *time.Time) {
+		t.Helper()
+		if _, err := pg.CreateRun(ctx, domain.TaskRun{
+			ID: id, ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeShell},
+			RunnerTags: []string{}, Status: status, RequestedBy: "usr_bootstrap", StartedAt: started, FinishedAt: finished,
+		}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	activeStart := now.Add(-6 * time.Minute)
+	expiredStart := now.Add(-5 * time.Minute)
+	queuedStart := now.Add(-4 * time.Minute)
+	create("run_observation_active", domain.RunQueued, activeStart, nil)
+	create("run_observation_expired", domain.RunQueued, expiredStart, nil)
+	create("run_observation_queued", domain.RunQueued, queuedStart, nil)
+	for _, terminal := range []struct {
+		id     string
+		status domain.RunStatus
+		start  time.Time
+	}{
+		{"run_observation_succeeded", domain.RunSucceeded, now.Add(-3 * time.Minute)},
+		{"run_observation_failed", domain.RunFailed, now.Add(-2 * time.Minute)},
+		{"run_observation_canceled", domain.RunCanceled, now.Add(-time.Minute)},
+	} {
+		finished := terminal.start.Add(30 * time.Second)
+		create(terminal.id, terminal.status, terminal.start, &finished)
+	}
+
+	active, err := pg.ClaimRun(ctx, runnerID, now, time.Minute)
+	if err != nil {
+		t.Fatalf("claim active: %v", err)
+	}
+	expired, err := pg.ClaimRun(ctx, runnerID, now, time.Minute)
+	if err != nil {
+		t.Fatalf("claim expired: %v", err)
+	}
+	if _, err := database.Exec(ctx, `UPDATE run_leases SET status='expired' WHERE id=$1`, expired.Lease.ID); err != nil {
+		t.Fatalf("expire lease: %v", err)
+	}
+	if err := pg.RecordRunnerOperationalObservation(ctx, runnerID, 7, 3, 2); err != nil {
+		t.Fatalf("record runner observation: %v", err)
+	}
+	if _, err := database.Exec(ctx, `INSERT INTO backup_operational_results (outcome, reason) VALUES ('success', 'none')`); err != nil {
+		t.Fatalf("record backup: %v", err)
+	}
+
+	snapshot, err := pg.OperationalSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.QueueDepth != baseline.QueueDepth+1 || snapshot.ActiveLeases != baseline.ActiveLeases+1 || snapshot.ExpiredLeases != baseline.ExpiredLeases+1 {
+		t.Fatalf("queue/lease snapshot=%#v", snapshot)
+	}
+	for _, status := range []domain.RunStatus{domain.RunSucceeded, domain.RunFailed, domain.RunCanceled} {
+		aggregate := snapshot.TerminalRuns[status]
+		before := baseline.TerminalRuns[string(status)]
+		if aggregate.Count != before.Count+1 || aggregate.SumSeconds < before.SumSeconds+29 {
+			t.Fatalf("terminal %s aggregate=%#v", status, aggregate)
+		}
+	}
+	if snapshot.RunnerJournalDepth != 7 || snapshot.RunnerRetryCount != 3 || snapshot.RunnerRenewFailures != 2 || snapshot.BackupOutcome != observability.BackupSuccess || snapshot.BackupReason != "none" || snapshot.BackupScheduleStatus != "backoff" || snapshot.BackupScheduleFailures != 2 || snapshot.BackupScheduleNextSeconds < 80 || snapshot.BackupScheduleNextSeconds > 100 {
+		t.Fatalf("telemetry/backup snapshot=%#v", snapshot)
+	}
+	if snapshot.QueueOldestAgeSeconds < 3*60 || snapshot.OldestRunnerHeartbeatSecond < 10 || snapshot.BackupAgeSeconds < 0 || snapshot.BackupAgeSeconds > 60 {
+		t.Fatalf("database-clock ages snapshot=%#v", snapshot)
+	}
+	if active.Lease.ID == expired.Lease.ID {
+		t.Fatal("distinct claims unexpectedly shared a lease")
+	}
+}
+
+func TestPostgresRunLogRetentionAtomicReplayAndConcurrency(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "run_log_retention")
+	defer pg.Close()
+	now := time.Now().UTC()
+	finished := now.Add(-48 * time.Hour)
+	for _, id := range []string{"retention_run_a", "retention_run_b"} {
+		if _, err := pg.CreateRun(ctx, domain.TaskRun{ID: id, ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeShell}, RunnerTags: []string{}, Status: domain.RunSucceeded, RequestedBy: "usr_bootstrap", StartedAt: finished.Add(-time.Minute), FinishedAt: &finished}); err != nil {
+			t.Fatalf("create terminal run %s: %v", id, err)
+		}
+	}
+	for _, log := range []domain.RunLog{{ID: "retention_log_a", RunID: "retention_run_a", Stream: domain.LogStdout, Message: "abc", CreatedAt: finished}, {ID: "retention_log_b", RunID: "retention_run_b", Stream: domain.LogStdout, Message: "wxyz", CreatedAt: finished}} {
+		if err := pg.CreateRunLog(ctx, log); err != nil {
+			t.Fatalf("create old log %s: %v", log.ID, err)
+		}
+	}
+	policy, err := pg.UpdateRunLogRetentionPolicy(ctx, domain.RunLogRetentionPolicy{Enabled: true, KeepDays: 1, BatchSize: 1, UpdatedBy: "usr_bootstrap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := store.RunLogRetentionBodyHash(policy)
+	const requestID = "retention-concurrent-request"
+	results := make(chan domain.RunLogRetentionExecution, 8)
+	errs := make(chan error, 8)
+	var group sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		group.Add(1)
+		go func(i int) {
+			defer group.Done()
+			result, err := pg.ExecuteRunLogRetention(ctx, requestID, body, domain.AuditEvent{ID: fmt.Sprintf("retention_audit_%d", i), ActorID: "usr_bootstrap", Action: "run_log_retention.execute", TargetID: "run-log-retention", CreatedAt: now})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- result
+		}(i)
+	}
+	group.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent execute: %v", err)
+	}
+	var first domain.RunLogRetentionExecution
+	for result := range results {
+		if first.RequestID == "" {
+			first = result
+		}
+		if result != first {
+			t.Fatalf("replay result=%#v want=%#v", result, first)
+		}
+	}
+	if first.Deleted != 1 || first.DeletedBytes != 3 || first.Preview.EligibleLogs != 2 || first.Preview.EligibleBytes != 7 {
+		t.Fatalf("execution=%#v", first)
+	}
+	var logs, receipts, audits int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM run_logs WHERE id IN ('retention_log_a','retention_log_b')`).Scan(&logs); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM run_log_retention_receipts WHERE request_id=$1`, requestID).Scan(&receipts); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='run_log_retention.execute'`).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if logs != 1 || receipts != 1 || audits != 1 {
+		t.Fatalf("retention rows logs=%d receipts=%d audits=%d", logs, receipts, audits)
+	}
+	// An audit failure occurs after candidate selection/deletion in the SQL
+	// transaction; it must roll the entire operation back.
+	if err := pg.CreateAuditEvent(ctx, domain.AuditEvent{ID: "retention_duplicate_audit", ActorID: "usr_bootstrap", Action: "test", TargetID: "test", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.ExecuteRunLogRetention(ctx, "retention-rollback-request", body, domain.AuditEvent{ID: "retention_duplicate_audit", ActorID: "usr_bootstrap", Action: "run_log_retention.execute", TargetID: "run-log-retention", CreatedAt: now}); err == nil {
+		t.Fatal("duplicate audit execution unexpectedly succeeded")
+	}
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM run_logs WHERE id='retention_log_b'`).Scan(&logs); err != nil || logs != 1 {
+		t.Fatalf("failed execution deleted log count=%d err=%v", logs, err)
+	}
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM run_log_retention_receipts WHERE request_id='retention-rollback-request'`).Scan(&receipts); err != nil || receipts != 0 {
+		t.Fatalf("failed execution receipt count=%d err=%v", receipts, err)
+	}
+}
+
+func TestPostgresFencedDeploymentAttemptHTTPAndRollback(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "deployment_fence")
+	defer pg.Close()
+	now := time.Now().UTC()
+	suffix := strconv.FormatInt(now.UnixNano(), 36)
+	serviceID, environmentID := "svc_fenced_"+suffix, "env_fenced_"+suffix
+	if _, err := pg.CreateService(ctx, domain.Service{ID: serviceID, ProjectID: "proj_platform", Name: "fenced-" + suffix, RepositoryID: "repo_platform_runbooks", ComposePath: "compose.yml", Profiles: []string{}, OwnerID: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.CreateEnvironment(ctx, domain.Environment{ID: environmentID, ServiceID: serviceID, Name: "prod", RunnerSelector: []string{}, ComposeProject: "fenced-" + suffix, HealthPolicy: domain.HealthPolicy{}, TimeoutSeconds: 60, SecretBindings: []domain.SecretBinding{}, RollbackSafe: true, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	revisionA, revisionB := "rev_fenced_a_"+suffix, "rev_fenced_b_"+suffix
+	if _, err := pg.CreateRevision(ctx, domain.Revision{ID: revisionA, ServiceID: serviceID, RequestedRef: "a", CreatedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.CreateRevision(ctx, domain.Revision{ID: revisionB, ServiceID: serviceID, RequestedRef: "b", CreatedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	var pendingRevisionCount int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM revisions WHERE service_id=$1 AND provenance_state='pending' AND content_identity=''`, serviceID).Scan(&pendingRevisionCount); err != nil || pendingRevisionCount != 2 {
+		t.Fatalf("two pending revisions not independently durable count=%d err=%v", pendingRevisionCount, err)
+	}
+
+	runnerToken := "runner-deployment-" + suffix
+	hash := sha256.Sum256([]byte(runnerToken))
+	runnerID := "runner_deployment_" + suffix
+	if _, err := pg.RegisterRunner(ctx, domain.Runner{ID: runnerID, Name: runnerID, Tags: []string{}, Capabilities: []string{domain.RunTypeComposeDeploy}, TokenHash: fmt.Sprintf("%x", hash[:]), Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	create := func(id, runID, revision, key string) domain.Deployment {
+		d, createErr := pg.CreateDeploymentRequest(ctx, domain.Deployment{ID: id, EnvironmentID: environmentID, DesiredRevisionID: revision, IdempotencyKey: key, Status: domain.DeploymentQueued, RequestedBy: "usr_bootstrap", FenceRequired: true, CreatedAt: now, UpdatedAt: now}, domain.TaskRun{ID: runID, ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy}, Workflow: domain.Workflow{}, WorkflowState: domain.WorkflowState{}, RunnerTags: []string{}, Status: domain.RunQueued, RequestedBy: "usr_bootstrap", StartedAt: now}, domain.AuditEvent{ID: "audit_" + id, ActorID: "usr_bootstrap", Action: "deployment.create", TargetID: id, Metadata: map[string]any{}, CreatedAt: now})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return d
+	}
+	depA := create("dep_fenced_a_"+suffix, "run_fenced_a_"+suffix, revisionA, "a")
+	claimA, err := pg.ClaimRun(ctx, runnerID, now, time.Minute)
+	if err != nil || claimA.Run.ID != *depA.TaskRunID || claimA.Lease.Attempt != 1 {
+		t.Fatalf("claim = %#v, %v", claimA, err)
+	}
+
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg})
+	server := api.NewServer(service, slog.Default(), web.Static())
+	adminSession, err := service.CreateSession(ctx, "admin@example.local", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	genericComplete := func(lease domain.RunLease) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"lease_id":%q,"attempt":%d,"fence":%q,"completion_key":"generic-deployment","status":"succeeded"}`, lease.ID, lease.Attempt, lease.Fence)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/complete", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := genericComplete(claimA.Lease); rec.Code != http.StatusConflict {
+		t.Fatalf("generic deployment completion before terminal = %d: %s", rec.Code, rec.Body.String())
+	}
+	postTransition := func(deployment domain.Deployment, claim domain.ClaimedRun, expected, target, key, fence string, health *bool) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"transition_key":%q,"expected_status":%q,"target_status":%q`, deployment.ID, claim.Run.ID, claim.Lease.ID, claim.Lease.Attempt, fence, key, expected, target)
+		if health != nil {
+			body += fmt.Sprintf(`,"health_passed":%t`, *health)
+		}
+		body += `,"metadata":{"integration":true}}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/transition", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	postProvenance := func(deployment domain.Deployment, claim domain.ClaimedRun, resolutionID, commit, hash string, digests []string, fence string) *httptest.ResponseRecorder {
+		digestJSON, marshalErr := json.Marshal(digests)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		body := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"resolution_id":%q,"git_commit":%q,"compose_hash":%q,"image_digests":%s,"content_identity":%q}`,
+			deployment.ID, claim.Run.ID, claim.Lease.ID, claim.Lease.Attempt, fence, resolutionID, commit, hash, digestJSON, commit+":"+hash)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/provenance", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	transition := func(expected, target, key string, health *bool) *httptest.ResponseRecorder {
+		return postTransition(depA, claimA, expected, target, key, claimA.Lease.Fence, health)
+	}
+	assertTerminalLifecycle := func(deployment domain.Deployment, claim domain.ClaimedRun, want string) {
+		var attemptStatus, leaseStatus, runStatus string
+		var runnerCleared, runFinished bool
+		if queryErr := database.QueryRow(ctx, `
+SELECT da.status, rl.status, tr.status, tr.runner_id IS NULL, tr.finished_at IS NOT NULL
+FROM deployment_attempts da
+JOIN run_leases rl ON rl.id=da.lease_id
+JOIN task_runs tr ON tr.id=da.run_id
+WHERE da.deployment_id=$1 AND da.attempt=$2`, deployment.ID, claim.Lease.Attempt).Scan(&attemptStatus, &leaseStatus, &runStatus, &runnerCleared, &runFinished); queryErr != nil {
+			t.Fatal(queryErr)
+		}
+		if attemptStatus != want || leaseStatus != want || runStatus != want || !runnerCleared || !runFinished {
+			t.Fatalf("terminal lifecycle deployment=%s attempt=%q lease=%q run=%q runner_cleared=%t finished=%t", deployment.ID, attemptStatus, leaseStatus, runStatus, runnerCleared, runFinished)
+		}
+	}
+	// The runner can only start applying after it has fetched the constrained
+	// plan and durably bound its observed provenance under this exact fence.
+	planReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/runners/deployments/plan?deployment_id=%s&run_id=%s&lease_id=%s&attempt=%d&fence=%s", depA.ID, claimA.Run.ID, claimA.Lease.ID, claimA.Lease.Attempt, claimA.Lease.Fence), nil)
+	planReq.Header.Set("Authorization", "Bearer "+runnerToken)
+	planRec := httptest.NewRecorder()
+	server.ServeHTTP(planRec, planReq)
+	if planRec.Code != http.StatusOK {
+		t.Fatalf("runner plan response %d: %s", planRec.Code, planRec.Body.String())
+	}
+	commitA, hashA, digestsA := strings.Repeat("a", 40), "sha256:"+strings.Repeat("b", 64), []string{"sha256:" + strings.Repeat("c", 64)}
+	provenanceResponses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() {
+			provenanceResponses <- postProvenance(depA, claimA, "resolution-a", commitA, hashA, digestsA, claimA.Lease.Fence)
+		}()
+	}
+	for range 2 {
+		if rec := <-provenanceResponses; rec.Code != http.StatusOK {
+			t.Fatalf("concurrent provenance response %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	var provenanceAuditCount, provenanceReceiptCount int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='runner.deployment.provenance.resolve'`, depA.ID).Scan(&provenanceAuditCount); err != nil || provenanceAuditCount != 1 {
+		t.Fatalf("provenance audit count=%d err=%v", provenanceAuditCount, err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM provenance_resolutions WHERE deployment_id=$1 AND resolution_id='resolution-a'`, depA.ID).Scan(&provenanceReceiptCount); err != nil || provenanceReceiptCount != 1 {
+		t.Fatalf("provenance receipt count=%d err=%v", provenanceReceiptCount, err)
+	}
+	var resolvedA domain.Revision
+	if err = json.Unmarshal(postProvenance(depA, claimA, "resolution-a", commitA, hashA, digestsA, claimA.Lease.Fence).Body.Bytes(), &resolvedA); err != nil || !resolvedA.ProvenanceResolved || resolvedA.ID != revisionA {
+		t.Fatalf("provenance replay dto=%#v err=%v", resolvedA, err)
+	}
+	if rec := postProvenance(depA, claimA, "resolution-a", strings.Repeat("9", 40), hashA, digestsA, claimA.Lease.Fence); rec.Code != http.StatusConflict {
+		t.Fatalf("altered provenance replay response %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "apply"}, {domain.DeploymentApplying, domain.DeploymentVerifying, "verify"}} {
+		if rec := transition(step[0], step[1], step[2], nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	yes := true
+	if rec := transition(domain.DeploymentVerifying, domain.DeploymentSucceeded, "succeed", &yes); rec.Code != http.StatusOK {
+		t.Fatalf("success response %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := transition(domain.DeploymentVerifying, domain.DeploymentSucceeded, "succeed", &yes); rec.Code != http.StatusOK {
+		t.Fatalf("exact replay response %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := transition(domain.DeploymentVerifying, domain.DeploymentFailed, "succeed", nil); rec.Code != http.StatusConflict {
+		t.Fatalf("conflicting replay response %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := genericComplete(claimA.Lease); rec.Code != http.StatusConflict {
+		t.Fatalf("generic deployment completion after terminal = %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err = pg.ActiveLeaseForRun(ctx, claimA.Run.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("terminal deployment retained active lease: %v", err)
+	}
+	runs, err := pg.ListRuns(ctx, "proj_platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range runs {
+		if run.ID == claimA.Run.ID && (run.Status != domain.RunSucceeded || run.RunnerID != nil || run.FinishedAt == nil) {
+			t.Fatalf("terminal run lifecycle %#v", run)
+		}
+	}
+	var attemptStatus, leaseStatus string
+	if err = database.QueryRow(ctx, `SELECT da.status, rl.status FROM deployment_attempts da JOIN run_leases rl ON rl.id=da.lease_id WHERE da.deployment_id=$1 AND da.attempt=$2`, depA.ID, claimA.Lease.Attempt).Scan(&attemptStatus, &leaseStatus); err != nil {
+		t.Fatal(err)
+	}
+	if attemptStatus != domain.RunSucceeded || leaseStatus != domain.RunSucceeded {
+		t.Fatalf("terminal lifecycle attempt=%q lease=%q", attemptStatus, leaseStatus)
+	}
+	assertTerminalLifecycle(depA, claimA, domain.RunSucceeded)
+	if rec := postProvenance(depA, claimA, "resolution-a", commitA, hashA, digestsA, claimA.Lease.Fence); rec.Code != http.StatusOK {
+		t.Fatalf("terminal exact provenance replay response %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postProvenance(depA, claimA, "unseen-after-terminal", commitA, hashA, digestsA, claimA.Lease.Fence); rec.Code != http.StatusForbidden {
+		t.Fatalf("terminal unseen provenance response %d: %s", rec.Code, rec.Body.String())
+	}
+	if err = pg.ExpireLeases(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("terminal deployment requeued/claimed: %v", err)
+	}
+	environments, err := pg.ListEnvironments(ctx, serviceID)
+	if err != nil || environments[0].CurrentHealthyRevisionID == nil || *environments[0].CurrentHealthyRevisionID != revisionA {
+		t.Fatalf("healthy pointer %#v, %v", environments, err)
+	}
+
+	depB := create("dep_fenced_b_"+suffix, "run_fenced_b_"+suffix, revisionB, "b")
+	claimB, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transitionB := func(expected, target, key string) {
+		if rec := postTransition(depB, claimB, expected, target, key, claimB.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", key, rec.Code, rec.Body.String())
+		}
+	}
+	transitionB(domain.DeploymentAssigned, domain.DeploymentPreparing, "bprepare")
+	commitB, hashB, digestsB := strings.Repeat("d", 40), "sha256:"+strings.Repeat("e", 64), []string{"sha256:" + strings.Repeat("f", 64)}
+	if rec := postProvenance(depB, claimB, "resolution-b", commitB, hashB, digestsB, claimB.Lease.Fence); rec.Code != http.StatusOK {
+		t.Fatalf("provenance B response %d: %s", rec.Code, rec.Body.String())
+	}
+	transitionB(domain.DeploymentPreparing, domain.DeploymentApplying, "bapply")
+	transitionB(domain.DeploymentApplying, domain.DeploymentCancelRequested, "bcancel-requested")
+	if rec := postTransition(depB, claimB, domain.DeploymentCancelRequested, domain.DeploymentCanceled, "bcancelled", claimB.Lease.Fence, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("post-apply direct cancellation response %d: %s", rec.Code, rec.Body.String())
+	}
+	var postApplyStatus string
+	if err = database.QueryRow(ctx, `SELECT status FROM deployments WHERE id=$1`, depB.ID).Scan(&postApplyStatus); err != nil {
+		t.Fatal(err)
+	}
+	if postApplyStatus != domain.DeploymentCancelRequested {
+		t.Fatalf("rejected post-apply cancel changed deployment status %q", postApplyStatus)
+	}
+	transitionB(domain.DeploymentCancelRequested, domain.DeploymentManualIntervention, "bmanual")
+	assertTerminalLifecycle(depB, claimB, domain.RunFailed)
+	environments, err = pg.ListEnvironments(ctx, serviceID)
+	if err != nil || environments[0].CurrentHealthyRevisionID == nil || *environments[0].CurrentHealthyRevisionID != revisionA {
+		t.Fatalf("rollback pointer %#v, %v", environments, err)
+	}
+	if rec := postTransition(depB, claimB, domain.DeploymentCancelRequested, domain.DeploymentManualIntervention, "stale", "stale", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("stale terminal fence response = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The replacement attempt is created by the normal DB-clock reaper and
+	// claim path; the expired authority cannot modify the still-assigned
+	// deployment, while the new fence can.
+	depC := create("dep_fenced_c_"+suffix, "run_fenced_c_"+suffix, revisionB, "c")
+	if _, err = pg.HeartbeatRunner(ctx, runnerID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	claimC1, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if err = pg.ExpireLeases(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	var expiredAttemptStatus string
+	var expiredAttemptFinished bool
+	if err = database.QueryRow(ctx, `SELECT status, finished_at IS NOT NULL FROM deployment_attempts WHERE deployment_id=$1 AND attempt=$2`, depC.ID, claimC1.Lease.Attempt).Scan(&expiredAttemptStatus, &expiredAttemptFinished); err != nil {
+		t.Fatal(err)
+	}
+	if expiredAttemptStatus != domain.RunFailed || !expiredAttemptFinished {
+		t.Fatalf("expired fence left nonterminal deployment attempt status=%q finished=%v", expiredAttemptStatus, expiredAttemptFinished)
+	}
+	if _, err = pg.HeartbeatRunner(ctx, runnerID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	claimC2, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil || claimC2.Lease.Attempt <= claimC1.Lease.Attempt {
+		t.Fatalf("replacement claim %#v after %#v: %v", claimC2.Lease, claimC1.Lease, err)
+	}
+	if rec := postTransition(depC, claimC1, domain.DeploymentAssigned, domain.DeploymentPreparing, "stale-expired", claimC1.Lease.Fence, nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("expired HTTP fence response = %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err = pg.TransitionDeploymentAttempt(ctx, domain.DeploymentTransitionRequest{DeploymentID: depC.ID, RunID: claimC2.Run.ID, LeaseID: claimC2.Lease.ID, RunnerID: runnerID, Attempt: claimC2.Lease.Attempt, Fence: claimC2.Lease.Fence, TransitionKey: "current", ExpectedStatus: domain.DeploymentAssigned, TargetStatus: domain.DeploymentPreparing, Metadata: map[string]any{}}, domain.AuditEvent{ID: "audit_current" + suffix, ActorID: runnerID, Action: "runner.deployment.transition", TargetID: depC.ID, Metadata: map[string]any{}, CreatedAt: now}); err != nil {
+		t.Fatalf("current fence: %v", err)
+	}
+	if rec := postTransition(depC, claimC2, domain.DeploymentPreparing, domain.DeploymentCanceled, "ccanceled", claimC2.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("pre-apply cancellation response = %d: %s", rec.Code, rec.Body.String())
+	}
+	assertTerminalLifecycle(depC, claimC2, domain.RunCanceled)
+
+	// Two simultaneous terminal reports with the same key must produce one
+	// durable transition and one replay acknowledgement, never a second
+	// attempt, lease completion, run completion, or audit event.
+	depD := create("dep_fenced_d_"+suffix, "run_fenced_d_"+suffix, revisionB, "d")
+	claimD, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "dprepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "dapply"}, {domain.DeploymentApplying, domain.DeploymentVerifying, "dverify"}} {
+		if rec := postTransition(depD, claimD, step[0], step[1], step[2], claimD.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() {
+			responses <- postTransition(depD, claimD, domain.DeploymentVerifying, domain.DeploymentSucceeded, "dsuccess", claimD.Lease.Fence, &yes)
+		}()
+	}
+	for range 2 {
+		if rec := <-responses; rec.Code != http.StatusOK {
+			t.Fatalf("concurrent terminal response %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	var auditCount int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='runner.deployment.transition'`, depD.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 4 { // prepare, apply, verify, and exactly one terminal transition.
+		t.Fatalf("concurrent terminal audit count = %d", auditCount)
+	}
+	if _, err = pg.ActiveLeaseForRun(ctx, claimD.Run.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("concurrent terminal deployment retained active lease: %v", err)
+	}
+	assertTerminalLifecycle(depD, claimD, domain.RunSucceeded)
+
+	// A maintainer's generic cancel route is deliberately not an execution
+	// authority for deployment-backed runs. The server path and direct store
+	// path both reject it without stranding deployment state or its lease.
+	depE := create("dep_fenced_cancel_"+suffix, "run_fenced_cancel_"+suffix, revisionA, "cancel")
+	claimE, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := postTransition(depE, claimE, domain.DeploymentAssigned, domain.DeploymentPreparing, "eprepare", claimE.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("prepare before generic cancellation response %d: %s", rec.Code, rec.Body.String())
+	}
+	var beforeLogs, beforeArtifacts int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM run_logs WHERE run_id=$1`, claimE.Run.ID).Scan(&beforeLogs); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM run_artifacts WHERE run_id=$1`, claimE.Run.ID).Scan(&beforeArtifacts); err != nil {
+		t.Fatal(err)
+	}
+	if err = pg.CreateRunLog(ctx, domain.RunLog{ID: "log_generic_deployment_" + suffix, RunID: claimE.Run.ID, Sequence: 1, Stream: domain.LogSystem, Message: "generic"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("direct generic deployment log = %v", err)
+	}
+	if err = pg.CreateArtifact(ctx, domain.ArtifactRecord{ID: "art_generic_deployment_" + suffix, RunID: claimE.Run.ID, LeaseID: claimE.Lease.ID, Name: "generic", Path: "generic", Kind: domain.ArtifactFile}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("direct generic deployment artifact = %v", err)
+	}
+	var afterGenericLogs, afterGenericArtifacts int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM run_logs WHERE run_id=$1`, claimE.Run.ID).Scan(&afterGenericLogs); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM run_artifacts WHERE run_id=$1`, claimE.Run.ID).Scan(&afterGenericArtifacts); err != nil {
+		t.Fatal(err)
+	}
+	if afterGenericLogs != beforeLogs || afterGenericArtifacts != beforeArtifacts {
+		t.Fatalf("generic deployment appends changed logs=%d/%d artifacts=%d/%d", beforeLogs, afterGenericLogs, beforeArtifacts, afterGenericArtifacts)
+	}
+	postRunnerEvents := func(fence, key string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"events":[{"event_key":%q,"sequence":1,"stream":"stdout","message":"deployment log"}]}`, claimE.Run.ID, claimE.Lease.ID, claimE.Lease.Attempt, fence, key)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/events/batch", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	postRunnerArtifact := func(fence, name string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"name":%q,"path":%q,"found":true,"required":true,"size":1,"kind":"file"}`, claimE.Run.ID, claimE.Lease.ID, claimE.Lease.Attempt, fence, name, name)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/artifacts", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := postRunnerEvents(claimE.Lease.Fence, "deployment-event"); rec.Code != http.StatusOK {
+		t.Fatalf("fenced runner batch response %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postRunnerArtifact(claimE.Lease.Fence, "deployment-artifact"); rec.Code != http.StatusCreated {
+		t.Fatalf("fenced runner artifact response %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postRunnerEvents("stale", "stale-deployment-event"); rec.Code != http.StatusNotFound {
+		t.Fatalf("stale runner batch response %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postRunnerArtifact("stale", "stale-deployment-artifact"); rec.Code != http.StatusNotFound {
+		t.Fatalf("stale runner artifact response %d: %s", rec.Code, rec.Body.String())
+	}
+	genericCancel := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/cancel", bytes.NewBufferString(fmt.Sprintf(`{"run_id":%q}`, claimE.Run.ID)))
+		req.Header.Set("Authorization", "Bearer "+adminSession.Token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := genericCancel(); rec.Code != http.StatusConflict {
+		t.Fatalf("generic deployment cancel response %d: %s", rec.Code, rec.Body.String())
+	}
+	var deploymentStatus, pendingAttemptStatus, activeLeaseStatus, activeRunStatus string
+	if err = database.QueryRow(ctx, `
+SELECT d.status, da.status, rl.status, tr.status
+FROM deployments d
+JOIN deployment_attempts da ON da.deployment_id=d.id AND da.attempt=$2
+JOIN run_leases rl ON rl.id=da.lease_id
+JOIN task_runs tr ON tr.id=da.run_id
+WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingAttemptStatus, &activeLeaseStatus, &activeRunStatus); err != nil {
+		t.Fatal(err)
+	}
+	if deploymentStatus != domain.DeploymentPreparing || pendingAttemptStatus != "active" || activeLeaseStatus != domain.LeaseActive || activeRunStatus != domain.RunRunning {
+		t.Fatalf("generic cancel mutated deployment=%q attempt=%q lease=%q run=%q", deploymentStatus, pendingAttemptStatus, activeLeaseStatus, activeRunStatus)
+	}
+	if _, err = pg.CancelRunRequest(ctx, claimE.Run.ID, time.Now().UTC(), domain.RunLog{ID: "log_direct_cancel_" + suffix, RunID: claimE.Run.ID, Stream: domain.LogSystem}, domain.AuditEvent{ID: "audit_direct_cancel_" + suffix}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("direct generic deployment cancel = %v", err)
+	}
+	if _, err = pg.UpdateRunStatus(ctx, claimE.Run.ID, domain.RunCanceled, nil); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("direct generic deployment status update = %v", err)
+	}
+	if _, err = pg.UpdateRunWorkflowState(ctx, claimE.Run.ID, domain.WorkflowState{}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("direct generic deployment workflow update = %v", err)
+	}
+	if _, err = pg.CreateApproval(ctx, domain.Approval{ID: "approval_deployment_" + suffix, RunID: claimE.Run.ID, Status: domain.ApprovalPending, RequestedBy: "usr_bootstrap", CreatedAt: time.Now().UTC()}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("direct generic deployment approval = %v", err)
+	}
+	if rec := postTransition(depE, claimE, domain.DeploymentPreparing, domain.DeploymentCanceled, "ecanceled", claimE.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("fenced cancellation response %d: %s", rec.Code, rec.Body.String())
+	}
+	assertTerminalLifecycle(depE, claimE, domain.RunCanceled)
+	if rec := genericCancel(); rec.Code != http.StatusConflict {
+		t.Fatalf("stale generic deployment cancel response %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err = pg.CancelRunRequest(ctx, claimE.Run.ID, time.Now().UTC(), domain.RunLog{ID: "log_stale_direct_cancel_" + suffix, RunID: claimE.Run.ID, Stream: domain.LogSystem}, domain.AuditEvent{ID: "audit_stale_direct_cancel_" + suffix}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale direct generic deployment cancel = %v", err)
+	}
+	if err = pg.CreateRunLog(ctx, domain.RunLog{ID: "log_terminal_generic_deployment_" + suffix, RunID: claimE.Run.ID, Sequence: 1, Stream: domain.LogSystem}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("terminal generic deployment log = %v", err)
+	}
+	if err = pg.CreateArtifact(ctx, domain.ArtifactRecord{ID: "art_terminal_generic_deployment_" + suffix, RunID: claimE.Run.ID, LeaseID: claimE.Lease.ID, Name: "terminal", Path: "terminal", Kind: domain.ArtifactFile}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("terminal generic deployment artifact = %v", err)
+	}
+	if rec := postRunnerEvents(claimE.Lease.Fence, "terminal-deployment-event"); rec.Code != http.StatusNotFound {
+		t.Fatalf("terminal runner batch response %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postRunnerArtifact(claimE.Lease.Fence, "terminal-deployment-artifact"); rec.Code != http.StatusNotFound {
+		t.Fatalf("terminal runner artifact response %d: %s", rec.Code, rec.Body.String())
+	}
+	var terminalLogs, terminalArtifacts int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM run_logs WHERE run_id=$1`, claimE.Run.ID).Scan(&terminalLogs); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM run_artifacts WHERE run_id=$1`, claimE.Run.ID).Scan(&terminalArtifacts); err != nil {
+		t.Fatal(err)
+	}
+	if terminalLogs != beforeLogs+1 || terminalArtifacts != beforeArtifacts+1 {
+		t.Fatalf("terminal deployment append changed logs=%d artifacts=%d", terminalLogs, terminalArtifacts)
+	}
+
+	// A post-apply cancellation can escalate to manual intervention, which is
+	// terminal and loud: it fails the exact run/lease/attempt but never moves
+	// the healthy pointer.
+	depF := create("dep_fenced_manual_"+suffix, "run_fenced_manual_"+suffix, revisionA, "manual")
+	claimF, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "fprepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "fapply"}, {domain.DeploymentApplying, domain.DeploymentCancelRequested, "fcancel-requested"}, {domain.DeploymentCancelRequested, domain.DeploymentManualIntervention, "fmanual"}} {
+		if rec := postTransition(depF, claimF, step[0], step[1], step[2], claimF.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	assertTerminalLifecycle(depF, claimF, domain.RunFailed)
+	environments, err = pg.ListEnvironments(ctx, serviceID)
+	if err != nil || environments[0].CurrentHealthyRevisionID == nil || *environments[0].CurrentHealthyRevisionID != revisionB {
+		t.Fatalf("manual intervention changed healthy pointer %#v, %v", environments, err)
+	}
+
+	postPreAssignmentFailure := func(deploymentID, failureCode string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"id":%q,"failure_code":%q}`, deploymentID, failureCode)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/fail-preassignment", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+adminSession.Token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	preFailed := create("dep_fenced_pre_failed_"+suffix, "run_fenced_pre_failed_"+suffix, revisionA, "pre-failed")
+	if rec := postPreAssignmentFailure(preFailed.ID, "validation_failed"); rec.Code != http.StatusOK {
+		t.Fatalf("pre-assignment failure response %d: %s", rec.Code, rec.Body.String())
+	}
+	var preFailureAudits int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='deployment.preassignment_fail'`, preFailed.ID).Scan(&preFailureAudits); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postPreAssignmentFailure(preFailed.ID, "validation_failed"); rec.Code != http.StatusOK {
+		t.Fatalf("idempotent pre-assignment failure response %d: %s", rec.Code, rec.Body.String())
+	}
+	var replayPreFailureAudits int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='deployment.preassignment_fail'`, preFailed.ID).Scan(&replayPreFailureAudits); err != nil {
+		t.Fatal(err)
+	}
+	if replayPreFailureAudits != preFailureAudits {
+		t.Fatalf("pre-assignment failure replay duplicated audit %d/%d", preFailureAudits, replayPreFailureAudits)
+	}
+	var preDeploymentStatus, preRunStatus string
+	if err = database.QueryRow(ctx, `SELECT d.status, tr.status FROM deployments d JOIN task_runs tr ON tr.id=d.task_run_id WHERE d.id=$1`, preFailed.ID).Scan(&preDeploymentStatus, &preRunStatus); err != nil {
+		t.Fatal(err)
+	}
+	if preDeploymentStatus != domain.DeploymentFailed || preRunStatus != domain.RunFailed {
+		t.Fatalf("pre-assignment failure lifecycle deployment=%q run=%q", preDeploymentStatus, preRunStatus)
+	}
+
+	// Post-apply failure is one runner-authored atomic operation: its source
+	// retains the environment lock while exactly one child rollback is queued.
+	revisionC := "rev_fenced_rollback_" + suffix
+	if _, err := pg.CreateRevision(ctx, domain.Revision{ID: revisionC, ServiceID: serviceID, RequestedRef: "rollback", CreatedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	source := create("dep_fenced_rollback_source_"+suffix, "run_fenced_rollback_source_"+suffix, revisionC, "rollback-source")
+	claimSource, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := postPreAssignmentFailure(source.ID, "too-late"); rec.Code != http.StatusConflict {
+		t.Fatalf("assigned pre-assignment failure response %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "source-prepare"}} {
+		if rec := postTransition(source, claimSource, step[0], step[1], step[2], claimSource.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	if rec := postProvenance(source, claimSource, "resolution-source", strings.Repeat("7", 40), "sha256:"+strings.Repeat("8", 64), []string{"sha256:" + strings.Repeat("9", 64)}, claimSource.Lease.Fence); rec.Code != http.StatusOK {
+		t.Fatalf("source provenance %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postTransition(source, claimSource, domain.DeploymentPreparing, domain.DeploymentApplying, "source-apply", claimSource.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("source apply %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postTransition(source, claimSource, domain.DeploymentApplying, domain.DeploymentRolledBack, "source-root-bypass", claimSource.Lease.Fence, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("root direct rollback response %d: %s", rec.Code, rec.Body.String())
+	}
+	var genericRunsBefore, genericDeploymentsBefore, genericAuditsBefore int
+	if err = database.QueryRow(ctx, `SELECT (SELECT count(*) FROM task_runs),(SELECT count(*) FROM deployments),(SELECT count(*) FROM audit_events)`).Scan(&genericRunsBefore, &genericDeploymentsBefore, &genericAuditsBefore); err != nil {
+		t.Fatal(err)
+	}
+	genericChildBody := fmt.Sprintf(`{"environment_id":%q,"desired_revision_id":%q,"idempotency_key":"generic-rollback-child-%s","rollback_of_id":%q}`, environmentID, revisionB, suffix, source.ID)
+	genericChildReq := httptest.NewRequest(http.MethodPost, "/api/v1/deployments", bytes.NewBufferString(genericChildBody))
+	genericChildReq.Header.Set("Authorization", "Bearer "+adminSession.Token)
+	genericChildReq.Header.Set("Content-Type", "application/json")
+	genericChildRec := httptest.NewRecorder()
+	server.ServeHTTP(genericChildRec, genericChildReq)
+	if genericChildRec.Code != http.StatusConflict {
+		t.Fatalf("generic rollback child API response %d: %s", genericChildRec.Code, genericChildRec.Body.String())
+	}
+	var genericRunsAfter, genericDeploymentsAfter, genericAuditsAfter int
+	if err = database.QueryRow(ctx, `SELECT (SELECT count(*) FROM task_runs),(SELECT count(*) FROM deployments),(SELECT count(*) FROM audit_events)`).Scan(&genericRunsAfter, &genericDeploymentsAfter, &genericAuditsAfter); err != nil || genericRunsAfter != genericRunsBefore || genericDeploymentsAfter != genericDeploymentsBefore || genericAuditsAfter != genericAuditsBefore {
+		t.Fatalf("generic rollback child mutated runs=%d/%d deployments=%d/%d audits=%d/%d err=%v", genericRunsBefore, genericRunsAfter, genericDeploymentsBefore, genericDeploymentsAfter, genericAuditsBefore, genericAuditsAfter, err)
+	}
+	postFailureWith := func(requestID, fence, failureCode string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":%q,"expected_status":"applying","failure_code":%q}`, source.ID, claimSource.Run.ID, claimSource.Lease.ID, claimSource.Lease.Attempt, fence, requestID, failureCode)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	childID, childRunID := domain.RollbackObjectIDs(source.ID, "failure-source")
+	postFailure := func(requestID, fence string) *httptest.ResponseRecorder {
+		return postFailureWith(requestID, fence, "health_failed")
+	}
+	if rec := postFailure("failure-source", "stale"); rec.Code != http.StatusForbidden {
+		t.Fatalf("stale failure fence %d: %s", rec.Code, rec.Body.String())
+	}
+	// Race two indistinguishable reports. One mutation and one replay ACK are
+	// required even though both requests initially observe no child receipt.
+	failureResponses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() { failureResponses <- postFailure("failure-source", claimSource.Lease.Fence) }()
+	}
+	for range 2 {
+		if rec := <-failureResponses; rec.Code != http.StatusOK {
+			t.Fatalf("concurrent atomic failure %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	var rootStatus, childStatus string
+	var children int
+	if err = database.QueryRow(ctx, `SELECT status FROM deployments WHERE id=$1`, source.ID).Scan(&rootStatus); err != nil || rootStatus != domain.DeploymentRollingBack {
+		t.Fatalf("source lifecycle status=%q err=%v", rootStatus, err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*), min(status) FROM deployments WHERE rollback_of_id=$1`, source.ID).Scan(&children, &childStatus); err != nil || children != 1 || childStatus != domain.DeploymentQueued {
+		t.Fatalf("rollback child count/status=%d/%q err=%v", children, childStatus, err)
+	}
+	assertTerminalLifecycle(source, claimSource, domain.RunFailed)
+	var failureAudits, rollbackAudits, failureTransitions int
+	if err = database.QueryRow(ctx, `SELECT count(*) FILTER (WHERE action='runner.deployment.failed'), count(*) FILTER (WHERE action='runner.deployment.rollback_queued') FROM audit_events WHERE target_id IN ($1,$2)`, source.ID, childID).Scan(&failureAudits, &rollbackAudits); err != nil || failureAudits != 1 || rollbackAudits != 1 {
+		t.Fatalf("concurrent failure audits failed=%d rollback=%d err=%v", failureAudits, rollbackAudits, err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM deployment_transitions WHERE deployment_id=$1 AND transition_key='failure:failure-source'`, source.ID).Scan(&failureTransitions); err != nil || failureTransitions != 1 {
+		t.Fatalf("failure receipt transitions=%d err=%v", failureTransitions, err)
+	}
+	if rec := postFailureWith("failure-source", claimSource.Lease.Fence, "different_failure"); rec.Code != http.StatusConflict {
+		t.Fatalf("changed replay body response %d: %s", rec.Code, rec.Body.String())
+	}
+	if err = pg.ExpireLeases(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postFailure("failure-source", claimSource.Lease.Fence); rec.Code != http.StatusOK {
+		t.Fatalf("post-terminal exact replay %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postFailure("unseen-after-terminal", claimSource.Lease.Fence); rec.Code != http.StatusForbidden {
+		t.Fatalf("unseen terminal replay %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The linked child is the only new execution. Its terminal outcome settles
+	// both records atomically and, on success, restores the previous healthy
+	// pointer. The source's completed run is never reaped/reclaimed.
+	claimChild, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil || claimChild.Run.ID != childRunID {
+		t.Fatalf("claim rollback child %#v err=%v", claimChild, err)
+	}
+	child := domain.Deployment{ID: childID, TaskRunID: &childRunID}
+	if rec := postTransition(child, claimChild, domain.DeploymentAssigned, domain.DeploymentFailed, "child-ordinary-fail", claimChild.Lease.Fence, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("child ordinary terminal response %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "child-prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "child-apply"}, {domain.DeploymentApplying, domain.DeploymentVerifying, "child-verify"}} {
+		if rec := postTransition(child, claimChild, step[0], step[1], step[2], claimChild.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	if rec := postTransition(child, claimChild, domain.DeploymentVerifying, domain.DeploymentRolledBack, "child-rolled-back", claimChild.Lease.Fence, &yes); rec.Code != http.StatusOK {
+		t.Fatalf("child rolled back response %d: %s", rec.Code, rec.Body.String())
+	}
+	assertTerminalLifecycle(child, claimChild, domain.RunSucceeded)
+	var sourceAfterSuccess, childAfterSuccess, pointerAfterSuccess string
+	if err = database.QueryRow(ctx, `SELECT d.status,(SELECT status FROM deployments WHERE id=$2),e.current_healthy_revision_id FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE d.id=$1`, source.ID, childID).Scan(&sourceAfterSuccess, &childAfterSuccess, &pointerAfterSuccess); err != nil || sourceAfterSuccess != domain.DeploymentRolledBack || childAfterSuccess != domain.DeploymentRolledBack || pointerAfterSuccess != revisionB {
+		t.Fatalf("successful rollback settlement source=%q child=%q pointer=%q err=%v", sourceAfterSuccess, childAfterSuccess, pointerAfterSuccess, err)
+	}
+	if _, err = pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("terminal source or child reaped/reclaimed: %v", err)
+	}
+	for _, terminalRunID := range []string{claimSource.Run.ID, claimChild.Run.ID} {
+		if _, err = pg.UpdateRunStatus(ctx, terminalRunID, domain.RunFailed, nil); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("terminal deployment generic status update %s = %v", terminalRunID, err)
+		}
+	}
+	if rec := postTransition(child, claimChild, domain.DeploymentRolledBack, domain.DeploymentRollbackFailed, "child-terminal-mutate", claimChild.Lease.Fence, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("terminal child mutation response %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Independently prove the loud rollback-failed settlement path. It must
+	// release the root lock but leave the verified healthy pointer untouched.
+	revisionD := "rev_fenced_rollback_failed_" + suffix
+	if _, err = pg.CreateRevision(ctx, domain.Revision{ID: revisionD, ServiceID: serviceID, RequestedRef: "rollback-failed", CreatedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	source2 := create("dep_fenced_rollback_failed_source_"+suffix, "run_fenced_rollback_failed_source_"+suffix, revisionD, "rollback-failed-source")
+	claimSource2, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "source2-prepare"}} {
+		if rec := postTransition(source2, claimSource2, step[0], step[1], step[2], claimSource2.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	if rec := postProvenance(source2, claimSource2, "resolution-source2", strings.Repeat("1", 40), "sha256:"+strings.Repeat("2", 64), []string{"sha256:" + strings.Repeat("3", 64)}, claimSource2.Lease.Fence); rec.Code != http.StatusOK {
+		t.Fatalf("source2 provenance %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postTransition(source2, claimSource2, domain.DeploymentPreparing, domain.DeploymentApplying, "source2-apply", claimSource2.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("source2 apply %d: %s", rec.Code, rec.Body.String())
+	}
+	child2ID, child2RunID := domain.RollbackObjectIDs(source2.ID, "failure-source2")
+	body2 := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"failure-source2","expected_status":"applying","failure_code":"apply_failed"}`, source2.ID, claimSource2.Run.ID, claimSource2.Lease.ID, claimSource2.Lease.Attempt, claimSource2.Lease.Fence)
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(body2))
+	req2.Header.Set("Authorization", "Bearer "+runnerToken)
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	server.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("source2 atomic failure %d: %s", rec2.Code, rec2.Body.String())
+	}
+	claimChild2, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil || claimChild2.Run.ID != child2RunID {
+		t.Fatalf("claim rollback child2 %#v err=%v", claimChild2, err)
+	}
+	child2 := domain.Deployment{ID: child2ID, TaskRunID: &child2RunID}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "child2-prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "child2-apply"}, {domain.DeploymentApplying, domain.DeploymentVerifying, "child2-verify"}, {domain.DeploymentVerifying, domain.DeploymentRollbackFailed, "child2-rollback-failed"}} {
+		if rec := postTransition(child2, claimChild2, step[0], step[1], step[2], claimChild2.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	assertTerminalLifecycle(child2, claimChild2, domain.RunFailed)
+	var sourceAfterFailure, childAfterFailure, pointerAfterFailure string
+	if err = database.QueryRow(ctx, `SELECT d.status,(SELECT status FROM deployments WHERE id=$2),e.current_healthy_revision_id FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE d.id=$1`, source2.ID, child2ID).Scan(&sourceAfterFailure, &childAfterFailure, &pointerAfterFailure); err != nil || sourceAfterFailure != domain.DeploymentRollbackFailed || childAfterFailure != domain.DeploymentRollbackFailed || pointerAfterFailure != revisionB {
+		t.Fatalf("failed rollback settlement source=%q child=%q pointer=%q err=%v", sourceAfterFailure, childAfterFailure, pointerAfterFailure, err)
+	}
+
+	// A stale healthy pointer invalidates rollback safety before *any* source,
+	// run, lease, attempt, audit, or child mutation is committed.
+	source3 := create("dep_fenced_rollback_mismatch_source_"+suffix, "run_fenced_rollback_mismatch_source_"+suffix, revisionA, "rollback-mismatch-source")
+	claimSource3, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := postTransition(source3, claimSource3, domain.DeploymentAssigned, domain.DeploymentPreparing, "source3-prepare", claimSource3.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("source3 prepare %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postTransition(source3, claimSource3, domain.DeploymentPreparing, domain.DeploymentApplying, "source3-apply", claimSource3.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("source3 apply %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err = database.Exec(ctx, `UPDATE environments SET current_healthy_revision_id=$2 WHERE id=$1`, environmentID, revisionA); err != nil {
+		t.Fatal(err)
+	}
+	var beforeStatus, afterStatus string
+	var beforeChild, afterChild, beforeLease, afterLease, beforeAttempt, afterAttempt, beforeAudit, afterAudit int
+	if err = database.QueryRow(ctx, `SELECT d.status,(SELECT count(*) FROM deployments WHERE rollback_of_id=$1),(SELECT count(*) FROM run_leases WHERE run_id=$2),(SELECT count(*) FROM deployment_attempts WHERE deployment_id=$1),(SELECT count(*) FROM audit_events WHERE target_id=$1) FROM deployments d WHERE d.id=$1`, source3.ID, claimSource3.Run.ID).Scan(&beforeStatus, &beforeChild, &beforeLease, &beforeAttempt, &beforeAudit); err != nil {
+		t.Fatal(err)
+	}
+	mismatchBody := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"failure-mismatch","expected_status":"applying","failure_code":"health_failed"}`, source3.ID, claimSource3.Run.ID, claimSource3.Lease.ID, claimSource3.Lease.Attempt, claimSource3.Lease.Fence)
+	mismatchReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(mismatchBody))
+	mismatchReq.Header.Set("Authorization", "Bearer "+runnerToken)
+	mismatchReq.Header.Set("Content-Type", "application/json")
+	mismatchRec := httptest.NewRecorder()
+	server.ServeHTTP(mismatchRec, mismatchReq)
+	if mismatchRec.Code != http.StatusConflict {
+		t.Fatalf("pointer mismatch response %d: %s", mismatchRec.Code, mismatchRec.Body.String())
+	}
+	if err = database.QueryRow(ctx, `SELECT d.status,(SELECT count(*) FROM deployments WHERE rollback_of_id=$1),(SELECT count(*) FROM run_leases WHERE run_id=$2),(SELECT count(*) FROM deployment_attempts WHERE deployment_id=$1),(SELECT count(*) FROM audit_events WHERE target_id=$1) FROM deployments d WHERE d.id=$1`, source3.ID, claimSource3.Run.ID).Scan(&afterStatus, &afterChild, &afterLease, &afterAttempt, &afterAudit); err != nil {
+		t.Fatal(err)
+	}
+	if afterStatus != beforeStatus || afterChild != beforeChild || afterLease != beforeLease || afterAttempt != beforeAttempt || afterAudit != beforeAudit {
+		t.Fatalf("pointer mismatch mutated source=%q/%q child=%d/%d lease=%d/%d attempt=%d/%d audit=%d/%d", beforeStatus, afterStatus, beforeChild, afterChild, beforeLease, afterLease, beforeAttempt, afterAttempt, beforeAudit, afterAudit)
+	}
+	if rec := postTransition(source3, claimSource3, domain.DeploymentApplying, domain.DeploymentCancelRequested, "source3-cleanup-request", claimSource3.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("source3 cleanup cancellation request %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postTransition(source3, claimSource3, domain.DeploymentCancelRequested, domain.DeploymentManualIntervention, "source3-cleanup-manual", claimSource3.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("source3 cleanup manual intervention %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// AC12: the maintainer cancellation receipt and the runner-authenticated
+	// rollback handoff are separate HTTP transactions.  The former is a stable
+	// operator request; the latter is the only authority allowed to create the
+	// server-derived child after an in-flight apply has been interrupted.
+	if _, err = database.Exec(ctx, `UPDATE environments SET current_healthy_revision_id=$2 WHERE id=$1`, environmentID, revisionB); err != nil {
+		t.Fatal(err)
+	}
+	cancelSource := create("dep_fenced_cancel_receipt_"+suffix, "run_fenced_cancel_receipt_"+suffix, revisionA, "cancel-receipt")
+	claimCancel, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "cancel-prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "cancel-apply"}} {
+		if rec := postTransition(cancelSource, claimCancel, step[0], step[1], step[2], claimCancel.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	postMaintainerCancel := func(requestID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/cancel", bytes.NewBufferString(fmt.Sprintf(`{"deployment_id":%q,"request_id":%q}`, cancelSource.ID, requestID)))
+		req.Header.Set("Authorization", "Bearer "+adminSession.Token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	cancelResponses := make(chan *httptest.ResponseRecorder, 8)
+	for range 8 {
+		go func() { cancelResponses <- postMaintainerCancel("ac12-cancel-receipt") }()
+	}
+	for range 8 {
+		if rec := <-cancelResponses; rec.Code != http.StatusOK {
+			t.Fatalf("concurrent maintainer cancel response %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	if rec := postMaintainerCancel("ac12-cancel-receipt"); rec.Code != http.StatusOK {
+		t.Fatalf("response-loss exact cancel replay %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postMaintainerCancel("ac12-cancel-changed"); rec.Code != http.StatusConflict {
+		t.Fatalf("changed cancellation receipt %d: %s", rec.Code, rec.Body.String())
+	}
+	statusRequest := func(fence string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/runners/deployments/status?deployment_id=%s&run_id=%s&lease_id=%s&attempt=%d&fence=%s", cancelSource.ID, claimCancel.Run.ID, claimCancel.Lease.ID, claimCancel.Lease.Attempt, fence), nil)
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	cancelStatusRec := statusRequest(claimCancel.Lease.Fence)
+	if cancelStatusRec.Code != http.StatusOK {
+		t.Fatalf("runner cancellation status %d: %s", cancelStatusRec.Code, cancelStatusRec.Body.String())
+	}
+	var observed domain.DeploymentPlan
+	if err := json.Unmarshal(cancelStatusRec.Body.Bytes(), &observed); err != nil || observed.Status != domain.DeploymentCancelRequested || observed.CancellationRequestID == nil || *observed.CancellationRequestID != "ac12-cancel-receipt" {
+		t.Fatalf("cancellation watcher receipt %#v err=%v", observed, err)
+	}
+	if rec := statusRequest("stale"); rec.Code != http.StatusForbidden {
+		t.Fatalf("stale fence observed cancellation receipt %d: %s", rec.Code, rec.Body.String())
+	}
+	postCancellationHandoff := func(fence, requestID string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":%q,"cancellation_request_id":%q,"expected_status":"cancel_requested","failure_code":"cancellation_requested"}`, cancelSource.ID, claimCancel.Run.ID, claimCancel.Lease.ID, claimCancel.Lease.Attempt, fence, requestID, requestID)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := postCancellationHandoff("stale", "ac12-cancel-receipt"); rec.Code != http.StatusForbidden {
+		t.Fatalf("stale fence cancellation handoff %d: %s", rec.Code, rec.Body.String())
+	}
+	handoffResponses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() { handoffResponses <- postCancellationHandoff(claimCancel.Lease.Fence, "ac12-cancel-receipt") }()
+	}
+	for range 2 {
+		if rec := <-handoffResponses; rec.Code != http.StatusOK {
+			t.Fatalf("concurrent cancellation handoff %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	if rec := postCancellationHandoff(claimCancel.Lease.Fence, "ac12-cancel-receipt"); rec.Code != http.StatusOK {
+		t.Fatalf("response-loss cancellation handoff replay %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postCancellationHandoff(claimCancel.Lease.Fence, "ac12-handoff-changed"); rec.Code != http.StatusConflict {
+		t.Fatalf("changed cancellation handoff receipt %d: %s", rec.Code, rec.Body.String())
+	}
+	var cancellationRows, cancellationAudits, handoffAudits, queuedAudits, cancellationChildren, activeCancellationLeases int
+	if err := database.QueryRow(ctx, `SELECT (SELECT count(*) FROM deployment_cancellations WHERE deployment_id=$1), (SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='deployment.cancel'), (SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='runner.deployment.cancellation_rollback'), (SELECT count(*) FROM audit_events WHERE action='runner.deployment.rollback_queued' AND metadata->>'source_deployment_id'=$1), (SELECT count(*) FROM deployments WHERE rollback_of_id=$1), (SELECT count(*) FROM run_leases WHERE run_id=$2 AND status='active')`, cancelSource.ID, claimCancel.Run.ID).Scan(&cancellationRows, &cancellationAudits, &handoffAudits, &queuedAudits, &cancellationChildren, &activeCancellationLeases); err != nil {
+		t.Fatal(err)
+	}
+	if cancellationRows != 1 || cancellationAudits != 1 || handoffAudits != 1 || queuedAudits != 1 || cancellationChildren != 1 || activeCancellationLeases != 0 {
+		t.Fatalf("AC12 atomic receipt/audit/child counts receipt=%d cancel_audit=%d handoff_audit=%d queued_audit=%d children=%d active=%d", cancellationRows, cancellationAudits, handoffAudits, queuedAudits, cancellationChildren, activeCancellationLeases)
+	}
+	assertTerminalLifecycle(cancelSource, claimCancel, domain.RunFailed)
+	// Free the environment through the normal linked-child path before racing
+	// another deployment.  This also proves that the public cancellation
+	// receipt did not strand an invisible lock.
+	cancelChildID, cancelChildRunID := domain.RollbackObjectIDs(cancelSource.ID, "ac12-cancel-receipt")
+	claimCancelChild, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil || claimCancelChild.Run.ID != cancelChildRunID {
+		t.Fatalf("claim cancellation child %#v err=%v", claimCancelChild, err)
+	}
+	cancelChild := domain.Deployment{ID: cancelChildID, TaskRunID: &cancelChildRunID}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "cancel-child-prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "cancel-child-apply"}, {domain.DeploymentApplying, domain.DeploymentVerifying, "cancel-child-verify"}} {
+		if rec := postTransition(cancelChild, claimCancelChild, step[0], step[1], step[2], claimCancelChild.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	if rec := postTransition(cancelChild, claimCancelChild, domain.DeploymentVerifying, domain.DeploymentRolledBack, "cancel-child-terminal", claimCancelChild.Lease.Fence, &yes); rec.Code != http.StatusOK {
+		t.Fatalf("cancel child terminal response %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// DB clock expiry races the same public cancellation boundary.  Whichever
+	// transaction serializes first, stale authority must not observe a receipt
+	// or perform a handoff, and the reaper cannot leave an active lease/attempt.
+	expiryEnvironmentID := "env_fenced_cancel_expiry_" + suffix
+	if _, err := pg.CreateEnvironment(ctx, domain.Environment{ID: expiryEnvironmentID, ServiceID: serviceID, Name: "expiry-" + suffix, RunnerSelector: []string{}, ComposeProject: "expiry-" + suffix, HealthPolicy: domain.HealthPolicy{}, TimeoutSeconds: 60, SecretBindings: []domain.SecretBinding{}, RollbackSafe: true, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	expiryRace, err := pg.CreateDeploymentRequest(ctx, domain.Deployment{ID: "dep_fenced_cancel_expiry_" + suffix, EnvironmentID: expiryEnvironmentID, DesiredRevisionID: revisionA, IdempotencyKey: "cancel-expiry", Status: domain.DeploymentQueued, RequestedBy: "usr_bootstrap", FenceRequired: true, CreatedAt: now, UpdatedAt: now}, domain.TaskRun{ID: "run_fenced_cancel_expiry_" + suffix, ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy}, Workflow: domain.Workflow{}, WorkflowState: domain.WorkflowState{}, RunnerTags: []string{}, Status: domain.RunQueued, RequestedBy: "usr_bootstrap", StartedAt: now}, domain.AuditEvent{ID: "audit_fenced_cancel_expiry_" + suffix, ActorID: "usr_bootstrap", Action: "deployment.create", TargetID: "dep_fenced_cancel_expiry_" + suffix, Metadata: map[string]any{}, CreatedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.HeartbeatRunner(ctx, runnerID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	claimExpiry, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "expiry-race-prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "expiry-race-apply"}} {
+		if rec := postTransition(expiryRace, claimExpiry, step[0], step[1], step[2], claimExpiry.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	time.Sleep(25 * time.Millisecond)
+	expiryStart := make(chan struct{})
+	expiryCancel := make(chan *httptest.ResponseRecorder, 1)
+	expiryReap := make(chan error, 1)
+	go func() {
+		<-expiryStart
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/cancel", bytes.NewBufferString(fmt.Sprintf(`{"deployment_id":%q,"request_id":"ac12-expiry-race"}`, expiryRace.ID)))
+		req.Header.Set("Authorization", "Bearer "+adminSession.Token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		expiryCancel <- rec
+	}()
+	go func() { <-expiryStart; expiryReap <- pg.ExpireLeases(ctx, time.Now().UTC()) }()
+	close(expiryStart)
+	if err := <-expiryReap; err != nil {
+		t.Fatalf("expiry race reaper: %v", err)
+	}
+	expiryCancelRec := <-expiryCancel
+	if expiryCancelRec.Code != http.StatusOK && expiryCancelRec.Code != http.StatusConflict {
+		t.Fatalf("expiry race public cancel=%d: %s", expiryCancelRec.Code, expiryCancelRec.Body.String())
+	}
+	var expiryActiveLeases, expiryActiveAttempts int
+	if err := database.QueryRow(ctx, `SELECT (SELECT count(*) FROM run_leases WHERE run_id=$1 AND status='active'), (SELECT count(*) FROM deployment_attempts WHERE deployment_id=$2 AND status='active')`, claimExpiry.Run.ID, expiryRace.ID).Scan(&expiryActiveLeases, &expiryActiveAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if expiryActiveLeases != 0 || expiryActiveAttempts != 0 {
+		t.Fatalf("expiry/cancel left orphan authority leases=%d attempts=%d", expiryActiveLeases, expiryActiveAttempts)
+	}
+	staleExpiryStatus := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/runners/deployments/status?deployment_id=%s&run_id=%s&lease_id=%s&attempt=%d&fence=%s", expiryRace.ID, claimExpiry.Run.ID, claimExpiry.Lease.ID, claimExpiry.Lease.Attempt, claimExpiry.Lease.Fence), nil)
+	staleExpiryStatus.Header.Set("Authorization", "Bearer "+runnerToken)
+	staleExpiryRec := httptest.NewRecorder()
+	server.ServeHTTP(staleExpiryRec, staleExpiryStatus)
+	if staleExpiryRec.Code != http.StatusForbidden {
+		t.Fatalf("expired fence observed status %d: %s", staleExpiryRec.Code, staleExpiryRec.Body.String())
+	}
+	// If cancellation won, the reaper requeues the run but preserves the
+	// receipt. A fresh fence, never the expired one, owns the explicit manual
+	// fallback because this isolated environment has no healthy target.
+	if expiryCancelRec.Code == http.StatusOK {
+		if _, err := pg.HeartbeatRunner(ctx, runnerID, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		claimExpiry2, claimErr := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+		if claimErr != nil || claimExpiry2.Run.ID != claimExpiry.Run.ID || claimExpiry2.Lease.Attempt <= claimExpiry.Lease.Attempt {
+			t.Fatalf("fresh expiry claim %#v err=%v", claimExpiry2.Lease, claimErr)
+		}
+		body := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"ac12-expiry-race","cancellation_request_id":"ac12-expiry-race","expected_status":"cancel_requested","failure_code":"cancellation_requested"}`, expiryRace.ID, claimExpiry2.Run.ID, claimExpiry2.Lease.ID, claimExpiry2.Lease.Attempt, claimExpiry2.Lease.Fence)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("fresh expiry cancellation handoff %d: %s", rec.Code, rec.Body.String())
+		}
+		var expiryStatus string
+		if err := database.QueryRow(ctx, `SELECT status FROM deployments WHERE id=$1`, expiryRace.ID).Scan(&expiryStatus); err != nil || expiryStatus != domain.DeploymentManualIntervention {
+			t.Fatalf("expiry cancellation fallback status=%q err=%v", expiryStatus, err)
+		}
+	}
+
+	// A real public cancel races the only legal runner terminal transition.
+	// Either serial winner is acceptable; the losing operation must leave no
+	// second receipt/audit or active source authority behind.
+	successRace := create("dep_fenced_cancel_success_"+suffix, "run_fenced_cancel_success_"+suffix, revisionA, "cancel-success")
+	claimSuccess, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "success-race-prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "success-race-apply"}, {domain.DeploymentApplying, domain.DeploymentVerifying, "success-race-verify"}} {
+		if rec := postTransition(successRace, claimSuccess, step[0], step[1], step[2], claimSuccess.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	startRace := make(chan struct{})
+	cancelRaceResponse := make(chan *httptest.ResponseRecorder, 1)
+	successRaceResponse := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		<-startRace
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/cancel", bytes.NewBufferString(fmt.Sprintf(`{"deployment_id":%q,"request_id":"ac12-success-race"}`, successRace.ID)))
+		req.Header.Set("Authorization", "Bearer "+adminSession.Token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		cancelRaceResponse <- rec
+	}()
+	go func() {
+		<-startRace
+		successRaceResponse <- postTransition(successRace, claimSuccess, domain.DeploymentVerifying, domain.DeploymentSucceeded, "success-race-terminal", claimSuccess.Lease.Fence, &yes)
+	}()
+	close(startRace)
+	cancelRaceRec, successRaceRec := <-cancelRaceResponse, <-successRaceResponse
+	var successRaceStatus string
+	if err := database.QueryRow(ctx, `SELECT status FROM deployments WHERE id=$1`, successRace.ID).Scan(&successRaceStatus); err != nil {
+		t.Fatal(err)
+	}
+	if successRaceStatus == domain.DeploymentSucceeded {
+		if successRaceRec.Code != http.StatusOK || cancelRaceRec.Code != http.StatusConflict {
+			t.Fatalf("success winner cancel=%d success=%d", cancelRaceRec.Code, successRaceRec.Code)
+		}
+		assertTerminalLifecycle(successRace, claimSuccess, domain.RunSucceeded)
+	} else if successRaceStatus == domain.DeploymentCancelRequested {
+		if cancelRaceRec.Code != http.StatusOK || successRaceRec.Code != http.StatusConflict {
+			t.Fatalf("cancel winner cancel=%d success=%d", cancelRaceRec.Code, successRaceRec.Code)
+		}
+		var active int
+		if err := database.QueryRow(ctx, `SELECT count(*) FROM run_leases WHERE run_id=$1 AND status='active'`, claimSuccess.Run.ID).Scan(&active); err != nil || active != 1 {
+			t.Fatalf("cancel winner authority active=%d err=%v", active, err)
+		}
+	} else {
+		t.Fatalf("illegal cancel/success race status=%q", successRaceStatus)
+	}
+}
+
+func TestPostgresClaimAndApprovalAuditRollback(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "claim_approval_audit")
+	defer pg.Close()
+	now := time.Now().UTC()
+	suffix := strconv.FormatInt(now.UnixNano(), 36)
+	runnerID, runID := "runner_audit_"+suffix, "run_audit_"+suffix
+	if _, err := pg.RegisterRunner(ctx, domain.Runner{ID: runnerID, Name: runnerID, Tags: []string{"audit-" + suffix}, Capabilities: []string{domain.RunTypeShell}, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.CreateRun(ctx, domain.TaskRun{ID: runID, ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeShell}, RunnerTags: []string{"audit-" + suffix}, Status: domain.RunQueued, RequestedBy: "usr_bootstrap", StartedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := domain.AuditEvent{ID: "audit_claim_duplicate_" + suffix, ActorID: runnerID, Action: "runner.claim", TargetID: runID, Metadata: map[string]any{}, CreatedAt: now}
+	if err := pg.CreateAuditEvent(ctx, duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.ClaimRunWithAudit(ctx, runnerID, now, time.Minute, duplicate); err == nil {
+		t.Fatal("claim with a duplicate audit ID unexpectedly succeeded")
+	}
+	var status string
+	var leases int
+	if err := database.QueryRow(ctx, `SELECT status FROM task_runs WHERE id=$1`, runID).Scan(&status); err != nil || status != domain.RunQueued {
+		t.Fatalf("duplicate audit partially claimed run status=%q err=%v", status, err)
+	}
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM run_leases WHERE run_id=$1`, runID).Scan(&leases); err != nil || leases != 0 {
+		t.Fatalf("duplicate audit created leases=%d err=%v", leases, err)
+	}
+	claimAudit := domain.AuditEvent{ID: "audit_claim_ok_" + suffix, ActorID: runnerID, Action: "runner.claim", Metadata: map[string]any{}, CreatedAt: now}
+	claim, err := pg.ClaimRunWithAudit(ctx, runnerID, now, time.Minute, claimAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claimAudits int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE id=$1 AND target_id=$2 AND metadata->>'lease_id'=$3 AND metadata->>'fence'=$4`, claimAudit.ID, runID, claim.Lease.ID, claim.Lease.Fence).Scan(&claimAudits); err != nil || claimAudits != 1 {
+		t.Fatalf("claim audit count=%d err=%v", claimAudits, err)
+	}
+
+	approvalRunID := "run_approval_audit_" + suffix
+	if _, err := pg.CreateRun(ctx, domain.TaskRun{ID: approvalRunID, ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeShell}, RunnerTags: []string{}, Status: domain.RunWaitingApproval, RequestedBy: "usr_bootstrap", StartedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.CreateApproval(ctx, domain.Approval{ID: "approval_audit_" + suffix, RunID: approvalRunID, Status: domain.ApprovalPending, RequestedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	duplicateApprovalAudit := domain.AuditEvent{ID: "audit_approval_duplicate_" + suffix, ActorID: "usr_bootstrap", Action: "run.approve", TargetID: approvalRunID, Metadata: map[string]any{}, CreatedAt: now}
+	if err := pg.CreateAuditEvent(ctx, duplicateApprovalAudit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.ApproveRunWithAudit(ctx, approvalRunID, "usr_bootstrap", now, duplicateApprovalAudit); err == nil {
+		t.Fatal("approval with a duplicate audit ID unexpectedly succeeded")
+	}
+	var approvalStatus, approvalRunStatus string
+	if err := database.QueryRow(ctx, `SELECT status FROM approvals WHERE run_id=$1`, approvalRunID).Scan(&approvalStatus); err != nil || approvalStatus != domain.ApprovalPending {
+		t.Fatalf("duplicate approval audit partially resolved approval status=%q err=%v", approvalStatus, err)
+	}
+	if err := database.QueryRow(ctx, `SELECT status FROM task_runs WHERE id=$1`, approvalRunID).Scan(&approvalRunStatus); err != nil || approvalRunStatus != domain.RunWaitingApproval {
+		t.Fatalf("duplicate approval audit partially queued run status=%q err=%v", approvalRunStatus, err)
+	}
+	approvalAudit := domain.AuditEvent{ID: "audit_approval_ok_" + suffix, ActorID: "usr_bootstrap", Action: "run.approve", Metadata: map[string]any{}, CreatedAt: now}
+	approval, err := pg.ApproveRunWithAudit(ctx, approvalRunID, "usr_bootstrap", now, approvalAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var approvalAudits int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE id=$1 AND target_id=$2 AND metadata->>'approval_id'=$3`, approvalAudit.ID, approvalRunID, approval.ID).Scan(&approvalAudits); err != nil || approvalAudits != 1 {
+		t.Fatalf("approval audit count=%d err=%v", approvalAudits, err)
+	}
+}
+
+func TestPostgresDeploymentRequestSerializesOneActiveEnvironment(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, _ := openPostgresIntegrationStore(t, ctx, "deployment_lock")
+	defer pg.Close()
+	now := time.Now().UTC()
+	suffix := strconv.FormatInt(now.UnixNano(), 36)
+	serviceID, environmentID := "svc_lock_"+suffix, "env_lock_"+suffix
+	if _, err := pg.CreateService(ctx, domain.Service{ID: serviceID, ProjectID: "proj_platform", Name: "lock-" + suffix, RepositoryID: "repo_platform_runbooks", ComposePath: "compose.yml", Profiles: []string{}, OwnerID: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.CreateEnvironment(ctx, domain.Environment{ID: environmentID, ServiceID: serviceID, Name: "prod", RunnerSelector: []string{}, ComposeProject: "lock-" + suffix, HealthPolicy: domain.HealthPolicy{}, TimeoutSeconds: 60, SecretBindings: []domain.SecretBinding{}, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	revisionID := "rev_lock_" + suffix
+	if _, err := pg.CreateRevision(ctx, domain.Revision{ID: revisionID, ServiceID: serviceID, RequestedRef: "main", GitCommit: "commit-" + suffix, ComposeHash: "hash", ImageDigests: []string{}, ContentIdentity: "identity-" + suffix, CreatedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	var wins int
+	var lock sync.Mutex
+	var group sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		group.Add(1)
+		go func(i int) {
+			defer group.Done()
+			id := fmt.Sprintf("dep_lock_%s_%d", suffix, i)
+			_, createErr := pg.CreateDeploymentRequest(ctx, domain.Deployment{ID: id, EnvironmentID: environmentID, DesiredRevisionID: revisionID, IdempotencyKey: fmt.Sprintf("key-%d", i), Status: domain.DeploymentQueued, RequestedBy: "usr_bootstrap", FenceRequired: true, CreatedAt: now, UpdatedAt: now}, domain.TaskRun{ID: "run_" + id, ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy}, Workflow: domain.Workflow{}, WorkflowState: domain.WorkflowState{}, RunnerTags: []string{}, Status: domain.RunQueued, RequestedBy: "usr_bootstrap", StartedAt: now}, domain.AuditEvent{ID: "audit_" + id, ActorID: "usr_bootstrap", Action: "deployment.create", TargetID: id, Metadata: map[string]any{}, CreatedAt: now})
+			if createErr == nil {
+				lock.Lock()
+				wins++
+				lock.Unlock()
+				return
+			}
+			if !errors.Is(createErr, store.ErrConflict) {
+				t.Errorf("request %d: %v", i, createErr)
+			}
+		}(i)
+	}
+	group.Wait()
+	if wins != 1 {
+		t.Fatalf("active environment admitted %d deployments", wins)
+	}
+}
 
 func TestPostgresIntegrationSQLCRoundTripsPaginationAndRollback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
@@ -228,7 +1508,7 @@ func TestPostgresIntegrationRunnerReplayIdempotency(t *testing.T) {
 		t.Fatalf("completion rollback state lease=%s key=%v run=%s audit=%d", rollbackLeaseStatus, rollbackCompletionKey, rollbackRunStatus, rollbackAudit)
 	}
 
-	service := app.NewService(auth.ContextProvider{}, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg)
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg})
 	runnerCtx := auth.WithPrincipal(ctx, auth.Principal{ID: runnerID, Provider: domain.PrincipalRunner})
 	completed, err := service.CompleteLease(runnerCtx, claim.Lease.ID, domain.RunSucceeded, claim.Lease.Attempt, claim.Lease.Fence, "completion_replay")
 	if err != nil {
@@ -515,7 +1795,7 @@ func TestPostgresIntegrationControlPlanePrimitives(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pg.Close()
-	service := app.NewService(auth.ContextProvider{}, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg)
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg})
 	session, err := service.CreateSession(ctx, "admin@example.local", "admin")
 	if err != nil {
 		t.Fatalf("create admin session: %v", err)
@@ -670,7 +1950,7 @@ func TestPostgresIntegrationTwoRunnerFencingAndBoundedClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pg.Close()
-	service := app.NewService(auth.ContextProvider{}, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg)
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg})
 
 	now := time.Now().UTC()
 	for _, id := range []string{"runner_a", "runner_b"} {
@@ -1488,7 +2768,7 @@ func TestPostgresIntegrationFencingMigrationCompatibility(t *testing.T) {
 	if err := applyEmbeddedMigrations(ctx, database, "", "0010_service_account_tokens.sql"); err != nil {
 		t.Fatal(err)
 	}
-	seed, err := db.Files.ReadFile("seeds/dev.sql")
+	seed, err := os.ReadFile("../../db/seeds/dev.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1586,6 +2866,147 @@ func TestPostgresIntegrationFencingMigrationCompatibility(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationProvenanceMigratesLegacyAndAllowsPendingSiblings(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	schema := "nerocd_provenance_upgrade_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err = admin.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`) })
+	schemaURL := databaseURLWithSearchPath(t, databaseURL, schema)
+	database, err := pgxpool.New(ctx, schemaURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err = applyEmbeddedMigrations(ctx, database, "", "0026_repository_policy_configuration_receipts.sql"); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := os.ReadFile("../../db/seeds/dev.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, string(seed)); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err = database.Exec(ctx, `INSERT INTO services(id,project_id,name,repository_id,compose_path,owner_id,created_at) VALUES ('svc_legacy','proj_platform','legacy','repo_platform_runbooks','compose.yml','usr_bootstrap',$1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, `INSERT INTO revisions(id,service_id,requested_ref,git_commit,compose_hash,image_digests,content_identity,created_by,created_at) VALUES ('rev_legacy','svc_legacy','main',$1,$2,ARRAY[]::text[],$3,'usr_bootstrap',$4)`, strings.Repeat("1", 40), "sha256:"+strings.Repeat("2", 64), strings.Repeat("1", 40)+":sha256:"+strings.Repeat("2", 64), now); err != nil {
+		t.Fatal(err)
+	}
+	if err = applyEmbeddedMigrations(ctx, database, "0026_repository_policy_configuration_receipts.sql", ""); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err = database.QueryRow(ctx, `SELECT provenance_state FROM revisions WHERE id='rev_legacy'`).Scan(&state); err != nil || state != "legacy_unverified" {
+		t.Fatalf("legacy migration state=%q err=%v", state, err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE revisions SET provenance_state='pending' WHERE id='rev_legacy'`); err == nil {
+		t.Fatal("legacy provenance was promotable")
+	}
+	if _, err = database.Exec(ctx, `INSERT INTO revisions(id,service_id,requested_ref,git_commit,compose_hash,image_digests,content_identity,created_by,created_at,provenance_state,provenance_resolved,resolved_at) VALUES ('rev_bad_digest','svc_legacy','bad',$1,$2,ARRAY[NULL::text],$3,'usr_bootstrap',$4,'resolved',true,$4)`, strings.Repeat("3", 40), "sha256:"+strings.Repeat("4", 64), strings.Repeat("3", 40)+":sha256:"+strings.Repeat("4", 64), now); err == nil {
+		t.Fatal("resolved revision accepted a NULL digest")
+	}
+	pg, err := store.OpenPostgres(ctx, schemaURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.Close()
+	for _, id := range []string{"rev_pending_one", "rev_pending_two"} {
+		if _, err = pg.CreateRevision(ctx, domain.Revision{ID: id, ServiceID: "svc_legacy", RequestedRef: id, CreatedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	var pending int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM revisions WHERE service_id='svc_legacy' AND provenance_state='pending' AND content_identity=''`).Scan(&pending); err != nil || pending != 2 {
+		t.Fatalf("pending siblings=%d err=%v", pending, err)
+	}
+}
+
+func TestPostgresLinkedRollbackLifecycleMigratesFrom0026(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	schema := "nerocd_rollback_upgrade_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err = admin.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`) })
+	databaseURL = databaseURLWithSearchPath(t, databaseURL, schema)
+	database, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err = applyEmbeddedMigrations(ctx, database, "", "0026_repository_policy_configuration_receipts.sql"); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := os.ReadFile("../../db/seeds/dev.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, string(seed)); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	seedStatements := []string{
+		`INSERT INTO services(id,project_id,name,repository_id,compose_path,owner_id,created_at) VALUES ('svc_upgrade_rollback','proj_platform','upgrade rollback','repo_platform_runbooks','compose.yml','usr_bootstrap',$1)`,
+		`INSERT INTO revisions(id,service_id,requested_ref,git_commit,compose_hash,image_digests,content_identity,created_by,created_at,provenance_state) VALUES ('rev_upgrade_a','svc_upgrade_rollback','a','','',ARRAY[]::text[],'','usr_bootstrap',$1,'pending'),('rev_upgrade_b','svc_upgrade_rollback','b','','',ARRAY[]::text[],'','usr_bootstrap',$1,'pending')`,
+		`INSERT INTO environments(id,service_id,name,runner_selector,compose_project,health_policy,timeout_seconds,secret_bindings,rollback_safe,current_healthy_revision_id,created_at) VALUES ('env_upgrade_rollback','svc_upgrade_rollback','prod',ARRAY[]::text[],'upgrade-rollback','{}'::jsonb,60,'[]'::jsonb,true,'rev_upgrade_a',$1)`,
+		`INSERT INTO task_runs(id,project_id,run_spec,workflow,workflow_state,runner_tags,status,requested_by,started_at) VALUES ('run_upgrade_source','proj_platform','{}'::jsonb,'{"steps":[]}'::jsonb,'{"steps":[]}'::jsonb,ARRAY[]::text[],'running','usr_bootstrap',$1),('run_upgrade_child','proj_platform','{}'::jsonb,'{"steps":[]}'::jsonb,'{"steps":[]}'::jsonb,ARRAY[]::text[],'queued','usr_bootstrap',$1),('run_upgrade_child_2','proj_platform','{}'::jsonb,'{"steps":[]}'::jsonb,'{"steps":[]}'::jsonb,ARRAY[]::text[],'queued','usr_bootstrap',$1),('run_upgrade_bad','proj_platform','{}'::jsonb,'{"steps":[]}'::jsonb,'{"steps":[]}'::jsonb,ARRAY[]::text[],'failed','usr_bootstrap',$1),('run_upgrade_bad_child','proj_platform','{}'::jsonb,'{"steps":[]}'::jsonb,'{"steps":[]}'::jsonb,ARRAY[]::text[],'queued','usr_bootstrap',$1)`,
+		`INSERT INTO runners(id,name,tags,capabilities,status,registered_at,last_heartbeat_at,token_hash) VALUES ('runner_upgrade','runner upgrade',ARRAY[]::text[],ARRAY['compose_deploy']::text[],'active',$1,$1,'upgrade-token')`,
+		`INSERT INTO run_leases(id,run_id,runner_id,status,expires_at,created_at,attempt,fence) VALUES ('lease_upgrade','run_upgrade_source','runner_upgrade','active',clock_timestamp() + interval '1 hour',$1,1,'upgrade-fence')`,
+		`INSERT INTO deployments(id,environment_id,desired_revision_id,previous_healthy_revision_id,task_run_id,idempotency_key,status,requested_by,created_at,updated_at,fence_required) VALUES ('dep_upgrade_source','env_upgrade_rollback','rev_upgrade_b','rev_upgrade_a','run_upgrade_source','source','rolling_back','usr_bootstrap',$1,$1,true),('dep_upgrade_bad','env_upgrade_rollback','rev_upgrade_b','rev_upgrade_a','run_upgrade_bad','bad-source','failed','usr_bootstrap',$1,$1,true)`,
+		`INSERT INTO deployment_attempts(deployment_id,run_id,lease_id,runner_id,attempt,fence) VALUES ('dep_upgrade_source','run_upgrade_source','lease_upgrade','runner_upgrade',1,'upgrade-fence')`,
+		`INSERT INTO deployment_transitions(deployment_id,attempt,transition_key,expected_status,target_status) VALUES ('dep_upgrade_source',1,'apply','preparing','applying')`,
+	}
+	for _, statement := range seedStatements {
+		args := []any(nil)
+		if strings.Contains(statement, "$1") {
+			args = append(args, now)
+		}
+		if _, err = database.Exec(ctx, statement, args...); err != nil {
+			t.Fatalf("seed representative 0026 data: %v", err)
+		}
+	}
+	if err = applyEmbeddedMigrations(ctx, database, "0026_repository_policy_configuration_receipts.sql", ""); err != nil {
+		t.Fatal(err)
+	}
+	var indexDef string
+	if err = database.QueryRow(ctx, `SELECT pg_get_indexdef('deployments_one_active_root_environment'::regclass)`).Scan(&indexDef); err != nil || !strings.Contains(indexDef, "rollback_of_id IS NULL") || !strings.Contains(indexDef, "rolling_back") {
+		t.Fatalf("root-only active index definition=%q err=%v", indexDef, err)
+	}
+	if _, err = database.Exec(ctx, `INSERT INTO deployments(id,environment_id,desired_revision_id,previous_healthy_revision_id,task_run_id,idempotency_key,status,requested_by,fence_required,rollback_of_id) VALUES ('dep_upgrade_child','env_upgrade_rollback','rev_upgrade_a','rev_upgrade_a','run_upgrade_child','child','queued','usr_bootstrap',true,'dep_upgrade_source')`); err != nil {
+		t.Fatalf("root lock did not admit linked rollback child after upgrade: %v", err)
+	}
+	if _, err = database.Exec(ctx, `INSERT INTO deployments(id,environment_id,desired_revision_id,previous_healthy_revision_id,task_run_id,idempotency_key,status,requested_by,fence_required,rollback_of_id) VALUES ('dep_upgrade_child_2','env_upgrade_rollback','rev_upgrade_a','rev_upgrade_a','run_upgrade_child_2','child-2','queued','usr_bootstrap',true,'dep_upgrade_source')`); err == nil {
+		t.Fatal("upgrade admitted a second rollback child")
+	}
+	if _, err = database.Exec(ctx, `INSERT INTO deployments(id,environment_id,desired_revision_id,previous_healthy_revision_id,task_run_id,idempotency_key,status,requested_by,fence_required,rollback_of_id) VALUES ('dep_upgrade_bad_child','env_upgrade_rollback','rev_upgrade_a','rev_upgrade_a','run_upgrade_bad_child','bad-child','queued','usr_bootstrap',true,'dep_upgrade_bad')`); err == nil {
+		t.Fatal("upgrade trigger accepted non-rolling-back source")
+	}
+}
+
 func TestPostgresIntegrationRejectsPartialSchedulerSchema(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
 	if databaseURL == "" {
@@ -1673,6 +3094,51 @@ func TestPostgresIntegrationRejectsPartialSchedulerSchema(t *testing.T) {
 	assertAccepted("repaired")
 }
 
+func TestPostgresRepositoryPolicyReceiptSchemaGuard(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "policy_schema_guard")
+	defer pg.Close()
+	assertRejected := func(label string) {
+		t.Helper()
+		candidate, err := store.OpenPostgres(ctx, database.Config().ConnString())
+		if err == nil {
+			candidate.Close()
+			t.Fatalf("%s malformed receipt schema accepted", label)
+		}
+	}
+	assertAccepted := func(label string) {
+		t.Helper()
+		candidate, err := store.OpenPostgres(ctx, database.Config().ConnString())
+		if err != nil {
+			t.Fatalf("%s repaired receipt schema rejected: %v", label, err)
+		}
+		candidate.Close()
+	}
+	assertAccepted("current")
+	mutations := []struct{ breakDB, repair string }{
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_pk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_pk PRIMARY KEY (configuration_id,repository_id)`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_pk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_pk PRIMARY KEY (repository_id,configuration_id)`},
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_audit_unique; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_audit_unique UNIQUE (actor_id)`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_audit_unique; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_audit_unique UNIQUE (audit_id)`},
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_repository_fk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_repository_fk FOREIGN KEY (repository_id) REFERENCES repositories(id)`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_repository_fk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_repository_fk FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE`},
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_sha256_format; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_sha256_format CHECK (true)`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_sha256_format; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_sha256_format CHECK (policy_sha256 ~ '^[0-9a-f]{64}$')`},
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_repository_fk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_repository_fk FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE NOT VALID`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_repository_fk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_repository_fk FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE`},
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_actor_fk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_actor_fk FOREIGN KEY (actor_id) REFERENCES users(id) NOT VALID`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_actor_fk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_actor_fk FOREIGN KEY (actor_id) REFERENCES users(id)`},
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_audit_fk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_audit_fk FOREIGN KEY (audit_id) REFERENCES audit_events(id) NOT VALID`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_audit_fk; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_audit_fk FOREIGN KEY (audit_id) REFERENCES audit_events(id)`},
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_configuration_id_format; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_configuration_id_format CHECK (configuration_id ~ '^cfg_[A-Za-z0-9_-]{8,128}$') NOT VALID`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_configuration_id_format; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_configuration_id_format CHECK (configuration_id ~ '^cfg_[A-Za-z0-9_-]{8,128}$')`},
+		{`ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_sha256_format; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_sha256_format CHECK (policy_sha256 ~ '^[0-9a-f]{64}$') NOT VALID`, `ALTER TABLE repository_policy_configuration_receipts DROP CONSTRAINT repository_policy_receipts_sha256_format; ALTER TABLE repository_policy_configuration_receipts ADD CONSTRAINT repository_policy_receipts_sha256_format CHECK (policy_sha256 ~ '^[0-9a-f]{64}$')`},
+	}
+	for _, mutation := range mutations {
+		if _, err := database.Exec(ctx, mutation.breakDB); err != nil {
+			t.Fatal(err)
+		}
+		assertRejected(mutation.breakDB)
+		if _, err := database.Exec(ctx, mutation.repair); err != nil {
+			t.Fatal(err)
+		}
+		assertAccepted(mutation.repair)
+	}
+}
+
 func TestPostgresIntegrationCancelRacesRemainCoherent(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
 	if databaseURL == "" {
@@ -1705,7 +3171,7 @@ func TestPostgresIntegrationCancelRacesRemainCoherent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pg.Close()
-	service := app.NewService(auth.ContextProvider{}, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg)
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg})
 	now := time.Now().UTC()
 	if _, err := pg.RegisterRunner(ctx, domain.Runner{ID: "runner_race", Name: "race", Tags: []string{"local"}, Capabilities: []string{"shell"}, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
 		t.Fatal(err)
@@ -1833,6 +3299,288 @@ func databaseURLWithSearchPath(t *testing.T, databaseURL string, schema string) 
 	return parsed.String()
 }
 
+func TestPostgresRepositoryPolicyConfigurationReceipts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "policy_receipts")
+	defer pg.Close()
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg})
+	admin := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_bootstrap", Roles: []string{domain.RoleSystemAdmin}, Provider: domain.PrincipalLocal})
+	policy := domain.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https", "ssh"}, AllowedHosts: []string{"z.example.local", "a.example.local"}, RedirectHosts: []string{"redirect.example.local"}, SSHHostFingerprints: []string{"SHA256:fixture-host-fingerprint"}, CredentialReferenceID: "cred_sentinel_12345678"}
+	input := app.RepositoryPolicyInput{ID: "repo_platform_runbooks", ProjectID: "proj_platform", ConfigurationID: "cfg_receipt_12345678", Policy: policy}
+	session, err := service.CreateSession(ctx, "admin@example.local", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"project_id": input.ProjectID, "configuration_id": input.ConfigurationID, "policy": input.Policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := api.NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static())
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/repositories/repo_platform_runbooks/policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+session.Token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "cred_sentinel") {
+		t.Fatalf("real HTTP configure status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	// Equivalent sets must canonicalize to the same receipt hash and replay.
+	input.Policy.AllowedSchemes = []string{"ssh", "https"}
+	input.Policy.AllowedHosts = []string{"a.example.local", "z.example.local"}
+	if _, err = service.ConfigureRepositoryPolicy(admin, input); err != nil {
+		t.Fatalf("canonical retry: %v", err)
+	}
+	input.Policy.AllowedHosts = []string{"different.example.local"}
+	if _, err = service.ConfigureRepositoryPolicy(admin, input); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("mismatched key = %v", err)
+	}
+	input.Policy.AllowedHosts = []string{"a.example.local", "z.example.local"}
+	input.ConfigurationID = "cfg_second_12345678"
+	if _, err = service.ConfigureRepositoryPolicy(admin, input); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second configuration = %v", err)
+	}
+
+	// An exact request remains an acknowledgement under contention, not a
+	// second audit or receipt.
+	input.ConfigurationID = "cfg_receipt_12345678"
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, e := service.ConfigureRepositoryPolicy(admin, input); errs <- e }()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		if e != nil {
+			t.Fatalf("concurrent exact replay: %v", e)
+		}
+	}
+	var receiptCount, auditCount int
+	var receiptAt, auditAt time.Time
+	var auditMetadata string
+	if err = database.QueryRow(ctx, `SELECT count(*), min(created_at) FROM repository_policy_configuration_receipts WHERE repository_id=$1`, "repo_platform_runbooks").Scan(&receiptCount, &receiptAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*), min(created_at), coalesce(min(metadata::text),'') FROM audit_events WHERE target_id=$1 AND action='repository.policy.configure'`, "repo_platform_runbooks").Scan(&auditCount, &auditAt, &auditMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if receiptCount != 1 || auditCount != 1 || receiptAt.IsZero() || auditAt.IsZero() {
+		t.Fatalf("receipt/audit cardinality or DB clocks: %d %d %v %v", receiptCount, auditCount, receiptAt, auditAt)
+	}
+	if strings.Contains(auditMetadata, "cred_sentinel") {
+		t.Fatalf("credential reference leaked to audit: %s", auditMetadata)
+	}
+	var receiptText string
+	if err = database.QueryRow(ctx, `SELECT row_to_json(r)::text FROM repository_policy_configuration_receipts r WHERE repository_id=$1`, "repo_platform_runbooks").Scan(&receiptText); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(receiptText, "cred_sentinel") {
+		t.Fatalf("credential reference leaked to receipt: %s", receiptText)
+	}
+
+	// A forced audit error must abort the preceding policy update and receipt.
+	legacyID := "repo_policy_rollback_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if _, err = pg.CreateRepository(ctx, domain.Repository{ID: legacyID, ProjectID: "proj_platform", Name: legacyID, URL: "https://example.local/rollback.git", Provider: domain.ProviderGit, DefaultRef: "main", Policy: domain.RepositoryPolicy{Version: 1, State: "legacy_unverified"}, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, `CREATE FUNCTION reject_policy_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='repository.policy.configure' THEN RAISE EXCEPTION 'forced policy audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_policy_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_policy_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.ConfigureRepositoryPolicy(admin, app.RepositoryPolicyInput{ID: legacyID, ProjectID: "proj_platform", ConfigurationID: "cfg_rollback_12345678", Policy: domain.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https"}, AllowedHosts: []string{"example.local"}}})
+	if err == nil {
+		t.Fatal("forced audit failure configured repository")
+	}
+	var state string
+	var count int
+	if err = database.QueryRow(ctx, `SELECT repository_policy->>'state' FROM repositories WHERE id=$1`, legacyID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM repository_policy_configuration_receipts WHERE repository_id=$1`, legacyID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if state != "legacy_unverified" || count != 0 {
+		t.Fatalf("audit rollback state=%q receipts=%d", state, count)
+	}
+	if _, err = database.Exec(ctx, `DROP TRIGGER reject_policy_audit ON audit_events; DROP FUNCTION reject_policy_audit(); CREATE FUNCTION reject_policy_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced policy receipt failure'; END $$; CREATE TRIGGER reject_policy_receipt BEFORE INSERT ON repository_policy_configuration_receipts FOR EACH ROW EXECUTE FUNCTION reject_policy_receipt()`); err != nil {
+		t.Fatal(err)
+	}
+	receiptFailureID := "repo_policy_receipt_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if _, err = pg.CreateRepository(ctx, domain.Repository{ID: receiptFailureID, ProjectID: "proj_platform", Name: receiptFailureID, URL: "https://example.local/receipt.git", Provider: domain.ProviderGit, DefaultRef: "main", Policy: domain.RepositoryPolicy{Version: 1, State: "legacy_unverified"}, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.ConfigureRepositoryPolicy(admin, app.RepositoryPolicyInput{ID: receiptFailureID, ProjectID: "proj_platform", ConfigurationID: "cfg_receipt_failure_12345678", Policy: domain.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https"}, AllowedHosts: []string{"example.local"}}})
+	if err == nil {
+		t.Fatal("forced receipt failure configured repository")
+	}
+	if err = database.QueryRow(ctx, `SELECT repository_policy->>'state' FROM repositories WHERE id=$1`, receiptFailureID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM repository_policy_configuration_receipts WHERE repository_id=$1`, receiptFailureID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if state != "legacy_unverified" || count != 0 {
+		t.Fatalf("receipt rollback state=%q receipts=%d", state, count)
+	}
+}
+
+func TestPostgresBootstrapAdminIsAtomicAndAudited(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresEmptyIntegrationStore(t, ctx, "bootstrap")
+	defer pg.Close()
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg})
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := service.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: "owner@example.invalid", Name: "Owner", Password: "bootstrap-password"})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	successes := 0
+	for err := range errs {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("bootstrap successes=%d, want one", successes)
+	}
+	var users, successAudits, deniedAudits int
+	if err := database.QueryRow(ctx, "SELECT count(*) FROM users").Scan(&users); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE action='identity.bootstrap_admin'").Scan(&successAudits); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE action='identity.bootstrap_admin.denied'").Scan(&deniedAudits); err != nil {
+		t.Fatal(err)
+	}
+	if users != 1 || successAudits != 1 || deniedAudits != 7 {
+		t.Fatalf("users=%d success_audits=%d denied_audits=%d", users, successAudits, deniedAudits)
+	}
+}
+
+func TestPostgresSessionMetadataSurvivesRestartAndAdminRevocation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "session_metadata")
+	defer pg.Close()
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	newService := func() *app.Service {
+		service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg})
+		service.SetClock(func() time.Time { return now })
+		return service
+	}
+	service := newService()
+	created, err := service.CreateSessionWithMetadata(ctx, "admin@example.local", "admin", app.SessionCreateMetadata{SourceIP: "203.0.113.9", UserAgent: "session-metadata-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := api.NewServer(service, slog.Default(), web.Static())
+	me := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	me.Header.Set("Authorization", "Bearer "+created.Token)
+	meRec := httptest.NewRecorder()
+	server.ServeHTTP(meRec, me)
+	if meRec.Code != http.StatusOK {
+		t.Fatalf("session authentication=%d %s", meRec.Code, meRec.Body.String())
+	}
+	var initialXmin string
+	var initialSeen time.Time
+	if err := database.QueryRow(ctx, `SELECT xmin::text, last_seen_at FROM sessions WHERE id=$1`, created.Session.ID).Scan(&initialXmin, &initialSeen); err != nil {
+		t.Fatal(err)
+	}
+	for range 8 {
+		if _, err := service.AuthenticateSessionToken(ctx, created.Token); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var repeatedXmin string
+	var repeatedSeen time.Time
+	if err := database.QueryRow(ctx, `SELECT xmin::text, last_seen_at FROM sessions WHERE id=$1`, created.Session.ID).Scan(&repeatedXmin, &repeatedSeen); err != nil {
+		t.Fatal(err)
+	}
+	if repeatedXmin != initialXmin || !repeatedSeen.Equal(initialSeen) {
+		t.Fatalf("repeated auth wrote session xmin=%s/%s seen=%s/%s", initialXmin, repeatedXmin, initialSeen, repeatedSeen)
+	}
+	now = now.Add(store.SessionLastSeenUpdateInterval)
+	var authWG sync.WaitGroup
+	for range 8 {
+		authWG.Add(1)
+		go func() {
+			defer authWG.Done()
+			if _, err := service.AuthenticateSessionToken(ctx, created.Token); err != nil {
+				t.Errorf("interval authentication: %v", err)
+			}
+		}()
+	}
+	authWG.Wait()
+	var advancedXmin string
+	var advancedSeen time.Time
+	if err := database.QueryRow(ctx, `SELECT xmin::text, last_seen_at FROM sessions WHERE id=$1`, created.Session.ID).Scan(&advancedXmin, &advancedSeen); err != nil {
+		t.Fatal(err)
+	}
+	if advancedXmin == initialXmin || !advancedSeen.Equal(now) {
+		t.Fatalf("interval update xmin=%s/%s seen=%s want=%s", initialXmin, advancedXmin, advancedSeen, now)
+	}
+	var sessionAudits int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE target_id=$1`, created.Session.ID).Scan(&sessionAudits); err != nil || sessionAudits != 1 {
+		t.Fatalf("auth added session audits count=%d err=%v", sessionAudits, err)
+	}
+	// A new HTTP/service instance exercises persisted session metadata rather
+	// than only the original in-memory object.
+	restarted := api.NewServer(newService(), slog.Default(), web.Static())
+	list := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	list.Header.Set("Authorization", "Bearer "+created.Token)
+	listRec := httptest.NewRecorder()
+	restarted.ServeHTTP(listRec, list)
+	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), created.Session.ID) || !strings.Contains(listRec.Body.String(), "203.0.113.9") || !strings.Contains(listRec.Body.String(), "last_seen_at") {
+		t.Fatalf("persisted session list=%d %s", listRec.Code, listRec.Body.String())
+	}
+	revoke := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/revoke", strings.NewReader(fmt.Sprintf(`{"session_id":%q}`, created.Session.ID)))
+	revoke.Header.Set("Authorization", "Bearer "+created.Token)
+	revoke.Header.Set("Content-Type", "application/json")
+	revokeRec := httptest.NewRecorder()
+	restarted.ServeHTTP(revokeRec, revoke)
+	if revokeRec.Code != http.StatusOK {
+		t.Fatalf("session revoke=%d %s", revokeRec.Code, revokeRec.Body.String())
+	}
+	var revokeAudits int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='session.revoke' AND target_id=$1`, created.Session.ID).Scan(&revokeAudits); err != nil || revokeAudits != 1 {
+		t.Fatalf("session revoke audit count=%d err=%v", revokeAudits, err)
+	}
+	after := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	after.Header.Set("Authorization", "Bearer "+created.Token)
+	afterRec := httptest.NewRecorder()
+	restarted.ServeHTTP(afterRec, after)
+	if afterRec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked session authentication=%d %s", afterRec.Code, afterRec.Body.String())
+	}
+}
+
+func TestPostgresAuditEventsAreAppendOnly(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "audit_append_only")
+	defer pg.Close()
+	event := domain.AuditEvent{ID: "aud_append_only", ActorID: "system", Action: "test.audit", TargetID: "target", Metadata: map[string]any{}, CreatedAt: time.Now().UTC()}
+	if err := pg.CreateAuditEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(ctx, `UPDATE audit_events SET action='mutated' WHERE id=$1`, event.ID); err == nil {
+		t.Fatal("append-only audit trigger accepted UPDATE")
+	}
+	if _, err := database.Exec(ctx, `DELETE FROM audit_events WHERE id=$1`, event.ID); err == nil {
+		t.Fatal("append-only audit trigger accepted DELETE")
+	}
+}
+
 func openPostgresIntegrationStore(t *testing.T, ctx context.Context, label string) (*store.PostgresStore, *pgxpool.Pool) {
 	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
@@ -1861,6 +3609,43 @@ func openPostgresIntegrationStore(t *testing.T, ctx context.Context, label strin
 	}
 	t.Cleanup(database.Close)
 	if err := applyEmbeddedSQL(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	pg, err := store.OpenPostgres(ctx, schemaURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pg, database
+}
+
+func openPostgresEmptyIntegrationStore(t *testing.T, ctx context.Context, label string) (*store.PostgresStore, *pgxpool.Pool) {
+	t.Helper()
+	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
+	}
+	schema := fmt.Sprintf("nerocd_%s_%d", label, time.Now().UTC().UnixNano())
+	adminDB, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminDB.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+		adminDB.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		_, _ = adminDB.Exec(cleanupCtx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
+		adminDB.Close()
+	})
+	schemaURL := databaseURLWithSearchPath(t, databaseURL, schema)
+	database, err := pgxpool.New(ctx, schemaURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(database.Close)
+	if err := applyEmbeddedMigrations(ctx, database, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	pg, err := store.OpenPostgres(ctx, schemaURL)
@@ -1933,12 +3718,12 @@ func applyEmbeddedSQL(ctx context.Context, database *pgxpool.Pool) error {
 	if err := applyEmbeddedMigrations(ctx, database, "", ""); err != nil {
 		return err
 	}
-	seed, err := db.Files.ReadFile("seeds/dev.sql")
+	seed, err := os.ReadFile("../../db/seeds/dev.sql")
 	if err != nil {
 		return err
 	}
 	if _, err := database.Exec(ctx, string(seed)); err != nil {
-		return fmt.Errorf("apply seeds/dev.sql: %w", err)
+		return fmt.Errorf("apply development test seed: %w", err)
 	}
 	return nil
 }

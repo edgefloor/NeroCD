@@ -14,4 +14,8 @@ func (*FileSecretResolver) Read(string) (string, error) {
 	return "", errors.New("runner_file secrets are unsupported on this platform")
 }
 
+func (*FileSecretResolver) ReadBytes(string) ([]byte, error) {
+	return nil, errors.New("runner_file secrets are unsupported on this platform")
+}
+
 func (*FileSecretResolver) Close() error { return nil }

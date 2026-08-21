@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT NOT NULL UNIQUE,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source_ip TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    last_seen_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ
 );
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"nerocd/internal/observability"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +12,66 @@ import (
 
 	"nerocd/internal/domain"
 )
+
+func TestMemoryOperationalSnapshotAggregatesWithoutIdentifiers(t *testing.T) {
+	now := time.Now().UTC()
+	finished := now.Add(-time.Minute)
+	passed := true
+	mem := NewMemoryStore()
+	mem.runs = []domain.TaskRun{{ID: "private-run", Status: domain.RunQueued, StartedAt: now.Add(-2 * time.Minute)}, {ID: "done", Status: domain.RunSucceeded, StartedAt: now.Add(-3 * time.Minute), FinishedAt: &finished}}
+	mem.runners = []domain.Runner{{ID: "private-runner", LastHeartbeatAt: now.Add(-time.Minute)}}
+	mem.leases = []domain.RunLease{{ID: "lease", Status: domain.LeaseActive}, {ID: "expired", Status: domain.LeaseExpired}}
+	mem.deployments = []domain.Deployment{{ID: "deployment", Status: domain.DeploymentSucceeded, HealthPassed: &passed}}
+	if err := mem.RecordRunnerOperationalObservation(t.Context(), "private-runner", 3, 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := mem.OperationalSnapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.QueueDepth != 1 || snapshot.ActiveLeases != 1 || snapshot.ExpiredLeases != 1 || snapshot.RunnerJournalDepth != 3 || snapshot.TerminalRuns[domain.RunSucceeded].Count != 1 || snapshot.DeploymentHealthPassed != 1 || snapshot.BackupOutcome != observability.BackupNone {
+		t.Fatalf("snapshot=%#v", snapshot)
+	}
+}
+
+func TestMemoryRunLogRetentionIsBoundedReplaySafeAndAtomic(t *testing.T) {
+	now := time.Now().UTC()
+	finished := now.Add(-48 * time.Hour)
+	mem := NewMemoryStore()
+	mem.runs = []domain.TaskRun{{ID: "retention_done", Status: domain.RunSucceeded, FinishedAt: &finished}, {ID: "retention_active", Status: domain.RunSucceeded, FinishedAt: &finished}}
+	mem.logs = []domain.RunLog{
+		{ID: "retention_old_1", RunID: "retention_done", Message: "abc", CreatedAt: now.Add(-48 * time.Hour)},
+		{ID: "retention_old_2", RunID: "retention_done", Message: "wxyz", CreatedAt: now.Add(-48 * time.Hour)},
+		{ID: "retention_leased", RunID: "retention_active", Message: "must remain", CreatedAt: now.Add(-48 * time.Hour)},
+	}
+	mem.leases = []domain.RunLease{{ID: "retention_lease", RunID: "retention_active", Status: domain.LeaseActive}}
+	policy, err := mem.UpdateRunLogRetentionPolicy(t.Context(), domain.RunLogRetentionPolicy{Enabled: true, KeepDays: 1, BatchSize: 1, UpdatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := RunLogRetentionBodyHash(policy)
+	first, err := mem.ExecuteRunLogRetention(t.Context(), "retention_request", body, domain.AuditEvent{ID: "retention_audit", Action: "run_log_retention.execute"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Deleted != 1 || first.DeletedBytes != 3 || first.Preview.EligibleLogs != 2 || first.Preview.EligibleBytes != 7 || len(mem.logs) != 2 {
+		t.Fatalf("first retention=%#v logs=%#v", first, mem.logs)
+	}
+	replayed, err := mem.ExecuteRunLogRetention(t.Context(), "retention_request", body, domain.AuditEvent{ID: "other_audit"})
+	if err != nil || replayed != first || len(mem.logs) != 2 || len(mem.auditEvents) != 1 {
+		t.Fatalf("replay=%#v err=%v logs=%d audits=%d", replayed, err, len(mem.logs), len(mem.auditEvents))
+	}
+	if _, err := mem.ExecuteRunLogRetention(t.Context(), "retention_request", RunLogRetentionBodyHash(domain.RunLogRetentionPolicy{Version: policy.Version + 1}), domain.AuditEvent{ID: "conflict_audit"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed replay err=%v", err)
+	}
+	before := append([]domain.RunLog(nil), mem.logs...)
+	if _, err := mem.ExecuteRunLogRetention(t.Context(), "retention_audit_conflict", body, domain.AuditEvent{ID: "retention_audit"}); err == nil || len(mem.logs) != len(before) {
+		t.Fatalf("audit conflict err=%v logs=%#v", err, mem.logs)
+	}
+	if mem.logs[1].ID != "retention_leased" && mem.logs[0].ID != "retention_leased" {
+		t.Fatalf("active-lease log was removed: %#v", mem.logs)
+	}
+}
 
 func TestMemoryStoreBoundedClaimCursorProgressesAndWraps(t *testing.T) {
 	mem := NewMemoryStore()
@@ -94,6 +155,80 @@ func TestMemoryStoreBoundedClaimCursorProgressesAndWraps(t *testing.T) {
 		if len(run.ID) >= len("run_memory_incompatible_") && run.ID[:len("run_memory_incompatible_")] == "run_memory_incompatible_" && run.Status != domain.RunQueued {
 			t.Fatalf("incompatible run %q was mutated to %q", run.ID, run.Status)
 		}
+	}
+}
+
+func TestMemorySessionLastSeenIsIntervalGated(t *testing.T) {
+	mem := NewMemoryStore()
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	session := domain.Session{ID: "ses_seen", UserID: "user_seen", CreatedAt: now, ExpiresAt: now.Add(time.Hour), LastSeenAt: &now}
+	mem.users = append(mem.users, domain.User{ID: "user_seen", Email: "seen@example.invalid", Status: domain.UserActive})
+	if err := mem.CreateSession(t.Context(), session, "session-token"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.GetPrincipalBySessionTokenHash(t.Context(), "session-token", now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got := *mem.sessions[0].LastSeenAt; !got.Equal(now) {
+		t.Fatalf("last_seen updated before interval: %s", got)
+	}
+	after := now.Add(SessionLastSeenUpdateInterval)
+	if _, err := mem.GetPrincipalBySessionTokenHash(t.Context(), "session-token", after); err != nil {
+		t.Fatal(err)
+	}
+	if got := *mem.sessions[0].LastSeenAt; !got.Equal(after) {
+		t.Fatalf("last_seen=%s want=%s", got, after)
+	}
+}
+
+func TestMemoryClaimAndApprovalAuditAreAtomic(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	mem := NewMemoryStore()
+	if _, err := mem.RegisterRunner(ctx, domain.Runner{ID: "runner_audit", Name: "audit", Tags: []string{"local"}, Capabilities: []string{"shell"}, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.CreateRun(ctx, domain.TaskRun{ID: "run_claim_audit", ProjectID: "project", RunSpec: domain.RunSpec{Type: domain.RunTypeShell}, RunnerTags: []string{"local"}, Status: domain.RunQueued, RequestedBy: "user", StartedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.ClaimRun(ctx, "runner_audit", now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if events, err := mem.ListAuditEvents(ctx); err != nil || len(events) != 0 {
+		t.Fatalf("claim without audit events=%#v err=%v", events, err)
+	}
+	if _, err := mem.CreateRun(ctx, domain.TaskRun{ID: "run_claim_duplicate", ProjectID: "project", RunSpec: domain.RunSpec{Type: domain.RunTypeShell}, RunnerTags: []string{"local"}, Status: domain.RunQueued, RequestedBy: "user", StartedAt: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := domain.AuditEvent{ID: "aud_claim_duplicate", ActorID: "runner_audit", Action: "runner.claim", CreatedAt: now}
+	if err := mem.CreateAuditEvent(ctx, duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.ClaimRunWithAudit(ctx, "runner_audit", now.Add(time.Second), time.Minute, duplicate); !errors.Is(err, ErrConflict) {
+		t.Fatalf("claim with duplicate audit error=%v, want conflict", err)
+	}
+	runs, err := mem.ListRuns(ctx, "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range runs {
+		if run.ID == "run_claim_duplicate" && run.Status != domain.RunQueued {
+			t.Fatalf("audit failure partially claimed run: %#v", run)
+		}
+	}
+
+	fixture := NewFixtureMemoryStore("admin@example.invalid", "viewer@example.invalid", "hash-a", "hash-b")
+	approveAudit := domain.AuditEvent{ID: "aud_approve", ActorID: "usr_bootstrap", Action: "run.approve", CreatedAt: now}
+	approval, err := fixture.ApproveRunWithAudit(ctx, "run_002", "usr_bootstrap", now, approveAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := fixture.ListAuditEvents(ctx)
+	if err != nil || len(events) != 1 || events[0].TargetID != "run_002" || events[0].Metadata["approval_id"] != approval.ID {
+		t.Fatalf("approve audit=%#v err=%v", events, err)
+	}
+	if _, err := fixture.ApproveRunWithAudit(ctx, "run_002", "usr_bootstrap", now, approveAudit); !errors.Is(err, ErrConflict) {
+		t.Fatalf("repeat approval error=%v, want conflict", err)
 	}
 }
 

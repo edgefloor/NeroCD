@@ -1,9 +1,13 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"nerocd/internal/app"
@@ -20,10 +25,38 @@ import (
 	"nerocd/web"
 )
 
+type unavailableProjects struct{ store.ProjectRepository }
+
+func (unavailableProjects) ListProjects(context.Context) ([]domain.Project, error) {
+	return nil, errors.New("database schema unavailable")
+}
+
+type incompatibleProjects struct{ store.ProjectRepository }
+
+func (incompatibleProjects) SchemaCompatible(context.Context) (bool, error) { return false, nil }
+
 func newTestServer() (*Server, *store.MemoryStore) {
-	mem := store.NewMemoryStore()
-	service := app.NewService(auth.ContextProvider{}, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem)
+	mem := newSeededTestStore()
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem})
 	return NewServer(service, slog.Default(), web.Static()), mem
+}
+
+func newTestServerWithConfig(cfg ServerConfig) (*Server, *store.MemoryStore) {
+	mem := newSeededTestStore()
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem})
+	return NewServerWithConfig(service, slog.Default(), web.Static(), cfg), mem
+}
+
+func newSeededTestStore() *store.MemoryStore {
+	hash, err := auth.HashPassword("admin")
+	if err != nil {
+		panic(err)
+	}
+	viewerHash, err := auth.HashPassword("viewer")
+	if err != nil {
+		panic(err)
+	}
+	return store.NewFixtureMemoryStore("admin@example.local", "viewer@example.local", hash, viewerHash)
 }
 
 func TestServerServesEmbeddedApplicationShell(t *testing.T) {
@@ -40,10 +73,63 @@ func TestServerServesEmbeddedApplicationShell(t *testing.T) {
 	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
 		t.Fatalf("GET / Content-Type = %q, want HTML", contentType)
 	}
+	for header, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
+	} {
+		if got := rec.Header().Get(header); got != want {
+			t.Fatalf("GET / %s=%q want %q", header, got, want)
+		}
+	}
 	for _, marker := range []string{"<!doctype html>", "<title>NeroCD</title>", `type="module"`, "<body"} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("GET / did not serve a valid embedded application shell; missing %q in %q", marker, body)
 		}
+	}
+}
+
+func TestStaticAssetsDenySourceMapsAndSetCacheHeaders(t *testing.T) {
+	static := fstest.MapFS{
+		"index.html":                     {Data: []byte("<!doctype html><title>NeroCD</title>")},
+		"assets/index-z8Z1weLE.js":       {Data: []byte("console.log('app')")},
+		"assets/index-CqM-jSVW.css":      {Data: []byte("body{}")},
+		"assets/operator-report-2024.js": {Data: []byte("console.log('report')")},
+		"scripts/index-z8Z1weLE.js":      {Data: []byte("console.log('not an asset')")},
+		"assets/index-z8Z1weLE.js.map":   {Data: []byte(`{"sources":["private.ts"]}`)},
+	}
+	handler := spaFileServer(static)
+	for _, test := range []struct {
+		path      string
+		wantCode  int
+		wantCache string
+		wantBody  string
+	}{
+		{path: "/", wantCode: http.StatusOK, wantCache: "no-cache", wantBody: "NeroCD"},
+		{path: "/projects", wantCode: http.StatusOK, wantCache: "no-cache", wantBody: "NeroCD"},
+		{path: "/assets/index-z8Z1weLE.js", wantCode: http.StatusOK, wantCache: "public, max-age=31536000, immutable", wantBody: "console.log('app')"},
+		{path: "/assets/index-CqM-jSVW.css", wantCode: http.StatusOK, wantCache: "public, max-age=31536000, immutable", wantBody: "body{}"},
+		{path: "/assets/operator-report-2024.js", wantCode: http.StatusOK, wantCache: "no-cache", wantBody: "report"},
+		{path: "/scripts/index-z8Z1weLE.js", wantCode: http.StatusOK, wantCache: "no-cache", wantBody: "not an asset"},
+		{path: "/assets/index-z8Z1weLE.js.map", wantCode: http.StatusNotFound},
+		{path: "/unknown.map", wantCode: http.StatusNotFound},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, test.path, nil))
+			if rec.Code != test.wantCode {
+				t.Fatalf("GET %s = %d, want %d", test.path, rec.Code, test.wantCode)
+			}
+			if test.wantCache != "" && rec.Header().Get("Cache-Control") != test.wantCache {
+				t.Fatalf("GET %s Cache-Control = %q, want %q", test.path, rec.Header().Get("Cache-Control"), test.wantCache)
+			}
+			if test.wantCode == http.StatusOK && rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+				t.Fatalf("GET %s X-Content-Type-Options = %q, want nosniff", test.path, rec.Header().Get("X-Content-Type-Options"))
+			}
+			if test.wantBody != "" && !strings.Contains(rec.Body.String(), test.wantBody) {
+				t.Fatalf("GET %s body = %q, want %q", test.path, rec.Body.String(), test.wantBody)
+			}
+		})
 	}
 }
 
@@ -56,6 +142,245 @@ func TestProtectedRoutesRequireBearerSession(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/v1/me without token returned %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestGetDeploymentByIDUsesProjectViewAuthorizationWithoutExistenceLeak(t *testing.T) {
+	server, mem := newTestServer()
+	now := time.Now().UTC()
+	if _, err := mem.CreateService(t.Context(), domain.Service{ID: "svc_detail", ProjectID: "proj_platform", RepositoryID: "repo_platform_runbooks", Name: "Detail", ComposePath: "compose.yaml", OwnerID: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.CreateEnvironment(t.Context(), domain.Environment{ID: "env_detail", ServiceID: "svc_detail", Name: "Production", ComposeProject: "detail", TimeoutSeconds: 60, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.CreateRevision(t.Context(), domain.Revision{ID: "rev_detail", ServiceID: "svc_detail", RequestedRef: "main", GitCommit: strings.Repeat("a", 40), ComposeHash: "sha256:detail", ImageDigests: []string{"sha256:detail"}, ContentIdentity: "detail", CreatedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.TaskRun{ID: "run_detail", ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy, Inputs: map[string]any{}}, Workflow: domain.Workflow{Steps: []domain.WorkflowStep{}}, WorkflowState: domain.WorkflowState{Steps: []domain.WorkflowStepState{}}, Status: domain.RunQueued, RequestedBy: "usr_bootstrap", StartedAt: now}
+	deployment, err := mem.CreateDeploymentRequest(t.Context(), domain.Deployment{ID: "dep_detail", EnvironmentID: "env_detail", DesiredRevisionID: "rev_detail", IdempotencyKey: "detail-intent", Status: domain.DeploymentQueued, RequestedBy: "usr_bootstrap", CreatedAt: now, UpdatedAt: now, FenceRequired: true}, run, domain.AuditEvent{ID: "audit_detail", ActorID: "usr_bootstrap", Action: "deployment.create", TargetID: "dep_detail", CreatedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := createTestSession(t, server)
+	adminReq := httptest.NewRequest(http.MethodGet, "/api/v1/deployments/dep_detail", nil)
+	adminReq.Header.Set("Authorization", "Bearer "+admin)
+	adminRec := httptest.NewRecorder()
+	server.ServeHTTP(adminRec, adminReq)
+	if adminRec.Code != http.StatusOK || !strings.Contains(adminRec.Body.String(), `"task_run_id":"run_detail"`) || !strings.Contains(adminRec.Body.String(), `"id":"`+deployment.ID+`"`) {
+		t.Fatalf("authorized deployment detail=%d %s", adminRec.Code, adminRec.Body.String())
+	}
+	viewer := createTestSessionFor(t, server, "viewer@example.local", "viewer")
+	for _, id := range []string{"dep_detail", "dep_absent"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments/"+id, nil)
+		req.Header.Set("Authorization", "Bearer "+viewer)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "dep_detail") {
+			t.Fatalf("viewer deployment %s = %d %s, want indistinguishable not-found", id, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestRequestBoundaryRejectsAmbiguousJSONAndUnboundedPagination(t *testing.T) {
+	server, _ := newTestServerWithConfig(ServerConfig{PublicOrigin: "https://nerocd.example.invalid"})
+	token := createTestSession(t, server)
+	for _, test := range []struct {
+		name        string
+		contentType string
+		body        string
+		want        int
+	}{
+		{name: "missing content type", body: `{}`, want: http.StatusUnsupportedMediaType},
+		{name: "wrong content type", contentType: "text/plain", body: `{}`, want: http.StatusUnsupportedMediaType},
+		{name: "multiple documents", contentType: "application/json", body: `{} {}`, want: http.StatusBadRequest},
+		{name: "valid content type parameter", contentType: "application/json; charset=utf-8", body: `{"name":"bounded"}`, want: http.StatusCreated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(test.body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			if test.contentType != "" {
+				req.Header.Set("Content-Type", test.contentType)
+			}
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != test.want {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if rec.Header().Get("X-Request-ID") == "" || rec.Header().Get("Strict-Transport-Security") == "" || rec.Header().Get("Content-Security-Policy") == "" {
+				t.Fatalf("security/request headers=%v", rec.Header())
+			}
+		})
+	}
+	large := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(strings.Repeat(" ", maxJSONBodyBytes+1)))
+	large.Header.Set("Authorization", "Bearer "+token)
+	large.Header.Set("Content-Type", "application/json")
+	largeRec := httptest.NewRecorder()
+	server.ServeHTTP(largeRec, large)
+	if largeRec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("large body status=%d", largeRec.Code)
+	}
+	page := httptest.NewRequest(http.MethodGet, "/api/v1/projects?limit=101", nil)
+	page.Header.Set("Authorization", "Bearer "+token)
+	pageRec := httptest.NewRecorder()
+	server.ServeHTTP(pageRec, page)
+	if pageRec.Code != http.StatusBadRequest {
+		t.Fatalf("unbounded page status=%d", pageRec.Code)
+	}
+	unsafeID := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	unsafeID.Header.Set("Authorization", "Bearer "+token)
+	unsafeID.Header.Set("X-Request-ID", strings.Repeat("a", maxRequestIDLen+1))
+	unsafeRec := httptest.NewRecorder()
+	server.ServeHTTP(unsafeRec, unsafeID)
+	if got := unsafeRec.Header().Get("X-Request-ID"); got == strings.Repeat("a", maxRequestIDLen+1) || !safeRequestID.MatchString(got) {
+		t.Fatalf("unsafe request ID echoed as %q", got)
+	}
+}
+
+func TestSecurityHeadersKeepExecutableContentStrict(t *testing.T) {
+	server, _ := newTestServerWithConfig(ServerConfig{PublicOrigin: "https://nerocd.example.invalid"})
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	const wantCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'"
+	if got := rec.Header().Get("Content-Security-Policy"); got != wantCSP {
+		t.Fatalf("Content-Security-Policy=%q, want %q", got, wantCSP)
+	}
+	for _, forbidden := range []string{"script-src", "'unsafe-eval'", "data:", "blob:", "*", "http://", "https://"} {
+		if strings.Contains(rec.Header().Get("Content-Security-Policy"), forbidden) {
+			t.Fatalf("CSP unexpectedly admits executable source %q: %q", forbidden, rec.Header().Get("Content-Security-Policy"))
+		}
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options=%q, want nosniff", got)
+	}
+	if got := rec.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
+		t.Fatalf("Referrer-Policy=%q", got)
+	}
+}
+
+func TestEveryMutationRouteRejectsUnknownTopLevelFieldsWithoutSideEffects(t *testing.T) {
+	server, mem := newTestServer()
+	adminToken := createTestSession(t, server)
+	runnerToken := "runner-strict-schema-token"
+	hash := sha256.Sum256([]byte(runnerToken))
+	if _, err := mem.RegisterRunner(t.Context(), domain.Runner{ID: "runner_strict_schema", Name: "strict", Tags: []string{}, Capabilities: []string{"shell", "compose_deploy"}, TokenHash: hex.EncodeToString(hash[:]), Status: domain.RunnerActive, RegisteredAt: time.Now().UTC(), LastHeartbeatAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	beforeAudits, err := mem.ListAuditEvents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeProjects, _ := mem.ListProjects(t.Context())
+	beforeRuns, _ := mem.ListRuns(t.Context(), "")
+	beforeRunners, _ := mem.ListRunners(t.Context())
+	for _, route := range PublicRoutes() {
+		if route.Method != http.MethodPost && route.Method != http.MethodPut && route.Method != http.MethodPatch {
+			continue
+		}
+		path := strings.Replace(route.Path, "{id}", "repo_platform_runbooks", 1)
+		t.Run(route.Method+" "+path, func(t *testing.T) {
+			req := httptest.NewRequest(route.Method, path, strings.NewReader(`{"unknown_field":true}`))
+			req.Header.Set("Content-Type", "application/json")
+			switch {
+			case requiresRunnerAuth(route.Path):
+				req.Header.Set("Authorization", "Bearer "+runnerToken)
+			case route.Path == "/api/v1/runner-enrollments/consume":
+				// This endpoint receives the enrollment credential directly; schema
+				// validation must still happen before it can consume anything.
+				req.Header.Set("Authorization", "Bearer enrollment-placeholder")
+			case requiresAuth(route.Path):
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+			}
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid_request"`) {
+				t.Fatalf("unknown top-level response=%d %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	afterAudits, _ := mem.ListAuditEvents(t.Context())
+	afterProjects, _ := mem.ListProjects(t.Context())
+	afterRuns, _ := mem.ListRuns(t.Context(), "")
+	afterRunners, _ := mem.ListRunners(t.Context())
+	if len(afterAudits) != len(beforeAudits) || len(afterProjects) != len(beforeProjects) || len(afterRuns) != len(beforeRuns) || len(afterRunners) != len(beforeRunners) {
+		t.Fatalf("unknown field caused state change: audits %d/%d projects %d/%d runs %d/%d runners %d/%d", len(beforeAudits), len(afterAudits), len(beforeProjects), len(afterProjects), len(beforeRuns), len(afterRuns), len(beforeRunners), len(afterRunners))
+	}
+}
+
+func FuzzStrictJSONDocument(f *testing.F) {
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`{} {}`))
+	f.Add([]byte(`{"unterminated"`))
+	f.Fuzz(func(t *testing.T, body []byte) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		strictJSONDocument(rec, req)
+	})
+}
+
+func FuzzUnknownTopLevelFieldIsRejected(f *testing.F) {
+	f.Add("unknown_field")
+	f.Add("x")
+	f.Fuzz(func(t *testing.T, field string) {
+		if field == "" {
+			t.Skip()
+		}
+		field = "unknown_" + hex.EncodeToString([]byte(field))
+		server, _ := newTestServer()
+		token := createTestSession(t, server)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"valid","`+field+`":true}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid_request"`) {
+			t.Fatalf("field %q response=%d %s", field, rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestRepositoryPolicyConfigurationIsStrictIdempotentAndNonLeaking(t *testing.T) {
+	server, _ := newTestServer()
+	token := createTestSession(t, server)
+	body := `{"project_id":"proj_platform","configuration_id":"cfg_12345678","policy":{"version":1,"state":"configured","mode":"public","allowed_schemes":["https"],"allowed_hosts":["git.example.local"],"credential_reference_id":"cred_12345678"}}`
+	request := func(payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/repositories/repo_platform_runbooks/policy", strings.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	first := request(body)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first configure = %d: %s", first.Code, first.Body.String())
+	}
+	if strings.Contains(first.Body.String(), "cred_12345678") {
+		t.Fatalf("credential reference leaked: %s", first.Body.String())
+	}
+	if retry := request(body); retry.Code != http.StatusOK {
+		t.Fatalf("idempotent retry = %d: %s", retry.Code, retry.Body.String())
+	}
+	if conflict := request(strings.Replace(body, "git.example.local", "other.example.local", 1)); conflict.Code != http.StatusConflict {
+		t.Fatalf("mismatched replay = %d", conflict.Code)
+	}
+	if unknown := request(strings.Replace(body, `"policy":{`, `"policy":{"secret":"sentinel",`, 1)); unknown.Code != http.StatusBadRequest {
+		t.Fatalf("unknown policy field = %d", unknown.Code)
+	}
+	if outer := request(strings.Replace(body, `"project_id":`, `"unknown":"sentinel","project_id":`, 1)); outer.Code != http.StatusBadRequest {
+		t.Fatalf("unknown outer field = %d", outer.Code)
+	}
+	viewer := createTestSessionFor(t, server, "viewer@example.local", "viewer")
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/repositories/repo_platform_runbooks/policy", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+viewer)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer configure = %d", rec.Code)
 	}
 }
 
@@ -95,7 +420,7 @@ func TestRunSecretProviderValidationRejectsUnsafeProductionBindings(t *testing.T
 	}
 }
 
-func TestReadinessAndMetricsArePublic(t *testing.T) {
+func TestReadinessIsPublicAndMetricsRequireAdmin(t *testing.T) {
 	server, _ := newTestServer()
 
 	readyReq := httptest.NewRequest(http.MethodGet, "/api/v1/ready", nil)
@@ -108,8 +433,251 @@ func TestReadinessAndMetricsArePublic(t *testing.T) {
 	metricsReq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	metricsRec := httptest.NewRecorder()
 	server.ServeHTTP(metricsRec, metricsReq)
-	if metricsRec.Code != http.StatusOK || !strings.Contains(metricsRec.Body.String(), "nerocd_http_requests_total") {
-		t.Fatalf("GET /metrics returned %d: %s", metricsRec.Code, metricsRec.Body.String())
+	if metricsRec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /metrics without credentials returned %d: %s", metricsRec.Code, metricsRec.Body.String())
+	}
+	metricsReq.Header.Set("Authorization", "Bearer "+createTestSession(t, server))
+	metricsRec = httptest.NewRecorder()
+	server.ServeHTTP(metricsRec, metricsReq)
+	if metricsRec.Code != http.StatusOK || !strings.Contains(metricsRec.Body.String(), "nerocd_http_requests_total") || !strings.Contains(metricsRec.Body.String(), "nerocd_queue_depth") || strings.Contains(metricsRec.Body.String(), "runner_id=") {
+		t.Fatalf("GET /metrics as admin returned %d: %s", metricsRec.Code, metricsRec.Body.String())
+	}
+}
+
+func TestBootstrapAndOperationsStatusAreBoundedAndRoleProtected(t *testing.T) {
+	empty := store.NewMemoryStore()
+	emptyService := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, Projects: empty, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty})
+	emptyServer := NewServer(emptyService, slog.Default(), web.Static())
+	required := httptest.NewRecorder()
+	emptyServer.ServeHTTP(required, httptest.NewRequest(http.MethodGet, "/api/v1/bootstrap-status", nil))
+	if required.Code != http.StatusOK || required.Body.String() != "{\"status\":\"required\"}\n" {
+		t.Fatalf("empty bootstrap state=%d %s", required.Code, required.Body.String())
+	}
+
+	server, _ := newTestServer()
+	complete := httptest.NewRecorder()
+	server.ServeHTTP(complete, httptest.NewRequest(http.MethodGet, "/api/v1/bootstrap-status", nil))
+	if complete.Code != http.StatusOK || complete.Body.String() != "{\"status\":\"complete\"}\n" {
+		t.Fatalf("complete bootstrap state=%d %s", complete.Code, complete.Body.String())
+	}
+	unauthenticated := httptest.NewRecorder()
+	server.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/v1/operations/status", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous operations status=%d", unauthenticated.Code)
+	}
+	viewer := createTestSessionFor(t, server, "viewer@example.local", "viewer")
+	forbidden := httptest.NewRecorder()
+	viewerRequest := httptest.NewRequest(http.MethodGet, "/api/v1/operations/status", nil)
+	viewerRequest.Header.Set("Authorization", "Bearer "+viewer)
+	server.ServeHTTP(forbidden, viewerRequest)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("viewer operations status=%d", forbidden.Code)
+	}
+	admin := createTestSession(t, server)
+	ready := httptest.NewRecorder()
+	adminRequest := httptest.NewRequest(http.MethodGet, "/api/v1/operations/status", nil)
+	adminRequest.Header.Set("Authorization", "Bearer "+admin)
+	server.ServeHTTP(ready, adminRequest)
+	if ready.Code != http.StatusOK || !strings.Contains(ready.Body.String(), `"readiness":"ready"`) || !strings.Contains(ready.Body.String(), `"snapshot"`) || strings.Contains(ready.Body.String(), "admin@example.local") {
+		t.Fatalf("admin operations status=%d %s", ready.Code, ready.Body.String())
+	}
+
+	incompatible := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, Projects: incompatibleProjects{empty}, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty})
+	if _, err := incompatible.BootstrapAdmin(t.Context(), app.BootstrapAdminInput{Email: "ops@example.invalid", Name: "Ops", Password: "correct horse battery staple"}); err != nil {
+		t.Fatal(err)
+	}
+	opsSession, err := incompatible.CreateSession(t.Context(), "ops@example.invalid", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	incompatibleServer := NewServer(incompatible, slog.Default(), web.Static())
+	noPartial := httptest.NewRecorder()
+	noPartialRequest := httptest.NewRequest(http.MethodGet, "/api/v1/operations/status", nil)
+	noPartialRequest.Header.Set("Authorization", "Bearer "+opsSession.Token)
+	incompatibleServer.ServeHTTP(noPartial, noPartialRequest)
+	if noPartial.Code != http.StatusServiceUnavailable || strings.Contains(noPartial.Body.String(), "snapshot") || strings.Contains(noPartial.Body.String(), "schema") {
+		t.Fatalf("incompatible operations status=%d %s", noPartial.Code, noPartial.Body.String())
+	}
+}
+
+func TestRunLogRetentionIsSystemAdminOnlyAndRequestReplaySafe(t *testing.T) {
+	server, _ := newTestServer()
+	viewer := createTestSessionFor(t, server, "viewer@example.local", "viewer")
+	forbidden := httptest.NewRequest(http.MethodGet, "/api/v1/run-log-retention", nil)
+	forbidden.Header.Set("Authorization", "Bearer "+viewer)
+	forbiddenRec := httptest.NewRecorder()
+	server.ServeHTTP(forbiddenRec, forbidden)
+	if forbiddenRec.Code != http.StatusForbidden {
+		t.Fatalf("viewer retention status=%d", forbiddenRec.Code)
+	}
+	admin := createTestSession(t, server)
+	update := httptest.NewRequest(http.MethodPut, "/api/v1/run-log-retention", strings.NewReader(`{"enabled":true,"keep_days":7,"batch_size":5}`))
+	update.Header.Set("Authorization", "Bearer "+admin)
+	update.Header.Set("Content-Type", "application/json")
+	updated := httptest.NewRecorder()
+	server.ServeHTTP(updated, update)
+	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"enabled":true`) || strings.Contains(updated.Body.String(), "log_") {
+		t.Fatalf("update retention=%d %s", updated.Code, updated.Body.String())
+	}
+	var status struct {
+		Policy struct {
+			Version int `json:"version"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal(updated.Body.Bytes(), &status); err != nil || status.Policy.Version < 1 {
+		t.Fatalf("decode retention status=%#v err=%v", status, err)
+	}
+	execute := func(version int) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/run-log-retention/execute", strings.NewReader(fmt.Sprintf(`{"policy_version":%d}`, version)))
+		req.Header.Set("Authorization", "Bearer "+admin)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Request-ID", "retention_api_replay_001")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	first := execute(status.Policy.Version)
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"deleted"`) || strings.Contains(first.Body.String(), "run_") {
+		t.Fatalf("first retention execute=%d %s", first.Code, first.Body.String())
+	}
+	// A policy update must not invalidate the durable result of an exact old
+	// request; it only prevents a new stale execution.
+	secondUpdate := httptest.NewRequest(http.MethodPut, "/api/v1/run-log-retention", strings.NewReader(`{"enabled":true,"keep_days":8,"batch_size":5}`))
+	secondUpdate.Header.Set("Authorization", "Bearer "+admin)
+	secondUpdate.Header.Set("Content-Type", "application/json")
+	secondUpdateRec := httptest.NewRecorder()
+	server.ServeHTTP(secondUpdateRec, secondUpdate)
+	replayed := execute(status.Policy.Version)
+	if replayed.Code != http.StatusOK || replayed.Body.String() != first.Body.String() {
+		t.Fatalf("exact replay=%d %s want %s", replayed.Code, replayed.Body.String(), first.Body.String())
+	}
+	changed := execute(status.Policy.Version + 1)
+	if changed.Code != http.StatusConflict {
+		t.Fatalf("changed replay=%d %s", changed.Code, changed.Body.String())
+	}
+}
+
+func TestRunnerTelemetryIsAuthenticatedBoundedAndAppearsOnlyAsAggregate(t *testing.T) {
+	server, _ := newTestServer()
+	admin := createTestSession(t, server)
+	register := httptest.NewRequest(http.MethodPost, "/api/v1/runners/register", strings.NewReader(`{"id":"runner_metrics","name":"private runner name","tags":[],"capabilities":["shell"]}`))
+	register.Header.Set("Authorization", "Bearer "+admin)
+	register.Header.Set("Content-Type", "application/json")
+	registered := httptest.NewRecorder()
+	server.ServeHTTP(registered, register)
+	if registered.Code != http.StatusCreated {
+		t.Fatalf("register=%d %s", registered.Code, registered.Body.String())
+	}
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(registered.Body.Bytes(), &payload); err != nil || payload.Token == "" {
+		t.Fatalf("runner token=%q err=%v", payload.Token, err)
+	}
+	telemetry := httptest.NewRequest(http.MethodPost, "/api/v1/runners/telemetry", strings.NewReader(`{"journal_depth":4,"retry_count":2,"renew_failures":1}`))
+	telemetry.Header.Set("Authorization", "Bearer "+payload.Token)
+	telemetry.Header.Set("Content-Type", "application/json")
+	telemetryRec := httptest.NewRecorder()
+	server.ServeHTTP(telemetryRec, telemetry)
+	if telemetryRec.Code != http.StatusNoContent {
+		t.Fatalf("telemetry=%d %s", telemetryRec.Code, telemetryRec.Body.String())
+	}
+	detail := httptest.NewRequest(http.MethodGet, "/api/v1/runners/runner_metrics", nil)
+	detail.Header.Set("Authorization", "Bearer "+admin)
+	detailRec := httptest.NewRecorder()
+	server.ServeHTTP(detailRec, detail)
+	if detailRec.Code != http.StatusOK || !strings.Contains(detailRec.Body.String(), `"journal_depth":4`) || !strings.Contains(detailRec.Body.String(), `"retry_count":2`) || strings.Contains(detailRec.Body.String(), payload.Token) {
+		t.Fatalf("safe runner telemetry detail=%d %s", detailRec.Code, detailRec.Body.String())
+	}
+	bad := httptest.NewRequest(http.MethodPost, "/api/v1/runners/telemetry", strings.NewReader(`{"journal_depth":9000,"retry_count":0,"renew_failures":0}`))
+	bad.Header.Set("Authorization", "Bearer "+payload.Token)
+	bad.Header.Set("Content-Type", "application/json")
+	badRec := httptest.NewRecorder()
+	server.ServeHTTP(badRec, bad)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("unbounded telemetry=%d %s", badRec.Code, badRec.Body.String())
+	}
+	metricsReq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsReq.Header.Set("Authorization", "Bearer "+admin)
+	metricsRec := httptest.NewRecorder()
+	server.ServeHTTP(metricsRec, metricsReq)
+	if metricsRec.Code != http.StatusOK || !strings.Contains(metricsRec.Body.String(), "nerocd_runner_journal_depth 4") || strings.Contains(metricsRec.Body.String(), "private runner name") || strings.Contains(metricsRec.Body.String(), "runner_metrics") {
+		t.Fatalf("metrics=%d %s", metricsRec.Code, metricsRec.Body.String())
+	}
+}
+
+func TestDrainKeepsLivenessButRejectsReadinessAndOrdinaryWork(t *testing.T) {
+	server, _ := newTestServer()
+	server.SetDraining(true)
+	for _, check := range []struct {
+		path string
+		want int
+		body string
+	}{
+		{"/api/v1/health", http.StatusOK, `"status":"ok"`},
+		{"/api/v1/ready", http.StatusServiceUnavailable, `"status":"not_ready"`},
+		{"/api/v1/projects", http.StatusServiceUnavailable, `"status":"draining"`},
+	} {
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, check.path, nil))
+		if rec.Code != check.want || !strings.Contains(rec.Body.String(), check.body) {
+			t.Fatalf("draining %s status=%d body=%s", check.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestReadinessDoesNotConflateLivenessWithDatabaseCompatibility(t *testing.T) {
+	mem := store.NewMemoryStore()
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: unavailableProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem})
+	server := NewServer(service, slog.Default(), web.Static())
+
+	health := httptest.NewRecorder()
+	server.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	if health.Code != http.StatusOK || !strings.Contains(health.Body.String(), `"status":"ok"`) {
+		t.Fatalf("liveness response=%d %s", health.Code, health.Body.String())
+	}
+
+	ready := httptest.NewRecorder()
+	server.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/api/v1/ready", nil))
+	if ready.Code != http.StatusServiceUnavailable || !strings.Contains(ready.Body.String(), `"status":"not_ready"`) {
+		t.Fatalf("readiness response=%d %s", ready.Code, ready.Body.String())
+	}
+}
+
+func TestReadinessRejectsOldOrPartialSchema(t *testing.T) {
+	mem := store.NewMemoryStore()
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: incompatibleProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem})
+	server := NewServer(service, slog.Default(), web.Static())
+	health := httptest.NewRecorder()
+	server.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	ready := httptest.NewRecorder()
+	server.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/api/v1/ready", nil))
+	if health.Code != http.StatusOK || ready.Code != http.StatusServiceUnavailable || !strings.Contains(ready.Body.String(), `"status":"not_ready"`) {
+		t.Fatalf("old-schema liveness=%d readiness=%d body=%s", health.Code, ready.Code, ready.Body.String())
+	}
+}
+
+func TestPanicRecoveryReturnsSafeJSONAndServerRemainsUsable(t *testing.T) {
+	server, _ := newTestServer()
+	var logs bytes.Buffer
+	server.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	server.mux.Handle("GET /panic-test", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("sentinel-secret-must-not-leak")
+	}))
+	panicRequest := httptest.NewRequest(http.MethodGet, "/panic-test", nil)
+	panicRequest.Header.Set("X-Request-ID", "req_panic_safe")
+	panicResponse := httptest.NewRecorder()
+	server.ServeHTTP(panicResponse, panicRequest)
+	if panicResponse.Code != http.StatusInternalServerError || !strings.Contains(panicResponse.Body.String(), `"error":"internal_error"`) || !strings.Contains(panicResponse.Body.String(), `"request_id":"req_panic_safe"`) {
+		t.Fatalf("panic response=%d %s", panicResponse.Code, panicResponse.Body.String())
+	}
+	if strings.Contains(panicResponse.Body.String(), "sentinel-secret") || strings.Contains(logs.String(), "sentinel-secret") {
+		t.Fatalf("panic sentinel leaked response=%q logs=%q", panicResponse.Body.String(), logs.String())
+	}
+	ready := httptest.NewRecorder()
+	server.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/api/v1/ready", nil))
+	if ready.Code != http.StatusOK {
+		t.Fatalf("server did not survive recovered panic: %d %s", ready.Code, ready.Body.String())
 	}
 }
 
@@ -151,6 +719,191 @@ func TestCreatedSessionAuthenticatesCurrentPrincipal(t *testing.T) {
 	}
 }
 
+func TestBrowserSessionsUseCookieOnlyAuthenticationAndCSRF(t *testing.T) {
+	server, _ := newTestServer()
+	cookie := createBrowserSession(t, server)
+
+	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.Path != "/api/v1" || !cookie.Secure || cookie.Expires.IsZero() {
+		t.Fatalf("browser session cookie attributes = %#v", cookie)
+	}
+
+	me := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	me.AddCookie(cookie)
+	meRec := httptest.NewRecorder()
+	server.ServeHTTP(meRec, me)
+	if meRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/me with browser cookie = %d: %s", meRec.Code, meRec.Body.String())
+	}
+
+	for _, csrf := range []string{"", "wrong"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"cookie csrf"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if csrf != "" {
+			req.Header.Set("X-NeroCD-CSRF", csrf)
+		}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("cookie POST with CSRF %q = %d: %s", csrf, rec.Code, rec.Body.String())
+		}
+	}
+	accepted := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"cookie accepted"}`))
+	accepted.Header.Set("Content-Type", "application/json")
+	accepted.Header.Set("X-NeroCD-CSRF", "1")
+	accepted.AddCookie(cookie)
+	acceptedRec := httptest.NewRecorder()
+	server.ServeHTTP(acceptedRec, accepted)
+	if acceptedRec.Code != http.StatusCreated {
+		t.Fatalf("cookie POST with CSRF = %d: %s", acceptedRec.Code, acceptedRec.Body.String())
+	}
+
+	bearer := createTestSession(t, server)
+	bearerReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"bearer mutation"}`))
+	bearerReq.Header.Set("Content-Type", "application/json")
+	bearerReq.Header.Set("Authorization", "Bearer "+bearer)
+	bearerRec := httptest.NewRecorder()
+	server.ServeHTTP(bearerRec, bearerReq)
+	if bearerRec.Code != http.StatusCreated {
+		t.Fatalf("bearer POST without CSRF = %d: %s", bearerRec.Code, bearerRec.Body.String())
+	}
+}
+
+func TestBrowserMutationsRequireExactConfiguredOriginButBearerDoesNot(t *testing.T) {
+	server, _ := newTestServerWithConfig(ServerConfig{PublicOrigin: "https://console.example.invalid"})
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/browser-sessions", strings.NewReader(`{"email":"admin@example.local","password":"admin"}`))
+	login.Header.Set("Content-Type", "application/json")
+	login.Header.Set("Origin", "https://console.example.invalid")
+	loginRec := httptest.NewRecorder()
+	server.ServeHTTP(loginRec, login)
+	if loginRec.Code != http.StatusCreated {
+		t.Fatalf("configured-origin browser login=%d: %s", loginRec.Code, loginRec.Body.String())
+	}
+	cookie := loginRec.Result().Cookies()[0]
+	cookieMutation := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"blocked"}`))
+	cookieMutation.Header.Set("Content-Type", "application/json")
+	cookieMutation.Header.Set("X-NeroCD-CSRF", "1")
+	cookieMutation.Header.Set("Origin", "https://evil.example.invalid")
+	cookieMutation.AddCookie(cookie)
+	cookieRec := httptest.NewRecorder()
+	server.ServeHTTP(cookieRec, cookieMutation)
+	if cookieRec.Code != http.StatusForbidden {
+		t.Fatalf("wrong-origin cookie mutation=%d: %s", cookieRec.Code, cookieRec.Body.String())
+	}
+	bearer := createTestSession(t, server)
+	bearerMutation := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"bearer"}`))
+	bearerMutation.Header.Set("Content-Type", "application/json")
+	bearerMutation.Header.Set("Origin", "https://evil.example.invalid")
+	bearerMutation.Header.Set("Authorization", "Bearer "+bearer)
+	bearerRec := httptest.NewRecorder()
+	server.ServeHTTP(bearerRec, bearerMutation)
+	if bearerRec.Code != http.StatusCreated {
+		t.Fatalf("bearer origin-independent mutation=%d: %s", bearerRec.Code, bearerRec.Body.String())
+	}
+}
+
+func TestBrowserSessionCookieSecureDefaultsAndExplicitLocalOverride(t *testing.T) {
+	secureServer, _ := newTestServerWithConfig(ServerConfig{})
+	if cookie := createBrowserSession(t, secureServer); !cookie.Secure {
+		t.Fatalf("zero-value server config emitted insecure cookie: %#v", cookie)
+	}
+	insecureServer, _ := newTestServerWithConfig(ServerConfig{AllowInsecureCookies: true})
+	if cookie := createBrowserSession(t, insecureServer); cookie.Secure {
+		t.Fatalf("explicit insecure local override emitted Secure cookie: %#v", cookie)
+	}
+}
+
+func TestBrowserSessionLogoutRevokesCookieAndRunnerRoutesRejectIt(t *testing.T) {
+	server, _ := newTestServer()
+	cookie := createBrowserSession(t, server)
+
+	runnerReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/heartbeat", strings.NewReader(`{}`))
+	runnerReq.Header.Set("Content-Type", "application/json")
+	runnerReq.AddCookie(cookie)
+	runnerRec := httptest.NewRecorder()
+	server.ServeHTTP(runnerRec, runnerReq)
+	if runnerRec.Code != http.StatusUnauthorized {
+		t.Fatalf("runner endpoint accepted browser cookie: %d", runnerRec.Code)
+	}
+
+	missingCSRF := httptest.NewRequest(http.MethodDelete, "/api/v1/browser-sessions", nil)
+	missingCSRF.AddCookie(cookie)
+	missingCSRFRec := httptest.NewRecorder()
+	server.ServeHTTP(missingCSRFRec, missingCSRF)
+	if missingCSRFRec.Code != http.StatusForbidden {
+		t.Fatalf("browser logout without CSRF = %d: %s", missingCSRFRec.Code, missingCSRFRec.Body.String())
+	}
+
+	logout := httptest.NewRequest(http.MethodDelete, "/api/v1/browser-sessions", nil)
+	logout.Header.Set("X-NeroCD-CSRF", "1")
+	logout.AddCookie(cookie)
+	logoutRec := httptest.NewRecorder()
+	server.ServeHTTP(logoutRec, logout)
+	if logoutRec.Code != http.StatusNoContent {
+		t.Fatalf("browser logout = %d: %s", logoutRec.Code, logoutRec.Body.String())
+	}
+	cleared := logoutRec.Result().Cookies()
+	if len(cleared) != 1 || cleared[0].Name != "nerocd_session" || cleared[0].MaxAge >= 0 || cleared[0].Path != "/api/v1" || !cleared[0].HttpOnly || !cleared[0].Secure || cleared[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("cleared cookie = %#v", cleared)
+	}
+	old := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	old.AddCookie(cookie)
+	oldRec := httptest.NewRecorder()
+	server.ServeHTTP(oldRec, old)
+	if oldRec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked browser cookie authenticated /me: %d", oldRec.Code)
+	}
+}
+
+func TestBrowserCookieDoesNotAcceptAPIToken(t *testing.T) {
+	server, _ := newTestServer()
+	bearer := createTestSession(t, server)
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/api-tokens", strings.NewReader(`{"name":"cookie rejection","roles":["system_admin"]}`))
+	create.Header.Set("Content-Type", "application/json")
+	create.Header.Set("Authorization", "Bearer "+bearer)
+	createRec := httptest.NewRecorder()
+	server.ServeHTTP(createRec, create)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create API token = %d: %s", createRec.Code, createRec.Body.String())
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(createRec.Body).Decode(&body); err != nil || body.Token == "" {
+		t.Fatalf("decode API token: %v %#v", err, body)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "nerocd_session", Value: body.Token})
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("API token in browser cookie = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func createBrowserSession(t *testing.T, server http.Handler) *http.Cookie {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/browser-sessions", strings.NewReader(`{"email":"admin@example.local","password":"admin"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/browser-sessions = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := body["token"]; exists {
+		t.Fatalf("browser session response included token: %s", rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "nerocd_session" || cookies[0].Value == "" {
+		t.Fatalf("browser login cookies = %#v", cookies)
+	}
+	return cookies[0]
+}
+
 func TestSessionCanBeRevoked(t *testing.T) {
 	server, _ := newTestServer()
 	token := createTestSession(t, server)
@@ -169,6 +922,87 @@ func TestSessionCanBeRevoked(t *testing.T) {
 	server.ServeHTTP(meRec, meReq)
 	if meRec.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/v1/me with revoked token returned %d, want %d", meRec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestLoginIsEnumerationSafeRateLimitedAndUsesTrustedProxySource(t *testing.T) {
+	server, _ := newTestServerWithConfig(ServerConfig{TrustedProxyCIDRs: []string{"10.0.0.0/8"}})
+	metricsToken := createTestSession(t, server)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	server.app.SetLoginLimiter(auth.NewLoginLimiter(func() time.Time { return now }, 2, time.Minute, 64))
+	login := func(email string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(`{"email":"`+email+`","password":"wrong"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "10.1.2.3:4444"
+		req.Header.Set("X-Forwarded-For", "203.0.113.9, 10.2.3.4")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	unknown := login("nobody@example.invalid")
+	known := login("admin@example.local")
+	if unknown.Code != http.StatusUnauthorized || known.Code != http.StatusUnauthorized || unknown.Body.String() != known.Body.String() {
+		t.Fatalf("enumeration responses unknown=%d/%s known=%d/%s", unknown.Code, unknown.Body.String(), known.Code, known.Body.String())
+	}
+	limited := login("another@example.invalid")
+	if limited.Code != http.StatusTooManyRequests || !strings.Contains(limited.Body.String(), `"code":"rate_limited"`) || limited.Header().Get("Retry-After") == "" {
+		t.Fatalf("rate limit response=%d headers=%v body=%s", limited.Code, limited.Header(), limited.Body.String())
+	}
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsRequest.Header.Set("Authorization", "Bearer "+metricsToken)
+	metrics := httptest.NewRecorder()
+	server.ServeHTTP(metrics, metricsRequest)
+	if metrics.Code != http.StatusOK || !strings.Contains(metrics.Body.String(), "nerocd_auth_login_rate_limited_total 1") {
+		t.Fatalf("login limiter metric=%d %s", metrics.Code, metrics.Body.String())
+	}
+	now = now.Add(time.Minute)
+	if cooled := login("another@example.invalid"); cooled.Code != http.StatusUnauthorized {
+		t.Fatalf("expired rate-limit login=%d %s", cooled.Code, cooled.Body.String())
+	}
+	if source := server.clientSource(httptest.NewRequest(http.MethodGet, "/", nil)); source != "192.0.2.1" {
+		t.Fatalf("untrusted/request default source=%q", source)
+	}
+	proxyReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	proxyReq.RemoteAddr = "10.1.2.3:443"
+	proxyReq.Header.Set("X-Forwarded-For", "203.0.113.9, 10.2.3.4")
+	if source := server.clientSource(proxyReq); source != "203.0.113.9" {
+		t.Fatalf("trusted proxy source=%q", source)
+	}
+}
+
+func TestAdminCanListAndRevokeSessionMetadata(t *testing.T) {
+	server, _ := newTestServer()
+	token := createTestSession(t, server)
+	list := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	list.Header.Set("Authorization", "Bearer "+token)
+	listRec := httptest.NewRecorder()
+	server.ServeHTTP(listRec, list)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list sessions=%d %s", listRec.Code, listRec.Body.String())
+	}
+	var body struct {
+		Items []domain.Session `json:"items"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &body); err != nil || len(body.Items) == 0 {
+		t.Fatalf("session list=%s err=%v", listRec.Body.String(), err)
+	}
+	var current domain.Session
+	for _, item := range body.Items {
+		if item.SourceIP != "" {
+			current = item
+			break
+		}
+	}
+	if current.ID == "" || current.LastSeenAt == nil {
+		t.Fatalf("missing session metadata %#v", body.Items)
+	}
+	revoke := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/revoke", strings.NewReader(`{"session_id":"`+current.ID+`"}`))
+	revoke.Header.Set("Authorization", "Bearer "+token)
+	revoke.Header.Set("Content-Type", "application/json")
+	revokeRec := httptest.NewRecorder()
+	server.ServeHTTP(revokeRec, revoke)
+	if revokeRec.Code != http.StatusOK {
+		t.Fatalf("admin revoke=%d %s", revokeRec.Code, revokeRec.Body.String())
 	}
 }
 
@@ -689,6 +1523,20 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 	if registered.Runner.ID != "runner_test" || registered.Token == "" {
 		t.Fatalf("registration did not return runner and token: %#v", registered)
 	}
+	getRunnerReq := httptest.NewRequest(http.MethodGet, "/api/v1/runners/runner_test", nil)
+	getRunnerReq.Header.Set("Authorization", "Bearer "+token)
+	getRunnerRec := httptest.NewRecorder()
+	server.ServeHTTP(getRunnerRec, getRunnerReq)
+	if getRunnerRec.Code != http.StatusOK || strings.Contains(getRunnerRec.Body.String(), registered.Token) || strings.Contains(getRunnerRec.Body.String(), "token_hash") {
+		t.Fatalf("GET runner detail is not safe/successful: %d %s", getRunnerRec.Code, getRunnerRec.Body.String())
+	}
+	viewerGetRunnerReq := httptest.NewRequest(http.MethodGet, "/api/v1/runners/runner_test", nil)
+	viewerGetRunnerReq.Header.Set("Authorization", "Bearer "+viewerToken)
+	viewerGetRunnerRec := httptest.NewRecorder()
+	server.ServeHTTP(viewerGetRunnerRec, viewerGetRunnerReq)
+	if viewerGetRunnerRec.Code != http.StatusForbidden {
+		t.Fatalf("viewer runner detail returned %d, want %d", viewerGetRunnerRec.Code, http.StatusForbidden)
+	}
 
 	viewerRegisterReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/register", strings.NewReader(`{"id":"runner_viewer","name":"Viewer Runner","capabilities":["shell"]}`))
 	viewerRegisterReq.Header.Set("Authorization", "Bearer "+viewerToken)
@@ -964,10 +1812,13 @@ func TestRunnerRegistrationClaimAndComplete(t *testing.T) {
 	for _, event := range rawEvents {
 		rawActions[event.Action] = true
 	}
-	for _, action := range []string{"runner.register", "runner.heartbeat", "runner.token.rotate", "runner.claim", "secret.access", "runner.complete", "runner.token.revoke"} {
+	for _, action := range []string{"runner.register", "runner.token.rotate", "runner.claim", "secret.access", "runner.complete", "runner.token.revoke"} {
 		if !rawActions[action] {
 			t.Fatalf("persisted audit events missing %s: %#v", action, rawEvents)
 		}
+	}
+	if rawActions["runner.heartbeat"] {
+		t.Fatalf("heartbeat must not flood append-only audit events: %#v", rawEvents)
 	}
 }
 

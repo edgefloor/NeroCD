@@ -1,0 +1,11 @@
+ARG BASE
+FROM ${BASE}
+USER root
+ARG DOCKER_GID=0
+RUN apk add --no-cache git openssh-client docker-cli-compose \
+ && (addgroup -g "$DOCKER_GID" dockerhost 2>/dev/null || true) \
+ && if grep -q '^dockerhost:' /etc/group; then sed -i '/^dockerhost:/ s/$/,nerocd/' /etc/group; else sed -i '/^root:/ s/$/,nerocd/' /etc/group; fi \
+ && mv /usr/bin/docker /usr/bin/docker.real
+COPY docker-trace-wrapper /usr/bin/docker
+RUN chmod 0555 /usr/bin/docker
+USER nerocd

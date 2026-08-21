@@ -1,90 +1,102 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { cancelRun, rejectRun, revokeSession, upsertProjectMember } from "./api";
+import { ApiError, archiveProject, approveRun, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createTemplate, getDeployment, listArtifacts, listProjects, listRepositories, listRunLogs, rejectRun, revokeBrowserSession, updateProject, updateTemplate } from "./api";
+import { request } from "./api/client";
 
 const originalFetch = globalThis.fetch;
+afterEach(() => { globalThis.fetch = originalFetch; });
 
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-});
-
-function mockJSONFetch(body: unknown) {
-  const calls: Array<{ path: string; init?: RequestInit }> = [];
-  globalThis.fetch = ((path: string | URL | Request, init?: RequestInit) => {
-    calls.push({ path: String(path), init });
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-  }) as typeof fetch;
-  return calls;
+function mockFetch(response: Response) {
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(response.clone()));
+  globalThis.fetch = fetchMock;
+  return fetchMock;
 }
 
-describe("api mutation routes", () => {
-  test("rejectRun posts the backend reject route", async () => {
-    const calls = mockJSONFetch({ id: "apr_1", run_id: "run_1", status: "rejected", requested_by: "usr_1", created_at: "2026-06-06T00:00:00Z" });
-
-    await rejectRun("ncd_token", "run_1");
-
-    expect(calls[0].path).toBe("/api/v1/runs/reject");
-    expect(calls[0].init?.method).toBe("POST");
-    expect(calls[0].init?.headers).toEqual({
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: "Bearer ncd_token",
-    });
-    expect(calls[0].init?.body).toBe(JSON.stringify({ run_id: "run_1" }));
+describe("native cookie API client", () => {
+  test("encodes query parameters and includes browser credentials", async () => {
+    const fetchMock = mockFetch(new Response(JSON.stringify({ items: [], limit: 10, offset: 2, count: 0, total: 0 }), { headers: { "Content-Type": "application/json" } }));
+    await listProjects({ limit: 10, offset: 2 });
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/projects?limit=10&offset=2", expect.objectContaining({ credentials: "include", headers: { Accept: "application/json" } }));
   });
 
-  test("cancelRun posts the backend cancel route", async () => {
-    const calls = mockJSONFetch({ id: "run_1", project_id: "proj_1", status: "canceled", requested_by: "usr_1", started_at: "2026-06-06T00:00:00Z", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, workflow_state: { steps: [] }, runner_tags: [] });
+  test("forwards generated project and run filters to request URLs", async () => {
+    const fetchMock = mockFetch(new Response(JSON.stringify({ items: [], limit: 0, offset: 0, count: 0, total: 0 }), { headers: { "Content-Type": "application/json" } }));
+    await listRepositories({ project_id: "proj platform", limit: 5, offset: 1 });
+    await listRunLogs({ run_id: "run/one", limit: 2, offset: 3 });
+    await listArtifacts({ run_id: "run/one", limit: 2, offset: 3 });
 
-    await cancelRun("ncd_token", "run_1");
-
-    expect(calls[0].path).toBe("/api/v1/runs/cancel");
-    expect(calls[0].init?.method).toBe("POST");
-    expect(calls[0].init?.body).toBe(JSON.stringify({ run_id: "run_1" }));
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      "/api/v1/repositories?project_id=proj+platform&limit=5&offset=1",
+      "/api/v1/run-logs?run_id=run%2Fone&limit=2&offset=3",
+      "/api/v1/artifacts?run_id=run%2Fone&limit=2&offset=3",
+    ]);
   });
 
-  test("revokeSession deletes the current session", async () => {
-    const calls: Array<{ path: string; init?: RequestInit }> = [];
-    globalThis.fetch = ((path: string | URL | Request, init?: RequestInit) => {
-      calls.push({ path: String(path), init });
-      return Promise.resolve(new Response(null, { status: 204 }));
-    }) as typeof fetch;
-
-    await revokeSession("ncd_token");
-
-    expect(calls[0].path).toBe("/api/v1/sessions");
-    expect(calls[0].init?.method).toBe("DELETE");
-    expect(calls[0].init?.headers).toEqual({
-      Accept: "application/json",
-      Authorization: "Bearer ncd_token",
-    });
+  test("returns JSON and supports no-content responses", async () => {
+    mockFetch(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+    await expect(request<{ ok: boolean }>("/example")).resolves.toEqual({ ok: true });
+    mockFetch(new Response(null, { status: 204 }));
+    await expect(revokeBrowserSession()).resolves.toBeUndefined();
   });
 
-  test("upsertProjectMember posts project access updates", async () => {
-    const calls = mockJSONFetch({
-      id: "pm_1",
-      project_id: "proj_platform",
-      user_id: "usr_bootstrap",
-      email: "admin@example.local",
-      name: "Bootstrap Admin",
-      role: "maintainer",
-      created_at: "2026-06-06T00:00:00Z",
-      updated_at: "2026-06-06T00:00:00Z",
-    });
+  test("exposes structured server failures and request IDs", async () => {
+    mockFetch(new Response(JSON.stringify({ error: "project is locked" }), { status: 409, statusText: "Conflict", headers: { "Content-Type": "application/json", "X-Request-ID": "req_123" } }));
+    await expect(request("/example")).rejects.toMatchObject<ApiError>({ name: "ApiError", status: 409, message: "project is locked", requestID: "req_123" });
+  });
 
-    await upsertProjectMember("ncd_token", {
-      project_id: "proj_platform",
-      email: "admin@example.local",
-      role: "maintainer",
-    });
+  test("passes AbortSignal and sends CSRF only for unsafe requests", async () => {
+    const fetchMock = mockFetch(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+    const controller = new AbortController();
+    await request("/get", { signal: controller.signal });
+    await request("/post", { method: "POST", body: {} });
+    await request("/patch", { method: "PATCH", body: {} });
+    await revokeBrowserSession();
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(fetchMock.mock.calls.map(([, init]) => (init?.headers as Record<string, string>)["X-NeroCD-CSRF"])).toEqual([undefined, "1", "1", "1"]);
+  });
 
-    expect(calls[0].path).toBe("/api/v1/project-members");
-    expect(calls[0].init?.method).toBe("POST");
-    expect(calls[0].init?.body).toBe(JSON.stringify({ project_id: "proj_platform", email: "admin@example.local", role: "maintainer" }));
+  test("uses cookie-backed mutation resources", async () => {
+    const fetchMock = mockFetch(new Response(JSON.stringify({ id: "run_1" }), { headers: { "Content-Type": "application/json" } }));
+    await cancelRun({ run_id: "run_1" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/runs/cancel", expect.objectContaining({ method: "POST", credentials: "include", headers: { Accept: "application/json", "Content-Type": "application/json", "X-NeroCD-CSRF": "1" } }));
+  });
+
+  test("sends generated mutation bodies without transport defaults", async () => {
+    const fetchMock = mockFetch(new Response(JSON.stringify({ id: "resource_1" }), { headers: { "Content-Type": "application/json" } }));
+    await updateProject({ id: "proj_1", name: "Platform", description: "Automation" });
+    await archiveProject({ id: "proj_1" });
+    await approveRun({ run_id: "run_1" });
+    await rejectRun({ run_id: "run_1" });
+    await updateTemplate({ id: "tpl_1", project_id: "proj_1", name: "Patch", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: false });
+    await createTemplate({ project_id: "proj_1", name: "Patch", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: false });
+
+    expect(fetchMock.mock.calls.map(([, init]) => init?.body)).toEqual([
+      JSON.stringify({ id: "proj_1", name: "Platform", description: "Automation" }),
+      JSON.stringify({ id: "proj_1" }),
+      JSON.stringify({ run_id: "run_1" }),
+      JSON.stringify({ run_id: "run_1" }),
+      JSON.stringify({ id: "tpl_1", project_id: "proj_1", name: "Patch", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: false }),
+      JSON.stringify({ project_id: "proj_1", name: "Patch", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: false }),
+    ]);
+  });
+
+  test("uses only public typed deployment endpoints with exact stable intent bodies", async () => {
+    const fetchMock = mockFetch(new Response(JSON.stringify({ id: "dep_1" }), { headers: { "Content-Type": "application/json" } }));
+    await createDeployment({ environment_id: "env_1", desired_revision_id: "rev_2", idempotency_key: "intent_immutable" });
+    await confirmDeployment({ id: "dep_1" });
+    await cancelDeployment({ deployment_id: "dep_1", request_id: "cancel_immutable" });
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(["/api/v1/deployments", "/api/v1/deployments/confirm", "/api/v1/deployments/cancel"]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.body)).toEqual([
+      JSON.stringify({ environment_id: "env_1", desired_revision_id: "rev_2", idempotency_key: "intent_immutable" }),
+      JSON.stringify({ id: "dep_1" }),
+      JSON.stringify({ deployment_id: "dep_1", request_id: "cancel_immutable" }),
+    ]);
+    expect(fetchMock.mock.calls.map(([path]) => String(path)).join(" ")).not.toContain("/api/v1/runners/");
+  });
+
+  test("gets a deployment by its encoded stable ID without list filters", async () => {
+    const fetchMock = mockFetch(new Response(JSON.stringify({ id: "dep/one" }), { headers: { "Content-Type": "application/json" } }));
+    await getDeployment("dep/one");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/deployments/dep%2Fone", expect.objectContaining({ method: "GET", credentials: "include" }));
   });
 });

@@ -32,7 +32,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'code=$?; trap - ERR; fail "unexpected command failure at line $LINENO (exit $code)"' ERR
 
-for tool in docker curl jq od openssl; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
+for tool in docker curl jq od openssl bun; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
 docker info >/dev/null 2>&1 || fail "Docker unavailable"
 record "gate=one-time runner enrollment and locally generated durable credential"
 record "scope=AC-06 prerequisite; not production bootstrap/browser/provenance/deployment proof"
@@ -41,7 +41,12 @@ record "source_tree=$(git -C "$repo_root" status --porcelain=v1 | wc -l | tr -d 
 record "project=$project started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 docker build --pull -t "$image" "$repo_root" >"$runtime_dir/docker-build.txt" 2>&1 || fail "fresh image build failed"
-compose up -d --wait postgres server proxy >"$runtime_dir/compose-up.txt" 2>&1 || fail "isolated stack failed"
+umask 077; admin_email="enrollment-${suffix}@example.invalid"; admin_password=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n'); printf '%s\n%s\n' "$admin_email" "$admin_password" >"$runtime_dir/browser.credentials"; chmod 0600 "$runtime_dir/browser.credentials"
+compose up -d --wait postgres >"$runtime_dir/postgres-up.txt" 2>&1 || fail "postgres stack failed"
+compose run --rm --no-deps --entrypoint nerocd server migrate >"$runtime_dir/migrate.txt" 2>&1 || fail "migration failed"
+tail -n 1 "$runtime_dir/browser.credentials" | compose run --rm --no-deps --entrypoint nerocd server bootstrap-admin --email "$admin_email" --name 'Runtime enrollment admin' --password-stdin >"$runtime_dir/bootstrap.txt" 2>&1 || fail "bootstrap failed"
+unset admin_password
+compose up -d --wait server proxy >"$runtime_dir/compose-up.txt" 2>&1 || { compose ps >>"$evidence" 2>&1 || true; compose logs --no-color postgres server proxy 2>&1 | sed -E 's#postgres://[^@[:space:]]+@#postgres://[REDACTED]@#g' | tail -n 80 >>"$evidence"; fail "isolated stack failed"; }
 server_port=$(compose port server 8080 | tail -n1); server_port=${server_port##*:}
 proxy_port=$(compose port proxy 8081 | tail -n1); proxy_port=${proxy_port##*:}
 base="http://127.0.0.1:$server_port"; proxy_control="http://127.0.0.1:$proxy_port/__control"
@@ -49,7 +54,8 @@ http_json() {
   local method=$1 url=$2 token=$3 body=$4 output=$5
   local -a args=(--silent --show-error --max-time 10 --output "$output" --write-out '%{http_code}' -X "$method" -H 'Content-Type: application/json')
   [[ -n "$token" ]] && args+=(-H "Authorization: Bearer $token")
-  args+=(--data "$body" "$url"); curl "${args[@]}"
+  if [[ "$body" == @* ]]; then args+=(--data-binary "$body"); else args+=(--data "$body"); fi
+  args+=("$url"); curl "${args[@]}"
 }
 sql() { compose exec --no-TTY postgres psql -U nerocd -d nerocd -At -F '|' -v ON_ERROR_STOP=1 -c "$1" | sed '/^[[:space:]]*$/d'; }
 proxy_status() { curl -fsS --max-time 5 "$proxy_control/status"; }
@@ -66,15 +72,25 @@ consume_direct() {
   http_json POST "$base/api/v1/runner-enrollments/consume" "$token" "$(jq -cn --arg request "$request_id" --arg hash "$hash" '{request_id:$request,credential_hash:$hash}')" "$output"
 }
 
-code=$(http_json POST "$base/api/v1/sessions" '' '{"email":"admin@example.local","password":"admin"}' "$runtime_dir/session.json")
+jq -cn --arg email "$admin_email" --arg password "$(tail -n 1 "$runtime_dir/browser.credentials")" '{email:$email,password:$password}' >"$runtime_dir/login.json"; chmod 0600 "$runtime_dir/login.json"
+code=$(http_json POST "$base/api/v1/sessions" '' "@$runtime_dir/login.json" "$runtime_dir/session.json")
 [[ "$code" == 201 ]] || fail "admin login returned $code"
 admin_token=$(jq -er '.token' "$runtime_dir/session.json")
+project_body=$(jq -cn --arg name "Runtime enrollment $suffix" '{name:$name,description:"isolated runner enrollment lifecycle"}')
+code=$(http_json POST "$base/api/v1/projects" "$admin_token" "$project_body" "$runtime_dir/project.json")
+[[ "$code" == 201 ]] || fail "create runtime enrollment project returned $code"
+project_id=$(jq -er '.id' "$runtime_dir/project.json")
 
-# Create the race enrollment and two unused controls up front so expiry can
-# advance concurrently with the enrollment/lost-response scenario.
-create_enrollment runner_enrollment_runtime 600 "$runtime_dir/race-enrollment.json"
+# The administrator creates the one-time token in the shipped browser UI.
+# The only permitted plaintext copy is its controlled download and this strict
+# temporary bridge file; the nonroot runner writes its own mode-0600 identity.
+cd "$repo_root/web/app" && bun "$repo_root/acceptance/runtime-enrollment/web-enrollment.mjs" "$base" "$runtime_dir/browser.credentials" runner_enrollment_runtime "$runtime_dir/race-enrollment.json" >"$runtime_dir/browser.log" 2>&1 || { tail -n 40 "$runtime_dir/browser.log" >>"$evidence"; fail "browser enrollment creation failed"; }
 race_token=$(jq -er '.token' "$runtime_dir/race-enrollment.json")
-race_enrollment_id=$(jq -er '.enrollment.id' "$runtime_dir/race-enrollment.json")
+race_enrollment_id=$(sql "SELECT id FROM runner_enrollments WHERE runner_id='runner_enrollment_runtime';")
+[[ "$race_enrollment_id" =~ ^enroll_ ]] || fail "browser enrollment was not persisted"
+record "browser_enrollment=create_download_once dialog_clear=true runner_only_calls=0 storage=empty"
+# Create two unused API controls up front so expiry can advance concurrently
+# with the enrollment/lost-response scenario.
 create_enrollment runner_enrollment_expired 60 "$runtime_dir/expired-enrollment.json"
 expired_token=$(jq -er '.token' "$runtime_dir/expired-enrollment.json")
 create_enrollment runner_enrollment_revoked 600 "$runtime_dir/revoked-enrollment.json"
@@ -145,7 +161,9 @@ negative_runner() {
   fi
 }
 mutate_loser_identity() {
-  compose run --rm --no-deps --entrypoint /bin/sh "$loser_identity_tool" -ec "$1" >/dev/null
+  # Keep Compose diagnostics observable: an inaccessible losing identity
+  # volume is a topology failure, not evidence that unsafe input was denied.
+  compose run --rm --no-deps --entrypoint /bin/sh "$loser_identity_tool" -ec "$1" || fail "could not mutate losing runner identity"
 }
 mutate_loser_identity 'chmod 0644 /identity/enrollment; rm -f /identity/negative-credential'
 negative_runner permissive-mode
@@ -186,7 +204,7 @@ code=$(consume_direct "$expired_token" "$fake_request" "$fake_hash" "$runtime_di
 record "unused_controls=revoked_http_404 expired_by_db_clock_http_404"
 
 # Run a real process tree, revoke its enrolled credential, and prove fail-close.
-run_body=$(jq -cn '{project_id:"proj_platform",run_spec:{type:"shell",process:{command:["/bin/sh","/fixtures/run-fixture.sh"],timeout_seconds:300}},runner_tags:["enrollment-runtime"]}')
+run_body=$(jq -cn --arg project "$project_id" '{project_id:$project,run_spec:{type:"shell",process:{command:["/bin/sh","/fixtures/run-fixture.sh"],timeout_seconds:300}},runner_tags:["enrollment-runtime"]}')
 code=$(http_json POST "$base/api/v1/runs" "$admin_token" "$run_body" "$runtime_dir/run.json")
 [[ "$code" == 201 ]] || fail "create revocation run returned $code"
 run_id=$(jq -er '.id' "$runtime_dir/run.json")
@@ -196,11 +214,30 @@ while (( SECONDS < deadline )); do
   docker exec "$winner_cid" test -e /state/enrollment.process.started 2>/dev/null && process_started=true && break
   sleep 0.2
 done
+if [[ "$process_started" != true ]]; then
+  revocation_runs=$(sql "SELECT id||':'||status FROM task_runs ORDER BY started_at DESC LIMIT 3" | tr '\n' ',')
+  revocation_runner=$(sql "SELECT id||':'||status||':'||array_to_string(capabilities,',') FROM runners WHERE id='runner_enrollment_runtime'")
+  record "revocation_run_diagnostic=$revocation_runs"
+  record "revocation_runner_diagnostic=$revocation_runner"
+  compose logs --no-color "$winner_service" 2>&1 | tail -n 30 >>"$evidence" || true
+fi
 [[ "$process_started" == true ]] || fail "enrolled runner process did not start"
+# The browser observes this active runner on its query-free public admin detail
+# route and performs the only credential revocation in this happy path. SQL is
+# read-only independent evidence for the bounded telemetry values.
+deadline=$((SECONDS+20)); telemetry_json=''
+while (( SECONDS < deadline )); do
+  telemetry_json=$(sql "SELECT json_build_object('journal_depth',journal_depth,'retry_count',retry_count,'renew_failures',renew_failures)::text FROM runner_operational_observations WHERE runner_id='runner_enrollment_runtime';" || true)
+  [[ -n "$telemetry_json" ]] && break
+  sleep 0.2
+done
+[[ -n "$telemetry_json" ]] || fail "runner did not publish bounded telemetry"
+printf '%s\n' "$telemetry_json" >"$runtime_dir/expected-telemetry.json"; chmod 0600 "$runtime_dir/expected-telemetry.json"
+cd "$repo_root/web/app" && bun "$repo_root/acceptance/runtime-enrollment/web-enrollment.mjs" "$base" "$runtime_dir/browser.credentials" runner_enrollment_runtime "$runtime_dir/browser-revoke.json" detail-revoke "$runtime_dir/expected-telemetry.json" >"$runtime_dir/browser-revoke.log" 2>&1 || { tail -n 40 "$runtime_dir/browser-revoke.log" >>"$evidence"; fail "browser runner detail/revoke failed"; }
+[[ "$(jq -r '.revoked' "$runtime_dir/browser-revoke.json")" == true && "$(jq -r '.runner_self_calls' "$runtime_dir/browser-revoke.json")" == 0 ]] || fail "browser runner detail/revoke evidence is incomplete"
+record "browser_detail=query_free active_fresh=true telemetry_exact=true tags_capabilities=true keyboard_mobile_reload=true revoke_cancel_no_mutation=true revoke_confirm_public_admin=true runner_self_calls=0"
 logs_at_revoke=$(sql "SELECT count(*) FROM run_logs WHERE run_id='$run_id';")
 revoke_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-code=$(http_json POST "$base/api/v1/runners/revoke-token" "$admin_token" '{"runner_id":"runner_enrollment_runtime"}' "$runtime_dir/runner-revoked.json")
-[[ "$code" == 200 ]] || fail "runner revocation returned $code"
 deadline=$((SECONDS+15)); runner_exited=false
 while (( SECONDS < deadline )); do
   docker exec "$winner_cid" test -e "/state/runner-$winner_slot.exit" 2>/dev/null && runner_exited=true && break

@@ -1,0 +1,8 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { principalQuery, projectMembersQuery, projectsQuery, queryKeys, upsertProjectMember } from "@/api";
+import { SettingsView } from "@/pages/SettingsView";
+import { validateSearch } from "@/router/search";
+export const Route = createFileRoute("/_authenticated/settings")({ validateSearch, loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(principalQuery()), context.queryClient.ensureQueryData(projectsQuery()), context.queryClient.ensureQueryData(projectMembersQuery())]), component: SettingsRoute });
+function SettingsRoute() { const client = useQueryClient(); const principal = useQuery(principalQuery()); const projects = useQuery(projectsQuery()); const members = useQuery(projectMembersQuery()); const upsert = useMutation({ mutationFn: (input: Parameters<typeof upsertProjectMember>[0]) => upsertProjectMember(input), onSuccess: async () => { await client.invalidateQueries({ queryKey: queryKeys.projectMembers() }); toast.success("Project access updated"); }, onError: (error) => toast.error(error.message) }); const error = [principal, projects, members].find((query) => query.isError)?.error; if (error) return <p role="alert">{error.message}</p>; return <SettingsView principal={principal.data ?? { id: "", name: "", email: "", provider: "", roles: [] }} projects={projects.data ?? []} members={members.data ?? []} loading={principal.isPending || projects.isPending || members.isPending} updatingMember={upsert.isPending} onUpsertMember={(input) => upsert.mutate(input)} />; }

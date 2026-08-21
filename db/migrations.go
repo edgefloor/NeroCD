@@ -2,5 +2,5 @@ package db
 
 import "embed"
 
-//go:embed migrations/*.sql seeds/*.sql
+//go:embed migrations/*.sql
 var Files embed.FS

@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -81,18 +82,19 @@ func (q *Queries) CreateInventory(ctx context.Context, arg CreateInventoryParams
 }
 
 const createRepository = `-- name: CreateRepository :one
-INSERT INTO repositories (id,project_id,name,url,provider,default_ref,created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, project_id, name, url, provider, default_ref, created_at, updated_at
+INSERT INTO repositories (id,project_id,name,url,provider,default_ref,repository_policy,created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, project_id, name, url, provider, default_ref, created_at, updated_at, repository_policy
 `
 
 type CreateRepositoryParams struct {
-	ID         string    `json:"id"`
-	ProjectID  string    `json:"project_id"`
-	Name       string    `json:"name"`
-	Url        string    `json:"url"`
-	Provider   string    `json:"provider"`
-	DefaultRef string    `json:"default_ref"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID               string          `json:"id"`
+	ProjectID        string          `json:"project_id"`
+	Name             string          `json:"name"`
+	Url              string          `json:"url"`
+	Provider         string          `json:"provider"`
+	DefaultRef       string          `json:"default_ref"`
+	RepositoryPolicy json.RawMessage `json:"repository_policy"`
+	CreatedAt        time.Time       `json:"created_at"`
 }
 
 func (q *Queries) CreateRepository(ctx context.Context, arg CreateRepositoryParams) (Repository, error) {
@@ -103,6 +105,7 @@ func (q *Queries) CreateRepository(ctx context.Context, arg CreateRepositoryPara
 		arg.Url,
 		arg.Provider,
 		arg.DefaultRef,
+		arg.RepositoryPolicy,
 		arg.CreatedAt,
 	)
 	var i Repository
@@ -115,6 +118,56 @@ func (q *Queries) CreateRepository(ctx context.Context, arg CreateRepositoryPara
 		&i.DefaultRef,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RepositoryPolicy,
+	)
+	return i, err
+}
+
+const createRepositoryPolicyConfigurationReceipt = `-- name: CreateRepositoryPolicyConfigurationReceipt :exec
+INSERT INTO repository_policy_configuration_receipts (repository_id, configuration_id, actor_id, policy_sha256, audit_id, created_at)
+VALUES ($1,$2,$3,$4,$5,clock_timestamp())
+`
+
+type CreateRepositoryPolicyConfigurationReceiptParams struct {
+	RepositoryID    string `json:"repository_id"`
+	ConfigurationID string `json:"configuration_id"`
+	ActorID         string `json:"actor_id"`
+	PolicySha256    string `json:"policy_sha256"`
+	AuditID         string `json:"audit_id"`
+}
+
+func (q *Queries) CreateRepositoryPolicyConfigurationReceipt(ctx context.Context, arg CreateRepositoryPolicyConfigurationReceiptParams) error {
+	_, err := q.db.Exec(ctx, createRepositoryPolicyConfigurationReceipt,
+		arg.RepositoryID,
+		arg.ConfigurationID,
+		arg.ActorID,
+		arg.PolicySha256,
+		arg.AuditID,
+	)
+	return err
+}
+
+const getRepositoryPolicyConfigurationReceipt = `-- name: GetRepositoryPolicyConfigurationReceipt :one
+SELECT repository_id, configuration_id, actor_id, policy_sha256, audit_id, created_at
+FROM repository_policy_configuration_receipts
+WHERE repository_id=$1 AND configuration_id=$2
+`
+
+type GetRepositoryPolicyConfigurationReceiptParams struct {
+	RepositoryID    string `json:"repository_id"`
+	ConfigurationID string `json:"configuration_id"`
+}
+
+func (q *Queries) GetRepositoryPolicyConfigurationReceipt(ctx context.Context, arg GetRepositoryPolicyConfigurationReceiptParams) (RepositoryPolicyConfigurationReceipt, error) {
+	row := q.db.QueryRow(ctx, getRepositoryPolicyConfigurationReceipt, arg.RepositoryID, arg.ConfigurationID)
+	var i RepositoryPolicyConfigurationReceipt
+	err := row.Scan(
+		&i.RepositoryID,
+		&i.ConfigurationID,
+		&i.ActorID,
+		&i.PolicySha256,
+		&i.AuditID,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -186,7 +239,7 @@ func (q *Queries) ListInventories(ctx context.Context, projectID string) ([]Inve
 }
 
 const listRepositories = `-- name: ListRepositories :many
-SELECT id, project_id, name, url, provider, default_ref, created_at, updated_at FROM repositories
+SELECT id, project_id, name, url, provider, default_ref, created_at, updated_at, repository_policy FROM repositories
 WHERE ($1::text='' OR project_id=$1)
 ORDER BY name
 `
@@ -209,6 +262,7 @@ func (q *Queries) ListRepositories(ctx context.Context, projectID string) ([]Rep
 			&i.DefaultRef,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RepositoryPolicy,
 		); err != nil {
 			return nil, err
 		}
@@ -218,4 +272,65 @@ func (q *Queries) ListRepositories(ctx context.Context, projectID string) ([]Rep
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockRepositoryForPolicyConfiguration = `-- name: LockRepositoryForPolicyConfiguration :one
+SELECT id, project_id, name, url, provider, default_ref, created_at, updated_at, repository_policy FROM repositories WHERE id=$1 AND project_id=$2 FOR UPDATE
+`
+
+type LockRepositoryForPolicyConfigurationParams struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+}
+
+func (q *Queries) LockRepositoryForPolicyConfiguration(ctx context.Context, arg LockRepositoryForPolicyConfigurationParams) (Repository, error) {
+	row := q.db.QueryRow(ctx, lockRepositoryForPolicyConfiguration, arg.ID, arg.ProjectID)
+	var i Repository
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Url,
+		&i.Provider,
+		&i.DefaultRef,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RepositoryPolicy,
+	)
+	return i, err
+}
+
+const repositoryPolicyActorAuthorized = `-- name: RepositoryPolicyActorAuthorized :one
+SELECT EXISTS (
+  SELECT 1 FROM users WHERE users.id=$2 AND users.global_role='system_admin'
+  UNION ALL
+  SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2 AND role IN ('owner','maintainer')
+)
+`
+
+type RepositoryPolicyActorAuthorizedParams struct {
+	ProjectID string `json:"project_id"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) RepositoryPolicyActorAuthorized(ctx context.Context, arg RepositoryPolicyActorAuthorizedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, repositoryPolicyActorAuthorized, arg.ProjectID, arg.ID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const setRepositoryPolicyConfiguration = `-- name: SetRepositoryPolicyConfiguration :exec
+UPDATE repositories SET repository_policy=$2, updated_at=clock_timestamp()
+WHERE id=$1 AND repository_policy->>'state'='legacy_unverified'
+`
+
+type SetRepositoryPolicyConfigurationParams struct {
+	ID               string          `json:"id"`
+	RepositoryPolicy json.RawMessage `json:"repository_policy"`
+}
+
+func (q *Queries) SetRepositoryPolicyConfiguration(ctx context.Context, arg SetRepositoryPolicyConfigurationParams) error {
+	_, err := q.db.Exec(ctx, setRepositoryPolicyConfiguration, arg.ID, arg.RepositoryPolicy)
+	return err
 }

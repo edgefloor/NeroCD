@@ -48,6 +48,27 @@ func TestFileSecretResolverSecurityAndRotation(t *testing.T) {
 	}
 }
 
+func TestFileSecretResolverReadBytesPreservesTerminalNewline(t *testing.T) {
+	root := filepath.Join(physicalTempDir(t), "secrets")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----\n")
+	path := filepath.Join(root, "deploy-key")
+	if err := os.WriteFile(path, key, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := OpenFileSecretResolver(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resolver.Close()
+	got, err := resolver.ReadBytes("deploy-key")
+	if err != nil || string(got) != string(key) {
+		t.Fatalf("raw key preserved=%v err=%v", string(got) == string(key), err)
+	}
+}
+
 func TestFileSecretResolverRejectsUnsafeFilesAndReferences(t *testing.T) {
 	root := filepath.Join(physicalTempDir(t), "secrets")
 	if err := os.Mkdir(root, 0o700); err != nil {

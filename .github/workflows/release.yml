@@ -1,0 +1,372 @@
+name: Release Trust
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing annotated semantic-version tag to release
+        required: true
+        type: string
+
+# The release environment is configured in GitHub repository settings with
+# required reviewers and an owner-only deployment policy. Do not broaden these
+# permissions: the evidence and verification jobs are deliberately read-only.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate protected release reference
+    if: github.repository_owner == 'edgefloor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      image: ${{ steps.release.outputs.image }}
+      revision: ${{ steps.release.outputs.revision }}
+      source_date_epoch: ${{ steps.release.outputs.source_date_epoch }}
+    steps:
+      - name: Check out the requested tag only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify repository owner, annotated tag, and exact target
+        id: release
+        shell: bash
+        env:
+          TAG_INPUT: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          tag=$TAG_INPUT
+          [[ "$GITHUB_REPOSITORY_OWNER" == edgefloor ]]
+          [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]
+          git check-ref-format --allow-onelevel "refs/tags/$tag"
+          git show-ref --verify --quiet "refs/tags/$tag"
+          [[ "$(git cat-file -t "refs/tags/$tag")" == tag ]]
+          revision=$(git rev-list -n 1 "$tag")
+          checked_out=$(git rev-parse HEAD)
+          source_date_epoch=$(git log -1 --format=%ct "$revision")
+          [[ "$revision" == "$checked_out" ]]
+          [[ "$source_date_epoch" =~ ^[0-9]+$ ]]
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" == "$tag" && "$revision" == "$GITHUB_SHA" ]]
+          else
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -n "$tag" ]]
+          fi
+          printf 'tag=%s\n' "$tag" >>"$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$revision" >>"$GITHUB_OUTPUT"
+          printf 'source_date_epoch=%s\n' "$source_date_epoch" >>"$GITHUB_OUTPUT"
+          printf 'image=ghcr.io/edgefloor/nerocd\n' >>"$GITHUB_OUTPUT"
+
+  evidence:
+    name: Fail-closed release evidence
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out verified release target
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.6
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Run exact local evidence inventory
+        run: make release-evidence-gate
+
+      - name: Upload local evidence for workflow review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence-${{ needs.validate.outputs.tag }}
+          path: artifacts/release-evidence/
+          if-no-files-found: error
+          include-hidden-files: false
+
+  publish:
+    name: Publish immutable multi-architecture image
+    needs: [validate, evidence]
+    if: github.repository_owner == 'edgefloor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.registry.outputs.digest }}
+    steps:
+      - name: Check out verified release target
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download exact evidence prerequisite
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-evidence-${{ needs.validate.outputs.tag }}
+          path: release-evidence
+
+      - name: Verify transferred local evidence before publication
+        env:
+          REVISION: ${{ needs.validate.outputs.revision }}
+        run: bash scripts/verify-release-evidence.sh release-evidence "$REVISION"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Refuse an existing release tag
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if docker buildx imagetools inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
+            echo 'release tag already exists; immutable publication refused' >&2
+            exit 1
+          fi
+
+      - name: Build and publish immutable OCI index
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          provenance: false
+          sbom: false
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ needs.validate.outputs.source_date_epoch }}
+            NEROCD_VERSION=${{ needs.validate.outputs.tag }}
+          tags: |
+            ${{ needs.validate.outputs.image }}:${{ needs.validate.outputs.tag }}
+
+      - name: Capture exact registry digest and reject tag/digest divergence
+        id: registry
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          BUILDX_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$BUILDX_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          registry_digest=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$IMAGE:$TAG")
+          [[ "$registry_digest" =~ ^sha256:[0-9a-f]{64}$ && "$registry_digest" == "$BUILDX_DIGEST" ]]
+          printf 'digest=%s\n' "$registry_digest" >>"$GITHUB_OUTPUT"
+
+      - name: Bind image reference to exact registry digest
+        id: image
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          DIGEST: ${{ steps.registry.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'image=%s\n' "$IMAGE" >>"$GITHUB_OUTPUT"
+
+      - name: Bind immutable digest to every retained evidence file
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          REVISION: ${{ needs.validate.outputs.revision }}
+          IMAGE: ${{ needs.validate.outputs.image }}
+          DIGEST: ${{ steps.registry.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p artifacts/release-trust
+          {
+            while read -r hash name; do printf '%s\t%s\n' "$name" "$hash"; done <release-evidence/evidence.sha256
+            printf 'evidence.sha256\t%s\n' "$(sha256sum release-evidence/evidence.sha256 | awk '{print $1}')"
+          } | jq -Rn '[inputs | split("\t") | {key:.[0], value:.[1]}] | from_entries' >artifacts/release-trust/evidence-hashes.json
+          jq -S -n \
+            --arg repository "$REPOSITORY" --arg tag "$TAG" --arg revision "$REVISION" --arg image "$IMAGE" --arg digest "$DIGEST" \
+            --slurpfile evidence artifacts/release-trust/evidence-hashes.json \
+            '{schema:"nerocd.release-trust/v1",repository:$repository,tag:$tag,revision:$revision,image:{reference:$image,digest:$digest},evidence:$evidence[0]}' \
+            >artifacts/release-trust/release-trust.json
+          jq -S -n \
+            --arg repository "$REPOSITORY" --arg revision "$REVISION" --arg image "$IMAGE" --arg digest "$DIGEST" \
+            '{schema:"nerocd.github-attestation-metadata/v1",repository:$repository,revision:$revision,subject:{name:$image,digest:$digest}}' \
+            >artifacts/release-trust/github-attestation.json
+          printf '%s@%s\n' "$IMAGE" "$DIGEST" >artifacts/release-trust/image-digest.txt
+          rm -f artifacts/release-trust/evidence-hashes.json
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+
+      - name: Sign exact published digest with GitHub OIDC and retain bundle
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          DIGEST: ${{ steps.registry.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cosign sign --yes --bundle artifacts/release-trust/image.bundle "$IMAGE@$DIGEST"
+
+      - name: Sign canonical release-trust manifest and retain bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cosign sign-blob --yes --bundle artifacts/release-trust/release-trust.bundle artifacts/release-trust/release-trust.json
+          (
+            cd artifacts/release-trust
+            sha256sum github-attestation.json image.bundle image-digest.txt release-trust.bundle release-trust.json >trust.sha256
+          )
+
+      - name: Attest GitHub build provenance for digest
+        uses: actions/attest-build-provenance@db473fddc028af60658334401dc6fa3ffd8669fd # v2.3.0
+        with:
+          subject-name: ${{ needs.validate.outputs.image }}
+          subject-digest: ${{ steps.registry.outputs.digest }}
+          push-to-registry: true
+
+      - name: Upload signed release trust artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-trust-${{ needs.validate.outputs.tag }}
+          path: artifacts/release-trust/
+          if-no-files-found: error
+          include-hidden-files: false
+
+  verify:
+    name: Verify digest, platforms, signature, and provenance
+    needs: [validate, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    steps:
+      - name: Check out verifier scripts at the verified release target
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          persist-credentials: false
+
+      - name: Download exact release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-evidence-${{ needs.validate.outputs.tag }}
+          path: release-evidence
+
+      - name: Download exact release trust artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-trust-${{ needs.validate.outputs.tag }}
+          path: release-trust
+
+      - name: Recompute evidence and trust binding before remote verification
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          REVISION: ${{ needs.validate.outputs.revision }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/verify-release-evidence.sh release-evidence "$REVISION"
+          bash scripts/verify-release-trust.sh release-evidence release-trust "$REPOSITORY" "$TAG" "$REVISION" "$IMAGE" "$DIGEST"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Log in for immutable digest inspection
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+
+      - name: Verify published immutable digest and both platforms
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" >index.json
+          jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort == ["amd64", "arm64"]' index.json >/dev/null
+          cosign verify \
+            --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/$TAG" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$IMAGE@$DIGEST" >/dev/null
+
+      - name: Verify retained release-trust bundle against exact bytes
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cosign verify-blob release-trust/release-trust.json \
+            --bundle release-trust/release-trust.bundle \
+            --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/$TAG" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
+
+      - name: Verify retained image bundle when supported by Cosign
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cosign verify --bundle release-trust/image.bundle \
+            --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/$TAG" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$IMAGE@$DIGEST" >/dev/null
+
+      - name: Verify GitHub provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh attestation verify "oci://$IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY"

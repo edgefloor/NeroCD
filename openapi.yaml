@@ -19,7 +19,225 @@ servers:
     description: Local development server
 security:
   - bearerAuth: []
+  - browserSession: []
 paths:
+  /api/v1/services:
+    get:
+      summary: List deployment services
+      operationId: listServices
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200": {description: Services, content: {application/json: {schema: {$ref: "#/components/schemas/ServiceListResponse"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    post:
+      summary: Create a deployment service
+      operationId: createService
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/ServiceInput"}}}}
+      responses:
+        "201": {description: Service created, content: {application/json: {schema: {$ref: "#/components/schemas/Service"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/environments:
+    get:
+      summary: List deployment environments
+      operationId: listEnvironments
+      parameters:
+        - name: service_id
+          in: query
+          schema: {type: string}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200": {description: Environments, content: {application/json: {schema: {$ref: "#/components/schemas/EnvironmentListResponse"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    post:
+      summary: Create a deployment environment
+      operationId: createEnvironment
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/EnvironmentInput"}}}}
+      responses:
+        "201": {description: Environment created, content: {application/json: {schema: {$ref: "#/components/schemas/Environment"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/revisions:
+    get:
+      summary: List immutable revisions
+      operationId: listRevisions
+      parameters:
+        - name: service_id
+          in: query
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200": {description: Revisions, content: {application/json: {schema: {$ref: "#/components/schemas/RevisionListResponse"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    post:
+      summary: Create an immutable revision
+      operationId: createRevision
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/RevisionInput"}}}}
+      responses:
+        "201": {description: Revision created, content: {application/json: {schema: {$ref: "#/components/schemas/Revision"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/deployments:
+    get:
+      summary: List deployments
+      operationId: listDeployments
+      parameters:
+        - name: environment_id
+          in: query
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200": {description: Deployments, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentListResponse"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    post:
+      summary: Request a deployment
+      operationId: createDeployment
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentInput"}}}}
+      responses:
+        "201": {description: Deployment created, content: {application/json: {schema: {$ref: "#/components/schemas/Deployment"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/deployments/{id}:
+    get:
+      summary: Get one deployment visible to the authenticated project viewer
+      operationId: getDeployment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: Deployment, content: {application/json: {schema: {$ref: "#/components/schemas/Deployment"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/v1/deployments/cancel:
+    post:
+      summary: Cancel a deployment through its typed environment lifecycle
+      operationId: cancelDeployment
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentCancelInput"}}}}
+      responses:
+        "200": {description: Cancellation receipt acknowledged, content: {application/json: {schema: {$ref: "#/components/schemas/Deployment"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/runners/deployments/transition:
+    post:
+      summary: Apply one fenced deployment state transition
+      operationId: transitionRunnerDeployment
+      security:
+        - bearerAuth: []
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentTransitionInput"}}}}
+      responses:
+        "200": {description: Transition acknowledged, content: {application/json: {schema: {$ref: "#/components/schemas/Deployment"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/runners/deployments/plan:
+    get:
+      summary: Read the exact fenced deployment plan for the authenticated runner
+      operationId: runnerDeploymentPlan
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: deployment_id, in: query, required: true, schema: {type: string}}
+        - {name: run_id, in: query, required: true, schema: {type: string}}
+        - {name: lease_id, in: query, required: true, schema: {type: string}}
+        - {name: attempt, in: query, required: true, schema: {type: integer, minimum: 1}}
+        - {name: fence, in: query, required: true, schema: {type: string}}
+      responses:
+        "200": {description: Fenced plan, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentPlan"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /api/v1/runners/deployments/status:
+    get:
+      summary: Read the exact fenced deployment status and cancellation receipt for the authenticated runner
+      operationId: runnerDeploymentStatus
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: deployment_id, in: query, required: true, schema: {type: string}}
+        - {name: run_id, in: query, required: true, schema: {type: string}}
+        - {name: lease_id, in: query, required: true, schema: {type: string}}
+        - {name: attempt, in: query, required: true, schema: {type: integer, minimum: 1}}
+        - {name: fence, in: query, required: true, schema: {type: string}}
+      responses:
+        "200": {description: Fenced authoritative status, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentPlan"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /api/v1/runners/deployments/provenance:
+    post:
+      summary: Bind runner-observed immutable deployment provenance
+      operationId: resolveRunnerDeploymentProvenance
+      security: [{bearerAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/ProvenanceResolutionInput"}}}}
+      responses:
+        "200": {description: Provenance acknowledged, content: {application/json: {schema: {$ref: "#/components/schemas/Revision"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/runners/deployments/fail-and-rollback:
+    post:
+      summary: Atomically fail a fenced post-apply deployment and queue its rollback
+      operationId: failRunnerDeploymentAndQueueRollback
+      security: [{bearerAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentFailureRollbackInput"}}}}
+      responses:
+        "200": {description: Failure and rollback acknowledged, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentFailureRollbackResult"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/deployments/confirm:
+    post:
+      summary: Confirm a deployment request and queue its typed run
+      operationId: confirmDeployment
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DeploymentConfirmationInput"}}}}
+      responses:
+        "200": {description: Deployment confirmed, content: {application/json: {schema: {$ref: "#/components/schemas/Deployment"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/deployments/fail-preassignment:
+    post:
+      summary: Record a maintainer validation failure before runner assignment
+      operationId: failPreAssignmentDeployment
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/PreAssignmentFailureInput"}}}}
+      responses:
+        "200": {description: Deployment failed before assignment, content: {application/json: {schema: {$ref: "#/components/schemas/Deployment"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   /api/v1/health:
     get:
       summary: Check API health
@@ -54,6 +272,69 @@ paths:
                 $ref: "#/components/schemas/ReadinessResponse"
         "500":
           $ref: "#/components/responses/Error"
+  /api/v1/bootstrap-status:
+    get:
+      summary: Get minimal local identity bootstrap state
+      operationId: getBootstrapStatus
+      security: []
+      responses:
+        "200": {description: Fixed bootstrap lifecycle state, content: {application/json: {schema: {$ref: "#/components/schemas/BootstrapStatus"}}}}
+        "503": {description: Bootstrap state is temporarily unavailable, content: {application/json: {schema: {$ref: "#/components/schemas/OperationsUnavailable"}}}}
+  /api/v1/operations/status:
+    get:
+      summary: Get authoritative administrative operations status
+      operationId: getOperationsStatus
+      responses:
+        "200": {description: Ready administrative operational snapshot, content: {application/json: {schema: {$ref: "#/components/schemas/OperationsStatus"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "503": {description: Operations state unavailable; no partial snapshot is returned., content: {application/json: {schema: {$ref: "#/components/schemas/OperationsUnavailable"}}}}
+  /api/v1/run-log-retention:
+    get:
+      summary: Get the global manual run-log retention policy and aggregate preview
+      operationId: getRunLogRetentionStatus
+      responses:
+        "200": {description: Current policy and aggregate-only preview, content: {application/json: {schema: {$ref: "#/components/schemas/RunLogRetentionStatus"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+    put:
+      summary: Update the global manual run-log retention policy
+      operationId: updateRunLogRetentionPolicy
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/RunLogRetentionPolicyInput"}}}
+      responses:
+        "200": {description: Updated policy and aggregate-only preview, content: {application/json: {schema: {$ref: "#/components/schemas/RunLogRetentionStatus"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/run-log-retention/preview:
+    post:
+      summary: Preview the current global run-log retention policy
+      operationId: previewRunLogRetention
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, additionalProperties: false}}}
+      responses:
+        "200": {description: Aggregate-only retention preview, content: {application/json: {schema: {$ref: "#/components/schemas/RunLogRetentionPreview"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /api/v1/run-log-retention/execute:
+    post:
+      summary: Execute one bounded, idempotent manual run-log retention batch
+      operationId: executeRunLogRetention
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/RunLogRetentionExecuteInput"}}}
+      responses:
+        "200": {description: Immutable execution receipt with aggregate-only result, content: {application/json: {schema: {$ref: "#/components/schemas/RunLogRetentionExecution"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   /api/v1/me:
     get:
       summary: Get the current principal
@@ -73,6 +354,8 @@ paths:
     post:
       summary: Append an idempotent bounded batch of attempt events
       operationId: appendRunnerEvents
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -100,6 +383,8 @@ paths:
     post:
       summary: Authorize and audit one fenced runner-local secret access
       operationId: authorizeRunnerSecretAccess
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -122,6 +407,20 @@ paths:
         "409":
           $ref: "#/components/responses/Error"
   /api/v1/sessions:
+    get:
+      summary: List local sessions (system administrator)
+      operationId: listSessions
+      responses:
+        "200":
+          description: Session metadata, never raw credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionListResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
     post:
       summary: Create a local session
       operationId: createSession
@@ -139,19 +438,86 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateSessionResponse"
-        "400":
+        "401":
+          $ref: "#/components/responses/Error"
+        "429":
           $ref: "#/components/responses/Error"
         "500":
           $ref: "#/components/responses/Error"
     delete:
       summary: Revoke the current session
       operationId: revokeSession
+      security:
+        - bearerAuth: []
       responses:
         "204":
           description: Session revoked.
         "401":
           $ref: "#/components/responses/Error"
         "404":
+          $ref: "#/components/responses/Error"
+  /api/v1/sessions/revoke:
+    post:
+      summary: Revoke a local session (system administrator)
+      operationId: revokeSessionByID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokeSessionRequest"
+      responses:
+        "200":
+          description: Session revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/v1/browser-sessions:
+    post:
+      summary: Create a browser session
+      operationId: createBrowserSession
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: Browser session created. The session credential is set only in the HttpOnly `nerocd_session` cookie.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserSessionResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Revoke the current browser session
+      operationId: revokeBrowserSession
+      security:
+        - browserSession: []
+      responses:
+        "204":
+          description: Browser session revoked and cookie expired.
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
           $ref: "#/components/responses/Error"
   /api/v1/api-tokens:
     post:
@@ -292,7 +658,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EmptyRequest"
+              $ref: "#/components/schemas/IDRequest"
       responses:
         "200":
           description: Archived project.
@@ -402,6 +768,33 @@ paths:
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
+  /api/v1/repositories/{id}/policy:
+    put:
+      summary: Configure a legacy repository source policy
+      operationId: configureRepositoryPolicy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+         application/json:
+           schema:
+             type: object
+             required: [project_id, configuration_id, policy]
+             additionalProperties: false
+             properties:
+               project_id: {type: string}
+               configuration_id: {type: string, pattern: '^cfg_[A-Za-z0-9_-]{8,128}$'}
+               policy: {$ref: "#/components/schemas/RepositoryPolicy"}
+      responses:
+        "200": {description: Configured repository, content: {application/json: {schema: {$ref: "#/components/schemas/Repository"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   /api/v1/project-members:
     get:
       summary: List project members
@@ -697,6 +1090,24 @@ paths:
                 $ref: "#/components/schemas/RunnerListResponse"
         "401":
           $ref: "#/components/responses/Error"
+  /api/v1/runners/{id}:
+    get:
+      summary: Get runner administrative detail
+      operationId: getRunner
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Safe runner identity, status, heartbeat, bounded telemetry, tags, and capabilities.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerDetail" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
   /api/v1/runners/register:
     post:
       summary: Register runner
@@ -767,6 +1178,8 @@ paths:
     post:
       summary: Consume an enrollment using its one-time bearer token
       operationId: consumeRunnerEnrollment
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -838,6 +1251,8 @@ paths:
     post:
       summary: Heartbeat runner
       operationId: heartbeatRunner
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -855,10 +1270,31 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /api/v1/runners/telemetry:
+    post:
+      summary: Report bounded runner operational telemetry
+      operationId: reportRunnerOperationalTelemetry
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunnerOperationalTelemetry"
+      responses:
+        "204":
+          description: Latest bounded runner telemetry accepted.
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
   /api/v1/runners/claim:
     post:
       summary: Claim queued run
       operationId: claimRun
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -880,6 +1316,8 @@ paths:
     post:
       summary: Renew a fenced runner lease
       operationId: renewRunnerLease
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -906,6 +1344,8 @@ paths:
     get:
       summary: Get runner lease status
       operationId: getRunnerLease
+      security:
+        - bearerAuth: []
       parameters:
         - in: query
           name: lease_id
@@ -937,6 +1377,8 @@ paths:
     post:
       summary: Append runner log
       operationId: appendRunnerLog
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -962,6 +1404,8 @@ paths:
     post:
       summary: Record runner artifact metadata
       operationId: createRunArtifact
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -985,6 +1429,8 @@ paths:
     post:
       summary: Complete run lease
       operationId: completeLease
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1105,7 +1551,12 @@ components:
       type: http
       scheme: bearer
       bearerFormat: NeroCD session token
-      description: Future authenticated routes will accept the token returned by `POST /api/v1/sessions`.
+      description: CLI session and API token credential.
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: nerocd_session
+      description: "Browser-only local session cookie. Unsafe cookie-authenticated requests require X-NeroCD-CSRF: 1."
   parameters:
     ProjectID:
       name: project_id
@@ -1118,10 +1569,11 @@ components:
       name: limit
       in: query
       required: false
-      description: Maximum number of items to return. Defaults to the full filtered result.
+      description: Maximum number of items to return (0-100). Omit to use the bounded default.
       schema:
         type: integer
         minimum: 0
+        maximum: 100
     Offset:
       name: offset
       in: query
@@ -1130,6 +1582,7 @@ components:
       schema:
         type: integer
         minimum: 0
+        maximum: 100000
   responses:
     Error:
       description: Stable error envelope.
@@ -1138,6 +1591,229 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    PaginatedResponse:
+      type: object
+      required: [items, limit, offset, count, total]
+      properties:
+        items: {type: array, items: {}}
+        limit: {type: integer, minimum: 0}
+        offset: {type: integer, minimum: 0}
+        count: {type: integer, minimum: 0}
+        total: {type: integer, minimum: 0}
+    ServiceInput:
+      type: object
+      required: [project_id, name, repository_id, compose_path]
+      properties:
+        project_id: {type: string}
+        name: {type: string}
+        repository_id: {type: string}
+        compose_path: {type: string}
+        profiles: {type: array, items: {type: string}}
+    Service:
+      allOf:
+        - $ref: "#/components/schemas/ServiceInput"
+        - type: object
+          required: [id, owner_id, created_at]
+          properties:
+            id: {type: string}
+            owner_id: {type: string}
+            created_at: {type: string, format: date-time}
+    SecretBindingMetadata:
+      type: object
+      required: [name, provider, reference, target, required]
+      properties:
+        name: {type: string}
+        provider: {type: string}
+        reference: {type: string}
+        target: {type: string}
+        required: {type: boolean}
+        version: {type: string}
+        fingerprint: {type: string}
+        redact_encodings: {type: array, items: {type: string}}
+        classification: {type: string}
+    HealthPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        url: {type: string, format: uri}
+        allowed_hosts: {type: array, items: {type: string}}
+        allowed_cidrs: {type: array, items: {type: string, format: cidr}}
+        allowed_ports: {type: array, items: {type: integer, minimum: 1, maximum: 65535}}
+        allow_http: {type: boolean, description: Explicitly permits HTTP only for an allowed CIDR fixture address.}
+        expected_revision: {type: string}
+        interval_seconds: {type: number, exclusiveMinimum: 0}
+        timeout_seconds: {type: number, exclusiveMinimum: 0}
+        expected_status: {type: integer, minimum: 200, maximum: 299}
+    EnvironmentInput:
+      type: object
+      required: [service_id, name, compose_project, timeout_seconds]
+      properties:
+        service_id: {type: string}
+        name: {type: string}
+        runner_selector: {type: array, items: {type: string}}
+        compose_project: {type: string}
+        health_policy: {$ref: "#/components/schemas/HealthPolicy"}
+        confirmation_required: {type: boolean}
+        timeout_seconds: {type: integer, minimum: 1}
+        secret_bindings: {type: array, items: {$ref: "#/components/schemas/SecretBindingMetadata"}}
+        rollback_safe: {type: boolean}
+    Environment:
+      allOf:
+        - $ref: "#/components/schemas/EnvironmentInput"
+        - type: object
+          required: [id, created_at]
+          properties:
+            id: {type: string}
+            current_healthy_revision_id: {type: [string, "null"]}
+            created_at: {type: string, format: date-time}
+    RevisionInput:
+      type: object
+      required: [service_id, requested_ref]
+      properties:
+        service_id: {type: string}
+        requested_ref: {type: string}
+    Revision:
+      type: object
+      required: [id, service_id, requested_ref, git_commit, compose_hash, image_digests, content_identity, provenance_state, provenance_resolved, created_by, created_at]
+      properties:
+        id: {type: string}
+        service_id: {type: string}
+        requested_ref: {type: string}
+        git_commit: {type: string}
+        compose_hash: {type: string}
+        image_digests: {type: array, items: {type: string}}
+        content_identity: {type: string}
+        provenance_state: {type: string, enum: [pending, resolved, legacy_unverified]}
+        provenance_resolved: {type: boolean}
+        resolved_at: {type: [string, "null"], format: date-time}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+    DeploymentInput:
+      type: object
+      required: [environment_id, desired_revision_id, idempotency_key]
+      properties:
+        environment_id: {type: string}
+        desired_revision_id: {type: string}
+        idempotency_key: {type: string, minLength: 1}
+        rollback_of_id: {type: [string, "null"]}
+    DeploymentTransitionInput:
+      type: object
+      required: [deployment_id, run_id, lease_id, attempt, fence, transition_key, expected_status, target_status]
+      properties:
+        deployment_id: {type: string}
+        run_id: {type: string}
+        lease_id: {type: string}
+        attempt: {type: integer, minimum: 1}
+        fence: {type: string, minLength: 1}
+        transition_key: {type: string, minLength: 1}
+        expected_status: {type: string, enum: [queued, waiting_confirmation, assigned, preparing, applying, verifying, failed, cancel_requested, rolling_back]}
+        target_status: {type: string, enum: [waiting_confirmation, assigned, preparing, applying, verifying, succeeded, failed, canceled, cancel_requested, rolling_back, rolled_back, rollback_failed, manual_intervention]}
+        health_passed: {type: [boolean, "null"]}
+        failure_code: {type: string}
+        metadata: {type: object, additionalProperties: true}
+    DeploymentCancelInput:
+      type: object
+      required: [deployment_id, request_id]
+      properties:
+        deployment_id: {type: string}
+        request_id: {type: string, minLength: 1}
+    DeploymentFailureRollbackInput:
+      type: object
+      required: [deployment_id, run_id, lease_id, attempt, fence, request_id, expected_status, failure_code]
+      properties:
+        deployment_id: {type: string}
+        run_id: {type: string}
+        lease_id: {type: string}
+        attempt: {type: integer, minimum: 1}
+        fence: {type: string}
+        request_id: {type: string}
+        expected_status: {type: string, enum: [applying, verifying, cancel_requested]}
+        cancellation_request_id: {type: string}
+        failure_code: {type: string}
+        metadata: {type: object, additionalProperties: true}
+    DeploymentFailureRollbackResult:
+      type: object
+      required: [failed, rollback]
+      properties:
+        failed: {$ref: "#/components/schemas/Deployment"}
+        rollback: {$ref: "#/components/schemas/Deployment"}
+    ProvenanceResolutionInput:
+      type: object
+      required: [deployment_id, run_id, lease_id, attempt, fence, resolution_id, git_commit, compose_hash, image_digests, content_identity]
+      properties:
+        deployment_id: {type: string}
+        run_id: {type: string}
+        lease_id: {type: string}
+        attempt: {type: integer, minimum: 1}
+        fence: {type: string, minLength: 1}
+        resolution_id: {type: string, minLength: 1}
+        git_commit: {type: string, pattern: '^[0-9a-f]{40,64}$'}
+        compose_hash: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        image_digests: {type: array, minItems: 1, items: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}}
+        content_identity: {type: string}
+    DeploymentPlan:
+      type: object
+      required: [deployment_id, run_id, lease_id, attempt, fence, project_id, service_id, environment_id, repository_id, repository_url, repository_policy, requested_ref, compose_path, compose_project, timeout_seconds, health_policy, secret_bindings, rollback_safe]
+      properties:
+        deployment_id: {type: string}
+        run_id: {type: string}
+        lease_id: {type: string}
+        attempt: {type: integer}
+        fence: {type: string}
+        project_id: {type: string}
+        service_id: {type: string}
+        environment_id: {type: string}
+        repository_id: {type: string}
+        repository_url: {type: string}
+        repository_policy: {$ref: "#/components/schemas/RepositoryPolicy"}
+        requested_ref: {type: string}
+        compose_path: {type: string}
+        profiles: {type: array, items: {type: string}}
+        compose_project: {type: string}
+        timeout_seconds: {type: integer}
+        health_policy: {$ref: "#/components/schemas/HealthPolicy"}
+        secret_bindings: {type: array, items: {type: object}}
+        rollback_safe: {type: boolean}
+        status: {type: string, enum: [assigned, preparing, applying, verifying, cancel_requested]}
+        cancellation_request_id: {type: [string, "null"]}
+    DeploymentConfirmationInput:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string}
+    PreAssignmentFailureInput:
+      type: object
+      required: [id, failure_code]
+      properties:
+        id: {type: string}
+        failure_code: {type: string, minLength: 1}
+    Deployment:
+      allOf:
+        - $ref: "#/components/schemas/DeploymentInput"
+        - type: object
+          required: [id, status, requested_by, created_at, updated_at, fence_required]
+          properties:
+            id: {type: string}
+            previous_healthy_revision_id: {type: [string, "null"]}
+            task_run_id: {type: [string, "null"]}
+            rollback_of_id: {type: [string, "null"]}
+            status: {type: string, enum: [queued, waiting_confirmation, assigned, preparing, applying, verifying, succeeded, failed, canceled, cancel_requested, rolling_back, rolled_back, rollback_failed, manual_intervention]}
+            requested_by: {type: string}
+            confirmed_by: {type: [string, "null"]}
+            created_at: {type: string, format: date-time}
+            updated_at: {type: string, format: date-time}
+            finished_at: {type: [string, "null"], format: date-time}
+            health_passed: {type: [boolean, "null"]}
+            failure_code: {type: string}
+            fence_required: {type: boolean}
+    ServiceListResponse:
+      allOf: [{$ref: "#/components/schemas/PaginatedResponse"}, {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/Service"}}}}]
+    EnvironmentListResponse:
+      allOf: [{$ref: "#/components/schemas/PaginatedResponse"}, {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/Environment"}}}}]
+    RevisionListResponse:
+      allOf: [{$ref: "#/components/schemas/PaginatedResponse"}, {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/Revision"}}}}]
+    DeploymentListResponse:
+      allOf: [{$ref: "#/components/schemas/PaginatedResponse"}, {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/Deployment"}}}}]
     HealthResponse:
       type: object
       required: [status]
@@ -1154,6 +1830,139 @@ components:
           enum: [ready, not_ready]
         error:
           type: string
+    BootstrapStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, enum: [required, complete]}
+    OperationsUnavailable:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: {type: string, enum: [bootstrap_status_unavailable, operations_unavailable]}
+    DurationAggregate:
+      type: object
+      additionalProperties: false
+      required: [count, sum_seconds]
+      properties:
+        count: {type: integer, minimum: 0}
+        sum_seconds: {type: number, minimum: 0}
+    PoolState:
+      type: object
+      additionalProperties: false
+      required: [total, idle, acquired]
+      properties:
+        total: {type: integer, minimum: 0}
+        idle: {type: integer, minimum: 0}
+        acquired: {type: integer, minimum: 0}
+    OperationalSnapshot:
+      type: object
+      additionalProperties: false
+      required: [collected_at, queue_depth, queue_oldest_age_seconds, active_leases, expired_leases, oldest_runner_heartbeat_seconds, terminal_runs, deployments, deployment_health_passed, deployment_health_failed, rollback_succeeded, rollback_failed, runner_journal_depth, runner_retry_count, runner_renew_failures, backup_age_seconds, backup_outcome, backup_reason, backup_schedule_status, backup_schedule_next_seconds, backup_schedule_failures, pool]
+      properties:
+        collected_at: {type: string, format: date-time}
+        queue_depth: {type: integer, minimum: 0}
+        queue_oldest_age_seconds: {type: number, minimum: 0}
+        active_leases: {type: integer, minimum: 0}
+        expired_leases: {type: integer, minimum: 0}
+        oldest_runner_heartbeat_seconds: {type: number, minimum: 0}
+        terminal_runs:
+          type: object
+          additionalProperties: false
+          properties:
+            succeeded: {$ref: "#/components/schemas/DurationAggregate"}
+            failed: {$ref: "#/components/schemas/DurationAggregate"}
+            canceled: {$ref: "#/components/schemas/DurationAggregate"}
+        deployments:
+          type: object
+          additionalProperties: false
+          properties:
+            queued: {type: integer, minimum: 0}
+            waiting_confirmation: {type: integer, minimum: 0}
+            assigned: {type: integer, minimum: 0}
+            preparing: {type: integer, minimum: 0}
+            applying: {type: integer, minimum: 0}
+            verifying: {type: integer, minimum: 0}
+            cancel_requested: {type: integer, minimum: 0}
+            rolling_back: {type: integer, minimum: 0}
+            succeeded: {type: integer, minimum: 0}
+            failed: {type: integer, minimum: 0}
+            rolled_back: {type: integer, minimum: 0}
+            rollback_failed: {type: integer, minimum: 0}
+            canceled: {type: integer, minimum: 0}
+            manual_intervention: {type: integer, minimum: 0}
+        deployment_health_passed: {type: integer, minimum: 0}
+        deployment_health_failed: {type: integer, minimum: 0}
+        rollback_succeeded: {type: integer, minimum: 0}
+        rollback_failed: {type: integer, minimum: 0}
+        runner_journal_depth: {type: integer, minimum: 0}
+        runner_retry_count: {type: integer, minimum: 0}
+        runner_renew_failures: {type: integer, minimum: 0}
+        backup_age_seconds: {type: number, minimum: 0}
+        backup_outcome: {type: string, enum: [none, success, failure]}
+        backup_reason: {type: string, enum: [none, preflight, dump, publish, database]}
+        backup_schedule_status: {type: string, enum: [disabled, waiting, due, running, backoff]}
+        backup_schedule_next_seconds: {type: number, minimum: 0}
+        backup_schedule_failures: {type: integer, minimum: 0, maximum: 8}
+        pool: {$ref: "#/components/schemas/PoolState"}
+    OperationsStatus:
+      type: object
+      additionalProperties: false
+      required: [readiness, snapshot]
+      properties:
+        readiness: {type: string, enum: [ready]}
+        snapshot: {$ref: "#/components/schemas/OperationalSnapshot"}
+    RunLogRetentionPolicy:
+      type: object
+      additionalProperties: false
+      required: [enabled, keep_days, batch_size, version, updated_at]
+      properties:
+        enabled: {type: boolean}
+        keep_days: {type: integer, minimum: 1, maximum: 3650}
+        batch_size: {type: integer, minimum: 1, maximum: 10000}
+        version: {type: integer, minimum: 1}
+        updated_at: {type: string, format: date-time}
+    RunLogRetentionPolicyInput:
+      type: object
+      additionalProperties: false
+      required: [enabled, keep_days, batch_size]
+      properties:
+        enabled: {type: boolean}
+        keep_days: {type: integer, minimum: 1, maximum: 3650}
+        batch_size: {type: integer, minimum: 1, maximum: 10000}
+    RunLogRetentionPreview:
+      type: object
+      additionalProperties: false
+      required: [cutoff, eligible_logs, eligible_bytes]
+      properties:
+        cutoff: {type: string, format: date-time}
+        eligible_logs: {type: integer, minimum: 0, format: int64}
+        eligible_bytes: {type: integer, minimum: 0, format: int64}
+    RunLogRetentionStatus:
+      type: object
+      additionalProperties: false
+      required: [policy, preview]
+      properties:
+        policy: {$ref: "#/components/schemas/RunLogRetentionPolicy"}
+        preview: {$ref: "#/components/schemas/RunLogRetentionPreview"}
+    RunLogRetentionExecuteInput:
+      type: object
+      additionalProperties: false
+      required: [policy_version]
+      properties:
+        policy_version: {type: integer, minimum: 1}
+    RunLogRetentionExecution:
+      type: object
+      additionalProperties: false
+      required: [request_id, policy, preview, deleted, deleted_bytes]
+      properties:
+        request_id: {type: string}
+        policy: {$ref: "#/components/schemas/RunLogRetentionPolicy"}
+        preview: {$ref: "#/components/schemas/RunLogRetentionPreview"}
+        deleted: {type: integer, minimum: 0, format: int64}
+        deleted_bytes: {type: integer, minimum: 0, format: int64}
     ErrorResponse:
       type: object
       required: [code, error]
@@ -1198,6 +2007,12 @@ components:
         token:
           type: string
           description: Bearer token returned once at creation time.
+    BrowserSessionResponse:
+      type: object
+      required: [session]
+      properties:
+        session:
+          $ref: "#/components/schemas/Session"
     Session:
       type: object
       required: [id, user_id, expires_at, created_at]
@@ -1212,6 +2027,40 @@ components:
         created_at:
           type: string
           format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        source_ip:
+          type: string
+        user_agent:
+          type: string
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+    SessionListResponse:
+      type: object
+      required: [items, limit, offset, count, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Session"
+        limit:
+          type: integer
+        offset:
+          type: integer
+        count:
+          type: integer
+        total:
+          type: integer
+    RevokeSessionRequest:
+      type: object
+      required: [session_id]
+      properties:
+        session_id:
+          type: string
     APITokenInput:
       type: object
       required: [name, roles]
@@ -1307,6 +2156,23 @@ components:
     EmptyRequest:
       type: object
       additionalProperties: false
+    RunnerOperationalTelemetry:
+      type: object
+      additionalProperties: false
+      required: [journal_depth, retry_count, renew_failures]
+      properties:
+        journal_depth:
+          type: integer
+          minimum: 0
+          maximum: 8192
+        retry_count:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        renew_failures:
+          type: integer
+          minimum: 0
+          maximum: 100000
     ProjectListResponse:
       type: object
       required: [items, limit, offset, count, total]
@@ -1798,7 +2664,7 @@ components:
           type: boolean
     Repository:
       type: object
-      required: [id, project_id, name, url, provider, default_ref, created_at]
+      required: [id, project_id, name, url, provider, default_ref, policy, created_at]
       properties:
         id:
           type: string
@@ -1812,6 +2678,7 @@ components:
           type: string
         default_ref:
           type: string
+        policy: {$ref: "#/components/schemas/RepositoryPolicy"}
         created_at:
           type: string
           format: date-time
@@ -1829,6 +2696,28 @@ components:
           type: string
         default_ref:
           type: string
+        policy: {$ref: "#/components/schemas/RepositoryPolicy"}
+    RepositoryPolicy:
+      discriminator: {propertyName: state}
+      oneOf:
+        - type: object
+          required: [version, state]
+          properties: {version: {type: integer, enum: [1]}, state: {type: string, enum: [legacy_unverified]}}
+          additionalProperties: false
+        - type: object
+          required: [version, state, mode, allowed_schemes, allowed_hosts]
+          additionalProperties: false
+          properties:
+            version: {type: integer, enum: [1]}
+            state: {type: string, enum: [configured]}
+            mode: {type: string, enum: [public, internal]}
+            allowed_schemes: {type: array, minItems: 1, maxItems: 2, items: {type: string, enum: [https, ssh, http]}}
+            allowed_hosts: {type: array, minItems: 1, maxItems: 32, items: {type: string}}
+            allowed_cidrs: {type: array, maxItems: 32, items: {type: string}}
+            redirect_hosts: {type: array, maxItems: 32, items: {type: string}}
+            ssh_host_fingerprints: {type: array, maxItems: 32, items: {type: string}}
+            credential_reference_id: {type: string, pattern: '^cred_[A-Za-z0-9_-]{8,128}$'}
+            allow_internal: {type: boolean}
     RepositoryListResponse:
       type: object
       required: [items, limit, offset, count, total]
@@ -1891,6 +2780,21 @@ components:
         last_heartbeat_at:
           type: string
           format: date-time
+    RunnerOperationalStatus:
+      type: object
+      required: [observed_at, journal_depth, retry_count, renew_failures]
+      additionalProperties: false
+      properties:
+        observed_at: { type: string, format: date-time }
+        journal_depth: { type: integer, minimum: 0, maximum: 8192 }
+        retry_count: { type: integer, minimum: 0, maximum: 100000 }
+        renew_failures: { type: integer, minimum: 0, maximum: 100000 }
+    RunnerDetail:
+      allOf:
+        - $ref: "#/components/schemas/Runner"
+        - type: object
+          properties:
+            telemetry: { $ref: "#/components/schemas/RunnerOperationalStatus" }
     RunnerInput:
       type: object
       required: [name, capabilities]

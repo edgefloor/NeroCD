@@ -51,6 +51,103 @@ type AuditEvent struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
+type BackupOperationalResult struct {
+	ID          int64     `json:"id"`
+	CompletedAt time.Time `json:"completed_at"`
+	Outcome     string    `json:"outcome"`
+	Reason      string    `json:"reason"`
+}
+
+type BackupSchedule struct {
+	Singleton           bool      `json:"singleton"`
+	Enabled             bool      `json:"enabled"`
+	IntervalSeconds     int32     `json:"interval_seconds"`
+	RetentionCount      int32     `json:"retention_count"`
+	NextRunAt           time.Time `json:"next_run_at"`
+	ConsecutiveFailures int32     `json:"consecutive_failures"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type BackupScheduleRun struct {
+	ID           string     `json:"id"`
+	ScheduledFor time.Time  `json:"scheduled_for"`
+	StartedAt    time.Time  `json:"started_at"`
+	CompletedAt  *time.Time `json:"completed_at"`
+	Status       string     `json:"status"`
+	Reason       string     `json:"reason"`
+}
+
+type Deployment struct {
+	ID                        string     `json:"id"`
+	EnvironmentID             string     `json:"environment_id"`
+	DesiredRevisionID         string     `json:"desired_revision_id"`
+	PreviousHealthyRevisionID *string    `json:"previous_healthy_revision_id"`
+	TaskRunID                 string     `json:"task_run_id"`
+	IdempotencyKey            string     `json:"idempotency_key"`
+	Status                    string     `json:"status"`
+	RequestedBy               string     `json:"requested_by"`
+	ConfirmedBy               *string    `json:"confirmed_by"`
+	CreatedAt                 time.Time  `json:"created_at"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
+	FinishedAt                *time.Time `json:"finished_at"`
+	HealthPassed              *bool      `json:"health_passed"`
+	RollbackOfID              *string    `json:"rollback_of_id"`
+	FailureCode               string     `json:"failure_code"`
+	FenceRequired             bool       `json:"fence_required"`
+}
+
+type DeploymentAttempt struct {
+	DeploymentID string     `json:"deployment_id"`
+	RunID        string     `json:"run_id"`
+	LeaseID      string     `json:"lease_id"`
+	RunnerID     string     `json:"runner_id"`
+	Attempt      int32      `json:"attempt"`
+	Fence        string     `json:"fence"`
+	CreatedAt    time.Time  `json:"created_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+	Status       string     `json:"status"`
+}
+
+type DeploymentCancellation struct {
+	DeploymentID string    `json:"deployment_id"`
+	RequestID    string    `json:"request_id"`
+	ActorID      string    `json:"actor_id"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type DeploymentTransition struct {
+	DeploymentID   string          `json:"deployment_id"`
+	Attempt        int32           `json:"attempt"`
+	TransitionKey  string          `json:"transition_key"`
+	ExpectedStatus string          `json:"expected_status"`
+	TargetStatus   string          `json:"target_status"`
+	HealthPassed   *bool           `json:"health_passed"`
+	FailureCode    string          `json:"failure_code"`
+	Metadata       json.RawMessage `json:"metadata"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
+type Environment struct {
+	ID                       string          `json:"id"`
+	ServiceID                string          `json:"service_id"`
+	Name                     string          `json:"name"`
+	RunnerSelector           []string        `json:"runner_selector"`
+	ComposeProject           string          `json:"compose_project"`
+	HealthPolicy             json.RawMessage `json:"health_policy"`
+	ConfirmationRequired     bool            `json:"confirmation_required"`
+	TimeoutSeconds           int32           `json:"timeout_seconds"`
+	SecretBindings           json.RawMessage `json:"secret_bindings"`
+	RollbackSafe             bool            `json:"rollback_safe"`
+	CurrentHealthyRevisionID *string         `json:"current_healthy_revision_id"`
+	CreatedAt                time.Time       `json:"created_at"`
+}
+
+type IdentityBootstrapState struct {
+	Singleton   bool       `json:"singleton"`
+	CompletedBy *string    `json:"completed_by"`
+	CompletedAt *time.Time `json:"completed_at"`
+}
+
 type Inventory struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
@@ -78,15 +175,57 @@ type ProjectMember struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type ProvenanceResolution struct {
+	DeploymentID    string    `json:"deployment_id"`
+	Attempt         int32     `json:"attempt"`
+	ResolutionID    string    `json:"resolution_id"`
+	RunID           string    `json:"run_id"`
+	LeaseID         string    `json:"lease_id"`
+	RunnerID        string    `json:"runner_id"`
+	Fence           string    `json:"fence"`
+	RevisionID      string    `json:"revision_id"`
+	GitCommit       string    `json:"git_commit"`
+	ComposeHash     string    `json:"compose_hash"`
+	ImageDigests    []string  `json:"image_digests"`
+	ContentIdentity string    `json:"content_identity"`
+	AuditID         string    `json:"audit_id"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 type Repository struct {
-	ID         string    `json:"id"`
-	ProjectID  string    `json:"project_id"`
-	Name       string    `json:"name"`
-	Url        string    `json:"url"`
-	Provider   string    `json:"provider"`
-	DefaultRef string    `json:"default_ref"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID               string          `json:"id"`
+	ProjectID        string          `json:"project_id"`
+	Name             string          `json:"name"`
+	Url              string          `json:"url"`
+	Provider         string          `json:"provider"`
+	DefaultRef       string          `json:"default_ref"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	RepositoryPolicy json.RawMessage `json:"repository_policy"`
+}
+
+type RepositoryPolicyConfigurationReceipt struct {
+	RepositoryID    string    `json:"repository_id"`
+	ConfigurationID string    `json:"configuration_id"`
+	ActorID         string    `json:"actor_id"`
+	PolicySha256    string    `json:"policy_sha256"`
+	AuditID         string    `json:"audit_id"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type Revision struct {
+	ID                 string     `json:"id"`
+	ServiceID          string     `json:"service_id"`
+	RequestedRef       string     `json:"requested_ref"`
+	GitCommit          string     `json:"git_commit"`
+	ComposeHash        string     `json:"compose_hash"`
+	ImageDigests       []string   `json:"image_digests"`
+	ContentIdentity    string     `json:"content_identity"`
+	CreatedBy          string     `json:"created_by"`
+	CreatedAt          time.Time  `json:"created_at"`
+	ProvenanceState    string     `json:"provenance_state"`
+	ProvenanceResolved bool       `json:"provenance_resolved"`
+	ResolvedAt         *time.Time `json:"resolved_at"`
 }
 
 type RunArtifact struct {
@@ -128,6 +267,31 @@ type RunLog struct {
 	RequestedSequence *int32    `json:"requested_sequence"`
 }
 
+type RunLogRetentionPolicy struct {
+	Singleton bool      `json:"singleton"`
+	Enabled   bool      `json:"enabled"`
+	KeepDays  int32     `json:"keep_days"`
+	BatchSize int32     `json:"batch_size"`
+	Version   int32     `json:"version"`
+	UpdatedBy string    `json:"updated_by"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type RunLogRetentionReceipt struct {
+	RequestID     string    `json:"request_id"`
+	BodySha256    string    `json:"body_sha256"`
+	KeepDays      int32     `json:"keep_days"`
+	BatchSize     int32     `json:"batch_size"`
+	PolicyVersion int32     `json:"policy_version"`
+	Cutoff        time.Time `json:"cutoff"`
+	EligibleLogs  int64     `json:"eligible_logs"`
+	EligibleBytes int64     `json:"eligible_bytes"`
+	DeletedCount  int64     `json:"deleted_count"`
+	DeletedBytes  int64     `json:"deleted_bytes"`
+	AuditID       string    `json:"audit_id"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type Runner struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
@@ -162,13 +326,35 @@ type RunnerEnrollment struct {
 	CredentialHash   *string    `json:"credential_hash"`
 }
 
+type RunnerOperationalObservation struct {
+	RunnerID      string    `json:"runner_id"`
+	ObservedAt    time.Time `json:"observed_at"`
+	JournalDepth  int32     `json:"journal_depth"`
+	RetryCount    int32     `json:"retry_count"`
+	RenewFailures int32     `json:"renew_failures"`
+}
+
+type Service struct {
+	ID           string    `json:"id"`
+	ProjectID    string    `json:"project_id"`
+	Name         string    `json:"name"`
+	RepositoryID string    `json:"repository_id"`
+	ComposePath  string    `json:"compose_path"`
+	Profiles     []string  `json:"profiles"`
+	OwnerID      string    `json:"owner_id"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type Session struct {
-	ID        string     `json:"id"`
-	UserID    string     `json:"user_id"`
-	TokenHash string     `json:"token_hash"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	CreatedAt time.Time  `json:"created_at"`
-	RevokedAt *time.Time `json:"revoked_at"`
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	TokenHash  string     `json:"token_hash"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	SourceIp   string     `json:"source_ip"`
+	UserAgent  string     `json:"user_agent"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
 }
 
 type TaskRun struct {

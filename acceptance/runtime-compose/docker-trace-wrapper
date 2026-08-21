@@ -1,0 +1,52 @@
+#!/bin/sh
+# Fixture-only Docker wrapper. It records a deliberately tiny allowlist of
+# non-secret adapter actions; it never writes raw args, URLs, credentials, or
+# workspace paths. The durable journal volume makes restart evidence stable.
+set -eu
+trace=${NEROCD_COMPOSE_TRACE:-}
+action=other project=none
+compose_metadata() {
+  project=none action=other
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project-name) project=${2:-invalid}; shift 2 ;;
+      config) action=compose_config; break ;;
+      up) action=compose_up; break ;;
+      ps) action=compose_ps; break ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s %s' "$project" "$action"
+}
+if [ "${1:-}" = compose ]; then
+  metadata=$(compose_metadata "$@")
+  project=${metadata%% *}
+  action=${metadata#* }
+elif [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+  action=image_inspect
+fi
+case "$project" in *[!a-z0-9_-]*|'') project=invalid ;; esac
+case "$action" in compose_config|compose_up|compose_ps|image_inspect) ;;
+  *) exec /usr/bin/docker.real "$@" ;;
+esac
+if [ -n "$trace" ]; then
+  umask 077
+  printf '%s project=%s action=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$project" "$action" >>"$trace"
+fi
+# Acceptance-only deterministic barriers. They live on the runner journal
+# volume, carry no arguments or credentials, and are consumed once so a
+# server-created rollback child cannot inherit the source barrier.
+if [ "$action" = compose_config ] && [ -f /journal/compose-barrier-config ]; then
+  mv /journal/compose-barrier-config /journal/compose-barrier-config-entered
+  trap '' TERM INT
+  while :; do sleep 1; done
+fi
+if [ "$action" = compose_up ] && [ -f /journal/compose-barrier-up ]; then
+  mv /journal/compose-barrier-up /journal/compose-barrier-up-entered
+  (trap '' TERM INT; while :; do sleep 1; done) &
+  printf '%s\n' "$!" >/journal/compose-barrier-up-descendant.pid
+  trap '' TERM INT
+  while :; do sleep 1; done
+fi
+exec /usr/bin/docker.real "$@"

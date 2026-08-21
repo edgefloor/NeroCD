@@ -1,0 +1,114 @@
+# Production-credential override for the real runtime fixture. It deliberately
+# retains the fixture's local host ports, Git endpoint, and non-root runner;
+# those are acceptance topology concerns. Credential handoff, migrations, and
+# bootstrap mirror the production profile and never use development seed data.
+services:
+  secret-dir-init:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command: ["install -d -m 0700 -o 10001 -g 10001 /runtime-owner /runtime-app"]
+    volumes: [runtime-owner-secrets:/runtime-owner, runtime-app-secrets:/runtime-app]
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+  secret-init:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    user: "10001:10001"
+    entrypoint: [/bin/sh, -ec]
+    command: ["umask 077; install -d -m 0700 /runtime-owner /runtime-app; install -m 0400 /run/secrets/owner_database_url /runtime-owner/owner_database_url; install -m 0400 /run/secrets/app_database_url /runtime-app/app_database_url"]
+    secrets: [owner_database_url, app_database_url]
+    volumes: [runtime-owner-secrets:/runtime-owner, runtime-app-secrets:/runtime-app]
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    depends_on: {secret-dir-init: {condition: service_completed_successfully}}
+  pgdata-init:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command: ["install -d -m 0700 -o 70 -g 70 /var/lib/postgresql/data/pgdata"]
+    volumes: [postgres-data:/var/lib/postgresql/data, postgres-run:/var/run/postgresql]
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+  postgres:
+    user: "70:70"
+    environment:
+      POSTGRES_DB: nerocd
+      POSTGRES_USER: "${NEROCD_RUNTIME_OWNER_DATABASE_USER:?set owner role}"
+      POSTGRES_PASSWORD: ""
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets: [postgres_password]
+    depends_on: {pgdata-init: {condition: service_completed_successfully}}
+    volumes: [postgres-data:/var/lib/postgresql/data, postgres-run:/var/run/postgresql]
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck: {test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"'], interval: 1s, timeout: 1s, retries: 30}
+  migrate:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    entrypoint: [nerocd]
+    command: [migrate, --seed=false]
+    environment:
+      NEROCD_MODE: production
+      NEROCD_IMAGE_REF: "${NEROCD_RUNTIME_IMAGE_REF:?set canonical image digest}"
+      NEROCD_DATABASE_CREDENTIAL: owner
+      NEROCD_OWNER_DATABASE_USER: "${NEROCD_RUNTIME_OWNER_DATABASE_USER:?set owner role}"
+      NEROCD_DATABASE_URL_FILE: /runtime-owner/owner_database_url
+    depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}}
+    volumes: [runtime-owner-secrets:/runtime-owner:ro]
+    networks: [runtime]
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  role-init:
+    image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
+    entrypoint: [nerocd]
+    command: [provision-app-role, --owner-file, /runtime-owner/owner_database_url, --app-file, /runtime-app/app_database_url]
+    environment:
+      NEROCD_OWNER_DATABASE_USER: "${NEROCD_RUNTIME_OWNER_DATABASE_USER:?set owner role}"
+      NEROCD_APP_DATABASE_USER: "${NEROCD_RUNTIME_APP_DATABASE_USER:?set app role}"
+    depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}, migrate: {condition: service_completed_successfully}}
+    volumes: [runtime-owner-secrets:/runtime-owner:ro, runtime-app-secrets:/runtime-app:ro]
+    networks: [runtime]
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  server:
+    entrypoint: [nerocd]
+    command: [server, --addr, :8080]
+    environment:
+      NEROCD_MODE: production
+      NEROCD_IMAGE_REF: "${NEROCD_RUNTIME_IMAGE_REF:?set canonical image digest}"
+      NEROCD_PUBLIC_ORIGIN: https://nerocd.dogfood.invalid
+      NEROCD_DATABASE_CREDENTIAL: app
+      NEROCD_APP_DATABASE_USER: "${NEROCD_RUNTIME_APP_DATABASE_USER:?set app role}"
+      NEROCD_DATABASE_URL_FILE: /runtime-app/app_database_url
+      NEROCD_DATABASE_URL: ""
+      NEROCD_DEV_SEED_FILE: ""
+    depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}, migrate: {condition: service_completed_successfully}, role-init: {condition: service_completed_successfully}}
+    volumes: [runtime-app-secrets:/runtime-app:ro]
+    read_only: true
+    tmpfs: [/tmp]
+secrets:
+  owner_database_url: {file: "${NEROCD_RUNTIME_OWNER_DATABASE_URL_SECRET:?set owner URL secret}"}
+  app_database_url: {file: "${NEROCD_RUNTIME_APP_DATABASE_URL_SECRET:?set app URL secret}"}
+  postgres_password: {file: "${NEROCD_RUNTIME_POSTGRES_PASSWORD_SECRET:?set owner password secret}"}
+volumes:
+  runtime-owner-secrets: {}
+  runtime-app-secrets: {}
+  postgres-run: {}

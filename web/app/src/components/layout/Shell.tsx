@@ -1,77 +1,71 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
-  Activity,
   Bell,
-  FileText,
-  FolderKanban,
-  Home,
-  Layers3,
   LogOut,
   Menu,
   Moon,
   RefreshCw,
   Search,
-  Settings,
-  ShieldCheck,
   Sun,
-  Terminal,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { ApiSnapshot } from "@/api";
+import { approvalsQuery, healthQuery, principalQuery, runsQuery } from "@/api";
 import { NavButton } from "./NavButton";
 import { NotificationPanel } from "./NotificationPanel";
 import { cn } from "@/lib/utils";
-
-type ViewKey = "home" | "runs" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
-
-const navItems: Array<{ key: ViewKey; label: string; mobileLabel?: string; icon: typeof Home; mobile?: boolean; configure?: boolean }> = [
-  { key: "home", label: "Home", icon: Home, mobile: true },
-  { key: "runs", label: "Runs", icon: Activity, mobile: true },
-  { key: "approvals", label: "Approvals", mobileLabel: "Inbox", icon: ShieldCheck, mobile: true },
-  { key: "templates", label: "Templates", icon: Layers3, mobile: true },
-  { key: "logs", label: "Logs", icon: Terminal, mobile: true },
-  { key: "projects", label: "Projects", icon: FolderKanban, configure: true },
-  { key: "audit", label: "Audit", icon: FileText, configure: true },
-  { key: "settings", label: "Settings", icon: Settings, configure: true },
-];
+import { navigationItems, titleForPath } from "@/router/metadata";
 
 
 
 export function Shell({
-  snapshot,
-  view,
-  setView,
-  notice,
   query,
   setQuery,
   theme,
   toggleTheme,
-  onRefresh,
   onSignOut,
   onOpenSearch,
   children,
 }: {
-  snapshot: ApiSnapshot | null;
-  view: ViewKey;
-  setView: (view: ViewKey) => void;
-  notice: string;
   query: string;
   setQuery: (query: string) => void;
   theme: "light" | "dark";
   toggleTheme: () => void;
-  onRefresh: () => void;
   onSignOut: () => void;
   onOpenSearch?: () => void;
   children: ReactNode;
 }): ReactNode {
-  const pending = snapshot?.approvals.filter((approval) => approval.status === "pending").length ?? 0;
-  const failed = snapshot?.runs.filter((run) => ["failed", "error"].includes(run.status)).length ?? 0;
-  const title = navItems.find((item) => item.key === view)?.label ?? "Home";
+  const health = useQuery(healthQuery());
+  const principal = useQuery(principalQuery());
+  const runs = useQuery({ ...runsQuery(), refetchInterval: (query) => query.state.data?.some((run) => !["succeeded", "failed", "canceled", "rejected"].includes(run.status)) ? 3000 : false });
+  const approvals = useQuery(approvalsQuery());
+  const queryClient = useQueryClient();
+  const pending = approvals.data?.filter((approval) => approval.status === "pending").length ?? 0;
+  const failed = runs.data?.filter((run) => ["failed", "error"].includes(run.status)).length ?? 0;
+  const location = useLocation();
+  const navigate = useNavigate();
+  const title = titleForPath(location.pathname);
+  const navItems = navigationItems.filter((item) => !item.adminOnly || (principal.data?.roles ?? []).includes("system_admin"));
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
+  const notificationTriggerRef = useRef<HTMLButtonElement>(null);
+  const notificationInitialFocusRef = useRef<HTMLButtonElement>(null);
+  const mobileMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileMenuCloseRef = useRef<HTMLButtonElement>(null);
+
+  function closeNotifications(restoreFocus = true): void {
+    setNotificationsOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => notificationTriggerRef.current?.focus());
+  }
+
+  function closeMobileMenu(restoreFocus = true): void {
+    setMobileMenuOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => mobileMenuTriggerRef.current?.focus());
+  }
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -84,13 +78,21 @@ export function Shell({
         searchRef.current?.focus();
       }
       if (event.key === "Escape") {
-        setNotificationsOpen(false);
-        setMobileMenuOpen(false);
+        if (notificationsOpen) closeNotifications();
+        if (mobileMenuOpen) closeMobileMenu();
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [mobileMenuOpen, notificationsOpen]);
+
+  useEffect(() => {
+    if (notificationsOpen) requestAnimationFrame(() => notificationInitialFocusRef.current?.focus());
+  }, [notificationsOpen]);
+
+  useEffect(() => {
+    if (mobileMenuOpen) requestAnimationFrame(() => mobileMenuCloseRef.current?.focus());
+  }, [mobileMenuOpen]);
 
   // Close notification panel on click outside
   useEffect(() => {
@@ -101,7 +103,7 @@ export function Shell({
         event.target instanceof Node &&
         !notifRef.current.contains(event.target)
       ) {
-        setNotificationsOpen(false);
+        closeNotifications();
       }
     }
     document.addEventListener("pointerdown", onPointerDown);
@@ -134,7 +136,7 @@ export function Shell({
         </div>
         <nav className="flex-1 py-3 px-2 space-y-0.5">
           {navItems.map((item) => (
-            <NavButton key={item.key} item={item} active={view === item.key} pending={pending} onClick={() => setView(item.key)} />
+            <NavButton key={item.to} item={item} pending={pending} />
           ))}
         </nav>
         <div className="border-t border-sidebar-border p-3">
@@ -143,9 +145,9 @@ export function Shell({
             <div className="flex items-center gap-1.5">
               <span className={cn(
                 "h-1.5 w-1.5 rounded-full",
-                snapshot?.health.status === "ok" ? "bg-success" : "bg-warning"
+                health.data?.status === "ok" ? "bg-success" : "bg-warning"
               )} />
-              <span className="text-[10px] uppercase tracking-wide">{snapshot?.health.status ?? "unknown"}</span>
+              <span className="text-[10px] uppercase tracking-wide">{health.data?.status ?? "unknown"}</span>
             </div>
           </div>
         </div>
@@ -154,11 +156,29 @@ export function Shell({
       {/* Mobile Sidebar Overlay */}
       {mobileMenuOpen && (
         <>
-          <div 
+          <div
+            data-slot="mobile-navigation-overlay"
+            aria-hidden="true"
             className="fixed inset-0 z-40 bg-black/50 lg:hidden"
-            onClick={() => setMobileMenuOpen(false)}
+            onClick={() => closeMobileMenu()}
           />
-          <aside className="fixed inset-y-0 left-0 z-50 w-60 border-r border-sidebar-border bg-sidebar flex flex-col lg:hidden">
+          <aside
+            id="mobile-navigation"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mobile navigation"
+            className="fixed inset-y-0 left-0 z-50 w-60 border-r border-sidebar-border bg-sidebar flex flex-col lg:hidden"
+            onKeyDown={(event) => {
+              if (event.key !== "Tab") return;
+              const focusable = event.currentTarget.querySelectorAll<HTMLElement>('a[href], button:not([disabled])');
+              if (focusable.length === 0) return;
+              const first = focusable[0];
+              const last = focusable[focusable.length - 1];
+              if (!first || !last) return;
+              if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+              if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+            }}
+          >
             <div className="flex h-14 items-center justify-between px-3 border-b border-sidebar-border">
               <div className="flex items-center gap-2">
                 <img
@@ -168,13 +188,13 @@ export function Shell({
                 />
                 <strong className="text-base font-semibold tracking-tight">NeroCD</strong>
               </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setMobileMenuOpen(false)}>
+              <Button ref={mobileMenuCloseRef} variant="ghost" size="icon" className="h-8 w-8" aria-label="Close mobile navigation" onClick={() => closeMobileMenu()}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
             <nav className="flex-1 py-3 px-2 space-y-0.5">
               {navItems.map((item) => (
-                <NavButton key={item.key} item={item} active={view === item.key} pending={pending} onClick={() => { setView(item.key); setMobileMenuOpen(false); }} />
+                <NavButton key={item.to} item={item} pending={pending} onNavigate={() => closeMobileMenu()} />
               ))}
             </nav>
           </aside>
@@ -186,17 +206,12 @@ export function Shell({
         {/* Header */}
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur-sm lg:px-6">
           <div className="flex items-center gap-3 shrink-0">
-            <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" onClick={() => setMobileMenuOpen(true)}>
+            <Button ref={mobileMenuTriggerRef} variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open mobile navigation" aria-expanded={mobileMenuOpen} aria-controls="mobile-navigation" onClick={() => setMobileMenuOpen(true)}>
               <Menu className="h-4 w-4" />
             </Button>
             <h1 className="text-lg font-semibold tracking-tight text-foreground whitespace-nowrap">{title}</h1>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            {notice ? (
-              <span className="hidden max-w-xs truncate rounded-md bg-secondary px-2.5 py-1 text-[11px] text-secondary-foreground md:inline">
-                {notice}
-              </span>
-            ) : null}
             <label className="hidden h-8 min-w-56 items-center gap-2 rounded-lg border border-border/80 bg-card px-2.5 text-sm text-muted-foreground shadow-sm md:flex">
               <Search className="h-3.5 w-3.5" />
               <input
@@ -210,7 +225,7 @@ export function Shell({
               <kbd className="rounded border border-border/70 bg-background px-1 text-[9px] font-mono text-muted-foreground">/</kbd>
             </label>
             <div className="relative" ref={notifRef}>
-              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Notifications" onClick={() => setNotificationsOpen((open) => !open)}>
+              <Button ref={notificationTriggerRef} variant="ghost" size="icon" className="h-8 w-8" aria-label="Notifications" aria-expanded={notificationsOpen} aria-controls="notification-panel" onClick={() => setNotificationsOpen((open) => !open)}>
                 <Bell className="h-4 w-4" />
                 {pending + failed > 0 ? (
                   <span className="absolute -right-0.5 -top-0.5 h-4 min-w-4 rounded-full bg-warning px-1 text-[9px] font-semibold text-warning-foreground flex items-center justify-center">
@@ -219,13 +234,13 @@ export function Shell({
                 ) : null}
               </Button>
               {notificationsOpen ? (
-                <NotificationPanel snapshot={snapshot} onNavigate={(next) => { setView(next); setNotificationsOpen(false); }} />
+                <NotificationPanel approvals={approvals.data ?? []} runs={runs.data ?? []} panelRef={notifRef} initialFocusRef={notificationInitialFocusRef} onNavigate={(to) => { void navigate({ to, search: (previous) => previous }); closeNotifications(); }} />
               ) : null}
             </div>
             <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Search" onClick={() => onOpenSearch?.()}>
               <Search className="h-4 w-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 hidden sm:flex" onClick={onRefresh} aria-label="Refresh">
+            <Button variant="ghost" size="icon" className="h-8 w-8 hidden sm:flex" onClick={() => void queryClient.invalidateQueries({ predicate: (query) => ["health", "runs", "approvals"].includes(String(query.queryKey[0])) })} aria-label="Refresh">
               <RefreshCw className="h-4 w-4" />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 hidden sm:flex" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
@@ -248,10 +263,10 @@ export function Shell({
             .filter((item) => item.mobile)
             .map((item) => {
               const Icon = item.icon;
-              const isActive = view === item.key;
+              const isActive = location.pathname === item.to || (item.to === "/runs" && location.pathname.startsWith("/runs/"));
               return (
                 <button
-                  key={item.key}
+                  key={item.to}
                   className={cn(
                     "relative flex h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium text-muted-foreground transition-colors",
                     "hover:bg-muted/70",
@@ -259,11 +274,11 @@ export function Shell({
                   )}
                   type="button"
                   aria-current={isActive ? "page" : undefined}
-                  onClick={() => setView(item.key)}
+                  onClick={() => void navigate({ to: item.to, search: (previous) => previous })}
                 >
                   <Icon className={cn("h-4 w-4", isActive && "text-foreground")} />
                   <span className="mobile-nav-text block max-w-full truncate px-1">{item.mobileLabel ?? item.label}</span>
-                  {item.key === "approvals" && pending > 0 ? (
+                  {item.to === "/approvals" && pending > 0 ? (
                     <b className="absolute right-1.5 top-1.5 h-3.5 min-w-3.5 rounded-full bg-warning px-1 text-[8px] font-bold text-warning-foreground flex items-center justify-center">
                       {pending}
                     </b>

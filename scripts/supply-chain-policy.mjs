@@ -6,23 +6,24 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const allowedLicenses = new Set(["0BSD", "Apache-2.0", "BlueOak-1.0.0", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "ISC", "MIT", "MPL-2.0", "OFL-1.1", "Python-2.0"]);
+const allowedLicenses = new Set(["0BSD", "Apache-2.0", "BlueOak-1.0.0", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "ISC", "MIT", "MIT-0", "MPL-2.0", "OFL-1.1", "Python-2.0", "Unlicense"]);
 const allowedWebRuntimeDependencies = new Set([
   "@fontsource-variable/geist",
-  "@fontsource-variable/merriweather",
-  "@fontsource-variable/outfit",
+  "@radix-ui/react-dialog",
+  "@radix-ui/react-slot",
+  "@tanstack/react-router",
+  "@tanstack/react-query",
   "class-variance-authority",
   "clsx",
   "cmdk",
   "lucide-react",
-  "radix-ui",
   "react",
   "react-dom",
   "sonner",
   "tailwind-merge",
   "tw-animate-css",
 ]);
-const allowedWebDevDependencies = new Set(["@playwright/test", "@tailwindcss/vite", "@types/node", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "shadcn", "tailwindcss", "typescript", "vite"]);
+const allowedWebDevDependencies = new Set(["@playwright/test", "@tailwindcss/vite", "@tanstack/router-plugin", "@testing-library/react", "@testing-library/user-event", "@types/node", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "jsdom", "openapi-typescript", "tailwindcss", "typescript", "vite", "vitest"]);
 const allowedGoDirectDependencies = new Set([
   "github.com/getkin/kin-openapi",
   "github.com/jackc/pgx/v5",
@@ -83,6 +84,12 @@ async function assertWebPolicy() {
   }
   if (Object.keys(pkg.trustedDependencies ?? {}).length > 0 || (pkg.trustedDependencies ?? []).length > 0) {
     fail("Bun trustedDependencies must remain empty unless documented as an exception");
+  }
+  const forbidden = ["radix-ui", "@fontsource-variable/outfit", "@fontsource-variable/merriweather", "@tanstack/react-start", "axios", "redux", "@reduxjs/toolkit", "zustand"];
+  const declared = [...runtimeDeps, ...devDeps];
+  const reintroduced = declared.filter((name) => forbidden.includes(name));
+  if (reintroduced.length > 0) {
+    fail(`forbidden frontend dependencies: ${reintroduced.join(", ")}`);
   }
 }
 
@@ -244,17 +251,27 @@ async function collectGoComponents() {
 async function writeArtifacts(components) {
   const artifactDir = join(root, "artifacts");
   await mkdir(artifactDir, { recursive: true });
+  const epoch = Number.parseInt(process.env.SOURCE_DATE_EPOCH ?? "", 10);
+  const reproducible = Number.isSafeInteger(epoch) && epoch >= 0;
+  const canonicalComponents = JSON.stringify(components);
+  const deterministicDigest = createHash("sha256").update(canonicalComponents).digest("hex");
+  // CycloneDX normally permits a fresh UUID and wall-clock timestamp. Release
+  // evidence deliberately fixes both from SOURCE_DATE_EPOCH so its SBOM can
+  // participate in a byte-for-byte local reproducibility comparison.
+  const serialUUID = reproducible
+    ? `${deterministicDigest.slice(0, 8)}-${deterministicDigest.slice(8, 12)}-5${deterministicDigest.slice(13, 16)}-a${deterministicDigest.slice(17, 20)}-${deterministicDigest.slice(20, 32)}`
+    : randomUUID();
   const sbom = {
     bomFormat: "CycloneDX",
     specVersion: "1.5",
-    serialNumber: `urn:uuid:${randomUUID()}`,
+    serialNumber: `urn:uuid:${serialUUID}`,
     version: 1,
     metadata: {
-      timestamp: new Date().toISOString(),
+      timestamp: reproducible ? new Date(epoch * 1000).toISOString() : new Date().toISOString(),
       component: {
         type: "application",
         name: "NeroCD",
-        version: "0.1.0-dev",
+        version: process.env.NEROCD_RELEASE_VERSION ?? "0.1.0-dev",
       },
     },
     components,

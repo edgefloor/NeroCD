@@ -48,6 +48,30 @@ func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventPara
 	return err
 }
 
+const createAuditEventAtDatabaseTime = `-- name: CreateAuditEventAtDatabaseTime :exec
+INSERT INTO audit_events (id,actor_id,action,target_id,metadata,created_at)
+VALUES ($1,$2,$3,$4,$5,clock_timestamp())
+`
+
+type CreateAuditEventAtDatabaseTimeParams struct {
+	ID       string          `json:"id"`
+	ActorID  string          `json:"actor_id"`
+	Action   string          `json:"action"`
+	TargetID string          `json:"target_id"`
+	Metadata json.RawMessage `json:"metadata"`
+}
+
+func (q *Queries) CreateAuditEventAtDatabaseTime(ctx context.Context, arg CreateAuditEventAtDatabaseTimeParams) error {
+	_, err := q.db.Exec(ctx, createAuditEventAtDatabaseTime,
+		arg.ID,
+		arg.ActorID,
+		arg.Action,
+		arg.TargetID,
+		arg.Metadata,
+	)
+	return err
+}
+
 const createSecretAccessAudit = `-- name: CreateSecretAccessAudit :one
 INSERT INTO audit_events (id,actor_id,action,target_id,metadata,created_at)
 VALUES ($1,$2,'secret.access',$3,$4,clock_timestamp())

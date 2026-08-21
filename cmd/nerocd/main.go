@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,14 +15,18 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -38,21 +43,59 @@ import (
 	"nerocd/web"
 )
 
-const version = "0.1.0-dev"
+// version is set by the reproducible release build with -ldflags -X. The
+// development default keeps local builds self-describing without embedding a
+// release identity in source.
+var version = "0.1.0-dev"
 
 var runnerHTTPClient = &http.Client{Timeout: 5 * time.Second}
 var errLeaseAuthorityLost = errors.New("lease authority lost")
+
+// runnerOperationalCounters are intentionally process-lifetime, aggregate
+// counters. They never retain an operation, lease, runner, URL, or error. The
+// service bounds the same values, and saturation keeps a compromised or
+// persistently failing runner from publishing an unbounded integer.
+type runnerOperationalCounters struct {
+	retries       atomic.Uint64
+	renewFailures atomic.Uint64
+}
+
+const maxRunnerOperationalCounter = uint64(100000)
+
+func (c *runnerOperationalCounters) increment(value *atomic.Uint64) {
+	for {
+		current := value.Load()
+		if current >= maxRunnerOperationalCounter || value.CompareAndSwap(current, current+1) {
+			return
+		}
+	}
+}
+
+func (c *runnerOperationalCounters) Retry()        { c.increment(&c.retries) }
+func (c *runnerOperationalCounters) RenewFailure() { c.increment(&c.renewFailures) }
+func (c *runnerOperationalCounters) Snapshot() (retryCount, renewFailures int) {
+	return int(c.retries.Load()), int(c.renewFailures.Load())
+}
+
+func randomRuntimeHex(bytes int) (string, error) {
+	buf := make([]byte, bytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
 
 // attemptSupervisor owns the cancellation boundary for a single fenced attempt.
 // Its watchdog is independent of request goroutines, so a blocked request cannot
 // let a child continue after the locally known authority deadline.
 type attemptSupervisor struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	mu     sync.RWMutex
-	expiry time.Time
-	margin time.Duration
-	done   chan struct{}
+	ctx     context.Context
+	cancel  context.CancelFunc
+	mu      sync.RWMutex
+	expiry  time.Time
+	margin  time.Duration
+	done    chan struct{}
+	metrics *runnerOperationalCounters
 }
 type leaseWatcher struct {
 	cancel context.CancelFunc
@@ -69,7 +112,7 @@ func (r *leaseRenewer) Stop() { r.once.Do(func() { r.cancel(); <-r.done }) }
 
 func (w *leaseWatcher) Stop() { w.once.Do(func() { w.cancel(); <-w.done }) }
 
-func newAttemptSupervisor(lease domain.RunLease) *attemptSupervisor {
+func newAttemptSupervisor(lease domain.RunLease, counters ...*runnerOperationalCounters) *attemptSupervisor {
 	ctx, cancel := context.WithCancel(context.Background())
 	// created_at identifies the attempt, not the latest renewal period. After a
 	// long-running lease is read during startup replay it can be many minutes old
@@ -83,7 +126,11 @@ func newAttemptSupervisor(lease domain.RunLease) *attemptSupervisor {
 	if margin > 30*time.Second {
 		margin = 30 * time.Second
 	}
-	s := &attemptSupervisor{ctx: ctx, cancel: cancel, expiry: lease.ExpiresAt, margin: margin, done: make(chan struct{})}
+	metrics := &runnerOperationalCounters{}
+	if len(counters) != 0 && counters[0] != nil {
+		metrics = counters[0]
+	}
+	s := &attemptSupervisor{ctx: ctx, cancel: cancel, expiry: lease.ExpiresAt, margin: margin, done: make(chan struct{}), metrics: metrics}
 	go func() {
 		defer close(s.done)
 		for {
@@ -147,10 +194,17 @@ func (s *attemptSupervisor) GuardDeadline() time.Time {
 func (s *attemptSupervisor) Close() { s.cancel(); <-s.done }
 
 type runtimeConfig struct {
-	addr           string
-	databaseURL    string
-	leaseTTL       time.Duration
-	reaperInterval time.Duration
+	addr                 string
+	databaseURL          string
+	mode                 deploymentMode
+	leaseTTL             time.Duration
+	reaperInterval       time.Duration
+	cookieSecure         bool
+	publicOrigin         string
+	trustedProxyCIDRs    []string
+	developmentMemory    bool
+	devBootstrapEmail    string
+	devBootstrapPassword string
 }
 
 type runnerRegisterRequest struct {
@@ -235,6 +289,8 @@ func run(args []string) error {
 		return runRunner(args[1:])
 	case "health":
 		return callAPI(args[1:], "/api/v1/health")
+	case "ready":
+		return callReady(args[1:])
 	case "projects":
 		return callAPI(args[1:], "/api/v1/projects")
 	case "runs":
@@ -243,10 +299,26 @@ func run(args []string) error {
 		return callAPI(args[1:], "/api/v1/templates")
 	case "run-logs":
 		return callAPI(args[1:], "/api/v1/run-logs")
+	case "run-log-retention":
+		return runLogRetention(args[1:])
 	case "session":
 		return createSession(args[1:])
 	case "migrate":
 		return migrateDatabase(args[1:])
+	case "backup":
+		return backupDatabase(args[1:])
+	case "restore":
+		return restoreDatabase(args[1:])
+	case "backup-scheduler":
+		return backupScheduler(args[1:])
+	case "seed-dev":
+		return seedDevelopmentDatabase(args[1:])
+	case "bootstrap-admin":
+		return bootstrapAdmin(args[1:])
+	case "provision-app-role":
+		return provisionAppRole(args[1:])
+	case "doctor":
+		return productionDoctor()
 	case "smoke":
 		return smoke(args[1:])
 	case "contract":
@@ -268,12 +340,20 @@ Usage:
   nerocd server [--addr :8080]
   nerocd runner [--server http://127.0.0.1:8080] (--token ADMIN_TOKEN | --credential-file /run/secrets/runner-token)
   nerocd health [--addr http://127.0.0.1:8080]
+	  nerocd ready [--addr http://127.0.0.1:8080]
   nerocd projects [--addr http://127.0.0.1:8080] [--token ncd_...]
   nerocd templates [--addr http://127.0.0.1:8080] [--token ncd_...]
   nerocd runs [--addr http://127.0.0.1:8080] [--token ncd_...]
   nerocd run-logs [--addr http://127.0.0.1:8080] [--token ncd_...]
-  nerocd session --email admin@example.local --password admin [--addr http://127.0.0.1:8080]
+	  nerocd run-log-retention <status|preview|update|execute> [--addr http://127.0.0.1:8080] --token ncd_... [--enabled] [--keep-days 30] [--batch-size 1000] [--policy-version 1 --request-id stable-id]
+	  nerocd session --email <email> --password <password> [--addr http://127.0.0.1:8080]
   nerocd migrate [--database-url postgres://...]
+	  nerocd backup --database-url postgres://... --output-dir /secure/backups
+	  nerocd restore --database-url postgres://... --input-dir /secure/backups/backup-...
+	  nerocd backup-scheduler --output-dir /secure/backups [--runner-file-root /secure/runner-files] [--interval-seconds 86400] [--retention-count 7]
+	  nerocd seed-dev [--database-url postgres://...]
+	  nerocd bootstrap-admin --email admin@example.com --name 'Initial Admin' (--password-stdin | --password-file /secure/password)
+	  nerocd doctor
   nerocd smoke [--addr http://127.0.0.1:8080]
   nerocd contract [--openapi openapi.yaml]
   nerocd version`)
@@ -313,19 +393,34 @@ func runServer(args []string) error {
 			}
 		}
 	}()
-	server := api.NewServer(service, logger, web.Static())
-
-	httpServer := &http.Server{
-		Addr:              cfg.addr,
-		Handler:           server,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	server := api.NewServerWithConfig(service, logger, web.Static(), api.ServerConfig{AllowInsecureCookies: !cfg.cookieSecure, PublicOrigin: cfg.publicOrigin, TrustedProxyCIDRs: cfg.trustedProxyCIDRs})
 
 	if cfg.databaseURL == "" {
 		logger.Warn("server using in-memory store; set NEROCD_DATABASE_URL for durable runtime state")
 	}
+	listener, err := net.Listen("tcp", cfg.addr)
+	if err != nil {
+		return err
+	}
+	terminationSignals := make(chan os.Signal, 1)
+	signal.Notify(terminationSignals, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(terminationSignals)
+	termination := make(chan struct{})
+	go func() {
+		select {
+		case <-terminationSignals:
+			close(termination)
+		case <-reaperCtx.Done():
+		}
+	}()
 	logger.Info("server listening", "addr", cfg.addr)
-	return httpServer.ListenAndServe()
+	return (&serverLifecycle{
+		Listener:    listener,
+		Handler:     server,
+		Termination: termination,
+		Logger:      logger,
+		OnDrain:     server.SetDraining,
+	}).Serve(context.Background())
 }
 
 func loadRuntimeConfig(addr string) (runtimeConfig, error) {
@@ -336,14 +431,34 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		return runtimeConfig{}, fmt.Errorf("listen address must include host and port or :port: %w", err)
 	}
-	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_DATABASE_URL"))
-	if databaseURL != "" {
-		if err := validateDatabaseURL(databaseURL); err != nil {
-			return runtimeConfig{}, fmt.Errorf("NEROCD_DATABASE_URL: %w", err)
-		}
+	mode, err := configuredMode()
+	if err != nil {
+		return runtimeConfig{}, err
 	}
-	if os.Getenv("NEROCD_REQUIRE_DATABASE") == "true" && databaseURL == "" {
+	databaseURL, err := loadDatabaseURL(mode)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+	developmentMemory := mode == modeDevelopment && strings.TrimSpace(os.Getenv("NEROCD_DEV_MEMORY")) == "true"
+	if (mode == modeProduction || os.Getenv("NEROCD_REQUIRE_DATABASE") == "true") && databaseURL == "" {
 		return runtimeConfig{}, errors.New("NEROCD_REQUIRE_DATABASE=true requires NEROCD_DATABASE_URL")
+	}
+	if databaseURL == "" && !developmentMemory {
+		return runtimeConfig{}, errors.New("NEROCD_DATABASE_URL is required; set NEROCD_DEV_MEMORY=true only for an explicit disposable development store")
+	}
+	devBootstrapEmail := ""
+	devBootstrapPassword := ""
+	if developmentMemory {
+		devBootstrapEmail = strings.TrimSpace(os.Getenv("NEROCD_DEV_BOOTSTRAP_EMAIL"))
+		passwordFile := strings.TrimSpace(os.Getenv("NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE"))
+		if devBootstrapEmail == "" || passwordFile == "" {
+			return runtimeConfig{}, errors.New("NEROCD_DEV_MEMORY=true requires NEROCD_DEV_BOOTSTRAP_EMAIL and NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE")
+		}
+		secret, secretErr := readOwnerOnlyProductionSecret(passwordFile)
+		if secretErr != nil || len(strings.TrimSpace(string(secret))) == 0 {
+			return runtimeConfig{}, errors.New("development bootstrap password cannot be read")
+		}
+		devBootstrapPassword = strings.TrimSpace(string(secret))
 	}
 	ttl := 2 * time.Minute
 	if raw := strings.TrimSpace(os.Getenv("NEROCD_LEASE_TTL")); raw != "" {
@@ -361,7 +476,40 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 		}
 		reaper = parsed
 	}
-	return runtimeConfig{addr: addr, databaseURL: databaseURL, leaseTTL: ttl, reaperInterval: reaper}, nil
+	cookieSecure := true
+	if raw, ok := os.LookupEnv("NEROCD_COOKIE_SECURE"); ok {
+		parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
+		if err != nil {
+			return runtimeConfig{}, errors.New("NEROCD_COOKIE_SECURE must be true or false")
+		}
+		cookieSecure = parsed
+	}
+	if mode == modeProduction && !cookieSecure {
+		return runtimeConfig{}, errors.New("production rejects insecure cookies")
+	}
+	publicOrigin := strings.TrimSpace(os.Getenv("NEROCD_PUBLIC_ORIGIN"))
+	trustedProxyCIDRs := []string{}
+	if raw := strings.TrimSpace(os.Getenv("NEROCD_TRUSTED_PROXY_CIDRS")); raw != "" {
+		for _, value := range strings.Split(raw, ",") {
+			value = strings.TrimSpace(value)
+			prefix, parseErr := netip.ParsePrefix(value)
+			if parseErr != nil || !prefix.IsValid() {
+				return runtimeConfig{}, errors.New("NEROCD_TRUSTED_PROXY_CIDRS must contain valid CIDRs")
+			}
+			trustedProxyCIDRs = append(trustedProxyCIDRs, prefix.Masked().String())
+		}
+		if len(trustedProxyCIDRs) > 32 {
+			return runtimeConfig{}, errors.New("NEROCD_TRUSTED_PROXY_CIDRS may contain at most 32 CIDRs")
+		}
+	}
+	if mode == modeProduction {
+		origin, err := url.Parse(publicOrigin)
+		if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.User != nil {
+			return runtimeConfig{}, errors.New("production requires NEROCD_PUBLIC_ORIGIN as an HTTPS origin")
+		}
+		publicOrigin = origin.String()
+	}
+	return runtimeConfig{addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword}, nil
 }
 
 func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), error) {
@@ -370,7 +518,8 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		if err != nil {
 			return nil, nil, err
 		}
-		service := app.NewService(auth.ContextProvider{}, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg, pg)
+		service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg})
+		service.SetAllowLegacyPasswordVerification(cfg.mode != modeProduction)
 		if err := service.SetLeaseTTL(cfg.leaseTTL); err != nil {
 			_ = pg.Close()
 			return nil, nil, err
@@ -378,8 +527,15 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		return service, func() { _ = pg.Close() }, nil
 	}
 
+	if !cfg.developmentMemory {
+		return nil, nil, errors.New("in-memory store requires explicit development mode")
+	}
 	mem := store.NewMemoryStore()
-	service := app.NewService(auth.ContextProvider{}, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem)
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Retention: mem})
+	if _, err := service.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: cfg.devBootstrapEmail, Name: "Development Operator", Password: cfg.devBootstrapPassword}); err != nil {
+		return nil, nil, errors.New("development bootstrap failed")
+	}
+	service.SetAllowLegacyPasswordVerification(cfg.mode != modeProduction)
 	if err := service.SetLeaseTTL(cfg.leaseTTL); err != nil {
 		return nil, nil, err
 	}
@@ -476,13 +632,20 @@ func runRunner(args []string) error {
 		return fmt.Errorf("open runner journal: %w", err)
 	}
 	defer journal.Close()
-	if err := reconcileRunnerJournal(*server, runnerToken, journal); err != nil {
+	operational := &runnerOperationalCounters{}
+	if err := reconcileRunnerJournalWithCounters(*server, runnerToken, journal, operational); err != nil {
 		return fmt.Errorf("reconcile runner journal: %w", err)
 	}
 	for {
 		var heartbeat domain.Runner
 		if err := postAPIInto(*server+"/api/v1/runners/heartbeat", struct{}{}, runnerToken, &heartbeat); err != nil {
 			return err
+		}
+		// This is aggregate-only, authenticated telemetry. It deliberately does
+		// not include workspace paths, journal entries, lease IDs, or failures.
+		retryCount, renewFailures := operational.Snapshot()
+		if err := postAPINoResponse(*server+"/api/v1/runners/telemetry", app.RunnerOperationalTelemetry{JournalDepth: journal.Depth(), RetryCount: retryCount, RenewFailures: renewFailures}, runnerToken); err != nil {
+			return fmt.Errorf("report runner telemetry: %w", err)
 		}
 		var claim domain.ClaimedRun
 		if err := postAPIInto(*server+"/api/v1/runners/claim", struct{}{}, runnerToken, &claim); err != nil {
@@ -500,7 +663,7 @@ func runRunner(args []string) error {
 			return err
 		}
 		if *execute {
-			if err := executeClaimWithJournalAndSecretRoot(*server, runnerToken, claim, *workDir, *cancelPollInterval, journal, *secretRoot); err != nil {
+			if err := executeClaimWithJournalAndSecretRootAndCounters(*server, runnerToken, claim, *workDir, *cancelPollInterval, journal, *secretRoot, operational); err != nil {
 				return err
 			}
 		} else if *completeStatus != "" {
@@ -549,6 +712,10 @@ func executeClaimWithJournal(server string, token string, claim domain.ClaimedRu
 }
 
 func executeClaimWithJournalAndSecretRoot(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string) error {
+	return executeClaimWithJournalAndSecretRootAndCounters(server, token, claim, workDir, cancelPollInterval, journal, secretRoot, &runnerOperationalCounters{})
+}
+
+func executeClaimWithJournalAndSecretRootAndCounters(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, operational *runnerOperationalCounters) error {
 	sequence := 4
 	var sequenceMu sync.Mutex
 	var supervisor *attemptSupervisor
@@ -584,7 +751,7 @@ func executeClaimWithJournalAndSecretRoot(server string, token string, claim dom
 		}
 	}
 	// One attempt-scoped context also governs preparation and checkout.
-	supervisor = newAttemptSupervisor(claim.Lease)
+	supervisor = newAttemptSupervisor(claim.Lease, operational)
 	defer supervisor.Close()
 	processCtx, stopProcessPolling := context.WithCancel(supervisor.Context())
 	defer stopProcessPolling()
@@ -600,6 +767,7 @@ func executeClaimWithJournalAndSecretRoot(server string, token string, claim dom
 		Attempt int    `json:"attempt"`
 		Fence   string `json:"fence"`
 	}{claim.Lease.ID, claim.Lease.Attempt, claim.Lease.Fence}, token, &initialRenew); err != nil {
+		supervisor.metrics.RenewFailure()
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
 	claim.Lease.ExpiresAt = initialRenew.ExpiresAt
@@ -615,6 +783,11 @@ func executeClaimWithJournalAndSecretRoot(server string, token string, claim dom
 	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
 	defer reporter.Stop()
 	if claim.PrimitivePlan.Process == nil {
+		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {
+			// Resolution is read-only: it cannot start containers or settle the
+			// deployment successfully. A later fenced adapter owns application.
+			return resolveComposeClaim(supervisor, journal, reporter, server, token, workDir, secretRoot, claim)
+		}
 		if err := completeReportedAttempt(supervisor, watcher, renewer, reporter, journal, server, token, claim.Run.ID, claim.Lease, "failed", nil); err != nil {
 			return err
 		}
@@ -864,11 +1037,15 @@ func renewLeaseWhileRunning(worker context.Context, supervisor *attemptSuperviso
 			for waitWorkerInterval(worker, renewalDelay) {
 				var renewed domain.RunLease
 				err := retryWorkerRequest(worker, supervisor, func(ctx context.Context) error {
-					return postAPIIntoContext(ctx, server+"/api/v1/runners/renew", struct {
+					err := postAPIIntoContext(ctx, server+"/api/v1/runners/renew", struct {
 						LeaseID string `json:"lease_id"`
 						Attempt int    `json:"attempt"`
 						Fence   string `json:"fence"`
 					}{lease.ID, lease.Attempt, lease.Fence}, token, &renewed)
+					if err != nil && worker.Err() == nil {
+						supervisor.metrics.RenewFailure()
+					}
+					return err
 				})
 				if err != nil {
 					if worker.Err() == nil {
@@ -957,6 +1134,7 @@ func retryWorkerRequest(worker context.Context, supervisor *attemptSupervisor, r
 			}
 			return fmt.Errorf("%w: retry deadline: %v", errLeaseAuthorityLost, err)
 		}
+		supervisor.metrics.Retry()
 		if backoff < time.Second {
 			backoff *= 2
 		}
@@ -1063,6 +1241,113 @@ func callAPI(args []string, path string) error {
 	return enc.Encode(payload)
 }
 
+// runLogRetention is intentionally a small authenticated operator client, not
+// a direct database shortcut.  Execute requires a caller-provided stable
+// request ID so an interrupted invocation can safely replay its receipt.
+func runLogRetention(args []string) error {
+	if len(args) == 0 {
+		return errors.New("run-log-retention requires status, preview, update, or execute")
+	}
+	action := args[0]
+	fs := flag.NewFlagSet("run-log-retention", flag.ExitOnError)
+	addr := fs.String("addr", defaultAPIAddr(), "NeroCD server URL")
+	token := fs.String("token", os.Getenv("NEROCD_TOKEN"), "system-admin bearer token")
+	enabled := fs.Bool("enabled", false, "enable retention when updating")
+	keepDays := fs.Int("keep-days", 30, "retention days when updating")
+	batchSize := fs.Int("batch-size", 1000, "maximum logs per execution")
+	policyVersion := fs.Int("policy-version", 0, "previewed policy version for execute")
+	requestID := fs.String("request-id", "", "stable request ID for execute replay")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*token) == "" {
+		return errors.New("run-log-retention requires --token or NEROCD_TOKEN")
+	}
+	method, path := http.MethodGet, "/api/v1/run-log-retention"
+	var payload any
+	switch action {
+	case "status":
+	case "preview":
+		method, path, payload = http.MethodPost, "/api/v1/run-log-retention/preview", map[string]any{}
+	case "update":
+		method, payload = http.MethodPut, map[string]any{"enabled": *enabled, "keep_days": *keepDays, "batch_size": *batchSize}
+	case "execute":
+		if *policyVersion < 1 || strings.TrimSpace(*requestID) == "" {
+			return errors.New("run-log-retention execute requires --policy-version and --request-id")
+		}
+		method, path, payload = http.MethodPost, "/api/v1/run-log-retention/execute", map[string]any{"policy_version": *policyVersion}
+	default:
+		return errors.New("run-log-retention requires status, preview, update, or execute")
+	}
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequest(method, strings.TrimRight(*addr, "/")+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+*token)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if action == "execute" {
+		req.Header.Set("X-Request-ID", *requestID)
+	}
+	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return errors.New("run-log-retention request failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("run-log-retention returned %s", response.Status)
+	}
+	var result any
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
+		return errors.New("run-log-retention response was invalid")
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+// callReady is intentionally not a generic successful-HTTP probe. Readiness
+// means the database-backed service accepted the readiness query and returned
+// the exact stable envelope used by the orchestration profile.
+func callReady(args []string) error {
+	fs := flag.NewFlagSet("ready", flag.ExitOnError)
+	addr := fs.String("addr", defaultAPIAddr(), "NeroCD server URL")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodGet, *addr+"/api/v1/ready", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("%w\nhint: set --addr or NEROCD_ADDR to the server URL, for example http://127.0.0.1:18080", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readiness returned %s", resp.Status)
+	}
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&payload); err != nil {
+		return fmt.Errorf("decode readiness response: %w", err)
+	}
+	if payload.Status != "ready" {
+		return fmt.Errorf("readiness response status = %q, want ready", payload.Status)
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "ready"})
+}
+
 func postAPI(url string, body any, token string) (map[string]any, error) {
 	var result map[string]any
 	if err := postAPIInto(url, body, token, &result); err != nil {
@@ -1073,6 +1358,28 @@ func postAPI(url string, body any, token string) (map[string]any, error) {
 
 func postAPIInto(url string, body any, token string, result any) error {
 	return postAPIIntoContext(context.Background(), url, body, token, result)
+}
+
+func postAPINoResponse(url string, body any, token string) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := runnerHTTPClient.Do(req)
+	if err != nil {
+		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), Err: err}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), StatusCode: resp.StatusCode, Status: resp.Status}
+	}
+	return nil
 }
 func postAPIIntoContext(ctx context.Context, url string, body any, token string, result any) error {
 	payload, err := json.Marshal(body)
@@ -1201,10 +1508,13 @@ func splitCSV(value string) []string {
 func createSession(args []string) error {
 	fs := flag.NewFlagSet("session", flag.ExitOnError)
 	addr := fs.String("addr", defaultAPIAddr(), "NeroCD server URL")
-	email := fs.String("email", "admin@example.local", "user email")
+	email := fs.String("email", "", "user email")
 	password := fs.String("password", os.Getenv("NEROCD_PASSWORD"), "user password")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if strings.TrimSpace(*email) == "" || *password == "" {
+		return errors.New("session requires --email and --password")
 	}
 	body := bytes.NewBufferString(fmt.Sprintf(`{"email":%q,"password":%q}`, *email, *password))
 	req, err := http.NewRequest(http.MethodPost, *addr+"/api/v1/sessions", body)
@@ -1218,9 +1528,26 @@ func createSession(args []string) error {
 func migrateDatabase(args []string) error {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	databaseURL := fs.String("database-url", os.Getenv("NEROCD_DATABASE_URL"), "PostgreSQL connection URL")
-	seed := fs.Bool("seed", true, "apply development seed data")
+	seed := fs.Bool("seed", false, "deprecated; development seeding is seed-dev")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	mode, err := configuredMode()
+	if err != nil {
+		return err
+	}
+	if mode == modeProduction {
+		if fs.Lookup("database-url").Value.String() != "" || *seed {
+			return errors.New("production migrate requires secret-file configuration and --seed=false")
+		}
+		value, configErr := loadDatabaseURL(mode)
+		if configErr != nil {
+			return configErr
+		}
+		*databaseURL = value
+	}
+	if *seed {
+		return errors.New("development seeding is a separate seed-dev command")
 	}
 	if *databaseURL == "" {
 		return errors.New("database URL is required via --database-url or NEROCD_DATABASE_URL")
@@ -1234,68 +1561,179 @@ func migrateDatabase(args []string) error {
 		return err
 	}
 	defer database.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := database.Ping(ctx); err != nil {
-		return err
-	}
-	if _, err := database.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version TEXT PRIMARY KEY,
-			checksum TEXT NOT NULL,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)
-	`); err != nil {
 		return err
 	}
 	migrations, err := migrationFiles()
 	if err != nil {
 		return err
 	}
+	source := make([]Migration, 0, len(migrations))
 	for _, name := range migrations {
 		content, err := db.Files.ReadFile(name)
 		if err != nil {
 			return err
 		}
-		checksum := sqlChecksum(content)
+		source = append(source, Migration{Version: name, SQL: string(content), Checksum: sqlChecksum(content)})
+	}
+	return migrateWithSource(ctx, database, source, MigrationOptions{SetTimeout: 2 * time.Minute, PerMigrationTimeout: 30 * time.Second, LockKey: 768316409})
+}
+
+type Migration struct{ Version, SQL, Checksum string }
+type MigrationOptions struct {
+	SetTimeout, PerMigrationTimeout time.Duration
+	LockKey                         int64
+}
+
+func migrateWithSource(ctx context.Context, database *pgxpool.Pool, migrations []Migration, options MigrationOptions) error {
+	if options.SetTimeout <= 0 {
+		options.SetTimeout = 2 * time.Minute
+	}
+	if options.PerMigrationTimeout <= 0 {
+		options.PerMigrationTimeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, options.SetTimeout)
+	defer cancel()
+	conn, err := database.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err = conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, options.LockKey); err != nil {
+		return err
+	}
+	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, options.LockKey)
+	if _, err = conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
+		return err
+	}
+	for _, migration := range migrations {
 		appliedChecksum := ""
-		err = database.QueryRow(ctx, `SELECT checksum FROM schema_migrations WHERE version = $1`, name).Scan(&appliedChecksum)
+		err = conn.QueryRow(ctx, `SELECT checksum FROM schema_migrations WHERE version = $1`, migration.Version).Scan(&appliedChecksum)
 		switch {
-		case err == nil && appliedChecksum == checksum:
-			fmt.Printf("skipped %s\n", name)
+		case err == nil && appliedChecksum == migration.Checksum:
+			fmt.Printf("skipped %s\n", migration.Version)
 			continue
-		case err == nil && appliedChecksum != checksum:
-			return fmt.Errorf("migration %s checksum changed after it was applied", name)
+		case err == nil && appliedChecksum != migration.Checksum:
+			return fmt.Errorf("migration %s checksum changed after it was applied", migration.Version)
 		case err != pgx.ErrNoRows:
 			return err
 		}
-		tx, err := database.Begin(ctx)
+		migrationCtx, migrationCancel := context.WithTimeout(ctx, options.PerMigrationTimeout)
+		tx, err := conn.Begin(migrationCtx)
 		if err != nil {
+			migrationCancel()
 			return err
 		}
-		if _, err := tx.Exec(ctx, string(content)); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("apply %s: %w", name, err)
+		if _, err := tx.Exec(migrationCtx, migration.SQL); err != nil {
+			_ = tx.Rollback(migrationCtx)
+			migrationCancel()
+			return fmt.Errorf("apply %s: %w", migration.Version, err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)`, name, checksum); err != nil {
-			_ = tx.Rollback(ctx)
+		if _, err := tx.Exec(migrationCtx, `INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)`, migration.Version, migration.Checksum); err != nil {
+			_ = tx.Rollback(migrationCtx)
+			migrationCancel()
 			return err
 		}
-		if err := tx.Commit(ctx); err != nil {
+		if err := tx.Commit(migrationCtx); err != nil {
+			migrationCancel()
 			return err
 		}
-		fmt.Printf("applied %s\n", name)
+		migrationCancel()
+		fmt.Printf("applied %s\n", migration.Version)
 	}
-	if *seed {
-		content, err := db.Files.ReadFile("seeds/dev.sql")
-		if err != nil {
-			return err
-		}
-		if _, err := database.Exec(ctx, string(content)); err != nil {
-			return fmt.Errorf("apply seeds/dev.sql: %w", err)
-		}
-		fmt.Println("applied seeds/dev.sql")
+	return nil
+}
+
+func seedDevelopmentDatabase(args []string) error {
+	if mode, err := configuredMode(); err != nil {
+		return err
+	} else if mode == modeProduction {
+		return errors.New("production rejects development seed data")
 	}
+	fs := flag.NewFlagSet("seed-dev", flag.ExitOnError)
+	databaseURL := fs.String("database-url", os.Getenv("NEROCD_DATABASE_URL"), "PostgreSQL connection URL")
+	seedFile := fs.String("seed-file", os.Getenv("NEROCD_DEV_SEED_FILE"), "explicit development seed SQL file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := validateDatabaseURL(*databaseURL); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*seedFile) == "" {
+		return errors.New("seed-dev requires --seed-file or NEROCD_DEV_SEED_FILE")
+	}
+	database, err := pgxpool.New(context.Background(), *databaseURL)
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	content, err := os.ReadFile(*seedFile)
+	if err != nil {
+		return errors.New("development seed file cannot be read")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := database.Exec(ctx, string(content)); err != nil {
+		return fmt.Errorf("apply development seed: %w", err)
+	}
+	if _, err := database.Exec(ctx, "UPDATE identity_bootstrap_state SET completed_by = 'development_seed', completed_at = clock_timestamp() WHERE singleton = TRUE AND completed_by IS NULL"); err != nil {
+		return errors.New("mark development seed bootstrap state")
+	}
+	fmt.Println("applied development seed")
+	return nil
+}
+
+func bootstrapAdmin(args []string) error {
+	fs := flag.NewFlagSet("bootstrap-admin", flag.ExitOnError)
+	email := fs.String("email", "", "initial administrator email")
+	name := fs.String("name", "", "initial administrator name")
+	passwordFile := fs.String("password-file", "", "owner-only password file")
+	passwordStdin := fs.Bool("password-stdin", false, "read one password from stdin")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if (*passwordFile == "" && !*passwordStdin) || (*passwordFile != "" && *passwordStdin) {
+		return errors.New("bootstrap-admin requires exactly one of --password-file or --password-stdin")
+	}
+	var raw []byte
+	var err error
+	if *passwordFile != "" {
+		raw, err = readOwnerOnlyProductionSecret(strings.TrimSpace(*passwordFile))
+	} else {
+		raw, err = io.ReadAll(io.LimitReader(os.Stdin, 4097))
+		if len(raw) > 4096 {
+			err = errors.New("bootstrap password is too large")
+		}
+	}
+	if err != nil {
+		return errors.New("bootstrap password cannot be read")
+	}
+	password := strings.TrimSpace(string(raw))
+	if password == "" {
+		return errors.New("bootstrap password is required")
+	}
+	cfg, err := loadRuntimeConfig(":8080")
+	if err != nil {
+		return err
+	}
+	if cfg.databaseURL == "" {
+		return errors.New("bootstrap-admin requires a configured PostgreSQL database")
+	}
+	service, closeStore, err := newService(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+	defer closeStore()
+	user, err := service.BootstrapAdmin(context.Background(), app.BootstrapAdminInput{Email: *email, Name: *name, Password: password})
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return errors.New("bootstrap-admin has already completed")
+		}
+		return err
+	}
+	fmt.Printf("bootstrapped administrator %s\n", user.ID)
 	return nil
 }
 
@@ -1340,11 +1778,20 @@ func validateDatabaseURL(value string) error {
 func smoke(args []string) error {
 	fs := flag.NewFlagSet("smoke", flag.ExitOnError)
 	addr := fs.String("addr", defaultAPIAddr(), "NeroCD server URL")
+	email := fs.String("email", os.Getenv("NEROCD_SMOKE_EMAIL"), "bootstrap email")
+	password := fs.String("password", os.Getenv("NEROCD_SMOKE_PASSWORD"), "bootstrap password")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if strings.TrimSpace(*email) == "" || *password == "" {
+		return errors.New("smoke requires --email and --password (or NEROCD_SMOKE_EMAIL/NEROCD_SMOKE_PASSWORD)")
+	}
 
-	sessionReq, err := http.NewRequest(http.MethodPost, *addr+"/api/v1/sessions", strings.NewReader(`{"email":"admin@example.local","password":"admin"}`))
+	sessionBody, err := json.Marshal(map[string]string{"email": *email, "password": *password})
+	if err != nil {
+		return err
+	}
+	sessionReq, err := http.NewRequest(http.MethodPost, *addr+"/api/v1/sessions", bytes.NewReader(sessionBody))
 	if err != nil {
 		return err
 	}
@@ -1640,6 +2087,7 @@ type documentedOperation struct {
 	Path              string
 	OperationID       bool
 	SecurityEmpty     bool
+	SecuritySchemes   map[string]bool
 	RequestBody       bool
 	JSONRequestBody   bool
 	Responses         map[string]bool
@@ -1663,6 +2111,7 @@ func readOpenAPIOperations(document *openapi3.T, path string) (map[string]docume
 		return nil, fmt.Errorf("%s does not document any /api/v1 routes", path)
 	}
 	routes := make(map[string]documentedOperation)
+	operationIDs := make(map[string]string)
 	for _, routePath := range document.Paths.Keys() {
 		if !strings.HasPrefix(routePath, "/api/v1/") {
 			continue
@@ -1673,6 +2122,12 @@ func readOpenAPIOperations(document *openapi3.T, path string) (map[string]docume
 		}
 		for method, operation := range pathItem.Operations() {
 			key := strings.ToUpper(method) + " " + routePath
+			if operation != nil && operation.OperationID != "" {
+				if previous, exists := operationIDs[operation.OperationID]; exists {
+					return nil, fmt.Errorf("operationId %q is duplicated by %s and %s", operation.OperationID, previous, key)
+				}
+				operationIDs[operation.OperationID] = key
+			}
 			routes[key] = documentedOperationFromOperation(strings.ToUpper(method), routePath, operation)
 		}
 	}
@@ -1689,12 +2144,20 @@ func documentedOperationFromOperation(method string, path string, operation *ope
 		OperationID:       operation != nil && operation.OperationID != "",
 		Responses:         map[string]bool{},
 		JSONResponseCodes: map[string]bool{},
+		SecuritySchemes:   map[string]bool{},
 	}
 	if operation == nil {
 		return op
 	}
 	if operation.Security != nil && len(*operation.Security) == 0 {
 		op.SecurityEmpty = true
+	}
+	if operation.Security != nil {
+		for _, requirement := range *operation.Security {
+			for scheme := range requirement {
+				op.SecuritySchemes[scheme] = true
+			}
+		}
 	}
 	if operation.RequestBody != nil {
 		op.RequestBody = true
@@ -1758,7 +2221,7 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 }
 
 func requiresContractAuth(method string, path string) bool {
-	return path != "/api/v1/health" && path != "/api/v1/ready" && !(method == http.MethodPost && path == "/api/v1/sessions")
+	return path != "/api/v1/health" && path != "/api/v1/ready" && path != "/api/v1/bootstrap-status" && !(method == http.MethodPost && (path == "/api/v1/sessions" || path == "/api/v1/browser-sessions"))
 }
 
 func requiresContractRunnerAuth(path string) bool {
@@ -1771,7 +2234,7 @@ func requiresContractRunnerAuth(path string) bool {
 }
 
 func mutates(method string, path string) bool {
-	if method == http.MethodDelete && path == "/api/v1/sessions" {
+	if method == http.MethodDelete && (path == "/api/v1/sessions" || path == "/api/v1/browser-sessions") {
 		return false
 	}
 	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
@@ -1779,10 +2242,29 @@ func mutates(method string, path string) bool {
 
 func validateContractResponses(documented map[string]documentedOperation) error {
 	mem := store.NewMemoryStore()
-	service := app.NewService(auth.ContextProvider{}, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem, mem)
+	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem})
 	server := api.NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static())
 
-	sessionPayload, err := contractRequest(server, http.MethodPost, "/api/v1/sessions", `{"email":"admin@example.local","password":"admin"}`, "")
+	identitySuffix, err := randomRuntimeHex(16)
+	if err != nil {
+		return err
+	}
+	email := "contract-" + identitySuffix + "@example.invalid"
+	password, err := randomRuntimeHex(32)
+	if err != nil {
+		return err
+	}
+	if _, err := service.BootstrapAdmin(context.Background(), app.BootstrapAdminInput{Email: email, Name: "Contract Operator", Password: password}); err != nil {
+		return err
+	}
+	if err := seedContractMemory(context.Background(), mem); err != nil {
+		return err
+	}
+	sessionBody, err := json.Marshal(map[string]string{"email": email, "password": password})
+	if err != nil {
+		return err
+	}
+	sessionPayload, err := contractRequest(server, http.MethodPost, "/api/v1/sessions", string(sessionBody), "")
 	if err != nil {
 		return err
 	}
@@ -1807,10 +2289,11 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodGet, path: "/api/v1/projects", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/projects", body: `{"name":"Contract Project","description":"contract"}`, auth: true, shape: "project"},
 		{method: http.MethodGet, path: "/api/v1/project-members", auth: true, shape: "list"},
-		{method: http.MethodPost, path: "/api/v1/project-members", body: `{"project_id":"proj_platform","email":"viewer@example.local","role":"viewer"}`, auth: true, shape: "project-member"},
+		{method: http.MethodPost, path: "/api/v1/project-members", body: `{"project_id":"proj_platform","email":"{{contract_email}}","role":"maintainer"}`, auth: true, shape: "project-member"},
 		{method: http.MethodGet, path: "/api/v1/project-role?project_id=proj_platform", auth: true, shape: "project-role"},
 		{method: http.MethodGet, path: "/api/v1/repositories", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/repositories", body: `{"project_id":"proj_platform","name":"Contract Repo","url":"https://example.local/repo.git"}`, auth: true, shape: "repository"},
+		{method: http.MethodPut, path: "/api/v1/repositories/repo_platform_runbooks/policy", body: `{"project_id":"proj_platform","configuration_id":"cfg_contract_policy_01","policy":{"version":1,"state":"configured","mode":"public","allowed_schemes":["https"],"allowed_hosts":["example.local"]}}`, auth: true, shape: "repository"},
 		{method: http.MethodGet, path: "/api/v1/access-keys", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/access-keys", body: `{"project_id":"proj_platform","name":"Contract SSH","kind":"ssh","fingerprint":"SHA256:contract"}`, auth: true, shape: "access-key"},
 		{method: http.MethodGet, path: "/api/v1/inventories", auth: true, shape: "list"},
@@ -1853,7 +2336,7 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 	for _, tc := range cases {
 		docPath := strings.SplitN(tc.path, "?", 2)[0]
 		key := tc.method + " " + docPath
-		if _, ok := documented[key]; !ok {
+		if _, ok := documented[key]; !ok && !isDocumentedPath(documented, docPath) {
 			return fmt.Errorf("contract response case references undocumented %s", key)
 		}
 		tokenValue := ""
@@ -1879,6 +2362,7 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		body = strings.ReplaceAll(body, "{{reject_run_id}}", rejectRunID)
 		body = strings.ReplaceAll(body, "{{cancel_run_id}}", cancelRunID)
 		body = strings.ReplaceAll(body, "{{api_token_id}}", apiTokenID)
+		body = strings.ReplaceAll(body, "{{contract_email}}", email)
 		payload, err := contractRequest(server, tc.method, tc.path, body, tokenValue)
 		if err != nil {
 			return err
@@ -1959,6 +2443,21 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		return errors.New("unauthorized response did not include stable unauthenticated code")
 	}
 	return nil
+}
+
+func seedContractMemory(ctx context.Context, mem *store.MemoryStore) error {
+	now := time.Now().UTC()
+	if _, err := mem.CreateProject(ctx, domain.Project{ID: "proj_platform", Name: "Contract Platform", CreatedAt: now}); err != nil {
+		return err
+	}
+	if _, err := mem.CreateRepository(ctx, domain.Repository{ID: "repo_platform_runbooks", ProjectID: "proj_platform", Name: "Contract Repository", URL: "https://example.invalid/contract.git", Provider: domain.ProviderGit, DefaultRef: "main", CreatedAt: now}); err != nil {
+		return err
+	}
+	if _, err := mem.CreateTemplate(ctx, domain.TaskTemplate{ID: "tpl_patch", ProjectID: "proj_platform", Name: "Contract Template", Kind: "shell", RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "true"}, Process: &domain.ProcessSpec{Command: []string{"true"}}}, RunnerTags: []string{"local"}, RequiresAck: true}); err != nil {
+		return err
+	}
+	_, err := mem.CreateRun(ctx, domain.TaskRun{ID: "run_001", ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "true"}, Repository: &domain.RepositoryRef{ID: "repo_platform_runbooks", Ref: "main", Path: ""}, Process: &domain.ProcessSpec{Command: []string{"true"}}, Secrets: []domain.SecretBinding{{Name: "contract-secret", Provider: "runner_file", Reference: "contract-secret", Target: "env:CONTRACT_SECRET", Required: true, Version: "v1"}}}, RunnerTags: []string{"local"}, Status: domain.RunQueued, RequestedBy: "contract"})
+	return err
 }
 
 func contractRequest(server http.Handler, method string, path string, body string, token string) (map[string]any, error) {
@@ -2224,7 +2723,22 @@ func validateConsumersUseDocumentedRoutes(documented map[string]documentedOperat
 
 func isDocumentedPath(documented map[string]documentedOperation, path string) bool {
 	for route := range documented {
-		if strings.HasSuffix(route, " "+path) {
+		documentedPath := strings.TrimPrefix(route[strings.Index(route, " ")+1:], " ")
+		if documentedPath == path {
+			return true
+		}
+		want, got := strings.Split(strings.Trim(documentedPath, "/"), "/"), strings.Split(strings.Trim(path, "/"), "/")
+		if len(want) != len(got) {
+			continue
+		}
+		matched := true
+		for i := range want {
+			if !(strings.HasPrefix(want[i], "{") && strings.HasSuffix(want[i], "}")) && want[i] != got[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
 			return true
 		}
 	}

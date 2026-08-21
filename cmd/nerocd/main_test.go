@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"nerocd/internal/api"
+	"nerocd/internal/app"
 	"nerocd/internal/domain"
 )
 
@@ -91,6 +92,7 @@ func TestRunnerCredentialFileSkipsRegistration(t *testing.T) {
 	var mu sync.Mutex
 	registerRequests := 0
 	heartbeatRequests := 0
+	telemetry := app.RunnerOperationalTelemetry{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			t.Errorf("authorization header = %q", r.Header.Get("Authorization"))
@@ -106,6 +108,11 @@ func TestRunnerCredentialFileSkipsRegistration(t *testing.T) {
 			heartbeatRequests++
 			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(domain.Runner{ID: "runner-dedicated", Status: domain.RunnerActive})
+		case "/api/v1/runners/telemetry":
+			if err := json.NewDecoder(r.Body).Decode(&telemetry); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusNoContent)
 		case "/api/v1/runners/claim":
 			w.WriteHeader(http.StatusNotFound)
 		default:
@@ -119,8 +126,30 @@ func TestRunnerCredentialFileSkipsRegistration(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if registerRequests != 0 || heartbeatRequests != 1 {
-		t.Fatalf("register=%d heartbeat=%d, want 0/1", registerRequests, heartbeatRequests)
+	if registerRequests != 0 || heartbeatRequests != 1 || telemetry.JournalDepth != 0 || telemetry.RetryCount != 0 || telemetry.RenewFailures != 0 {
+		t.Fatalf("register=%d heartbeat=%d telemetry=%#v, want 0/1/zero", registerRequests, heartbeatRequests, telemetry)
+	}
+}
+
+func TestRunnerOperationalCountersSaturateUnderConcurrency(t *testing.T) {
+	counters := &runnerOperationalCounters{}
+	counters.retries.Store(maxRunnerOperationalCounter - 1)
+	counters.renewFailures.Store(maxRunnerOperationalCounter - 1)
+	var workers sync.WaitGroup
+	for range 32 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for range 64 {
+				counters.Retry()
+				counters.RenewFailure()
+			}
+		}()
+	}
+	workers.Wait()
+	retries, renewals := counters.Snapshot()
+	if retries != int(maxRunnerOperationalCounter) || renewals != int(maxRunnerOperationalCounter) {
+		t.Fatalf("saturated counters retries=%d renewals=%d", retries, renewals)
 	}
 }
 
@@ -362,6 +391,14 @@ func TestLeaseRenewerAuthorityFailureCancelsSupervisor(t *testing.T) {
 			}
 			if !seenFailure {
 				t.Fatalf("failing endpoint %q was not called", tc.fail)
+			}
+			retries, renewFailures := s.metrics.Snapshot()
+			wantRenewFailures := 0
+			if tc.fail == "renew" {
+				wantRenewFailures = 1
+			}
+			if retries != 0 || renewFailures != wantRenewFailures {
+				t.Fatalf("authority counters retries=%d renew_failures=%d want=0/%d", retries, renewFailures, wantRenewFailures)
 			}
 		})
 	}
@@ -625,12 +662,28 @@ func TestRuntimeConfigValidation(t *testing.T) {
 	}
 
 	t.Setenv("NEROCD_REQUIRE_DATABASE", "")
+	t.Setenv("NEROCD_DEV_MEMORY", "true")
+	bootstrap := filepath.Join(t.TempDir(), "bootstrap-password")
+	if err := os.WriteFile(bootstrap, []byte("test-password\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NEROCD_DEV_BOOTSTRAP_EMAIL", "test@example.invalid")
+	t.Setenv("NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE", bootstrap)
 	cfg, err := loadRuntimeConfig("127.0.0.1:18080")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.addr != "127.0.0.1:18080" || cfg.databaseURL != "" {
+	if cfg.addr != "127.0.0.1:18080" || cfg.databaseURL != "" || !cfg.cookieSecure {
 		t.Fatalf("unexpected config: %#v", cfg)
+	}
+	t.Setenv("NEROCD_COOKIE_SECURE", "false")
+	cfg, err = loadRuntimeConfig("127.0.0.1:18080")
+	if err != nil || cfg.cookieSecure {
+		t.Fatalf("local cookie override config=%#v err=%v", cfg, err)
+	}
+	t.Setenv("NEROCD_COOKIE_SECURE", "invalid")
+	if _, err := loadRuntimeConfig("127.0.0.1:18080"); err == nil || !strings.Contains(err.Error(), "NEROCD_COOKIE_SECURE") {
+		t.Fatalf("loadRuntimeConfig accepted invalid cookie security override: %v", err)
 	}
 }
 
@@ -677,5 +730,14 @@ func TestDocumentedOperationMetadataComesFromOpenAPIModel(t *testing.T) {
 	}
 	if !projects.Responses["401"] {
 		t.Fatal("GET /api/v1/projects should document 401")
+	}
+	for _, key := range []string{
+		http.MethodDelete + " /api/v1/sessions",
+		http.MethodPost + " /api/v1/runner-enrollments/consume",
+	} {
+		op := documented[key]
+		if !op.SecuritySchemes["bearerAuth"] || op.SecuritySchemes["browserSession"] {
+			t.Fatalf("%s must explicitly document bearer-only security: %#v", key, op.SecuritySchemes)
+		}
 	}
 }

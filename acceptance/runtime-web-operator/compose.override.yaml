@@ -1,0 +1,6 @@
+services:
+  server:
+    environment:
+      NEROCD_DEV_SEED_FILE: ""
+    command: ["nerocd migrate && exec nerocd server --addr :8080"]
+    volumes: []
