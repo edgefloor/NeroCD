@@ -258,7 +258,13 @@ func TestPostgresFencedDeploymentAttemptHTTPAndRollback(t *testing.T) {
 		t.Fatalf("claim = %#v, %v", claimA, err)
 	}
 
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+
+	if err != nil {
+
+		t.Fatal(err)
+
+	}
 	server := api.NewServer(service, slog.Default(), web.Static())
 	adminSession, err := service.CreateSession(ctx, "admin@example.local", "admin")
 	if err != nil {
@@ -1508,7 +1514,13 @@ func TestPostgresIntegrationRunnerReplayIdempotency(t *testing.T) {
 		t.Fatalf("completion rollback state lease=%s key=%v run=%s audit=%d", rollbackLeaseStatus, rollbackCompletionKey, rollbackRunStatus, rollbackAudit)
 	}
 
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+
+	if err != nil {
+
+		t.Fatal(err)
+
+	}
 	runnerCtx := auth.WithPrincipal(ctx, auth.Principal{ID: runnerID, Provider: domain.PrincipalRunner})
 	completed, err := service.CompleteLease(runnerCtx, claim.Lease.ID, domain.RunSucceeded, claim.Lease.Attempt, claim.Lease.Fence, "completion_replay")
 	if err != nil {
@@ -1795,7 +1807,10 @@ func TestPostgresIntegrationControlPlanePrimitives(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pg.Close()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
 	session, err := service.CreateSession(ctx, "admin@example.local", "admin")
 	if err != nil {
 		t.Fatalf("create admin session: %v", err)
@@ -1950,7 +1965,10 @@ func TestPostgresIntegrationTwoRunnerFencingAndBoundedClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pg.Close()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	now := time.Now().UTC()
 	for _, id := range []string{"runner_a", "runner_b"} {
@@ -3171,7 +3189,10 @@ func TestPostgresIntegrationCancelRacesRemainCoherent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pg.Close()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	if _, err := pg.RegisterRunner(ctx, domain.Runner{ID: "runner_race", Name: "race", Tags: []string{"local"}, Capabilities: []string{"shell"}, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
 		t.Fatal(err)
@@ -3304,7 +3325,10 @@ func TestPostgresRepositoryPolicyConfigurationReceipts(t *testing.T) {
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "policy_receipts")
 	defer pg.Close()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
 	admin := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_bootstrap", Roles: []string{domain.RoleSystemAdmin}, Provider: domain.PrincipalLocal})
 	policy := domain.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https", "ssh"}, AllowedHosts: []string{"z.example.local", "a.example.local"}, RedirectHosts: []string{"redirect.example.local"}, SSHHostFingerprints: []string{"SHA256:fixture-host-fingerprint"}, CredentialReferenceID: "cred_sentinel_12345678"}
 	input := app.RepositoryPolicyInput{ID: "repo_platform_runbooks", ProjectID: "proj_platform", ConfigurationID: "cfg_receipt_12345678", Policy: policy}
@@ -3430,7 +3454,10 @@ func TestPostgresBootstrapAdminIsAtomicAndAudited(t *testing.T) {
 	defer cancel()
 	pg, database := openPostgresEmptyIntegrationStore(t, ctx, "bootstrap")
 	defer pg.Close()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for range 8 {
@@ -3474,7 +3501,10 @@ func TestPostgresSessionMetadataSurvivesRestartAndAdminRevocation(t *testing.T) 
 	defer pg.Close()
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	newService := func() *app.Service {
-		service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg})
+		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+		if err != nil {
+			t.Fatal(err)
+		}
 		service.SetClock(func() time.Time { return now })
 		return service
 	}

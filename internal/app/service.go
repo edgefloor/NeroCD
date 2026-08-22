@@ -53,6 +53,10 @@ type Service struct {
 	loginLimiter         *auth.LoginLimiter
 }
 
+// Dependencies names every collaborator of the application service. All
+// fields are required: NewService fails instead of probing the runner or run
+// repositories for optional capabilities, so wiring mistakes surface at
+// construction rather than as missing behavior at request time.
 type Dependencies struct {
 	Auth              auth.Provider
 	Users             store.UserRepository
@@ -73,28 +77,88 @@ type Dependencies struct {
 	Retention         store.RunLogRetentionRepository
 }
 
-func NewService(deps Dependencies) *Service {
-	if deps.Auth == nil || deps.Users == nil || deps.Sessions == nil || deps.APITokens == nil || deps.Projects == nil || deps.Members == nil || deps.Templates == nil || deps.Sources == nil || deps.Runs == nil || deps.Runners == nil || deps.Approvals == nil || deps.Audit == nil {
-		panic("app.NewService requires all dependencies")
+// NewService constructs the application service. It reports every missing
+// dependency by name so wiring errors are actionable at startup.
+func NewService(deps Dependencies) (*Service, error) {
+	var missing []string
+	if deps.Auth == nil {
+		missing = append(missing, "Auth")
 	}
-	now := time.Now
-	snapshot := deps.Observability
-	if snapshot == nil {
-		snapshot, _ = deps.Runners.(store.OperationalSnapshotRepository)
+	if deps.Users == nil {
+		missing = append(missing, "Users")
 	}
-	writer := deps.ObservationWriter
-	if writer == nil {
-		writer, _ = deps.Runners.(store.OperationalObservationWriter)
+	if deps.Sessions == nil {
+		missing = append(missing, "Sessions")
 	}
-	reader := deps.ObservationReader
-	if reader == nil {
-		reader, _ = deps.Runners.(store.OperationalObservationReader)
+	if deps.APITokens == nil {
+		missing = append(missing, "APITokens")
 	}
-	retention := deps.Retention
-	if retention == nil {
-		retention, _ = deps.Runs.(store.RunLogRetentionRepository)
+	if deps.Projects == nil {
+		missing = append(missing, "Projects")
 	}
-	return &Service{auth: deps.Auth, users: deps.Users, sessions: deps.Sessions, apiTokens: deps.APITokens, projects: deps.Projects, members: deps.Members, templates: deps.Templates, sources: deps.Sources, runs: deps.Runs, runners: deps.Runners, approvals: deps.Approvals, audit: deps.Audit, deployments: deps.Deployments, operationalSnapshot: snapshot, operationalWriter: writer, operationalReader: reader, retention: retention, registry: runner.NewRegistry(), leaseTTL: 2 * time.Minute, allowLegacyPasswords: true, clock: now, loginLimiter: auth.NewLoginLimiter(now, 5, time.Minute, 10_000)}
+	if deps.Members == nil {
+		missing = append(missing, "Members")
+	}
+	if deps.Templates == nil {
+		missing = append(missing, "Templates")
+	}
+	if deps.Sources == nil {
+		missing = append(missing, "Sources")
+	}
+	if deps.Runs == nil {
+		missing = append(missing, "Runs")
+	}
+	if deps.Runners == nil {
+		missing = append(missing, "Runners")
+	}
+	if deps.Approvals == nil {
+		missing = append(missing, "Approvals")
+	}
+	if deps.Audit == nil {
+		missing = append(missing, "Audit")
+	}
+	if deps.Deployments == nil {
+		missing = append(missing, "Deployments")
+	}
+	if deps.Observability == nil {
+		missing = append(missing, "Observability")
+	}
+	if deps.ObservationWriter == nil {
+		missing = append(missing, "ObservationWriter")
+	}
+	if deps.ObservationReader == nil {
+		missing = append(missing, "ObservationReader")
+	}
+	if deps.Retention == nil {
+		missing = append(missing, "Retention")
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("app.NewService: missing required dependencies: %s", strings.Join(missing, ", "))
+	}
+	return &Service{
+		auth:                 deps.Auth,
+		users:                deps.Users,
+		sessions:             deps.Sessions,
+		apiTokens:            deps.APITokens,
+		projects:             deps.Projects,
+		members:              deps.Members,
+		templates:            deps.Templates,
+		sources:              deps.Sources,
+		runs:                 deps.Runs,
+		runners:              deps.Runners,
+		approvals:            deps.Approvals,
+		audit:                deps.Audit,
+		deployments:          deps.Deployments,
+		operationalSnapshot:  deps.Observability,
+		operationalWriter:    deps.ObservationWriter,
+		operationalReader:    deps.ObservationReader,
+		retention:            deps.Retention,
+		registry:             runner.NewRegistry(),
+		leaseTTL:             2 * time.Minute,
+		allowLegacyPasswords: true,
+		clock:                time.Now,
+		loginLimiter:         auth.NewLoginLimiter(time.Now, 5, time.Minute, 10_000),
+	}, nil
 }
 
 func (s *Service) OperationalSnapshot(ctx context.Context) (observability.Snapshot, error) {

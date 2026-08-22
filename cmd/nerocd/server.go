@@ -195,7 +195,11 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		if err != nil {
 			return nil, nil, err
 		}
-		service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg})
+		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg})
+		if err != nil {
+			_ = pg.Close()
+			return nil, nil, err
+		}
 		service.SetAllowLegacyPasswordVerification(cfg.mode != modeProduction)
 		if err := service.SetLeaseTTL(cfg.leaseTTL); err != nil {
 			_ = pg.Close()
@@ -208,7 +212,10 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		return nil, nil, errors.New("in-memory store requires explicit development mode")
 	}
 	mem := store.NewMemoryStore()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Retention: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem})
+	if err != nil {
+		return nil, nil, err
+	}
 	if _, err := service.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: cfg.devBootstrapEmail, Name: "Development Operator", Password: cfg.devBootstrapPassword}); err != nil {
 		return nil, nil, errors.New("development bootstrap failed")
 	}

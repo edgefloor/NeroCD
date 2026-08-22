@@ -37,13 +37,19 @@ func (incompatibleProjects) SchemaCompatible(context.Context) (bool, error) { re
 
 func newTestServer() (*Server, *store.MemoryStore) {
 	mem := newSeededTestStore()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		panic(err)
+	}
 	return NewServer(service, slog.Default(), web.Static()), mem
 }
 
 func newTestServerWithConfig(cfg ServerConfig) (*Server, *store.MemoryStore) {
 	mem := newSeededTestStore()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		panic(err)
+	}
 	return NewServerWithConfig(service, slog.Default(), web.Static(), cfg), mem
 }
 
@@ -446,7 +452,10 @@ func TestReadinessIsPublicAndMetricsRequireAdmin(t *testing.T) {
 
 func TestBootstrapAndOperationsStatusAreBoundedAndRoleProtected(t *testing.T) {
 	empty := store.NewMemoryStore()
-	emptyService := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, Projects: empty, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty})
+	emptyService, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, Projects: empty, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
+	if err != nil {
+		t.Fatal(err)
+	}
 	emptyServer := NewServer(emptyService, slog.Default(), web.Static())
 	required := httptest.NewRecorder()
 	emptyServer.ServeHTTP(required, httptest.NewRequest(http.MethodGet, "/api/v1/bootstrap-status", nil))
@@ -482,7 +491,13 @@ func TestBootstrapAndOperationsStatusAreBoundedAndRoleProtected(t *testing.T) {
 		t.Fatalf("admin operations status=%d %s", ready.Code, ready.Body.String())
 	}
 
-	incompatible := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, Projects: incompatibleProjects{empty}, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty})
+	incompatible, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, Projects: incompatibleProjects{empty}, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
+
+	if err != nil {
+
+		t.Fatal(err)
+
+	}
 	if _, err := incompatible.BootstrapAdmin(t.Context(), app.BootstrapAdminInput{Email: "ops@example.invalid", Name: "Ops", Password: "correct horse battery staple"}); err != nil {
 		t.Fatal(err)
 	}
@@ -628,7 +643,10 @@ func TestDrainKeepsLivenessButRejectsReadinessAndOrdinaryWork(t *testing.T) {
 
 func TestReadinessDoesNotConflateLivenessWithDatabaseCompatibility(t *testing.T) {
 	mem := store.NewMemoryStore()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: unavailableProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: unavailableProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := NewServer(service, slog.Default(), web.Static())
 
 	health := httptest.NewRecorder()
@@ -646,7 +664,10 @@ func TestReadinessDoesNotConflateLivenessWithDatabaseCompatibility(t *testing.T)
 
 func TestReadinessRejectsOldOrPartialSchema(t *testing.T) {
 	mem := store.NewMemoryStore()
-	service := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: incompatibleProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: incompatibleProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := NewServer(service, slog.Default(), web.Static())
 	health := httptest.NewRecorder()
 	server.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))

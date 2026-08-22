@@ -13,7 +13,11 @@ import (
 
 func newTestService() *Service {
 	mem := newSeededTestStore()
-	return NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem})
+	service, err := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		panic(err)
+	}
+	return service
 }
 
 func newSeededTestStore() *store.MemoryStore {
@@ -32,6 +36,18 @@ func testPrincipalContext(t *testing.T) auth.Principal {
 		Name:     "Bootstrap Admin",
 		Roles:    []string{domain.RoleSystemAdmin},
 		Provider: domain.PrincipalLocal,
+	}
+}
+
+func TestNewServiceRequiresEveryDependencyByName(t *testing.T) {
+	_, err := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: store.NewMemoryStore()})
+	if err == nil {
+		t.Fatal("NewService with missing dependencies must fail")
+	}
+	for _, want := range []string{"Sessions", "Runners", "Deployments", "Observability", "Retention"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not name missing dependency %s", err.Error(), want)
+		}
 	}
 }
 
@@ -126,7 +142,10 @@ func TestConfigureRepositoryPolicyIsAtomicAndIdempotent(t *testing.T) {
 
 func TestDeploymentMutationsRequireMaintainer(t *testing.T) {
 	mem := newSeededTestStore()
-	service := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem})
+	service, err := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
 	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
 	if _, err := service.UpsertProjectMember(admin, ProjectMemberInput{ProjectID: "proj_platform", Email: "viewer@example.local", Role: domain.RoleViewer}); err != nil {
 		t.Fatal(err)
@@ -173,7 +192,10 @@ func TestDeploymentMutationsRequireMaintainer(t *testing.T) {
 
 func TestCreateEnvironmentRejectsInvalidSecretBindingBeforePersistence(t *testing.T) {
 	mem := newSeededTestStore()
-	service := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem})
+	service, err := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
 	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
 	created, err := service.CreateService(admin, ServiceInput{ProjectID: "proj_platform", Name: "binding-validation", RepositoryID: "repo_platform_runbooks", ComposePath: "compose.yml"})
 	if err != nil {
