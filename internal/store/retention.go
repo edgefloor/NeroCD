@@ -32,13 +32,21 @@ func (s *MemoryStore) GetRunLogRetentionPolicy(_ context.Context) (domain.RunLog
 	defer s.mu.RUnlock()
 	return s.retentionPolicy, nil
 }
-func (s *MemoryStore) UpdateRunLogRetentionPolicy(_ context.Context, p domain.RunLogRetentionPolicy) (domain.RunLogRetentionPolicy, error) {
+func (s *MemoryStore) UpdateRunLogRetentionPolicy(_ context.Context, p domain.RunLogRetentionPolicy, opts ...MutationOption) (domain.RunLogRetentionPolicy, error) {
+	audit := resolveMutationOptions(opts)
 	if !validRunLogRetentionPolicy(p) {
 		return domain.RunLogRetentionPolicy{}, ErrConflict
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.updateRunLogRetentionPolicyLocked(p), nil
+	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
+		return domain.RunLogRetentionPolicy{}, errors.New("audit id conflict")
+	}
+	updated := s.updateRunLogRetentionPolicyLocked(p)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
+	return updated, nil
 }
 
 func (s *MemoryStore) updateRunLogRetentionPolicyLocked(p domain.RunLogRetentionPolicy) domain.RunLogRetentionPolicy {
@@ -51,19 +59,6 @@ func (s *MemoryStore) updateRunLogRetentionPolicyLocked(p domain.RunLogRetention
 	return p
 }
 
-func (s *MemoryStore) UpdateRunLogRetentionPolicyWithAudit(_ context.Context, p domain.RunLogRetentionPolicy, audit domain.AuditEvent) (domain.RunLogRetentionPolicy, error) {
-	if !validRunLogRetentionPolicy(p) {
-		return domain.RunLogRetentionPolicy{}, ErrConflict
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.auditIDAvailableLocked(audit.ID) {
-		return domain.RunLogRetentionPolicy{}, errors.New("audit id conflict")
-	}
-	updated := s.updateRunLogRetentionPolicyLocked(p)
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
-	return updated, nil
-}
 func (s *MemoryStore) retentionPreviewLocked(now time.Time) (domain.RunLogRetentionPreview, []int) {
 	p := s.retentionPolicy
 	result := domain.RunLogRetentionPreview{}

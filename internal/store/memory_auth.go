@@ -51,20 +51,15 @@ func (s *MemoryStore) BootstrapComplete(_ context.Context) (bool, error) {
 	return len(s.users) != 0, nil
 }
 
-func (s *MemoryStore) CreateSession(_ context.Context, session domain.Session, tokenHash string) error {
+func (s *MemoryStore) CreateSession(_ context.Context, session domain.Session, tokenHash string, opts ...MutationOption) error {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions = append(s.sessions, session)
 	s.tokenHashBySessionID[session.ID] = tokenHash
-	return nil
-}
-
-func (s *MemoryStore) CreateSessionWithAudit(_ context.Context, session domain.Session, tokenHash string, audit domain.AuditEvent) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sessions = append(s.sessions, session)
-	s.tokenHashBySessionID[session.ID] = tokenHash
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
 	return nil
 }
 
@@ -94,27 +89,17 @@ func (s *MemoryStore) GetPrincipalBySessionTokenHash(_ context.Context, tokenHas
 	return domain.User{}, ErrNotFound
 }
 
-func (s *MemoryStore) RevokeSessionByTokenHash(_ context.Context, tokenHash string, revokedAt time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i, session := range s.sessions {
-		if s.tokenHashBySessionID[session.ID] == tokenHash {
-			session.RevokedAt = &revokedAt
-			s.sessions[i] = session
-			return nil
-		}
-	}
-	return ErrNotFound
-}
-
-func (s *MemoryStore) RevokeSessionByTokenHashWithAudit(_ context.Context, tokenHash string, revokedAt time.Time, audit domain.AuditEvent) error {
+func (s *MemoryStore) RevokeSessionByTokenHash(_ context.Context, tokenHash string, revokedAt time.Time, opts ...MutationOption) error {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, session := range s.sessions {
 		if s.tokenHashBySessionID[session.ID] == tokenHash && session.RevokedAt == nil {
 			session.RevokedAt = &revokedAt
 			s.sessions[i] = session
-			s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+			if audit != nil {
+				s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+			}
 			return nil
 		}
 	}
@@ -138,44 +123,31 @@ func (s *MemoryStore) ListSessions(_ context.Context) ([]domain.Session, error) 
 	return result, nil
 }
 
-func (s *MemoryStore) RevokeSessionByID(_ context.Context, id string, revokedAt time.Time) (domain.Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.sessions {
-		if s.sessions[i].ID == id && s.sessions[i].RevokedAt == nil {
-			s.sessions[i].RevokedAt = &revokedAt
-			return s.sessions[i], nil
-		}
-	}
-	return domain.Session{}, ErrNotFound
-}
-
-func (s *MemoryStore) RevokeSessionByIDWithAudit(_ context.Context, id string, revokedAt time.Time, audit domain.AuditEvent) (domain.Session, error) {
+func (s *MemoryStore) RevokeSessionByID(_ context.Context, id string, revokedAt time.Time, opts ...MutationOption) (domain.Session, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, session := range s.sessions {
 		if session.ID == id && session.RevokedAt == nil {
 			session.RevokedAt = &revokedAt
 			s.sessions[i] = session
-			s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+			if audit != nil {
+				s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+			}
 			return session, nil
 		}
 	}
 	return domain.Session{}, ErrNotFound
 }
 
-func (s *MemoryStore) CreateAPIToken(_ context.Context, token domain.APIToken) (domain.APIToken, error) {
+func (s *MemoryStore) CreateAPIToken(_ context.Context, token domain.APIToken, opts ...MutationOption) (domain.APIToken, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.apiTokens = append(s.apiTokens, token)
-	return token, nil
-}
-
-func (s *MemoryStore) CreateAPITokenWithAudit(_ context.Context, token domain.APIToken, audit domain.AuditEvent) (domain.APIToken, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.apiTokens = append(s.apiTokens, token)
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
 	return token, nil
 }
 
@@ -196,28 +168,17 @@ func (s *MemoryStore) GetAPITokenByHash(_ context.Context, tokenHash string, now
 	return domain.APIToken{}, ErrNotFound
 }
 
-func (s *MemoryStore) RevokeAPIToken(_ context.Context, tokenID string, revokedAt time.Time) (domain.APIToken, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i, token := range s.apiTokens {
-		if token.ID == tokenID && token.RevokedAt == nil {
-			token.Status = domain.TokenRevoked
-			token.RevokedAt = &revokedAt
-			s.apiTokens[i] = token
-			return token, nil
-		}
-	}
-	return domain.APIToken{}, ErrNotFound
-}
-
-func (s *MemoryStore) RevokeAPITokenWithAudit(_ context.Context, tokenID string, revokedAt time.Time, audit domain.AuditEvent) (domain.APIToken, error) {
+func (s *MemoryStore) RevokeAPIToken(_ context.Context, tokenID string, revokedAt time.Time, opts ...MutationOption) (domain.APIToken, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, token := range s.apiTokens {
 		if token.ID == tokenID && token.RevokedAt == nil {
 			token.Status, token.RevokedAt = domain.TokenRevoked, &revokedAt
 			s.apiTokens[i] = token
-			s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+			if audit != nil {
+				s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+			}
 			return token, nil
 		}
 	}

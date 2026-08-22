@@ -35,17 +35,18 @@ func (s *PostgresStore) GetRunnerByID(ctx context.Context, id string) (domain.Ru
 	return runnerFromSQLC(row), nil
 }
 
-func (s *PostgresStore) RegisterRunner(ctx context.Context, runner domain.Runner) (domain.Runner, error) {
-	upserted, err := s.queries.RegisterRunner(ctx, sqlcgen.RegisterRunnerParams{ID: runner.ID, Name: runner.Name, Tags: runner.Tags, Capabilities: runner.Capabilities, Status: runner.Status, RegisteredAt: runner.RegisteredAt, LastHeartbeatAt: runner.LastHeartbeatAt, TokenHash: runner.TokenHash})
-	if isUniqueViolation(err) {
-		return domain.Runner{}, ErrConflict
+func (s *PostgresStore) RegisterRunner(ctx context.Context, runner domain.Runner, opts ...MutationOption) (domain.Runner, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		upserted, err := s.queries.RegisterRunner(ctx, sqlcgen.RegisterRunnerParams{ID: runner.ID, Name: runner.Name, Tags: runner.Tags, Capabilities: runner.Capabilities, Status: runner.Status, RegisteredAt: runner.RegisteredAt, LastHeartbeatAt: runner.LastHeartbeatAt, TokenHash: runner.TokenHash})
+		if isUniqueViolation(err) {
+			return domain.Runner{}, ErrConflict
+		}
+		if err != nil {
+			return domain.Runner{}, err
+		}
+		return runnerFromSQLC(upserted), nil
 	}
-	if err != nil {
-		return domain.Runner{}, err
-	}
-	return runnerFromSQLC(upserted), nil
-}
-func (s *PostgresStore) RegisterRunnerWithAudit(ctx context.Context, runner domain.Runner, audit domain.AuditEvent) (domain.Runner, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Runner{}, err
@@ -56,7 +57,7 @@ func (s *PostgresStore) RegisterRunnerWithAudit(ctx context.Context, runner doma
 	if err != nil {
 		return domain.Runner{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.Runner{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -164,17 +165,18 @@ func (s *PostgresStore) ConsumeRunnerEnrollment(ctx context.Context, consume dom
 	return runnerFromSQLC(runnerRow), nil
 }
 
-func (s *PostgresStore) UpdateRunnerToken(ctx context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time) (domain.Runner, error) {
-	updated, err := s.queries.UpdateRunnerToken(ctx, sqlcgen.UpdateRunnerTokenParams{ID: runnerID, TokenHash: tokenHash, Status: status, LastHeartbeatAt: updatedAt})
-	if err == pgx.ErrNoRows {
-		return domain.Runner{}, ErrNotFound
+func (s *PostgresStore) UpdateRunnerToken(ctx context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time, opts ...MutationOption) (domain.Runner, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		updated, err := s.queries.UpdateRunnerToken(ctx, sqlcgen.UpdateRunnerTokenParams{ID: runnerID, TokenHash: tokenHash, Status: status, LastHeartbeatAt: updatedAt})
+		if err == pgx.ErrNoRows {
+			return domain.Runner{}, ErrNotFound
+		}
+		if err != nil {
+			return domain.Runner{}, err
+		}
+		return runnerFromSQLC(updated), nil
 	}
-	if err != nil {
-		return domain.Runner{}, err
-	}
-	return runnerFromSQLC(updated), nil
-}
-func (s *PostgresStore) UpdateRunnerTokenWithAudit(ctx context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time, audit domain.AuditEvent) (domain.Runner, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Runner{}, err
@@ -188,7 +190,7 @@ func (s *PostgresStore) UpdateRunnerTokenWithAudit(ctx context.Context, runnerID
 	if err != nil {
 		return domain.Runner{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.Runner{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -219,11 +221,8 @@ func (s *PostgresStore) HeartbeatRunner(ctx context.Context, id string, heartbea
 	return runnerFromSQLC(runner), nil
 }
 
-func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.Time, ttl time.Duration) (domain.ClaimedRun, error) {
-	return s.ClaimRunWithAudit(ctx, runnerID, now, ttl, domain.AuditEvent{})
-}
-
-func (s *PostgresStore) ClaimRunWithAudit(ctx context.Context, runnerID string, now time.Time, ttl time.Duration, audit domain.AuditEvent) (domain.ClaimedRun, error) {
+func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.Time, ttl time.Duration, opts ...MutationOption) (domain.ClaimedRun, error) {
+	audit := resolveMutationOptions(opts)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.ClaimedRun{}, err
@@ -366,10 +365,10 @@ func (s *PostgresStore) ClaimRunWithAudit(ctx context.Context, runnerID string, 
 	} else if lookupErr != pgx.ErrNoRows {
 		return domain.ClaimedRun{}, lookupErr
 	}
-	if audit.ID != "" {
+	if audit != nil && audit.ID != "" {
 		audit.TargetID = claimedRun.ID
 		audit.Metadata = auditMetadata(audit.Metadata, map[string]any{"runner_id": runner.ID, "lease_id": lease.ID, "attempt": lease.Attempt, "fence": lease.Fence})
-		if err := createAuditWithQueries(ctx, queries, audit); err != nil {
+		if err := createAuditWithQueries(ctx, queries, *audit); err != nil {
 			return domain.ClaimedRun{}, err
 		}
 	}

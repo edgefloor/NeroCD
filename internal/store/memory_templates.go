@@ -29,38 +29,27 @@ func (s *MemoryStore) GetTemplate(_ context.Context, id string) (domain.TaskTemp
 	return domain.TaskTemplate{}, ErrNotFound
 }
 
-func (s *MemoryStore) CreateTemplate(_ context.Context, template domain.TaskTemplate) (domain.TaskTemplate, error) {
+func (s *MemoryStore) CreateTemplate(_ context.Context, template domain.TaskTemplate, opts ...MutationOption) (domain.TaskTemplate, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.templates = append(s.templates, template)
-	return template, nil
-}
-func (s *MemoryStore) CreateTemplateWithAudit(_ context.Context, template domain.TaskTemplate, audit domain.AuditEvent) (domain.TaskTemplate, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.templates = append(s.templates, template)
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
 	return template, nil
 }
 
-func (s *MemoryStore) UpdateTemplate(_ context.Context, template domain.TaskTemplate) (domain.TaskTemplate, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.templates {
-		if s.templates[i].ID == template.ID {
-			s.templates[i] = template
-			return template, nil
-		}
-	}
-	return domain.TaskTemplate{}, ErrNotFound
-}
-func (s *MemoryStore) UpdateTemplateWithAudit(_ context.Context, template domain.TaskTemplate, audit domain.AuditEvent) (domain.TaskTemplate, error) {
+func (s *MemoryStore) UpdateTemplate(_ context.Context, template domain.TaskTemplate, opts ...MutationOption) (domain.TaskTemplate, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, old := range s.templates {
 		if old.ID == template.ID {
 			s.templates[i] = template
-			s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+			if audit != nil {
+				s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+			}
 			return template, nil
 		}
 	}

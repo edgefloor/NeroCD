@@ -18,17 +18,14 @@ func (s *MemoryStore) ListRepositories(_ context.Context, projectID string) ([]d
 	return out, nil
 }
 
-func (s *MemoryStore) CreateRepository(_ context.Context, repository domain.Repository) (domain.Repository, error) {
+func (s *MemoryStore) CreateRepository(_ context.Context, repository domain.Repository, opts ...MutationOption) (domain.Repository, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.repositories = append(s.repositories, repository)
-	return repository, nil
-}
-func (s *MemoryStore) CreateRepositoryWithAudit(_ context.Context, repository domain.Repository, audit domain.AuditEvent) (domain.Repository, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.repositories = append(s.repositories, repository)
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
 	return repository, nil
 }
 func (s *MemoryStore) ConfigureRepositoryPolicy(_ context.Context, request RepositoryPolicyConfiguration) (domain.Repository, error) {
@@ -90,17 +87,14 @@ func (s *MemoryStore) ListAccessKeys(_ context.Context, projectID string) ([]dom
 	return out, nil
 }
 
-func (s *MemoryStore) CreateAccessKey(_ context.Context, key domain.AccessKey) (domain.AccessKey, error) {
+func (s *MemoryStore) CreateAccessKey(_ context.Context, key domain.AccessKey, opts ...MutationOption) (domain.AccessKey, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.accessKeys = append(s.accessKeys, key)
-	return key, nil
-}
-func (s *MemoryStore) CreateAccessKeyWithAudit(_ context.Context, key domain.AccessKey, audit domain.AuditEvent) (domain.AccessKey, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.accessKeys = append(s.accessKeys, key)
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
 	return key, nil
 }
 
@@ -116,16 +110,13 @@ func (s *MemoryStore) ListInventories(_ context.Context, projectID string) ([]do
 	return out, nil
 }
 
-func (s *MemoryStore) CreateInventory(_ context.Context, inventory domain.Inventory) (domain.Inventory, error) {
+func (s *MemoryStore) CreateInventory(_ context.Context, inventory domain.Inventory, opts ...MutationOption) (domain.Inventory, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.inventories = append(s.inventories, inventory)
-	return inventory, nil
-}
-func (s *MemoryStore) CreateInventoryWithAudit(_ context.Context, inventory domain.Inventory, audit domain.AuditEvent) (domain.Inventory, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.inventories = append(s.inventories, inventory)
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
 	return inventory, nil
 }

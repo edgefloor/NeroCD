@@ -29,14 +29,11 @@ func (s *MemoryStore) CreateApproval(_ context.Context, approval domain.Approval
 	return approval, nil
 }
 
-func (s *MemoryStore) ApproveRun(ctx context.Context, runID string, actorID string, approvedAt time.Time) (domain.Approval, error) {
-	return s.ApproveRunWithAudit(ctx, runID, actorID, approvedAt, domain.AuditEvent{})
-}
-
-func (s *MemoryStore) ApproveRunWithAudit(_ context.Context, runID string, actorID string, approvedAt time.Time, audit domain.AuditEvent) (domain.Approval, error) {
+func (s *MemoryStore) ApproveRun(_ context.Context, runID string, actorID string, approvedAt time.Time, opts ...MutationOption) (domain.Approval, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.auditIDAvailableLocked(audit.ID) {
+	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
 		return domain.Approval{}, ErrConflict
 	}
 	if s.deploymentBackedRunLocked(runID) {
@@ -65,10 +62,10 @@ func (s *MemoryStore) ApproveRunWithAudit(_ context.Context, runID string, actor
 				s.claimOrderByRun = make(map[string]time.Time)
 			}
 			s.claimOrderByRun[runID] = approvedAt
-			if audit.ID != "" {
+			if audit != nil && audit.ID != "" {
 				audit.TargetID = runID
 				audit.Metadata = auditMetadata(audit.Metadata, map[string]any{"approval_id": approval.ID})
-				s.auditEvents = append(s.auditEvents, audit)
+				s.auditEvents = append(s.auditEvents, *audit)
 			}
 			return approval, nil
 		}
@@ -76,14 +73,11 @@ func (s *MemoryStore) ApproveRunWithAudit(_ context.Context, runID string, actor
 	return domain.Approval{}, ErrNotFound
 }
 
-func (s *MemoryStore) RejectRun(ctx context.Context, runID string, actorID string, rejectedAt time.Time) (domain.Approval, error) {
-	return s.RejectRunWithAudit(ctx, runID, actorID, rejectedAt, domain.AuditEvent{})
-}
-
-func (s *MemoryStore) RejectRunWithAudit(_ context.Context, runID string, actorID string, rejectedAt time.Time, audit domain.AuditEvent) (domain.Approval, error) {
+func (s *MemoryStore) RejectRun(_ context.Context, runID string, actorID string, rejectedAt time.Time, opts ...MutationOption) (domain.Approval, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.auditIDAvailableLocked(audit.ID) {
+	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
 		return domain.Approval{}, ErrConflict
 	}
 	if s.deploymentBackedRunLocked(runID) {
@@ -103,10 +97,10 @@ func (s *MemoryStore) RejectRunWithAudit(_ context.Context, runID string, actorI
 					break
 				}
 			}
-			if audit.ID != "" {
+			if audit != nil && audit.ID != "" {
 				audit.TargetID = runID
 				audit.Metadata = auditMetadata(audit.Metadata, map[string]any{"approval_id": approval.ID})
-				s.auditEvents = append(s.auditEvents, audit)
+				s.auditEvents = append(s.auditEvents, *audit)
 			}
 			return approval, nil
 		}

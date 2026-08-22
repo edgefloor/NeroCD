@@ -33,11 +33,8 @@ func (s *PostgresStore) CreateApproval(ctx context.Context, approval domain.Appr
 	return approvalFromSQLC(inserted), nil
 }
 
-func (s *PostgresStore) ApproveRun(ctx context.Context, runID string, actorID string, approvedAt time.Time) (domain.Approval, error) {
-	return s.ApproveRunWithAudit(ctx, runID, actorID, approvedAt, domain.AuditEvent{})
-}
-
-func (s *PostgresStore) ApproveRunWithAudit(ctx context.Context, runID string, actorID string, approvedAt time.Time, audit domain.AuditEvent) (domain.Approval, error) {
+func (s *PostgresStore) ApproveRun(ctx context.Context, runID string, actorID string, approvedAt time.Time, opts ...MutationOption) (domain.Approval, error) {
+	audit := resolveMutationOptions(opts)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Approval{}, err
@@ -59,10 +56,10 @@ func (s *PostgresStore) ApproveRunWithAudit(ctx context.Context, runID string, a
 	} else if err != nil {
 		return domain.Approval{}, err
 	}
-	if audit.ID != "" {
+	if audit != nil && audit.ID != "" {
 		audit.TargetID = runID
 		audit.Metadata = auditMetadata(audit.Metadata, map[string]any{"approval_id": updated.ID})
-		if err := createAuditWithQueries(ctx, queries, audit); err != nil {
+		if err := createAuditWithQueries(ctx, queries, *audit); err != nil {
 			return domain.Approval{}, err
 		}
 	}
@@ -72,11 +69,8 @@ func (s *PostgresStore) ApproveRunWithAudit(ctx context.Context, runID string, a
 	return approvalFromSQLC(updated), nil
 }
 
-func (s *PostgresStore) RejectRun(ctx context.Context, runID string, actorID string, rejectedAt time.Time) (domain.Approval, error) {
-	return s.RejectRunWithAudit(ctx, runID, actorID, rejectedAt, domain.AuditEvent{})
-}
-
-func (s *PostgresStore) RejectRunWithAudit(ctx context.Context, runID string, actorID string, rejectedAt time.Time, audit domain.AuditEvent) (domain.Approval, error) {
+func (s *PostgresStore) RejectRun(ctx context.Context, runID string, actorID string, rejectedAt time.Time, opts ...MutationOption) (domain.Approval, error) {
+	audit := resolveMutationOptions(opts)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Approval{}, err
@@ -96,10 +90,10 @@ func (s *PostgresStore) RejectRunWithAudit(ctx context.Context, runID string, ac
 	if _, err := queries.UpdateRunStatus(ctx, sqlcgen.UpdateRunStatusParams{ID: runID, Status: domain.RunCanceled, FinishedAt: &rejectedAt}); err != nil {
 		return domain.Approval{}, err
 	}
-	if audit.ID != "" {
+	if audit != nil && audit.ID != "" {
 		audit.TargetID = runID
 		audit.Metadata = auditMetadata(audit.Metadata, map[string]any{"approval_id": updated.ID})
-		if err := createAuditWithQueries(ctx, queries, audit); err != nil {
+		if err := createAuditWithQueries(ctx, queries, *audit); err != nil {
 			return domain.Approval{}, err
 		}
 	}

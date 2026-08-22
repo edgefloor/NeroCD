@@ -383,7 +383,7 @@ func (s *Service) ApproveRun(ctx context.Context, runID string) (domain.Approval
 	if err != nil {
 		return domain.Approval{}, err
 	}
-	approval, err := s.approvals.ApproveRunWithAudit(ctx, strings.TrimSpace(runID), principal.ID, time.Now().UTC(), audit)
+	approval, err := s.approvals.ApproveRun(ctx, strings.TrimSpace(runID), principal.ID, time.Now().UTC(), store.WithAudit(audit))
 	if err != nil {
 		return domain.Approval{}, err
 	}
@@ -406,7 +406,7 @@ func (s *Service) RejectRun(ctx context.Context, runID string) (domain.Approval,
 	if err != nil {
 		return domain.Approval{}, err
 	}
-	approval, err := s.approvals.RejectRunWithAudit(ctx, strings.TrimSpace(runID), principal.ID, time.Now().UTC(), audit)
+	approval, err := s.approvals.RejectRun(ctx, strings.TrimSpace(runID), principal.ID, time.Now().UTC(), store.WithAudit(audit))
 	if err != nil {
 		return domain.Approval{}, err
 	}

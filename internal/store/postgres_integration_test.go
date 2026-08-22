@@ -1213,7 +1213,7 @@ func TestPostgresClaimAndApprovalAuditRollback(t *testing.T) {
 	if err := pg.CreateAuditEvent(ctx, duplicate); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pg.ClaimRunWithAudit(ctx, runnerID, now, time.Minute, duplicate); err == nil {
+	if _, err := pg.ClaimRun(ctx, runnerID, now, time.Minute, store.WithAudit(duplicate)); err == nil {
 		t.Fatal("claim with a duplicate audit ID unexpectedly succeeded")
 	}
 	var status string
@@ -1225,7 +1225,7 @@ func TestPostgresClaimAndApprovalAuditRollback(t *testing.T) {
 		t.Fatalf("duplicate audit created leases=%d err=%v", leases, err)
 	}
 	claimAudit := domain.AuditEvent{ID: "audit_claim_ok_" + suffix, ActorID: runnerID, Action: "runner.claim", Metadata: map[string]any{}, CreatedAt: now}
-	claim, err := pg.ClaimRunWithAudit(ctx, runnerID, now, time.Minute, claimAudit)
+	claim, err := pg.ClaimRun(ctx, runnerID, now, time.Minute, store.WithAudit(claimAudit))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1245,7 +1245,7 @@ func TestPostgresClaimAndApprovalAuditRollback(t *testing.T) {
 	if err := pg.CreateAuditEvent(ctx, duplicateApprovalAudit); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pg.ApproveRunWithAudit(ctx, approvalRunID, "usr_bootstrap", now, duplicateApprovalAudit); err == nil {
+	if _, err := pg.ApproveRun(ctx, approvalRunID, "usr_bootstrap", now, store.WithAudit(duplicateApprovalAudit)); err == nil {
 		t.Fatal("approval with a duplicate audit ID unexpectedly succeeded")
 	}
 	var approvalStatus, approvalRunStatus string
@@ -1256,7 +1256,7 @@ func TestPostgresClaimAndApprovalAuditRollback(t *testing.T) {
 		t.Fatalf("duplicate approval audit partially queued run status=%q err=%v", approvalRunStatus, err)
 	}
 	approvalAudit := domain.AuditEvent{ID: "audit_approval_ok_" + suffix, ActorID: "usr_bootstrap", Action: "run.approve", Metadata: map[string]any{}, CreatedAt: now}
-	approval, err := pg.ApproveRunWithAudit(ctx, approvalRunID, "usr_bootstrap", now, approvalAudit)
+	approval, err := pg.ApproveRun(ctx, approvalRunID, "usr_bootstrap", now, store.WithAudit(approvalAudit))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -63,7 +63,7 @@ func (s *Service) UpdateRunLogRetentionPolicy(ctx context.Context, input RunLogR
 	if err != nil {
 		return RunLogRetentionStatus{}, err
 	}
-	policy, err := s.retention.UpdateRunLogRetentionPolicyWithAudit(ctx, domain.RunLogRetentionPolicy{Enabled: input.Enabled, KeepDays: input.KeepDays, BatchSize: input.BatchSize, UpdatedBy: principal.ID}, audit)
+	policy, err := s.retention.UpdateRunLogRetentionPolicy(ctx, domain.RunLogRetentionPolicy{Enabled: input.Enabled, KeepDays: input.KeepDays, BatchSize: input.BatchSize, UpdatedBy: principal.ID}, store.WithAudit(audit))
 	if err != nil {
 		return RunLogRetentionStatus{}, err
 	}

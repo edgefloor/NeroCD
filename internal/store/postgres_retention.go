@@ -19,20 +19,17 @@ func (s *PostgresStore) GetRunLogRetentionPolicy(ctx context.Context) (domain.Ru
 	}
 	return domain.RunLogRetentionPolicy{Enabled: r.Enabled, KeepDays: int(r.KeepDays), BatchSize: int(r.BatchSize), Version: int(r.Version), UpdatedBy: r.UpdatedBy, UpdatedAt: r.UpdatedAt}, nil
 }
-func (s *PostgresStore) UpdateRunLogRetentionPolicy(ctx context.Context, p domain.RunLogRetentionPolicy) (domain.RunLogRetentionPolicy, error) {
+func (s *PostgresStore) UpdateRunLogRetentionPolicy(ctx context.Context, p domain.RunLogRetentionPolicy, opts ...MutationOption) (domain.RunLogRetentionPolicy, error) {
+	audit := resolveMutationOptions(opts)
 	if !validRunLogRetentionPolicy(p) {
 		return domain.RunLogRetentionPolicy{}, ErrConflict
 	}
-	r, err := s.queries.UpdateRunLogRetentionPolicy(ctx, sqlcgen.UpdateRunLogRetentionPolicyParams{Enabled: p.Enabled, KeepDays: int32(p.KeepDays), BatchSize: int32(p.BatchSize), UpdatedBy: p.UpdatedBy})
-	if err != nil {
-		return domain.RunLogRetentionPolicy{}, err
-	}
-	return domain.RunLogRetentionPolicy{Enabled: r.Enabled, KeepDays: int(r.KeepDays), BatchSize: int(r.BatchSize), Version: int(r.Version), UpdatedBy: r.UpdatedBy, UpdatedAt: r.UpdatedAt}, nil
-}
-
-func (s *PostgresStore) UpdateRunLogRetentionPolicyWithAudit(ctx context.Context, p domain.RunLogRetentionPolicy, audit domain.AuditEvent) (domain.RunLogRetentionPolicy, error) {
-	if !validRunLogRetentionPolicy(p) {
-		return domain.RunLogRetentionPolicy{}, ErrConflict
+	if audit == nil {
+		r, err := s.queries.UpdateRunLogRetentionPolicy(ctx, sqlcgen.UpdateRunLogRetentionPolicyParams{Enabled: p.Enabled, KeepDays: int32(p.KeepDays), BatchSize: int32(p.BatchSize), UpdatedBy: p.UpdatedBy})
+		if err != nil {
+			return domain.RunLogRetentionPolicy{}, err
+		}
+		return domain.RunLogRetentionPolicy{Enabled: r.Enabled, KeepDays: int(r.KeepDays), BatchSize: int(r.BatchSize), Version: int(r.Version), UpdatedBy: r.UpdatedBy, UpdatedAt: r.UpdatedAt}, nil
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -46,7 +43,7 @@ func (s *PostgresStore) UpdateRunLogRetentionPolicyWithAudit(ctx context.Context
 	}
 	audit.Metadata = map[string]any{"enabled": r.Enabled, "keep_days": r.KeepDays, "batch_size": r.BatchSize, "policy_version": r.Version}
 	audit.CreatedAt = r.UpdatedAt
-	if err := createAuditWithQueries(ctx, q, audit); err != nil {
+	if err := createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.RunLogRetentionPolicy{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

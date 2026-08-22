@@ -92,7 +92,7 @@ func (s *Service) CreateRepository(ctx context.Context, input RepositoryInput) (
 	if err != nil {
 		return domain.Repository{}, err
 	}
-	return s.sources.CreateRepositoryWithAudit(ctx, repository, audit)
+	return s.sources.CreateRepository(ctx, repository, store.WithAudit(audit))
 }
 
 type RepositoryPolicyInput struct {
@@ -204,7 +204,7 @@ func (s *Service) CreateTemplate(ctx context.Context, input TemplateInput) (doma
 	if err != nil {
 		return domain.TaskTemplate{}, err
 	}
-	return s.templates.CreateTemplateWithAudit(ctx, template, audit)
+	return s.templates.CreateTemplate(ctx, template, store.WithAudit(audit))
 }
 
 func (s *Service) UpdateTemplate(ctx context.Context, id string, input TemplateInput) (domain.TaskTemplate, error) {
@@ -233,5 +233,5 @@ func (s *Service) UpdateTemplate(ctx context.Context, id string, input TemplateI
 	if err != nil {
 		return domain.TaskTemplate{}, err
 	}
-	return s.templates.UpdateTemplateWithAudit(ctx, template, audit)
+	return s.templates.UpdateTemplate(ctx, template, store.WithAudit(audit))
 }

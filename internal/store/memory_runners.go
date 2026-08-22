@@ -27,18 +27,8 @@ func (s *MemoryStore) GetRunnerByID(_ context.Context, id string) (domain.Runner
 	return domain.Runner{}, ErrNotFound
 }
 
-func (s *MemoryStore) RegisterRunner(_ context.Context, runner domain.Runner) (domain.Runner, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, existing := range s.runners {
-		if existing.ID == runner.ID {
-			return domain.Runner{}, ErrConflict
-		}
-	}
-	s.runners = append(s.runners, runner)
-	return runner, nil
-}
-func (s *MemoryStore) RegisterRunnerWithAudit(_ context.Context, runner domain.Runner, audit domain.AuditEvent) (domain.Runner, error) {
+func (s *MemoryStore) RegisterRunner(_ context.Context, runner domain.Runner, opts ...MutationOption) (domain.Runner, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, r := range s.runners {
@@ -47,7 +37,9 @@ func (s *MemoryStore) RegisterRunnerWithAudit(_ context.Context, runner domain.R
 		}
 	}
 	s.runners = append(s.runners, runner)
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
 	return runner, nil
 }
 
@@ -122,29 +114,17 @@ func (s *MemoryStore) ConsumeRunnerEnrollment(_ context.Context, consume domain.
 	return domain.Runner{}, ErrNotFound
 }
 
-func (s *MemoryStore) UpdateRunnerToken(_ context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time) (domain.Runner, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i, runner := range s.runners {
-		if runner.ID != runnerID {
-			continue
-		}
-		runner.TokenHash = tokenHash
-		runner.Status = status
-		runner.LastHeartbeatAt = updatedAt
-		s.runners[i] = runner
-		return runner, nil
-	}
-	return domain.Runner{}, ErrNotFound
-}
-func (s *MemoryStore) UpdateRunnerTokenWithAudit(_ context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time, audit domain.AuditEvent) (domain.Runner, error) {
+func (s *MemoryStore) UpdateRunnerToken(_ context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time, opts ...MutationOption) (domain.Runner, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, r := range s.runners {
 		if r.ID == runnerID {
 			r.TokenHash, r.Status, r.LastHeartbeatAt = tokenHash, status, updatedAt
 			s.runners[i] = r
-			s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+			if audit != nil {
+				s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+			}
 			return r, nil
 		}
 	}
@@ -176,14 +156,11 @@ func (s *MemoryStore) HeartbeatRunner(_ context.Context, id string, heartbeatAt 
 	return domain.Runner{}, ErrNotFound
 }
 
-func (s *MemoryStore) ClaimRun(ctx context.Context, runnerID string, now time.Time, ttl time.Duration) (domain.ClaimedRun, error) {
-	return s.ClaimRunWithAudit(ctx, runnerID, now, ttl, domain.AuditEvent{})
-}
-
-func (s *MemoryStore) ClaimRunWithAudit(_ context.Context, runnerID string, now time.Time, ttl time.Duration, audit domain.AuditEvent) (domain.ClaimedRun, error) {
+func (s *MemoryStore) ClaimRun(_ context.Context, runnerID string, now time.Time, ttl time.Duration, opts ...MutationOption) (domain.ClaimedRun, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.auditIDAvailableLocked(audit.ID) {
+	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
 		return domain.ClaimedRun{}, ErrConflict
 	}
 	s.expireLeasesLocked(now)
@@ -278,10 +255,10 @@ func (s *MemoryStore) ClaimRunWithAudit(_ context.Context, runnerID string, now 
 				s.deployments[i].UpdatedAt = now
 			}
 		}
-		if audit.ID != "" {
+		if audit != nil && audit.ID != "" {
 			audit.TargetID = run.ID
 			audit.Metadata = auditMetadata(audit.Metadata, map[string]any{"runner_id": runner.ID, "lease_id": lease.ID, "attempt": lease.Attempt, "fence": lease.Fence})
-			s.auditEvents = append(s.auditEvents, audit)
+			s.auditEvents = append(s.auditEvents, *audit)
 		}
 		return domain.ClaimedRun{Lease: lease, Run: run, PrimitivePlan: primitivePlanForRun(run)}, nil
 	}

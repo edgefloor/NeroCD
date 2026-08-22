@@ -36,21 +36,18 @@ func (s *PostgresStore) GetTemplate(ctx context.Context, id string) (domain.Task
 	return taskTemplateFromSQLC(template)
 }
 
-func (s *PostgresStore) CreateTemplate(ctx context.Context, template domain.TaskTemplate) (domain.TaskTemplate, error) {
+func (s *PostgresStore) CreateTemplate(ctx context.Context, template domain.TaskTemplate, opts ...MutationOption) (domain.TaskTemplate, error) {
+	audit := resolveMutationOptions(opts)
 	runSpec, workflow, err := templateJSON(template)
 	if err != nil {
 		return domain.TaskTemplate{}, err
 	}
-	inserted, err := s.queries.CreateTemplate(ctx, sqlcgen.CreateTemplateParams{ID: template.ID, ProjectID: template.ProjectID, Name: template.Name, Kind: template.Kind, RunSpec: runSpec, Workflow: workflow, RunnerTags: template.RunnerTags, RequiresAck: template.RequiresAck})
-	if err != nil {
-		return domain.TaskTemplate{}, err
-	}
-	return taskTemplateFromSQLC(inserted)
-}
-func (s *PostgresStore) CreateTemplateWithAudit(ctx context.Context, template domain.TaskTemplate, audit domain.AuditEvent) (domain.TaskTemplate, error) {
-	runSpec, workflow, err := templateJSON(template)
-	if err != nil {
-		return domain.TaskTemplate{}, err
+	if audit == nil {
+		inserted, err := s.queries.CreateTemplate(ctx, sqlcgen.CreateTemplateParams{ID: template.ID, ProjectID: template.ProjectID, Name: template.Name, Kind: template.Kind, RunSpec: runSpec, Workflow: workflow, RunnerTags: template.RunnerTags, RequiresAck: template.RequiresAck})
+		if err != nil {
+			return domain.TaskTemplate{}, err
+		}
+		return taskTemplateFromSQLC(inserted)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -62,7 +59,7 @@ func (s *PostgresStore) CreateTemplateWithAudit(ctx context.Context, template do
 	if err != nil {
 		return domain.TaskTemplate{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.TaskTemplate{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -71,24 +68,21 @@ func (s *PostgresStore) CreateTemplateWithAudit(ctx context.Context, template do
 	return taskTemplateFromSQLC(row)
 }
 
-func (s *PostgresStore) UpdateTemplate(ctx context.Context, template domain.TaskTemplate) (domain.TaskTemplate, error) {
+func (s *PostgresStore) UpdateTemplate(ctx context.Context, template domain.TaskTemplate, opts ...MutationOption) (domain.TaskTemplate, error) {
+	audit := resolveMutationOptions(opts)
 	runSpec, workflow, err := templateJSON(template)
 	if err != nil {
 		return domain.TaskTemplate{}, err
 	}
-	updated, err := s.queries.UpdateTemplate(ctx, sqlcgen.UpdateTemplateParams{ID: template.ID, Name: template.Name, Kind: template.Kind, RunSpec: runSpec, Workflow: workflow, RunnerTags: template.RunnerTags, RequiresAck: template.RequiresAck})
-	if err == pgx.ErrNoRows {
-		return domain.TaskTemplate{}, ErrNotFound
-	}
-	if err != nil {
-		return domain.TaskTemplate{}, err
-	}
-	return taskTemplateFromSQLC(updated)
-}
-func (s *PostgresStore) UpdateTemplateWithAudit(ctx context.Context, template domain.TaskTemplate, audit domain.AuditEvent) (domain.TaskTemplate, error) {
-	runSpec, workflow, err := templateJSON(template)
-	if err != nil {
-		return domain.TaskTemplate{}, err
+	if audit == nil {
+		updated, err := s.queries.UpdateTemplate(ctx, sqlcgen.UpdateTemplateParams{ID: template.ID, Name: template.Name, Kind: template.Kind, RunSpec: runSpec, Workflow: workflow, RunnerTags: template.RunnerTags, RequiresAck: template.RequiresAck})
+		if err == pgx.ErrNoRows {
+			return domain.TaskTemplate{}, ErrNotFound
+		}
+		if err != nil {
+			return domain.TaskTemplate{}, err
+		}
+		return taskTemplateFromSQLC(updated)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -103,7 +97,7 @@ func (s *PostgresStore) UpdateTemplateWithAudit(ctx context.Context, template do
 	if err != nil {
 		return domain.TaskTemplate{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.TaskTemplate{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

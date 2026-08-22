@@ -121,7 +121,7 @@ func (s *Service) CreateService(ctx context.Context, in ServiceInput) (domain.Se
 	if e != nil {
 		return domain.Service{}, e
 	}
-	return r.CreateServiceWithAudit(ctx, v, audit)
+	return r.CreateService(ctx, v, store.WithAudit(audit))
 }
 func (s *Service) ListEnvironments(ctx context.Context, serviceID string) ([]domain.Environment, error) {
 	r, e := s.deploymentRepo()
@@ -218,7 +218,7 @@ func (s *Service) CreateEnvironment(ctx context.Context, in EnvironmentInput) (d
 	if e != nil {
 		return domain.Environment{}, e
 	}
-	return r.CreateEnvironmentWithAudit(ctx, v, audit)
+	return r.CreateEnvironment(ctx, v, store.WithAudit(audit))
 }
 func (s *Service) ListRevisions(ctx context.Context, serviceID string) ([]domain.Revision, error) {
 	if e := s.requireServiceView(ctx, serviceID); e != nil {
@@ -253,7 +253,7 @@ func (s *Service) CreateRevision(ctx context.Context, in RevisionInput) (domain.
 	if e != nil {
 		return domain.Revision{}, e
 	}
-	return r.CreateRevisionWithAudit(ctx, v, audit)
+	return r.CreateRevision(ctx, v, store.WithAudit(audit))
 }
 func (s *Service) ListDeployments(ctx context.Context, eid string) ([]domain.Deployment, error) {
 	r, e := s.deploymentRepo()

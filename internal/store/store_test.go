@@ -204,7 +204,7 @@ func TestMemoryClaimAndApprovalAuditAreAtomic(t *testing.T) {
 	if err := mem.CreateAuditEvent(ctx, duplicate); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mem.ClaimRunWithAudit(ctx, "runner_audit", now.Add(time.Second), time.Minute, duplicate); !errors.Is(err, ErrConflict) {
+	if _, err := mem.ClaimRun(ctx, "runner_audit", now.Add(time.Second), time.Minute, WithAudit(duplicate)); !errors.Is(err, ErrConflict) {
 		t.Fatalf("claim with duplicate audit error=%v, want conflict", err)
 	}
 	runs, err := mem.ListRuns(ctx, "project")
@@ -219,7 +219,7 @@ func TestMemoryClaimAndApprovalAuditAreAtomic(t *testing.T) {
 
 	fixture := NewFixtureMemoryStore("admin@example.invalid", "viewer@example.invalid", "hash-a", "hash-b")
 	approveAudit := domain.AuditEvent{ID: "aud_approve", ActorID: "usr_bootstrap", Action: "run.approve", CreatedAt: now}
-	approval, err := fixture.ApproveRunWithAudit(ctx, "run_002", "usr_bootstrap", now, approveAudit)
+	approval, err := fixture.ApproveRun(ctx, "run_002", "usr_bootstrap", now, WithAudit(approveAudit))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestMemoryClaimAndApprovalAuditAreAtomic(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].TargetID != "run_002" || events[0].Metadata["approval_id"] != approval.ID {
 		t.Fatalf("approve audit=%#v err=%v", events, err)
 	}
-	if _, err := fixture.ApproveRunWithAudit(ctx, "run_002", "usr_bootstrap", now, approveAudit); !errors.Is(err, ErrConflict) {
+	if _, err := fixture.ApproveRun(ctx, "run_002", "usr_bootstrap", now, WithAudit(approveAudit)); !errors.Is(err, ErrConflict) {
 		t.Fatalf("repeat approval error=%v, want conflict", err)
 	}
 }

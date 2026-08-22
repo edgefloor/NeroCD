@@ -245,7 +245,7 @@ func (s *Service) CreateAPIToken(ctx context.Context, input APITokenInput) (Crea
 	if err != nil {
 		return CreatedAPIToken{}, err
 	}
-	apiToken, err = s.apiTokens.CreateAPITokenWithAudit(ctx, apiToken, audit)
+	apiToken, err = s.apiTokens.CreateAPIToken(ctx, apiToken, store.WithAudit(audit))
 	if err != nil {
 		return CreatedAPIToken{}, err
 	}
@@ -271,7 +271,7 @@ func (s *Service) RevokeAPIToken(ctx context.Context, input RevokeAPITokenInput)
 	if err != nil {
 		return domain.APIToken{}, err
 	}
-	return s.apiTokens.RevokeAPITokenWithAudit(ctx, tokenID, time.Now().UTC(), audit)
+	return s.apiTokens.RevokeAPIToken(ctx, tokenID, time.Now().UTC(), store.WithAudit(audit))
 }
 
 type CreatedSession struct {
@@ -350,7 +350,7 @@ func (s *Service) CreateSessionWithMetadata(ctx context.Context, email string, p
 	if err != nil {
 		return CreatedSession{}, err
 	}
-	if err := s.sessions.CreateSessionWithAudit(ctx, session, tokenHash, audit); err != nil {
+	if err := s.sessions.CreateSession(ctx, session, tokenHash, store.WithAudit(audit)); err != nil {
 		return CreatedSession{}, err
 	}
 	s.loginLimiter.Succeeded(email)
@@ -366,7 +366,7 @@ func (s *Service) RevokeSessionToken(ctx context.Context, token string) error {
 	if err != nil {
 		return err
 	}
-	return s.sessions.RevokeSessionByTokenHashWithAudit(ctx, sessionTokenHash(token), s.clock().UTC(), audit)
+	return s.sessions.RevokeSessionByTokenHash(ctx, sessionTokenHash(token), s.clock().UTC(), store.WithAudit(audit))
 }
 
 func (s *Service) ListSessions(ctx context.Context) ([]domain.Session, error) {
@@ -398,5 +398,5 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID string) (domain.S
 	if err != nil {
 		return domain.Session{}, err
 	}
-	return s.sessions.RevokeSessionByIDWithAudit(ctx, sessionID, s.clock().UTC(), audit)
+	return s.sessions.RevokeSessionByID(ctx, sessionID, s.clock().UTC(), store.WithAudit(audit))
 }

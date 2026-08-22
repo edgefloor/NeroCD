@@ -20,7 +20,8 @@ func (s *MemoryStore) ListServices(_ context.Context, projectID string) ([]domai
 	}
 	return out, nil
 }
-func (s *MemoryStore) CreateService(_ context.Context, v domain.Service) (domain.Service, error) {
+func (s *MemoryStore) CreateService(_ context.Context, v domain.Service, opts ...MutationOption) (domain.Service, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, x := range s.services {
@@ -33,22 +34,9 @@ func (s *MemoryStore) CreateService(_ context.Context, v domain.Service) (domain
 		s.serviceByID = map[string]int{}
 	}
 	s.serviceByID[v.ID] = len(s.services) - 1
-	return v, nil
-}
-func (s *MemoryStore) CreateServiceWithAudit(_ context.Context, v domain.Service, audit domain.AuditEvent) (domain.Service, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, x := range s.services {
-		if x.ID == v.ID || (x.ProjectID == v.ProjectID && x.Name == v.Name) {
-			return domain.Service{}, ErrConflict
-		}
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
 	}
-	s.services = append(s.services, v)
-	if s.serviceByID == nil {
-		s.serviceByID = map[string]int{}
-	}
-	s.serviceByID[v.ID] = len(s.services) - 1
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
 	return v, nil
 }
 func (s *MemoryStore) GetService(_ context.Context, id string) (domain.Service, error) {
@@ -71,7 +59,8 @@ func (s *MemoryStore) ListEnvironments(_ context.Context, serviceID string) ([]d
 	}
 	return out, nil
 }
-func (s *MemoryStore) CreateEnvironment(_ context.Context, v domain.Environment) (domain.Environment, error) {
+func (s *MemoryStore) CreateEnvironment(_ context.Context, v domain.Environment, opts ...MutationOption) (domain.Environment, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, x := range s.environments {
@@ -84,22 +73,9 @@ func (s *MemoryStore) CreateEnvironment(_ context.Context, v domain.Environment)
 		s.environmentByID = map[string]int{}
 	}
 	s.environmentByID[v.ID] = len(s.environments) - 1
-	return v, nil
-}
-func (s *MemoryStore) CreateEnvironmentWithAudit(_ context.Context, v domain.Environment, audit domain.AuditEvent) (domain.Environment, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, x := range s.environments {
-		if x.ID == v.ID || (x.ServiceID == v.ServiceID && x.Name == v.Name) {
-			return domain.Environment{}, ErrConflict
-		}
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
 	}
-	s.environments = append(s.environments, v)
-	if s.environmentByID == nil {
-		s.environmentByID = map[string]int{}
-	}
-	s.environmentByID[v.ID] = len(s.environments) - 1
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
 	return v, nil
 }
 func (s *MemoryStore) GetEnvironment(_ context.Context, id string) (domain.Environment, error) {
@@ -122,7 +98,8 @@ func (s *MemoryStore) ListRevisions(_ context.Context, serviceID string) ([]doma
 	}
 	return out, nil
 }
-func (s *MemoryStore) CreateRevision(_ context.Context, v domain.Revision) (domain.Revision, error) {
+func (s *MemoryStore) CreateRevision(_ context.Context, v domain.Revision, opts ...MutationOption) (domain.Revision, error) {
+	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, x := range s.revisions {
@@ -133,33 +110,23 @@ func (s *MemoryStore) CreateRevision(_ context.Context, v domain.Revision) (doma
 			return domain.Revision{}, ErrConflict
 		}
 	}
-	// Direct repository callers (fixtures/imports) may supply complete evidence;
-	// application creates deliberately leave it pending for the runner.
-	if v.GitCommit != "" && v.ComposeHash != "" {
-		v.ProvenanceResolved = true
-		v.ProvenanceState = "legacy_unverified"
-		now := time.Now().UTC()
-		v.ResolvedAt = &now
-	}
-	if v.ProvenanceState == "" {
-		v.ProvenanceState = "pending"
-	}
-	s.revisions = append(s.revisions, v)
-	return v, nil
-}
-func (s *MemoryStore) CreateRevisionWithAudit(_ context.Context, v domain.Revision, audit domain.AuditEvent) (domain.Revision, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, x := range s.revisions {
-		if x.ID == v.ID || (v.ContentIdentity != "" && x.ServiceID == v.ServiceID && x.ContentIdentity == v.ContentIdentity) {
-			if v.ContentIdentity != "" && x.ServiceID == v.ServiceID && x.ContentIdentity == v.ContentIdentity {
-				return x, nil
-			}
-			return domain.Revision{}, ErrConflict
+	if audit == nil {
+		// Direct repository callers (fixtures/imports) may supply complete evidence;
+		// application creates deliberately leave it pending for the runner.
+		if v.GitCommit != "" && v.ComposeHash != "" {
+			v.ProvenanceResolved = true
+			v.ProvenanceState = "legacy_unverified"
+			now := time.Now().UTC()
+			v.ResolvedAt = &now
+		}
+		if v.ProvenanceState == "" {
+			v.ProvenanceState = "pending"
 		}
 	}
 	s.revisions = append(s.revisions, v)
-	s.auditEvents = append([]domain.AuditEvent{audit}, s.auditEvents...)
+	if audit != nil {
+		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
+	}
 	return v, nil
 }
 

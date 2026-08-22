@@ -197,7 +197,7 @@ func (s *Service) UpsertProjectMember(ctx context.Context, input ProjectMemberIn
 	if err != nil {
 		return domain.ProjectMember{}, err
 	}
-	return s.members.UpsertProjectMemberWithAudit(ctx, member, audit)
+	return s.members.UpsertProjectMember(ctx, member, store.WithAudit(audit))
 }
 
 func (s *Service) CreateAccessKey(ctx context.Context, input AccessKeyInput) (domain.AccessKey, error) {
@@ -235,7 +235,7 @@ func (s *Service) CreateAccessKey(ctx context.Context, input AccessKeyInput) (do
 	if err != nil {
 		return domain.AccessKey{}, err
 	}
-	return s.sources.CreateAccessKeyWithAudit(ctx, key, audit)
+	return s.sources.CreateAccessKey(ctx, key, store.WithAudit(audit))
 }
 
 func (s *Service) CreateInventory(ctx context.Context, input InventoryInput) (domain.Inventory, error) {
@@ -273,7 +273,7 @@ func (s *Service) CreateInventory(ctx context.Context, input InventoryInput) (do
 	if err != nil {
 		return domain.Inventory{}, err
 	}
-	return s.sources.CreateInventoryWithAudit(ctx, inventory, audit)
+	return s.sources.CreateInventory(ctx, inventory, store.WithAudit(audit))
 }
 
 func (s *Service) UpdateProject(ctx context.Context, id string, input ProjectInput) (domain.Project, error) {
@@ -293,7 +293,7 @@ func (s *Service) UpdateProject(ctx context.Context, id string, input ProjectInp
 	if err != nil {
 		return domain.Project{}, err
 	}
-	return s.projects.UpdateProjectWithAudit(ctx, project, audit)
+	return s.projects.UpdateProject(ctx, project, store.WithAudit(audit))
 }
 
 func (s *Service) ArchiveProject(ctx context.Context, id string) (domain.Project, error) {
@@ -308,5 +308,5 @@ func (s *Service) ArchiveProject(ctx context.Context, id string) (domain.Project
 	if err != nil {
 		return domain.Project{}, err
 	}
-	return s.projects.ArchiveProjectWithAudit(ctx, id, time.Now().UTC(), audit)
+	return s.projects.ArchiveProject(ctx, id, time.Now().UTC(), store.WithAudit(audit))
 }

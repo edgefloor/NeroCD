@@ -26,21 +26,18 @@ func (s *PostgresStore) ListRepositories(ctx context.Context, projectID string) 
 	return repositories, nil
 }
 
-func (s *PostgresStore) CreateRepository(ctx context.Context, repository domain.Repository) (domain.Repository, error) {
+func (s *PostgresStore) CreateRepository(ctx context.Context, repository domain.Repository, opts ...MutationOption) (domain.Repository, error) {
+	audit := resolveMutationOptions(opts)
 	policy, err := json.Marshal(repository.Policy)
 	if err != nil {
 		return domain.Repository{}, err
 	}
-	inserted, err := s.queries.CreateRepository(ctx, sqlcgen.CreateRepositoryParams{ID: repository.ID, ProjectID: repository.ProjectID, Name: repository.Name, Url: repository.URL, Provider: repository.Provider, DefaultRef: repository.DefaultRef, RepositoryPolicy: policy, CreatedAt: repository.CreatedAt})
-	if err != nil {
-		return domain.Repository{}, err
-	}
-	return repositoryFromSQLC(inserted)
-}
-func (s *PostgresStore) CreateRepositoryWithAudit(ctx context.Context, repository domain.Repository, audit domain.AuditEvent) (domain.Repository, error) {
-	policy, err := json.Marshal(repository.Policy)
-	if err != nil {
-		return domain.Repository{}, err
+	if audit == nil {
+		inserted, err := s.queries.CreateRepository(ctx, sqlcgen.CreateRepositoryParams{ID: repository.ID, ProjectID: repository.ProjectID, Name: repository.Name, Url: repository.URL, Provider: repository.Provider, DefaultRef: repository.DefaultRef, RepositoryPolicy: policy, CreatedAt: repository.CreatedAt})
+		if err != nil {
+			return domain.Repository{}, err
+		}
+		return repositoryFromSQLC(inserted)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -52,7 +49,7 @@ func (s *PostgresStore) CreateRepositoryWithAudit(ctx context.Context, repositor
 	if err != nil {
 		return domain.Repository{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.Repository{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -137,14 +134,15 @@ func (s *PostgresStore) ListAccessKeys(ctx context.Context, projectID string) ([
 	return keys, nil
 }
 
-func (s *PostgresStore) CreateAccessKey(ctx context.Context, key domain.AccessKey) (domain.AccessKey, error) {
-	inserted, err := s.queries.CreateAccessKey(ctx, sqlcgen.CreateAccessKeyParams{ID: key.ID, ProjectID: key.ProjectID, Name: key.Name, Kind: key.Kind, Fingerprint: key.Fingerprint, CreatedAt: key.CreatedAt})
-	if err != nil {
-		return domain.AccessKey{}, err
+func (s *PostgresStore) CreateAccessKey(ctx context.Context, key domain.AccessKey, opts ...MutationOption) (domain.AccessKey, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		inserted, err := s.queries.CreateAccessKey(ctx, sqlcgen.CreateAccessKeyParams{ID: key.ID, ProjectID: key.ProjectID, Name: key.Name, Kind: key.Kind, Fingerprint: key.Fingerprint, CreatedAt: key.CreatedAt})
+		if err != nil {
+			return domain.AccessKey{}, err
+		}
+		return accessKeyFromSQLC(inserted), nil
 	}
-	return accessKeyFromSQLC(inserted), nil
-}
-func (s *PostgresStore) CreateAccessKeyWithAudit(ctx context.Context, key domain.AccessKey, audit domain.AuditEvent) (domain.AccessKey, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.AccessKey{}, err
@@ -155,7 +153,7 @@ func (s *PostgresStore) CreateAccessKeyWithAudit(ctx context.Context, key domain
 	if err != nil {
 		return domain.AccessKey{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.AccessKey{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -176,14 +174,15 @@ func (s *PostgresStore) ListInventories(ctx context.Context, projectID string) (
 	return inventories, nil
 }
 
-func (s *PostgresStore) CreateInventory(ctx context.Context, inventory domain.Inventory) (domain.Inventory, error) {
-	inserted, err := s.queries.CreateInventory(ctx, sqlcgen.CreateInventoryParams{ID: inventory.ID, ProjectID: inventory.ProjectID, Name: inventory.Name, Kind: inventory.Kind, Source: inventory.Source, CreatedAt: inventory.CreatedAt})
-	if err != nil {
-		return domain.Inventory{}, err
+func (s *PostgresStore) CreateInventory(ctx context.Context, inventory domain.Inventory, opts ...MutationOption) (domain.Inventory, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		inserted, err := s.queries.CreateInventory(ctx, sqlcgen.CreateInventoryParams{ID: inventory.ID, ProjectID: inventory.ProjectID, Name: inventory.Name, Kind: inventory.Kind, Source: inventory.Source, CreatedAt: inventory.CreatedAt})
+		if err != nil {
+			return domain.Inventory{}, err
+		}
+		return inventoryFromSQLC(inserted), nil
 	}
-	return inventoryFromSQLC(inserted), nil
-}
-func (s *PostgresStore) CreateInventoryWithAudit(ctx context.Context, inventory domain.Inventory, audit domain.AuditEvent) (domain.Inventory, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Inventory{}, err
@@ -194,7 +193,7 @@ func (s *PostgresStore) CreateInventoryWithAudit(ctx context.Context, inventory 
 	if err != nil {
 		return domain.Inventory{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.Inventory{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

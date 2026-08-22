@@ -56,18 +56,18 @@ func (s *PostgresStore) CreateProjectWithOwner(ctx context.Context, project doma
 	return projectFromSQLC(inserted), nil
 }
 
-func (s *PostgresStore) UpdateProject(ctx context.Context, project domain.Project) (domain.Project, error) {
-	updated, err := s.queries.UpdateProject(ctx, sqlcgen.UpdateProjectParams{ID: project.ID, Name: project.Name, Description: project.Description})
-	if err == pgx.ErrNoRows {
-		return domain.Project{}, ErrNotFound
+func (s *PostgresStore) UpdateProject(ctx context.Context, project domain.Project, opts ...MutationOption) (domain.Project, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		updated, err := s.queries.UpdateProject(ctx, sqlcgen.UpdateProjectParams{ID: project.ID, Name: project.Name, Description: project.Description})
+		if err == pgx.ErrNoRows {
+			return domain.Project{}, ErrNotFound
+		}
+		if err != nil {
+			return domain.Project{}, err
+		}
+		return projectFromSQLC(updated), nil
 	}
-	if err != nil {
-		return domain.Project{}, err
-	}
-	return projectFromSQLC(updated), nil
-}
-
-func (s *PostgresStore) UpdateProjectWithAudit(ctx context.Context, project domain.Project, audit domain.AuditEvent) (domain.Project, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Project{}, err
@@ -81,7 +81,7 @@ func (s *PostgresStore) UpdateProjectWithAudit(ctx context.Context, project doma
 	if err != nil {
 		return domain.Project{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.Project{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -90,18 +90,18 @@ func (s *PostgresStore) UpdateProjectWithAudit(ctx context.Context, project doma
 	return projectFromSQLC(updated), nil
 }
 
-func (s *PostgresStore) ArchiveProject(ctx context.Context, id string, archivedAt time.Time) (domain.Project, error) {
-	archived, err := s.queries.ArchiveProject(ctx, sqlcgen.ArchiveProjectParams{ID: id, ArchivedAt: &archivedAt})
-	if err == pgx.ErrNoRows {
-		return domain.Project{}, ErrNotFound
+func (s *PostgresStore) ArchiveProject(ctx context.Context, id string, archivedAt time.Time, opts ...MutationOption) (domain.Project, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		archived, err := s.queries.ArchiveProject(ctx, sqlcgen.ArchiveProjectParams{ID: id, ArchivedAt: &archivedAt})
+		if err == pgx.ErrNoRows {
+			return domain.Project{}, ErrNotFound
+		}
+		if err != nil {
+			return domain.Project{}, err
+		}
+		return projectFromSQLC(archived), nil
 	}
-	if err != nil {
-		return domain.Project{}, err
-	}
-	return projectFromSQLC(archived), nil
-}
-
-func (s *PostgresStore) ArchiveProjectWithAudit(ctx context.Context, id string, archivedAt time.Time, audit domain.AuditEvent) (domain.Project, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Project{}, err
@@ -115,7 +115,7 @@ func (s *PostgresStore) ArchiveProjectWithAudit(ctx context.Context, id string, 
 	if err != nil {
 		return domain.Project{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.Project{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -136,22 +136,22 @@ func (s *PostgresStore) ListProjectMembers(ctx context.Context, projectID string
 	return members, nil
 }
 
-func (s *PostgresStore) UpsertProjectMember(ctx context.Context, member domain.ProjectMember) (domain.ProjectMember, error) {
-	upserted, err := s.queries.UpsertProjectMember(ctx, sqlcgen.UpsertProjectMemberParams{ID: member.ID, ProjectID: member.ProjectID, UserID: member.UserID, Role: member.Role, CreatedAt: member.CreatedAt, UpdatedAt: member.UpdatedAt})
-	if err != nil {
-		return domain.ProjectMember{}, err
+func (s *PostgresStore) UpsertProjectMember(ctx context.Context, member domain.ProjectMember, opts ...MutationOption) (domain.ProjectMember, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		upserted, err := s.queries.UpsertProjectMember(ctx, sqlcgen.UpsertProjectMemberParams{ID: member.ID, ProjectID: member.ProjectID, UserID: member.UserID, Role: member.Role, CreatedAt: member.CreatedAt, UpdatedAt: member.UpdatedAt})
+		if err != nil {
+			return domain.ProjectMember{}, err
+		}
+		user, err := s.queries.GetUserByID(ctx, upserted.UserID)
+		if err == pgx.ErrNoRows {
+			return domain.ProjectMember{}, ErrNotFound
+		}
+		if err != nil {
+			return domain.ProjectMember{}, err
+		}
+		return projectMemberFromSQLC(upserted, user), nil
 	}
-	user, err := s.queries.GetUserByID(ctx, upserted.UserID)
-	if err == pgx.ErrNoRows {
-		return domain.ProjectMember{}, ErrNotFound
-	}
-	if err != nil {
-		return domain.ProjectMember{}, err
-	}
-	return projectMemberFromSQLC(upserted, user), nil
-}
-
-func (s *PostgresStore) UpsertProjectMemberWithAudit(ctx context.Context, member domain.ProjectMember, audit domain.AuditEvent) (domain.ProjectMember, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.ProjectMember{}, err
@@ -169,7 +169,7 @@ func (s *PostgresStore) UpsertProjectMemberWithAudit(ctx context.Context, member
 	if err != nil {
 		return domain.ProjectMember{}, err
 	}
-	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
 		return domain.ProjectMember{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

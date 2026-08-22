@@ -53,14 +53,15 @@ func (s *PostgresStore) ListServices(ctx context.Context, p string) ([]domain.Se
 	}
 	return out, nil
 }
-func (s *PostgresStore) CreateService(ctx context.Context, v domain.Service) (domain.Service, error) {
-	x, e := s.queries.CreateService(ctx, sqlcgen.CreateServiceParams{ID: v.ID, ProjectID: v.ProjectID, Name: v.Name, RepositoryID: v.RepositoryID, ComposePath: v.ComposePath, Profiles: v.Profiles, OwnerID: v.OwnerID, CreatedAt: v.CreatedAt})
-	if isUniqueViolation(e) {
-		return domain.Service{}, ErrConflict
+func (s *PostgresStore) CreateService(ctx context.Context, v domain.Service, opts ...MutationOption) (domain.Service, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		x, e := s.queries.CreateService(ctx, sqlcgen.CreateServiceParams{ID: v.ID, ProjectID: v.ProjectID, Name: v.Name, RepositoryID: v.RepositoryID, ComposePath: v.ComposePath, Profiles: v.Profiles, OwnerID: v.OwnerID, CreatedAt: v.CreatedAt})
+		if isUniqueViolation(e) {
+			return domain.Service{}, ErrConflict
+		}
+		return serviceFromSQLC(x), e
 	}
-	return serviceFromSQLC(x), e
-}
-func (s *PostgresStore) CreateServiceWithAudit(ctx context.Context, v domain.Service, audit domain.AuditEvent) (domain.Service, error) {
 	tx, e := s.pool.Begin(ctx)
 	if e != nil {
 		return domain.Service{}, e
@@ -74,7 +75,7 @@ func (s *PostgresStore) CreateServiceWithAudit(ctx context.Context, v domain.Ser
 	if e != nil {
 		return domain.Service{}, e
 	}
-	if e = createAuditWithQueries(ctx, q, audit); e != nil {
+	if e = createAuditWithQueries(ctx, q, *audit); e != nil {
 		return domain.Service{}, e
 	}
 	if e = tx.Commit(ctx); e != nil {
@@ -93,18 +94,17 @@ func (s *PostgresStore) ListEnvironments(ctx context.Context, id string) ([]doma
 	}
 	return out, nil
 }
-func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environment) (domain.Environment, error) {
+func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environment, opts ...MutationOption) (domain.Environment, error) {
+	audit := resolveMutationOptions(opts)
 	hp, _ := json.Marshal(v.HealthPolicy)
 	sb, _ := json.Marshal(v.SecretBindings)
-	x, e := s.queries.CreateEnvironment(ctx, sqlcgen.CreateEnvironmentParams{ID: v.ID, ServiceID: v.ServiceID, Name: v.Name, RunnerSelector: v.RunnerSelector, ComposeProject: v.ComposeProject, HealthPolicy: hp, ConfirmationRequired: v.ConfirmationRequired, TimeoutSeconds: int32(v.TimeoutSeconds), SecretBindings: sb, RollbackSafe: v.RollbackSafe, CurrentHealthyRevisionID: v.CurrentHealthyRevisionID, CreatedAt: v.CreatedAt})
-	if isUniqueViolation(e) {
-		return domain.Environment{}, ErrConflict
+	if audit == nil {
+		x, e := s.queries.CreateEnvironment(ctx, sqlcgen.CreateEnvironmentParams{ID: v.ID, ServiceID: v.ServiceID, Name: v.Name, RunnerSelector: v.RunnerSelector, ComposeProject: v.ComposeProject, HealthPolicy: hp, ConfirmationRequired: v.ConfirmationRequired, TimeoutSeconds: int32(v.TimeoutSeconds), SecretBindings: sb, RollbackSafe: v.RollbackSafe, CurrentHealthyRevisionID: v.CurrentHealthyRevisionID, CreatedAt: v.CreatedAt})
+		if isUniqueViolation(e) {
+			return domain.Environment{}, ErrConflict
+		}
+		return environmentFromSQLC(x), e
 	}
-	return environmentFromSQLC(x), e
-}
-func (s *PostgresStore) CreateEnvironmentWithAudit(ctx context.Context, v domain.Environment, audit domain.AuditEvent) (domain.Environment, error) {
-	hp, _ := json.Marshal(v.HealthPolicy)
-	sb, _ := json.Marshal(v.SecretBindings)
 	tx, e := s.pool.Begin(ctx)
 	if e != nil {
 		return domain.Environment{}, e
@@ -118,7 +118,7 @@ func (s *PostgresStore) CreateEnvironmentWithAudit(ctx context.Context, v domain
 	if e != nil {
 		return domain.Environment{}, e
 	}
-	if e = createAuditWithQueries(ctx, q, audit); e != nil {
+	if e = createAuditWithQueries(ctx, q, *audit); e != nil {
 		return domain.Environment{}, e
 	}
 	if e = tx.Commit(ctx); e != nil {
@@ -137,21 +137,22 @@ func (s *PostgresStore) ListRevisions(ctx context.Context, id string) ([]domain.
 	}
 	return out, nil
 }
-func (s *PostgresStore) CreateRevision(ctx context.Context, v domain.Revision) (domain.Revision, error) {
-	x, e := s.queries.CreateRevision(ctx, sqlcgen.CreateRevisionParams{ID: v.ID, ServiceID: v.ServiceID, RequestedRef: v.RequestedRef, GitCommit: v.GitCommit, ComposeHash: v.ComposeHash, ImageDigests: v.ImageDigests, ContentIdentity: v.ContentIdentity, CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt})
-	if isUniqueViolation(e) {
-		if v.ContentIdentity == "" {
+func (s *PostgresStore) CreateRevision(ctx context.Context, v domain.Revision, opts ...MutationOption) (domain.Revision, error) {
+	audit := resolveMutationOptions(opts)
+	if audit == nil {
+		x, e := s.queries.CreateRevision(ctx, sqlcgen.CreateRevisionParams{ID: v.ID, ServiceID: v.ServiceID, RequestedRef: v.RequestedRef, GitCommit: v.GitCommit, ComposeHash: v.ComposeHash, ImageDigests: v.ImageDigests, ContentIdentity: v.ContentIdentity, CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt})
+		if isUniqueViolation(e) {
+			if v.ContentIdentity == "" {
+				return domain.Revision{}, ErrConflict
+			}
+			x, e = s.queries.GetRevisionByIdentity(ctx, sqlcgen.GetRevisionByIdentityParams{ServiceID: v.ServiceID, ContentIdentity: v.ContentIdentity})
+			if e == nil {
+				return revisionFromSQLC(x), nil
+			}
 			return domain.Revision{}, ErrConflict
 		}
-		x, e = s.queries.GetRevisionByIdentity(ctx, sqlcgen.GetRevisionByIdentityParams{ServiceID: v.ServiceID, ContentIdentity: v.ContentIdentity})
-		if e == nil {
-			return revisionFromSQLC(x), nil
-		}
-		return domain.Revision{}, ErrConflict
+		return revisionFromSQLC(x), e
 	}
-	return revisionFromSQLC(x), e
-}
-func (s *PostgresStore) CreateRevisionWithAudit(ctx context.Context, v domain.Revision, audit domain.AuditEvent) (domain.Revision, error) {
 	tx, e := s.pool.Begin(ctx)
 	if e != nil {
 		return domain.Revision{}, e
@@ -165,7 +166,7 @@ func (s *PostgresStore) CreateRevisionWithAudit(ctx context.Context, v domain.Re
 	if e != nil {
 		return domain.Revision{}, e
 	}
-	if e = createAuditWithQueries(ctx, q, audit); e != nil {
+	if e = createAuditWithQueries(ctx, q, *audit); e != nil {
 		return domain.Revision{}, e
 	}
 	if e = tx.Commit(ctx); e != nil {

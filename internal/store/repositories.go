@@ -12,38 +12,30 @@ type ProjectRepository interface {
 	ListProjects(context.Context) ([]domain.Project, error)
 	CreateProject(context.Context, domain.Project) (domain.Project, error)
 	CreateProjectWithOwner(context.Context, domain.Project, domain.ProjectMember, domain.AuditEvent) (domain.Project, error)
-	UpdateProject(context.Context, domain.Project) (domain.Project, error)
-	UpdateProjectWithAudit(context.Context, domain.Project, domain.AuditEvent) (domain.Project, error)
-	ArchiveProject(context.Context, string, time.Time) (domain.Project, error)
-	ArchiveProjectWithAudit(context.Context, string, time.Time, domain.AuditEvent) (domain.Project, error)
+	UpdateProject(context.Context, domain.Project, ...MutationOption) (domain.Project, error)
+	ArchiveProject(context.Context, string, time.Time, ...MutationOption) (domain.Project, error)
 }
 
 type ProjectMemberRepository interface {
 	ListProjectMembers(context.Context, string) ([]domain.ProjectMember, error)
-	UpsertProjectMember(context.Context, domain.ProjectMember) (domain.ProjectMember, error)
-	UpsertProjectMemberWithAudit(context.Context, domain.ProjectMember, domain.AuditEvent) (domain.ProjectMember, error)
+	UpsertProjectMember(context.Context, domain.ProjectMember, ...MutationOption) (domain.ProjectMember, error)
 }
 
 type TemplateRepository interface {
 	ListTemplates(context.Context, string) ([]domain.TaskTemplate, error)
 	GetTemplate(context.Context, string) (domain.TaskTemplate, error)
-	CreateTemplate(context.Context, domain.TaskTemplate) (domain.TaskTemplate, error)
-	CreateTemplateWithAudit(context.Context, domain.TaskTemplate, domain.AuditEvent) (domain.TaskTemplate, error)
-	UpdateTemplate(context.Context, domain.TaskTemplate) (domain.TaskTemplate, error)
-	UpdateTemplateWithAudit(context.Context, domain.TaskTemplate, domain.AuditEvent) (domain.TaskTemplate, error)
+	CreateTemplate(context.Context, domain.TaskTemplate, ...MutationOption) (domain.TaskTemplate, error)
+	UpdateTemplate(context.Context, domain.TaskTemplate, ...MutationOption) (domain.TaskTemplate, error)
 }
 
 type SourceRepository interface {
 	ListRepositories(context.Context, string) ([]domain.Repository, error)
-	CreateRepository(context.Context, domain.Repository) (domain.Repository, error)
-	CreateRepositoryWithAudit(context.Context, domain.Repository, domain.AuditEvent) (domain.Repository, error)
+	CreateRepository(context.Context, domain.Repository, ...MutationOption) (domain.Repository, error)
 	ConfigureRepositoryPolicy(context.Context, RepositoryPolicyConfiguration) (domain.Repository, error)
 	ListAccessKeys(context.Context, string) ([]domain.AccessKey, error)
-	CreateAccessKey(context.Context, domain.AccessKey) (domain.AccessKey, error)
-	CreateAccessKeyWithAudit(context.Context, domain.AccessKey, domain.AuditEvent) (domain.AccessKey, error)
+	CreateAccessKey(context.Context, domain.AccessKey, ...MutationOption) (domain.AccessKey, error)
 	ListInventories(context.Context, string) ([]domain.Inventory, error)
-	CreateInventory(context.Context, domain.Inventory) (domain.Inventory, error)
-	CreateInventoryWithAudit(context.Context, domain.Inventory, domain.AuditEvent) (domain.Inventory, error)
+	CreateInventory(context.Context, domain.Inventory, ...MutationOption) (domain.Inventory, error)
 }
 
 // RepositoryPolicyConfiguration is the one-shot, idempotent policy admission
@@ -82,8 +74,7 @@ type RunRepository interface {
 // and the single immutable deletion audit; callers never enumerate logs.
 type RunLogRetentionRepository interface {
 	GetRunLogRetentionPolicy(context.Context) (domain.RunLogRetentionPolicy, error)
-	UpdateRunLogRetentionPolicy(context.Context, domain.RunLogRetentionPolicy) (domain.RunLogRetentionPolicy, error)
-	UpdateRunLogRetentionPolicyWithAudit(context.Context, domain.RunLogRetentionPolicy, domain.AuditEvent) (domain.RunLogRetentionPolicy, error)
+	UpdateRunLogRetentionPolicy(context.Context, domain.RunLogRetentionPolicy, ...MutationOption) (domain.RunLogRetentionPolicy, error)
 	PreviewRunLogRetention(context.Context) (domain.RunLogRetentionPreview, error)
 	ExecuteRunLogRetention(context.Context, string, string, domain.AuditEvent) (domain.RunLogRetentionExecution, error)
 }
@@ -91,17 +82,15 @@ type RunLogRetentionRepository interface {
 type RunnerRepository interface {
 	ListRunners(context.Context) ([]domain.Runner, error)
 	GetRunnerByID(context.Context, string) (domain.Runner, error)
-	RegisterRunner(context.Context, domain.Runner) (domain.Runner, error)
-	RegisterRunnerWithAudit(context.Context, domain.Runner, domain.AuditEvent) (domain.Runner, error)
-	UpdateRunnerToken(context.Context, string, string, string, time.Time) (domain.Runner, error)
-	UpdateRunnerTokenWithAudit(context.Context, string, string, string, time.Time, domain.AuditEvent) (domain.Runner, error)
+	RegisterRunner(context.Context, domain.Runner, ...MutationOption) (domain.Runner, error)
+	UpdateRunnerToken(context.Context, string, string, string, time.Time, ...MutationOption) (domain.Runner, error)
 	GetRunnerByTokenHash(context.Context, string) (domain.Runner, error)
 	HeartbeatRunner(context.Context, string, time.Time) (domain.Runner, error)
-	ClaimRun(context.Context, string, time.Time, time.Duration) (domain.ClaimedRun, error)
-	// ClaimRunWithAudit records the successful claim and its evidence under the
-	// same store transaction/lock.  A zero audit is useful to low-level callers
-	// that deliberately do not create operator evidence.
-	ClaimRunWithAudit(context.Context, string, time.Time, time.Duration, domain.AuditEvent) (domain.ClaimedRun, error)
+	// ClaimRun records the successful claim and its evidence under the same
+	// store transaction/lock when a WithAudit option is supplied.  Omitting the
+	// option is useful to low-level callers that deliberately do not create
+	// operator evidence.
+	ClaimRun(context.Context, string, time.Time, time.Duration, ...MutationOption) (domain.ClaimedRun, error)
 	ExpireLeases(context.Context, time.Time) error
 	RenewLease(context.Context, string, string, string, int, time.Time, time.Duration) (domain.RunLease, error)
 	CompleteLeaseRequest(context.Context, string, string, string, int, string, string, time.Time, string, *time.Time, *domain.WorkflowState, []domain.RunLog, domain.AuditEvent) (domain.RunLease, error)
@@ -128,14 +117,11 @@ type BootstrapRepository interface {
 }
 
 type SessionRepository interface {
-	CreateSession(context.Context, domain.Session, string) error
-	CreateSessionWithAudit(context.Context, domain.Session, string, domain.AuditEvent) error
+	CreateSession(context.Context, domain.Session, string, ...MutationOption) error
 	GetPrincipalBySessionTokenHash(context.Context, string, time.Time) (domain.User, error)
-	RevokeSessionByTokenHash(context.Context, string, time.Time) error
-	RevokeSessionByTokenHashWithAudit(context.Context, string, time.Time, domain.AuditEvent) error
+	RevokeSessionByTokenHash(context.Context, string, time.Time, ...MutationOption) error
 	ListSessions(context.Context) ([]domain.Session, error)
-	RevokeSessionByID(context.Context, string, time.Time) (domain.Session, error)
-	RevokeSessionByIDWithAudit(context.Context, string, time.Time, domain.AuditEvent) (domain.Session, error)
+	RevokeSessionByID(context.Context, string, time.Time, ...MutationOption) (domain.Session, error)
 }
 
 // SessionLastSeenUpdateInterval bounds session activity writes. Authentication
@@ -143,20 +129,16 @@ type SessionRepository interface {
 const SessionLastSeenUpdateInterval = 5 * time.Minute
 
 type APITokenRepository interface {
-	CreateAPIToken(context.Context, domain.APIToken) (domain.APIToken, error)
-	CreateAPITokenWithAudit(context.Context, domain.APIToken, domain.AuditEvent) (domain.APIToken, error)
+	CreateAPIToken(context.Context, domain.APIToken, ...MutationOption) (domain.APIToken, error)
 	GetAPITokenByHash(context.Context, string, time.Time) (domain.APIToken, error)
-	RevokeAPIToken(context.Context, string, time.Time) (domain.APIToken, error)
-	RevokeAPITokenWithAudit(context.Context, string, time.Time, domain.AuditEvent) (domain.APIToken, error)
+	RevokeAPIToken(context.Context, string, time.Time, ...MutationOption) (domain.APIToken, error)
 }
 
 type ApprovalRepository interface {
 	ListApprovals(context.Context, string) ([]domain.Approval, error)
 	CreateApproval(context.Context, domain.Approval) (domain.Approval, error)
-	ApproveRun(context.Context, string, string, time.Time) (domain.Approval, error)
-	ApproveRunWithAudit(context.Context, string, string, time.Time, domain.AuditEvent) (domain.Approval, error)
-	RejectRun(context.Context, string, string, time.Time) (domain.Approval, error)
-	RejectRunWithAudit(context.Context, string, string, time.Time, domain.AuditEvent) (domain.Approval, error)
+	ApproveRun(context.Context, string, string, time.Time, ...MutationOption) (domain.Approval, error)
+	RejectRun(context.Context, string, string, time.Time, ...MutationOption) (domain.Approval, error)
 }
 
 type AuditRepository interface {
@@ -168,15 +150,12 @@ type AuditRepository interface {
 type DeploymentRepository interface {
 	ListServices(context.Context, string) ([]domain.Service, error)
 	GetService(context.Context, string) (domain.Service, error)
-	CreateService(context.Context, domain.Service) (domain.Service, error)
-	CreateServiceWithAudit(context.Context, domain.Service, domain.AuditEvent) (domain.Service, error)
+	CreateService(context.Context, domain.Service, ...MutationOption) (domain.Service, error)
 	ListEnvironments(context.Context, string) ([]domain.Environment, error)
 	GetEnvironment(context.Context, string) (domain.Environment, error)
-	CreateEnvironment(context.Context, domain.Environment) (domain.Environment, error)
-	CreateEnvironmentWithAudit(context.Context, domain.Environment, domain.AuditEvent) (domain.Environment, error)
+	CreateEnvironment(context.Context, domain.Environment, ...MutationOption) (domain.Environment, error)
 	ListRevisions(context.Context, string) ([]domain.Revision, error)
-	CreateRevision(context.Context, domain.Revision) (domain.Revision, error)
-	CreateRevisionWithAudit(context.Context, domain.Revision, domain.AuditEvent) (domain.Revision, error)
+	CreateRevision(context.Context, domain.Revision, ...MutationOption) (domain.Revision, error)
 	ListDeployments(context.Context, string) ([]domain.Deployment, error)
 	GetDeployment(context.Context, string) (domain.Deployment, error)
 	CreateDeploymentRequest(context.Context, domain.Deployment, domain.TaskRun, domain.AuditEvent) (domain.Deployment, error)

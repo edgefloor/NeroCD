@@ -275,7 +275,7 @@ func (s *Service) RegisterRunner(ctx context.Context, input RunnerInput) (Regist
 	if err != nil {
 		return RegisteredRunner{}, err
 	}
-	runner, err = s.runners.RegisterRunnerWithAudit(ctx, runner, audit)
+	runner, err = s.runners.RegisterRunner(ctx, runner, store.WithAudit(audit))
 	if err != nil {
 		return RegisteredRunner{}, err
 	}
@@ -312,7 +312,7 @@ func (s *Service) RotateRunnerToken(ctx context.Context, input RunnerTokenInput)
 	if err != nil {
 		return RegisteredRunner{}, err
 	}
-	runner, err := s.runners.UpdateRunnerTokenWithAudit(ctx, runnerID, tokenHash, domain.RunnerActive, time.Now().UTC(), audit)
+	runner, err := s.runners.UpdateRunnerToken(ctx, runnerID, tokenHash, domain.RunnerActive, time.Now().UTC(), store.WithAudit(audit))
 	if err != nil {
 		return RegisteredRunner{}, err
 	}
@@ -336,7 +336,7 @@ func (s *Service) RevokeRunnerToken(ctx context.Context, input RunnerTokenInput)
 	if err != nil {
 		return domain.Runner{}, err
 	}
-	return s.runners.UpdateRunnerTokenWithAudit(ctx, runnerID, "", domain.RunnerRevoked, time.Now().UTC(), audit)
+	return s.runners.UpdateRunnerToken(ctx, runnerID, "", domain.RunnerRevoked, time.Now().UTC(), store.WithAudit(audit))
 }
 
 func (s *Service) HeartbeatRunner(ctx context.Context) (domain.Runner, error) {
@@ -386,7 +386,7 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
-	claim, err := s.runners.ClaimRunWithAudit(ctx, principal.ID, time.Now().UTC(), s.leaseTTL, audit)
+	claim, err := s.runners.ClaimRun(ctx, principal.ID, time.Now().UTC(), s.leaseTTL, store.WithAudit(audit))
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
