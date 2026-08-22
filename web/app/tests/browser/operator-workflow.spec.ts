@@ -64,8 +64,8 @@ test("authenticated navigation and sign out work with runtime-only credentials",
 test("system administrators can open the bounded Operations summary", async ({ page }) => {
 	await page.goto("/operations");
 	await signIn(page);
-	await expect(page.getByRole("heading", { name: "System Operations" })).toBeVisible();
-	await expect(page.getByText("No completed backup observed")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "System Operations" })).toBeVisible();
+  await expect(page.getByText("Local schedule disabled")).toBeVisible();
 	await expect(page.getByText("Manual run-log retention", { exact: true })).toBeVisible();
 	const policy = page.getByRole("form", { name: "Run-log retention policy" });
 	await policy.getByRole("checkbox", { name: "Enable manual retention" }).check();
