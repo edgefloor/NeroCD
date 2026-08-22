@@ -1,0 +1,260 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"nerocd/internal/domain"
+	"nerocd/internal/store/sqlcgen"
+)
+
+func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
+	user, err := s.queries.GetUserByEmail(ctx, email)
+	if err == pgx.ErrNoRows {
+		return domain.User{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	return userFromSQLC(user), nil
+}
+
+func (s *PostgresStore) UpdatePasswordHash(ctx context.Context, userID, previousHash, passwordHash string) error {
+	updated, err := s.queries.UpdatePasswordHash(ctx, sqlcgen.UpdatePasswordHashParams{ID: userID, PasswordHash: passwordHash, PasswordHash_2: previousHash})
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PostgresStore) BootstrapAdmin(ctx context.Context, user domain.User, audit domain.AuditEvent) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	q := s.queries.WithTx(tx)
+	completedBy := user.ID
+	completedAt := user.CreatedAt
+	claimed, err := q.ClaimBootstrapAdmin(ctx, sqlcgen.ClaimBootstrapAdminParams{CompletedBy: &completedBy, CompletedAt: &completedAt})
+	if err != nil {
+		return err
+	}
+	if claimed != 1 {
+		denied := domain.AuditEvent{ID: audit.ID + "-denied", ActorID: "system", Action: "identity.bootstrap_admin.denied", TargetID: "bootstrap-admin", Metadata: map[string]any{"reason": "already_completed"}, CreatedAt: user.CreatedAt}
+		if err = createAuditWithQueries(ctx, q, denied); err != nil {
+			return err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return err
+		}
+		return ErrConflict
+	}
+	if err = q.CreateBootstrapUser(ctx, sqlcgen.CreateBootstrapUserParams{ID: user.ID, Email: user.Email, Name: user.Name, Status: user.Status, GlobalRole: user.GlobalRole, PasswordHash: user.PasswordHash, CreatedAt: user.CreatedAt}); err != nil {
+		return err
+	}
+	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PostgresStore) BootstrapComplete(ctx context.Context) (bool, error) {
+	completed, err := s.queries.BootstrapComplete(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return completed, err
+}
+
+func (s *PostgresStore) CreateSession(ctx context.Context, session domain.Session, tokenHash string) error {
+	return s.queries.CreateSession(ctx, sqlcgen.CreateSessionParams{ID: session.ID, UserID: session.UserID, TokenHash: tokenHash, ExpiresAt: session.ExpiresAt, CreatedAt: session.CreatedAt, SourceIp: session.SourceIP, UserAgent: session.UserAgent, LastSeenAt: session.LastSeenAt})
+}
+
+func (s *PostgresStore) CreateSessionWithAudit(ctx context.Context, session domain.Session, tokenHash string, audit domain.AuditEvent) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	q := s.queries.WithTx(tx)
+	if err = q.CreateSession(ctx, sqlcgen.CreateSessionParams{ID: session.ID, UserID: session.UserID, TokenHash: tokenHash, ExpiresAt: session.ExpiresAt, CreatedAt: session.CreatedAt, SourceIp: session.SourceIP, UserAgent: session.UserAgent, LastSeenAt: session.LastSeenAt}); err != nil {
+		return err
+	}
+	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func sessionFromFields(id, userID string, expiresAt, createdAt time.Time, sourceIP, userAgent string, lastSeenAt, revokedAt *time.Time) domain.Session {
+	return domain.Session{ID: id, UserID: userID, ExpiresAt: expiresAt, CreatedAt: createdAt, SourceIP: sourceIP, UserAgent: userAgent, LastSeenAt: lastSeenAt, RevokedAt: revokedAt}
+}
+
+func (s *PostgresStore) ListSessions(ctx context.Context) ([]domain.Session, error) {
+	rows, err := s.queries.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.Session, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, sessionFromFields(row.ID, row.UserID, row.ExpiresAt, row.CreatedAt, row.SourceIp, row.UserAgent, row.LastSeenAt, row.RevokedAt))
+	}
+	return result, nil
+}
+
+func (s *PostgresStore) RevokeSessionByID(ctx context.Context, id string, revokedAt time.Time) (domain.Session, error) {
+	row, err := s.queries.RevokeSessionByID(ctx, sqlcgen.RevokeSessionByIDParams{ID: id, RevokedAt: &revokedAt})
+	if err == pgx.ErrNoRows {
+		return domain.Session{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Session{}, err
+	}
+	return sessionFromFields(row.ID, row.UserID, row.ExpiresAt, row.CreatedAt, row.SourceIp, row.UserAgent, row.LastSeenAt, row.RevokedAt), nil
+}
+
+func (s *PostgresStore) RevokeSessionByIDWithAudit(ctx context.Context, id string, revokedAt time.Time, audit domain.AuditEvent) (domain.Session, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.queries.WithTx(tx)
+	row, err := q.RevokeSessionByID(ctx, sqlcgen.RevokeSessionByIDParams{ID: id, RevokedAt: &revokedAt})
+	if err == pgx.ErrNoRows {
+		return domain.Session{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+		return domain.Session{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.Session{}, err
+	}
+	return sessionFromFields(row.ID, row.UserID, row.ExpiresAt, row.CreatedAt, row.SourceIp, row.UserAgent, row.LastSeenAt, row.RevokedAt), nil
+}
+
+func (s *PostgresStore) GetPrincipalBySessionTokenHash(ctx context.Context, tokenHash string, now time.Time) (domain.User, error) {
+	threshold := now.Add(-SessionLastSeenUpdateInterval)
+	user, err := s.queries.GetPrincipalBySessionTokenHash(ctx, sqlcgen.GetPrincipalBySessionTokenHashParams{TokenHash: tokenHash, ExpiresAt: now, LastSeenAt: &threshold})
+	if err == pgx.ErrNoRows {
+		return domain.User{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	return userFromSQLC(user), nil
+}
+
+func (s *PostgresStore) RevokeSessionByTokenHash(ctx context.Context, tokenHash string, revokedAt time.Time) error {
+	count, err := s.queries.RevokeSessionByTokenHash(ctx, sqlcgen.RevokeSessionByTokenHashParams{TokenHash: tokenHash, RevokedAt: &revokedAt})
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) RevokeSessionByTokenHashWithAudit(ctx context.Context, tokenHash string, revokedAt time.Time, audit domain.AuditEvent) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	q := s.queries.WithTx(tx)
+	rows, err := q.RevokeSessionByTokenHash(ctx, sqlcgen.RevokeSessionByTokenHashParams{TokenHash: tokenHash, RevokedAt: &revokedAt})
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return ErrNotFound
+	}
+	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PostgresStore) CreateAPIToken(ctx context.Context, token domain.APIToken) (domain.APIToken, error) {
+	inserted, err := s.queries.CreateAPIToken(ctx, sqlcgen.CreateAPITokenParams{ID: token.ID, Name: token.Name, Kind: token.Kind, TokenHash: token.TokenHash, Roles: token.Roles, Status: token.Status, CreatedBy: token.CreatedBy, CreatedAt: token.CreatedAt, ExpiresAt: token.ExpiresAt})
+	if err != nil {
+		return domain.APIToken{}, err
+	}
+	return apiTokenFromSQLC(inserted), nil
+}
+
+func (s *PostgresStore) CreateAPITokenWithAudit(ctx context.Context, token domain.APIToken, audit domain.AuditEvent) (domain.APIToken, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.APIToken{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.queries.WithTx(tx)
+	row, err := q.CreateAPIToken(ctx, sqlcgen.CreateAPITokenParams{ID: token.ID, Name: token.Name, Kind: token.Kind, TokenHash: token.TokenHash, Roles: token.Roles, Status: token.Status, CreatedBy: token.CreatedBy, CreatedAt: token.CreatedAt, ExpiresAt: token.ExpiresAt})
+	if err != nil {
+		return domain.APIToken{}, err
+	}
+	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+		return domain.APIToken{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.APIToken{}, err
+	}
+	return apiTokenFromSQLC(row), nil
+}
+
+func (s *PostgresStore) GetAPITokenByHash(ctx context.Context, tokenHash string, now time.Time) (domain.APIToken, error) {
+	token, err := s.queries.GetAPITokenByHash(ctx, sqlcgen.GetAPITokenByHashParams{TokenHash: tokenHash, LastUsedAt: &now})
+	if err == pgx.ErrNoRows {
+		return domain.APIToken{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.APIToken{}, err
+	}
+	return apiTokenFromSQLC(token), nil
+}
+
+func (s *PostgresStore) RevokeAPIToken(ctx context.Context, tokenID string, revokedAt time.Time) (domain.APIToken, error) {
+	token, err := s.queries.RevokeAPIToken(ctx, sqlcgen.RevokeAPITokenParams{ID: tokenID, RevokedAt: &revokedAt})
+	if err == pgx.ErrNoRows {
+		return domain.APIToken{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.APIToken{}, err
+	}
+	return apiTokenFromSQLC(token), nil
+}
+
+func (s *PostgresStore) RevokeAPITokenWithAudit(ctx context.Context, tokenID string, revokedAt time.Time, audit domain.AuditEvent) (domain.APIToken, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.APIToken{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.queries.WithTx(tx)
+	row, err := q.RevokeAPIToken(ctx, sqlcgen.RevokeAPITokenParams{ID: tokenID, RevokedAt: &revokedAt})
+	if err == pgx.ErrNoRows {
+		return domain.APIToken{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.APIToken{}, err
+	}
+	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+		return domain.APIToken{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.APIToken{}, err
+	}
+	return apiTokenFromSQLC(row), nil
+}
