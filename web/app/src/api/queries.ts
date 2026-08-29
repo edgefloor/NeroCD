@@ -2,7 +2,7 @@ import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import type { paths } from "./generated";
 import { ApiError } from "./errors";
 import {
-  getCurrentPrincipal, getHealth, getBootstrapStatus, getOperationsStatus, getRunLogRetentionStatus, listApprovals, listArtifacts, listAuditEvents, listCapabilities,
+  getCurrentPrincipal, getHealth, getBootstrapStatus, getOperationsStatus, getRunLogRetentionStatus, listApprovals, listAuditEvents,
   listProjectMembers, listProjects, listRepositories, listRunLogs, listRuns, listTemplates, listServices, listEnvironments, listRevisions, listDeployments, getDeployment, listRunners, getRunner,
 } from "./resources";
 import type { TaskRun } from "./resources";
@@ -73,8 +73,6 @@ export const runsQuery = (value?: RunFilters) => queryOptions({ queryKey: queryK
 export const approvalsQuery = (value?: ApprovalFilters) => queryOptions({ queryKey: queryKeys.approvals(value), queryFn: ({ signal }) => listApprovals(value, { signal }).then((item) => item.items) });
 export const auditEventsQuery = (value?: AuditEventFilters) => queryOptions({ queryKey: queryKeys.auditEvents(value), queryFn: ({ signal }) => listAuditEvents(value, { signal }).then((item) => item.items) });
 export const runLogsQuery = (value: RunLogFilters = {}) => queryOptions({ queryKey: queryKeys.runLogs(value), queryFn: ({ signal }) => listRunLogs(value, { signal }).then((item) => item.items) });
-export const artifactsQuery = (value: ArtifactFilters) => queryOptions({ queryKey: queryKeys.artifacts(value), queryFn: ({ signal }) => listArtifacts(value, { signal }).then((item) => item.items) });
-export const capabilitiesQuery = (value?: CapabilityFilters) => queryOptions({ queryKey: queryKeys.capabilities(value), queryFn: ({ signal }) => listCapabilities(value, { signal }).then((item) => item.items) });
 export const servicesQuery = (value?: ServiceFilters) => queryOptions({ queryKey: queryKeys.services(value), queryFn: ({ signal }) => listServices(value, { signal }).then((item) => item.items) });
 export const environmentsQuery = (value?: EnvironmentFilters) => queryOptions({ queryKey: queryKeys.environments(value), queryFn: ({ signal }) => listEnvironments(value, { signal }).then((item) => item.items) });
 export const revisionsQuery = (value?: RevisionFilters) => queryOptions({ queryKey: queryKeys.revisions(value), queryFn: ({ signal }) => listRevisions(value, { signal }).then((item) => item.items) });

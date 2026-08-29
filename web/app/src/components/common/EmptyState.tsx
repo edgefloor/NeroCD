@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { Box, Plus, ArrowRight, type LucideIcon } from "lucide-react";
+import { Box, Plus, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface EmptyStateProps {
@@ -21,8 +21,8 @@ export function EmptyState({
   children,
 }: EmptyStateProps): ReactNode {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-10 text-center px-4">
-      <div className="grid h-10 w-10 place-items-center rounded-lg border border-border/60 bg-transparent">
+    <div className="flex flex-col items-center justify-center gap-3 py-12 text-center px-4">
+      <div className="grid h-10 w-10 place-items-center rounded-xl bg-muted border border-border/60">
         <Icon className="h-5 w-5 text-muted-foreground" />
       </div>
       <div className="space-y-1">

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -45,7 +46,7 @@ func mustAuditJSON(metadata map[string]any) json.RawMessage {
 func (s *PostgresStore) ListServices(ctx context.Context, p string) ([]domain.Service, error) {
 	rows, e := s.queries.ListServices(ctx, p)
 	if e != nil {
-		return nil, e
+		return nil, fmt.Errorf("list services query: %w", e)
 	}
 	out := make([]domain.Service, 0, len(rows))
 	for _, v := range rows {
@@ -64,7 +65,7 @@ func (s *PostgresStore) CreateService(ctx context.Context, v domain.Service, opt
 	}
 	tx, e := s.pool.Begin(ctx)
 	if e != nil {
-		return domain.Service{}, e
+		return domain.Service{}, fmt.Errorf("begin transaction: %w", e)
 	}
 	defer tx.Rollback(ctx)
 	q := s.queries.WithTx(tx)
@@ -73,20 +74,20 @@ func (s *PostgresStore) CreateService(ctx context.Context, v domain.Service, opt
 		return domain.Service{}, ErrConflict
 	}
 	if e != nil {
-		return domain.Service{}, e
+		return domain.Service{}, fmt.Errorf("create service query: %w", e)
 	}
 	if e = createAuditWithQueries(ctx, q, *audit); e != nil {
-		return domain.Service{}, e
+		return domain.Service{}, fmt.Errorf("create audit event: %w", e)
 	}
 	if e = tx.Commit(ctx); e != nil {
-		return domain.Service{}, e
+		return domain.Service{}, fmt.Errorf("commit transaction: %w", e)
 	}
 	return serviceFromSQLC(x), nil
 }
 func (s *PostgresStore) ListEnvironments(ctx context.Context, id string) ([]domain.Environment, error) {
 	rows, e := s.queries.ListEnvironments(ctx, id)
 	if e != nil {
-		return nil, e
+		return nil, fmt.Errorf("list environments query: %w", e)
 	}
 	out := make([]domain.Environment, 0, len(rows))
 	for _, v := range rows {
@@ -107,7 +108,7 @@ func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environm
 	}
 	tx, e := s.pool.Begin(ctx)
 	if e != nil {
-		return domain.Environment{}, e
+		return domain.Environment{}, fmt.Errorf("begin transaction: %w", e)
 	}
 	defer tx.Rollback(ctx)
 	q := s.queries.WithTx(tx)
@@ -116,20 +117,20 @@ func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environm
 		return domain.Environment{}, ErrConflict
 	}
 	if e != nil {
-		return domain.Environment{}, e
+		return domain.Environment{}, fmt.Errorf("create environment query: %w", e)
 	}
 	if e = createAuditWithQueries(ctx, q, *audit); e != nil {
-		return domain.Environment{}, e
+		return domain.Environment{}, fmt.Errorf("create audit event: %w", e)
 	}
 	if e = tx.Commit(ctx); e != nil {
-		return domain.Environment{}, e
+		return domain.Environment{}, fmt.Errorf("commit transaction: %w", e)
 	}
 	return environmentFromSQLC(x), nil
 }
 func (s *PostgresStore) ListRevisions(ctx context.Context, id string) ([]domain.Revision, error) {
 	rows, e := s.queries.ListRevisions(ctx, id)
 	if e != nil {
-		return nil, e
+		return nil, fmt.Errorf("list revisions query: %w", e)
 	}
 	out := make([]domain.Revision, 0, len(rows))
 	for _, v := range rows {
@@ -155,7 +156,7 @@ func (s *PostgresStore) CreateRevision(ctx context.Context, v domain.Revision, o
 	}
 	tx, e := s.pool.Begin(ctx)
 	if e != nil {
-		return domain.Revision{}, e
+		return domain.Revision{}, fmt.Errorf("begin transaction: %w", e)
 	}
 	defer tx.Rollback(ctx)
 	q := s.queries.WithTx(tx)
@@ -164,13 +165,13 @@ func (s *PostgresStore) CreateRevision(ctx context.Context, v domain.Revision, o
 		return domain.Revision{}, ErrConflict
 	}
 	if e != nil {
-		return domain.Revision{}, e
+		return domain.Revision{}, fmt.Errorf("create revision query: %w", e)
 	}
 	if e = createAuditWithQueries(ctx, q, *audit); e != nil {
-		return domain.Revision{}, e
+		return domain.Revision{}, fmt.Errorf("create audit event: %w", e)
 	}
 	if e = tx.Commit(ctx); e != nil {
-		return domain.Revision{}, e
+		return domain.Revision{}, fmt.Errorf("commit transaction: %w", e)
 	}
 	return revisionFromSQLC(x), nil
 }
@@ -184,7 +185,7 @@ func (s *PostgresStore) DeploymentPlan(ctx context.Context, deploymentID, runID,
 		return domain.DeploymentPlan{}, ErrNotFound
 	}
 	if err != nil {
-		return domain.DeploymentPlan{}, err
+		return domain.DeploymentPlan{}, fmt.Errorf("deployment plan query: %w", err)
 	}
 	requestedRef := row.RequestedRef
 	// Once provenance is resolved, subsequent attempts—especially a rollback
@@ -202,17 +203,17 @@ func (s *PostgresStore) DeploymentPlan(ctx context.Context, deploymentID, runID,
 func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymentID, runID, leaseID, runnerID string, attempt int, fence, resolutionID, commit, hash string, digests []string, audit domain.AuditEvent) (domain.Revision, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return domain.Revision{}, err
+		return domain.Revision{}, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	q := s.queries.WithTx(tx)
 	// Replay lookup deliberately precedes lease-expiry validation.  An exact
 	// committed acknowledgement is a receipt, not renewed runner authority.
 	if v, found, e := provenanceReplay(ctx, q, deploymentID, resolutionID, runID, leaseID, runnerID, attempt, fence, commit, hash, digests); e != nil {
-		return domain.Revision{}, e
+		return domain.Revision{}, fmt.Errorf("check provenance replay: %w", e)
 	} else if found {
 		if err = tx.Commit(ctx); err != nil {
-			return domain.Revision{}, err
+			return domain.Revision{}, fmt.Errorf("commit transaction: %w", err)
 		}
 		return v, nil
 	}
@@ -224,13 +225,13 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 		return domain.Revision{}, ErrNotFound
 	}
 	if err != nil {
-		return domain.Revision{}, err
+		return domain.Revision{}, fmt.Errorf("lock provenance attempt query: %w", err)
 	}
 	if v, found, e := provenanceReplay(ctx, q, deploymentID, resolutionID, runID, leaseID, runnerID, attempt, fence, commit, hash, digests); e != nil {
-		return domain.Revision{}, e
+		return domain.Revision{}, fmt.Errorf("check provenance replay: %w", e)
 	} else if found {
 		if err = tx.Commit(ctx); err != nil {
-			return domain.Revision{}, err
+			return domain.Revision{}, fmt.Errorf("commit transaction: %w", err)
 		}
 		return v, nil
 	}
@@ -239,7 +240,7 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 		return domain.Revision{}, ErrNotFound
 	}
 	if err != nil {
-		return domain.Revision{}, err
+		return domain.Revision{}, fmt.Errorf("provenance attempt is active query: %w", err)
 	}
 	v := revisionFromSQLC(row)
 	if v.ProvenanceResolved {
@@ -258,14 +259,14 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 			return domain.Revision{}, ErrConflict
 		}
 		if err != nil {
-			return domain.Revision{}, err
+			return domain.Revision{}, fmt.Errorf("resolve revision provenance query: %w", err)
 		}
 		v = revisionFromSQLC(updated)
 	}
 	if audit.ID != "" {
 		audit.CreatedAt = time.Now().UTC()
 		if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
-			return domain.Revision{}, err
+			return domain.Revision{}, fmt.Errorf("create audit event: %w", err)
 		}
 	}
 	err = q.CreateProvenanceResolutionReplay(ctx, sqlcgen.CreateProvenanceResolutionReplayParams{DeploymentID: deploymentID, Attempt: int32(attempt), ResolutionID: resolutionID, RunID: runID, LeaseID: leaseID, RunnerID: runnerID, Fence: fence, RevisionID: v.ID, GitCommit: commit, ComposeHash: hash, ImageDigests: digests, ContentIdentity: commit + ":" + hash, AuditID: audit.ID})
@@ -273,10 +274,10 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 		return domain.Revision{}, ErrConflict
 	}
 	if err != nil {
-		return domain.Revision{}, err
+		return domain.Revision{}, fmt.Errorf("create provenance resolution replay query: %w", err)
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return domain.Revision{}, err
+		return domain.Revision{}, fmt.Errorf("commit transaction: %w", err)
 	}
 	return v, nil
 }
@@ -289,7 +290,7 @@ func provenanceReplay(ctx context.Context, q *sqlcgen.Queries, deploymentID, res
 		return domain.Revision{}, false, nil
 	}
 	if err != nil {
-		return domain.Revision{}, false, err
+		return domain.Revision{}, false, fmt.Errorf("get provenance resolution replay query: %w", err)
 	}
 	if row.RunID != runID || row.LeaseID != leaseID || row.RunnerID != runnerID || int(row.Attempt) != attempt || row.Fence != fence || row.ReplayGitCommit != commit || row.ReplayComposeHash != hash || !reflect.DeepEqual(row.ReplayImageDigests, digests) {
 		return domain.Revision{}, false, ErrConflict
@@ -299,7 +300,7 @@ func provenanceReplay(ctx context.Context, q *sqlcgen.Queries, deploymentID, res
 func (s *PostgresStore) ListDeployments(ctx context.Context, id string) ([]domain.Deployment, error) {
 	rows, e := s.queries.ListDeployments(ctx, id)
 	if e != nil {
-		return nil, e
+		return nil, fmt.Errorf("list deployments query: %w", e)
 	}
 	out := make([]domain.Deployment, 0, len(rows))
 	for _, v := range rows {
@@ -314,7 +315,7 @@ func (s *PostgresStore) GetDeployment(ctx context.Context, id string) (domain.De
 		return domain.Deployment{}, ErrNotFound
 	}
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("get deployment by id query: %w", err)
 	}
 	return deploymentFromSQLC(row), nil
 }
@@ -325,7 +326,7 @@ func (s *PostgresStore) GetEnvironment(ctx context.Context, id string) (domain.E
 		return domain.Environment{}, ErrNotFound
 	}
 	if err != nil {
-		return domain.Environment{}, err
+		return domain.Environment{}, fmt.Errorf("get environment by id query: %w", err)
 	}
 	return environmentFromSQLC(row), nil
 }
@@ -336,7 +337,7 @@ func (s *PostgresStore) GetService(ctx context.Context, id string) (domain.Servi
 		return domain.Service{}, ErrNotFound
 	}
 	if err != nil {
-		return domain.Service{}, err
+		return domain.Service{}, fmt.Errorf("get service by id query: %w", err)
 	}
 	return serviceFromSQLC(row), nil
 }
@@ -347,11 +348,11 @@ func (s *PostgresStore) GetService(ctx context.Context, id string) (domain.Servi
 func (s *PostgresStore) CreateDeploymentRequest(ctx context.Context, v domain.Deployment, run domain.TaskRun, audit domain.AuditEvent) (domain.Deployment, error) {
 	raw, err := json.Marshal(run.RunSpec)
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("encode run spec: %w", err)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	q := s.queries.WithTx(tx)
@@ -363,14 +364,14 @@ func (s *PostgresStore) CreateDeploymentRequest(ctx context.Context, v domain.De
 			return domain.Deployment{}, ErrConflict
 		}
 		if err = tx.Commit(ctx); err != nil {
-			return domain.Deployment{}, err
+			return domain.Deployment{}, fmt.Errorf("commit transaction: %w", err)
 		}
 		return deploymentFromSQLC(replay), nil
 	} else if lookupErr != pgx.ErrNoRows {
-		return domain.Deployment{}, lookupErr
+		return domain.Deployment{}, fmt.Errorf("get deployment by environment key query: %w", lookupErr)
 	}
 	if _, err = q.CreateDeploymentRun(ctx, sqlcgen.CreateDeploymentRunParams{ID: run.ID, ProjectID: run.ProjectID, RunSpec: raw, RunnerTags: run.RunnerTags, Status: run.Status, RequestedBy: run.RequestedBy}); err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("create deployment run query: %w", err)
 	}
 	v.TaskRunID = &run.ID
 	x, err := q.CreateDeployment(ctx, sqlcgen.CreateDeploymentParams{ID: v.ID, EnvironmentID: v.EnvironmentID, DesiredRevisionID: v.DesiredRevisionID, PreviousHealthyRevisionID: v.PreviousHealthyRevisionID, TaskRunID: run.ID, IdempotencyKey: v.IdempotencyKey, Status: v.Status, RequestedBy: v.RequestedBy, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, FenceRequired: true, RollbackOfID: v.RollbackOfID})
@@ -378,13 +379,13 @@ func (s *PostgresStore) CreateDeploymentRequest(ctx context.Context, v domain.De
 		return domain.Deployment{}, ErrConflict
 	}
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("create deployment query: %w", err)
 	}
 	if err = createAuditWithQueries(ctx, q, audit); err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("create audit event: %w", err)
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("commit transaction: %w", err)
 	}
 	return deploymentFromSQLC(x), nil
 }
@@ -392,7 +393,7 @@ func (s *PostgresStore) CreateDeploymentRequest(ctx context.Context, v domain.De
 func (s *PostgresStore) ConfirmDeployment(ctx context.Context, id, confirmedBy string, audit domain.AuditEvent) (domain.Deployment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	q := s.queries.WithTx(tx)
@@ -401,16 +402,16 @@ func (s *PostgresStore) ConfirmDeployment(ctx context.Context, id, confirmedBy s
 		return domain.Deployment{}, ErrConflict
 	}
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("confirm deployment query: %w", err)
 	}
 	if err = q.QueueConfirmedDeploymentRun(ctx, confirmed.TaskRunID); err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("queue confirmed deployment run query: %w", err)
 	}
 	if err = createAuditWithQueries(ctx, q, audit); err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("create audit event: %w", err)
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("commit transaction: %w", err)
 	}
 	return deploymentFromSQLC(confirmed), nil
 }
@@ -422,7 +423,7 @@ func (s *PostgresStore) ConfirmDeployment(ctx context.Context, id, confirmedBy s
 func (s *PostgresStore) FailPreAssignmentDeployment(ctx context.Context, id, failureCode string, audit domain.AuditEvent) (domain.Deployment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	q := s.queries.WithTx(tx)
@@ -431,14 +432,14 @@ func (s *PostgresStore) FailPreAssignmentDeployment(ctx context.Context, id, fai
 		return domain.Deployment{}, ErrNotFound
 	}
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("lock deployment by id query: %w", err)
 	}
 	if current.Status == domain.DeploymentFailed {
 		if current.FailureCode != failureCode {
 			return domain.Deployment{}, ErrConflict
 		}
 		if err = tx.Commit(ctx); err != nil {
-			return domain.Deployment{}, err
+			return domain.Deployment{}, fmt.Errorf("commit transaction: %w", err)
 		}
 		return deploymentFromSQLC(current), nil
 	}
@@ -447,26 +448,26 @@ func (s *PostgresStore) FailPreAssignmentDeployment(ctx context.Context, id, fai
 	}
 	now, err := q.DatabaseClock(ctx)
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("database clock query: %w", err)
 	}
 	failed, err := q.FailPreAssignmentDeployment(ctx, sqlcgen.FailPreAssignmentDeploymentParams{ID: id, FailureCode: failureCode})
 	if err == pgx.ErrNoRows {
 		return domain.Deployment{}, ErrConflict
 	}
 	if err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("fail pre-assignment deployment query: %w", err)
 	}
 	if changed, changeErr := q.FailPreAssignmentDeploymentRun(ctx, failed.TaskRunID); changeErr != nil {
-		return domain.Deployment{}, changeErr
+		return domain.Deployment{}, fmt.Errorf("fail pre-assignment deployment run query: %w", changeErr)
 	} else if changed != 1 {
 		return domain.Deployment{}, ErrConflict
 	}
 	audit.CreatedAt = now
 	if err = createAuditWithQueries(ctx, q, audit); err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("create audit event: %w", err)
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return domain.Deployment{}, err
+		return domain.Deployment{}, fmt.Errorf("commit transaction: %w", err)
 	}
 	return deploymentFromSQLC(failed), nil
 }

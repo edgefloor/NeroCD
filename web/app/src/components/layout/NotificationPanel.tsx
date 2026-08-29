@@ -1,37 +1,32 @@
-import { ReactNode, RefObject } from "react";
+import { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
-import type { Approval, TaskRun } from "@/api";
+import type { ApiSnapshot } from "@/api";
+
+type ViewKey = "home" | "runs" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
 
 export function NotificationPanel({
-  approvals,
-  runs,
+  snapshot,
   onNavigate,
-  panelRef,
-  initialFocusRef,
 }: {
-  approvals: Approval[];
-  runs: TaskRun[];
-  onNavigate: (to: "/approvals" | "/runs") => void;
-  panelRef: RefObject<HTMLDivElement | null>;
-  initialFocusRef: RefObject<HTMLButtonElement | null>;
+  snapshot: ApiSnapshot | null;
+  onNavigate: (view: ViewKey) => void;
 }): ReactNode {
-  const pending = approvals.filter((approval) => approval.status === "pending");
-  const failed = runs.filter((run) => ["failed", "error"].includes(run.status));
+  const pending = snapshot?.approvals.filter((approval) => approval.status === "pending") ?? [];
+  const failed = snapshot?.runs.filter((run) => ["failed", "error"].includes(run.status)) ?? [];
 
   return (
-    <div id="notification-panel" ref={panelRef} role="dialog" aria-label="Notifications" className="absolute right-0 top-11 z-50 w-80 rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl">
-      <div className="px-2 py-1.5">
-        <strong className="text-sm">Notifications</strong>
-        <p className="text-xs text-muted-foreground">
+    <div className="absolute right-0 top-11 z-50 w-80 rounded-2xl border border-border/60 bg-popover p-2 text-popover-foreground shadow-lg ring-1 ring-black/5 dark:ring-white/5">
+      <div className="px-2.5 py-2">
+        <strong className="text-sm font-semibold">Notifications</strong>
+        <p className="text-xs text-muted-foreground mt-0.5">
           {pending.length} approvals · {failed.length} failed runs
         </p>
       </div>
-      <div className="mt-1 grid gap-1">
+      <div className="mt-1 grid gap-0.5">
         <button
-          ref={initialFocusRef}
-          className="rounded-lg px-2 py-2 text-left hover:bg-muted"
+          className="rounded-xl px-2.5 py-2.5 text-left hover:bg-muted/60 transition-colors"
           type="button"
-          onClick={() => onNavigate("/approvals")}
+          onClick={() => onNavigate("approvals")}
         >
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm font-medium">Approvals waiting</span>
@@ -40,9 +35,9 @@ export function NotificationPanel({
           <p className="mt-1 text-xs text-muted-foreground">Review approve/reject decisions.</p>
         </button>
         <button
-          className="rounded-lg px-2 py-2 text-left hover:bg-muted"
+          className="rounded-xl px-2.5 py-2.5 text-left hover:bg-muted/60 transition-colors"
           type="button"
-          onClick={() => onNavigate("/runs")}
+          onClick={() => onNavigate("runs")}
         >
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm font-medium">Runs failed</span>

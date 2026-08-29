@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 
@@ -16,7 +17,7 @@ import (
 func (s *PostgresStore) OperationalSnapshot(ctx context.Context) (observability.Snapshot, error) {
 	base, err := s.queries.OperationalSnapshotBase(ctx)
 	if err != nil {
-		return observability.Snapshot{}, err
+		return observability.Snapshot{}, fmt.Errorf("operational snapshot query: %w", err)
 	}
 	snapshot := observability.Snapshot{CollectedAt: base.CollectedAt, QueueDepth: base.Depth, QueueOldestAgeSeconds: maxSnapshotAge(base.QueueOldestAge), ActiveLeases: base.ActiveLeases, ExpiredLeases: base.ExpiredLeases, OldestRunnerHeartbeatSecond: maxSnapshotAge(base.RunnerOldestAge), RunnerJournalDepth: base.JournalDepth, RunnerRetryCount: base.RetryCount, RunnerRenewFailures: base.RenewFailures, BackupScheduleStatus: base.BackupScheduleStatus, BackupScheduleNextSeconds: maxSnapshotAge(base.BackupScheduleNextSeconds), BackupScheduleFailures: int64(base.BackupScheduleFailures)}
 	snapshot.TerminalRuns = map[string]observability.DurationAggregate{
@@ -27,14 +28,14 @@ func (s *PostgresStore) OperationalSnapshot(ctx context.Context) (observability.
 	snapshot.Deployments = map[string]int64{}
 	counts, err := s.queries.OperationalDeploymentCounts(ctx)
 	if err != nil {
-		return observability.Snapshot{}, err
+		return observability.Snapshot{}, fmt.Errorf("operational deployment counts query: %w", err)
 	}
 	for _, row := range counts {
 		snapshot.Deployments[row.Status] = row.Count
 	}
 	health, err := s.queries.OperationalDeploymentHealth(ctx)
 	if err != nil {
-		return observability.Snapshot{}, err
+		return observability.Snapshot{}, fmt.Errorf("operational deployment health query: %w", err)
 	}
 	snapshot.DeploymentHealthPassed, snapshot.DeploymentHealthFailed, snapshot.RollbackSucceeded, snapshot.RollbackFailed = health.Count, health.Count_2, health.Count_3, health.Count_4
 	snapshot.BackupOutcome, snapshot.BackupReason = observability.BackupNone, "none"
@@ -50,7 +51,7 @@ func (s *PostgresStore) OperationalSnapshot(ctx context.Context) (observability.
 	stat := s.pool.Stat()
 	snapshot.Pool = observability.PoolState{Total: int64(stat.TotalConns()), Idle: int64(stat.IdleConns()), Acquired: int64(stat.AcquiredConns())}
 	if err := snapshot.Validate(); err != nil {
-		return observability.Snapshot{}, err
+		return observability.Snapshot{}, fmt.Errorf("validate snapshot: %w", err)
 	}
 	return snapshot, nil
 }
@@ -68,7 +69,7 @@ func (s *PostgresStore) RunnerOperationalObservation(ctx context.Context, runner
 		return RunnerOperationalObservation{}, ErrNotFound
 	}
 	if err != nil {
-		return RunnerOperationalObservation{}, err
+		return RunnerOperationalObservation{}, fmt.Errorf("get runner operational observation query: %w", err)
 	}
 	return RunnerOperationalObservation{ObservedAt: value.ObservedAt, JournalDepth: int(value.JournalDepth), RetryCount: int(value.RetryCount), RenewFailures: int(value.RenewFailures)}, nil
 }

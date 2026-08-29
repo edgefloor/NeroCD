@@ -15,7 +15,3 @@ export const navigationItems: NavigationItem[] = [
   { to: "/audit", label: "Audit", icon: FileText },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
-
-export function titleForPath(pathname: string): string {
-  return navigationItems.find((item) => item.to === pathname || (item.to !== "/" && pathname.startsWith(`${item.to}/`)))?.label ?? "Runs";
-}

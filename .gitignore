@@ -2,6 +2,7 @@
 __MACOSX/
 .cache/
 .cachebro/
+.tools/
 artifacts/*.json
 artifacts/*.txt
 bin/

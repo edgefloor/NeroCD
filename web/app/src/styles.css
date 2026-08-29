@@ -56,25 +56,25 @@
 
 :root {
   color-scheme: light;
-  /* Surfaces — deeper tonal planes for operational clarity */
-  --background: #f3f4f6;
-  --foreground: #0b1221;
-  --card: #ffffff;
-  --card-foreground: #0b1221;
-  --popover: #ffffff;
-  --popover-foreground: #0b1221;
+  /* Surfaces — matte canvas with a glossy porcelain work panel */
+  --background: #e9ebef;
+  --foreground: #17181c;
+  --card: #fdfdfe;
+  --card-foreground: #17181c;
+  --popover: #fdfdfe;
+  --popover-foreground: #17181c;
 
   /* Primary action — a precise, deep blue */
   --primary: #1d4ed8;
   --primary-foreground: #ffffff;
 
   /* Secondary — subtle surface for grouping */
-  --secondary: #eef1f5;
-  --secondary-foreground: #44536a;
+  --secondary: #eceef2;
+  --secondary-foreground: #45474f;
 
   /* Muted — for receding content */
-  --muted: #eef1f5;
-  --muted-foreground: #6b7b91;
+  --muted: #eceef2;
+  --muted-foreground: #6d707a;
 
   /* Accent — tied to primary for coherence */
   --accent: #e8f0fe;
@@ -89,21 +89,26 @@
   --warning-foreground: #ffffff;
 
   /* Edges and controls */
-  --border: #e1e6ec;
-  --input: #e1e6ec;
+  --border: #d8dbe2;
+  --input: #d8dbe2;
   --ring: #1d4ed8;
 
-  /* Sidebar — a distinct canvas for navigation */
-  --sidebar: #f7f9fb;
-  --sidebar-foreground: #0b1221;
-  --sidebar-muted: #6b7b91;
-  --sidebar-border: #e1e6ec;
-  --sidebar-panel: #eef1f5;
+  /* Sidebar — no surface of its own; it belongs to the canvas */
+  --sidebar: transparent;
+  --sidebar-foreground: #17181c;
+  --sidebar-muted: #6d707a;
+  --sidebar-border: transparent;
+  --sidebar-panel: rgba(23, 24, 28, 0.06);
   --sidebar-primary: #1d4ed8;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eef1f5;
-  --sidebar-accent-foreground: #0b1221;
+  --sidebar-accent: rgba(23, 24, 28, 0.06);
+  --sidebar-accent-foreground: #17181c;
   --sidebar-ring: #1d4ed8;
+
+  /* Panel — flat work surface floating on the matte canvas */
+  --panel-base: #fbfcfd;
+  --panel-border: rgba(20, 23, 30, 0.16);
+  --panel-shadow: 0 1px 2px rgba(16, 18, 24, 0.08), 0 28px 70px -18px rgba(16, 18, 24, 0.28);
 
   /* Shape — disciplined for precision */
   --radius: 0.5rem;
@@ -123,25 +128,25 @@
 
 .dark {
   color-scheme: dark;
-  /* Dark surfaces — deep navy-black with clear layers */
-  --background: #080c14;
-  --foreground: #eef1f5;
-  --card: #0f1520;
-  --card-foreground: #eef1f5;
-  --popover: #0f1520;
-  --popover-foreground: #eef1f5;
+  /* Dark surfaces — matte black canvas, jet black gloss panel, neutral grays */
+  --background: #0e0e11;
+  --foreground: #ececef;
+  --card: #141418;
+  --card-foreground: #ececef;
+  --popover: #101013;
+  --popover-foreground: #ececef;
 
   /* Primary — bright but controlled */
   --primary: #60a5fa;
-  --primary-foreground: #080c14;
+  --primary-foreground: #0a0a0c;
 
   /* Secondary */
-  --secondary: #141c2e;
-  --secondary-foreground: #8896aa;
+  --secondary: #17171c;
+  --secondary-foreground: #8b8d97;
 
   /* Muted */
-  --muted: #141c2e;
-  --muted-foreground: #8896aa;
+  --muted: #17171c;
+  --muted-foreground: #8b8d97;
 
   /* Accent */
   --accent: #172554;
@@ -149,28 +154,33 @@
 
   /* Status — vivid but harmonious */
   --destructive: #f87171;
-  --destructive-foreground: #080c14;
+  --destructive-foreground: #0a0a0c;
   --success: #34d399;
-  --success-foreground: #080c14;
+  --success-foreground: #0a0a0c;
   --warning: #fbbf24;
-  --warning-foreground: #080c14;
+  --warning-foreground: #0a0a0c;
 
   /* Edges */
-  --border: #1a2335;
-  --input: #1a2335;
+  --border: #232329;
+  --input: #232329;
   --ring: #60a5fa;
 
-  /* Sidebar — darker than background for depth */
-  --sidebar: #060a12;
-  --sidebar-foreground: #eef1f5;
-  --sidebar-muted: #8896aa;
-  --sidebar-border: #1a2335;
-  --sidebar-panel: #0f1520;
+  /* Sidebar — pure background layer, never a panel */
+  --sidebar: transparent;
+  --sidebar-foreground: #ececef;
+  --sidebar-muted: #6f707a;
+  --sidebar-border: transparent;
+  --sidebar-panel: rgba(236, 236, 239, 0.05);
   --sidebar-primary: #60a5fa;
-  --sidebar-primary-foreground: #080c14;
-  --sidebar-accent: #141c2e;
-  --sidebar-accent-foreground: #eef1f5;
+  --sidebar-primary-foreground: #0a0a0c;
+  --sidebar-accent: rgba(236, 236, 239, 0.05);
+  --sidebar-accent-foreground: #ececef;
   --sidebar-ring: #60a5fa;
+
+  /* Panel — flat jet black slab on the matte field */
+  --panel-base: #09090b;
+  --panel-border: rgba(255, 255, 255, 0.09);
+  --panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 30px 80px -16px rgba(0, 0, 0, 0.65);
 }
 
 * {
@@ -278,4 +288,17 @@ body {
 /* Password inputs: use system font for dot glyph */
 input[type="password"] {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ---------------------------------------------------------------------------
+ * Obsidian deck: a matte canvas, a quiet background sidebar, and a flat
+ * jet black work panel floating on it with round edges.
+ * ------------------------------------------------------------------------- */
+
+/* The work panel: flat jet black, one border, one lift shadow. No inner
+ * gradients, no sheens, no fades. */
+.app-panel {
+  background: var(--panel-base);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
 }

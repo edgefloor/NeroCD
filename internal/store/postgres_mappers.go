@@ -32,14 +32,14 @@ func projectMemberListRowFromSQLC(row sqlcgen.ListProjectMembersRow) domain.Proj
 func repositoryFromSQLC(row sqlcgen.Repository) (domain.Repository, error) {
 	var policy domain.RepositoryPolicy
 	if err := json.Unmarshal(row.RepositoryPolicy, &policy); err != nil {
-		return domain.Repository{}, err
+		return domain.Repository{}, fmt.Errorf("decode repository policy: %w", err)
 	}
 	if policy.Version != 1 || (policy.State != "configured" && policy.State != "legacy_unverified") {
 		return domain.Repository{}, fmt.Errorf("invalid repository policy state")
 	}
 	if policy.State == "configured" {
 		if err := (source.RepositoryPolicy{Version: policy.Version, State: policy.State, Mode: policy.Mode, AllowedSchemes: policy.AllowedSchemes, AllowedHosts: policy.AllowedHosts, AllowedCIDRs: policy.AllowedCIDRs, RedirectHosts: policy.RedirectHosts, SSHHostFingerprints: policy.SSHHostFingerprints, CredentialReferenceID: policy.CredentialReferenceID, AllowInternal: policy.AllowInternal}).ValidatePolicy(); err != nil {
-			return domain.Repository{}, err
+			return domain.Repository{}, fmt.Errorf("validate repository policy: %w", err)
 		}
 	}
 	return domain.Repository{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, URL: row.Url, Provider: row.Provider, DefaultRef: row.DefaultRef, Policy: policy, CreatedAt: row.CreatedAt}, nil
@@ -56,10 +56,10 @@ func inventoryFromSQLC(row sqlcgen.Inventory) domain.Inventory {
 func taskTemplateFromSQLC(row sqlcgen.TaskTemplate) (domain.TaskTemplate, error) {
 	result := domain.TaskTemplate{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, Kind: row.Kind, RunnerTags: append([]string(nil), row.RunnerTags...), RequiresAck: row.RequiresAck}
 	if err := decodeRunSpec(row.RunSpec, &result.RunSpec); err != nil {
-		return domain.TaskTemplate{}, err
+		return domain.TaskTemplate{}, fmt.Errorf("decode template row: %w", err)
 	}
 	if err := decodeWorkflow(row.Workflow, &result.Workflow); err != nil {
-		return domain.TaskTemplate{}, err
+		return domain.TaskTemplate{}, fmt.Errorf("decode template row: %w", err)
 	}
 	return result, nil
 }
@@ -67,7 +67,7 @@ func taskTemplateFromSQLC(row sqlcgen.TaskTemplate) (domain.TaskTemplate, error)
 func templateJSON(template domain.TaskTemplate) (json.RawMessage, json.RawMessage, error) {
 	runSpec, err := json.Marshal(template.RunSpec)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("encode run spec: %w", err)
 	}
 	workflow, err := json.Marshal(template.Workflow)
 	return runSpec, workflow, err
@@ -76,13 +76,13 @@ func templateJSON(template domain.TaskTemplate) (json.RawMessage, json.RawMessag
 func taskRunFromSQLC(row sqlcgen.TaskRun) (domain.TaskRun, error) {
 	result := domain.TaskRun{ID: row.ID, ProjectID: row.ProjectID, TemplateID: row.TemplateID, RunnerTags: append([]string(nil), row.RunnerTags...), Status: row.Status, RunnerID: row.RunnerID, RequestedBy: row.RequestedBy, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt}
 	if err := decodeRunSpec(row.RunSpec, &result.RunSpec); err != nil {
-		return domain.TaskRun{}, err
+		return domain.TaskRun{}, fmt.Errorf("decode run row: %w", err)
 	}
 	if err := decodeWorkflow(row.Workflow, &result.Workflow); err != nil {
-		return domain.TaskRun{}, err
+		return domain.TaskRun{}, fmt.Errorf("decode run row: %w", err)
 	}
 	if err := decodeWorkflowState(row.WorkflowState, &result.WorkflowState); err != nil {
-		return domain.TaskRun{}, err
+		return domain.TaskRun{}, fmt.Errorf("decode run row: %w", err)
 	}
 	return result, nil
 }
@@ -90,11 +90,11 @@ func taskRunFromSQLC(row sqlcgen.TaskRun) (domain.TaskRun, error) {
 func runJSON(run domain.TaskRun) (json.RawMessage, json.RawMessage, json.RawMessage, error) {
 	runSpec, err := json.Marshal(run.RunSpec)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("encode run spec: %w", err)
 	}
 	workflow, err := json.Marshal(run.Workflow)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("encode workflow: %w", err)
 	}
 	state, err := json.Marshal(run.WorkflowState)
 	return runSpec, workflow, state, err
@@ -150,7 +150,7 @@ func auditEventFromSQLC(row sqlcgen.AuditEvent) (domain.AuditEvent, error) {
 	result := domain.AuditEvent{ID: row.ID, ActorID: row.ActorID, Action: row.Action, TargetID: row.TargetID, CreatedAt: row.CreatedAt}
 	if len(row.Metadata) > 0 {
 		if err := json.Unmarshal(row.Metadata, &result.Metadata); err != nil {
-			return domain.AuditEvent{}, err
+			return domain.AuditEvent{}, fmt.Errorf("decode audit event metadata: %w", err)
 		}
 	}
 	return result, nil

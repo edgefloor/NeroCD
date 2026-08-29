@@ -1,43 +1,39 @@
 import { ReactNode } from "react";
-import { Link, useLocation } from "@tanstack/react-router";
+import { type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { NavigationItem } from "@/router/metadata";
+
+type ViewKey = "home" | "runs" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
 
 export function NavButton({
   item,
+  active,
   pending,
-  onNavigate,
+  onClick,
 }: {
-  item: Pick<NavigationItem, "to" | "label" | "icon">;
+  item: { key: ViewKey; label: string; icon: LucideIcon };
+  active: boolean;
   pending: number;
-  onNavigate?: () => void;
+  onClick: () => void;
 }): ReactNode {
   const Icon = item.icon;
-  const location = useLocation();
-  const active = location.pathname === item.to || ((item.to === "/runs" || item.to === "/deployments" || item.to === "/runners" || item.to === "/operations") && location.pathname.startsWith(`${item.to}/`));
   return (
-    <Link
-      to={item.to}
-      search={(previous) => previous}
-      aria-current={active ? "page" : undefined}
-      onClick={onNavigate}
+    <button
       className={cn(
-        "relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors",
+        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
         "hover:bg-sidebar-panel",
-        active && "bg-sidebar-panel text-foreground",
+        active && "bg-sidebar-panel text-foreground shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)] dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]",
         !active && "text-sidebar-muted"
       )}
+      type="button"
+      onClick={onClick}
     >
-      {active && (
-        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[2px] rounded-full bg-primary" />
-      )}
-      <Icon className={cn("h-4 w-4", active ? "text-foreground" : "text-sidebar-muted")} />
+      <Icon className={cn("h-4 w-4 transition-colors", active ? "text-foreground" : "text-sidebar-muted")} />
       <span className="flex-1 text-left">{item.label}</span>
-      {item.to === "/approvals" && pending > 0 ? (
+      {item.key === "approvals" && pending > 0 ? (
         <span className="rounded-full bg-warning px-1.5 py-0.5 text-[10px] font-semibold text-warning-foreground">
           {pending}
         </span>
       ) : null}
-    </Link>
+    </button>
   );
 }

@@ -1,5 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { ReactNode, useEffect, useEffectEvent, useState } from "react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -10,60 +9,74 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import {
+  Activity,
+  FileText,
+  FolderKanban,
+  Home,
+  Layers3,
   LogOut,
   Moon,
   RefreshCw,
   Search,
+  Settings,
+  ShieldCheck,
   Sun,
+  Terminal,
 } from "lucide-react";
-import { navigationItems, type NavigationItem } from "@/router/metadata";
+import type { ApiSnapshot } from "@/api";
+
+type ViewKey = "home" | "runs" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
+
+const navItems: Array<{ key: ViewKey; label: string; icon: typeof Home }> = [
+  { key: "home", label: "Home", icon: Home },
+  { key: "runs", label: "Runs", icon: Activity },
+  { key: "approvals", label: "Approvals", icon: ShieldCheck },
+  { key: "projects", label: "Projects", icon: FolderKanban },
+  { key: "templates", label: "Templates", icon: Layers3 },
+  { key: "logs", label: "Logs", icon: Terminal },
+  { key: "audit", label: "Audit", icon: FileText },
+  { key: "settings", label: "Settings", icon: Settings },
+];
 
 export function CommandPalette({
   open,
   onOpenChange,
+  snapshot,
+  view,
+  setView,
   theme,
   toggleTheme,
   onRefresh,
   onSignOut,
   onSearch,
-  navigation = navigationItems,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  snapshot: ApiSnapshot | null;
+  view: ViewKey;
+  setView: (view: ViewKey) => void;
   theme: "light" | "dark";
   toggleTheme: () => void;
   onRefresh: () => void;
   onSignOut: () => void;
   onSearch?: (query: string) => void;
-  navigation?: NavigationItem[];
 }): ReactNode {
   const [searchTerm, setSearchTerm] = useState("");
-  const navigate = useNavigate();
-  const location = useLocation();
-  const openerRef = useRef<HTMLElement | null>(null);
+  const onKeyOpenChange = useEffectEvent(onOpenChange);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        if (!open && document.activeElement instanceof HTMLElement) openerRef.current = document.activeElement;
-        onOpenChange(!open);
+        onKeyOpenChange(!open);
       }
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, [open, onOpenChange]);
+  }, [open]);
 
   return (
-    <CommandDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      onCloseAutoFocus={(event) => {
-        if (!openerRef.current?.isConnected) return;
-        event.preventDefault();
-        openerRef.current.focus();
-      }}
-    >
+    <CommandDialog open={open} onOpenChange={onOpenChange}>
       <CommandInput
         placeholder="Type a command or search..."
         value={searchTerm}
@@ -85,25 +98,26 @@ export function CommandPalette({
           )}
         </CommandEmpty>
         <CommandGroup heading="Navigation">
-          {navigation.map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
             return (
               <CommandItem
-                key={item.to}
+                key={item.key}
                 onSelect={() => {
-                  void navigate({ to: item.to, search: (previous) => previous });
+                  setView(item.key);
                   onOpenChange(false);
                 }}
               >
                 <Icon className="mr-2 h-4 w-4" />
                 <span>{item.label}</span>
-                {location.pathname === item.to && <span className="ml-auto text-xs text-muted-foreground">Current</span>}
+                {view === item.key && <span className="ml-auto text-xs text-muted-foreground">Current</span>}
               </CommandItem>
             );
           })}
         </CommandGroup>
         <CommandSeparator />
-        <CommandGroup heading="Quick Actions">
+        {snapshot && (
+          <CommandGroup heading="Quick Actions">
             <CommandItem
               onSelect={() => {
                 onRefresh();
@@ -131,7 +145,8 @@ export function CommandPalette({
               <LogOut className="mr-2 h-4 w-4" />
               <span>Sign out</span>
             </CommandItem>
-        </CommandGroup>
+          </CommandGroup>
+        )}
       </CommandList>
     </CommandDialog>
   );

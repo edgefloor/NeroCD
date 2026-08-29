@@ -66,16 +66,18 @@ export function useAuth() {
   return { authenticated, authError, signIn, signOut };
 }
 
+const THEME_STORAGE_KEY = "nerocd.theme.v2";
+
 export function useTheme() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const saved = localStorage.getItem("nerocd.theme");
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
     if (saved === "dark" || saved === "light") return saved;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return "dark";
   });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
-    localStorage.setItem("nerocd.theme", theme);
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {
@@ -83,27 +85,4 @@ export function useTheme() {
   }, []);
 
   return { theme, toggleTheme };
-}
-
-export function useSearch() {
-  const [query, setQuery] = useState("");
-
-  return { query, setQuery };
-}
-
-export function useLocalStorage<T>(key: string, initialValue: T) {
-  const [value, setValue] = useState<T>(() => {
-    try {
-      const item = localStorage.getItem(key);
-      return item ? (JSON.parse(item) as T) : initialValue;
-    } catch {
-      return initialValue;
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(value));
-  }, [key, value]);
-
-  return [value, setValue] as const;
 }

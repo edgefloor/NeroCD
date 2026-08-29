@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 export function SkeletonCard({ rows = 3 }: { rows?: number }) {
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="pb-2">
         <Skeleton className="h-5 w-1/3 rounded-md" />
         <Skeleton className="h-4 w-1/2 rounded-md" />
       </CardHeader>
@@ -21,7 +21,7 @@ export function SkeletonMetricCard() {
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between">
           <Skeleton className="h-4 w-20 rounded-md" />
           <Skeleton className="h-7 w-7 rounded-md" />
         </div>

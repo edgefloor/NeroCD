@@ -2,16 +2,52 @@ GOCACHE_DIR := $(CURDIR)/.cache/go-build
 BIN_DIR := $(CURDIR)/bin
 WEB_APP_DIR := $(CURDIR)/web/app
 WEB_DIST_DIR := $(CURDIR)/web/dist
+TOOLS_BIN := $(CURDIR)/.tools/bin
+GOLANGCI_LINT_VERSION := v2.10.1
+GOLANGCI_LINT := $(TOOLS_BIN)/$(GOLANGCI_LINT_VERSION)/golangci-lint
+LINT_BASE_REV ?= HEAD
 SQLC_TOOL_IMAGE := golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299a562f08707eb0ecb24b659e5bd6c108e1
+PRODUCT_PACKAGES := ./cmd/... ./internal/...
+TEST_PACKAGES := $(shell go list ./... | grep -v '/agent/skills/')
 
-.PHONY: build test postgres-test generate check-generated web-install web-test web-build web-policy browser-smoke docker-build identity-artifact-gate runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-web-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate production-profile-gate backup-restore-gate backup-scheduler-gate dogfood-gate system-operations-gate observability-gate release-evidence-accepted-gates release-evidence-gate release-evidence-synthetic-gate ci-release-policy-gate supply-chain release-artifacts contract check clean run smoke docker-up docker-down docker-logs
+.PHONY: build test fmt-check vet race lint lint-new lint-install shell-check verify postgres-test generate check-generated web-install web-test web-build web-policy browser-smoke docker-build identity-artifact-gate runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-web-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate production-profile-gate backup-restore-gate backup-scheduler-gate dogfood-gate system-operations-gate observability-gate release-evidence-accepted-gates release-evidence-gate release-evidence-synthetic-gate ci-release-policy-gate supply-chain release-artifacts contract check clean run smoke docker-up docker-down docker-logs
 
 build: web-build
 	mkdir -p "$(BIN_DIR)"
 	GOCACHE="$(GOCACHE_DIR)" go build -trimpath -o "$(BIN_DIR)/nerocd" ./cmd/nerocd
 
 test:
-	GOCACHE="$(GOCACHE_DIR)" go test ./...
+	GOCACHE="$(GOCACHE_DIR)" go test $(TEST_PACKAGES)
+
+fmt-check:
+	scripts/verify-go.sh
+
+vet:
+	GOCACHE="$(GOCACHE_DIR)" go vet $(PRODUCT_PACKAGES)
+
+race:
+	GOCACHE="$(GOCACHE_DIR)" go test -race $(PRODUCT_PACKAGES)
+
+lint-install: $(GOLANGCI_LINT)
+
+$(GOLANGCI_LINT):
+	@mkdir -p "$(dir $(GOLANGCI_LINT))"
+	GOBIN="$(dir $(GOLANGCI_LINT))" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+
+lint: $(GOLANGCI_LINT)
+	$(GOLANGCI_LINT) config verify --config .golangci.yml
+	$(GOLANGCI_LINT) run $(PRODUCT_PACKAGES)
+
+# Keep the full audit available as `make lint`, while gating only findings
+# introduced relative to the selected baseline until the legacy debt is paid.
+lint-new: $(GOLANGCI_LINT)
+	$(GOLANGCI_LINT) config verify --config .golangci.yml
+	$(GOLANGCI_LINT) run --new-from-rev=$(LINT_BASE_REV) $(PRODUCT_PACKAGES)
+
+shell-check:
+	scripts/verify-shell.sh
+
+verify: fmt-check vet test lint-new shell-check
 
 postgres-test:
 	test -n "$$NEROCD_TEST_DATABASE_URL"
@@ -130,7 +166,7 @@ contract:
 
 check:
 	$(MAKE) clean
-	$(MAKE) test web-test build browser-smoke web-policy contract check-generated docker-build
+	$(MAKE) verify web-test build browser-smoke web-policy contract check-generated docker-build
 
 clean:
 	rm -rf -- "$(GOCACHE_DIR)" "$(BIN_DIR)" "$(WEB_APP_DIR)/node_modules" "$(WEB_APP_DIR)/playwright-report" "$(WEB_APP_DIR)/test-results"

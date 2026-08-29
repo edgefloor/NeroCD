@@ -1,0 +1,53 @@
+# Project-scoped Codex orchestration. The primary Leader is read-only.
+sandbox_mode = "read-only"
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 3
+default_subagent_model = "gpt-5.6-terra"
+default_subagent_reasoning_effort = "medium"
+interrupt_message = true
+
+[agents.read_only_explorer]
+config_file = "agents/read-only-explorer.toml"
+description = "Read-only explorer that maps code paths and gathers evidence before implementation."
+
+[agents.mechanical_worker]
+config_file = "agents/mechanical-worker.toml"
+description = "Luna worker for small, mechanical, explicitly bounded changes."
+
+[agents.bounded_worker]
+config_file = "agents/bounded-worker.toml"
+description = "Terra worker for ordinary implementation within frozen, disjoint ownership."
+
+[agents.complex_worker]
+config_file = "agents/complex-worker.toml"
+description = "Sol worker for multi-step implementation after interfaces are frozen."
+
+[agents.critical_worker]
+config_file = "agents/critical-worker.toml"
+description = "High-effort Sol worker for explicitly approved critical implementation."
+
+[agents.integration_steward]
+config_file = "agents/integration-steward.toml"
+description = "Terra steward that integrates only Leader-approved commits and runs combined checks."
+
+[agents.code_hygiene_reviewer]
+config_file = "agents/code-hygiene-reviewer.toml"
+description = "Read-only Terra reviewer for routine code hygiene and maintainability."
+
+[agents.specification_reviewer]
+config_file = "agents/specification-reviewer.toml"
+description = "Read-only Terra reviewer for specification fit and behavioral coverage."
+
+[agents.cryptographic_correctness_reviewer]
+config_file = "agents/cryptographic-correctness-reviewer.toml"
+description = "Read-only Terra reviewer for concrete cryptographic correctness concerns."
+
+[agents.critical_security_reviewer]
+config_file = "agents/critical-security-reviewer.toml"
+description = "Read-only Terra reviewer invoked only for listed critical application areas."
+
+[agents.escalation_resolver]
+config_file = "agents/escalation-resolver.toml"
+description = "High-effort Sol resolver for material conflicts or blockers explicitly escalated by the Leader."

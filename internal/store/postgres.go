@@ -45,24 +45,24 @@ const leaseExpiryBatchSize = 64
 func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresStore, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse pool config: %w", err)
 	}
 	config.MaxConns = 20
 	config.MinConns = 0
 	config.MaxConnLifetime = 30 * time.Minute
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create connection pool: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, err
+		return nil, fmt.Errorf("ping database: %w", err)
 	}
 	queries := sqlcgen.New(pool)
 	compatible, err := queries.SchedulerSchemaCompatible(ctx)
 	if err != nil {
 		pool.Close()
-		return nil, err
+		return nil, fmt.Errorf("check schema compatibility: %w", err)
 	}
 	if compatible == nil || !*compatible {
 		pool.Close()
@@ -76,7 +76,7 @@ func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresStore, erro
 func (s *PostgresStore) SchemaCompatible(ctx context.Context) (bool, error) {
 	compatible, err := s.queries.SchedulerSchemaCompatible(ctx)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("check schema compatibility: %w", err)
 	}
 	return compatible != nil && *compatible, nil
 }
@@ -94,7 +94,7 @@ func maxSnapshotAge(value float64) float64 {
 func rejectGenericDeploymentRun(ctx context.Context, queries *sqlcgen.Queries, runID string) error {
 	isDeployment, err := queries.IsDeploymentRun(ctx, runID)
 	if err != nil {
-		return err
+		return fmt.Errorf("is deployment run query: %w", err)
 	}
 	if isDeployment {
 		return ErrConflict
@@ -110,7 +110,7 @@ func (s *PostgresStore) Close() error {
 func createAuditWithQueries(ctx context.Context, queries *sqlcgen.Queries, audit domain.AuditEvent) error {
 	metadata, err := json.Marshal(audit.Metadata)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode audit metadata: %w", err)
 	}
 	return queries.CreateAuditEvent(ctx, sqlcgen.CreateAuditEventParams{ID: audit.ID, ActorID: audit.ActorID, Action: audit.Action, TargetID: audit.TargetID, Metadata: metadata, CreatedAt: audit.CreatedAt})
 }
@@ -134,7 +134,7 @@ func decodeRunSpec(raw []byte, runSpec *domain.RunSpec) error {
 		return nil
 	}
 	if err := json.Unmarshal(raw, runSpec); err != nil {
-		return err
+		return fmt.Errorf("decode run spec: %w", err)
 	}
 	if runSpec.Inputs == nil {
 		runSpec.Inputs = map[string]any{}
