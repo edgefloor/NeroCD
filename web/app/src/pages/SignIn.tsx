@@ -30,13 +30,18 @@ export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: 
             <CardTitle className="text-base font-semibold">Sign in</CardTitle>
           </CardHeader>
           <CardContent className="pb-5">
-            <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+            {bootstrapRequired ? (
+              <div className="space-y-3" role="status" aria-label="Administrator bootstrap required">
+                <p className="text-sm font-medium">Administrator bootstrap required</p>
+                <p className="text-sm text-muted-foreground">Bootstrap is intentionally CLI-only.</p>
+                <p className="text-sm text-muted-foreground">Create the first administrator with the bootstrap command, then return here to sign in.</p>
+              </div>
+            ) : <form className="space-y-4" onSubmit={(event) => void submit(event)}>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Email</label>
                 <Input 
                   name="email" 
                   type="email" 
-                  defaultValue="admin@example.local" 
                   autoComplete="email" 
                   required 
                   className="h-9"
@@ -47,7 +52,6 @@ export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: 
                 <Input 
                   name="password" 
                   type="password" 
-                  defaultValue="admin" 
                   autoComplete="current-password" 
                   required 
                   className="h-9"
@@ -56,11 +60,10 @@ export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: 
               <Button className="w-full h-9" type="submit">
                 Sign in
               </Button>
-              {bootstrapRequired ? <p className="text-sm text-muted-foreground">Create the first administrator with the bootstrap command before signing in.</p> : null}
               {error ? (
                 <p className="text-sm text-destructive">{error}</p>
               ) : null}
-            </form>
+            </form>}
           </CardContent>
         </Card>
       </div>
