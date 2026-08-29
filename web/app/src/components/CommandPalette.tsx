@@ -22,14 +22,20 @@ import {
   ShieldCheck,
   Sun,
   Terminal,
+  Rocket,
+  Bot,
+  Gauge,
 } from "lucide-react";
 import type { ApiSnapshot } from "@/api";
 
-type ViewKey = "home" | "runs" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
+type ViewKey = "home" | "runs" | "deployments" | "runners" | "operations" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
 
 const navItems: Array<{ key: ViewKey; label: string; icon: typeof Home }> = [
   { key: "home", label: "Home", icon: Home },
   { key: "runs", label: "Runs", icon: Activity },
+  { key: "deployments", label: "Deployments", icon: Rocket },
+  { key: "runners", label: "Runners", icon: Bot },
+  { key: "operations", label: "Operations", icon: Gauge },
   { key: "approvals", label: "Approvals", icon: ShieldCheck },
   { key: "projects", label: "Projects", icon: FolderKanban },
   { key: "templates", label: "Templates", icon: Layers3 },

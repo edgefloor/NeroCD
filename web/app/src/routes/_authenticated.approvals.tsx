@@ -1,8 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { approvalsQuery, approveRun, projectsQuery, queryKeys, rejectRun, runsQuery, templatesQuery } from "@/api";
+import { useQuery } from "@tanstack/react-query";
+import { approvalsQuery, projectsQuery, runsQuery, templatesQuery } from "@/api";
+import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
 import { ApprovalsView } from "@/pages/ApprovalsView";
 import { validateSearch } from "@/router/search";
-export const Route = createFileRoute("/_authenticated/approvals")({ validateSearch, loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(approvalsQuery()), context.queryClient.ensureQueryData(runsQuery()), context.queryClient.ensureQueryData(projectsQuery()), context.queryClient.ensureQueryData(templatesQuery())]), component: ApprovalsRoute });
-function ApprovalsRoute() { const { q } = Route.useSearch(); const client = useQueryClient(); const approvals = useQuery(approvalsQuery()); const runs = useQuery(runsQuery()); const projects = useQuery(projectsQuery()); const templates = useQuery(templatesQuery()); const approve = useMutation({ mutationFn: (run_id: string) => approveRun({ run_id }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: queryKeys.runs() }), client.invalidateQueries({ queryKey: queryKeys.approvals() })]); toast.success("Run approved"); }, onError: (error) => toast.error(error.message) }); const reject = useMutation({ mutationFn: (run_id: string) => rejectRun({ run_id }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: queryKeys.runs() }), client.invalidateQueries({ queryKey: queryKeys.approvals() })]); toast.success("Run rejected"); }, onError: (error) => toast.error(error.message) }); const error = [approvals, runs, projects, templates].find((query) => query.isError)?.error; if (error) return <p role="alert">{error.message}</p>; return <ApprovalsView approvals={approvals.data ?? []} runs={runs.data ?? []} projects={projects.data ?? []} templates={templates.data ?? []} q={q} loading={[approvals, runs, projects, templates].some((query) => query.isPending)} approvingRunID={approve.isPending ? approve.variables : undefined} rejectingRunID={reject.isPending ? reject.variables : undefined} onApprove={(id) => approve.mutate(id)} onReject={(id) => reject.mutate(id)} />; }
+
+export const Route = createFileRoute("/_authenticated/approvals")({
+  validateSearch,
+  loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(approvalsQuery()), context.queryClient.ensureQueryData(runsQuery()), context.queryClient.ensureQueryData(projectsQuery()), context.queryClient.ensureQueryData(templatesQuery())]),
+  component: ApprovalsRoute,
+});
+
+function ApprovalsRoute() {
+  const approvals = useQuery(approvalsQuery());
+  const runs = useQuery(runsQuery());
+  const projects = useQuery(projectsQuery());
+  const templates = useQuery(templatesQuery());
+  const { busy, mutate } = useSnapshotMutation();
+  const queries = [approvals, runs, projects, templates];
+  const error = queries.find((query) => query.isError)?.error;
+  if (error) return <p role="alert">{error.message}</p>;
+  return <ApprovalsView snapshot={apiSnapshot({ approvals: approvals.data, runs: runs.data, projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} />;
+}

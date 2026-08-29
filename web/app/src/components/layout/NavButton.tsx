@@ -2,7 +2,7 @@ import { ReactNode } from "react";
 import { type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type ViewKey = "home" | "runs" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
+type ViewKey = "home" | "runs" | "deployments" | "runners" | "operations" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
 
 export function NavButton({
   item,

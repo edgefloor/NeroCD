@@ -1,4 +1,4 @@
-import type { Project, RunLog, TaskRun, TaskTemplate } from "./api";
+import type { ApiSnapshot, Project, RunLog, TaskRun, TaskTemplate } from "./api";
 
 export type OverviewSummary = {
   projectCount: number;
@@ -8,13 +8,23 @@ export type OverviewSummary = {
   logCount: number;
 };
 
-export function summarizeOverview(projects: Project[], templates: TaskTemplate[], runs: TaskRun[], logs: RunLog[]): OverviewSummary {
+export function summarizeOverview(snapshot: ApiSnapshot): OverviewSummary;
+export function summarizeOverview(projects: Project[], templates: TaskTemplate[], runs: TaskRun[], logs: RunLog[]): OverviewSummary;
+export function summarizeOverview(
+  projectsOrSnapshot: Project[] | ApiSnapshot,
+  templates?: TaskTemplate[],
+  runs?: TaskRun[],
+  logs?: RunLog[],
+): OverviewSummary {
+  const snapshot = Array.isArray(projectsOrSnapshot)
+    ? { projects: projectsOrSnapshot, templates: templates ?? [], runs: runs ?? [], logs: logs ?? [] }
+    : projectsOrSnapshot;
   return {
-    projectCount: projects.length,
-    templateCount: templates.length,
-    approvalTemplateCount: templates.filter((template) => template.requires_ack).length,
-    liveRunCount: runs.filter((run) => !run.finished_at).length,
-    logCount: logs.length,
+    projectCount: snapshot.projects.length,
+    templateCount: snapshot.templates.length,
+    approvalTemplateCount: snapshot.templates.filter((template) => template.requires_ack).length,
+    liveRunCount: snapshot.runs.filter((run) => !run.finished_at).length,
+    logCount: snapshot.logs.length,
   };
 }
 

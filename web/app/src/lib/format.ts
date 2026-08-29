@@ -1,4 +1,4 @@
-import type { Project, TaskRun, TaskTemplate } from "@/api";
+import type { ApiSnapshot, Project, TaskRun, TaskTemplate } from "@/api";
 
 export function projectName(projects: Project[], projectID: string): string {
   return projects.find((project) => project.id === projectID)?.name ?? projectID;
@@ -29,4 +29,8 @@ export function matchesQuery(query: string | undefined, ...values: Array<string 
   if (!query) return true;
   const needle = query.trim().toLocaleLowerCase();
   return values.some((value) => value?.toLocaleLowerCase().includes(needle));
+}
+
+export function countFilteredItems(snapshot: ApiSnapshot): number {
+  return snapshot.projects.length + snapshot.templates.length + snapshot.runs.length + snapshot.approvals.length + snapshot.logs.length + snapshot.repositories.length;
 }

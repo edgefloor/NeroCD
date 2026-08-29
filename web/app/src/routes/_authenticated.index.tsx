@@ -1,8 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { approvalsQuery, approveRun, healthQuery, projectsQuery, queryKeys, rejectRun, runLogsQuery, runsQuery, shouldPollRunList, templatesQuery } from "@/api";
+import { useQuery } from "@tanstack/react-query";
+import { approvalsQuery, healthQuery, projectsQuery, runLogsQuery, runsQuery, shouldPollRunList, templatesQuery } from "@/api";
+import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
 import { HomeView } from "@/pages/HomeView";
 import { validateSearch } from "@/router/search";
-export const Route = createFileRoute("/_authenticated/")({ validateSearch, loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(healthQuery()), context.queryClient.ensureQueryData(projectsQuery()), context.queryClient.ensureQueryData(templatesQuery()), context.queryClient.ensureQueryData(runsQuery()), context.queryClient.ensureQueryData(approvalsQuery()), context.queryClient.ensureQueryData(runLogsQuery({ limit: 5, offset: 0 }))]), component: HomeRoute });
-function HomeRoute() { const { q } = Route.useSearch(); const client = useQueryClient(); const health = useQuery(healthQuery()); const projects = useQuery(projectsQuery()); const templates = useQuery(templatesQuery()); const runs = useQuery({ ...runsQuery(), refetchInterval: (query) => shouldPollRunList(query.state.data) ? 3_000 : false }); const approvals = useQuery(approvalsQuery()); const logs = useQuery(runLogsQuery({ limit: 5, offset: 0 })); const approve = useMutation({ mutationFn: (run_id: string) => approveRun({ run_id }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: queryKeys.runs() }), client.invalidateQueries({ queryKey: queryKeys.approvals() })]); toast.success("Run approved"); }, onError: (error) => toast.error(error.message) }); const reject = useMutation({ mutationFn: (run_id: string) => rejectRun({ run_id }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: queryKeys.runs() }), client.invalidateQueries({ queryKey: queryKeys.approvals() })]); toast.success("Run rejected"); }, onError: (error) => toast.error(error.message) }); const error = [health, projects, templates, runs, approvals, logs].find((query) => query.isError)?.error; if (error) return <p role="alert">{error.message}</p>; return <HomeView health={health.data ?? { status: "ok" }} projects={projects.data ?? []} templates={templates.data ?? []} runs={runs.data ?? []} approvals={approvals.data ?? []} logs={logs.data ?? []} q={q} loading={[health, projects, templates, runs, approvals, logs].some((query) => query.isPending)} approvingRunID={approve.isPending ? approve.variables : undefined} rejectingRunID={reject.isPending ? reject.variables : undefined} onApprove={(runID) => approve.mutate(runID)} onReject={(runID) => reject.mutate(runID)} />; }
+
+export const Route = createFileRoute("/_authenticated/")({
+  validateSearch,
+  loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(healthQuery()), context.queryClient.ensureQueryData(projectsQuery()), context.queryClient.ensureQueryData(templatesQuery()), context.queryClient.ensureQueryData(runsQuery()), context.queryClient.ensureQueryData(approvalsQuery()), context.queryClient.ensureQueryData(runLogsQuery({ limit: 5, offset: 0 }))]),
+  component: HomeRoute,
+});
+
+function HomeRoute() {
+  const { q } = Route.useSearch();
+  const health = useQuery(healthQuery());
+  const projects = useQuery(projectsQuery());
+  const templates = useQuery(templatesQuery());
+  const runs = useQuery({ ...runsQuery(), refetchInterval: (query) => shouldPollRunList(query.state.data) ? 3_000 : false });
+  const approvals = useQuery(approvalsQuery());
+  const logs = useQuery(runLogsQuery({ limit: 5, offset: 0 }));
+  const { busy, mutate } = useSnapshotMutation();
+  const queries = [health, projects, templates, runs, approvals, logs];
+  const error = queries.find((query) => query.isError)?.error;
+  if (error) return <p role="alert">{error.message}</p>;
+  const snapshot = apiSnapshot({ health: health.data, projects: projects.data, templates: templates.data, runs: runs.data, approvals: approvals.data, logs: logs.data });
+  return <HomeView snapshot={snapshot} workSnapshot={snapshot} query={q} onClearQuery={() => undefined} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} />;
+}

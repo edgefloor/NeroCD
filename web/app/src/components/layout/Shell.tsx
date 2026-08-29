@@ -16,6 +16,9 @@ import {
   Sun,
   Terminal,
   X,
+  Rocket,
+  Bot,
+  Gauge,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ApiSnapshot } from "@/api";
@@ -23,11 +26,14 @@ import { NavButton } from "./NavButton";
 import { NotificationPanel } from "./NotificationPanel";
 import { cn } from "@/lib/utils";
 
-type ViewKey = "home" | "runs" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
+type ViewKey = "home" | "runs" | "deployments" | "runners" | "operations" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
 
 const navItems: Array<{ key: ViewKey; label: string; mobileLabel?: string; icon: typeof Home; mobile?: boolean; configure?: boolean }> = [
   { key: "home", label: "Home", icon: Home, mobile: true },
   { key: "runs", label: "Runs", icon: Activity, mobile: true },
+  { key: "deployments", label: "Deployments", icon: Rocket, mobile: true },
+  { key: "runners", label: "Runners", icon: Bot, mobile: true },
+  { key: "operations", label: "Operations", icon: Gauge, configure: true },
   { key: "approvals", label: "Approvals", mobileLabel: "Inbox", icon: ShieldCheck, mobile: true },
   { key: "templates", label: "Templates", icon: Layers3, mobile: true },
   { key: "logs", label: "Logs", icon: Terminal, mobile: true },

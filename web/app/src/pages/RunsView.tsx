@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import type { ApiSnapshot, TaskRun, Project, TaskTemplate } from "@/api";
-import { cancelRun } from "@/api";
+import { cancelRun } from "@/api/compat";
 import type { MutateFn } from "@/hooks/useApi";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";

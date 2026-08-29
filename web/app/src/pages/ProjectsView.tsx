@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ApiSnapshot, Project } from "@/api";
-import { archiveProject, createProject, createRepository, updateProject } from "@/api";
+import { archiveProject, createProject, createRepository, updateProject } from "@/api/compat";
 import type { MutateFn } from "@/hooks/useApi";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonCard } from "@/components/common/SkeletonCard";

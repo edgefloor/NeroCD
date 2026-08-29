@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-export function SignIn({ error, onSubmit }: { error: string; onSubmit: (email: string, password: string) => Promise<void> }): ReactNode {
+export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: string; bootstrapRequired?: boolean; onSubmit: (email: string, password: string) => Promise<void> }): ReactNode {
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -56,6 +56,7 @@ export function SignIn({ error, onSubmit }: { error: string; onSubmit: (email: s
               <Button className="w-full h-9" type="submit">
                 Sign in
               </Button>
+              {bootstrapRequired ? <p className="text-sm text-muted-foreground">Create the first administrator with the bootstrap command before signing in.</p> : null}
               {error ? (
                 <p className="text-sm text-destructive">{error}</p>
               ) : null}

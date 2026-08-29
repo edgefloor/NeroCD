@@ -4,3 +4,4 @@ export * from "./api/resources";
 export * from "./api/queries";
 export * from "./api/polling";
 export * from "./api/mutations";
+export type { ApiSnapshot } from "./api/compat";

@@ -3,7 +3,7 @@ import { CheckCircle2, GitBranch, XCircle, ShieldCheck, Clock } from "lucide-rea
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import type { ApiSnapshot, Approval } from "@/api";
-import { approveRun, rejectRun } from "@/api";
+import { approveRun, rejectRun } from "@/api/compat";
 import type { MutateFn } from "@/hooks/useApi";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";

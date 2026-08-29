@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ApiSnapshot, TaskRun, TaskTemplate } from "@/api";
-import { createTemplate, requestRun, updateTemplate } from "@/api";
+import { createTemplate, requestRun, updateTemplate } from "@/api/compat";
 import type { MutateFn } from "@/hooks/useApi";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
