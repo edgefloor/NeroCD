@@ -82,6 +82,7 @@ func TestReadRunnerCredentialFileSecurity(t *testing.T) {
 }
 
 func TestRunnerCredentialFileSkipsRegistration(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
 	t.Setenv("NEROCD_TOKEN", "")
 	t.Setenv("NEROCD_RUNNER_CREDENTIAL_FILE", "")
 	credential := filepath.Join(t.TempDir(), "runner-token")
@@ -154,6 +155,7 @@ func TestRunnerOperationalCountersSaturateUnderConcurrency(t *testing.T) {
 }
 
 func TestRunnerCredentialAndRegistrationModesAreExclusive(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
 	t.Setenv("NEROCD_TOKEN", "")
 	t.Setenv("NEROCD_RUNNER_CREDENTIAL_FILE", "")
 	credential := filepath.Join(t.TempDir(), "runner-token")

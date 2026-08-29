@@ -285,6 +285,7 @@ func TestReconcileRunnerJournalFlushesBeforeAnyNewRunnerTraffic(t *testing.T) {
 }
 
 func TestRunnerStartupPreservesJournalWhenAuthorityIsUnproven(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
 	for _, tc := range []struct {
 		name   string
 		status int
@@ -324,6 +325,7 @@ func TestRunnerStartupPreservesJournalWhenAuthorityIsUnproven(t *testing.T) {
 }
 
 func TestRunnerStartupLocalGuardExpiryPreservesJournal(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
 	lease := replayTestLease()
 	journalDir, credentialPath, before := createPendingRunnerStartup(t, lease)
 	var mu sync.Mutex
@@ -369,6 +371,7 @@ func TestRunnerStartupLocalGuardExpiryPreservesJournal(t *testing.T) {
 }
 
 func TestRunnerStartupInvalidAuthorityProbePreservesJournal(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
 	lease := replayTestLease()
 	journalDir, credentialPath, before := createPendingRunnerStartup(t, lease)
 	paths := []string{}
@@ -477,6 +480,7 @@ func TestAttemptSupervisorOldCreatedAtUsesCurrentRemainingAuthority(t *testing.T
 }
 
 func TestRunnerStartupMultiBatchFailurePreservesExactJournal(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
 	for _, mode := range []string{"invalid_ack", "conflict", "transient"} {
 		t.Run(mode, func(t *testing.T) {
 			lease := replayTestLease()
@@ -539,6 +543,7 @@ func TestRunnerStartupMultiBatchFailurePreservesExactJournal(t *testing.T) {
 }
 
 func TestRunnerStartupCompletionFailurePreservesAllAcknowledgedEvents(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
 	lease := replayTestLease()
 	lease.CreatedAt = time.Now().Add(-10 * time.Minute)
 	journalDir, credentialPath, before := createReplayRunnerStartup(t, lease, 65, true)
