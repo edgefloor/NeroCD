@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"unicode"
@@ -20,8 +21,9 @@ const runnerSecretMaxBytes = 64 * 1024
 
 // FileSecretResolver reads secrets from a secure, descriptor-confined root.
 type FileSecretResolver struct {
-	mu sync.Mutex
-	fd int
+	mu   sync.Mutex
+	fd   int
+	root string
 }
 
 // OpenFileSecretResolver opens an owner-only secret root.
@@ -30,6 +32,10 @@ func OpenFileSecretResolver(root string) (*FileSecretResolver, error) {
 	if root == "" {
 		return nil, errors.New("runner secret root is required")
 	}
+	if !filepath.IsAbs(root) {
+		return nil, errors.New("runner secret root must be an absolute path")
+	}
+	root = filepath.Clean(root)
 	fd, err := openDirectoryNoSymlinks(root)
 	if err != nil {
 		return nil, err
@@ -47,7 +53,21 @@ func OpenFileSecretResolver(root string) (*FileSecretResolver, error) {
 		_ = unix.Close(fd)
 		return nil, errors.New("runner secret root must be owned by the runner user")
 	}
-	return &FileSecretResolver{fd: fd}, nil
+	return &FileSecretResolver{fd: fd, root: root}, nil
+}
+
+// CanonicalSourcePath returns the descriptor-confined canonical source path
+// for a validated logical reference. It never follows a caller-provided path.
+func (r *FileSecretResolver) CanonicalSourcePath(reference string) (string, error) {
+	if !validSecretLogicalReference(reference) {
+		return "", errors.New("runner secret reference is invalid")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fd < 0 {
+		return "", errors.New("runner secret resolver is closed")
+	}
+	return filepath.Join(r.root, reference), nil
 }
 
 // Close releases the resolver's root descriptor.

@@ -37,10 +37,11 @@ type PreparedSecrets struct {
 // names validated operator-managed runner_file sources; Cleanup removes only
 // generated override metadata and never copies or deletes source values.
 type PreparedComposeSecrets struct {
-	OverridePath string
-	Redactor     *Redactor
-	Count        int
-	Cleanup      func()
+	OverridePath      string
+	DescriptorSources map[string]string
+	Redactor          *Redactor
+	Count             int
+	Cleanup           func()
 }
 
 // ValidateSecretBinding verifies binding syntax and provider constraints.
@@ -164,7 +165,12 @@ func PrepareComposeSecrets(ctx context.Context, bindings []domain.SecretBinding,
 			cleanup()
 			return PreparedComposeSecrets{}, fmt.Errorf("resolve secret binding %q: %w", binding.Name, readErr)
 		}
-		entries = append(entries, composeSecretEntry{Name: name, Path: filepath.Join(strings.TrimSpace(secretRoot), strings.TrimSpace(binding.Reference))})
+		source, sourceErr := resolver.CanonicalSourcePath(strings.TrimSpace(binding.Reference))
+		if sourceErr != nil {
+			cleanup()
+			return PreparedComposeSecrets{}, fmt.Errorf("canonicalize secret binding %q source: %w", binding.Name, sourceErr)
+		}
+		entries = append(entries, composeSecretEntry{Name: name, Path: source})
 		materials = append(materials, SecretMaterial{Value: string(value), Encodings: binding.RedactEncodings})
 	}
 	overridePath := filepath.Join(directory, "compose-secrets.yaml")
@@ -172,7 +178,11 @@ func PrepareComposeSecrets(ctx context.Context, bindings []domain.SecretBinding,
 		cleanup()
 		return PreparedComposeSecrets{}, err
 	}
-	return PreparedComposeSecrets{OverridePath: overridePath, Redactor: NewRedactor(materials), Count: len(materials), Cleanup: cleanup}, nil
+	sources := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		sources[entry.Name] = entry.Path
+	}
+	return PreparedComposeSecrets{OverridePath: overridePath, DescriptorSources: sources, Redactor: NewRedactor(materials), Count: len(materials), Cleanup: cleanup}, nil
 }
 
 type composeSecretEntry struct{ Name, Path string }

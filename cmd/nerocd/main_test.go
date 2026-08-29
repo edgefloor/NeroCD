@@ -168,6 +168,15 @@ func TestRunnerCredentialAndRegistrationModesAreExclusive(t *testing.T) {
 	}
 }
 
+func TestValidateRunnerSecretRootRejectsRelativePath(t *testing.T) {
+	if err := validateRunnerSecretRoot("relative/secrets"); err == nil {
+		t.Fatal("validateRunnerSecretRoot accepted a relative path")
+	}
+	if err := validateRunnerSecretRoot(t.TempDir()); err != nil {
+		t.Fatalf("validateRunnerSecretRoot absolute path error=%v", err)
+	}
+}
+
 func TestOpenAPIContractLoadsAndMatchesImplementedRoutes(t *testing.T) {
 	document, err := loadOpenAPIContract("../../openapi.yaml")
 	if err != nil {

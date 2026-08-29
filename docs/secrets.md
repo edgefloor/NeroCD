@@ -9,7 +9,7 @@ and secret-read audit are implemented.
 `RunSpec.secrets` entries are references, never inline values:
 
 - `name`: display/audit label.
-- `provider`: `env`, `database`, or `vault`.
+- `provider`: `runner_file`, `env`, `database`, or `vault`.
 - `reference`: provider-specific lookup key.
 - `target`: either `env:NAME` for a process or `file:NAME` for a Compose
   top-level secret. Compose services must reference `NAME` in their checked-in
@@ -34,6 +34,11 @@ messages, artifact records, or runner primitive plans.
   needs an owner-only host bind directory mounted at the identical absolute
   path inside the runner; named or container-private volumes are unsupported.
   Production should prefer a host-process runner on a dedicated runner VM.
+  After Compose merges the generated override, NeroCD accepts only the exact
+  authorized top-level `file:NAME` bindings: every descriptor is exactly its
+  validated source file and every service reference names one of those
+  bindings. Repository-defined `external`, additional, or alternate-file
+  descriptors are rejected.
 - `env`: resolved by the runner from its own host environment and allowed only
   with the `development` classification. It is not a production Compose
   secret transport.

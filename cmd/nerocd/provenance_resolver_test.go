@@ -187,6 +187,39 @@ func TestCanonicalComposeFileSecretsAreStableAcrossAttemptsAndRollback(t *testin
 	}
 }
 
+func TestCanonicalComposeRejectsUnboundOrUnsafeEffectiveSecrets(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	bindings := []domain.SecretBinding{{Name: "application", Provider: domain.ProviderRunnerFile, Reference: "application", Target: "file:application", Version: "v1", Required: true}}
+	sources := map[string]string{"application": "/runner/secrets/application"}
+	service := `{"image":"registry.example/api@sha256:` + digest + `","secrets":["application"]}`
+	for name, raw := range map[string]string{
+		"unbound_etc_descriptor": `{"services":{"api":` + service + `},"secrets":{"application":{"file":"/runner/secrets/application"},"steal":{"file":"/etc/shadow"}}}`,
+		"external_descriptor":    `{"services":{"api":` + service + `},"secrets":{"application":{"external":true}}}`,
+		"extra_descriptor_key":   `{"services":{"api":` + service + `},"secrets":{"application":{"file":"/runner/secrets/application","name":"attacker"}}}`,
+		"wrong_validated_source": `{"services":{"api":` + service + `},"secrets":{"application":{"file":"/etc/shadow"}}}`,
+		"unauthorized_service":   `{"services":{"api":{"image":"registry.example/api@sha256:` + digest + `","secrets":["steal"]}},"secrets":{"application":{"file":"/runner/secrets/application"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := canonicalComposeWithSecretSources([]byte(raw), "server-owned", bindings, sources); err == nil {
+				t.Fatalf("canonicalComposeWithSecretSources accepted unsafe effective secret config %s", raw)
+			}
+		})
+	}
+}
+
+func TestCanonicalComposeAcceptsAuthorizedMultiServiceSecrets(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	bindings := []domain.SecretBinding{{Name: "application", Provider: domain.ProviderRunnerFile, Reference: "application", Target: "file:application", Version: "v1", Required: true}}
+	raw := `{"services":{"api":{"image":"registry.example/api@sha256:` + digest + `","secrets":["application"]},"worker":{"image":"registry.example/worker@sha256:` + digest + `","secrets":[{"source":"application","target":"/run/secrets/application"}]}},"secrets":{"application":{"file":"/runner/secrets/application"}}}`
+	canonical, _, err := canonicalComposeWithSecretSources([]byte(raw), "server-owned", bindings, map[string]string{"application": "/runner/secrets/application"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(canonical), "/runner/secrets/application") || !strings.Contains(string(canonical), "nerocd-secret://application") {
+		t.Fatalf("canonicalComposeWithSecretSources did not replace source path safely: %s", canonical)
+	}
+}
+
 func TestSSHProvenanceUsesFencedRunnerFileAndPinnedHostKey(t *testing.T) {
 	previous := lookupRepositoryIP
 	lookupRepositoryIP = func(context.Context, string, string) ([]netip.Addr, error) {

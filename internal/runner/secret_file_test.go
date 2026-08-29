@@ -105,6 +105,9 @@ func TestFileSecretResolverRejectsUnsafeFilesAndReferences(t *testing.T) {
 }
 
 func TestFileSecretResolverRejectsUnsafeRoot(t *testing.T) {
+	if _, err := OpenFileSecretResolver("relative-secrets"); err == nil {
+		t.Fatal("accepted relative root")
+	}
 	parent := physicalTempDir(t)
 	wide := filepath.Join(parent, "wide")
 	if err := os.Mkdir(wide, 0o755); err != nil {
@@ -123,6 +126,22 @@ func TestFileSecretResolverRejectsUnsafeRoot(t *testing.T) {
 	}
 	if _, err := OpenFileSecretResolver(link); err == nil {
 		t.Fatal("accepted symlink root")
+	}
+}
+
+func TestFileSecretResolverReturnsCanonicalAbsoluteSource(t *testing.T) {
+	root := filepath.Join(physicalTempDir(t), "secrets")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := OpenFileSecretResolver(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resolver.Close() }()
+	got, err := resolver.CanonicalSourcePath("application")
+	if err != nil || got != filepath.Join(root, "application") || !filepath.IsAbs(got) {
+		t.Fatalf("CanonicalSourcePath got=%q err=%v, want absolute source %q", got, err, filepath.Join(root, "application"))
 	}
 }
 
@@ -190,6 +209,9 @@ func TestPrepareComposeSecretsUsesValidatedSourcesAndCleansUpOverride(t *testing
 	}
 	if prepared.Count != 1 || prepared.OverridePath == "" {
 		t.Fatalf("PrepareComposeSecrets count=%d override=%q, want one private override", prepared.Count, prepared.OverridePath)
+	}
+	if got := prepared.DescriptorSources["app_db_password"]; got != filepath.Join(root, "database-password") || !filepath.IsAbs(got) {
+		t.Fatalf("PrepareComposeSecrets descriptor source=%q, want canonical absolute source", got)
 	}
 	defer prepared.Cleanup()
 	info, err := os.Stat(filepath.Dir(prepared.OverridePath))

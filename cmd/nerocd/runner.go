@@ -240,6 +240,9 @@ func runRunner(args []string) error {
 	if err := validateRunnerOperatingGuardrails(*server, *workDir); err != nil {
 		return err
 	}
+	if err := validateRunnerSecretRoot(*secretRoot); err != nil {
+		return err
+	}
 	registrationToken := strings.TrimSpace(*token)
 	credentialPath := strings.TrimSpace(*credentialFile)
 	enrollmentPath := strings.TrimSpace(*enrollmentFile)
@@ -362,6 +365,14 @@ func runRunner(args []string) error {
 			return nil
 		}
 	}
+}
+
+func validateRunnerSecretRoot(root string) error {
+	root = strings.TrimSpace(root)
+	if root != "" && !filepath.IsAbs(root) {
+		return errors.New("runner --secret-root must be an absolute path")
+	}
+	return nil
 }
 
 func printRunnerAuthorityEvent(event, runID string, lease domain.RunLease) error {

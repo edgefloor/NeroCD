@@ -608,6 +608,7 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 		return resolvedProvenance{}, errors.New("invalid compose project name")
 	}
 	secretOverride := ""
+	secretSources := map[string]string(nil)
 	if prepareWorkspace != nil {
 		prepared, prepareErr := prepareWorkspace(ctx, workspace)
 		if prepareErr != nil {
@@ -615,6 +616,7 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 		}
 		defer prepared.Cleanup()
 		secretOverride = prepared.OverridePath
+		secretSources = prepared.DescriptorSources
 	}
 	// Compose otherwise auto-loads a checkout-controlled .env file. Its only
 	// input here is a runner-created server value; deployment secrets never take
@@ -643,7 +645,7 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	if err != nil {
 		return resolvedProvenance{}, commandFailure("docker compose config", err)
 	}
-	canonical, images, err := canonicalCompose(compose, plan.ComposeProject, composeApplicationSecretBindings(plan.SecretBindings))
+	canonical, images, err := canonicalComposeWithSecretSources(compose, plan.ComposeProject, composeApplicationSecretBindings(plan.SecretBindings), secretSources)
 	if err != nil {
 		return resolvedProvenance{}, err
 	}
@@ -927,6 +929,17 @@ func isHexCommit(v string) bool {
 }
 
 func canonicalCompose(raw []byte, serverProject string, secretBindings ...[]domain.SecretBinding) ([]byte, []string, error) {
+	if len(secretBindings) > 1 {
+		return nil, nil, errors.New("compose canonicalization accepts one secret binding set")
+	}
+	var bindings []domain.SecretBinding
+	if len(secretBindings) == 1 {
+		bindings = secretBindings[0]
+	}
+	return canonicalComposeWithSecretSources(raw, serverProject, bindings, nil)
+}
+
+func canonicalComposeWithSecretSources(raw []byte, serverProject string, bindings []domain.SecretBinding, sources map[string]string) ([]byte, []string, error) {
 	if len(raw) > 4<<20 {
 		return nil, nil, errors.New("compose config exceeds limit")
 	}
@@ -944,13 +957,8 @@ func canonicalCompose(raw []byte, serverProject string, secretBindings ...[]doma
 		}
 		delete(doc, "name")
 	}
-	if len(secretBindings) > 1 {
-		return nil, nil, errors.New("compose canonicalization accepts one secret binding set")
-	}
-	if len(secretBindings) == 1 {
-		if err := normalizeComposeSecretDescriptors(doc, secretBindings[0]); err != nil {
-			return nil, nil, err
-		}
+	if err := normalizeComposeSecretDescriptors(doc, bindings, sources); err != nil {
+		return nil, nil, err
 	}
 	// A deployment may not attach itself to pre-existing engine objects.  The
 	// later adapter creates only a controlled project namespace.
@@ -999,33 +1007,94 @@ func canonicalCompose(raw []byte, serverProject string, secretBindings ...[]doma
 // the provenance input. Runtime Compose still receives the real private paths;
 // only the content hash sees stable placeholders derived from validated binding
 // targets, never from secret values.
-func normalizeComposeSecretDescriptors(doc map[string]any, bindings []domain.SecretBinding) error {
-	if len(bindings) == 0 {
-		return nil
-	}
-	secrets, ok := doc["secrets"].(map[string]any)
-	if !ok {
-		return errors.New("compose secret override was not retained")
-	}
-	seen := make(map[string]struct{}, len(bindings))
+func normalizeComposeSecretDescriptors(doc map[string]any, bindings []domain.SecretBinding, sources map[string]string) error {
+	allowed := make(map[string]struct{}, len(bindings))
 	for _, binding := range bindings {
 		target := strings.TrimSpace(binding.Target)
 		name, ok := strings.CutPrefix(target, "file:")
 		if !ok || name == "" {
 			return errors.New("compose secret binding target is invalid")
 		}
-		if _, exists := seen[name]; exists {
+		if _, exists := allowed[name]; exists {
 			return errors.New("compose secret binding target is duplicated")
 		}
-		seen[name] = struct{}{}
+		allowed[name] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		if secrets, exists := doc["secrets"]; exists {
+			values, ok := secrets.(map[string]any)
+			if !ok || len(values) != 0 {
+				return errors.New("compose declares unbound secrets")
+			}
+		}
+		return validateComposeServiceSecrets(doc, allowed)
+	}
+	secrets, ok := doc["secrets"].(map[string]any)
+	if !ok || len(secrets) != len(allowed) {
+		return errors.New("effective compose secrets do not exactly match authorized bindings")
+	}
+	for name := range allowed {
 		descriptor, ok := secrets[name].(map[string]any)
 		if !ok {
 			return fmt.Errorf("compose secret override missing target %q", name)
 		}
-		if _, ok := descriptor["file"].(string); !ok {
+		if len(descriptor) != 1 {
+			return fmt.Errorf("compose secret descriptor for target %q has unsupported fields", name)
+		}
+		file, ok := descriptor["file"].(string)
+		if !ok || strings.TrimSpace(file) == "" {
 			return fmt.Errorf("compose secret override for target %q is invalid", name)
+		}
+		if sources != nil && file != sources[name] {
+			return fmt.Errorf("compose secret descriptor for target %q does not use its validated source", name)
 		}
 		descriptor["file"] = "nerocd-secret://" + name
 	}
+	return validateComposeServiceSecrets(doc, allowed)
+}
+
+func validateComposeServiceSecrets(doc map[string]any, allowed map[string]struct{}) error {
+	services, ok := doc["services"].(map[string]any)
+	if !ok {
+		return errors.New("compose config has no services")
+	}
+	for serviceName, rawService := range services {
+		service, ok := rawService.(map[string]any)
+		if !ok {
+			return errors.New("invalid compose service")
+		}
+		rawSecrets, exists := service["secrets"]
+		if !exists {
+			continue
+		}
+		entries, ok := rawSecrets.([]any)
+		if !ok {
+			return fmt.Errorf("compose service %q has invalid secret references", serviceName)
+		}
+		for _, rawEntry := range entries {
+			name, err := composeServiceSecretName(rawEntry)
+			if err != nil {
+				return fmt.Errorf("compose service %q has invalid secret reference: %w", serviceName, err)
+			}
+			if _, ok := allowed[name]; !ok {
+				return fmt.Errorf("compose service %q references unbound secret %q", serviceName, name)
+			}
+		}
+	}
 	return nil
+}
+
+func composeServiceSecretName(raw any) (string, error) {
+	if name, ok := raw.(string); ok && strings.TrimSpace(name) != "" {
+		return name, nil
+	}
+	entry, ok := raw.(map[string]any)
+	if !ok {
+		return "", errors.New("unsupported secret reference")
+	}
+	name, ok := entry["source"].(string)
+	if !ok || strings.TrimSpace(name) == "" {
+		return "", errors.New("secret source is required")
+	}
+	return name, nil
 }
