@@ -39,7 +39,9 @@ try {
       throw new Error(`CLI-only bootstrap guidance absent (body=${body})`);
     }
     if (!(await page.getByText("Bootstrap is intentionally CLI-only.").isVisible())) throw new Error("CLI-only bootstrap guidance absent");
-    if (await page.getByLabel("Email").inputValue() || await page.getByLabel("Password").inputValue()) throw new Error("pre-bootstrap UI prefilled credentials");
+    if (await page.getByLabel("Email").count() || await page.getByLabel("Password").count() || await page.getByRole("button", { name: "Sign in" }).count()) {
+      throw new Error("pre-bootstrap UI exposed browser login controls");
+    }
     const bootstrap = await page.evaluate(async () => (await fetch("/api/v1/bootstrap-status")).json());
     if (bootstrap.status !== "required" || Object.keys(bootstrap).length !== 1) throw new Error("bootstrap status was not fixed required-only data");
   } else {
@@ -65,8 +67,8 @@ try {
     if (phase === "unavailable") {
       if (await page.locator("body").innerText().then((body) => /postgres:\/\/|SQLSTATE|relation .* does not exist|nerocd_repository_policy_schema_compatible/.test(body))) throw new Error("unavailable operations UI disclosed a partial diagnostic");
     } else {
-      const backup = phase === "success" ? /Last result/ : "No completed backup observed";
-      await page.getByText(backup).waitFor();
+      const backupCard = page.getByText("Backup", { exact: true }).locator("xpath=../..");
+      await backupCard.getByText(phase === "success" ? "success" : "none", { exact: true }).waitFor();
       await page.reload({ waitUntil: "networkidle" });
       await page.getByRole("heading", { name: "System Operations" }).waitFor();
     }
