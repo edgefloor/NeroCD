@@ -278,7 +278,10 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 		return nil
 	}
 	isRollback := plan.RollbackOfID != nil && strings.TrimSpace(*plan.RollbackOfID) != ""
-	value, err := resolveDeploymentProvenanceWithCredentialWorkspace(operationCtx, plan, workDir, nil, secretRoot, authorizeCredential, func(value resolvedProvenance, workspace string) error {
+	prepareWorkspace := func(ctx context.Context, workspace string) (runner.PreparedComposeSecrets, error) {
+		return runner.PrepareComposeSecrets(ctx, composeApplicationSecretBindings(plan.SecretBindings), secretRoot, workspace, authorizeCredential)
+	}
+	value, err := resolveDeploymentProvenanceWithCredentialWorkspace(operationCtx, plan, workDir, nil, secretRoot, authorizeCredential, prepareWorkspace, func(value resolvedProvenance, workspace, secretOverride string) error {
 		resolutionID := attemptMutationKey("provenance", claim.Lease.ID, claim.Lease.Attempt, value.GitCommit)
 		pending := runner.JournalProvenance{ID: resolutionID, Attempt: journalAttemptIdentity(plan.RunID, claim.Lease, supervisor), DeploymentID: plan.DeploymentID, GitCommit: value.GitCommit, ComposeHash: value.ComposeHash, ImageDigests: append([]string(nil), value.ImageDigests...), ContentIdentity: value.GitCommit + ":" + value.ComposeHash, CreatedAt: time.Now().UTC()}
 		if _, err := journal.AppendProvenance(pending); err != nil {
@@ -291,25 +294,18 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 			return err
 		}
 		engine := newComposeEngine(nil, nil, imagePolicy)
-		if err := engine.EnsureAvailability(operationCtx, plan, workspace, value); err != nil {
+		if err := engine.EnsureAvailability(operationCtx, plan, workspace, value, secretOverride); err != nil {
 			if plan.Status == domain.DeploymentPreparing {
 				return composePreApplyFailure(transition, claim, isRollback, "resolved_image_unavailable", err)
 			}
 			return composePostApplyFailure(supervisor, server, token, plan, claim, isRollback, plan.Status, "resolved_image_unavailable", err)
 		}
-		apply := func() error {
-			prepared, err := runner.PrepareComposeSecrets(operationCtx, composeApplicationSecretBindings(plan.SecretBindings), secretRoot, workspace, authorizeCredential)
-			if err != nil {
-				return err
-			}
-			defer prepared.Cleanup()
-			return engine.Apply(operationCtx, plan, workspace, value, prepared.OverridePath)
-		}
+		apply := func() error { return engine.Apply(operationCtx, plan, workspace, value, secretOverride) }
 		// A new attempt after apply must inspect the server-owned project before
 		// deciding whether mutation is necessary. Verifying may only continue if
 		// that inspection confirms the immutable target still exists.
 		if plan.Status == domain.DeploymentApplying || plan.Status == domain.DeploymentVerifying {
-			reconciled, reconcileErr := engine.Reconcile(operationCtx, plan, workspace, value)
+			reconciled, reconcileErr := engine.Reconcile(operationCtx, plan, workspace, value, secretOverride)
 			if reconcileErr != nil {
 				return composePostApplyFailure(supervisor, server, token, plan, claim, isRollback, plan.Status, "compose_reconcile_failed", reconcileErr)
 			}
@@ -345,7 +341,7 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 			passed := true
 			return transition(domain.DeploymentVerifying, target, attemptMutationKey("compose-resume-terminal", claim.Lease.ID, claim.Lease.Attempt, ""), "", &passed)
 		}
-		if reconciled, err := engine.Reconcile(operationCtx, plan, workspace, value); err != nil {
+		if reconciled, err := engine.Reconcile(operationCtx, plan, workspace, value, secretOverride); err != nil {
 			return composePreApplyFailure(transition, claim, isRollback, "compose_reconcile_failed", err)
 		} else if reconciled {
 			if err := transition(domain.DeploymentPreparing, domain.DeploymentApplying, attemptMutationKey("compose-reconcile-apply", claim.Lease.ID, claim.Lease.Attempt, ""), "", nil); err != nil {
@@ -364,18 +360,13 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 			passed := true
 			return transition(domain.DeploymentVerifying, target, attemptMutationKey("compose-reconcile-terminal", claim.Lease.ID, claim.Lease.Attempt, ""), "", &passed)
 		}
-		// Materialize and authorize before entering the mutation state. A missing
-		// or stale secret therefore remains a pre-apply failure and cannot cause
-		// a rollback of an untouched deployment.
-		prepared, err := runner.PrepareComposeSecrets(operationCtx, composeApplicationSecretBindings(plan.SecretBindings), secretRoot, workspace, authorizeCredential)
-		if err != nil {
-			return composePreApplyFailure(transition, claim, isRollback, "compose_secret_prepare_failed", err)
-		}
-		defer prepared.Cleanup()
+		// Secret material was authorized and created before the first Compose
+		// parse. Its one cleanup lifetime covers all read, reconcile, pull, and
+		// mutation stages for this fenced attempt.
 		if err := transition(domain.DeploymentPreparing, domain.DeploymentApplying, attemptMutationKey("compose-apply", claim.Lease.ID, claim.Lease.Attempt, ""), "", nil); err != nil {
 			return err
 		}
-		if err := engine.Apply(operationCtx, plan, workspace, value, prepared.OverridePath); err != nil {
+		if err := engine.Apply(operationCtx, plan, workspace, value, secretOverride); err != nil {
 			return composePostApplyFailure(supervisor, server, token, plan, claim, isRollback, domain.DeploymentApplying, "compose_apply_failed", err)
 		}
 		if err := transition(domain.DeploymentApplying, domain.DeploymentVerifying, attemptMutationKey("compose-verify", claim.Lease.ID, claim.Lease.Attempt, ""), "", nil); err != nil {
@@ -506,14 +497,14 @@ func resolveDeploymentProvenance(ctx context.Context, plan domain.DeploymentPlan
 }
 
 func resolveDeploymentProvenanceWithCredential(ctx context.Context, plan domain.DeploymentPlan, root string, command provenanceCommand, secretRoot string, authorize runner.SecretAuthorizer) (resolvedProvenance, error) {
-	return resolveDeploymentProvenanceWithCredentialWorkspace(ctx, plan, root, command, secretRoot, authorize, nil)
+	return resolveDeploymentProvenanceWithCredentialWorkspace(ctx, plan, root, command, secretRoot, authorize, nil, nil)
 }
 
 // resolveDeploymentProvenanceWithCredentialWorkspace keeps the checked-out
 // immutable input alive only while the caller performs its fenced deployment
 // action. It is intentionally not exported: no other runner path may reuse a
 // checkout after the controlling attempt ends.
-func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, plan domain.DeploymentPlan, root string, command provenanceCommand, secretRoot string, authorize runner.SecretAuthorizer, afterResolved func(resolvedProvenance, string) error) (resolvedProvenance, error) {
+func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, plan domain.DeploymentPlan, root string, command provenanceCommand, secretRoot string, authorize runner.SecretAuthorizer, prepareWorkspace func(context.Context, string) (runner.PreparedComposeSecrets, error), afterResolved func(resolvedProvenance, string, string) error) (resolvedProvenance, error) {
 	provenanceDiagnostic("resolve", "start")
 	policy := sourcePolicyFromPlan(plan.RepositoryPolicy)
 	repositoryURL, err := policy.ValidateURL(plan.RepositoryURL, false)
@@ -616,6 +607,15 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	if !composeProjectName(plan.ComposeProject) {
 		return resolvedProvenance{}, errors.New("invalid compose project name")
 	}
+	secretOverride := ""
+	if prepareWorkspace != nil {
+		prepared, prepareErr := prepareWorkspace(ctx, workspace)
+		if prepareErr != nil {
+			return resolvedProvenance{}, prepareErr
+		}
+		defer prepared.Cleanup()
+		secretOverride = prepared.OverridePath
+	}
 	// Compose otherwise auto-loads a checkout-controlled .env file. Its only
 	// input here is a runner-created server value; deployment secrets never take
 	// part in provenance resolution. This also lets a service expose the exact
@@ -626,6 +626,9 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 		return resolvedProvenance{}, err
 	}
 	composeArgs := []string{"compose", "--project-name", plan.ComposeProject, "--env-file", emptyEnv, "--file", composePath}
+	if secretOverride != "" {
+		composeArgs = append(composeArgs, "--file", secretOverride)
+	}
 	profiles := append([]string(nil), plan.Profiles...)
 	sort.Strings(profiles)
 	for _, profile := range profiles {
@@ -647,7 +650,7 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	sum := sha256.Sum256(canonical)
 	resolved := resolvedProvenance{GitCommit: commit, ComposeHash: "sha256:" + hex.EncodeToString(sum[:]), ImageDigests: images}
 	if afterResolved != nil {
-		if err := afterResolved(resolved, workspace); err != nil {
+		if err := afterResolved(resolved, workspace, secretOverride); err != nil {
 			return resolvedProvenance{}, err
 		}
 	}
@@ -968,19 +971,10 @@ func canonicalCompose(raw []byte, serverProject string) ([]byte, []string, error
 			}
 		}
 		image, ok := svc["image"].(string)
-		if !ok || !strings.Contains(image, "@sha256:") {
+		if !ok || validateProductionImageReference(strings.TrimSpace(image)) != nil {
 			return nil, nil, errors.New("compose services require digest-pinned prebuilt images")
 		}
-		digest := image[strings.LastIndex(image, "@")+1:]
-		if len(digest) != 71 || !strings.HasPrefix(digest, "sha256:") {
-			return nil, nil, errors.New("invalid image digest")
-		}
-		for _, c := range digest[7:] {
-			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-				return nil, nil, errors.New("invalid image digest")
-			}
-		}
-		images = append(images, digest)
+		images = append(images, strings.TrimSpace(image))
 	}
 	sort.Strings(images)
 	for i := 1; i < len(images); i++ {

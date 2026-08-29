@@ -1,10 +1,32 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"nerocd/internal/domain"
 )
+
+func TestValidImageReferenceRequiresUntaggedRepositoryDigest(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	for _, value := range []string{
+		"registry.example/app@sha256:" + digest,
+		"registry.example:5443/ns/app@sha256:" + digest,
+	} {
+		if !validImageReference(value) {
+			t.Fatalf("validImageReference(%q) = false, want true", value)
+		}
+	}
+	for _, value := range []string{
+		"sha256:" + digest,
+		"registry.example/app:latest@sha256:" + digest,
+		"registry.example/app@sha256:" + strings.Repeat("A", 64),
+	} {
+		if validImageReference(value) {
+			t.Fatalf("validImageReference(%q) = true, want false", value)
+		}
+	}
+}
 
 func TestServerOwnedRollbackIDsAreStableAndScoped(t *testing.T) {
 	depA, runA := domain.RollbackObjectIDs("dep_source", "failure_receipt")

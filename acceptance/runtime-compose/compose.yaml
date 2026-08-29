@@ -99,7 +99,7 @@ services:
     depends_on: {proxy: {condition: service_started}, git: {condition: service_started}}
     entrypoint: [nerocd, runner]
     command: [--server, http://proxy:8081, --credential-file, /credentials/token, --journal-dir, /journal, --secret-root, /secrets/root, --id, runner_compose, --tags, compose-runtime, --capabilities, compose-deploy, --poll-interval, 1s, --work-dir, /workspace]
-    environment: {NEROCD_COMPOSE_TRACE: /journal/compose-trace.log}
+    environment: {NEROCD_COMPOSE_TRACE: /journal/compose-trace.log, NEROCD_MODE: development}
     user: "10001:10001"
     group_add: ["${NEROCD_DOCKER_GID:?set NEROCD_DOCKER_GID}"]
     volumes: [runner-credential:/credentials:ro, runner-journal:/journal, runner-workspace:/workspace, runner-secrets:/secrets:ro, /var/run/docker.sock:/var/run/docker.sock]

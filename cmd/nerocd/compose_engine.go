@@ -122,8 +122,12 @@ func composeSecretOverride(overrides []string) (string, error) {
 // Reconcile reads durable, non-secret per-environment state and asks Docker
 // for the controlled project before any mutation. A matching verified state is
 // a retry/restart no-op; a missing or changed identity proceeds to Apply.
-func (e composeEngine) Reconcile(ctx context.Context, plan domain.DeploymentPlan, workspace string, resolved resolvedProvenance) (bool, error) {
-	args, cleanup, err := composeInvocation(plan, workspace, resolved.GitCommit, "")
+func (e composeEngine) Reconcile(ctx context.Context, plan domain.DeploymentPlan, workspace string, resolved resolvedProvenance, secretOverrides ...string) (bool, error) {
+	secretOverride, err := composeSecretOverride(secretOverrides)
+	if err != nil {
+		return false, err
+	}
+	args, cleanup, err := composeInvocation(plan, workspace, resolved.GitCommit, secretOverride)
 	if err != nil {
 		return false, err
 	}
@@ -209,7 +213,11 @@ func writeComposeReconciliationState(workspace string, state composeReconciliati
 // EnsureAvailability checks or obtains only already-resolved immutable images.
 // The policy is runner-owned; neither a checkout nor a deployment payload can
 // choose a pull operation.
-func (e composeEngine) EnsureAvailability(ctx context.Context, plan domain.DeploymentPlan, workspace string, resolved resolvedProvenance) error {
+func (e composeEngine) EnsureAvailability(ctx context.Context, plan domain.DeploymentPlan, workspace string, resolved resolvedProvenance, secretOverrides ...string) error {
+	secretOverride, err := composeSecretOverride(secretOverrides)
+	if err != nil {
+		return err
+	}
 	if e.imagePolicy != composeImagePolicyPreloaded && e.imagePolicy != composeImagePolicyPull {
 		return errors.New("runner compose image policy is invalid")
 	}
@@ -226,12 +234,7 @@ func (e composeEngine) EnsureAvailability(ctx context.Context, plan domain.Deplo
 		// image names. Compose therefore performs the pull from the already
 		// validated checkout configuration, whose service images were accepted
 		// only when pinned to those exact digests.
-		pullPlan := plan
-		// Pull has no secret transport: Compose reads only the already-validated
-		// checked-out image references. File descriptors are needed exclusively
-		// for the later application mutation.
-		pullPlan.SecretBindings = nil
-		args, cleanup, err := composeInvocation(pullPlan, workspace, resolved.GitCommit)
+		args, cleanup, err := composeInvocation(plan, workspace, resolved.GitCommit, secretOverride)
 		if err != nil {
 			return err
 		}
@@ -306,16 +309,7 @@ func composeInvocation(plan domain.DeploymentPlan, workspace, revision string, s
 }
 
 func immutableImageDigest(value string) bool {
-	digest := strings.TrimSpace(value)
-	if !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 {
-		return false
-	}
-	for _, r := range digest[7:] {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
+	return validateProductionImageReference(strings.TrimSpace(value)) == nil
 }
 
 func healthContract(raw domain.HealthPolicy, commit string, timeoutSeconds int) (composeHealthContract, error) {

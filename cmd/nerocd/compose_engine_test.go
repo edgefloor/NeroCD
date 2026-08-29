@@ -52,7 +52,7 @@ func composeTestPlan() domain.DeploymentPlan {
 	return domain.DeploymentPlan{ComposeProject: "project_prod", ComposePath: "compose.yaml", TimeoutSeconds: 5, HealthPolicy: domain.HealthPolicy{URL: "http://127.0.0.1:8080/health", AllowedHosts: []string{"127.0.0.1"}, AllowedCIDRs: []string{"127.0.0.0/8"}, AllowedPorts: []int{8080}, AllowHTTP: true, ExpectedRevision: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 }
 func composeTestResolved() resolvedProvenance {
-	return resolvedProvenance{GitCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ComposeHash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", ImageDigests: []string{"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}
+	return resolvedProvenance{GitCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ComposeHash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", ImageDigests: []string{"registry.example/app@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}
 }
 
 func TestComposeReconciliationIsDurableAndIdempotent(t *testing.T) {
@@ -153,6 +153,32 @@ func TestComposeEngineAcceptsOnlyPrivateFileSecretOverride(t *testing.T) {
 	}
 }
 
+func TestComposeFileSecretOverrideCoversAvailabilityReconcileAndApply(t *testing.T) {
+	plan := composeTestPlan()
+	plan.SecretBindings = []domain.SecretBinding{{Name: "db", Provider: domain.ProviderRunnerFile, Reference: "db", Target: "file:db", Required: true, Version: "v1"}}
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("secrets:\n  db:\n    file: /private/generated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &fakeComposeCommand{}
+	engine := newComposeEngine(cmd, &fakeComposeHealth{}, composeImagePolicyPull)
+	workspace := t.TempDir()
+	if err := engine.EnsureAvailability(context.Background(), plan, workspace, composeTestResolved(), override); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Apply(context.Background(), plan, workspace, composeTestResolved(), override); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Reconcile(context.Background(), plan, workspace, composeTestResolved(), override); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range cmd.calls {
+		if call[0] == "compose" && !slices.Contains(call, override) {
+			t.Fatalf("Compose stage %#v omitted file-secret override %q", call, override)
+		}
+	}
+}
+
 func TestComposeImagePolicyPullsExactDigestBeforeInspection(t *testing.T) {
 	resolved := composeTestResolved()
 	cmd := &fakeComposeCommand{}
@@ -162,7 +188,7 @@ func TestComposeImagePolicyPullsExactDigestBeforeInspection(t *testing.T) {
 	if len(cmd.calls) != 2 || !slices.Equal(cmd.calls[0][len(cmd.calls[0])-2:], []string{"pull", "--ignore-buildable"}) || !slices.Equal(cmd.calls[1], []string{"image", "inspect", resolved.ImageDigests[0]}) {
 		t.Fatalf("image policy calls=%#v, want pull then inspect exact digest", cmd.calls)
 	}
-	for _, value := range []string{"repo:latest", "repo@sha256:not-a-digest", "sha256:" + strings.Repeat("A", 64)} {
+	for _, value := range []string{"repo:latest", "repo:latest@sha256:" + strings.Repeat("a", 64), "repo@sha256:not-a-digest", "repo@sha256:" + strings.Repeat("A", 64)} {
 		if err := newComposeEngine(&fakeComposeCommand{}, &fakeComposeHealth{}, composeImagePolicyPull).EnsureAvailability(context.Background(), composeTestPlan(), t.TempDir(), resolvedProvenance{ImageDigests: []string{value}}); err == nil {
 			t.Fatalf("EnsureAvailability(%q) succeeded, want immutable digest rejection", value)
 		}

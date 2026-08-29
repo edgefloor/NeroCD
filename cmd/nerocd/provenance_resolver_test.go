@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +84,7 @@ func TestResolveDeploymentProvenanceDetachedAndDigestPinned(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if v.GitCommit != strings.Repeat("a", 40) || len(v.ImageDigests) != 1 {
+	if v.GitCommit != strings.Repeat("a", 40) || !slices.Equal(v.ImageDigests, []string{"example/api@sha256:" + strings.Repeat("a", 64)}) {
 		t.Fatalf("bad result %#v", v)
 	}
 	joined := ""
@@ -145,6 +146,10 @@ func TestCanonicalComposeRejectsMutationFeatures(t *testing.T) {
 	_, _, e = canonicalCompose([]byte(`{"name":"attacker","services":{"x":{"image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`), "server-owned")
 	if e == nil || !strings.Contains(e.Error(), "project name") {
 		t.Fatalf("project override got %v", e)
+	}
+	_, _, e = canonicalCompose([]byte(`{"services":{"x":{"image":"x:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`), "server-owned")
+	if e == nil || !strings.Contains(e.Error(), "digest-pinned") {
+		t.Fatalf("tagged image got %v", e)
 	}
 }
 

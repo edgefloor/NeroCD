@@ -810,6 +810,11 @@ func validDigest(v string) bool {
 	return true
 }
 
+func validImageReference(v string) bool {
+	repository, digest, found := strings.Cut(v, "@sha256:")
+	return found && repository != "" && strings.LastIndex(repository, ":") <= strings.LastIndex(repository, "/") && validDigest("sha256:"+digest)
+}
+
 // ResolveDeploymentProvenance records verified deployment provenance.
 func (s *Service) ResolveDeploymentProvenance(ctx context.Context, in ProvenanceResolutionInput) (domain.Revision, error) {
 	p, err := s.requireRunnerPrincipal(ctx)
@@ -818,13 +823,13 @@ func (s *Service) ResolveDeploymentProvenance(ctx context.Context, in Provenance
 	}
 	commit, hash := strings.TrimSpace(in.GitCommit), strings.TrimSpace(in.ComposeHash)
 	if strings.TrimSpace(in.ResolutionID) == "" || strings.TrimSpace(in.ContentIdentity) != commit+":"+hash || !validCommit(commit) || !validDigest(hash) || len(in.ImageDigests) == 0 {
-		return domain.Revision{}, errors.New("git_commit and compose_hash must be immutable sha256 values and image_digests must be non-empty sha256 digests")
+		return domain.Revision{}, errors.New("git_commit and compose_hash must be immutable sha256 values and image_digests must be non-empty repository digests")
 	}
 	digests := append([]string(nil), in.ImageDigests...)
 	for i, d := range digests {
 		digests[i] = strings.TrimSpace(d)
-		if !validDigest(digests[i]) {
-			return domain.Revision{}, errors.New("image_digests must be sha256 digests")
+		if !validImageReference(digests[i]) {
+			return domain.Revision{}, errors.New("image_digests must be repository@sha256 digests")
 		}
 	}
 	for i := 1; i < len(digests); i++ {
