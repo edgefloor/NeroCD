@@ -194,6 +194,17 @@ fi
 backup_name=$(basename "$(tail -n1 "$dir/backup.log")")
 backup_dir="$dir/backups/$backup_name"
 [[ -f "$backup_dir/database.dump" && -f "$backup_dir/manifest.json" ]] || fail 'atomic backup files missing'
+mkdir -m 0700 "$dir/off-host"
+# Export uses an operator-mounted destination rather than a cloud SDK. The
+# source is verified before copy and again before its single atomic publish.
+run_tool "$dir/source-url" -v "$backup_dir:/restore:ro" -v "$dir/off-host:/off-host" "$image_ref" backup-export --input-dir /restore --output-dir /off-host >"$dir/export.log" 2>&1 || fail 'verified off-host backup export failed'
+export_name=$(basename "$(tail -n1 "$dir/export.log")")
+export_dir="$dir/off-host/$export_name"
+[[ -f "$export_dir/database.dump" && -f "$export_dir/manifest.json" ]] || fail 'off-host export files missing'
+run_tool "$dir/source-url" -v "$export_dir:/restore:ro" "$image_ref" backup-verify --input-dir /restore >"$dir/export-verify.log" 2>&1 || fail 'off-host backup verification failed'
+docker run --rm -v "$export_dir:/backup" alpine:3.22.2 sh -ec 'printf tamper >> /backup/database.dump; chmod 600 /backup/database.dump'
+if run_tool "$dir/source-url" -v "$export_dir:/restore:ro" "$image_ref" backup-verify --input-dir /restore >"$dir/export-tamper.log" 2>&1; then fail 'backup verification accepted tampered off-host export'; fi
+record 'off_host_export_atomic=true exported_archive_verified=true exported_archive_tamper_rejected=true'
 jq -e '.version == 1 and .files[0].path == "database.dump" and (.files[0].sha256|length == 64) and .runner_file_inventory == [{provider:"runner_file",reference:"run-nested.json",version:"v3"},{provider:"runner_file",reference:"run-root.json",version:"v1"},{provider:"runner_file",reference:"runner.json",version:"v1"},{provider:"runner_file",reference:"template-workflow.json",version:"v2"},{provider:"runner_file",reference:"template.json",version:"v1"}]' "$backup_dir/manifest.json" >/dev/null || fail 'backup manifest is incomplete or omitted persisted run specifications'
 ! rg -Fq 'fixture runner credential' "$backup_dir/manifest.json" "$dir/backup.log" || fail 'runner file content leaked into manifest or tool output'
 if docker run --rm --network "$network" alpine:3.22.2 wget -qO- "http://$source_server:8080/metrics" >"$dir/metrics-anonymous.out" 2>&1; then fail 'anonymous metrics unexpectedly succeeded'; fi

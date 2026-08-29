@@ -47,6 +47,10 @@ func run(args []string) error {
 		return migrateDatabase(args[1:])
 	case "backup":
 		return backupDatabase(args[1:])
+	case "backup-export":
+		return backupExport(args[1:])
+	case "backup-verify":
+		return verifyBackup(args[1:])
 	case "restore":
 		return restoreDatabase(args[1:])
 	case "backup-scheduler":
@@ -89,6 +93,8 @@ Usage:
 	  nerocd session --email <email> --password <password> [--addr http://127.0.0.1:8080]
   nerocd migrate [--database-url postgres://...]
 	  nerocd backup --database-url postgres://... --output-dir /secure/backups
+	  nerocd backup-export --input-dir /secure/backups/backup-... --output-dir /mounted/off-host
+	  nerocd backup-verify --input-dir /secure/backups/backup-...
 	  nerocd restore --database-url postgres://... --input-dir /secure/backups/backup-...
 	  nerocd backup-scheduler --output-dir /secure/backups [--runner-file-root /secure/runner-files] [--interval-seconds 86400] [--retention-count 7]
 	  nerocd seed-dev [--database-url postgres://...]

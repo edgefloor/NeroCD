@@ -2,15 +2,104 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"nerocd/internal/domain"
 )
+
+func TestVerifyBackupArchiveRejectsTamperingAndUnexpectedEntries(t *testing.T) {
+	root := privateBackupTestDir(t)
+	archive := filepath.Join(root, "archive")
+	if err := os.Mkdir(archive, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dump := []byte("backup-data")
+	if err := os.WriteFile(filepath.Join(archive, "database.dump"), dump, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(dump)
+	manifest := backupManifest{Version: backupManifestVersion, CreatedAt: time.Now().UTC(), ApplicationVersion: "test", SchemaIdentity: "sha256:test", Database: "nerocd", Files: []backupFile{{Path: "database.dump", SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(dump))}}}
+	if err := writeAtomicJSON(filepath.Join(archive, "manifest.json"), manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyBackupArchive(archive); err != nil {
+		t.Fatalf("verifyBackupArchive(valid) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "database.dump"), []byte("tampered"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyBackupArchive(archive); err == nil {
+		t.Fatal("verifyBackupArchive accepted checksum mismatch")
+	}
+	if err := os.WriteFile(filepath.Join(archive, "database.dump"), dump, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "unexpected"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyBackupArchive(archive); err == nil {
+		t.Fatal("verifyBackupArchive accepted unexpected archive entry")
+	}
+}
+
+func TestBackupExportPublishesPrivateVerifiedCopy(t *testing.T) {
+	sourceRoot := privateBackupTestDir(t)
+	destination := privateBackupTestDir(t)
+	archive := filepath.Join(sourceRoot, "archive")
+	if err := os.Mkdir(archive, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dump := []byte("backup-data")
+	if err := os.WriteFile(filepath.Join(archive, "database.dump"), dump, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(dump)
+	manifest := backupManifest{Version: backupManifestVersion, CreatedAt: time.Now().UTC(), ApplicationVersion: "test", SchemaIdentity: "sha256:test", Database: "nerocd", Files: []backupFile{{Path: "database.dump", SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(dump))}}}
+	if err := writeAtomicJSON(filepath.Join(archive, "manifest.json"), manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupExport([]string{"--input-dir", archive, "--output-dir", destination}); err != nil {
+		t.Fatalf("backupExport() error = %v", err)
+	}
+	entries, err := os.ReadDir(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("export entries = %d, want 1", len(entries))
+	}
+	exported := filepath.Join(destination, entries[0].Name())
+	if _, err := verifyBackupArchive(exported); err != nil {
+		t.Fatalf("verifyBackupArchive(exported) error = %v", err)
+	}
+	info, err := os.Stat(exported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Fatalf("exported mode = %o, want 700", info.Mode().Perm())
+	}
+}
+
+func privateBackupTestDir(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
 
 func TestBackupRestoreDatabaseURLProductionRequiresOwnerSecret(t *testing.T) {
 	t.Setenv("NEROCD_MODE", "production")

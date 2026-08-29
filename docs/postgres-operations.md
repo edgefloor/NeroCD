@@ -41,6 +41,32 @@ docker compose --profile tools run --rm \
 database-tools backup --output-dir /backups
 ```
 
+## Off-host Export and Verification
+
+The local schedule is not disaster recovery by itself: its archive volume is
+on the same host as PostgreSQL. Mount an operator-managed encrypted destination
+(another machine, removable media, or a mounted backup service) and export a
+completed archive. NeroCD does not require a cloud vendor or receive credentials
+for that destination. It verifies the private manifest, exact dump checksum,
+and archive shape before copying, then verifies the staged copy before atomically
+publishing it with `0700` directory and `0600` file permissions.
+
+```sh
+mkdir -m 0700 /mnt/off-host/nerocd
+nerocd backup-export \
+  --input-dir /secure/nerocd-backups/backup-YYYYMMDDTHHMMSSZ \
+  --output-dir /mnt/off-host/nerocd
+nerocd backup-verify \
+  --input-dir /mnt/off-host/nerocd/export-YYYYMMDDTHHMMSSZ
+```
+
+Perform this export after every scheduled backup and retain the exact NeroCD
+image digest that created it. At least quarterly, create an isolated empty
+PostgreSQL target on a different host, run `backup-verify`, then use `restore`
+against that disposable target and confirm the restored schema ledger. Runner
+file content is intentionally never copied; restore that material separately
+from its own encrypted backup before performing the database restore.
+
 ## Local Backup Schedule
 
 The production profile also contains a separate, non-root `backup-scheduler`

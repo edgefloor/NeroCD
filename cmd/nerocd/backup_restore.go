@@ -199,23 +199,9 @@ func restoreDatabase(args []string) error {
 	if strings.TrimSpace(*input) == "" {
 		return errors.New("restore requires --input-dir")
 	}
-	manifestPath := filepath.Join(*input, "manifest.json")
-	if err := ensureSecureBackupParent(*input); err != nil {
-		return errors.New("restore input directory must be owner-only")
-	}
-	if err := ensureSecureBackupFile(manifestPath); err != nil {
-		return errors.New("restore manifest cannot be read")
-	}
-	raw, err := readSecureBackupFile(manifestPath)
+	manifest, err := verifyBackupArchive(*input)
 	if err != nil {
-		return errors.New("restore manifest cannot be read")
-	}
-	manifest, err := decodeBackupManifest(raw)
-	if err != nil || manifest.Version != backupManifestVersion || manifest.CreatedAt.IsZero() || strings.TrimSpace(manifest.ApplicationVersion) == "" || strings.TrimSpace(manifest.SchemaIdentity) == "" || strings.TrimSpace(manifest.Database) == "" || len(manifest.Files) != 1 || manifest.Files[0].Path != "database.dump" || len(manifest.Files[0].SHA256) != sha256.Size*2 || manifest.Files[0].Bytes < 0 {
-		return errors.New("restore manifest is invalid or incompatible")
-	}
-	if _, err := hex.DecodeString(manifest.Files[0].SHA256); err != nil {
-		return errors.New("restore manifest is invalid or incompatible")
+		return err
 	}
 	applicationVersion, schemaIdentity, expectedMigrations, err := backupCompatibility()
 	if err != nil || manifest.ApplicationVersion != applicationVersion || manifest.SchemaIdentity != schemaIdentity || strings.Join(manifest.Migrations, "\n") != strings.Join(expectedMigrations, "\n") {
@@ -231,10 +217,6 @@ func restoreDatabase(args []string) error {
 		}
 	}
 	dumpPath := filepath.Join(*input, manifest.Files[0].Path)
-	got, err := checksumBackupFile(dumpPath)
-	if err != nil || got.SHA256 != manifest.Files[0].SHA256 || got.Bytes != manifest.Files[0].Bytes {
-		return errors.New("backup checksum verification failed")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, resolvedURL)
