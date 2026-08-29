@@ -210,7 +210,7 @@ func TestCanonicalComposeRejectsUnboundOrUnsafeEffectiveSecrets(t *testing.T) {
 func TestCanonicalComposeAcceptsAuthorizedMultiServiceSecrets(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	bindings := []domain.SecretBinding{{Name: "application", Provider: domain.ProviderRunnerFile, Reference: "application", Target: "file:application", Version: "v1", Required: true}}
-	raw := `{"services":{"api":{"image":"registry.example/api@sha256:` + digest + `","secrets":["application"]},"worker":{"image":"registry.example/worker@sha256:` + digest + `","secrets":[{"source":"application","target":"/run/secrets/application"}]}},"secrets":{"application":{"file":"/runner/secrets/application"}}}`
+	raw := `{"services":{"api":{"image":"registry.example/api@sha256:` + digest + `","secrets":["application"]},"worker":{"image":"registry.example/worker@sha256:` + digest + `","secrets":[{"source":"application","target":"/run/secrets/application"}]}},"secrets":{"application":{"name":"server-owned_application","file":"/runner/secrets/application"}}}`
 	canonical, _, err := canonicalComposeWithSecretSources([]byte(raw), "server-owned", bindings, map[string]string{"application": "/runner/secrets/application"})
 	if err != nil {
 		t.Fatal(err)

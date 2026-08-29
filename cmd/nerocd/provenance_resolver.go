@@ -957,7 +957,7 @@ func canonicalComposeWithSecretSources(raw []byte, serverProject string, binding
 		}
 		delete(doc, "name")
 	}
-	if err := normalizeComposeSecretDescriptors(doc, bindings, sources); err != nil {
+	if err := normalizeComposeSecretDescriptors(doc, serverProject, bindings, sources); err != nil {
 		return nil, nil, err
 	}
 	// A deployment may not attach itself to pre-existing engine objects.  The
@@ -1007,7 +1007,7 @@ func canonicalComposeWithSecretSources(raw []byte, serverProject string, binding
 // the provenance input. Runtime Compose still receives the real private paths;
 // only the content hash sees stable placeholders derived from validated binding
 // targets, never from secret values.
-func normalizeComposeSecretDescriptors(doc map[string]any, bindings []domain.SecretBinding, sources map[string]string) error {
+func normalizeComposeSecretDescriptors(doc map[string]any, serverProject string, bindings []domain.SecretBinding, sources map[string]string) error {
 	allowed := make(map[string]struct{}, len(bindings))
 	for _, binding := range bindings {
 		target := strings.TrimSpace(binding.Target)
@@ -1038,7 +1038,16 @@ func normalizeComposeSecretDescriptors(doc map[string]any, bindings []domain.Sec
 		if !ok {
 			return fmt.Errorf("compose secret override missing target %q", name)
 		}
-		if len(descriptor) != 1 {
+		expectedFields := 1
+		if sources != nil {
+			expectedName := serverProject + "_" + name
+			derivedName, ok := descriptor["name"].(string)
+			if !ok || derivedName != expectedName {
+				return fmt.Errorf("compose secret descriptor for target %q has an invalid derived name", name)
+			}
+			expectedFields++
+		}
+		if len(descriptor) != expectedFields {
 			return fmt.Errorf("compose secret descriptor for target %q has unsupported fields", name)
 		}
 		file, ok := descriptor["file"].(string)
