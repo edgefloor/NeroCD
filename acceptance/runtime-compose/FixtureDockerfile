@@ -4,7 +4,7 @@ ARG MODE=good
 ARG BUILD_NONCE
 RUN apk add --no-cache python3 \
  && mkdir -p /www/cgi-bin \
- && printf '%s\n' '#!/bin/sh' 'if [ "${MODE}" = slow ]; then sleep 15; fi' 'echo "Content-Type: text/plain"' 'echo "X-NeroCD-Revision: ${REVISION}"' 'echo' 'echo "${VERSION}"' > /www/cgi-bin/health \
+ && printf '%s\n' '#!/bin/sh' 'if [ "${MODE}" = slow ]; then sleep 15; fi' 'if [ "${REQUIRE_FILE_SECRET:-false}" = true ]; then test -r /run/secrets/app_secret && test -s /run/secrets/app_secret || exit 1; fi' 'echo "Content-Type: text/plain"' 'echo "X-NeroCD-Revision: ${REVISION}"' 'echo' 'echo "${VERSION}"' > /www/cgi-bin/health \
  && chmod 0555 /www/cgi-bin/health
 LABEL net.nerocd.acceptance.fixture-nonce=${BUILD_NONCE}
 ENV VERSION=${VERSION} MODE=${MODE} REVISION=fixture

@@ -22,16 +22,18 @@ messages, artifact records, or runner primitive plans.
 ## Providers
 
 - `runner_file`: resolved from the runner's owner-only secret root. For
-  Compose `file:NAME` targets, the runner authorizes the lease first, writes
-  the bytes to a generated attempt-local mode-0600 file, provides Compose a
-  mode-0600 descriptor, then removes the private directory on every exit path.
-  The descriptor's real path is retained for execution but replaced with a
+  Compose `file:NAME` targets, the runner authorizes the lease first and
+  writes a generated mode-0600 descriptor pointing directly at the validated,
+  operator-managed source file. It removes this override metadata on every
+  exit path but never copies or deletes the persistent source. The descriptor's
+  real path is retained for execution but replaced with a
   stable `file:NAME`-derived placeholder before provenance hashing, so retry,
   recovery, and rollback are deterministic without recording a secret path.
   The private file must be reachable by the same Compose daemon that consumes
-  the descriptor. A runner container talking to a host Docker socket cannot
-  safely use its container-private secret volume as that source; use a runner
-  deployment topology with a daemon-visible private secret directory instead.
+  the descriptor. A containerized runner using a host Docker socket therefore
+  needs an owner-only host bind directory mounted at the identical absolute
+  path inside the runner; named or container-private volumes are unsupported.
+  Production should prefer a host-process runner on a dedicated runner VM.
 - `env`: resolved by the runner from its own host environment and allowed only
   with the `development` classification. It is not a production Compose
   secret transport.

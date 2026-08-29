@@ -172,7 +172,7 @@ func TestPrepareRunnerFileSecretAuthorizesBeforeRead(t *testing.T) {
 	}
 }
 
-func TestPrepareComposeSecretsUsesPrivateFilesAndCleansUp(t *testing.T) {
+func TestPrepareComposeSecretsUsesValidatedSourcesAndCleansUpOverride(t *testing.T) {
 	root := filepath.Join(physicalTempDir(t), "secrets")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -196,22 +196,17 @@ func TestPrepareComposeSecretsUsesPrivateFilesAndCleansUp(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o700 {
 		t.Fatalf("compose secret directory mode=%v err=%v, want 0700", info.Mode().Perm(), err)
 	}
-	contents, err := os.ReadFile(filepath.Join(filepath.Dir(prepared.OverridePath), "secret-001"))
-	if err != nil || string(contents) != secret {
-		t.Fatalf("attempt-local secret contents=%q err=%v, want original bytes", contents, err)
-	}
-	secretInfo, err := os.Stat(filepath.Join(filepath.Dir(prepared.OverridePath), "secret-001"))
-	if err != nil || secretInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("attempt-local secret mode=%v err=%v, want 0600", secretInfo.Mode().Perm(), err)
-	}
 	override, err := os.ReadFile(prepared.OverridePath)
-	if err != nil || strings.Contains(string(override), secret) || strings.Contains(string(override), "database-password") {
-		t.Fatalf("compose override disclosed a value or reference: %q err=%v", override, err)
+	if err != nil || strings.Contains(string(override), secret) || !strings.Contains(string(override), filepath.Join(root, "database-password")) {
+		t.Fatalf("compose override did not retain only validated source metadata: %q err=%v", override, err)
 	}
 	directory := filepath.Dir(prepared.OverridePath)
 	prepared.Cleanup()
 	if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("PrepareComposeSecrets cleanup stat error=%v, want not exist", err)
+	}
+	if contents, sourceErr := os.ReadFile(filepath.Join(root, "database-password")); sourceErr != nil || string(contents) != secret {
+		t.Fatalf("PrepareComposeSecrets source after cleanup=%q err=%v, want original bytes", contents, sourceErr)
 	}
 }
 

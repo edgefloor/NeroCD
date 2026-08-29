@@ -34,8 +34,8 @@ type PreparedSecrets struct {
 }
 
 // PreparedComposeSecrets is an attempt-local Compose override. Its descriptor
-// contains only generated file paths and safe Compose secret names; values
-// remain in mode-0600 files until Cleanup removes the entire private directory.
+// names validated operator-managed runner_file sources; Cleanup removes only
+// generated override metadata and never copies or deletes source values.
 type PreparedComposeSecrets struct {
 	OverridePath string
 	Redactor     *Redactor
@@ -98,9 +98,10 @@ func ValidateSecretBinding(binding domain.SecretBinding) error {
 	return nil
 }
 
-// PrepareComposeSecrets authorizes runner_file bindings and materializes each
-// value into a generated attempt-local file for Compose's file-secret
-// descriptor. It never returns secret values or user-controlled filenames.
+// PrepareComposeSecrets authorizes runner_file bindings, validates each source,
+// and writes a generated attempt-local Compose descriptor that refers directly
+// to the validated operator-managed source. It never returns secret values or
+// user-controlled filenames; cleanup removes only the generated metadata.
 func PrepareComposeSecrets(ctx context.Context, bindings []domain.SecretBinding, secretRoot, workspace string, authorize SecretAuthorizer) (PreparedComposeSecrets, error) {
 	if len(bindings) == 0 {
 		return PreparedComposeSecrets{Redactor: NewRedactor(nil), Cleanup: func() {}}, nil
@@ -140,7 +141,7 @@ func PrepareComposeSecrets(ctx context.Context, bindings []domain.SecretBinding,
 	seen := make(map[string]struct{}, len(bindings))
 	materials := make([]SecretMaterial, 0, len(bindings))
 	entries := make([]composeSecretEntry, 0, len(bindings))
-	for index, binding := range bindings {
+	for _, binding := range bindings {
 		if err := ctx.Err(); err != nil {
 			cleanup()
 			return PreparedComposeSecrets{}, err
@@ -163,22 +164,7 @@ func PrepareComposeSecrets(ctx context.Context, bindings []domain.SecretBinding,
 			cleanup()
 			return PreparedComposeSecrets{}, fmt.Errorf("resolve secret binding %q: %w", binding.Name, readErr)
 		}
-		path := filepath.Join(directory, fmt.Sprintf("secret-%03d", index+1))
-		file, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if createErr != nil {
-			cleanup()
-			return PreparedComposeSecrets{}, fmt.Errorf("create compose secret file: %w", createErr)
-		}
-		if _, writeErr := file.Write(value); writeErr != nil {
-			_ = file.Close()
-			cleanup()
-			return PreparedComposeSecrets{}, fmt.Errorf("write compose secret file: %w", writeErr)
-		}
-		if closeErr := file.Close(); closeErr != nil {
-			cleanup()
-			return PreparedComposeSecrets{}, fmt.Errorf("close compose secret file: %w", closeErr)
-		}
-		entries = append(entries, composeSecretEntry{Name: name, Path: path})
+		entries = append(entries, composeSecretEntry{Name: name, Path: filepath.Join(strings.TrimSpace(secretRoot), strings.TrimSpace(binding.Reference))})
 		materials = append(materials, SecretMaterial{Value: string(value), Encodings: binding.RedactEncodings})
 	}
 	overridePath := filepath.Join(directory, "compose-secrets.yaml")
