@@ -5,6 +5,7 @@ export type RequestOptions = {
   body?: unknown;
   query?: object;
   signal?: AbortSignal;
+  cache?: RequestCache;
   /** A caller-owned, safe request identity for durable mutation replay. */
   requestID?: string;
 };
@@ -44,6 +45,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     credentials: "include",
     body: hasBody ? JSON.stringify(options.body) : undefined,
     signal: options.signal,
+    cache: options.cache,
   });
   if (!response.ok) throw await errorFor(response);
   if (response.status === 204) return undefined as T;

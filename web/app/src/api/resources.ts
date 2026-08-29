@@ -63,7 +63,7 @@ export type RevisionList = Omit<Schema<"RevisionListResponse">, "items"> & { ite
 export type DeploymentList = Omit<Schema<"DeploymentListResponse">, "items"> & { items: Deployment[] };
 
 export function getHealth(options?: Pick<RequestOptions, "signal">): Promise<HealthResponse> { return request("/api/v1/health", options); }
-export function getBootstrapStatus(options?: Pick<RequestOptions, "signal">): Promise<BootstrapStatus> { return request("/api/v1/bootstrap-status", options); }
+export function getBootstrapStatus(options?: Pick<RequestOptions, "signal">): Promise<BootstrapStatus> { return request("/api/v1/bootstrap-status", { ...options, cache: "no-store" }); }
 export function getOperationsStatus(options?: Pick<RequestOptions, "signal">): Promise<OperationsStatus> { return request("/api/v1/operations/status", options); }
 export function getRunLogRetentionStatus(options?: Pick<RequestOptions, "signal">): Promise<RunLogRetentionStatus> { return request("/api/v1/run-log-retention", options); }
 export function updateRunLogRetentionPolicy(input: JSONRequest<"/api/v1/run-log-retention", "put">, options?: Pick<RequestOptions, "signal">): Promise<JSONResponse<"/api/v1/run-log-retention", "put", 200>> { return request("/api/v1/run-log-retention", { ...options, method: "PUT", body: input }); }

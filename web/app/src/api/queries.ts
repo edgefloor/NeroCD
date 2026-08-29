@@ -57,7 +57,14 @@ export const queryKeys = {
 export const healthQuery = () => queryOptions({ queryKey: queryKeys.health, queryFn: ({ signal }) => getHealth({ signal }) });
 // Bootstrap state contains only a fixed, public lifecycle enum. Keep it short
 // lived so the sign-in guidance changes promptly after the CLI completes.
-export const bootstrapStatusQuery = () => queryOptions({ queryKey: queryKeys.bootstrapStatus, staleTime: 5_000, queryFn: ({ signal }) => getBootstrapStatus({ signal }) });
+export const bootstrapStatusQuery = () => queryOptions({
+  queryKey: queryKeys.bootstrapStatus,
+  staleTime: 0,
+  queryFn: ({ signal }) => getBootstrapStatus({ signal }),
+  // Bootstrap may complete in a supported CLI process while this public page
+  // remains open. Poll only until it completes, then leave it cached.
+  refetchInterval: (query) => query.state.data?.status === "complete" ? false : 1_000,
+});
 // A mounted Operations page is the only owner of this query.  Avoid polling a
 // background tab; the cached snapshot remains available for an immediate
 // render when the operator returns, then refreshes on focus.

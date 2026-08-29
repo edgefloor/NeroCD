@@ -10,14 +10,15 @@ export function NavButton({
   pending,
   onClick,
 }: {
-  item: { key: ViewKey; label: string; icon: LucideIcon };
+  item: { key: ViewKey; label: string; icon: LucideIcon; href: string };
   active: boolean;
   pending: number;
   onClick: () => void;
 }): ReactNode {
   const Icon = item.icon;
   return (
-    <button
+    <a
+      href={item.href}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
         "hover:bg-sidebar-panel",
@@ -25,7 +26,10 @@ export function NavButton({
         !active && "text-sidebar-muted"
       )}
       type="button"
-      onClick={onClick}
+      onClick={(event) => {
+        event.preventDefault();
+        onClick();
+      }}
     >
       <Icon className={cn("h-4 w-4 transition-colors", active ? "text-foreground" : "text-sidebar-muted")} />
       <span className="flex-1 text-left">{item.label}</span>
@@ -34,6 +38,6 @@ export function NavButton({
           {pending}
         </span>
       ) : null}
-    </button>
+    </a>
   );
 }

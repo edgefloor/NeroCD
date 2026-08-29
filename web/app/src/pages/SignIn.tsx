@@ -38,8 +38,9 @@ export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: 
               </div>
             ) : <form className="space-y-4" onSubmit={(event) => void submit(event)}>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Email</label>
+                <label className="text-sm font-medium" htmlFor="sign-in-email">Email</label>
                 <Input 
+                  id="sign-in-email"
                   name="email" 
                   type="email" 
                   autoComplete="email" 
@@ -48,8 +49,9 @@ export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: 
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Password</label>
+                <label className="text-sm font-medium" htmlFor="sign-in-password">Password</label>
                 <Input 
+                  id="sign-in-password"
                   name="password" 
                   type="password" 
                   autoComplete="current-password" 

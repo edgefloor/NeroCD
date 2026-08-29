@@ -28,6 +28,10 @@ import { cn } from "@/lib/utils";
 
 type ViewKey = "home" | "runs" | "deployments" | "runners" | "operations" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
 
+const viewPaths: Record<ViewKey, string> = {
+  home: "/", runs: "/runs", deployments: "/deployments", runners: "/runners", operations: "/operations", approvals: "/approvals", projects: "/projects", templates: "/templates", logs: "/logs", audit: "/audit", settings: "/settings",
+};
+
 const navItems: Array<{ key: ViewKey; label: string; mobileLabel?: string; icon: typeof Home; mobile?: boolean; configure?: boolean }> = [
   { key: "home", label: "Home", icon: Home, mobile: true },
   { key: "runs", label: "Runs", icon: Activity, mobile: true },
@@ -138,7 +142,7 @@ export function Shell({
         </div>
         <nav className="flex-1 py-3 px-2.5 space-y-0.5">
           {navItems.map((item) => (
-            <NavButton key={item.key} item={item} active={view === item.key} pending={pending} onClick={() => setView(item.key)} />
+            <NavButton key={item.key} item={{ ...item, href: viewPaths[item.key] }} active={view === item.key} pending={pending} onClick={() => setView(item.key)} />
           ))}
         </nav>
         <div className="border-t border-sidebar-border p-3">
@@ -162,7 +166,7 @@ export function Shell({
             className="fixed inset-0 z-40 bg-black/40 lg:hidden"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="fixed inset-y-0 left-0 z-50 w-60 border-r border-sidebar-border bg-sidebar flex flex-col lg:hidden">
+          <aside className="fixed inset-y-0 left-0 z-50 w-60 border-r border-sidebar-border bg-sidebar flex flex-col lg:hidden" role="dialog" aria-label="Mobile navigation">
             <div className="flex h-14 items-center justify-between px-4 border-b border-sidebar-border">
               <div className="flex items-center gap-2.5">
                 <img
@@ -178,7 +182,7 @@ export function Shell({
             </div>
             <nav className="flex-1 py-3 px-2.5 space-y-0.5">
               {navItems.map((item) => (
-                <NavButton key={item.key} item={item} active={view === item.key} pending={pending} onClick={() => { setView(item.key); setMobileMenuOpen(false); }} />
+                <NavButton key={item.key} item={{ ...item, href: viewPaths[item.key] }} active={view === item.key} pending={pending} onClick={() => { setView(item.key); setMobileMenuOpen(false); }} />
               ))}
             </nav>
           </aside>
@@ -190,7 +194,7 @@ export function Shell({
         {/* Header */}
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur-sm lg:px-6">
           <div className="flex items-center gap-3 shrink-0">
-            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full lg:hidden" onClick={() => setMobileMenuOpen(true)}>
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full lg:hidden" aria-label="Open mobile navigation" onClick={() => setMobileMenuOpen(true)}>
               <Menu className="h-4 w-4" />
             </Button>
             <h1 className="text-base font-semibold tracking-tight text-foreground whitespace-nowrap">{title}</h1>

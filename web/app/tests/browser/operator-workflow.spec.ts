@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +13,18 @@ async function signIn(page: Page): Promise<void> {
   await page.getByLabel("Email").fill(bootstrapEmail);
   await page.getByLabel("Password").fill(bootstrapPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
+}
+
+function bootstrapAdmin(port: string): void {
+  const runtimeDir = join(tmpdir(), `nerocd-browser-${port}`);
+  const [email] = readFileSync(join(runtimeDir, "credentials"), "utf8").trim().split("\n");
+  const databaseURL = readFileSync(join(runtimeDir, "database-url"), "utf8");
+  if (!email || !databaseURL) throw new Error("browser bootstrap fixture is unavailable");
+  execFileSync("go", ["run", "../../cmd/nerocd", "bootstrap-admin", "--email", email, "--name", "Browser Administrator", "--password-file", join(runtimeDir, "password")], {
+    cwd: process.cwd(),
+    env: { ...process.env, NEROCD_DATABASE_URL: databaseURL, GOCACHE: "/private/tmp/nerocd-gocache" },
+    stdio: "pipe",
+  });
 }
 
 async function postJSON<T>(page: Page, path: string, data: unknown, headers: Record<string, string> = {}): Promise<T> {
@@ -41,8 +54,16 @@ async function createDetailFixture(page: Page): Promise<{ deploymentID: string }
   return { deploymentID: deployment.id };
 }
 
-test("fresh browser bootstrap has no credential prefill and signs in", async ({ page }) => {
+test("browser observes CLI-only bootstrap guidance before a supported CLI bootstrap", async ({ page }) => {
   await page.goto("/");
+  await expect(page.getByRole("status", { name: "Administrator bootstrap required" })).toBeVisible();
+  await expect(page.getByText("Bootstrap is intentionally CLI-only.")).toBeVisible();
+  await expect(page.getByLabel("Email")).toHaveCount(0);
+  await expect(page.getByLabel("Password")).toHaveCount(0);
+  const port = new URL(page.url()).port;
+  if (!port) throw new Error("browser smoke port is unavailable");
+  bootstrapAdmin(port);
+  await page.goto(`/sign-in?redirect=/${Date.now()}`, { waitUntil: "networkidle" });
   await expect(page.getByLabel("Email")).toHaveValue("");
   await expect(page.getByLabel("Password")).toHaveValue("");
   await signIn(page);
