@@ -25,8 +25,8 @@ export function NavButton({
         active && "bg-sidebar-panel text-foreground shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)] dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]",
         !active && "text-sidebar-muted"
       )}
-      type="button"
       onClick={(event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         onClick();
       }}

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 async function signIn(page: Page): Promise<void> {
+  await ensureBootstrapped(page);
   const port = new URL(page.url()).port;
   if (!port) throw new Error("browser smoke credentials are unavailable");
   const bootstrapCredentialFile = join(tmpdir(), `nerocd-browser-${port}`, "credentials");
@@ -25,6 +26,19 @@ function bootstrapAdmin(port: string): void {
     env: { ...process.env, NEROCD_DATABASE_URL: databaseURL, GOCACHE: "/private/tmp/nerocd-gocache" },
     stdio: "pipe",
   });
+}
+
+async function ensureBootstrapped(page: Page): Promise<void> {
+  const status = await page.request.get("/api/v1/bootstrap-status");
+  if (!status.ok()) throw new Error(`browser bootstrap status failed with ${status.status()}`);
+  const body = await status.json() as { status?: string };
+  if (body.status === "complete") return;
+  if (body.status !== "required") throw new Error("browser bootstrap status is invalid");
+  const port = new URL(page.url()).port;
+  if (!port) throw new Error("browser smoke port is unavailable");
+  bootstrapAdmin(port);
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByLabel("Email")).toBeVisible();
 }
 
 async function postJSON<T>(page: Page, path: string, data: unknown, headers: Record<string, string> = {}): Promise<T> {
@@ -60,10 +74,7 @@ test("browser observes CLI-only bootstrap guidance before a supported CLI bootst
   await expect(page.getByText("Bootstrap is intentionally CLI-only.")).toBeVisible();
   await expect(page.getByLabel("Email")).toHaveCount(0);
   await expect(page.getByLabel("Password")).toHaveCount(0);
-  const port = new URL(page.url()).port;
-  if (!port) throw new Error("browser smoke port is unavailable");
-  bootstrapAdmin(port);
-  await page.goto(`/sign-in?redirect=/${Date.now()}`, { waitUntil: "networkidle" });
+  await ensureBootstrapped(page);
   await expect(page.getByLabel("Email")).toHaveValue("");
   await expect(page.getByLabel("Password")).toHaveValue("");
   await signIn(page);
