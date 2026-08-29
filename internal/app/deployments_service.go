@@ -7,9 +7,12 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
 	"nerocd/internal/store"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var immutableImageReferencePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*@sha256:[a-f0-9]{64}$`)
 
 // ServiceInput supplies service registration attributes.
 type ServiceInput struct {
@@ -812,7 +815,7 @@ func validDigest(v string) bool {
 
 func validImageReference(v string) bool {
 	repository, digest, found := strings.Cut(v, "@sha256:")
-	return found && repository != "" && strings.LastIndex(repository, ":") <= strings.LastIndex(repository, "/") && validDigest("sha256:"+digest)
+	return found && immutableImageReferencePattern.MatchString(v) && strings.LastIndex(repository, ":") <= strings.LastIndex(repository, "/") && validDigest("sha256:"+digest)
 }
 
 // ResolveDeploymentProvenance records verified deployment provenance.

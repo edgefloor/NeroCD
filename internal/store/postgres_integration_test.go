@@ -2966,6 +2966,76 @@ func TestPostgresIntegrationProvenanceMigratesLegacyAndAllowsPendingSiblings(t *
 	}
 }
 
+func TestPostgresIntegrationProvenanceImageReferencesMigrationKeepsLegacyReadable(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	schema := "nerocd_image_reference_upgrade_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err = admin.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`) })
+	schemaURL := databaseURLWithSearchPath(t, databaseURL, schema)
+	database, err := pgxpool.New(ctx, schemaURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err = applyEmbeddedMigrations(ctx, database, "", "0035_backup_scheduler.sql"); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := os.ReadFile("../../db/seeds/dev.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, string(seed)); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	commit := strings.Repeat("1", 40)
+	composeHash := "sha256:" + strings.Repeat("2", 64)
+	legacyDigest := "sha256:" + strings.Repeat("3", 64)
+	contentIdentity := commit + ":" + composeHash
+	if _, err = database.Exec(ctx, `INSERT INTO services(id,project_id,name,repository_id,compose_path,owner_id,created_at) VALUES ('svc_image_reference_upgrade','proj_platform','image reference upgrade','repo_platform_runbooks','compose.yml','usr_bootstrap',$1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, `INSERT INTO revisions(id,service_id,requested_ref,git_commit,compose_hash,image_digests,content_identity,created_by,created_at,provenance_state,provenance_resolved,resolved_at) VALUES ('rev_image_reference_legacy','svc_image_reference_upgrade','legacy',$1,$2,ARRAY[$3],$4,'usr_bootstrap',$5,'resolved',true,$5)`, commit, composeHash, legacyDigest, contentIdentity, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = applyEmbeddedMigrations(ctx, database, "0035_backup_scheduler.sql", ""); err != nil {
+		t.Fatal(err)
+	}
+	var persisted string
+	if err = database.QueryRow(ctx, `SELECT image_digests[1] FROM revisions WHERE id='rev_image_reference_legacy'`).Scan(&persisted); err != nil || persisted != legacyDigest {
+		t.Fatalf("legacy digest readable=%q err=%v", persisted, err)
+	}
+	fullReference := "registry.example/ns/app@sha256:" + strings.Repeat("4", 64)
+	insertResolved := func(id, image string) error {
+		_, err := database.Exec(ctx, `INSERT INTO revisions(id,service_id,requested_ref,git_commit,compose_hash,image_digests,content_identity,created_by,created_at,provenance_state,provenance_resolved,resolved_at) VALUES ($1,'svc_image_reference_upgrade',$1,$2,$3,ARRAY[$4],$5,'usr_bootstrap',$6,'resolved',true,$6)`, id, strings.Repeat("5", 40), "sha256:"+strings.Repeat("6", 64), image, strings.Repeat("5", 40)+":sha256:"+strings.Repeat("6", 64), now)
+		return err
+	}
+	if err = insertResolved("rev_image_reference_full", fullReference); err != nil {
+		t.Fatalf("full immutable reference rejected: %v", err)
+	}
+	for _, image := range []string{
+		"sha256:" + strings.Repeat("7", 64),
+		"registry.example/ns/app:latest@sha256:" + strings.Repeat("7", 64),
+		"registry.example/ns/app@sha256:" + strings.Repeat("z", 64),
+	} {
+		if err = insertResolved("rev_image_reference_bad_"+strconv.FormatInt(time.Now().UnixNano(), 36), image); err == nil {
+			t.Fatalf("invalid immutable image reference accepted: %q", image)
+		}
+	}
+}
+
 func TestPostgresLinkedRollbackLifecycleMigratesFrom0026(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
 	if databaseURL == "" {

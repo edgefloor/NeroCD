@@ -15,10 +15,10 @@ fixture_a="nerocd-compose-fixture-a:$suffix" fixture_b="nerocd-compose-fixture-b
 # Docker Desktop can remap the host socket group inside containers. Derive the
 # effective mount GID in the same mount namespace the non-root runner uses.
 docker_gid(){ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412 sh -ec 'stat -c %g /var/run/docker.sock'; }
-# Docker Compose needs a locally-addressable repository to apply a fixture;
-# the adapter extracts and persists only the unambiguous sha256 digest from
-# this repository@digest input. Assertions below reject any non-pure persisted
-# digest, so a mutable tag never enters deployment provenance.
+# Docker Compose needs a locally-addressable repository to apply a fixture.
+# The adapter retains its complete repository@sha256 reference so the runner
+# can inspect and, when enabled, pull the same immutable artifact. Assertions
+# below reject mutable tags, bare digests, and malformed provenance values.
 compose(){
   local -a files=(-f "$root/acceptance/runtime-compose/compose.yaml")
   [[ "$runtime_profile" != production ]] || files+=(-f "$root/acceptance/runtime-compose/compose.production-dogfood.yaml")
@@ -125,7 +125,7 @@ runner.deployment.transition:$child"
   [[ "$audits" == "$expected_audits" ]] || fail "rollback audit exact order mismatch got=[$audits] want=[$expected_audits]"
   record "rollback_lifecycle source=$source child=$child exact_rows=$(tr '\n' ',' <<<\"$rows\") exact_audits=$(tr '\n' ',' <<<\"$audits\")"
 }
-a_commit=$(origin_commit main); b_commit=$(origin_commit fixture-b); c_commit=$(origin_commit fixture-c); d_commit=$(origin_commit fixture-d); a_hash=$(expected_provenance a "$a_commit" "$fixture_a_id"); b_hash=$(expected_provenance b "$b_commit" "$fixture_b_id"); c_hash=$(expected_provenance c "$c_commit" "$fixture_c_id"); d_hash=$(expected_provenance d "$d_commit" "$fixture_c_id"); record "fixture_provenance a=$a_commit/$a_hash b=$b_commit/$b_hash c=$c_commit/$c_hash d=$d_commit/$d_hash images=pure_sha256"
+a_commit=$(origin_commit main); b_commit=$(origin_commit fixture-b); c_commit=$(origin_commit fixture-c); d_commit=$(origin_commit fixture-d); a_hash=$(expected_provenance a "$a_commit" "$fixture_a_id"); b_hash=$(expected_provenance b "$b_commit" "$fixture_b_id"); c_hash=$(expected_provenance c "$c_commit" "$fixture_c_id"); d_hash=$(expected_provenance d "$d_commit" "$fixture_c_id"); record "fixture_provenance a=$a_commit/$a_hash b=$b_commit/$b_hash c=$c_commit/$c_hash d=$d_commit/$d_hash images=repository_at_sha256"
 read -r rev_a dep_a <<<"$(deploy a)"; wait_status "$dep_a" succeeded; revision_observation "$rev_a" "$a_commit" "$a_hash" "$fixture_a_ref"; provenance_receipt "$dep_a" "$rev_a" "$a_commit" "$a_hash" "$fixture_a_ref" 1; [[ "$(curl -fsS --max-time 5 http://127.0.0.1:18080/cgi-bin/health)" == A ]] || fail 'A health body failed'; pointer=$(psql_query "select current_healthy_revision_id from environments where id='$env_id'"); [[ "$pointer" == "$rev_a" ]] || fail 'A healthy pointer failed'; record "A=$rev_a deployment=$dep_a health=A immutable_provenance=true"
 compose run --rm --no-deps git_advance_b >"$dir/advance-b.log"; revision_observation "$rev_a" "$a_commit" "$a_hash" "$fixture_a_ref"; provenance_receipt "$dep_a" "$rev_a" "$a_commit" "$a_hash" "$fixture_a_ref" 1; read -r rev_b dep_b <<<"$(deploy b)"; wait_status "$dep_b" succeeded; revision_observation "$rev_b" "$b_commit" "$b_hash" "$fixture_b_ref"; provenance_receipt "$dep_b" "$rev_b" "$b_commit" "$b_hash" "$fixture_b_ref" 1; [[ "$(curl -fsS --max-time 5 http://127.0.0.1:18080/cgi-bin/health)" == B ]] || fail 'B health body failed'; pointer=$(psql_query "select current_healthy_revision_id from environments where id='$env_id'"); [[ "$pointer" == "$rev_b" ]] || fail 'B healthy pointer failed'; record "B=$rev_b deployment=$dep_b health=B immutable_provenance=true"
 compose_trace(){ local after=$1; compose exec -T runner sh -ec "test -f /journal/compose-trace.log && tail -n +$((after+1)) /journal/compose-trace.log"; }

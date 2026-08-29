@@ -21,6 +21,8 @@ func TestValidImageReferenceRequiresUntaggedRepositoryDigest(t *testing.T) {
 		"sha256:" + digest,
 		"registry.example/app:latest@sha256:" + digest,
 		"registry.example/app@sha256:" + strings.Repeat("A", 64),
+		"registry.example/app@sha256:" + digest + "\n",
+		"registry.example/app@sha256:" + digest[:63],
 	} {
 		if validImageReference(value) {
 			t.Fatalf("validImageReference(%q) = true, want false", value)
