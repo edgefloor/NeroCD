@@ -189,6 +189,8 @@ func restoreDatabase(args []string) error {
 	databaseURL := fs.String("database-url", "", "empty PostgreSQL target URL (development only)")
 	input := fs.String("input-dir", "", "backup directory containing manifest.json")
 	runnerRoot := fs.String("runner-file-root", "", "owner-only recovered runner_file root, required when inventory exists")
+	allowDisposableTarget := fs.Bool("allow-disposable-target", false, "required acknowledgement that the restore target is an isolated disposable database")
+	confirmedTarget := fs.String("confirm-target-database", "", "required exact target database name")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -198,6 +200,9 @@ func restoreDatabase(args []string) error {
 	}
 	if strings.TrimSpace(*input) == "" {
 		return errors.New("restore requires --input-dir")
+	}
+	if err := validateRestoreConfirmation(*allowDisposableTarget, *confirmedTarget); err != nil {
+		return err
 	}
 	manifest, err := verifyBackupArchive(*input)
 	if err != nil {
@@ -227,13 +232,11 @@ func restoreDatabase(args []string) error {
 	if err := pool.Ping(ctx); err != nil {
 		return err
 	}
-	var tables int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_tables WHERE schemaname='public'`).Scan(&tables); err != nil {
+	releaseRestoreAdmission, err := acquireDisposableRestoreTarget(ctx, pool, *confirmedTarget)
+	if err != nil {
 		return err
 	}
-	if tables != 0 {
-		return errors.New("restore target must be an empty database")
-	}
+	defer releaseRestoreAdmission()
 	if _, err := backupCommand(ctx, "pg_restore", "--exit-on-error", "--single-transaction", "--no-owner", "--no-acl", "--dbname="+resolvedURL, dumpPath).CombinedOutput(); err != nil {
 		return errors.New("pg_restore failed")
 	}
@@ -258,6 +261,74 @@ func restoreDatabase(args []string) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func validateRestoreConfirmation(allowed bool, confirmed string) error {
+	if !allowed || strings.TrimSpace(confirmed) == "" {
+		return errors.New("restore requires --allow-disposable-target and --confirm-target-database")
+	}
+	return nil
+}
+
+// acquireDisposableRestoreTarget has no destructive action. It serializes
+// restore admission, requires operator confirmation of the exact database, and
+// rejects every user-visible object category before pg_restore gets a chance to
+// connect. It deliberately does not terminate another session.
+func acquireDisposableRestoreTarget(ctx context.Context, pool *pgxpool.Pool, confirmed string) (func(), error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	release := func() {
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext('nerocd_restore_admission_v1'))`)
+		conn.Release()
+	}
+	var database string
+	if err := conn.QueryRow(ctx, `SELECT current_database()`).Scan(&database); err != nil {
+		conn.Release()
+		return nil, err
+	}
+	if database != strings.TrimSpace(confirmed) {
+		conn.Release()
+		return nil, errors.New("restore target database does not match explicit confirmation")
+	}
+	var locked bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext('nerocd_restore_admission_v1'))`).Scan(&locked); err != nil {
+		conn.Release()
+		return nil, err
+	}
+	if !locked {
+		conn.Release()
+		return nil, errors.New("another restore admission is active for this database")
+	}
+	var activeSessions int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid <> pg_backend_pid()`).Scan(&activeSessions); err != nil {
+		release()
+		return nil, err
+	}
+	if activeSessions != 0 {
+		release()
+		return nil, errors.New("restore target has active sessions")
+	}
+	var objects int
+	const userObjects = `
+SELECT count(*) FROM (
+  SELECT n.oid FROM pg_namespace n WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'public') AND n.nspname !~ '^pg_toast'
+  UNION ALL SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' OR (n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname !~ '^pg_toast')
+  UNION ALL SELECT p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' OR (n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname !~ '^pg_toast')
+  UNION ALL SELECT t.oid FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='public' OR (n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname !~ '^pg_toast')
+  UNION ALL SELECT o.oid FROM pg_operator o JOIN pg_namespace n ON n.oid=o.oprnamespace WHERE n.nspname='public' OR (n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname !~ '^pg_toast')
+  UNION ALL SELECT x.oid FROM pg_extension x WHERE x.extname <> 'plpgsql'
+) objects`
+	if err := conn.QueryRow(ctx, userObjects).Scan(&objects); err != nil {
+		release()
+		return nil, err
+	}
+	if objects != 0 {
+		release()
+		return nil, errors.New("restore target must contain no user schemas or objects")
+	}
+	return release, nil
 }
 
 func decodeBackupManifest(raw []byte) (backupManifest, error) {

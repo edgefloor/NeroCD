@@ -89,6 +89,25 @@ func TestBackupExportPublishesPrivateVerifiedCopy(t *testing.T) {
 	}
 }
 
+func TestRestoreRequiresExplicitDisposableTargetConfirmation(t *testing.T) {
+	for name, tc := range map[string]struct {
+		allowed  bool
+		database string
+	}{
+		"missing_capability": {database: "restore_target"},
+		"missing_database":   {allowed: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateRestoreConfirmation(tc.allowed, tc.database); err == nil {
+				t.Fatal("validateRestoreConfirmation accepted incomplete acknowledgement")
+			}
+		})
+	}
+	if err := validateRestoreConfirmation(true, "restore_target"); err != nil {
+		t.Fatalf("validateRestoreConfirmation(valid) error = %v", err)
+	}
+}
+
 func privateBackupTestDir(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())

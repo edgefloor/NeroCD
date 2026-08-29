@@ -95,7 +95,7 @@ Usage:
 	  nerocd backup --database-url postgres://... --output-dir /secure/backups
 	  nerocd backup-export --input-dir /secure/backups/backup-... --output-dir /mounted/off-host
 	  nerocd backup-verify --input-dir /secure/backups/backup-...
-	  nerocd restore --database-url postgres://... --input-dir /secure/backups/backup-...
+	  nerocd restore --database-url postgres://... --input-dir /secure/backups/backup-... --allow-disposable-target --confirm-target-database <name>
 	  nerocd backup-scheduler --output-dir /secure/backups [--runner-file-root /secure/runner-files] [--interval-seconds 86400] [--retention-count 7]
 	  nerocd seed-dev [--database-url postgres://...]
 	  nerocd bootstrap-admin --email admin@example.com --name 'Initial Admin' (--password-stdin | --password-file /secure/password)

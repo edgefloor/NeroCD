@@ -142,7 +142,7 @@ load_archives
 
 # The surviving scheduler-created archive must restore through the unchanged
 # production command into a separately clean database.
-run_owner "$work/target-url" -v "${archives[0]}:/restore:ro" "$image_ref" restore --input-dir /restore >"$work/restore.log" 2>&1 || fail 'scheduler archive did not restore into clean target'
+run_owner "$work/target-url" -v "${archives[0]}:/restore:ro" "$image_ref" restore --input-dir /restore --allow-disposable-target --confirm-target-database nerocd >"$work/restore.log" 2>&1 || fail 'scheduler archive did not restore into clean target'
 tables=$(docker exec "$target" psql -At -U "$owner" -d nerocd -c "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
 [[ "$tables" -gt 0 ]] || fail 'restored target has no public schema'
 record 'failure_recovery=true scheduler_archive_restore=true clean_target_schema_restored=true'

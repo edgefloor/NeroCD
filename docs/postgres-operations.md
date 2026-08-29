@@ -99,12 +99,17 @@ Restore only into a newly created, empty database. The command verifies the
 manifest checksum and exact migration ledger before invalidating every active
 session and runner lease; operators must issue fresh credentials and let the
 reaper reconcile interrupted work. It never uses `--clean` against a live
-target.
+target. Restore requires two explicit safeguards: `--allow-disposable-target`
+and an exact `--confirm-target-database` name. Before `pg_restore`, NeroCD
+holds a restore-admission advisory lock, rejects any other active DB session,
+and rejects non-public schemas and objects in `public` or another user schema.
+It does not terminate sessions for you.
 
 ```sh
 createdb nerocd_restore
 nerocd restore --database-url "$NEROCD_RESTORE_DATABASE_URL" \
   --input-dir /secure/nerocd-backups/backup-YYYYMMDDTHHMMSSZ \
+  --allow-disposable-target --confirm-target-database nerocd_restore \
   --runner-file-root /secure/runner-files
 ```
 
@@ -116,7 +121,8 @@ owner credential. Do not point it at an existing stack:
 docker compose --profile tools run --rm \
   -v /secure/nerocd-backups/backup-YYYYMMDDTHHMMSSZ:/restore:ro \
   -v /secure/runner-files:/runner-files:ro \
-  database-tools restore --input-dir /restore --runner-file-root /runner-files
+database-tools restore --input-dir /restore --runner-file-root /runner-files \
+  --allow-disposable-target --confirm-target-database nerocd_restore
 ```
 
 ## Runtime Checks

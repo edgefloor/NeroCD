@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -14,7 +15,10 @@ func validateRunnerOperatingGuardrails(server, workspace string) error {
 	if err != nil {
 		return err
 	}
-	if mode != modeProduction {
+	// A missing mode is never an implicit approval to run a privileged worker
+	// over HTTP or from /tmp. Operators must explicitly select development mode
+	// for local-only runner behavior.
+	if mode == modeDevelopment && strings.EqualFold(strings.TrimSpace(os.Getenv("NEROCD_MODE")), string(modeDevelopment)) {
 		return nil
 	}
 	endpoint, err := url.Parse(strings.TrimSpace(server))

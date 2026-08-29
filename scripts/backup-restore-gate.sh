@@ -84,6 +84,16 @@ done
 run_tool(){
   local url_file=$1
   shift
+  # Every restore requires a deliberate disposable-target capability and the
+  # exact DB name. The negative cases below still reach their archive checks,
+  # but cannot mutate a target unless these two independent acknowledgements
+  # were supplied by the operator.
+  for arg in "$@"; do
+    if [[ "$arg" == restore ]]; then
+      set -- "$@" --allow-disposable-target --confirm-target-database nerocd
+      break
+    fi
+  done
   docker run --rm --user "$(id -u):$(id -g)" --network "$network" \
     -e NEROCD_MODE=production -e NEROCD_IMAGE_REF="$image_ref" \
     -e NEROCD_DATABASE_CREDENTIAL=owner -e NEROCD_OWNER_DATABASE_USER="$owner" \
@@ -328,12 +338,31 @@ backup >"$dir/backup-2.log" 2>&1 || fail 'replacement backup failed'
 backup_name=$(basename "$(tail -n1 "$dir/backup-2.log")")
 backup_dir="$dir/backups/$backup_name"
 
-# A table created in the target proves the strict empty-target check happens
-# before pg_restore; cleanup restores the target to its initial empty state.
+# A public table and a non-public schema prove admission rejects all user
+# objects before pg_restore; cleanup restores the target to its empty state.
 docker exec "$target" psql -v ON_ERROR_STOP=1 -U "$owner" -d nerocd -c 'CREATE TABLE restore_must_refuse (id integer)' >"$dir/nonempty-fixture.log"
 if run_tool "$dir/target-url" -v "$backup_dir:/restore:ro" -v "$dir/runner-files:/runner-files:ro" "$image_ref" restore --input-dir /restore --runner-file-root /runner-files >"$dir/nonempty.out" 2>&1; then fail 'restore accepted a nonempty target'; fi
-rg -q 'empty database' "$dir/nonempty.out" || fail 'nonempty target did not return strict empty-target error'
+rg -q 'no user schemas or objects' "$dir/nonempty.out" || fail 'nonempty target did not return strict empty-target error'
 docker exec "$target" psql -v ON_ERROR_STOP=1 -U "$owner" -d nerocd -c 'DROP TABLE restore_must_refuse' >"$dir/nonempty-cleanup.log"
+docker exec "$target" psql -v ON_ERROR_STOP=1 -U "$owner" -d nerocd -c 'CREATE SCHEMA restore_nonpublic' >"$dir/nonpublic-schema-fixture.log"
+if run_tool "$dir/target-url" -v "$backup_dir:/restore:ro" -v "$dir/runner-files:/runner-files:ro" "$image_ref" restore --input-dir /restore --runner-file-root /runner-files >"$dir/nonpublic-schema.out" 2>&1; then fail 'restore accepted a non-public schema'; fi
+rg -q 'no user schemas or objects' "$dir/nonpublic-schema.out" || fail 'non-public schema did not return strict target error'
+docker exec "$target" psql -v ON_ERROR_STOP=1 -U "$owner" -d nerocd -c 'DROP SCHEMA restore_nonpublic' >"$dir/nonpublic-schema-cleanup.log"
+
+# Restore never terminates sessions. A held admission lock rejects a concurrent
+# restore before it can inspect or mutate anything; an ordinary active session
+# is rejected separately.
+docker exec -d "$target" sh -ec "psql -v ON_ERROR_STOP=1 -U '$owner' -d nerocd -c \"SELECT pg_advisory_lock(hashtext('nerocd_restore_admission_v1')); SELECT pg_sleep(3)\"" >/dev/null
+sleep .2
+if run_tool "$dir/target-url" -v "$backup_dir:/restore:ro" -v "$dir/runner-files:/runner-files:ro" "$image_ref" restore --input-dir /restore --runner-file-root /runner-files >"$dir/concurrent-restore.out" 2>&1; then fail 'restore accepted concurrent restore admission'; fi
+rg -q 'another restore admission' "$dir/concurrent-restore.out" || fail 'concurrent restore did not report admission lock'
+sleep 3
+docker exec -d "$target" sh -ec "psql -v ON_ERROR_STOP=1 -U '$owner' -d nerocd -c 'SELECT pg_sleep(3)'" >/dev/null
+sleep .2
+if run_tool "$dir/target-url" -v "$backup_dir:/restore:ro" -v "$dir/runner-files:/runner-files:ro" "$image_ref" restore --input-dir /restore --runner-file-root /runner-files >"$dir/active-session.out" 2>&1; then fail 'restore accepted active target session'; fi
+rg -q 'active sessions' "$dir/active-session.out" || fail 'active target session did not fail closed'
+sleep 3
+record 'restore_confirmation=true nonpublic_schema_rejected=true concurrent_restore_lock_rejected=true active_session_rejected=true'
 
 if ! run_tool "$dir/target-url" -v "$backup_dir:/restore:ro" -v "$dir/runner-files:/runner-files:ro" "$image_ref" restore --input-dir /restore --runner-file-root /runner-files >"$dir/restore.log" 2>&1; then
   [[ $(wc -c <"$dir/restore.log") -le 1024 ]] || fail 'clean-target restore failed with oversized diagnostic'

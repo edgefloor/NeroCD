@@ -45,3 +45,10 @@ func TestDevelopmentRunnerOperatingGuardrailsPermitExplicitDevelopmentMode(t *te
 		t.Fatalf("development guardrails error = %v", err)
 	}
 }
+
+func TestUnsetRunnerModeFailsClosed(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "")
+	if err := validateRunnerOperatingGuardrails("http://127.0.0.1:8080", t.TempDir()); err == nil {
+		t.Fatal("unset mode accepted an insecure temporary runner")
+	}
+}
