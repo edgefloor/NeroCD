@@ -232,7 +232,7 @@ func TestPostgresFencedDeploymentAttemptHTTPAndRollback(t *testing.T) {
 	if _, err := pg.CreateService(ctx, domain.Service{ID: serviceID, ProjectID: "proj_platform", Name: "fenced-" + suffix, RepositoryID: "repo_platform_runbooks", ComposePath: "compose.yml", Profiles: []string{}, OwnerID: "usr_bootstrap", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pg.CreateEnvironment(ctx, domain.Environment{ID: environmentID, ServiceID: serviceID, Name: "prod", RunnerSelector: []string{}, ComposeProject: "fenced-" + suffix, HealthPolicy: domain.HealthPolicy{}, TimeoutSeconds: 60, SecretBindings: []domain.SecretBinding{}, RollbackSafe: true, CreatedAt: now}); err != nil {
+	if _, err := pg.CreateEnvironment(ctx, domain.Environment{ID: environmentID, ServiceID: serviceID, Name: "prod", ComposeProject: "fenced-" + suffix, HealthPolicy: domain.HealthPolicy{}, TimeoutSeconds: 60, SecretBindings: []domain.SecretBinding{}, RollbackSafe: true, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	revisionA, revisionB := "rev_fenced_a_"+suffix, "rev_fenced_b_"+suffix
@@ -344,7 +344,7 @@ WHERE da.deployment_id=$1 AND da.attempt=$2`, deployment.ID, claim.Lease.Attempt
 	if planRec.Code != http.StatusOK {
 		t.Fatalf("runner plan response %d: %s", planRec.Code, planRec.Body.String())
 	}
-	commitA, hashA, digestsA := strings.Repeat("a", 40), "sha256:"+strings.Repeat("b", 64), []string{"sha256:" + strings.Repeat("c", 64)}
+	commitA, hashA, digestsA := strings.Repeat("a", 40), "sha256:"+strings.Repeat("b", 64), []string{"registry.example/fenced-a@sha256:" + strings.Repeat("c", 64)}
 	provenanceResponses := make(chan *httptest.ResponseRecorder, 2)
 	for range 2 {
 		go func() {
@@ -436,7 +436,7 @@ WHERE da.deployment_id=$1 AND da.attempt=$2`, deployment.ID, claim.Lease.Attempt
 		}
 	}
 	transitionB(domain.DeploymentAssigned, domain.DeploymentPreparing, "bprepare")
-	commitB, hashB, digestsB := strings.Repeat("d", 40), "sha256:"+strings.Repeat("e", 64), []string{"sha256:" + strings.Repeat("f", 64)}
+	commitB, hashB, digestsB := strings.Repeat("d", 40), "sha256:"+strings.Repeat("e", 64), []string{"registry.example/fenced-b@sha256:" + strings.Repeat("f", 64)}
 	if rec := postProvenance(depB, claimB, "resolution-b", commitB, hashB, digestsB, claimB.Lease.Fence); rec.Code != http.StatusOK {
 		t.Fatalf("provenance B response %d: %s", rec.Code, rec.Body.String())
 	}
@@ -745,7 +745,7 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
 		}
 	}
-	if rec := postProvenance(source, claimSource, "resolution-source", strings.Repeat("7", 40), "sha256:"+strings.Repeat("8", 64), []string{"sha256:" + strings.Repeat("9", 64)}, claimSource.Lease.Fence); rec.Code != http.StatusOK {
+	if rec := postProvenance(source, claimSource, "resolution-source", strings.Repeat("7", 40), "sha256:"+strings.Repeat("8", 64), []string{"registry.example/rollback-source@sha256:" + strings.Repeat("9", 64)}, claimSource.Lease.Fence); rec.Code != http.StatusOK {
 		t.Fatalf("source provenance %d: %s", rec.Code, rec.Body.String())
 	}
 	if rec := postTransition(source, claimSource, domain.DeploymentPreparing, domain.DeploymentApplying, "source-apply", claimSource.Lease.Fence, nil); rec.Code != http.StatusOK {
@@ -879,7 +879,7 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 			t.Fatalf("%s %d: %s", step[2], rec.Code, rec.Body.String())
 		}
 	}
-	if rec := postProvenance(source2, claimSource2, "resolution-source2", strings.Repeat("1", 40), "sha256:"+strings.Repeat("2", 64), []string{"sha256:" + strings.Repeat("3", 64)}, claimSource2.Lease.Fence); rec.Code != http.StatusOK {
+	if rec := postProvenance(source2, claimSource2, "resolution-source2", strings.Repeat("1", 40), "sha256:"+strings.Repeat("2", 64), []string{"registry.example/rollback-failed@sha256:" + strings.Repeat("3", 64)}, claimSource2.Lease.Fence); rec.Code != http.StatusOK {
 		t.Fatalf("source2 provenance %d: %s", rec.Code, rec.Body.String())
 	}
 	if rec := postTransition(source2, claimSource2, domain.DeploymentPreparing, domain.DeploymentApplying, "source2-apply", claimSource2.Lease.Fence, nil); rec.Code != http.StatusOK {

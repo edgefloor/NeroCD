@@ -70,6 +70,8 @@ services:
       server:
         condition: service_healthy
     entrypoint: ["/bin/sh", "/fixtures/runner-wrapper.sh", "runner-a"]
+    environment:
+      NEROCD_MODE: development
     command: ["nerocd", "runner", "--server", "http://server:8080", "--credential-file", "/credentials/token", "--journal-dir", "/journal", "--id", "runner_runtime_a", "--tags", "runtime-fencing", "--capabilities", "shell", "--poll-interval", "1s", "--cancel-poll-interval", "1s", "--work-dir", "/work"]
     read_only: true
     tmpfs: ["/tmp", "/work"]
@@ -89,6 +91,8 @@ services:
       server:
         condition: service_healthy
     entrypoint: ["/bin/sh", "/fixtures/runner-wrapper.sh", "runner-b"]
+    environment:
+      NEROCD_MODE: development
     command: ["nerocd", "runner", "--server", "http://server:8080", "--credential-file", "/credentials/token", "--journal-dir", "/journal", "--id", "runner_runtime_b", "--tags", "runtime-fencing", "--capabilities", "shell", "--poll-interval", "1s", "--cancel-poll-interval", "1s", "--work-dir", "/work"]
     read_only: true
     tmpfs: ["/tmp", "/work"]

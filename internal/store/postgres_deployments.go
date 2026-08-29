@@ -103,8 +103,12 @@ func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environm
 	audit := resolveMutationOptions(opts)
 	hp, _ := json.Marshal(v.HealthPolicy)
 	sb, _ := json.Marshal(v.SecretBindings)
+	runnerSelector := v.RunnerSelector
+	if runnerSelector == nil {
+		runnerSelector = []string{}
+	}
 	if audit == nil {
-		x, e := s.queries.CreateEnvironment(ctx, sqlcgen.CreateEnvironmentParams{ID: v.ID, ServiceID: v.ServiceID, Name: v.Name, RunnerSelector: v.RunnerSelector, ComposeProject: v.ComposeProject, HealthPolicy: hp, ConfirmationRequired: v.ConfirmationRequired, TimeoutSeconds: int32(v.TimeoutSeconds), SecretBindings: sb, RollbackSafe: v.RollbackSafe, CurrentHealthyRevisionID: v.CurrentHealthyRevisionID, CreatedAt: v.CreatedAt})
+		x, e := s.queries.CreateEnvironment(ctx, sqlcgen.CreateEnvironmentParams{ID: v.ID, ServiceID: v.ServiceID, Name: v.Name, RunnerSelector: runnerSelector, ComposeProject: v.ComposeProject, HealthPolicy: hp, ConfirmationRequired: v.ConfirmationRequired, TimeoutSeconds: int32(v.TimeoutSeconds), SecretBindings: sb, RollbackSafe: v.RollbackSafe, CurrentHealthyRevisionID: v.CurrentHealthyRevisionID, CreatedAt: v.CreatedAt})
 		if isUniqueViolation(e) {
 			return domain.Environment{}, ErrConflict
 		}
@@ -116,7 +120,7 @@ func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environm
 	}
 	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
-	x, e := q.CreateEnvironment(ctx, sqlcgen.CreateEnvironmentParams{ID: v.ID, ServiceID: v.ServiceID, Name: v.Name, RunnerSelector: v.RunnerSelector, ComposeProject: v.ComposeProject, HealthPolicy: hp, ConfirmationRequired: v.ConfirmationRequired, TimeoutSeconds: int32(v.TimeoutSeconds), SecretBindings: sb, RollbackSafe: v.RollbackSafe, CurrentHealthyRevisionID: v.CurrentHealthyRevisionID, CreatedAt: v.CreatedAt})
+	x, e := q.CreateEnvironment(ctx, sqlcgen.CreateEnvironmentParams{ID: v.ID, ServiceID: v.ServiceID, Name: v.Name, RunnerSelector: runnerSelector, ComposeProject: v.ComposeProject, HealthPolicy: hp, ConfirmationRequired: v.ConfirmationRequired, TimeoutSeconds: int32(v.TimeoutSeconds), SecretBindings: sb, RollbackSafe: v.RollbackSafe, CurrentHealthyRevisionID: v.CurrentHealthyRevisionID, CreatedAt: v.CreatedAt})
 	if isUniqueViolation(e) {
 		return domain.Environment{}, ErrConflict
 	}
@@ -335,7 +339,7 @@ func validFullImageReference(value string) bool {
 		return false
 	}
 	for index, character := range repository {
-		if !((character >= 'a' && character <= 'z') || (index > 0 && character >= '0' && character <= '9') || character == '.' || character == '_' || character == '/' || character == ':' || character == '-') {
+		if (character < 'a' || character > 'z') && (index == 0 || character < '0' || character > '9') && character != '.' && character != '_' && character != '/' && character != ':' && character != '-' {
 			return false
 		}
 	}
