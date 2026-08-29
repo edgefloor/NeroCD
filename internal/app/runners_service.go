@@ -13,6 +13,7 @@ import (
 	"nerocd/internal/store"
 )
 
+// ListRunners lists authorized runners.
 func (s *Service) ListRunners(ctx context.Context) ([]domain.Runner, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -25,9 +26,7 @@ func (s *Service) ListRunners(ctx context.Context) ([]domain.Runner, error) {
 	return s.runners.ListRunners(ctx)
 }
 
-// RunnerByID keeps administrative detail lookup indexed and distinct from the
-// paginated inventory. Runner identity is global operational metadata and is
-// deliberately visible only to global runner administrators.
+// RunnerOperationalStatus reports the most recent operational telemetry for a runner.
 type RunnerOperationalStatus struct {
 	ObservedAt    time.Time `json:"observed_at"`
 	JournalDepth  int       `json:"journal_depth"`
@@ -35,11 +34,13 @@ type RunnerOperationalStatus struct {
 	RenewFailures int       `json:"renew_failures"`
 }
 
+// RunnerDetail combines runner identity with optional operational telemetry.
 type RunnerDetail struct {
 	domain.Runner
 	Telemetry *RunnerOperationalStatus `json:"telemetry,omitempty"`
 }
 
+// RunnerByID returns administrative runner detail for a global runner administrator.
 func (s *Service) RunnerByID(ctx context.Context, id string) (RunnerDetail, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -72,6 +73,7 @@ func (s *Service) RunnerByID(ctx context.Context, id string) (RunnerDetail, erro
 	return result, nil
 }
 
+// RunnerInput supplies runner registration attributes.
 type RunnerInput struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
@@ -79,11 +81,13 @@ type RunnerInput struct {
 	Capabilities []string `json:"capabilities"`
 }
 
+// RegisteredRunner returns a runner and its one-time authentication token.
 type RegisteredRunner struct {
 	Runner domain.Runner `json:"runner"`
 	Token  string        `json:"token"`
 }
 
+// RunnerEnrollmentInput supplies an authorized runner-enrollment request.
 type RunnerEnrollmentInput struct {
 	RunnerID     string   `json:"runner_id"`
 	RunnerName   string   `json:"runner_name"`
@@ -92,28 +96,34 @@ type RunnerEnrollmentInput struct {
 	TTLSeconds   int      `json:"ttl_seconds"`
 }
 
+// CreatedRunnerEnrollment returns an enrollment and its one-time token.
 type CreatedRunnerEnrollment struct {
 	Enrollment domain.RunnerEnrollment `json:"enrollment"`
 	Token      string                  `json:"token"`
 }
 
+// RunnerEnrollmentRevokeInput identifies an enrollment to revoke.
 type RunnerEnrollmentRevokeInput struct {
 	EnrollmentID string `json:"enrollment_id"`
 }
 
+// RunnerEnrollmentConsumeInput supplies runner details for enrollment consumption.
 type RunnerEnrollmentConsumeInput struct {
 	RequestID      string `json:"request_id"`
 	CredentialHash string `json:"credential_hash"`
 }
 
+// ConsumedRunnerEnrollment returns the runner created from an enrollment.
 type ConsumedRunnerEnrollment struct {
 	Runner domain.Runner `json:"runner"`
 }
 
+// RunnerTokenInput identifies a runner whose token is managed.
 type RunnerTokenInput struct {
 	RunnerID string `json:"runner_id"`
 }
 
+// AuthenticateRunnerToken authenticates the supplied runner token.
 func (s *Service) AuthenticateRunnerToken(ctx context.Context, token string) (auth.Principal, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -140,6 +150,7 @@ var enrollmentConsumeIDPattern = regexp.MustCompile(`^enroll_consume_[0-9a-f]{32
 var sha256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var enrollmentTokenPattern = regexp.MustCompile(`^nce_[0-9a-f]{64}$`)
 
+// CreateRunnerEnrollment creates an authorized runner enrollment.
 func (s *Service) CreateRunnerEnrollment(ctx context.Context, input RunnerEnrollmentInput) (CreatedRunnerEnrollment, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -196,6 +207,7 @@ func (s *Service) CreateRunnerEnrollment(ctx context.Context, input RunnerEnroll
 	return CreatedRunnerEnrollment{Enrollment: enrollment, Token: token}, nil
 }
 
+// RevokeRunnerEnrollment revokes the authorized runner enrollment.
 func (s *Service) RevokeRunnerEnrollment(ctx context.Context, input RunnerEnrollmentRevokeInput) (domain.RunnerEnrollment, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -215,6 +227,7 @@ func (s *Service) RevokeRunnerEnrollment(ctx context.Context, input RunnerEnroll
 	return s.runners.RevokeRunnerEnrollment(ctx, id, audit)
 }
 
+// ConsumeRunnerEnrollment consumes a valid enrollment and returns its runner.
 func (s *Service) ConsumeRunnerEnrollment(ctx context.Context, token string, input RunnerEnrollmentConsumeInput) (ConsumedRunnerEnrollment, error) {
 	token = strings.TrimSpace(token)
 	if !enrollmentTokenPattern.MatchString(token) {
@@ -236,6 +249,7 @@ func (s *Service) ConsumeRunnerEnrollment(ctx context.Context, token string, inp
 	return ConsumedRunnerEnrollment{Runner: runner}, nil
 }
 
+// RegisterRunner registers an authorized runner.
 func (s *Service) RegisterRunner(ctx context.Context, input RunnerInput) (RegisteredRunner, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -291,6 +305,7 @@ func composeRunnerHasGenericShell(capabilities []string) bool {
 	return compose && shell
 }
 
+// RotateRunnerToken rotates an authorized runner token.
 func (s *Service) RotateRunnerToken(ctx context.Context, input RunnerTokenInput) (RegisteredRunner, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -319,6 +334,7 @@ func (s *Service) RotateRunnerToken(ctx context.Context, input RunnerTokenInput)
 	return RegisteredRunner{Runner: runner, Token: token}, nil
 }
 
+// RevokeRunnerToken revokes the authorized runner token.
 func (s *Service) RevokeRunnerToken(ctx context.Context, input RunnerTokenInput) (domain.Runner, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -339,6 +355,7 @@ func (s *Service) RevokeRunnerToken(ctx context.Context, input RunnerTokenInput)
 	return s.runners.UpdateRunnerToken(ctx, runnerID, "", domain.RunnerRevoked, time.Now().UTC(), store.WithAudit(audit))
 }
 
+// HeartbeatRunner records an authenticated runner heartbeat.
 func (s *Service) HeartbeatRunner(ctx context.Context) (domain.Runner, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -357,12 +374,14 @@ func (s *Service) HeartbeatRunner(ctx context.Context) (domain.Runner, error) {
 // RunnerOperationalTelemetry is a bounded latest-state report. Runner
 // identity is authenticated from the bearer context; callers cannot select a
 // target runner or attach paths, logs, errors, or arbitrary labels.
+// RunnerOperationalTelemetry reports journal and renewal health from a runner.
 type RunnerOperationalTelemetry struct {
 	JournalDepth  int `json:"journal_depth"`
 	RetryCount    int `json:"retry_count"`
 	RenewFailures int `json:"renew_failures"`
 }
 
+// RecordRunnerOperationalTelemetry records authenticated runner telemetry.
 func (s *Service) RecordRunnerOperationalTelemetry(ctx context.Context, input RunnerOperationalTelemetry) error {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -377,6 +396,7 @@ func (s *Service) RecordRunnerOperationalTelemetry(ctx context.Context, input Ru
 	return s.operationalWriter.RecordRunnerOperationalObservation(ctx, principal.ID, input.JournalDepth, input.RetryCount, input.RenewFailures)
 }
 
+// ClaimRun claims eligible work for the authenticated runner.
 func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -405,6 +425,7 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	return claim, nil
 }
 
+// RenewLease renews an authenticated runner lease.
 func (s *Service) RenewLease(ctx context.Context, leaseID, fence string, attempt int) (domain.RunLease, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -416,10 +437,12 @@ func (s *Service) RenewLease(ctx context.Context, leaseID, fence string, attempt
 	return s.runners.RenewLease(ctx, principal.ID, leaseID, fence, attempt, time.Now().UTC(), s.leaseTTL)
 }
 
+// ReapExpiredLeases expires leases that have passed their deadline.
 func (s *Service) ReapExpiredLeases(ctx context.Context) error {
 	return s.runners.ExpireLeases(ctx, time.Now().UTC())
 }
 
+// CompleteLease records an authenticated runner lease completion.
 func (s *Service) CompleteLease(ctx context.Context, leaseID string, status string, attempt int, fence string, completionKey ...string) (domain.RunLease, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -486,6 +509,7 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 	return s.runners.CompleteLeaseRequest(ctx, leaseID, principal.ID, status, attempt, fence, key, now, runStatus, finishedAt, workflowState, logs, audit)
 }
 
+// RunnerLease returns the authorized lease.
 func (s *Service) RunnerLease(ctx context.Context, leaseID string, attempt int, fence string) (domain.RunLease, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -505,6 +529,7 @@ func (s *Service) RunnerLease(ctx context.Context, leaseID string, attempt int, 
 	return lease, nil
 }
 
+// SecretAccessInput identifies a lease-bound secret access request.
 type SecretAccessInput struct {
 	AccessID string `json:"access_id"`
 	RunID    string `json:"run_id"`
@@ -516,6 +541,7 @@ type SecretAccessInput struct {
 	Version  string `json:"version"`
 }
 
+// AuthorizeSecretAccess authorizes secret access for an active runner lease.
 func (s *Service) AuthorizeSecretAccess(ctx context.Context, input SecretAccessInput) (domain.SecretAccessGrant, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {

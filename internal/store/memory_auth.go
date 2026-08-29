@@ -7,6 +7,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// GetUserByEmail implements the corresponding repository operation.
 func (s *MemoryStore) GetUserByEmail(_ context.Context, email string) (domain.User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -18,6 +19,7 @@ func (s *MemoryStore) GetUserByEmail(_ context.Context, email string) (domain.Us
 	return domain.User{}, ErrNotFound
 }
 
+// UpdatePasswordHash implements the corresponding repository operation.
 func (s *MemoryStore) UpdatePasswordHash(_ context.Context, userID, previousHash, passwordHash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -30,6 +32,7 @@ func (s *MemoryStore) UpdatePasswordHash(_ context.Context, userID, previousHash
 	return ErrConflict
 }
 
+// BootstrapAdmin implements the corresponding repository operation.
 func (s *MemoryStore) BootstrapAdmin(_ context.Context, user domain.User, audit domain.AuditEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -45,12 +48,14 @@ func (s *MemoryStore) BootstrapAdmin(_ context.Context, user domain.User, audit 
 // BootstrapComplete intentionally exposes only the one fixed lifecycle bit.
 // It is safe to use before authentication and never reveals an administrator
 // identity, address, timestamp, or migration detail.
+// BootstrapComplete implements the corresponding repository operation.
 func (s *MemoryStore) BootstrapComplete(_ context.Context) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.users) != 0, nil
 }
 
+// CreateSession implements the corresponding repository operation.
 func (s *MemoryStore) CreateSession(_ context.Context, session domain.Session, tokenHash string, opts ...MutationOption) error {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -63,6 +68,7 @@ func (s *MemoryStore) CreateSession(_ context.Context, session domain.Session, t
 	return nil
 }
 
+// GetPrincipalBySessionTokenHash implements the corresponding repository operation.
 func (s *MemoryStore) GetPrincipalBySessionTokenHash(_ context.Context, tokenHash string, now time.Time) (domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,6 +95,7 @@ func (s *MemoryStore) GetPrincipalBySessionTokenHash(_ context.Context, tokenHas
 	return domain.User{}, ErrNotFound
 }
 
+// RevokeSessionByTokenHash implements the corresponding repository operation.
 func (s *MemoryStore) RevokeSessionByTokenHash(_ context.Context, tokenHash string, revokedAt time.Time, opts ...MutationOption) error {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -106,6 +113,7 @@ func (s *MemoryStore) RevokeSessionByTokenHash(_ context.Context, tokenHash stri
 	return ErrNotFound
 }
 
+// ListSessions implements the corresponding repository operation.
 func (s *MemoryStore) ListSessions(_ context.Context) ([]domain.Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -123,6 +131,7 @@ func (s *MemoryStore) ListSessions(_ context.Context) ([]domain.Session, error) 
 	return result, nil
 }
 
+// RevokeSessionByID implements the corresponding repository operation.
 func (s *MemoryStore) RevokeSessionByID(_ context.Context, id string, revokedAt time.Time, opts ...MutationOption) (domain.Session, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -140,6 +149,7 @@ func (s *MemoryStore) RevokeSessionByID(_ context.Context, id string, revokedAt 
 	return domain.Session{}, ErrNotFound
 }
 
+// CreateAPIToken implements the corresponding repository operation.
 func (s *MemoryStore) CreateAPIToken(_ context.Context, token domain.APIToken, opts ...MutationOption) (domain.APIToken, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -151,6 +161,7 @@ func (s *MemoryStore) CreateAPIToken(_ context.Context, token domain.APIToken, o
 	return token, nil
 }
 
+// GetAPITokenByHash implements the corresponding repository operation.
 func (s *MemoryStore) GetAPITokenByHash(_ context.Context, tokenHash string, now time.Time) (domain.APIToken, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -168,6 +179,7 @@ func (s *MemoryStore) GetAPITokenByHash(_ context.Context, tokenHash string, now
 	return domain.APIToken{}, ErrNotFound
 }
 
+// RevokeAPIToken implements the corresponding repository operation.
 func (s *MemoryStore) RevokeAPIToken(_ context.Context, tokenID string, revokedAt time.Time, opts ...MutationOption) (domain.APIToken, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()

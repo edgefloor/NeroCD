@@ -11,6 +11,7 @@ import (
 	"nerocd/internal/store"
 )
 
+// ListProjects lists authorized projects.
 func (s *Service) ListProjects(ctx context.Context) ([]domain.Project, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -36,6 +37,7 @@ func (s *Service) ListProjects(ctx context.Context) ([]domain.Project, error) {
 	return out, nil
 }
 
+// ListProjectMembers lists authorized project members.
 func (s *Service) ListProjectMembers(ctx context.Context, projectID string) ([]domain.ProjectMember, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -68,6 +70,7 @@ func (s *Service) ListProjectMembers(ctx context.Context, projectID string) ([]d
 	return out, nil
 }
 
+// ProjectRole returns the caller's role for a project.
 func (s *Service) ProjectRole(ctx context.Context, projectID string) (domain.ProjectRole, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -92,17 +95,20 @@ func (s *Service) ProjectRole(ctx context.Context, projectID string) (domain.Pro
 	return domain.ProjectRole{}, auth.ErrForbidden
 }
 
+// ProjectInput supplies project attributes for creation or update.
 type ProjectInput struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
+// ProjectMemberInput supplies an authorized project membership change.
 type ProjectMemberInput struct {
 	ProjectID string `json:"project_id"`
 	Email     string `json:"email"`
 	Role      string `json:"role"`
 }
 
+// AccessKeyInput supplies an authorized source access-key request.
 type AccessKeyInput struct {
 	ProjectID   string `json:"project_id"`
 	Name        string `json:"name"`
@@ -110,6 +116,7 @@ type AccessKeyInput struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
+// InventoryInput supplies an authorized inventory source request.
 type InventoryInput struct {
 	ProjectID string `json:"project_id"`
 	Name      string `json:"name"`
@@ -117,6 +124,7 @@ type InventoryInput struct {
 	Source    string `json:"source"`
 }
 
+// CreateProject creates an authorized project.
 func (s *Service) CreateProject(ctx context.Context, input ProjectInput) (domain.Project, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -144,6 +152,7 @@ func (s *Service) CreateProject(ctx context.Context, input ProjectInput) (domain
 	return s.projects.CreateProjectWithOwner(ctx, project, member, audit)
 }
 
+// UpsertProjectMember creates or updates an authorized project membership.
 func (s *Service) UpsertProjectMember(ctx context.Context, input ProjectMemberInput) (domain.ProjectMember, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -200,6 +209,7 @@ func (s *Service) UpsertProjectMember(ctx context.Context, input ProjectMemberIn
 	return s.members.UpsertProjectMember(ctx, member, store.WithAudit(audit))
 }
 
+// CreateAccessKey creates an authorized access key.
 func (s *Service) CreateAccessKey(ctx context.Context, input AccessKeyInput) (domain.AccessKey, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -238,6 +248,7 @@ func (s *Service) CreateAccessKey(ctx context.Context, input AccessKeyInput) (do
 	return s.sources.CreateAccessKey(ctx, key, store.WithAudit(audit))
 }
 
+// CreateInventory creates an authorized inventory.
 func (s *Service) CreateInventory(ctx context.Context, input InventoryInput) (domain.Inventory, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -276,6 +287,7 @@ func (s *Service) CreateInventory(ctx context.Context, input InventoryInput) (do
 	return s.sources.CreateInventory(ctx, inventory, store.WithAudit(audit))
 }
 
+// UpdateProject updates the authorized project.
 func (s *Service) UpdateProject(ctx context.Context, id string, input ProjectInput) (domain.Project, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -296,6 +308,7 @@ func (s *Service) UpdateProject(ctx context.Context, id string, input ProjectInp
 	return s.projects.UpdateProject(ctx, project, store.WithAudit(audit))
 }
 
+// ArchiveProject archives an authorized project.
 func (s *Service) ArchiveProject(ctx context.Context, id string) (domain.Project, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {

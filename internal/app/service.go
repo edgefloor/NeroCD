@@ -20,6 +20,7 @@ import (
 
 type requestIDContextKey struct{}
 
+// WithRequestID returns ctx carrying a normalized request identifier.
 func WithRequestID(ctx context.Context, requestID string) context.Context {
 	requestID = strings.TrimSpace(requestID)
 	if requestID == "" {
@@ -28,6 +29,7 @@ func WithRequestID(ctx context.Context, requestID string) context.Context {
 	return context.WithValue(ctx, requestIDContextKey{}, requestID)
 }
 
+// Service orchestrates authorized application workflows across injected dependencies.
 type Service struct {
 	auth                 auth.Provider
 	users                store.UserRepository
@@ -57,6 +59,7 @@ type Service struct {
 // fields are required: NewService fails instead of probing the runner or run
 // repositories for optional capabilities, so wiring mistakes surface at
 // construction rather than as missing behavior at request time.
+// Dependencies supplies the repositories and services used by Service.
 type Dependencies struct {
 	Auth              auth.Provider
 	Users             store.UserRepository
@@ -161,6 +164,7 @@ func NewService(deps Dependencies) (*Service, error) {
 	}, nil
 }
 
+// OperationalSnapshot returns the current operational snapshot.
 func (s *Service) OperationalSnapshot(ctx context.Context) (observability.Snapshot, error) {
 	if s.operationalSnapshot == nil {
 		return observability.Snapshot{}, errors.New("operational snapshot is unavailable")
@@ -170,12 +174,15 @@ func (s *Service) OperationalSnapshot(ctx context.Context) (observability.Snapsh
 
 // SetLoginLimiter is an explicit test/configuration seam. A nil limiter is
 // rejected so production login never silently loses its brute-force boundary.
+// SetLoginLimiter configures login-attempt limiting.
 func (s *Service) SetLoginLimiter(limiter *auth.LoginLimiter) {
 	if limiter == nil {
 		panic("login limiter is required")
 	}
 	s.loginLimiter = limiter
 }
+
+// SetClock configures the clock used by service operations.
 func (s *Service) SetClock(clock func() time.Time) {
 	if clock == nil {
 		panic("clock is required")
@@ -185,8 +192,10 @@ func (s *Service) SetClock(clock func() time.Time) {
 
 // SetAllowLegacyPasswordVerification is only used by the explicit development
 // mode to perform a one-time compare-and-swap style upgrade of retired hashes.
+// SetAllowLegacyPasswordVerification configures legacy password verification.
 func (s *Service) SetAllowLegacyPasswordVerification(value bool) { s.allowLegacyPasswords = value }
 
+// Capabilities returns the service capability inventory.
 func (s *Service) Capabilities() []domain.Capability {
 	return s.registry.Capabilities()
 }
@@ -474,39 +483,6 @@ func (s *Service) executableRunForWorkflowStep(run domain.TaskRun) domain.TaskRu
 		}
 	}
 	return run
-}
-
-func (s *Service) advanceWorkflowAfterLease(ctx context.Context, runID string, status string) error {
-	run, err := s.runByID(ctx, runID)
-	if err != nil {
-		return err
-	}
-	if len(run.Workflow.Steps) == 0 || strings.TrimSpace(run.WorkflowState.CurrentStepID) == "" {
-		return nil
-	}
-	now := time.Now().UTC()
-	for i, stepState := range run.WorkflowState.Steps {
-		if stepState.ID != run.WorkflowState.CurrentStepID {
-			continue
-		}
-		run.WorkflowState.Steps[i].Status = status
-		run.WorkflowState.Steps[i].FinishedAt = &now
-		break
-	}
-	run.WorkflowState.CurrentStepID = ""
-	if _, err := s.runs.UpdateRunWorkflowState(ctx, run.ID, run.WorkflowState); err != nil {
-		return err
-	}
-	if status != domain.RunSucceeded {
-		return nil
-	}
-	if nextWorkflowStepIndex(run) >= 0 {
-		if _, err := s.runs.UpdateRunStatus(ctx, run.ID, domain.RunQueued, nil); err != nil {
-			return err
-		}
-		_ = s.runs.CreateRunLog(ctx, domain.RunLog{ID: mustPrefixedID("log"), RunID: run.ID, Sequence: 3, Stream: domain.LogSystem, Message: "Workflow queued next step", CreatedAt: now})
-	}
-	return nil
 }
 
 func completionRunState(run domain.TaskRun, status string, completedAt time.Time) (string, *time.Time, *domain.WorkflowState, bool, error) {

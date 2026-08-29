@@ -13,11 +13,13 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// ListRuns implements the corresponding repository operation.
 func (s *PostgresStore) ListRuns(ctx context.Context, projectID string) ([]domain.TaskRun, error) {
 	result, err := s.ListRunsPage(ctx, projectID, Page{})
 	return result.Items, err
 }
 
+// ListRunsPage implements the corresponding repository operation.
 func (s *PostgresStore) ListRunsPage(ctx context.Context, projectID string, page Page) (PageResult[domain.TaskRun], error) {
 	total64, err := s.queries.CountRuns(ctx, projectID)
 	if err != nil {
@@ -40,6 +42,7 @@ func (s *PostgresStore) ListRunsPage(ctx context.Context, projectID string, page
 	return PageResult[domain.TaskRun]{Items: runs, Limit: limit, Offset: offset, Total: total}, nil
 }
 
+// CreateRun implements the corresponding repository operation.
 func (s *PostgresStore) CreateRun(ctx context.Context, run domain.TaskRun) (domain.TaskRun, error) {
 	runSpec, workflow, state, err := runJSON(run)
 	if err != nil {
@@ -52,6 +55,7 @@ func (s *PostgresStore) CreateRun(ctx context.Context, run domain.TaskRun) (doma
 	return taskRunFromSQLC(inserted)
 }
 
+// CreateRunRequest implements the corresponding repository operation.
 func (s *PostgresStore) CreateRunRequest(ctx context.Context, run domain.TaskRun, log domain.RunLog, approval *domain.Approval, audit domain.AuditEvent) (domain.TaskRun, error) {
 	runSpec, workflow, state, err := runJSON(run)
 	if err != nil {
@@ -65,7 +69,7 @@ func (s *PostgresStore) CreateRunRequest(ctx context.Context, run domain.TaskRun
 	if err != nil {
 		return domain.TaskRun{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	inserted, err := queries.CreateRun(ctx, sqlcgen.CreateRunParams{ID: run.ID, ProjectID: run.ProjectID, TemplateID: run.TemplateID, RunSpec: runSpec, Workflow: workflow, WorkflowState: state, RunnerTags: run.RunnerTags, Status: run.Status, RequestedBy: run.RequestedBy, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt})
 	if err != nil {
@@ -92,6 +96,7 @@ func (s *PostgresStore) CreateRunRequest(ctx context.Context, run domain.TaskRun
 	return run, nil
 }
 
+// UpdateRunStatus implements the corresponding repository operation.
 func (s *PostgresStore) UpdateRunStatus(ctx context.Context, id string, status string, finishedAt *time.Time) (domain.TaskRun, error) {
 	if err := rejectGenericDeploymentRun(ctx, s.queries, id); err != nil {
 		return domain.TaskRun{}, fmt.Errorf("reject generic deployment run: %w", err)
@@ -106,6 +111,7 @@ func (s *PostgresStore) UpdateRunStatus(ctx context.Context, id string, status s
 	return taskRunFromSQLC(updated)
 }
 
+// UpdateRunWorkflowState implements the corresponding repository operation.
 func (s *PostgresStore) UpdateRunWorkflowState(ctx context.Context, id string, workflowState domain.WorkflowState) (domain.TaskRun, error) {
 	if err := rejectGenericDeploymentRun(ctx, s.queries, id); err != nil {
 		return domain.TaskRun{}, fmt.Errorf("reject generic deployment run: %w", err)
@@ -124,12 +130,13 @@ func (s *PostgresStore) UpdateRunWorkflowState(ctx context.Context, id string, w
 	return taskRunFromSQLC(updated)
 }
 
+// CreateRunLog implements the corresponding repository operation.
 func (s *PostgresStore) CreateRunLog(ctx context.Context, log domain.RunLog) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	if err := rejectGenericDeploymentRun(ctx, queries, log.RunID); err != nil {
 		return fmt.Errorf("reject generic deployment run: %w", err)
@@ -143,6 +150,7 @@ func (s *PostgresStore) CreateRunLog(ctx context.Context, log domain.RunLog) err
 	return tx.Commit(ctx)
 }
 
+// CreateRunLogForLease implements the corresponding repository operation.
 func (s *PostgresStore) CreateRunLogForLease(ctx context.Context, log domain.RunLog, runnerID, leaseID string, attempt int, fence string, now time.Time) (domain.RunLog, error) {
 	if log.EventKey != "" {
 		logs, err := s.CreateRunLogsForLease(ctx, []domain.RunLog{log}, log.RunID, runnerID, leaseID, attempt, fence, now)
@@ -155,7 +163,7 @@ func (s *PostgresStore) CreateRunLogForLease(ctx context.Context, log domain.Run
 	if err != nil {
 		return domain.RunLog{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	// Serialize all log allocation for a run, including controller and runner events.
 	if err := queries.AcquireRunLogLock(ctx, log.RunID); err != nil {
@@ -176,6 +184,7 @@ func (s *PostgresStore) CreateRunLogForLease(ctx context.Context, log domain.Run
 	return log, nil
 }
 
+// CreateRunLogsForLease implements the corresponding repository operation.
 func (s *PostgresStore) CreateRunLogsForLease(ctx context.Context, logs []domain.RunLog, runID, runnerID, leaseID string, attempt int, fence string, _ time.Time) ([]domain.RunLog, error) {
 	if len(logs) == 0 {
 		return []domain.RunLog{}, nil
@@ -189,7 +198,7 @@ func (s *PostgresStore) CreateRunLogsForLease(ctx context.Context, logs []domain
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	if err := queries.AcquireRunLogLock(ctx, runID); err != nil {
 		return nil, fmt.Errorf("acquire run log lock query: %w", err)
@@ -251,11 +260,13 @@ func (s *PostgresStore) CreateRunLogsForLease(ctx context.Context, logs []domain
 	return results, nil
 }
 
+// ListRunLogs implements the corresponding repository operation.
 func (s *PostgresStore) ListRunLogs(ctx context.Context, runID string) ([]domain.RunLog, error) {
 	result, err := s.ListRunLogsPage(ctx, runID, Page{})
 	return result.Items, err
 }
 
+// ListRunLogsPage implements the corresponding repository operation.
 func (s *PostgresStore) ListRunLogsPage(ctx context.Context, runID string, page Page) (PageResult[domain.RunLog], error) {
 	total64, err := s.queries.CountRunLogs(ctx, runID)
 	if err != nil {
@@ -274,11 +285,13 @@ func (s *PostgresStore) ListRunLogsPage(ctx context.Context, runID string, page 
 	return PageResult[domain.RunLog]{Items: logs, Limit: limit, Offset: offset, Total: total}, nil
 }
 
+// ListArtifacts implements the corresponding repository operation.
 func (s *PostgresStore) ListArtifacts(ctx context.Context, runID string) ([]domain.ArtifactRecord, error) {
 	result, err := s.ListArtifactsPage(ctx, runID, Page{})
 	return result.Items, err
 }
 
+// ListArtifactsPage implements the corresponding repository operation.
 func (s *PostgresStore) ListArtifactsPage(ctx context.Context, runID string, page Page) (PageResult[domain.ArtifactRecord], error) {
 	total64, err := s.queries.CountArtifacts(ctx, strings.TrimSpace(runID))
 	if err != nil {
@@ -297,12 +310,13 @@ func (s *PostgresStore) ListArtifactsPage(ctx context.Context, runID string, pag
 	return PageResult[domain.ArtifactRecord]{Items: artifacts, Limit: limit, Offset: offset, Total: total}, nil
 }
 
+// CreateArtifact implements the corresponding repository operation.
 func (s *PostgresStore) CreateArtifact(ctx context.Context, artifact domain.ArtifactRecord) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	if err := rejectGenericDeploymentRun(ctx, queries, artifact.RunID); err != nil {
 		return fmt.Errorf("reject generic deployment run: %w", err)
@@ -313,12 +327,13 @@ func (s *PostgresStore) CreateArtifact(ctx context.Context, artifact domain.Arti
 	return tx.Commit(ctx)
 }
 
+// CreateArtifactForLease implements the corresponding repository operation.
 func (s *PostgresStore) CreateArtifactForLease(ctx context.Context, artifact domain.ArtifactRecord, runnerID string, attempt int, fence string, now time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	if _, err := queries.LockAuthorizedLease(ctx, sqlcgen.LockAuthorizedLeaseParams{LeaseID: artifact.LeaseID, RunID: artifact.RunID, RunnerID: runnerID, Attempt: int32(attempt), Fence: fence}); err == pgx.ErrNoRows {
 		return ErrNotFound

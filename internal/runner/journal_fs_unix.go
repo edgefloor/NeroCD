@@ -121,7 +121,7 @@ func (s *secureJournalStore) read(maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	file := os.NewFile(uintptr(fd), journalStateFilename)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
 		return nil, err
@@ -157,7 +157,7 @@ func (s *secureJournalStore) Write(contents []byte) error {
 	file := os.NewFile(uintptr(fd), temporary)
 	removeTemp := true
 	defer func() {
-		file.Close()
+		_ = file.Close()
 		if removeTemp {
 			_ = unix.Unlinkat(s.dirfd, temporary, 0)
 		}

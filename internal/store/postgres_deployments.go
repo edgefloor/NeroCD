@@ -39,10 +39,7 @@ func deploymentFromSQLC(v sqlcgen.Deployment) domain.Deployment {
 	return domain.Deployment{ID: v.ID, EnvironmentID: v.EnvironmentID, DesiredRevisionID: v.DesiredRevisionID, PreviousHealthyRevisionID: v.PreviousHealthyRevisionID, TaskRunID: &v.TaskRunID, IdempotencyKey: v.IdempotencyKey, Status: v.Status, RequestedBy: v.RequestedBy, ConfirmedBy: v.ConfirmedBy, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, FinishedAt: v.FinishedAt, HealthPassed: v.HealthPassed, RollbackOfID: v.RollbackOfID, FailureCode: v.FailureCode, FenceRequired: v.FenceRequired}
 }
 
-func mustAuditJSON(metadata map[string]any) json.RawMessage {
-	encoded, _ := json.Marshal(metadata)
-	return encoded
-}
+// ListServices implements the corresponding repository operation.
 func (s *PostgresStore) ListServices(ctx context.Context, p string) ([]domain.Service, error) {
 	rows, e := s.queries.ListServices(ctx, p)
 	if e != nil {
@@ -54,6 +51,8 @@ func (s *PostgresStore) ListServices(ctx context.Context, p string) ([]domain.Se
 	}
 	return out, nil
 }
+
+// CreateService implements the corresponding repository operation.
 func (s *PostgresStore) CreateService(ctx context.Context, v domain.Service, opts ...MutationOption) (domain.Service, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -67,7 +66,7 @@ func (s *PostgresStore) CreateService(ctx context.Context, v domain.Service, opt
 	if e != nil {
 		return domain.Service{}, fmt.Errorf("begin transaction: %w", e)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	x, e := q.CreateService(ctx, sqlcgen.CreateServiceParams{ID: v.ID, ProjectID: v.ProjectID, Name: v.Name, RepositoryID: v.RepositoryID, ComposePath: v.ComposePath, Profiles: v.Profiles, OwnerID: v.OwnerID, CreatedAt: v.CreatedAt})
 	if isUniqueViolation(e) {
@@ -84,6 +83,8 @@ func (s *PostgresStore) CreateService(ctx context.Context, v domain.Service, opt
 	}
 	return serviceFromSQLC(x), nil
 }
+
+// ListEnvironments implements the corresponding repository operation.
 func (s *PostgresStore) ListEnvironments(ctx context.Context, id string) ([]domain.Environment, error) {
 	rows, e := s.queries.ListEnvironments(ctx, id)
 	if e != nil {
@@ -95,6 +96,8 @@ func (s *PostgresStore) ListEnvironments(ctx context.Context, id string) ([]doma
 	}
 	return out, nil
 }
+
+// CreateEnvironment implements the corresponding repository operation.
 func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environment, opts ...MutationOption) (domain.Environment, error) {
 	audit := resolveMutationOptions(opts)
 	hp, _ := json.Marshal(v.HealthPolicy)
@@ -110,7 +113,7 @@ func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environm
 	if e != nil {
 		return domain.Environment{}, fmt.Errorf("begin transaction: %w", e)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	x, e := q.CreateEnvironment(ctx, sqlcgen.CreateEnvironmentParams{ID: v.ID, ServiceID: v.ServiceID, Name: v.Name, RunnerSelector: v.RunnerSelector, ComposeProject: v.ComposeProject, HealthPolicy: hp, ConfirmationRequired: v.ConfirmationRequired, TimeoutSeconds: int32(v.TimeoutSeconds), SecretBindings: sb, RollbackSafe: v.RollbackSafe, CurrentHealthyRevisionID: v.CurrentHealthyRevisionID, CreatedAt: v.CreatedAt})
 	if isUniqueViolation(e) {
@@ -127,6 +130,8 @@ func (s *PostgresStore) CreateEnvironment(ctx context.Context, v domain.Environm
 	}
 	return environmentFromSQLC(x), nil
 }
+
+// ListRevisions implements the corresponding repository operation.
 func (s *PostgresStore) ListRevisions(ctx context.Context, id string) ([]domain.Revision, error) {
 	rows, e := s.queries.ListRevisions(ctx, id)
 	if e != nil {
@@ -138,6 +143,8 @@ func (s *PostgresStore) ListRevisions(ctx context.Context, id string) ([]domain.
 	}
 	return out, nil
 }
+
+// CreateRevision implements the corresponding repository operation.
 func (s *PostgresStore) CreateRevision(ctx context.Context, v domain.Revision, opts ...MutationOption) (domain.Revision, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -158,7 +165,7 @@ func (s *PostgresStore) CreateRevision(ctx context.Context, v domain.Revision, o
 	if e != nil {
 		return domain.Revision{}, fmt.Errorf("begin transaction: %w", e)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	x, e := q.CreateRevision(ctx, sqlcgen.CreateRevisionParams{ID: v.ID, ServiceID: v.ServiceID, RequestedRef: v.RequestedRef, GitCommit: v.GitCommit, ComposeHash: v.ComposeHash, ImageDigests: v.ImageDigests, ContentIdentity: v.ContentIdentity, CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt})
 	if isUniqueViolation(e) {
@@ -179,6 +186,7 @@ func (s *PostgresStore) CreateRevision(ctx context.Context, v domain.Revision, o
 // DeploymentPlan verifies runner identity, fence and the database clock in the
 // same read-only statement.  It deliberately joins only controlled deployment
 // configuration and opaque secret binding references.
+// DeploymentPlan implements the corresponding repository operation.
 func (s *PostgresStore) DeploymentPlan(ctx context.Context, deploymentID, runID, leaseID, runnerID string, attempt int, fence string) (domain.DeploymentPlan, error) {
 	row, err := s.queries.DeploymentPlan(ctx, sqlcgen.DeploymentPlanParams{ID: deploymentID, TaskRunID: runID, LeaseID: leaseID, RunnerID: runnerID, Attempt: int32(attempt), Fence: fence})
 	if err == pgx.ErrNoRows {
@@ -200,12 +208,13 @@ func (s *PostgresStore) DeploymentPlan(ctx context.Context, deploymentID, runID,
 	return p, nil
 }
 
+// ResolveRevisionProvenance implements the corresponding repository operation.
 func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymentID, runID, leaseID, runnerID string, attempt int, fence, resolutionID, commit, hash string, digests []string, audit domain.AuditEvent) (domain.Revision, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Revision{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	// Replay lookup deliberately precedes lease-expiry validation.  An exact
 	// committed acknowledgement is a receipt, not renewed runner authority.
@@ -297,6 +306,8 @@ func provenanceReplay(ctx context.Context, q *sqlcgen.Queries, deploymentID, res
 	}
 	return revisionFromSQLC(sqlcgen.Revision{ID: row.ID, ServiceID: row.ServiceID, RequestedRef: row.RequestedRef, GitCommit: row.GitCommit, ComposeHash: row.ComposeHash, ImageDigests: row.ImageDigests, ContentIdentity: row.ContentIdentity, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ProvenanceState: row.ProvenanceState, ProvenanceResolved: row.ProvenanceResolved, ResolvedAt: row.ResolvedAt}), true, nil
 }
+
+// ListDeployments implements the corresponding repository operation.
 func (s *PostgresStore) ListDeployments(ctx context.Context, id string) ([]domain.Deployment, error) {
 	rows, e := s.queries.ListDeployments(ctx, id)
 	if e != nil {
@@ -309,6 +320,7 @@ func (s *PostgresStore) ListDeployments(ctx context.Context, id string) ([]domai
 	return out, nil
 }
 
+// GetDeployment implements the corresponding repository operation.
 func (s *PostgresStore) GetDeployment(ctx context.Context, id string) (domain.Deployment, error) {
 	row, err := s.queries.GetDeploymentByID(ctx, id)
 	if err == pgx.ErrNoRows {
@@ -320,6 +332,7 @@ func (s *PostgresStore) GetDeployment(ctx context.Context, id string) (domain.De
 	return deploymentFromSQLC(row), nil
 }
 
+// GetEnvironment implements the corresponding repository operation.
 func (s *PostgresStore) GetEnvironment(ctx context.Context, id string) (domain.Environment, error) {
 	row, err := s.queries.GetEnvironmentByID(ctx, id)
 	if err == pgx.ErrNoRows {
@@ -331,6 +344,7 @@ func (s *PostgresStore) GetEnvironment(ctx context.Context, id string) (domain.E
 	return environmentFromSQLC(row), nil
 }
 
+// GetService implements the corresponding repository operation.
 func (s *PostgresStore) GetService(ctx context.Context, id string) (domain.Service, error) {
 	row, err := s.queries.GetServiceByID(ctx, id)
 	if err == pgx.ErrNoRows {
@@ -345,6 +359,7 @@ func (s *PostgresStore) GetService(ctx context.Context, id string) (domain.Servi
 // CreateDeploymentRequest persists the typed, non-shell deployment plan and
 // its first-class deployment record together. A client never supplies the run
 // linkage, so it cannot attach an arbitrary generic execution to a deployment.
+// CreateDeploymentRequest implements the corresponding repository operation.
 func (s *PostgresStore) CreateDeploymentRequest(ctx context.Context, v domain.Deployment, run domain.TaskRun, audit domain.AuditEvent) (domain.Deployment, error) {
 	raw, err := json.Marshal(run.RunSpec)
 	if err != nil {
@@ -354,7 +369,7 @@ func (s *PostgresStore) CreateDeploymentRequest(ctx context.Context, v domain.De
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	if v.RollbackOfID != nil {
 		return domain.Deployment{}, ErrConflict
@@ -390,12 +405,13 @@ func (s *PostgresStore) CreateDeploymentRequest(ctx context.Context, v domain.De
 	return deploymentFromSQLC(x), nil
 }
 
+// ConfirmDeployment implements the corresponding repository operation.
 func (s *PostgresStore) ConfirmDeployment(ctx context.Context, id, confirmedBy string, audit domain.AuditEvent) (domain.Deployment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	confirmed, err := q.ConfirmDeployment(ctx, sqlcgen.ConfirmDeploymentParams{ID: id, ConfirmedBy: &confirmedBy})
 	if err == pgx.ErrNoRows {
@@ -420,12 +436,13 @@ func (s *PostgresStore) ConfirmDeployment(ctx context.Context, id, confirmedBy s
 // protocol: it can only record validation failures before a run is assigned.
 // Once assigned, an exact lease/fence deployment transition is the only
 // execution authority.
+// FailPreAssignmentDeployment implements the corresponding repository operation.
 func (s *PostgresStore) FailPreAssignmentDeployment(ctx context.Context, id, failureCode string, audit domain.AuditEvent) (domain.Deployment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	current, err := q.LockDeploymentByID(ctx, id)
 	if err == pgx.ErrNoRows {
@@ -499,6 +516,7 @@ func deploymentTerminalOutcome(status domain.DeploymentStatus) (attemptStatus, l
 // task run, per-run advisory log lock, deployment linkage/attempt, exact lease. The
 // replay record is checked before expiry only when its complete fenced body
 // matches; it cannot grant new mutation authority after reassignment.
+// TransitionDeploymentAttempt implements the corresponding repository operation.
 func (s *PostgresStore) TransitionDeploymentAttempt(ctx context.Context, request domain.DeploymentTransitionRequest, audit domain.AuditEvent) (domain.Deployment, error) {
 	metadata, err := json.Marshal(request.Metadata)
 	if err != nil {
@@ -508,7 +526,7 @@ func (s *PostgresStore) TransitionDeploymentAttempt(ctx context.Context, request
 	if err != nil {
 		return domain.Deployment{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	runID, err := q.GetLeaseRunID(ctx, request.LeaseID)
 	if err == pgx.ErrNoRows {
@@ -634,12 +652,13 @@ func (s *PostgresStore) TransitionDeploymentAttempt(ctx context.Context, request
 // and its run. Pre-apply cancellation settles every owned record in the same
 // transaction; post-apply cancellation intentionally preserves the active
 // lease so the fenced runner can inspect the target and enter rollback.
+// CancelDeploymentRequest implements the corresponding repository operation.
 func (s *PostgresStore) CancelDeploymentRequest(ctx context.Context, req domain.DeploymentCancelRequest, audit domain.AuditEvent) (domain.Deployment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Deployment{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	d, err := q.LockDeploymentByID(ctx, req.DeploymentID)
 	if err == pgx.ErrNoRows {
@@ -717,6 +736,7 @@ func (s *PostgresStore) CancelDeploymentRequest(ctx context.Context, req domain.
 // FailDeploymentAndCreateRollback is the post-apply failure boundary.  It
 // deliberately uses one transaction: a source deployment cannot be marked
 // failed and release the environment before its rollback run exists.
+// FailDeploymentAndCreateRollback implements the corresponding repository operation.
 func (s *PostgresStore) FailDeploymentAndCreateRollback(ctx context.Context, req domain.DeploymentFailureRollbackRequest, failedAudit, rollbackAudit domain.AuditEvent) (domain.DeploymentFailureRollbackResult, error) {
 	if (req.ExpectedStatus != domain.DeploymentApplying && req.ExpectedStatus != domain.DeploymentVerifying && req.ExpectedStatus != domain.DeploymentCancelRequested) || req.RequestID == "" || (req.ExpectedStatus == domain.DeploymentCancelRequested && req.CancellationRequestID == "") {
 		return domain.DeploymentFailureRollbackResult{}, ErrConflict
@@ -726,7 +746,7 @@ func (s *PostgresStore) FailDeploymentAndCreateRollback(ctx context.Context, req
 	if err != nil {
 		return domain.DeploymentFailureRollbackResult{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	if req.ExpectedStatus == domain.DeploymentCancelRequested {
 		receipt, receiptErr := q.GetDeploymentCancellation(ctx, req.DeploymentID)

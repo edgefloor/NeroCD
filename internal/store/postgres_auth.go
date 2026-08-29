@@ -12,6 +12,7 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// GetUserByEmail implements the corresponding repository operation.
 func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
 	user, err := s.queries.GetUserByEmail(ctx, email)
 	if err == pgx.ErrNoRows {
@@ -23,6 +24,7 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (domai
 	return userFromSQLC(user), nil
 }
 
+// UpdatePasswordHash implements the corresponding repository operation.
 func (s *PostgresStore) UpdatePasswordHash(ctx context.Context, userID, previousHash, passwordHash string) error {
 	updated, err := s.queries.UpdatePasswordHash(ctx, sqlcgen.UpdatePasswordHashParams{ID: userID, PasswordHash: passwordHash, PasswordHash_2: previousHash})
 	if err != nil {
@@ -34,12 +36,13 @@ func (s *PostgresStore) UpdatePasswordHash(ctx context.Context, userID, previous
 	return nil
 }
 
+// BootstrapAdmin implements the corresponding repository operation.
 func (s *PostgresStore) BootstrapAdmin(ctx context.Context, user domain.User, audit domain.AuditEvent) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	completedBy := user.ID
 	completedAt := user.CreatedAt
@@ -66,6 +69,7 @@ func (s *PostgresStore) BootstrapAdmin(ctx context.Context, user domain.User, au
 	return tx.Commit(ctx)
 }
 
+// BootstrapComplete implements the corresponding repository operation.
 func (s *PostgresStore) BootstrapComplete(ctx context.Context) (bool, error) {
 	completed, err := s.queries.BootstrapComplete(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -74,6 +78,7 @@ func (s *PostgresStore) BootstrapComplete(ctx context.Context) (bool, error) {
 	return completed, err
 }
 
+// CreateSession implements the corresponding repository operation.
 func (s *PostgresStore) CreateSession(ctx context.Context, session domain.Session, tokenHash string, opts ...MutationOption) error {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -83,7 +88,7 @@ func (s *PostgresStore) CreateSession(ctx context.Context, session domain.Sessio
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	if err = q.CreateSession(ctx, sqlcgen.CreateSessionParams{ID: session.ID, UserID: session.UserID, TokenHash: tokenHash, ExpiresAt: session.ExpiresAt, CreatedAt: session.CreatedAt, SourceIp: session.SourceIP, UserAgent: session.UserAgent, LastSeenAt: session.LastSeenAt}); err != nil {
 		return fmt.Errorf("create session query: %w", err)
@@ -98,6 +103,7 @@ func sessionFromFields(id, userID string, expiresAt, createdAt time.Time, source
 	return domain.Session{ID: id, UserID: userID, ExpiresAt: expiresAt, CreatedAt: createdAt, SourceIP: sourceIP, UserAgent: userAgent, LastSeenAt: lastSeenAt, RevokedAt: revokedAt}
 }
 
+// ListSessions implements the corresponding repository operation.
 func (s *PostgresStore) ListSessions(ctx context.Context) ([]domain.Session, error) {
 	rows, err := s.queries.ListSessions(ctx)
 	if err != nil {
@@ -110,6 +116,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context) ([]domain.Session, err
 	return result, nil
 }
 
+// RevokeSessionByID implements the corresponding repository operation.
 func (s *PostgresStore) RevokeSessionByID(ctx context.Context, id string, revokedAt time.Time, opts ...MutationOption) (domain.Session, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -126,7 +133,7 @@ func (s *PostgresStore) RevokeSessionByID(ctx context.Context, id string, revoke
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.RevokeSessionByID(ctx, sqlcgen.RevokeSessionByIDParams{ID: id, RevokedAt: &revokedAt})
 	if err == pgx.ErrNoRows {
@@ -144,6 +151,7 @@ func (s *PostgresStore) RevokeSessionByID(ctx context.Context, id string, revoke
 	return sessionFromFields(row.ID, row.UserID, row.ExpiresAt, row.CreatedAt, row.SourceIp, row.UserAgent, row.LastSeenAt, row.RevokedAt), nil
 }
 
+// GetPrincipalBySessionTokenHash implements the corresponding repository operation.
 func (s *PostgresStore) GetPrincipalBySessionTokenHash(ctx context.Context, tokenHash string, now time.Time) (domain.User, error) {
 	threshold := now.Add(-SessionLastSeenUpdateInterval)
 	user, err := s.queries.GetPrincipalBySessionTokenHash(ctx, sqlcgen.GetPrincipalBySessionTokenHashParams{TokenHash: tokenHash, ExpiresAt: now, LastSeenAt: &threshold})
@@ -156,6 +164,7 @@ func (s *PostgresStore) GetPrincipalBySessionTokenHash(ctx context.Context, toke
 	return userFromSQLC(user), nil
 }
 
+// RevokeSessionByTokenHash implements the corresponding repository operation.
 func (s *PostgresStore) RevokeSessionByTokenHash(ctx context.Context, tokenHash string, revokedAt time.Time, opts ...MutationOption) error {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -172,7 +181,7 @@ func (s *PostgresStore) RevokeSessionByTokenHash(ctx context.Context, tokenHash 
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	rows, err := q.RevokeSessionByTokenHash(ctx, sqlcgen.RevokeSessionByTokenHashParams{TokenHash: tokenHash, RevokedAt: &revokedAt})
 	if err != nil {
@@ -187,6 +196,7 @@ func (s *PostgresStore) RevokeSessionByTokenHash(ctx context.Context, tokenHash 
 	return tx.Commit(ctx)
 }
 
+// CreateAPIToken implements the corresponding repository operation.
 func (s *PostgresStore) CreateAPIToken(ctx context.Context, token domain.APIToken, opts ...MutationOption) (domain.APIToken, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -200,7 +210,7 @@ func (s *PostgresStore) CreateAPIToken(ctx context.Context, token domain.APIToke
 	if err != nil {
 		return domain.APIToken{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.CreateAPIToken(ctx, sqlcgen.CreateAPITokenParams{ID: token.ID, Name: token.Name, Kind: token.Kind, TokenHash: token.TokenHash, Roles: token.Roles, Status: token.Status, CreatedBy: token.CreatedBy, CreatedAt: token.CreatedAt, ExpiresAt: token.ExpiresAt})
 	if err != nil {
@@ -215,6 +225,7 @@ func (s *PostgresStore) CreateAPIToken(ctx context.Context, token domain.APIToke
 	return apiTokenFromSQLC(row), nil
 }
 
+// GetAPITokenByHash implements the corresponding repository operation.
 func (s *PostgresStore) GetAPITokenByHash(ctx context.Context, tokenHash string, now time.Time) (domain.APIToken, error) {
 	token, err := s.queries.GetAPITokenByHash(ctx, sqlcgen.GetAPITokenByHashParams{TokenHash: tokenHash, LastUsedAt: &now})
 	if err == pgx.ErrNoRows {
@@ -226,6 +237,7 @@ func (s *PostgresStore) GetAPITokenByHash(ctx context.Context, tokenHash string,
 	return apiTokenFromSQLC(token), nil
 }
 
+// RevokeAPIToken implements the corresponding repository operation.
 func (s *PostgresStore) RevokeAPIToken(ctx context.Context, tokenID string, revokedAt time.Time, opts ...MutationOption) (domain.APIToken, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -242,7 +254,7 @@ func (s *PostgresStore) RevokeAPIToken(ctx context.Context, tokenID string, revo
 	if err != nil {
 		return domain.APIToken{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.RevokeAPIToken(ctx, sqlcgen.RevokeAPITokenParams{ID: tokenID, RevokedAt: &revokedAt})
 	if err == pgx.ErrNoRows {

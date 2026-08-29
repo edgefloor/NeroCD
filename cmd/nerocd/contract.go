@@ -206,7 +206,7 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 }
 
 func requiresContractAuth(method string, path string) bool {
-	return path != "/api/v1/health" && path != "/api/v1/ready" && path != "/api/v1/bootstrap-status" && !(method == http.MethodPost && (path == "/api/v1/sessions" || path == "/api/v1/browser-sessions"))
+	return path != "/api/v1/health" && path != "/api/v1/ready" && path != "/api/v1/bootstrap-status" && (method != http.MethodPost || (path != "/api/v1/sessions" && path != "/api/v1/browser-sessions"))
 }
 
 func requiresContractRunnerAuth(path string) bool {
@@ -721,7 +721,7 @@ func isDocumentedPath(documented map[string]documentedOperation, path string) bo
 		}
 		matched := true
 		for i := range want {
-			if !(strings.HasPrefix(want[i], "{") && strings.HasSuffix(want[i], "}")) && want[i] != got[i] {
+			if (!strings.HasPrefix(want[i], "{") || !strings.HasSuffix(want[i], "}")) && want[i] != got[i] {
 				matched = false
 				break
 			}

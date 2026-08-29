@@ -8,8 +8,10 @@ import (
 	"sync"
 )
 
+// RedactionMarker replaces secret material in runner output.
 const RedactionMarker = "[REDACTED]"
 
+// SecretMaterial describes a value and encodings that must be redacted.
 type SecretMaterial struct {
 	Value     string
 	Encodings []string
@@ -25,6 +27,7 @@ type Redactor struct {
 	order    []string
 }
 
+// NewRedactor constructs a streaming redactor for materials.
 func NewRedactor(materials []SecretMaterial) *Redactor {
 	unique := map[string]struct{}{}
 	for _, material := range materials {
@@ -61,6 +64,7 @@ func NewRedactor(materials []SecretMaterial) *Redactor {
 	return &Redactor{patterns: patterns, pending: map[string]string{}}
 }
 
+// Redact removes known secret material from text.
 func (r *Redactor) Redact(text string) string {
 	if r == nil {
 		return text
@@ -71,6 +75,7 @@ func (r *Redactor) Redact(text string) string {
 	return text
 }
 
+// RedactChunk redacts one output chunk while preserving stream boundaries.
 func (r *Redactor) RedactChunk(stream, chunk string) string {
 	if r == nil || len(r.patterns) == 0 {
 		return chunk
@@ -101,6 +106,7 @@ func (r *Redactor) RedactChunk(stream, chunk string) string {
 	return safe.String()
 }
 
+// Flush returns any buffered redacted output.
 func (r *Redactor) Flush() []ProcessEvent {
 	if r == nil {
 		return nil

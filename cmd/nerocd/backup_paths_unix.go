@@ -22,7 +22,7 @@ func secureBackupDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || int(stat.Uid) != os.Geteuid() || stat.Mode&0o7777 != 0o700 {
 		return errors.New("unsafe backup directory")
@@ -46,7 +46,7 @@ func openSecureBackupFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, errors.New("backup file cannot be opened")
 	}
-	defer unix.Close(parent)
+	defer func() { _ = unix.Close(parent) }()
 	fd, err := unix.Openat(parent, base, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, errors.New("backup file cannot be opened")
@@ -80,11 +80,11 @@ func openBackupDirectoryPath(path string) (int, error) {
 			continue
 		}
 		if component == ".." {
-			unix.Close(fd)
+			_ = unix.Close(fd)
 			return -1, errors.New("backup path contains parent traversal")
 		}
 		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		if openErr != nil {
 			return -1, openErr
 		}
@@ -111,6 +111,6 @@ func readSecureBackupFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return io.ReadAll(io.LimitReader(file, maxBackupMetadataBytes+1))
 }

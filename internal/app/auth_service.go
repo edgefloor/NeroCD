@@ -12,6 +12,7 @@ import (
 	"nerocd/internal/store"
 )
 
+// BootstrapStatus reports whether initial administrator bootstrap is required.
 type BootstrapStatus struct {
 	Status string `json:"status"`
 }
@@ -34,6 +35,7 @@ func (s *Service) PublicBootstrapStatus(ctx context.Context) (BootstrapStatus, e
 	return BootstrapStatus{Status: "required"}, nil
 }
 
+// OperationsStatus summarizes service readiness for operations endpoints.
 type OperationsStatus struct {
 	Readiness string                 `json:"readiness"`
 	Snapshot  observability.Snapshot `json:"snapshot"`
@@ -42,6 +44,7 @@ type OperationsStatus struct {
 // OperationsStatus returns an all-or-nothing, database-authoritative
 // administrative summary. A failed readiness or snapshot does not publish a
 // stale or partial view.
+// OperationsStatus reports operational readiness without exposing credentials.
 func (s *Service) OperationsStatus(ctx context.Context) (OperationsStatus, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -60,6 +63,7 @@ func (s *Service) OperationsStatus(ctx context.Context) (OperationsStatus, error
 	return OperationsStatus{Readiness: "ready", Snapshot: snapshot}, nil
 }
 
+// SetLeaseTTL configures the TTL used for future runner leases.
 func (s *Service) SetLeaseTTL(ttl time.Duration) error {
 	if ttl < 5*time.Second || ttl > 10*time.Minute {
 		return errors.New("lease TTL must be between 5s and 10m")
@@ -68,10 +72,12 @@ func (s *Service) SetLeaseTTL(ttl time.Duration) error {
 	return nil
 }
 
+// CurrentPrincipal returns the authenticated request principal.
 func (s *Service) CurrentPrincipal(ctx context.Context) (auth.Principal, error) {
 	return s.auth.CurrentPrincipal(ctx)
 }
 
+// Ready verifies that the service dependencies are ready.
 func (s *Service) Ready(ctx context.Context) error {
 	if compatible, ok := s.projects.(interface {
 		SchemaCompatible(context.Context) (bool, error)
@@ -90,6 +96,7 @@ func (s *Service) Ready(ctx context.Context) error {
 	return nil
 }
 
+// AuthenticateSessionToken authenticates the supplied session token.
 func (s *Service) AuthenticateSessionToken(ctx context.Context, token string) (auth.Principal, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -113,6 +120,7 @@ func (s *Service) AuthenticateSessionToken(ctx context.Context, token string) (a
 
 // AuthenticateBrowserSessionToken authenticates only local session credentials.
 // Unlike bearer authentication, it must never fall back to a platform API token.
+// AuthenticateBrowserSessionToken authenticates the supplied browser session token.
 func (s *Service) AuthenticateBrowserSessionToken(ctx context.Context, token string) (auth.Principal, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -151,17 +159,20 @@ func (s *Service) authenticateAPIToken(ctx context.Context, token string) (auth.
 	}, nil
 }
 
+// CreatedAPIToken returns an API token and its one-time plaintext value.
 type CreatedAPIToken struct {
 	APIToken domain.APIToken `json:"api_token"`
 	Token    string          `json:"token"`
 }
 
+// BootstrapAdminInput supplies the initial administrator identity and password.
 type BootstrapAdminInput struct {
 	Email    string
 	Name     string
 	Password string
 }
 
+// BootstrapAdmin creates the initial administrator when bootstrap is required.
 func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput) (domain.User, error) {
 	repository, ok := s.users.(store.BootstrapRepository)
 	if !ok {
@@ -193,6 +204,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput)
 	return user, nil
 }
 
+// APITokenInput supplies the authorized API-token creation request.
 type APITokenInput struct {
 	Name      string     `json:"name"`
 	Kind      string     `json:"kind"`
@@ -200,10 +212,12 @@ type APITokenInput struct {
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
+// RevokeAPITokenInput identifies an API token to revoke.
 type RevokeAPITokenInput struct {
 	TokenID string `json:"token_id"`
 }
 
+// CreateAPIToken creates an authorized API token.
 func (s *Service) CreateAPIToken(ctx context.Context, input APITokenInput) (CreatedAPIToken, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -252,6 +266,7 @@ func (s *Service) CreateAPIToken(ctx context.Context, input APITokenInput) (Crea
 	return CreatedAPIToken{APIToken: apiToken, Token: token}, nil
 }
 
+// RevokeAPIToken revokes an authorized API token.
 func (s *Service) RevokeAPIToken(ctx context.Context, input RevokeAPITokenInput) (domain.APIToken, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -274,20 +289,24 @@ func (s *Service) RevokeAPIToken(ctx context.Context, input RevokeAPITokenInput)
 	return s.apiTokens.RevokeAPIToken(ctx, tokenID, time.Now().UTC(), store.WithAudit(audit))
 }
 
+// CreatedSession returns a session and its one-time plaintext token.
 type CreatedSession struct {
 	Session domain.Session `json:"session"`
 	Token   string         `json:"token"`
 }
 
+// SessionCreateMetadata carries request metadata recorded with a new session.
 type SessionCreateMetadata struct {
 	SourceIP  string
 	UserAgent string
 }
 
+// CreateSession creates an authorized session.
 func (s *Service) CreateSession(ctx context.Context, email string, password string) (CreatedSession, error) {
 	return s.CreateSessionWithMetadata(ctx, email, password, SessionCreateMetadata{})
 }
 
+// CreateSessionWithMetadata creates an authorized session with metadata.
 func (s *Service) CreateSessionWithMetadata(ctx context.Context, email string, password string, metadata SessionCreateMetadata) (CreatedSession, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	metadata.SourceIP = strings.TrimSpace(metadata.SourceIP)
@@ -357,6 +376,7 @@ func (s *Service) CreateSessionWithMetadata(ctx context.Context, email string, p
 	return CreatedSession{Session: session, Token: token}, nil
 }
 
+// RevokeSessionToken revokes the authorized session token.
 func (s *Service) RevokeSessionToken(ctx context.Context, token string) error {
 	principal, err := s.AuthenticateSessionToken(ctx, token)
 	if err != nil {
@@ -369,6 +389,7 @@ func (s *Service) RevokeSessionToken(ctx context.Context, token string) error {
 	return s.sessions.RevokeSessionByTokenHash(ctx, sessionTokenHash(token), s.clock().UTC(), store.WithAudit(audit))
 }
 
+// ListSessions lists authorized sessions.
 func (s *Service) ListSessions(ctx context.Context) ([]domain.Session, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -381,6 +402,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]domain.Session, error) {
 	return s.sessions.ListSessions(ctx)
 }
 
+// RevokeSession revokes the authorized session.
 func (s *Service) RevokeSession(ctx context.Context, sessionID string) (domain.Session, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {

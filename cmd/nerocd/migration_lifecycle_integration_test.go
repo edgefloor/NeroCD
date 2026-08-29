@@ -27,7 +27,7 @@ func TestMigrationLifecyclePG17(t *testing.T) {
 	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	defer admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
+	defer func() { _, _ = admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE") }()
 	pool, err := pgxpool.New(ctx, base+"&search_path="+schema)
 	if err != nil {
 		t.Fatal(err)

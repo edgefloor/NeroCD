@@ -13,6 +13,7 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// GetRunLogRetentionPolicy implements the corresponding repository operation.
 func (s *PostgresStore) GetRunLogRetentionPolicy(ctx context.Context) (domain.RunLogRetentionPolicy, error) {
 	r, err := s.queries.GetRunLogRetentionPolicy(ctx)
 	if err != nil {
@@ -20,6 +21,8 @@ func (s *PostgresStore) GetRunLogRetentionPolicy(ctx context.Context) (domain.Ru
 	}
 	return domain.RunLogRetentionPolicy{Enabled: r.Enabled, KeepDays: int(r.KeepDays), BatchSize: int(r.BatchSize), Version: int(r.Version), UpdatedBy: r.UpdatedBy, UpdatedAt: r.UpdatedAt}, nil
 }
+
+// UpdateRunLogRetentionPolicy implements the corresponding repository operation.
 func (s *PostgresStore) UpdateRunLogRetentionPolicy(ctx context.Context, p domain.RunLogRetentionPolicy, opts ...MutationOption) (domain.RunLogRetentionPolicy, error) {
 	audit := resolveMutationOptions(opts)
 	if !validRunLogRetentionPolicy(p) {
@@ -36,7 +39,7 @@ func (s *PostgresStore) UpdateRunLogRetentionPolicy(ctx context.Context, p domai
 	if err != nil {
 		return domain.RunLogRetentionPolicy{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	r, err := q.UpdateRunLogRetentionPolicy(ctx, sqlcgen.UpdateRunLogRetentionPolicyParams{Enabled: p.Enabled, KeepDays: int32(p.KeepDays), BatchSize: int32(p.BatchSize), UpdatedBy: p.UpdatedBy})
 	if err != nil {
@@ -52,6 +55,8 @@ func (s *PostgresStore) UpdateRunLogRetentionPolicy(ctx context.Context, p domai
 	}
 	return domain.RunLogRetentionPolicy{Enabled: r.Enabled, KeepDays: int(r.KeepDays), BatchSize: int(r.BatchSize), Version: int(r.Version), UpdatedBy: r.UpdatedBy, UpdatedAt: r.UpdatedAt}, nil
 }
+
+// PreviewRunLogRetention implements the corresponding repository operation.
 func (s *PostgresStore) PreviewRunLogRetention(ctx context.Context) (domain.RunLogRetentionPreview, error) {
 	r, err := s.queries.PreviewRunLogRetention(ctx)
 	if err != nil {
@@ -70,6 +75,7 @@ func retentionExecutionFromReceipt(receipt sqlcgen.RunLogRetentionReceipt) domai
 // Its lock order is policy/receipt -> task run -> per-run log advisory lock ->
 // active leases, which stays compatible with fenced log append and terminal
 // transition paths. It selects and deletes run_logs only.
+// ExecuteRunLogRetention implements the corresponding repository operation.
 func (s *PostgresStore) ExecuteRunLogRetention(ctx context.Context, requestID, bodyHash string, audit domain.AuditEvent) (domain.RunLogRetentionExecution, error) {
 	requestID, bodyHash = strings.TrimSpace(requestID), strings.TrimSpace(bodyHash)
 	if requestID == "" || bodyHash == "" {
@@ -79,7 +85,7 @@ func (s *PostgresStore) ExecuteRunLogRetention(ctx context.Context, requestID, b
 	if err != nil {
 		return domain.RunLogRetentionExecution{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	locked, err := q.LockRunLogRetentionPolicy(ctx)
 	if err != nil {

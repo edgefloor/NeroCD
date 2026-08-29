@@ -27,11 +27,15 @@ func RunLogRetentionBodyHash(p domain.RunLogRetentionPolicy) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
+
+// GetRunLogRetentionPolicy implements the corresponding repository operation.
 func (s *MemoryStore) GetRunLogRetentionPolicy(_ context.Context) (domain.RunLogRetentionPolicy, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.retentionPolicy, nil
 }
+
+// UpdateRunLogRetentionPolicy implements the corresponding repository operation.
 func (s *MemoryStore) UpdateRunLogRetentionPolicy(_ context.Context, p domain.RunLogRetentionPolicy, opts ...MutationOption) (domain.RunLogRetentionPolicy, error) {
 	audit := resolveMutationOptions(opts)
 	if !validRunLogRetentionPolicy(p) {
@@ -95,12 +99,16 @@ func (s *MemoryStore) retentionPreviewLocked(now time.Time) (domain.RunLogRetent
 	})
 	return result, indexes
 }
+
+// PreviewRunLogRetention implements the corresponding repository operation.
 func (s *MemoryStore) PreviewRunLogRetention(_ context.Context) (domain.RunLogRetentionPreview, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, _ := s.retentionPreviewLocked(time.Now().UTC())
 	return p, nil
 }
+
+// ExecuteRunLogRetention implements the corresponding repository operation.
 func (s *MemoryStore) ExecuteRunLogRetention(_ context.Context, id, body string, audit domain.AuditEvent) (domain.RunLogRetentionExecution, error) {
 	if strings.TrimSpace(id) == "" {
 		return domain.RunLogRetentionExecution{}, ErrConflict

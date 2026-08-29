@@ -65,12 +65,14 @@ func immutableGitCommit(value string) bool {
 	return err == nil
 }
 
+// Page specifies a bounded offset page for a list operation.
 type Page struct {
 	Limit   int
 	Offset  int
 	Enabled bool
 }
 
+// PageResult contains a page of items and the total available count.
 type PageResult[T any] struct {
 	Items  []T
 	Limit  int
@@ -78,6 +80,7 @@ type PageResult[T any] struct {
 	Total  int
 }
 
+// MemoryStore is an in-memory implementation of the store repository contracts.
 type MemoryStore struct {
 	mu                    sync.RWMutex
 	users                 []domain.User

@@ -7,6 +7,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListRuns implements the corresponding repository operation.
 func (s *MemoryStore) ListRuns(_ context.Context, projectID string) ([]domain.TaskRun, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -19,6 +20,7 @@ func (s *MemoryStore) ListRuns(_ context.Context, projectID string) ([]domain.Ta
 	return out, nil
 }
 
+// ListRunsPage implements the corresponding repository operation.
 func (s *MemoryStore) ListRunsPage(ctx context.Context, projectID string, page Page) (PageResult[domain.TaskRun], error) {
 	runs, err := s.ListRuns(ctx, projectID)
 	if err != nil {
@@ -27,6 +29,7 @@ func (s *MemoryStore) ListRunsPage(ctx context.Context, projectID string, page P
 	return paginateSlice(runs, page), nil
 }
 
+// ListRunLogs implements the corresponding repository operation.
 func (s *MemoryStore) ListRunLogs(_ context.Context, runID string) ([]domain.RunLog, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -39,6 +42,7 @@ func (s *MemoryStore) ListRunLogs(_ context.Context, runID string) ([]domain.Run
 	return out, nil
 }
 
+// ListRunLogsPage implements the corresponding repository operation.
 func (s *MemoryStore) ListRunLogsPage(ctx context.Context, runID string, page Page) (PageResult[domain.RunLog], error) {
 	logs, err := s.ListRunLogs(ctx, runID)
 	if err != nil {
@@ -47,6 +51,7 @@ func (s *MemoryStore) ListRunLogsPage(ctx context.Context, runID string, page Pa
 	return paginateSlice(logs, page), nil
 }
 
+// ListArtifacts implements the corresponding repository operation.
 func (s *MemoryStore) ListArtifacts(_ context.Context, runID string) ([]domain.ArtifactRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -59,6 +64,7 @@ func (s *MemoryStore) ListArtifacts(_ context.Context, runID string) ([]domain.A
 	return out, nil
 }
 
+// ListArtifactsPage implements the corresponding repository operation.
 func (s *MemoryStore) ListArtifactsPage(ctx context.Context, runID string, page Page) (PageResult[domain.ArtifactRecord], error) {
 	artifacts, err := s.ListArtifacts(ctx, runID)
 	if err != nil {
@@ -67,6 +73,7 @@ func (s *MemoryStore) ListArtifactsPage(ctx context.Context, runID string, page 
 	return paginateSlice(artifacts, page), nil
 }
 
+// CreateRun implements the corresponding repository operation.
 func (s *MemoryStore) CreateRun(_ context.Context, run domain.TaskRun) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,6 +85,7 @@ func (s *MemoryStore) CreateRun(_ context.Context, run domain.TaskRun) (domain.T
 	return run, nil
 }
 
+// CreateRunRequest implements the corresponding repository operation.
 func (s *MemoryStore) CreateRunRequest(_ context.Context, run domain.TaskRun, log domain.RunLog, approval *domain.Approval, audit domain.AuditEvent) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -94,6 +102,7 @@ func (s *MemoryStore) CreateRunRequest(_ context.Context, run domain.TaskRun, lo
 	return run, nil
 }
 
+// UpdateRunStatus implements the corresponding repository operation.
 func (s *MemoryStore) UpdateRunStatus(_ context.Context, id string, status string, finishedAt *time.Time) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -117,6 +126,7 @@ func (s *MemoryStore) UpdateRunStatus(_ context.Context, id string, status strin
 	return domain.TaskRun{}, ErrNotFound
 }
 
+// UpdateRunWorkflowState implements the corresponding repository operation.
 func (s *MemoryStore) UpdateRunWorkflowState(_ context.Context, id string, workflowState domain.WorkflowState) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -133,6 +143,7 @@ func (s *MemoryStore) UpdateRunWorkflowState(_ context.Context, id string, workf
 	return domain.TaskRun{}, ErrNotFound
 }
 
+// ActiveLeaseForRun implements the corresponding repository operation.
 func (s *MemoryStore) ActiveLeaseForRun(_ context.Context, runID string) (domain.RunLease, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -144,6 +155,7 @@ func (s *MemoryStore) ActiveLeaseForRun(_ context.Context, runID string) (domain
 	return domain.RunLease{}, ErrNotFound
 }
 
+// GetLeaseForRunner implements the corresponding repository operation.
 func (s *MemoryStore) GetLeaseForRunner(_ context.Context, leaseID string, runnerID string) (domain.RunLease, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -155,6 +167,7 @@ func (s *MemoryStore) GetLeaseForRunner(_ context.Context, leaseID string, runne
 	return domain.RunLease{}, ErrNotFound
 }
 
+// GetLeaseForCompletion implements the corresponding repository operation.
 func (s *MemoryStore) GetLeaseForCompletion(_ context.Context, leaseID, runnerID string, attempt int, fence string) (domain.RunLease, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -166,6 +179,7 @@ func (s *MemoryStore) GetLeaseForCompletion(_ context.Context, leaseID, runnerID
 	return domain.RunLease{}, ErrNotFound
 }
 
+// CreateRunLog implements the corresponding repository operation.
 func (s *MemoryStore) CreateRunLog(_ context.Context, log domain.RunLog) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -193,6 +207,7 @@ func (s *MemoryStore) createRunLogLocked(log domain.RunLog) {
 	s.logs = append(s.logs, log)
 }
 
+// CreateArtifact implements the corresponding repository operation.
 func (s *MemoryStore) CreateArtifact(_ context.Context, artifact domain.ArtifactRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -203,6 +218,7 @@ func (s *MemoryStore) CreateArtifact(_ context.Context, artifact domain.Artifact
 	return nil
 }
 
+// CreateRunLogForLease implements the corresponding repository operation.
 func (s *MemoryStore) CreateRunLogForLease(_ context.Context, log domain.RunLog, runnerID, leaseID string, attempt int, fence string, now time.Time) (domain.RunLog, error) {
 	if log.EventKey != "" {
 		logs, err := s.CreateRunLogsForLease(context.Background(), []domain.RunLog{log}, log.RunID, runnerID, leaseID, attempt, fence, now)
@@ -222,6 +238,7 @@ func (s *MemoryStore) CreateRunLogForLease(_ context.Context, log domain.RunLog,
 	return domain.RunLog{}, ErrNotFound
 }
 
+// CreateRunLogsForLease implements the corresponding repository operation.
 func (s *MemoryStore) CreateRunLogsForLease(_ context.Context, logs []domain.RunLog, runID, runnerID, leaseID string, attempt int, fence string, now time.Time) ([]domain.RunLog, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -281,6 +298,7 @@ func (s *MemoryStore) CreateRunLogsForLease(_ context.Context, logs []domain.Run
 	return results, nil
 }
 
+// CreateArtifactForLease implements the corresponding repository operation.
 func (s *MemoryStore) CreateArtifactForLease(_ context.Context, artifact domain.ArtifactRecord, runnerID string, attempt int, fence string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

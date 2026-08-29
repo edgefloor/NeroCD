@@ -104,7 +104,7 @@ func backupDatabaseContext(parent context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(staging)
+	defer func() { _ = os.RemoveAll(staging) }()
 	dumpPath := filepath.Join(staging, "database.dump")
 	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
@@ -268,7 +268,7 @@ func restoreDatabase(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL`); err != nil {
 		return err
 	}
@@ -353,7 +353,7 @@ func checksumBackupFile(path string) (backupFile, error) {
 	if err != nil {
 		return backupFile{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	h := sha256.New()
 	n, err := io.Copy(h, file)
 	if err != nil {
@@ -413,7 +413,7 @@ func syncBackupDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	defer parent.Close()
+	defer func() { _ = parent.Close() }()
 	return parent.Sync()
 }
 func backupDatabaseState(ctx context.Context, databaseURL string) ([]string, string, error) {
@@ -449,7 +449,7 @@ func inventoryRunnerFiles(root string, requirements []runnerFileInventory) ([]ru
 	if err != nil {
 		return nil, fmt.Errorf("runner-file root is unsafe: %w", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 	result := append([]runnerFileInventory(nil), requirements...)
 	sortRunnerFileInventory(result)
 	for _, requirement := range result {

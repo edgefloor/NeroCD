@@ -19,6 +19,7 @@ const (
 	journalMaxProvenanceBytes = 64 << 10
 )
 
+// ErrJournalConflict indicates reuse of a journal ID with different content.
 var ErrJournalConflict = errors.New("runner journal id reused with different content")
 
 // AttemptIdentity is the complete fenced authority required to replay an
@@ -33,6 +34,7 @@ type AttemptIdentity struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// JournalEvent is a durable runner output event.
 type JournalEvent struct {
 	ID        string          `json:"id"`
 	Attempt   AttemptIdentity `json:"attempt_authority"`
@@ -42,6 +44,7 @@ type JournalEvent struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
+// JournalCompletion is a durable terminal attempt outcome.
 type JournalCompletion struct {
 	ID        string          `json:"id"`
 	Attempt   AttemptIdentity `json:"attempt_authority"`
@@ -63,6 +66,7 @@ type JournalProvenance struct {
 	CreatedAt       time.Time       `json:"created_at"`
 }
 
+// JournalSnapshot is a copy of pending durable attempt mutations.
 type JournalSnapshot struct {
 	Events      []JournalEvent      `json:"events"`
 	Completions []JournalCompletion `json:"completions"`
@@ -85,6 +89,7 @@ type AttemptJournal struct {
 	state journalState
 }
 
+// OpenAttemptJournal opens or creates the secure journal at path.
 func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 	store, contents, err := openSecureJournalStore(strings.TrimSpace(path), journalMaxBytes)
 	if err != nil {
@@ -93,17 +98,18 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 	j := &AttemptJournal{store: store, state: journalState{Version: journalFormatVersion}}
 	if len(contents) != 0 {
 		if err := json.Unmarshal(contents, &j.state); err != nil {
-			store.Close()
+			_ = store.Close()
 			return nil, fmt.Errorf("decode runner journal: %w", err)
 		}
 		if err := validateJournalState(j.state); err != nil {
-			store.Close()
+			_ = store.Close()
 			return nil, err
 		}
 	}
 	return j, nil
 }
 
+// Close releases the journal's secure resources.
 func (j *AttemptJournal) Close() error {
 	if j == nil || j.store == nil {
 		return nil
@@ -111,6 +117,7 @@ func (j *AttemptJournal) Close() error {
 	return j.store.Close()
 }
 
+// AppendEvent durably appends event unless its ID is already recorded.
 func (j *AttemptJournal) AppendEvent(event JournalEvent) (JournalEvent, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -137,6 +144,7 @@ func (j *AttemptJournal) AppendEvent(event JournalEvent) (JournalEvent, error) {
 	return event, nil
 }
 
+// AppendCompletion durably appends completion unless its ID is already recorded.
 func (j *AttemptJournal) AppendCompletion(completion JournalCompletion) (JournalCompletion, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -163,6 +171,7 @@ func (j *AttemptJournal) AppendCompletion(completion JournalCompletion) (Journal
 	return completion, nil
 }
 
+// AppendProvenance durably appends provenance unless its ID is already recorded.
 func (j *AttemptJournal) AppendProvenance(provenance JournalProvenance) (JournalProvenance, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -189,6 +198,7 @@ func (j *AttemptJournal) AppendProvenance(provenance JournalProvenance) (Journal
 	return provenance, nil
 }
 
+// AckEvents removes acknowledged event IDs from the journal.
 func (j *AttemptJournal) AckEvents(ids []string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -214,6 +224,7 @@ func (j *AttemptJournal) AckEvents(ids []string) error {
 	return nil
 }
 
+// AckCompletion removes an acknowledged completion from the journal.
 func (j *AttemptJournal) AckCompletion(id string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -235,6 +246,7 @@ func (j *AttemptJournal) AckCompletion(id string) error {
 	return nil
 }
 
+// AckProvenance removes acknowledged provenance from the journal.
 func (j *AttemptJournal) AckProvenance(id string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -256,6 +268,7 @@ func (j *AttemptJournal) AckProvenance(id string) error {
 	return nil
 }
 
+// DiscardAttempt removes all pending mutations for one fenced attempt.
 func (j *AttemptJournal) DiscardAttempt(leaseID string, attempt int) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -289,6 +302,7 @@ func (j *AttemptJournal) DiscardAttempt(leaseID string, attempt int) error {
 	return nil
 }
 
+// Snapshot returns a copy of pending journal state.
 func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -299,12 +313,14 @@ func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	}
 }
 
+// Depth returns the number of pending journal entries.
 func (j *AttemptJournal) Depth() int {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.entryCountLocked()
 }
 
+// NewJournalID returns a cryptographically random journal identifier.
 func NewJournalID(prefix string) (string, error) {
 	var entropy [16]byte
 	if _, err := rand.Read(entropy[:]); err != nil {

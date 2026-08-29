@@ -11,6 +11,7 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// ListRepositories implements the corresponding repository operation.
 func (s *PostgresStore) ListRepositories(ctx context.Context, projectID string) ([]domain.Repository, error) {
 	rows, err := s.queries.ListRepositories(ctx, projectID)
 	if err != nil {
@@ -27,6 +28,7 @@ func (s *PostgresStore) ListRepositories(ctx context.Context, projectID string) 
 	return repositories, nil
 }
 
+// CreateRepository implements the corresponding repository operation.
 func (s *PostgresStore) CreateRepository(ctx context.Context, repository domain.Repository, opts ...MutationOption) (domain.Repository, error) {
 	audit := resolveMutationOptions(opts)
 	policy, err := json.Marshal(repository.Policy)
@@ -44,7 +46,7 @@ func (s *PostgresStore) CreateRepository(ctx context.Context, repository domain.
 	if err != nil {
 		return domain.Repository{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.CreateRepository(ctx, sqlcgen.CreateRepositoryParams{ID: repository.ID, ProjectID: repository.ProjectID, Name: repository.Name, Url: repository.URL, Provider: repository.Provider, DefaultRef: repository.DefaultRef, RepositoryPolicy: policy, CreatedAt: repository.CreatedAt})
 	if err != nil {
@@ -58,6 +60,8 @@ func (s *PostgresStore) CreateRepository(ctx context.Context, repository domain.
 	}
 	return repositoryFromSQLC(row)
 }
+
+// ConfigureRepositoryPolicy implements the corresponding repository operation.
 func (s *PostgresStore) ConfigureRepositoryPolicy(ctx context.Context, request RepositoryPolicyConfiguration) (domain.Repository, error) {
 	raw, err := json.Marshal(request.Policy)
 	if err != nil {
@@ -123,6 +127,7 @@ func (s *PostgresStore) ConfigureRepositoryPolicy(ctx context.Context, request R
 	return repository, nil
 }
 
+// ListAccessKeys implements the corresponding repository operation.
 func (s *PostgresStore) ListAccessKeys(ctx context.Context, projectID string) ([]domain.AccessKey, error) {
 	rows, err := s.queries.ListAccessKeys(ctx, projectID)
 	if err != nil {
@@ -135,6 +140,7 @@ func (s *PostgresStore) ListAccessKeys(ctx context.Context, projectID string) ([
 	return keys, nil
 }
 
+// CreateAccessKey implements the corresponding repository operation.
 func (s *PostgresStore) CreateAccessKey(ctx context.Context, key domain.AccessKey, opts ...MutationOption) (domain.AccessKey, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -148,7 +154,7 @@ func (s *PostgresStore) CreateAccessKey(ctx context.Context, key domain.AccessKe
 	if err != nil {
 		return domain.AccessKey{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.CreateAccessKey(ctx, sqlcgen.CreateAccessKeyParams{ID: key.ID, ProjectID: key.ProjectID, Name: key.Name, Kind: key.Kind, Fingerprint: key.Fingerprint, CreatedAt: key.CreatedAt})
 	if err != nil {
@@ -163,6 +169,7 @@ func (s *PostgresStore) CreateAccessKey(ctx context.Context, key domain.AccessKe
 	return accessKeyFromSQLC(row), nil
 }
 
+// ListInventories implements the corresponding repository operation.
 func (s *PostgresStore) ListInventories(ctx context.Context, projectID string) ([]domain.Inventory, error) {
 	rows, err := s.queries.ListInventories(ctx, projectID)
 	if err != nil {
@@ -175,6 +182,7 @@ func (s *PostgresStore) ListInventories(ctx context.Context, projectID string) (
 	return inventories, nil
 }
 
+// CreateInventory implements the corresponding repository operation.
 func (s *PostgresStore) CreateInventory(ctx context.Context, inventory domain.Inventory, opts ...MutationOption) (domain.Inventory, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -188,7 +196,7 @@ func (s *PostgresStore) CreateInventory(ctx context.Context, inventory domain.In
 	if err != nil {
 		return domain.Inventory{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.CreateInventory(ctx, sqlcgen.CreateInventoryParams{ID: inventory.ID, ProjectID: inventory.ProjectID, Name: inventory.Name, Kind: inventory.Kind, Source: inventory.Source, CreatedAt: inventory.CreatedAt})
 	if err != nil {

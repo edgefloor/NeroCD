@@ -361,10 +361,13 @@ func TestLeaseRenewerAuthorityFailureCancelsSupervisor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newAttemptSupervisor(domain.RunLease{CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)})
 			defer s.Close()
-			calls := make(chan string, 2)
+			var callsMu sync.Mutex
+			var calls []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				path := strings.TrimPrefix(r.URL.Path, "/api/v1/runners/")
-				calls <- path
+				callsMu.Lock()
+				calls = append(calls, path)
+				callsMu.Unlock()
 				if path == tc.fail {
 					w.WriteHeader(http.StatusForbidden)
 					return
@@ -384,11 +387,13 @@ func TestLeaseRenewerAuthorityFailureCancelsSupervisor(t *testing.T) {
 			}
 			r.Stop()
 			seenFailure := false
-			for len(calls) > 0 {
-				if <-calls == tc.fail {
+			callsMu.Lock()
+			for _, call := range calls {
+				if call == tc.fail {
 					seenFailure = true
 				}
 			}
+			callsMu.Unlock()
 			if !seenFailure {
 				t.Fatalf("failing endpoint %q was not called", tc.fail)
 			}

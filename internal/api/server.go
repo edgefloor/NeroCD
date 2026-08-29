@@ -35,6 +35,7 @@ const (
 
 var safeRequestID = regexp.MustCompile(`\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`)
 
+// Server serves the NeroCD HTTP API.
 type Server struct {
 	app            *app.Service
 	logger         *slog.Logger
@@ -46,6 +47,7 @@ type Server struct {
 	draining       atomic.Bool
 }
 
+// ServerConfig controls HTTP server boundary behavior.
 type ServerConfig struct {
 	// AllowInsecureCookies permits non-Secure cookies only for explicit local
 	// development or HTTP test servers. The zero value remains secure.
@@ -54,6 +56,7 @@ type ServerConfig struct {
 	TrustedProxyCIDRs    []string
 }
 
+// PublicRoute identifies a method and path exposed by the API.
 type PublicRoute struct {
 	Method string
 	Path   string
@@ -153,10 +156,12 @@ func (m *metrics) render() string {
 	return out.String()
 }
 
+// NewServer constructs a Server with secure default configuration.
 func NewServer(appService *app.Service, logger *slog.Logger, static fs.FS) *Server {
 	return NewServerWithConfig(appService, logger, static, ServerConfig{})
 }
 
+// NewServerWithConfig constructs a Server using cfg.
 func NewServerWithConfig(appService *app.Service, logger *slog.Logger, static fs.FS, cfg ServerConfig) *Server {
 	trusted, err := parseTrustedProxyCIDRs(cfg.TrustedProxyCIDRs)
 	if err != nil {
@@ -637,7 +642,7 @@ func isHashedStaticAsset(path string) bool {
 		return false
 	}
 	for _, character := range name[dot-viteHashLength : dot] {
-		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || character == '-' || character == '_') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && character != '-' && character != '_' {
 			return false
 		}
 	}

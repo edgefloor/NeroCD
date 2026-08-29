@@ -7,11 +7,12 @@ import (
 )
 
 func (s *Server) servicesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		s.listServices(w, r)
-	} else if r.Method == http.MethodPost {
+	case http.MethodPost:
 		s.createService(w, r)
-	} else {
+	default:
 		http.NotFound(w, r)
 	}
 }
@@ -36,11 +37,12 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, v)
 }
 func (s *Server) environmentsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		s.listEnvironments(w, r)
-	} else if r.Method == http.MethodPost {
+	case http.MethodPost:
 		s.createEnvironment(w, r)
-	} else {
+	default:
 		http.NotFound(w, r)
 	}
 }
@@ -65,11 +67,12 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, v)
 }
 func (s *Server) revisionsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		s.listRevisions(w, r)
-	} else if r.Method == http.MethodPost {
+	case http.MethodPost:
 		s.createRevision(w, r)
-	} else {
+	default:
 		http.NotFound(w, r)
 	}
 }
@@ -94,11 +97,12 @@ func (s *Server) createRevision(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, v)
 }
 func (s *Server) deploymentsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		s.listDeployments(w, r)
-	} else if r.Method == http.MethodPost {
+	case http.MethodPost:
 		s.createDeployment(w, r)
-	} else {
+	default:
 		http.NotFound(w, r)
 	}
 }

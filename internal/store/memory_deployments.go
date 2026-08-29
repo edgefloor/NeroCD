@@ -9,6 +9,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListServices implements the corresponding repository operation.
 func (s *MemoryStore) ListServices(_ context.Context, projectID string) ([]domain.Service, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -20,6 +21,8 @@ func (s *MemoryStore) ListServices(_ context.Context, projectID string) ([]domai
 	}
 	return out, nil
 }
+
+// CreateService implements the corresponding repository operation.
 func (s *MemoryStore) CreateService(_ context.Context, v domain.Service, opts ...MutationOption) (domain.Service, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -39,6 +42,8 @@ func (s *MemoryStore) CreateService(_ context.Context, v domain.Service, opts ..
 	}
 	return v, nil
 }
+
+// GetService implements the corresponding repository operation.
 func (s *MemoryStore) GetService(_ context.Context, id string) (domain.Service, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -48,6 +53,8 @@ func (s *MemoryStore) GetService(_ context.Context, id string) (domain.Service, 
 	}
 	return s.services[index], nil
 }
+
+// ListEnvironments implements the corresponding repository operation.
 func (s *MemoryStore) ListEnvironments(_ context.Context, serviceID string) ([]domain.Environment, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -59,6 +66,8 @@ func (s *MemoryStore) ListEnvironments(_ context.Context, serviceID string) ([]d
 	}
 	return out, nil
 }
+
+// CreateEnvironment implements the corresponding repository operation.
 func (s *MemoryStore) CreateEnvironment(_ context.Context, v domain.Environment, opts ...MutationOption) (domain.Environment, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -78,6 +87,8 @@ func (s *MemoryStore) CreateEnvironment(_ context.Context, v domain.Environment,
 	}
 	return v, nil
 }
+
+// GetEnvironment implements the corresponding repository operation.
 func (s *MemoryStore) GetEnvironment(_ context.Context, id string) (domain.Environment, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -87,6 +98,8 @@ func (s *MemoryStore) GetEnvironment(_ context.Context, id string) (domain.Envir
 	}
 	return s.environments[index], nil
 }
+
+// ListRevisions implements the corresponding repository operation.
 func (s *MemoryStore) ListRevisions(_ context.Context, serviceID string) ([]domain.Revision, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -98,6 +111,8 @@ func (s *MemoryStore) ListRevisions(_ context.Context, serviceID string) ([]doma
 	}
 	return out, nil
 }
+
+// CreateRevision implements the corresponding repository operation.
 func (s *MemoryStore) CreateRevision(_ context.Context, v domain.Revision, opts ...MutationOption) (domain.Revision, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -130,6 +145,7 @@ func (s *MemoryStore) CreateRevision(_ context.Context, v domain.Revision, opts 
 	return v, nil
 }
 
+// DeploymentPlan implements the corresponding repository operation.
 func (s *MemoryStore) DeploymentPlan(_ context.Context, deploymentID, runID, leaseID, runnerID string, attempt int, fence string) (domain.DeploymentPlan, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -201,6 +217,7 @@ func (s *MemoryStore) DeploymentPlan(_ context.Context, deploymentID, runID, lea
 	return domain.DeploymentPlan{DeploymentID: deployment.ID, Status: deployment.Status, RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence, ProjectID: service.ProjectID, ServiceID: service.ID, EnvironmentID: env.ID, RepositoryID: repository.ID, RepositoryURL: repository.URL, RepositoryPolicy: repository.Policy, RequestedRef: requestedRef, ComposePath: service.ComposePath, Profiles: append([]string(nil), service.Profiles...), ComposeProject: env.ComposeProject, TimeoutSeconds: env.TimeoutSeconds, HealthPolicy: env.HealthPolicy, SecretBindings: append([]domain.SecretBinding(nil), env.SecretBindings...), RollbackSafe: env.RollbackSafe, PreviousHealthyRevisionID: deployment.PreviousHealthyRevisionID, RollbackOfID: deployment.RollbackOfID, CancellationRequestID: cancellationRequestID}, nil
 }
 
+// ResolveRevisionProvenance implements the corresponding repository operation.
 func (s *MemoryStore) ResolveRevisionProvenance(_ context.Context, deploymentID, runID, leaseID, runnerID string, attempt int, fence, resolutionID, commit, hash string, digests []string, audit domain.AuditEvent) (domain.Revision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -267,6 +284,8 @@ func (s *MemoryStore) ResolveRevisionProvenance(_ context.Context, deploymentID,
 	}
 	return domain.Revision{}, ErrNotFound
 }
+
+// ListDeployments implements the corresponding repository operation.
 func (s *MemoryStore) ListDeployments(_ context.Context, environmentID string) ([]domain.Deployment, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -288,6 +307,7 @@ func (s *MemoryStore) deploymentBackedRunLocked(runID string) bool {
 	return false
 }
 
+// CreateDeploymentRequest implements the corresponding repository operation.
 func (s *MemoryStore) CreateDeploymentRequest(_ context.Context, v domain.Deployment, run domain.TaskRun, a domain.AuditEvent) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -349,6 +369,7 @@ func deploymentTransitionAllowed(from, to domain.DeploymentStatus) bool {
 	return domain.DeploymentTransitionAllowed(from, to)
 }
 
+// GetDeployment implements the corresponding repository operation.
 func (s *MemoryStore) GetDeployment(_ context.Context, id string) (domain.Deployment, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -359,6 +380,7 @@ func (s *MemoryStore) GetDeployment(_ context.Context, id string) (domain.Deploy
 	return s.deployments[index], nil
 }
 
+// ConfirmDeployment implements the corresponding repository operation.
 func (s *MemoryStore) ConfirmDeployment(_ context.Context, id, confirmedBy string, audit domain.AuditEvent) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -390,6 +412,7 @@ func (s *MemoryStore) ConfirmDeployment(_ context.Context, id, confirmedBy strin
 // FailPreAssignmentDeployment records a maintainer-side validation failure
 // before any runner owns a deployment. Assigned work must use the fenced
 // runner transition protocol instead.
+// FailPreAssignmentDeployment implements the corresponding repository operation.
 func (s *MemoryStore) FailPreAssignmentDeployment(_ context.Context, id, failureCode string, audit domain.AuditEvent) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -438,6 +461,7 @@ func sameDeploymentTransition(left, right domain.DeploymentTransitionRequest) bo
 	return left.DeploymentID == right.DeploymentID && left.RunID == right.RunID && left.LeaseID == right.LeaseID && left.RunnerID == right.RunnerID && left.Attempt == right.Attempt && left.Fence == right.Fence && left.ExpectedStatus == right.ExpectedStatus && left.TargetStatus == right.TargetStatus && left.FailureCode == right.FailureCode && ((left.HealthPassed == nil && right.HealthPassed == nil) || (left.HealthPassed != nil && right.HealthPassed != nil && *left.HealthPassed == *right.HealthPassed)) && reflect.DeepEqual(left.Metadata, right.Metadata)
 }
 
+// TransitionDeploymentAttempt implements the corresponding repository operation.
 func (s *MemoryStore) TransitionDeploymentAttempt(_ context.Context, request domain.DeploymentTransitionRequest, audit domain.AuditEvent) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -557,6 +581,7 @@ func (s *MemoryStore) TransitionDeploymentAttempt(_ context.Context, request dom
 // runner transition API: pre-apply cancellation has no runner fence yet, and
 // post-apply cancellation must retain that fence until the runner reconciles
 // the target into rollback or manual intervention.
+// CancelDeploymentRequest implements the corresponding repository operation.
 func (s *MemoryStore) CancelDeploymentRequest(_ context.Context, req domain.DeploymentCancelRequest, audit domain.AuditEvent) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -632,6 +657,7 @@ func (s *MemoryStore) CancelDeploymentRequest(_ context.Context, req domain.Depl
 // those calls another deployment could acquire the environment.  Holding the
 // store lock makes the source terminalization, lease settlement and rollback
 // queue insertion one all-or-nothing fenced mutation.
+// FailDeploymentAndCreateRollback implements the corresponding repository operation.
 func (s *MemoryStore) FailDeploymentAndCreateRollback(_ context.Context, req domain.DeploymentFailureRollbackRequest, failedAudit, rollbackAudit domain.AuditEvent) (domain.DeploymentFailureRollbackResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

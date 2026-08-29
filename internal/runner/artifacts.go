@@ -10,6 +10,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ArtifactResult records the capture outcome for one artifact specification.
 type ArtifactResult struct {
 	Name     string
 	Path     string
@@ -19,6 +20,7 @@ type ArtifactResult struct {
 	IsDir    bool
 }
 
+// CaptureArtifacts captures artifacts relative to baseDir.
 func CaptureArtifacts(baseDir string, artifacts []domain.ArtifactSpec, emit func(ProcessEvent)) ([]ArtifactResult, error) {
 	if len(artifacts) == 0 {
 		return nil, nil

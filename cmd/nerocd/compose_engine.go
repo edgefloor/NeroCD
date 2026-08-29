@@ -165,14 +165,16 @@ func writeComposeReconciliationState(workspace string, state composeReconciliati
 		return err
 	}
 	name := temp.Name()
-	defer os.Remove(name)
-	if err := temp.Chmod(0600); err == nil {
-		_, err = temp.Write(raw)
+	defer func() { _ = os.Remove(name) }()
+	if err := temp.Chmod(0600); err != nil {
+		_ = temp.Close()
+		return err
 	}
-	if closeErr := temp.Close(); err == nil {
-		err = closeErr
+	if _, err := temp.Write(raw); err != nil {
+		_ = temp.Close()
+		return err
 	}
-	if err != nil {
+	if err := temp.Close(); err != nil {
 		return err
 	}
 	return os.Rename(name, filepath.Join(root, "state.json"))
@@ -324,7 +326,7 @@ func canonicalHealthHost(value string) string {
 			return ""
 		}
 		for _, r := range label {
-			if !(r == '-' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			if r != '-' && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 				return ""
 			}
 		}

@@ -313,10 +313,10 @@ func TestComposeHealthBlocksRedirectsProxiesAndDisclosure(t *testing.T) {
 
 func TestComposeHealthBoundsResponseBody(t *testing.T) {
 	client, server := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	var written atomic.Int32
 	go func() {
-		defer server.Close()
+		defer func() { _ = server.Close() }()
 		buf := make([]byte, 4096)
 		_, _ = server.Read(buf) // request headers are irrelevant to this body-bound proof
 		_, _ = server.Write([]byte("HTTP/1.1 200 OK\r\nX-NeroCD-Revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\nContent-Length: 131072\r\n\r\n"))

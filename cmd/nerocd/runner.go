@@ -179,17 +179,6 @@ type runnerCompleteRequest struct {
 	CompletionKey string `json:"completion_key"`
 }
 
-type runnerLogRequest struct {
-	RunID    string `json:"run_id"`
-	LeaseID  string `json:"lease_id"`
-	Sequence int    `json:"sequence"`
-	Stream   string `json:"stream"`
-	Message  string `json:"message"`
-	Attempt  int    `json:"attempt"`
-	Fence    string `json:"fence"`
-	EventKey string `json:"event_key"`
-}
-
 type runnerEventRequest struct {
 	EventKey string `json:"event_key"`
 	Sequence int    `json:"sequence"`
@@ -311,7 +300,7 @@ func runRunner(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open runner journal: %w", err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	operational := &runnerOperationalCounters{}
 	if err := reconcileRunnerJournalWithCounters(*server, runnerToken, journal, operational); err != nil {
 		return fmt.Errorf("reconcile runner journal: %w", err)
@@ -383,11 +372,7 @@ func executeClaim(server string, token string, claim domain.ClaimedRun, workDir 
 	if err != nil {
 		return err
 	}
-	defer journal.Close()
-	return executeClaimWithJournalAndSecretRoot(server, token, claim, workDir, cancelPollInterval, journal, os.Getenv("NEROCD_RUNNER_SECRET_ROOT"))
-}
-
-func executeClaimWithJournal(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal) error {
+	defer func() { _ = journal.Close() }()
 	return executeClaimWithJournalAndSecretRoot(server, token, claim, workDir, cancelPollInterval, journal, os.Getenv("NEROCD_RUNNER_SECRET_ROOT"))
 }
 
@@ -452,7 +437,7 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 	}
 	claim.Lease.ExpiresAt = initialRenew.ExpiresAt
 	supervisor.Update(initialRenew)
-	renewEvery := claim.Lease.ExpiresAt.Sub(time.Now()) / 3
+	renewEvery := time.Until(claim.Lease.ExpiresAt) / 3
 	if renewEvery <= 0 || renewEvery > 30*time.Second {
 		renewEvery = 5 * time.Second
 	}
@@ -607,9 +592,6 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 	return printRunnerAuthorityEvent("completed_run", claim.Run.ID, completed)
 }
 
-func completeRunnerLeaseAPI(server string, token string, lease domain.RunLease, status string, completed *domain.RunLease) error {
-	return completeRunnerLeaseAPIContext(context.Background(), server, token, lease, status, completed)
-}
 func completeRunnerLeaseAPIContext(ctx context.Context, server string, token string, lease domain.RunLease, status string, completed *domain.RunLease) error {
 	var discard domain.RunLease
 	if completed == nil {
@@ -734,7 +716,7 @@ func renewLeaseWhileRunning(worker context.Context, supervisor *attemptSuperviso
 					return
 				}
 				supervisor.Update(renewed)
-				renewalDelay = boundedRenewalDelay(renewed.ExpiresAt.Sub(time.Now()) / 3)
+				renewalDelay = boundedRenewalDelay(time.Until(renewed.ExpiresAt) / 3)
 			}
 		}()
 		go func() {
@@ -826,9 +808,6 @@ func startLeaseRenewer(parent context.Context, supervisor *attemptSupervisor, se
 	return &leaseRenewer{cancel: cancel, done: renewLeaseWhileRunning(ctx, supervisor, server, token, lease, interval, supervisor.cancel)}
 }
 
-func appendArtifactAPI(server string, token string, runID string, leaseID string, attempt int, fence string, name string, path string, found bool, required bool, size int64, kind string) error {
-	return appendArtifactAPIContext(context.Background(), server, token, runID, leaseID, attempt, fence, name, path, found, required, size, kind)
-}
 func appendArtifactAPIContext(ctx context.Context, server string, token string, runID string, leaseID string, attempt int, fence string, name string, path string, found bool, required bool, size int64, kind string) error {
 	var artifact domain.ArtifactRecord
 	return postAPIIntoContext(ctx, server+"/api/v1/runners/artifacts", runnerArtifactRequest{RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence, Name: name, Path: path, Found: found, Required: required, Size: size, Kind: kind}, token, &artifact)
@@ -873,14 +852,6 @@ func watchLeaseCancellation(ctx context.Context, server string, token string, le
 func startLeaseWatcher(parent context.Context, server, token string, lease domain.RunLease, interval time.Duration, authorityCancel func()) *leaseWatcher {
 	ctx, cancel := context.WithCancel(parent)
 	return &leaseWatcher{cancel: cancel, done: watchLeaseCancellation(ctx, server, token, lease, interval, func(string) {}, authorityCancel)}
-}
-
-func appendRunLogAPI(server string, token string, runID string, leaseID string, attempt int, fence string, sequence int, stream string, message string) error {
-	return appendRunLogAPIContext(context.Background(), server, token, runID, leaseID, attempt, fence, sequence, stream, message)
-}
-func appendRunLogAPIContext(ctx context.Context, server string, token string, runID string, leaseID string, attempt int, fence string, sequence int, stream string, message string) error {
-	var log domain.RunLog
-	return postAPIIntoContext(ctx, server+"/api/v1/runners/logs", runnerLogRequest{RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence, Sequence: sequence, Stream: stream, Message: message, EventKey: attemptMutationKey("event", leaseID, attempt, strconv.Itoa(sequence))}, token, &log)
 }
 
 func attemptMutationKey(kind, leaseID string, attempt int, discriminator string) string {

@@ -27,7 +27,7 @@ func readOwnerOnlyProductionSecret(path string) ([]byte, error) {
 		_ = syscall.Close(fd)
 		return nil, errors.New("production database secret file cannot be read")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	contents, err := io.ReadAll(io.LimitReader(f, 8193))
 	if err != nil || len(contents) == 0 || len(contents) > 8192 {
 		return nil, errors.New("production database secret file permissions are invalid")

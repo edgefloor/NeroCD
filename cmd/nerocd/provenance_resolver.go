@@ -503,7 +503,7 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	if err != nil {
 		return resolvedProvenance{}, err
 	}
-	if repositoryURL.Scheme != "https" && repositoryURL.Scheme != "ssh" && !(repositoryURL.Scheme == "http" && policy.Mode == "internal" && policy.AllowInternal) {
+	if repositoryURL.Scheme != "https" && repositoryURL.Scheme != "ssh" && (repositoryURL.Scheme != "http" || policy.Mode != "internal" || !policy.AllowInternal) {
 		return resolvedProvenance{}, errors.New("repository transport is not permitted")
 	}
 	if !requestedGitRef(plan.RequestedRef) {
@@ -525,7 +525,7 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	if err != nil {
 		return resolvedProvenance{}, err
 	}
-	defer os.RemoveAll(workspace)
+	defer func() { _ = os.RemoveAll(workspace) }()
 	if err := os.Chmod(workspace, 0700); err != nil {
 		return resolvedProvenance{}, err
 	}
@@ -707,7 +707,7 @@ func prepareSSHTransport(ctx context.Context, command provenanceCommand, workspa
 	if err != nil {
 		return nil, nil, fmt.Errorf("open SSH credential resolver: %w", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 	privateKey, err := resolver.ReadBytes(reference)
 	if err != nil || !bytes.Contains(privateKey, []byte("PRIVATE KEY-----")) {
 		return nil, nil, errors.New("SSH credential is not a private key")
@@ -887,7 +887,7 @@ func isHexCommit(v string) bool {
 		return false
 	}
 	for _, c := range v {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
@@ -947,7 +947,7 @@ func canonicalCompose(raw []byte, serverProject string) ([]byte, []string, error
 			return nil, nil, errors.New("invalid image digest")
 		}
 		for _, c := range digest[7:] {
-			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 				return nil, nil, errors.New("invalid image digest")
 			}
 		}

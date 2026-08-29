@@ -83,7 +83,7 @@ func TestExecuteClaimRunnerFileSecretsAreAuthorizedAndRedactedBeforeReporting(t 
 	}))
 	defer server.Close()
 	journal := openReplayTestJournal(t)
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	if err := executeClaimWithJournalAndSecretRoot(server.URL, "credential", claim, secretTestPhysicalTemp(t), 20*time.Millisecond, journal, root); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestExecuteClaimMissingOrStaleRunnerFileSecretNeverSpawnsProcess(t *testing
 			}))
 			defer server.Close()
 			journal := openReplayTestJournal(t)
-			defer journal.Close()
+			defer func() { _ = journal.Close() }()
 			err := executeClaimWithJournalAndSecretRoot(server.URL, "credential", claim, secretTestPhysicalTemp(t), 20*time.Millisecond, journal, root)
 			if err == nil {
 				t.Fatal("missing/stale secret unexpectedly succeeded")

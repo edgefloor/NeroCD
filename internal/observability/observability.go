@@ -12,9 +12,12 @@ import (
 )
 
 const (
+	// BackupSuccess identifies a successfully completed backup.
 	BackupSuccess = "success"
+	// BackupFailure identifies a failed backup.
 	BackupFailure = "failure"
-	BackupNone    = "none"
+	// BackupNone identifies a backup outcome with no specific reason.
+	BackupNone = "none"
 )
 
 // Snapshot is intentionally aggregate-only. It must never grow an identifier,
@@ -45,11 +48,13 @@ type Snapshot struct {
 	Pool                        PoolState                    `json:"pool"`
 }
 
+// DurationAggregate summarizes a set of durations.
 type DurationAggregate struct {
 	Count      int64   `json:"count"`
 	SumSeconds float64 `json:"sum_seconds"`
 }
 
+// PoolState reports current database-pool capacity and use.
 type PoolState struct {
 	Total    int64 `json:"total"`
 	Idle     int64 `json:"idle"`
@@ -129,6 +134,7 @@ func Render(base string, snapshot Snapshot) (string, error) {
 	return out.String(), nil
 }
 
+// Validate verifies Snapshot invariants before it is published.
 func (s Snapshot) Validate() error {
 	if !known(backupOutcomes, s.BackupOutcome) || !known(backupReasons, s.BackupReason) || (s.BackupScheduleStatus != "" && !known(backupScheduleStates, s.BackupScheduleStatus)) {
 		return fmt.Errorf("invalid backup observation enum")

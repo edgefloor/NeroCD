@@ -8,6 +8,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListRunners implements the corresponding repository operation.
 func (s *MemoryStore) ListRunners(context.Context) ([]domain.Runner, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -16,6 +17,7 @@ func (s *MemoryStore) ListRunners(context.Context) ([]domain.Runner, error) {
 	return out, nil
 }
 
+// GetRunnerByID implements the corresponding repository operation.
 func (s *MemoryStore) GetRunnerByID(_ context.Context, id string) (domain.Runner, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -27,6 +29,7 @@ func (s *MemoryStore) GetRunnerByID(_ context.Context, id string) (domain.Runner
 	return domain.Runner{}, ErrNotFound
 }
 
+// RegisterRunner implements the corresponding repository operation.
 func (s *MemoryStore) RegisterRunner(_ context.Context, runner domain.Runner, opts ...MutationOption) (domain.Runner, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -43,6 +46,7 @@ func (s *MemoryStore) RegisterRunner(_ context.Context, runner domain.Runner, op
 	return runner, nil
 }
 
+// CreateRunnerEnrollment implements the corresponding repository operation.
 func (s *MemoryStore) CreateRunnerEnrollment(_ context.Context, enrollment domain.RunnerEnrollment, audit domain.AuditEvent) (domain.RunnerEnrollment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -56,6 +60,7 @@ func (s *MemoryStore) CreateRunnerEnrollment(_ context.Context, enrollment domai
 	return enrollment, nil
 }
 
+// RevokeRunnerEnrollment implements the corresponding repository operation.
 func (s *MemoryStore) RevokeRunnerEnrollment(_ context.Context, enrollmentID string, audit domain.AuditEvent) (domain.RunnerEnrollment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -72,6 +77,7 @@ func (s *MemoryStore) RevokeRunnerEnrollment(_ context.Context, enrollmentID str
 	return domain.RunnerEnrollment{}, ErrNotFound
 }
 
+// ConsumeRunnerEnrollment implements the corresponding repository operation.
 func (s *MemoryStore) ConsumeRunnerEnrollment(_ context.Context, consume domain.RunnerEnrollmentConsume, audit domain.AuditEvent) (domain.Runner, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,6 +120,7 @@ func (s *MemoryStore) ConsumeRunnerEnrollment(_ context.Context, consume domain.
 	return domain.Runner{}, ErrNotFound
 }
 
+// UpdateRunnerToken implements the corresponding repository operation.
 func (s *MemoryStore) UpdateRunnerToken(_ context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time, opts ...MutationOption) (domain.Runner, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -131,6 +138,7 @@ func (s *MemoryStore) UpdateRunnerToken(_ context.Context, runnerID string, toke
 	return domain.Runner{}, ErrNotFound
 }
 
+// GetRunnerByTokenHash implements the corresponding repository operation.
 func (s *MemoryStore) GetRunnerByTokenHash(_ context.Context, tokenHash string) (domain.Runner, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -142,6 +150,7 @@ func (s *MemoryStore) GetRunnerByTokenHash(_ context.Context, tokenHash string) 
 	return domain.Runner{}, ErrNotFound
 }
 
+// HeartbeatRunner implements the corresponding repository operation.
 func (s *MemoryStore) HeartbeatRunner(_ context.Context, id string, heartbeatAt time.Time) (domain.Runner, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,6 +165,7 @@ func (s *MemoryStore) HeartbeatRunner(_ context.Context, id string, heartbeatAt 
 	return domain.Runner{}, ErrNotFound
 }
 
+// ClaimRun implements the corresponding repository operation.
 func (s *MemoryStore) ClaimRun(_ context.Context, runnerID string, now time.Time, ttl time.Duration, opts ...MutationOption) (domain.ClaimedRun, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -272,6 +282,7 @@ func (s *MemoryStore) ClaimRun(_ context.Context, runnerID string, now time.Time
 	return domain.ClaimedRun{}, ErrNotFound
 }
 
+// RenewLease implements the corresponding repository operation.
 func (s *MemoryStore) RenewLease(_ context.Context, runnerID, leaseID, fence string, attempt int, now time.Time, ttl time.Duration) (domain.RunLease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -320,6 +331,7 @@ func (s *MemoryStore) expireLeasesLocked(now time.Time) {
 	}
 }
 
+// ExpireLeases implements the corresponding repository operation.
 func (s *MemoryStore) ExpireLeases(_ context.Context, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -327,6 +339,7 @@ func (s *MemoryStore) ExpireLeases(_ context.Context, now time.Time) error {
 	return nil
 }
 
+// CompleteLeaseRequest implements the corresponding repository operation.
 func (s *MemoryStore) CompleteLeaseRequest(_ context.Context, leaseID string, runnerID string, status string, attempt int, fence string, completionKey string, completedAt time.Time, runStatus string, finishedAt *time.Time, workflowState *domain.WorkflowState, logs []domain.RunLog, audit domain.AuditEvent) (domain.RunLease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -379,6 +392,7 @@ func (s *MemoryStore) CompleteLeaseRequest(_ context.Context, leaseID string, ru
 	return domain.RunLease{}, ErrNotFound
 }
 
+// CancelRunRequest implements the corresponding repository operation.
 func (s *MemoryStore) CancelRunRequest(_ context.Context, runID string, canceledAt time.Time, log domain.RunLog, audit domain.AuditEvent) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -407,6 +421,7 @@ func (s *MemoryStore) CancelRunRequest(_ context.Context, runID string, canceled
 	return domain.TaskRun{}, ErrNotFound
 }
 
+// AuthorizeSecretAccess implements the corresponding repository operation.
 func (s *MemoryStore) AuthorizeSecretAccess(_ context.Context, request domain.SecretAccessRequest) (domain.SecretAccessGrant, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -18,11 +18,13 @@ import (
 
 const runnerSecretMaxBytes = 64 * 1024
 
+// FileSecretResolver reads secrets from a secure, descriptor-confined root.
 type FileSecretResolver struct {
 	mu sync.Mutex
 	fd int
 }
 
+// OpenFileSecretResolver opens an owner-only secret root.
 func OpenFileSecretResolver(root string) (*FileSecretResolver, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
@@ -34,20 +36,21 @@ func OpenFileSecretResolver(root string) (*FileSecretResolver, error) {
 	}
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		return nil, os.NewSyscallError("fstat runner secret root", err)
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o7777 != 0o700 {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		return nil, errors.New("runner secret root must be an exact mode-0700 directory")
 	}
 	if int(stat.Uid) != os.Geteuid() {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		return nil, errors.New("runner secret root must be owned by the runner user")
 	}
 	return &FileSecretResolver{fd: fd}, nil
 }
 
+// Close releases the resolver's root descriptor.
 func (r *FileSecretResolver) Close() error {
 	if r == nil {
 		return nil
@@ -100,7 +103,7 @@ func (r *FileSecretResolver) ReadBytes(reference string) ([]byte, error) {
 		return nil, os.NewSyscallError("open runner secret", err)
 	}
 	file := os.NewFile(uintptr(fd), "runner-secret")
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
 		return nil, os.NewSyscallError("fstat runner secret", err)
@@ -152,11 +155,11 @@ func openDirectoryNoSymlinks(root string) (int, error) {
 			continue
 		}
 		if component == ".." {
-			unix.Close(fd)
+			_ = unix.Close(fd)
 			return -1, errors.New("runner secret root must not contain parent traversal")
 		}
 		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		if openErr != nil {
 			return -1, os.NewSyscallError("open runner secret root component", openErr)
 		}

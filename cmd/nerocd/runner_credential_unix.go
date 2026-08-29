@@ -23,7 +23,7 @@ func readRunnerCredentialFile(filename string) (string, error) {
 		return "", err
 	}
 	file := os.NewFile(uintptr(fd), filename)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return "", err
@@ -87,7 +87,7 @@ func createRunnerCredentialFile(filename string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer unix.Close(dirfd)
+	defer func() { _ = unix.Close(dirfd) }()
 	var stat unix.Stat_t
 	if err := unix.Fstat(dirfd, &stat); err != nil {
 		return "", err
@@ -111,7 +111,7 @@ func createRunnerCredentialFile(filename string) (string, error) {
 	}
 	cleanup := true
 	defer func() {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		if cleanup {
 			_ = unix.Unlinkat(dirfd, tmp, 0)
 		}
@@ -150,20 +150,20 @@ func removeRunnerEnrollmentFile(filename string) error {
 	}
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		return err
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o7777 != 0o600 || int(stat.Uid) != os.Geteuid() || stat.Size <= 0 || stat.Size > 64*1024 {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		return errors.New("enrollment file changed before removal")
 	}
 	zeros := make([]byte, stat.Size)
 	if _, err := unix.Pwrite(fd, zeros, 0); err != nil {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		return err
 	}
 	if err := unix.Fsync(fd); err != nil {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		return err
 	}
 	if err := unix.Close(fd); err != nil {
@@ -176,6 +176,6 @@ func removeRunnerEnrollmentFile(filename string) error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(dirfd)
+	defer func() { _ = unix.Close(dirfd) }()
 	return unix.Fsync(dirfd)
 }

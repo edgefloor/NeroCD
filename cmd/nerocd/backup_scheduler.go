@@ -102,13 +102,15 @@ func runDueBackupSchedule(ctx context.Context, pool *pgxpool.Pool, resolvedURL, 
 	if !locked {
 		return false, nil
 	}
-	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, backupSchedulerLockKey)
+	defer func() {
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, backupSchedulerLockKey)
+	}()
 
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return false, errors.New("backup scheduler transaction is unavailable")
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var enabled bool
 	var interval, retain, failures int
 	var next, now time.Time
@@ -173,7 +175,7 @@ func runDueBackupSchedule(ctx context.Context, pool *pgxpool.Pool, resolvedURL, 
 	if finishErr != nil {
 		return true, errors.New("backup scheduler completion is unavailable")
 	}
-	defer finish.Rollback(context.Background())
+	defer func() { _ = finish.Rollback(context.Background()) }()
 	var finishNow time.Time
 	if finishErr = finish.QueryRow(context.Background(), `SELECT clock_timestamp()`).Scan(&finishNow); finishErr != nil {
 		return true, errors.New("backup scheduler completion is unavailable")

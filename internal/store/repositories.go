@@ -8,6 +8,7 @@ import (
 	"nerocd/internal/observability"
 )
 
+// ProjectRepository persists projects and their memberships.
 type ProjectRepository interface {
 	ListProjects(context.Context) ([]domain.Project, error)
 	CreateProject(context.Context, domain.Project) (domain.Project, error)
@@ -16,11 +17,13 @@ type ProjectRepository interface {
 	ArchiveProject(context.Context, string, time.Time, ...MutationOption) (domain.Project, error)
 }
 
+// ProjectMemberRepository persists project membership records.
 type ProjectMemberRepository interface {
 	ListProjectMembers(context.Context, string) ([]domain.ProjectMember, error)
 	UpsertProjectMember(context.Context, domain.ProjectMember, ...MutationOption) (domain.ProjectMember, error)
 }
 
+// TemplateRepository persists task templates.
 type TemplateRepository interface {
 	ListTemplates(context.Context, string) ([]domain.TaskTemplate, error)
 	GetTemplate(context.Context, string) (domain.TaskTemplate, error)
@@ -28,6 +31,7 @@ type TemplateRepository interface {
 	UpdateTemplate(context.Context, domain.TaskTemplate, ...MutationOption) (domain.TaskTemplate, error)
 }
 
+// SourceRepository persists source-control configuration.
 type SourceRepository interface {
 	ListRepositories(context.Context, string) ([]domain.Repository, error)
 	CreateRepository(context.Context, domain.Repository, ...MutationOption) (domain.Repository, error)
@@ -51,6 +55,7 @@ type RepositoryPolicyConfiguration struct {
 	Audit           domain.AuditEvent
 }
 
+// RunRepository persists task runs, logs, and artifacts.
 type RunRepository interface {
 	ListRuns(context.Context, string) ([]domain.TaskRun, error)
 	ListRunsPage(context.Context, string, Page) (PageResult[domain.TaskRun], error)
@@ -79,6 +84,7 @@ type RunLogRetentionRepository interface {
 	ExecuteRunLogRetention(context.Context, string, string, domain.AuditEvent) (domain.RunLogRetentionExecution, error)
 }
 
+// RunnerRepository persists runner registration and lease state.
 type RunnerRepository interface {
 	ListRunners(context.Context) ([]domain.Runner, error)
 	GetRunnerByID(context.Context, string) (domain.Runner, error)
@@ -104,6 +110,7 @@ type RunnerRepository interface {
 	ConsumeRunnerEnrollment(context.Context, domain.RunnerEnrollmentConsume, domain.AuditEvent) (domain.Runner, error)
 }
 
+// UserRepository persists user identity records.
 type UserRepository interface {
 	GetUserByEmail(context.Context, string) (domain.User, error)
 	UpdatePasswordHash(context.Context, string, string, string) error
@@ -116,6 +123,7 @@ type BootstrapRepository interface {
 	BootstrapComplete(context.Context) (bool, error)
 }
 
+// SessionRepository persists authenticated browser sessions.
 type SessionRepository interface {
 	CreateSession(context.Context, domain.Session, string, ...MutationOption) error
 	GetPrincipalBySessionTokenHash(context.Context, string, time.Time) (domain.User, error)
@@ -128,12 +136,14 @@ type SessionRepository interface {
 // remains valid on every request; only durable activity telemetry is sampled.
 const SessionLastSeenUpdateInterval = 5 * time.Minute
 
+// APITokenRepository persists API tokens.
 type APITokenRepository interface {
 	CreateAPIToken(context.Context, domain.APIToken, ...MutationOption) (domain.APIToken, error)
 	GetAPITokenByHash(context.Context, string, time.Time) (domain.APIToken, error)
 	RevokeAPIToken(context.Context, string, time.Time, ...MutationOption) (domain.APIToken, error)
 }
 
+// ApprovalRepository persists run approval decisions.
 type ApprovalRepository interface {
 	ListApprovals(context.Context, string) ([]domain.Approval, error)
 	CreateApproval(context.Context, domain.Approval) (domain.Approval, error)
@@ -141,12 +151,14 @@ type ApprovalRepository interface {
 	RejectRun(context.Context, string, string, time.Time, ...MutationOption) (domain.Approval, error)
 }
 
+// AuditRepository persists audit events.
 type AuditRepository interface {
 	ListAuditEvents(context.Context) ([]domain.AuditEvent, error)
 	ListAuditEventsPage(context.Context, Page) (PageResult[domain.AuditEvent], error)
 	CreateAuditEvent(context.Context, domain.AuditEvent) error
 }
 
+// DeploymentRepository persists deployment lifecycle state.
 type DeploymentRepository interface {
 	ListServices(context.Context, string) ([]domain.Service, error)
 	GetService(context.Context, string) (domain.Service, error)
@@ -175,6 +187,7 @@ type OperationalSnapshotRepository interface {
 	OperationalSnapshot(context.Context) (observability.Snapshot, error)
 }
 
+// OperationalObservationWriter records runner operational observations.
 type OperationalObservationWriter interface {
 	RecordRunnerOperationalObservation(context.Context, string, int, int, int) error
 }
@@ -189,6 +202,7 @@ type RunnerOperationalObservation struct {
 	RenewFailures int
 }
 
+// OperationalObservationReader reads runner operational observations.
 type OperationalObservationReader interface {
 	RunnerOperationalObservation(context.Context, string) (RunnerOperationalObservation, error)
 }

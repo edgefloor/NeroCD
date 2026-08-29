@@ -85,6 +85,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/deployments/fail-preassignment"},
 }
 
+// PublicRoutes returns a copy of the routes exposed by the public API.
 func PublicRoutes() []PublicRoute {
 	routes := make([]PublicRoute, len(publicRoutes))
 	copy(routes, publicRoutes)

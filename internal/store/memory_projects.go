@@ -7,6 +7,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListProjects implements the corresponding repository operation.
 func (s *MemoryStore) ListProjects(context.Context) ([]domain.Project, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -19,6 +20,7 @@ func (s *MemoryStore) ListProjects(context.Context) ([]domain.Project, error) {
 	return out, nil
 }
 
+// CreateProject implements the corresponding repository operation.
 func (s *MemoryStore) CreateProject(_ context.Context, project domain.Project) (domain.Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -26,6 +28,7 @@ func (s *MemoryStore) CreateProject(_ context.Context, project domain.Project) (
 	return project, nil
 }
 
+// CreateProjectWithOwner implements the corresponding repository operation.
 func (s *MemoryStore) CreateProjectWithOwner(_ context.Context, project domain.Project, owner domain.ProjectMember, audit domain.AuditEvent) (domain.Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -43,6 +46,7 @@ func (s *MemoryStore) CreateProjectWithOwner(_ context.Context, project domain.P
 	return project, nil
 }
 
+// UpdateProject implements the corresponding repository operation.
 func (s *MemoryStore) UpdateProject(_ context.Context, project domain.Project, opts ...MutationOption) (domain.Project, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -60,6 +64,7 @@ func (s *MemoryStore) UpdateProject(_ context.Context, project domain.Project, o
 	return domain.Project{}, ErrNotFound
 }
 
+// ArchiveProject implements the corresponding repository operation.
 func (s *MemoryStore) ArchiveProject(_ context.Context, id string, archivedAt time.Time, opts ...MutationOption) (domain.Project, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -77,6 +82,7 @@ func (s *MemoryStore) ArchiveProject(_ context.Context, id string, archivedAt ti
 	return domain.Project{}, ErrNotFound
 }
 
+// ListProjectMembers implements the corresponding repository operation.
 func (s *MemoryStore) ListProjectMembers(_ context.Context, projectID string) ([]domain.ProjectMember, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -89,6 +95,7 @@ func (s *MemoryStore) ListProjectMembers(_ context.Context, projectID string) ([
 	return out, nil
 }
 
+// UpsertProjectMember implements the corresponding repository operation.
 func (s *MemoryStore) UpsertProjectMember(_ context.Context, member domain.ProjectMember, opts ...MutationOption) (domain.ProjectMember, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()

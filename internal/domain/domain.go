@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// Project is a tenant-owned collection of automation resources.
 type Project struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
@@ -17,6 +18,7 @@ type Project struct {
 	ArchivedAt  *time.Time `json:"archived_at,omitempty"`
 }
 
+// ProjectMember grants a user a role within a project.
 type ProjectMember struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
@@ -28,6 +30,7 @@ type ProjectMember struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ProjectRole describes a principal's effective project permissions.
 type ProjectRole struct {
 	ProjectID string `json:"project_id"`
 	Role      string `json:"role"`
@@ -36,6 +39,7 @@ type ProjectRole struct {
 	CanAdmin  bool   `json:"can_admin"`
 }
 
+// User is a locally managed control-plane identity.
 type User struct {
 	ID           string    `json:"id"`
 	Email        string    `json:"email"`
@@ -46,6 +50,7 @@ type User struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// Session is a revocable browser or local-session credential record.
 type Session struct {
 	ID         string     `json:"id"`
 	UserID     string     `json:"user_id"`
@@ -57,6 +62,7 @@ type Session struct {
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
+// APIToken is a hashed, role-scoped programmatic credential record.
 type APIToken struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
@@ -71,6 +77,7 @@ type APIToken struct {
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
+// TaskTemplate defines a reusable project automation request.
 type TaskTemplate struct {
 	ID          string   `json:"id"`
 	ProjectID   string   `json:"project_id"`
@@ -82,6 +89,7 @@ type TaskTemplate struct {
 	RequiresAck bool     `json:"requires_ack"`
 }
 
+// RunSpec defines the runner primitives requested by a task.
 type RunSpec struct {
 	Type       string          `json:"type"`
 	Inputs     map[string]any  `json:"inputs"`
@@ -92,6 +100,7 @@ type RunSpec struct {
 	Workflow   *Workflow       `json:"workflow,omitempty"`
 }
 
+// RepositoryRef identifies source input for a task or deployment.
 type RepositoryRef struct {
 	ID       string `json:"id,omitempty"`
 	URL      string `json:"url,omitempty"`
@@ -100,6 +109,7 @@ type RepositoryRef struct {
 	Path     string `json:"path,omitempty"`
 }
 
+// ProcessSpec describes a local process to execute.
 type ProcessSpec struct {
 	Command        []string          `json:"command"`
 	WorkingDir     string            `json:"working_dir,omitempty"`
@@ -107,6 +117,7 @@ type ProcessSpec struct {
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 }
 
+// ArtifactSpec identifies an expected output relative to a workspace.
 type ArtifactSpec struct {
 	Name      string `json:"name"`
 	Path      string `json:"path"`
@@ -114,6 +125,7 @@ type ArtifactSpec struct {
 	Retention string `json:"retention,omitempty"`
 }
 
+// SecretBinding maps an authorized secret reference to a runner target.
 type SecretBinding struct {
 	Name            string   `json:"name"`
 	Provider        string   `json:"provider"`
@@ -126,10 +138,12 @@ type SecretBinding struct {
 	Classification  string   `json:"classification,omitempty"`
 }
 
+// Workflow orders the steps that make up a multi-step task.
 type Workflow struct {
 	Steps []WorkflowStep `json:"steps"`
 }
 
+// WorkflowStep defines one dependency-aware task in a workflow.
 type WorkflowStep struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -138,11 +152,13 @@ type WorkflowStep struct {
 	RequiresAck bool     `json:"requires_ack"`
 }
 
+// WorkflowState records progress through a workflow.
 type WorkflowState struct {
 	CurrentStepID string              `json:"current_step_id,omitempty"`
 	Steps         []WorkflowStepState `json:"steps"`
 }
 
+// WorkflowStepState records one workflow step's execution state.
 type WorkflowStepState struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
@@ -151,6 +167,7 @@ type WorkflowStepState struct {
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
+// TaskRun is a requested or executing instance of a task template.
 type TaskRun struct {
 	ID            string        `json:"id"`
 	ProjectID     string        `json:"project_id"`
@@ -166,6 +183,7 @@ type TaskRun struct {
 	FinishedAt    *time.Time    `json:"finished_at,omitempty"`
 }
 
+// Runner is an enrolled worker that can execute tasks.
 type Runner struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
@@ -195,12 +213,14 @@ type RunnerEnrollment struct {
 	CredentialHash   *string    `json:"-"`
 }
 
+// RunnerEnrollmentConsume carries hashes used to atomically consume enrollment.
 type RunnerEnrollmentConsume struct {
 	TokenHash      string
 	RequestID      string
 	CredentialHash string
 }
 
+// RunLease grants one runner a fenced, time-bounded attempt to execute a run.
 type RunLease struct {
 	ID          string     `json:"id"`
 	RunID       string     `json:"run_id"`
@@ -216,12 +236,14 @@ type RunLease struct {
 	CompletionKey string `json:"-"`
 }
 
+// ClaimedRun combines a lease, run, and executable primitive plan.
 type ClaimedRun struct {
 	Lease         RunLease            `json:"lease"`
 	Run           TaskRun             `json:"run"`
 	PrimitivePlan RunnerPrimitivePlan `json:"primitive_plan"`
 }
 
+// RunLog is one ordered runner event retained for a task run.
 type RunLog struct {
 	ID                string    `json:"id"`
 	RunID             string    `json:"run_id"`
@@ -235,6 +257,7 @@ type RunLog struct {
 	RequestedSequence int       `json:"requested_sequence,omitempty"`
 }
 
+// ArtifactRecord records an artifact inspection result for a run.
 type ArtifactRecord struct {
 	ID        string    `json:"id"`
 	RunID     string    `json:"run_id"`
@@ -248,6 +271,7 @@ type ArtifactRecord struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Repository is a project source repository and its admission policy.
 type Repository struct {
 	ID         string           `json:"id"`
 	ProjectID  string           `json:"project_id"`
@@ -259,6 +283,7 @@ type Repository struct {
 	CreatedAt  time.Time        `json:"created_at"`
 }
 
+// AccessKey records a project-scoped external access-key reference.
 type AccessKey struct {
 	ID          string    `json:"id"`
 	ProjectID   string    `json:"project_id"`
@@ -268,6 +293,7 @@ type AccessKey struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// Inventory is a named source of deployment target data.
 type Inventory struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
@@ -277,6 +303,7 @@ type Inventory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// RunnerPrimitivePlan contains the runner primitives needed for a run.
 type RunnerPrimitivePlan struct {
 	RunID     string          `json:"run_id"`
 	Checkout  *CheckoutPlan   `json:"checkout,omitempty"`
@@ -285,11 +312,13 @@ type RunnerPrimitivePlan struct {
 	Secrets   []SecretBinding `json:"secrets,omitempty"`
 }
 
+// CheckoutPlan identifies a repository checkout destination.
 type CheckoutPlan struct {
 	Repository RepositoryRef `json:"repository"`
 	DestPath   string        `json:"dest_path"`
 }
 
+// Approval records the decision required to proceed with a run.
 type Approval struct {
 	ID          string     `json:"id"`
 	RunID       string     `json:"run_id"`
@@ -300,6 +329,7 @@ type Approval struct {
 	ApprovedAt  *time.Time `json:"approved_at,omitempty"`
 }
 
+// AuditEvent records an actor's control-plane action.
 type AuditEvent struct {
 	ID        string         `json:"id"`
 	ActorID   string         `json:"actor_id"`
@@ -309,7 +339,8 @@ type AuditEvent struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
-// Service, Environment, Revision and Deployment are the durable deployment
+// Service is a durable deployment control-plane service record.
+// Environment, Revision and Deployment are the durable deployment
 // control plane. They intentionally carry metadata only: an execution adapter
 // must obtain its own fenced attempt before mutating a runner.
 type Service struct {
@@ -355,6 +386,7 @@ func (p *HealthPolicy) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Environment is a deployment target configuration for a service.
 type Environment struct {
 	ID                       string          `json:"id"`
 	ServiceID                string          `json:"service_id"`
@@ -369,6 +401,8 @@ type Environment struct {
 	CurrentHealthyRevisionID *string         `json:"current_healthy_revision_id,omitempty"`
 	CreatedAt                time.Time       `json:"created_at"`
 }
+
+// Revision records immutable deployment source evidence once resolved.
 type Revision struct {
 	ID              string    `json:"id"`
 	ServiceID       string    `json:"service_id"`
@@ -430,6 +464,8 @@ type RepositoryPolicy struct {
 	CredentialReferenceID string   `json:"credential_reference_id,omitempty"`
 	AllowInternal         bool     `json:"allow_internal"`
 }
+
+// Deployment coordinates applying a desired revision to an environment.
 type Deployment struct {
 	ID                        string           `json:"id"`
 	EnvironmentID             string           `json:"environment_id"`
@@ -464,6 +500,7 @@ type DeploymentAttempt struct {
 	FinishedAt   *time.Time `json:"finished_at,omitempty"`
 }
 
+// DeploymentTransitionRequest carries a fenced runner status transition.
 type DeploymentTransitionRequest struct {
 	DeploymentID   string
 	RunID          string
@@ -505,6 +542,7 @@ func RollbackObjectIDs(deploymentID, requestID string) (string, string) {
 	return "dep_rollback_" + value, "run_rollback_" + value
 }
 
+// DeploymentFailureRollbackResult contains linked failed and rollback deployments.
 type DeploymentFailureRollbackResult struct {
 	Failed   Deployment `json:"failed"`
 	Rollback Deployment `json:"rollback"`
@@ -536,6 +574,7 @@ type SecretAccessRequest struct {
 	RequestedAt time.Time
 }
 
+// SecretAccessGrant records authorization for a runner-local secret read.
 type SecretAccessGrant struct {
 	AccessID     string    `json:"access_id"`
 	RunID        string    `json:"run_id"`
@@ -547,6 +586,7 @@ type SecretAccessGrant struct {
 	AuthorizedAt time.Time `json:"authorized_at"`
 }
 
+// Capability describes an advertised product or runner capability.
 type Capability struct {
 	Name        string `json:"name"`
 	Status      string `json:"status"`

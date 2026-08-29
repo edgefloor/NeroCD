@@ -6,6 +6,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListApprovals lists authorized approvals.
 func (s *Service) ListApprovals(ctx context.Context, status string) ([]domain.Approval, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {

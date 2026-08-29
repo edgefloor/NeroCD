@@ -32,8 +32,10 @@ const (
 	argonSaltLen = 16
 )
 
+// ErrUnsupportedPasswordHash indicates an unsupported persisted hash format.
 var ErrUnsupportedPasswordHash = errors.New("unsupported password hash")
 
+// HashPassword returns a password hash suitable for persistent storage.
 func HashPassword(password string) (string, error) {
 	if password == "" {
 		return "", errors.New("password is required")

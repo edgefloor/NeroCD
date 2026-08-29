@@ -32,7 +32,7 @@ func TestFileSecretResolverSecurityAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 	if value, err := resolver.Read("service-token"); err != nil || value != "version-one" {
 		t.Fatalf("value=%q err=%v", value, err)
 	}
@@ -62,7 +62,7 @@ func TestFileSecretResolverReadBytesPreservesTerminalNewline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 	got, err := resolver.ReadBytes("deploy-key")
 	if err != nil || string(got) != string(key) {
 		t.Fatalf("raw key preserved=%v err=%v", string(got) == string(key), err)
@@ -96,7 +96,7 @@ func TestFileSecretResolverRejectsUnsafeFilesAndReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 	for _, reference := range []string{"../target", "nested/target", `nested\target`, ".", "..", "wide", "empty", "nul", "control", "oversize", "link"} {
 		if _, err := resolver.Read(reference); err == nil {
 			t.Fatalf("reference %q unexpectedly succeeded", reference)
@@ -142,7 +142,7 @@ func TestFileSecretResolverRejectsWrongOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 	if err := os.Chown(secret, 65534, 65534); err != nil {
 		t.Fatal(err)
 	}

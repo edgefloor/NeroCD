@@ -13,6 +13,7 @@ var metadataServiceIPs = map[string]struct{}{
 	"169.254.169.254": {},
 }
 
+// ValidateRepositoryURL rejects repository URLs that name blocked hosts.
 func ValidateRepositoryURL(value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {

@@ -7,11 +7,13 @@ import (
 	"nerocd/internal/store"
 )
 
+// ListAuditEvents lists authorized audit events.
 func (s *Service) ListAuditEvents(ctx context.Context) ([]domain.AuditEvent, error) {
 	result, err := s.ListAuditEventsPage(ctx, store.Page{})
 	return result.Items, err
 }
 
+// ListAuditEventsPage lists authorized audit events page.
 func (s *Service) ListAuditEventsPage(ctx context.Context, page store.Page) (store.PageResult[domain.AuditEvent], error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {

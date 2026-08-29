@@ -10,6 +10,7 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// ListTemplates implements the corresponding repository operation.
 func (s *PostgresStore) ListTemplates(ctx context.Context, projectID string) ([]domain.TaskTemplate, error) {
 	rows, err := s.queries.ListTemplates(ctx, projectID)
 	if err != nil {
@@ -26,6 +27,7 @@ func (s *PostgresStore) ListTemplates(ctx context.Context, projectID string) ([]
 	return templates, nil
 }
 
+// GetTemplate implements the corresponding repository operation.
 func (s *PostgresStore) GetTemplate(ctx context.Context, id string) (domain.TaskTemplate, error) {
 	template, err := s.queries.GetTemplate(ctx, id)
 	if err == pgx.ErrNoRows {
@@ -37,6 +39,7 @@ func (s *PostgresStore) GetTemplate(ctx context.Context, id string) (domain.Task
 	return taskTemplateFromSQLC(template)
 }
 
+// CreateTemplate implements the corresponding repository operation.
 func (s *PostgresStore) CreateTemplate(ctx context.Context, template domain.TaskTemplate, opts ...MutationOption) (domain.TaskTemplate, error) {
 	audit := resolveMutationOptions(opts)
 	runSpec, workflow, err := templateJSON(template)
@@ -54,7 +57,7 @@ func (s *PostgresStore) CreateTemplate(ctx context.Context, template domain.Task
 	if err != nil {
 		return domain.TaskTemplate{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.CreateTemplate(ctx, sqlcgen.CreateTemplateParams{ID: template.ID, ProjectID: template.ProjectID, Name: template.Name, Kind: template.Kind, RunSpec: runSpec, Workflow: workflow, RunnerTags: template.RunnerTags, RequiresAck: template.RequiresAck})
 	if err != nil {
@@ -69,6 +72,7 @@ func (s *PostgresStore) CreateTemplate(ctx context.Context, template domain.Task
 	return taskTemplateFromSQLC(row)
 }
 
+// UpdateTemplate implements the corresponding repository operation.
 func (s *PostgresStore) UpdateTemplate(ctx context.Context, template domain.TaskTemplate, opts ...MutationOption) (domain.TaskTemplate, error) {
 	audit := resolveMutationOptions(opts)
 	runSpec, workflow, err := templateJSON(template)
@@ -89,7 +93,7 @@ func (s *PostgresStore) UpdateTemplate(ctx context.Context, template domain.Task
 	if err != nil {
 		return domain.TaskTemplate{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.UpdateTemplate(ctx, sqlcgen.UpdateTemplateParams{ID: template.ID, Name: template.Name, Kind: template.Kind, RunSpec: runSpec, Workflow: workflow, RunnerTags: template.RunnerTags, RequiresAck: template.RequiresAck})
 	if err == pgx.ErrNoRows {

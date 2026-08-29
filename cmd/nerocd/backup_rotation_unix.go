@@ -22,7 +22,7 @@ func rotateSecureBackups(root string, retain int) error {
 	if err != nil {
 		return errors.New("backup rotation root is unsafe")
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	if err := verifyBackupDirectoryFD(fd); err != nil {
 		return errors.New("backup rotation root is unsafe")
 	}
@@ -89,7 +89,7 @@ func removeSecureBackupTreeAt(parent int, name string) error {
 		}
 		return errors.New("backup rotation entry is unsafe")
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	copyFD, err := unix.Dup(fd)
 	if err != nil {
 		return errors.New("backup rotation entry cannot be read")

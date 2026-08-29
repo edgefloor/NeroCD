@@ -38,8 +38,7 @@ lint: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) config verify --config .golangci.yml
 	$(GOLANGCI_LINT) run $(PRODUCT_PACKAGES)
 
-# Keep the full audit available as `make lint`, while gating only findings
-# introduced relative to the selected baseline until the legacy debt is paid.
+# Keep the changed-code lint target available for fast local feedback.
 lint-new: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) config verify --config .golangci.yml
 	$(GOLANGCI_LINT) run --new-from-rev=$(LINT_BASE_REV) $(PRODUCT_PACKAGES)
@@ -47,7 +46,7 @@ lint-new: $(GOLANGCI_LINT)
 shell-check:
 	scripts/verify-shell.sh
 
-verify: fmt-check vet test lint-new shell-check
+verify: fmt-check vet test lint shell-check
 
 postgres-test:
 	test -n "$$NEROCD_TEST_DATABASE_URL"

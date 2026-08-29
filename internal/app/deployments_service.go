@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// ServiceInput supplies service registration attributes.
 type ServiceInput struct {
 	ProjectID    string   `json:"project_id"`
 	Name         string   `json:"name"`
@@ -18,6 +19,8 @@ type ServiceInput struct {
 	ComposePath  string   `json:"compose_path"`
 	Profiles     []string `json:"profiles"`
 }
+
+// EnvironmentInput supplies deployment-environment configuration.
 type EnvironmentInput struct {
 	ServiceID            string                 `json:"service_id"`
 	Name                 string                 `json:"name"`
@@ -29,10 +32,14 @@ type EnvironmentInput struct {
 	SecretBindings       []domain.SecretBinding `json:"secret_bindings"`
 	RollbackSafe         bool                   `json:"rollback_safe"`
 }
+
+// RevisionInput supplies an immutable service revision request.
 type RevisionInput struct {
 	ServiceID    string `json:"service_id"`
 	RequestedRef string `json:"requested_ref"`
 }
+
+// DeploymentInput supplies an authorized deployment request.
 type DeploymentInput struct {
 	EnvironmentID     string  `json:"environment_id"`
 	DesiredRevisionID string  `json:"desired_revision_id"`
@@ -41,6 +48,7 @@ type DeploymentInput struct {
 	RollbackOfID      *string `json:"rollback_of_id,omitempty"`
 }
 
+// DeploymentCancelInput identifies an authorized deployment cancellation.
 type DeploymentCancelInput struct {
 	DeploymentID string `json:"deployment_id"`
 	RequestID    string `json:"request_id"`
@@ -52,6 +60,8 @@ func (s *Service) deploymentRepo() (store.DeploymentRepository, error) {
 	}
 	return s.deployments, nil
 }
+
+// ListServices lists authorized services.
 func (s *Service) ListServices(ctx context.Context, projectID string) ([]domain.Service, error) {
 	p, e := s.CurrentPrincipal(ctx)
 	if e != nil {
@@ -82,6 +92,8 @@ func (s *Service) ListServices(ctx context.Context, projectID string) ([]domain.
 	}
 	return out, nil
 }
+
+// CreateService creates an authorized service.
 func (s *Service) CreateService(ctx context.Context, in ServiceInput) (domain.Service, error) {
 	p, e := s.CurrentPrincipal(ctx)
 	if e != nil {
@@ -123,6 +135,8 @@ func (s *Service) CreateService(ctx context.Context, in ServiceInput) (domain.Se
 	}
 	return r.CreateService(ctx, v, store.WithAudit(audit))
 }
+
+// ListEnvironments lists authorized environments.
 func (s *Service) ListEnvironments(ctx context.Context, serviceID string) ([]domain.Environment, error) {
 	r, e := s.deploymentRepo()
 	if e != nil {
@@ -186,12 +200,8 @@ func (s *Service) requireServiceView(ctx context.Context, id string) error {
 func (s *Service) requireServiceMutation(ctx context.Context, id string) error {
 	return s.requireServiceRole(ctx, id, domain.RoleMaintainer)
 }
-func mustServices(v []domain.Service, e error) []domain.Service {
-	if e != nil {
-		return nil
-	}
-	return v
-}
+
+// CreateEnvironment creates an authorized environment.
 func (s *Service) CreateEnvironment(ctx context.Context, in EnvironmentInput) (domain.Environment, error) {
 	r, e := s.deploymentRepo()
 	if e != nil {
@@ -220,6 +230,8 @@ func (s *Service) CreateEnvironment(ctx context.Context, in EnvironmentInput) (d
 	}
 	return r.CreateEnvironment(ctx, v, store.WithAudit(audit))
 }
+
+// ListRevisions lists authorized revisions.
 func (s *Service) ListRevisions(ctx context.Context, serviceID string) ([]domain.Revision, error) {
 	if e := s.requireServiceView(ctx, serviceID); e != nil {
 		return nil, e
@@ -230,6 +242,8 @@ func (s *Service) ListRevisions(ctx context.Context, serviceID string) ([]domain
 	}
 	return r.ListRevisions(ctx, serviceID)
 }
+
+// CreateRevision creates an authorized revision.
 func (s *Service) CreateRevision(ctx context.Context, in RevisionInput) (domain.Revision, error) {
 	if e := s.requireServiceMutation(ctx, in.ServiceID); e != nil {
 		return domain.Revision{}, e
@@ -255,6 +269,8 @@ func (s *Service) CreateRevision(ctx context.Context, in RevisionInput) (domain.
 	}
 	return r.CreateRevision(ctx, v, store.WithAudit(audit))
 }
+
+// ListDeployments lists authorized deployments.
 func (s *Service) ListDeployments(ctx context.Context, eid string) ([]domain.Deployment, error) {
 	r, e := s.deploymentRepo()
 	if e != nil {
@@ -277,6 +293,7 @@ func (s *Service) ListDeployments(ctx context.Context, eid string) ([]domain.Dep
 // GetDeployment resolves one public control-plane record by its stable ID.
 // The lookup is direct rather than an unbounded deployment list scan. Access
 // denial is normalized to not-found, preventing cross-project enumeration.
+// GetDeployment returns the authorized deployment.
 func (s *Service) GetDeployment(ctx context.Context, id string) (domain.Deployment, error) {
 	r, err := s.deploymentRepo()
 	if err != nil {
@@ -295,6 +312,8 @@ func (s *Service) GetDeployment(ctx context.Context, id string) (domain.Deployme
 	}
 	return deployment, nil
 }
+
+// CreateDeployment creates an authorized deployment.
 func (s *Service) CreateDeployment(ctx context.Context, in DeploymentInput) (domain.Deployment, error) {
 	r, e := s.deploymentRepo()
 	if e != nil {
@@ -444,6 +463,7 @@ func hasDeploymentRunnerEligibility(tags, selector, capabilities []string) bool 
 	return false
 }
 
+// ConfirmDeployment confirms an authorized deployment request.
 func (s *Service) ConfirmDeployment(ctx context.Context, id string) (domain.Deployment, error) {
 	repo, err := s.deploymentRepo()
 	if err != nil {
@@ -489,6 +509,7 @@ func (s *Service) ConfirmDeployment(ctx context.Context, id string) (domain.Depl
 // CancelDeployment is the only maintainer cancellation entry point for a
 // deployment-owned run.  Generic /runs/cancel remains intentionally rejected
 // for these runs because it cannot preserve the environment lock lifecycle.
+// CancelDeployment requests cancellation of an authorized deployment.
 func (s *Service) CancelDeployment(ctx context.Context, in DeploymentCancelInput) (domain.Deployment, error) {
 	repo, err := s.deploymentRepo()
 	if err != nil {
@@ -530,11 +551,13 @@ func (s *Service) CancelDeployment(ctx context.Context, in DeploymentCancelInput
 	return repo.CancelDeploymentRequest(ctx, domain.DeploymentCancelRequest{DeploymentID: id, RequestID: requestID, ActorID: p.ID}, audit)
 }
 
+// PreAssignmentFailureInput records a deployment failure before assignment.
 type PreAssignmentFailureInput struct {
 	ID          string `json:"id"`
 	FailureCode string `json:"failure_code"`
 }
 
+// FailPreAssignmentDeployment records a deployment failure before runner assignment.
 func (s *Service) FailPreAssignmentDeployment(ctx context.Context, in PreAssignmentFailureInput) (domain.Deployment, error) {
 	repo, err := s.deploymentRepo()
 	if err != nil {
@@ -582,6 +605,7 @@ func (s *Service) FailPreAssignmentDeployment(ctx context.Context, in PreAssignm
 }
 func mustID(prefix string) string { id, _ := prefixedID(prefix); return id }
 
+// DeploymentTransitionInput supplies an authenticated deployment state transition.
 type DeploymentTransitionInput struct {
 	DeploymentID   string                  `json:"deployment_id"`
 	RunID          string                  `json:"run_id"`
@@ -596,6 +620,7 @@ type DeploymentTransitionInput struct {
 	Metadata       map[string]any          `json:"metadata"`
 }
 
+// DeploymentFailureRollbackInput supplies failure details for rollback creation.
 type DeploymentFailureRollbackInput struct {
 	DeploymentID          string                  `json:"deployment_id"`
 	RunID                 string                  `json:"run_id"`
@@ -609,6 +634,7 @@ type DeploymentFailureRollbackInput struct {
 	Metadata              map[string]any          `json:"metadata"`
 }
 
+// FailDeploymentAndCreateRollback records failure and creates a rollback request.
 func (s *Service) FailDeploymentAndCreateRollback(ctx context.Context, in DeploymentFailureRollbackInput) (domain.DeploymentFailureRollbackResult, error) {
 	p, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -648,6 +674,7 @@ func (s *Service) FailDeploymentAndCreateRollback(ctx context.Context, in Deploy
 	return result, err
 }
 
+// TransitionDeploymentAttempt applies an authorized deployment lifecycle transition.
 func (s *Service) TransitionDeploymentAttempt(ctx context.Context, in DeploymentTransitionInput) (domain.Deployment, error) {
 	p, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -682,6 +709,7 @@ func (s *Service) TransitionDeploymentAttempt(ctx context.Context, in Deployment
 	return deployed, err
 }
 
+// DeploymentPlanInput identifies the runner lease requesting a deployment plan.
 type DeploymentPlanInput struct {
 	DeploymentID string `json:"deployment_id"`
 	RunID        string `json:"run_id"`
@@ -693,6 +721,7 @@ type DeploymentPlanInput struct {
 // RunnerDeploymentPlan returns no user credentials or secret material.  The
 // store verifies all lease identity fields against its database clock before
 // returning the plan.
+// RunnerDeploymentPlan returns the authorized deployment plan.
 func (s *Service) RunnerDeploymentPlan(ctx context.Context, in DeploymentPlanInput) (domain.DeploymentPlan, error) {
 	p, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -718,10 +747,12 @@ func (s *Service) RunnerDeploymentPlan(ctx context.Context, in DeploymentPlanInp
 // RunnerDeploymentStatus is the bounded, read-only cancellation watcher
 // capability. It authenticates the complete live fence through DeploymentPlan
 // and returns only authoritative status plus the server-issued cancel receipt.
+// RunnerDeploymentStatus returns the authorized deployment status.
 func (s *Service) RunnerDeploymentStatus(ctx context.Context, in DeploymentPlanInput) (domain.DeploymentPlan, error) {
 	return s.RunnerDeploymentPlan(ctx, in)
 }
 
+// ProvenanceResolutionInput supplies verified revision provenance for a deployment.
 type ProvenanceResolutionInput struct {
 	DeploymentID    string   `json:"deployment_id"`
 	RunID           string   `json:"run_id"`
@@ -740,7 +771,7 @@ func validCommit(v string) bool {
 		return false
 	}
 	for _, c := range v {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if c < '0' || c > '9' && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
@@ -752,13 +783,14 @@ func validDigest(v string) bool {
 		return false
 	}
 	for _, c := range parts[1] {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if c < '0' || c > '9' && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
 	return true
 }
 
+// ResolveDeploymentProvenance records verified deployment provenance.
 func (s *Service) ResolveDeploymentProvenance(ctx context.Context, in ProvenanceResolutionInput) (domain.Revision, error) {
 	p, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {

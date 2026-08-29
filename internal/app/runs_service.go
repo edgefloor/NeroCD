@@ -10,11 +10,13 @@ import (
 	"nerocd/internal/store"
 )
 
+// ListRuns lists authorized runs.
 func (s *Service) ListRuns(ctx context.Context, projectID string) ([]domain.TaskRun, error) {
 	result, err := s.ListRunsPage(ctx, projectID, store.Page{})
 	return result.Items, err
 }
 
+// ListRunsPage lists authorized runs page.
 func (s *Service) ListRunsPage(ctx context.Context, projectID string, page store.Page) (store.PageResult[domain.TaskRun], error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -38,11 +40,13 @@ func (s *Service) ListRunsPage(ctx context.Context, projectID string, page store
 	return paginateForService(filtered, page), nil
 }
 
+// ListRunLogs lists authorized run logs.
 func (s *Service) ListRunLogs(ctx context.Context, runID string) ([]domain.RunLog, error) {
 	result, err := s.ListRunLogsPage(ctx, runID, store.Page{})
 	return result.Items, err
 }
 
+// ListRunLogsPage lists authorized run logs page.
 func (s *Service) ListRunLogsPage(ctx context.Context, runID string, page store.Page) (store.PageResult[domain.RunLog], error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -84,11 +88,13 @@ func (s *Service) ListRunLogsPage(ctx context.Context, runID string, page store.
 	return paginateForService(out, page), nil
 }
 
+// ListArtifacts lists authorized artifacts.
 func (s *Service) ListArtifacts(ctx context.Context, runID string) ([]domain.ArtifactRecord, error) {
 	result, err := s.ListArtifactsPage(ctx, runID, store.Page{})
 	return result.Items, err
 }
 
+// ListArtifactsPage lists authorized artifacts page.
 func (s *Service) ListArtifactsPage(ctx context.Context, runID string, page store.Page) (store.PageResult[domain.ArtifactRecord], error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -129,6 +135,7 @@ func (s *Service) ListArtifactsPage(ctx context.Context, runID string, page stor
 	return paginateForService(out, page), nil
 }
 
+// RunLogInput supplies an authorized run-log append request.
 type RunLogInput struct {
 	RunID    string `json:"run_id"`
 	LeaseID  string `json:"lease_id"`
@@ -140,6 +147,7 @@ type RunLogInput struct {
 	EventKey string `json:"event_key"`
 }
 
+// RunEventInput represents one event in a runner event batch.
 type RunEventInput struct {
 	EventKey string `json:"event_key"`
 	Sequence int    `json:"sequence"`
@@ -147,6 +155,7 @@ type RunEventInput struct {
 	Message  string `json:"message"`
 }
 
+// RunEventBatchInput supplies an ordered batch of runner events.
 type RunEventBatchInput struct {
 	RunID   string          `json:"run_id"`
 	LeaseID string          `json:"lease_id"`
@@ -155,10 +164,12 @@ type RunEventBatchInput struct {
 	Events  []RunEventInput `json:"events"`
 }
 
+// RunEventBatchAck acknowledges the events persisted from a submitted batch.
 type RunEventBatchAck struct {
 	Events []domain.RunLog `json:"events"`
 }
 
+// ArtifactInput supplies an authorized artifact record request.
 type ArtifactInput struct {
 	RunID    string `json:"run_id"`
 	LeaseID  string `json:"lease_id"`
@@ -172,6 +183,7 @@ type ArtifactInput struct {
 	Fence    string `json:"fence"`
 }
 
+// CreateArtifact creates an authorized artifact.
 func (s *Service) CreateArtifact(ctx context.Context, input ArtifactInput) (domain.ArtifactRecord, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -198,6 +210,7 @@ func (s *Service) CreateArtifact(ctx context.Context, input ArtifactInput) (doma
 	return artifact, nil
 }
 
+// AppendRunLog appends an authorized log entry to a run.
 func (s *Service) AppendRunLog(ctx context.Context, input RunLogInput) (domain.RunLog, error) {
 	result, err := s.AppendRunEvents(ctx, RunEventBatchInput{RunID: input.RunID, LeaseID: input.LeaseID, Attempt: input.Attempt, Fence: input.Fence, Events: []RunEventInput{{EventKey: input.EventKey, Sequence: input.Sequence, Stream: input.Stream, Message: input.Message}}})
 	if err != nil {
@@ -206,6 +219,7 @@ func (s *Service) AppendRunLog(ctx context.Context, input RunLogInput) (domain.R
 	return result.Events[0], nil
 }
 
+// AppendRunEvents appends an authorized batch of run events.
 func (s *Service) AppendRunEvents(ctx context.Context, input RunEventBatchInput) (RunEventBatchAck, error) {
 	principal, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -256,6 +270,7 @@ func (s *Service) AppendRunEvents(ctx context.Context, input RunEventBatchInput)
 	return RunEventBatchAck{Events: persisted}, nil
 }
 
+// RequestRun requests an authorized run.
 func (s *Service) RequestRun(ctx context.Context, templateID string) (domain.TaskRun, error) {
 	templateID = strings.TrimSpace(templateID)
 	if templateID == "" {
@@ -302,6 +317,7 @@ func (s *Service) RequestRun(ctx context.Context, templateID string) (domain.Tas
 	return s.runs.CreateRunRequest(ctx, run, log, approval, audit)
 }
 
+// RunRequestInput supplies an authorized ad-hoc run request.
 type RunRequestInput struct {
 	ProjectID   string          `json:"project_id"`
 	TemplateID  string          `json:"template_id"`
@@ -311,6 +327,7 @@ type RunRequestInput struct {
 	RequiresAck bool            `json:"requires_ack"`
 }
 
+// RequestRunWithSpec requests an authorized run with spec.
 func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput) (domain.TaskRun, error) {
 	if strings.TrimSpace(input.TemplateID) != "" {
 		return s.RequestRun(ctx, input.TemplateID)
@@ -367,6 +384,7 @@ func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput)
 	return s.runs.CreateRunRequest(ctx, run, log, approval, audit)
 }
 
+// ApproveRun records an authorized approval decision.
 func (s *Service) ApproveRun(ctx context.Context, runID string) (domain.Approval, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -390,6 +408,7 @@ func (s *Service) ApproveRun(ctx context.Context, runID string) (domain.Approval
 	return approval, nil
 }
 
+// RejectRun records an authorized rejection decision.
 func (s *Service) RejectRun(ctx context.Context, runID string) (domain.Approval, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -414,6 +433,7 @@ func (s *Service) RejectRun(ctx context.Context, runID string) (domain.Approval,
 	return approval, nil
 }
 
+// CancelRun requests cancellation of an authorized run.
 func (s *Service) CancelRun(ctx context.Context, runID string) (domain.TaskRun, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -442,6 +462,7 @@ func (s *Service) CancelRun(ctx context.Context, runID string) (domain.TaskRun, 
 	return s.runners.CancelRunRequest(ctx, runID, now, domain.RunLog{ID: logID, RunID: runID, Sequence: 2, Stream: domain.LogSystem, Message: "Run canceled by user", CreatedAt: now}, audit)
 }
 
+// RunnerPrimitivePlan returns the authorized primitive plan.
 func (s *Service) RunnerPrimitivePlan(ctx context.Context, runID string) (domain.RunnerPrimitivePlan, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {

@@ -57,7 +57,7 @@ func (p RepositoryPolicy) ValidatePolicy() error {
 		return errors.New("public repository policy cannot allow internal addresses")
 	}
 	for scheme := range p.normalizedSchemes() {
-		if scheme != "https" && scheme != "ssh" && !(scheme == "http" && p.Mode == "internal" && p.AllowInternal) {
+		if scheme != "https" && scheme != "ssh" && (scheme != "http" || p.Mode != "internal" || !p.AllowInternal) {
 			return errors.New("repository policy has unsupported scheme")
 		}
 	}
@@ -110,7 +110,7 @@ func (p RepositoryPolicy) ValidateURL(raw string, redirect bool) (*url.URL, erro
 		}
 	}
 	scheme := strings.ToLower(u.Scheme)
-	if scheme == "" || !p.normalizedSchemes()[scheme] || (scheme != "https" && scheme != "ssh" && !(scheme == "http" && p.AllowInternal)) {
+	if scheme == "" || !p.normalizedSchemes()[scheme] || (scheme != "https" && scheme != "ssh" && (scheme != "http" || !p.AllowInternal)) {
 		return nil, errors.New("repository URL scheme is not permitted")
 	}
 	if redirect && !matchesHost(u.Hostname(), p.RedirectHosts) && !matchesHost(u.Hostname(), p.AllowedHosts) {
@@ -127,7 +127,7 @@ func validSSHUser(value string) bool {
 		return false
 	}
 	for _, character := range value {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' || character == '-') {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') && character != '_' && character != '-' {
 			return false
 		}
 	}

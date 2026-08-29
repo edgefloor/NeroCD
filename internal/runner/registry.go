@@ -8,6 +8,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// Adapter constructs a runner primitive plan for one run type.
 type Adapter struct {
 	Type        string
 	Name        string
@@ -16,10 +17,12 @@ type Adapter struct {
 	BuildPlan   func(domain.TaskRun) (domain.RunnerPrimitivePlan, error)
 }
 
+// Registry maps run types to runner adapters.
 type Registry struct {
 	adapters map[string]Adapter
 }
 
+// NewRegistry returns the built-in runner adapter registry.
 func NewRegistry() Registry {
 	adapters := []Adapter{
 		{Type: "shell", Name: "Shell", Status: "implemented", Description: "Builds a local process plan from shell command input and shared runner primitives.", BuildPlan: buildShellPlan},
@@ -37,11 +40,13 @@ func NewRegistry() Registry {
 	return registry
 }
 
+// Supports reports whether runType has an adapter.
 func (r Registry) Supports(runType string) bool {
 	_, ok := r.adapters[runType]
 	return ok
 }
 
+// BuildPlan converts run into its runner primitive plan.
 func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, error) {
 	adapter, ok := r.adapters[run.RunSpec.Type]
 	if !ok {
@@ -53,6 +58,7 @@ func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, err
 	return adapter.BuildPlan(run)
 }
 
+// Capabilities returns the capabilities represented by registered adapters.
 func (r Registry) Capabilities() []domain.Capability {
 	capabilities := []domain.Capability{
 		{Name: "Local auth", Status: "scaffolded", Description: "Session-backed local provider with future password and recovery policy."},

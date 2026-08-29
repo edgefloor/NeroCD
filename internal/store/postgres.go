@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -14,9 +15,16 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// PostgresStore is a PostgreSQL-backed implementation of the store repositories.
 type PostgresStore struct {
 	pool    *pgxpool.Pool
 	queries *sqlcgen.Queries
+}
+
+// rollbackTransaction performs best-effort failure-path cleanup. It ignores all
+// rollback errors so deferred cleanup cannot mask the operation's primary result.
+func rollbackTransaction(ctx context.Context, tx pgx.Tx) {
+	_ = tx.Rollback(ctx)
 }
 
 var (
@@ -42,6 +50,7 @@ var (
 // turning one runner claim into a global lock/materialization operation.
 const leaseExpiryBatchSize = 64
 
+// OpenPostgres opens a PostgreSQL store after verifying schema compatibility.
 func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresStore, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
@@ -73,6 +82,7 @@ func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresStore, erro
 
 // SchemaCompatible is intentionally called for every readiness probe so an
 // old or partially-applied schema can never remain ready after startup.
+// SchemaCompatible implements the corresponding repository operation.
 func (s *PostgresStore) SchemaCompatible(ctx context.Context) (bool, error) {
 	compatible, err := s.queries.SchedulerSchemaCompatible(ctx)
 	if err != nil {
@@ -102,6 +112,7 @@ func rejectGenericDeploymentRun(ctx context.Context, queries *sqlcgen.Queries, r
 	return nil
 }
 
+// Close implements the corresponding repository operation.
 func (s *PostgresStore) Close() error {
 	s.pool.Close()
 	return nil

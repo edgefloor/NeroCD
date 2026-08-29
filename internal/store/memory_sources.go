@@ -6,6 +6,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListRepositories implements the corresponding repository operation.
 func (s *MemoryStore) ListRepositories(_ context.Context, projectID string) ([]domain.Repository, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -18,6 +19,7 @@ func (s *MemoryStore) ListRepositories(_ context.Context, projectID string) ([]d
 	return out, nil
 }
 
+// CreateRepository implements the corresponding repository operation.
 func (s *MemoryStore) CreateRepository(_ context.Context, repository domain.Repository, opts ...MutationOption) (domain.Repository, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -28,6 +30,8 @@ func (s *MemoryStore) CreateRepository(_ context.Context, repository domain.Repo
 	}
 	return repository, nil
 }
+
+// ConfigureRepositoryPolicy implements the corresponding repository operation.
 func (s *MemoryStore) ConfigureRepositoryPolicy(_ context.Context, request RepositoryPolicyConfiguration) (domain.Repository, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -75,6 +79,7 @@ func (s *MemoryStore) ConfigureRepositoryPolicy(_ context.Context, request Repos
 	return domain.Repository{}, ErrNotFound
 }
 
+// ListAccessKeys implements the corresponding repository operation.
 func (s *MemoryStore) ListAccessKeys(_ context.Context, projectID string) ([]domain.AccessKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -87,6 +92,7 @@ func (s *MemoryStore) ListAccessKeys(_ context.Context, projectID string) ([]dom
 	return out, nil
 }
 
+// CreateAccessKey implements the corresponding repository operation.
 func (s *MemoryStore) CreateAccessKey(_ context.Context, key domain.AccessKey, opts ...MutationOption) (domain.AccessKey, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -98,6 +104,7 @@ func (s *MemoryStore) CreateAccessKey(_ context.Context, key domain.AccessKey, o
 	return key, nil
 }
 
+// ListInventories implements the corresponding repository operation.
 func (s *MemoryStore) ListInventories(_ context.Context, projectID string) ([]domain.Inventory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -110,6 +117,7 @@ func (s *MemoryStore) ListInventories(_ context.Context, projectID string) ([]do
 	return out, nil
 }
 
+// CreateInventory implements the corresponding repository operation.
 func (s *MemoryStore) CreateInventory(_ context.Context, inventory domain.Inventory, opts ...MutationOption) (domain.Inventory, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()

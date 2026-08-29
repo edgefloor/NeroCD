@@ -11,6 +11,7 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// ListProjects implements the corresponding repository operation.
 func (s *PostgresStore) ListProjects(ctx context.Context) ([]domain.Project, error) {
 	rows, err := s.queries.ListProjects(ctx)
 	if err != nil {
@@ -23,6 +24,7 @@ func (s *PostgresStore) ListProjects(ctx context.Context) ([]domain.Project, err
 	return projects, nil
 }
 
+// CreateProject implements the corresponding repository operation.
 func (s *PostgresStore) CreateProject(ctx context.Context, project domain.Project) (domain.Project, error) {
 	inserted, err := s.queries.CreateProject(ctx, sqlcgen.CreateProjectParams{ID: project.ID, Name: project.Name, Description: project.Description, CreatedAt: project.CreatedAt})
 	if err != nil {
@@ -31,6 +33,7 @@ func (s *PostgresStore) CreateProject(ctx context.Context, project domain.Projec
 	return projectFromSQLC(inserted), nil
 }
 
+// CreateProjectWithOwner implements the corresponding repository operation.
 func (s *PostgresStore) CreateProjectWithOwner(ctx context.Context, project domain.Project, owner domain.ProjectMember, audit domain.AuditEvent) (domain.Project, error) {
 	if owner.ProjectID != project.ID || owner.UserID == "" || owner.Role != domain.RoleOwner {
 		return domain.Project{}, ErrConflict
@@ -39,7 +42,7 @@ func (s *PostgresStore) CreateProjectWithOwner(ctx context.Context, project doma
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	inserted, err := q.CreateProject(ctx, sqlcgen.CreateProjectParams{ID: project.ID, Name: project.Name, Description: project.Description, CreatedAt: project.CreatedAt})
 	if err != nil {
@@ -57,6 +60,7 @@ func (s *PostgresStore) CreateProjectWithOwner(ctx context.Context, project doma
 	return projectFromSQLC(inserted), nil
 }
 
+// UpdateProject implements the corresponding repository operation.
 func (s *PostgresStore) UpdateProject(ctx context.Context, project domain.Project, opts ...MutationOption) (domain.Project, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -73,7 +77,7 @@ func (s *PostgresStore) UpdateProject(ctx context.Context, project domain.Projec
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	updated, err := q.UpdateProject(ctx, sqlcgen.UpdateProjectParams{ID: project.ID, Name: project.Name, Description: project.Description})
 	if err == pgx.ErrNoRows {
@@ -91,6 +95,7 @@ func (s *PostgresStore) UpdateProject(ctx context.Context, project domain.Projec
 	return projectFromSQLC(updated), nil
 }
 
+// ArchiveProject implements the corresponding repository operation.
 func (s *PostgresStore) ArchiveProject(ctx context.Context, id string, archivedAt time.Time, opts ...MutationOption) (domain.Project, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -107,7 +112,7 @@ func (s *PostgresStore) ArchiveProject(ctx context.Context, id string, archivedA
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	archived, err := q.ArchiveProject(ctx, sqlcgen.ArchiveProjectParams{ID: id, ArchivedAt: &archivedAt})
 	if err == pgx.ErrNoRows {
@@ -125,6 +130,7 @@ func (s *PostgresStore) ArchiveProject(ctx context.Context, id string, archivedA
 	return projectFromSQLC(archived), nil
 }
 
+// ListProjectMembers implements the corresponding repository operation.
 func (s *PostgresStore) ListProjectMembers(ctx context.Context, projectID string) ([]domain.ProjectMember, error) {
 	rows, err := s.queries.ListProjectMembers(ctx, projectID)
 	if err != nil {
@@ -137,6 +143,7 @@ func (s *PostgresStore) ListProjectMembers(ctx context.Context, projectID string
 	return members, nil
 }
 
+// UpsertProjectMember implements the corresponding repository operation.
 func (s *PostgresStore) UpsertProjectMember(ctx context.Context, member domain.ProjectMember, opts ...MutationOption) (domain.ProjectMember, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -157,7 +164,7 @@ func (s *PostgresStore) UpsertProjectMember(ctx context.Context, member domain.P
 	if err != nil {
 		return domain.ProjectMember{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	upserted, err := q.UpsertProjectMember(ctx, sqlcgen.UpsertProjectMemberParams{ID: member.ID, ProjectID: member.ProjectID, UserID: member.UserID, Role: member.Role, CreatedAt: member.CreatedAt, UpdatedAt: member.UpdatedAt})
 	if err != nil {

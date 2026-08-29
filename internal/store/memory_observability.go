@@ -11,6 +11,7 @@ import (
 // OperationalSnapshot mirrors the PostgreSQL aggregate contract for explicit
 // development/test memory stores. It deliberately reads under one lock so a
 // scrape cannot combine queue and lease state from different mutations.
+// OperationalSnapshot implements the corresponding repository operation.
 func (s *MemoryStore) OperationalSnapshot(_ context.Context) (observability.Snapshot, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -88,6 +89,7 @@ func (s *MemoryStore) OperationalSnapshot(_ context.Context) (observability.Snap
 	return result, nil
 }
 
+// RecordRunnerOperationalObservation implements the corresponding repository operation.
 func (s *MemoryStore) RecordRunnerOperationalObservation(_ context.Context, runnerID string, journalDepth, retryCount, renewFailures int) error {
 	if runnerID == "" || journalDepth < 0 || journalDepth > 8192 || retryCount < 0 || retryCount > 100000 || renewFailures < 0 || renewFailures > 100000 {
 		return ErrConflict
@@ -108,6 +110,7 @@ func (s *MemoryStore) RecordRunnerOperationalObservation(_ context.Context, runn
 	return nil
 }
 
+// RunnerOperationalObservation implements the corresponding repository operation.
 func (s *MemoryStore) RunnerOperationalObservation(_ context.Context, runnerID string) (RunnerOperationalObservation, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -100,7 +100,7 @@ func migrateWithSource(ctx context.Context, database *pgxpool.Pool, migrations [
 	if _, err = conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, options.LockKey); err != nil {
 		return err
 	}
-	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, options.LockKey)
+	defer func() { _, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, options.LockKey) }()
 	if _, err = conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
 		return err
 	}

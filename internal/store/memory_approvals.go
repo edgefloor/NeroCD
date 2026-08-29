@@ -7,6 +7,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListApprovals implements the corresponding repository operation.
 func (s *MemoryStore) ListApprovals(_ context.Context, status string) ([]domain.Approval, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -19,6 +20,7 @@ func (s *MemoryStore) ListApprovals(_ context.Context, status string) ([]domain.
 	return out, nil
 }
 
+// CreateApproval implements the corresponding repository operation.
 func (s *MemoryStore) CreateApproval(_ context.Context, approval domain.Approval) (domain.Approval, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -29,6 +31,7 @@ func (s *MemoryStore) CreateApproval(_ context.Context, approval domain.Approval
 	return approval, nil
 }
 
+// ApproveRun implements the corresponding repository operation.
 func (s *MemoryStore) ApproveRun(_ context.Context, runID string, actorID string, approvedAt time.Time, opts ...MutationOption) (domain.Approval, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -73,6 +76,7 @@ func (s *MemoryStore) ApproveRun(_ context.Context, runID string, actorID string
 	return domain.Approval{}, ErrNotFound
 }
 
+// RejectRun implements the corresponding repository operation.
 func (s *MemoryStore) RejectRun(_ context.Context, runID string, actorID string, rejectedAt time.Time, opts ...MutationOption) (domain.Approval, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()

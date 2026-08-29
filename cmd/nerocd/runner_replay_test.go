@@ -62,7 +62,7 @@ func TestAttemptReporterRetriesCommittedEventAfterLostResponse(t *testing.T) {
 	supervisor := newAttemptSupervisor(lease)
 	defer supervisor.Close()
 	journal := openReplayTestJournal(t)
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 
 	var mu sync.Mutex
 	requests := 0
@@ -127,7 +127,7 @@ func TestAttemptReporterRetriesCommittedEventAfterLostResponse(t *testing.T) {
 func TestReconcileRunnerJournalReplaysDurableProvenanceBeforeOtherTraffic(t *testing.T) {
 	lease := replayTestLease()
 	journal := openReplayTestJournal(t)
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	commit := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	hash := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	digest := "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
@@ -186,7 +186,7 @@ func TestJournaledCompletionRetriesCommittedMutationAfterLostResponse(t *testing
 	supervisor := newAttemptSupervisor(lease)
 	defer supervisor.Close()
 	journal := openReplayTestJournal(t)
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 
 	var mu sync.Mutex
 	requests := 0
@@ -234,7 +234,7 @@ func TestJournaledCompletionRetriesCommittedMutationAfterLostResponse(t *testing
 func TestReconcileRunnerJournalFlushesBeforeAnyNewRunnerTraffic(t *testing.T) {
 	lease := replayTestLease()
 	journal := openReplayTestJournal(t)
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	authority := journalAttemptIdentity(lease.RunID, lease, nil)
 	event := runner.JournalEvent{ID: "event_pending", Attempt: authority, Sequence: 4, Stream: domain.LogSystem, Message: "pending", CreatedAt: time.Now().UTC()}
 	completion := runner.JournalCompletion{ID: "completion_pending", Attempt: authority, Status: domain.RunSucceeded, CreatedAt: time.Now().UTC()}
@@ -395,7 +395,7 @@ func TestRunnerStartupInvalidAuthorityProbePreservesJournal(t *testing.T) {
 func TestReconcileRunnerJournalDiscardsOnlyExplicitFencedProbe(t *testing.T) {
 	lease := replayTestLease()
 	journal := openReplayTestJournal(t)
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	appendReplayTestEvent(t, journal, lease)
 	authority := journalAttemptIdentity(lease.RunID, lease, nil)
 	if _, err := journal.AppendCompletion(runner.JournalCompletion{ID: "completion_startup_pending", Attempt: authority, Status: domain.RunSucceeded, CreatedAt: time.Now().UTC()}); err != nil {
@@ -422,7 +422,7 @@ func TestReconcileRunnerJournalActiveProbeRefreshesExpiredAuthorityAndReplays(t 
 	lease.CreatedAt = time.Now().Add(-10 * time.Minute)
 	lease.ExpiresAt = time.Now().Add(-30 * time.Second)
 	journal := openReplayTestJournal(t)
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	appendReplayTestEvent(t, journal, lease)
 	var mu sync.Mutex
 	paths := []string{}
@@ -594,7 +594,7 @@ func TestReconcileRunnerJournalMultiBatchSuccessDrainsAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	batches := []int{}
 	completions := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {

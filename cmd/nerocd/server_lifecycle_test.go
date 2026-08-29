@@ -60,7 +60,7 @@ func TestServerLifecycleBoundsSlowHeaderAndBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer slowHeader.Close()
+	defer func() { _ = slowHeader.Close() }()
 	if _, err = io.WriteString(slowHeader, "GET / HTTP/1.1\r\nHost: example"); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestServerLifecycleBoundsSlowHeaderAndBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer slowBody.Close()
+	defer func() { _ = slowBody.Close() }()
 	if _, err = io.WriteString(slowBody, "POST / HTTP/1.1\r\nHost: example\r\nContent-Length: 4\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestServerLifecycleBoundsWriteAndIdleConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer writeConn.Close()
+	defer func() { _ = writeConn.Close() }()
 	if _, err = io.WriteString(writeConn, "GET /write HTTP/1.1\r\nHost: example\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestServerLifecycleBoundsWriteAndIdleConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer idleConn.Close()
+	defer func() { _ = idleConn.Close() }()
 	if _, err = io.WriteString(idleConn, "GET / HTTP/1.1\r\nHost: example\r\nConnection: keep-alive\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestServerLifecycleForceClosesHungHandler(t *testing.T) {
 	go func() {
 		response, err := http.Get("http://" + addr + "/")
 		if err == nil {
-			response.Body.Close()
+			_ = response.Body.Close()
 		}
 		clientDone <- err
 	}()

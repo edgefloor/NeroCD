@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nerocd/db"
@@ -33,11 +34,18 @@ import (
 	"nerocd/web"
 )
 
+func closePostgresStore(t *testing.T, pg *store.PostgresStore) {
+	t.Helper()
+	if err := pg.Close(); err != nil {
+		t.Errorf("close postgres store: %v", err)
+	}
+}
+
 func TestPostgresOperationalSnapshotAggregates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "operational_snapshot")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	baseline, err := pg.OperationalSnapshot(ctx)
 	if err != nil {
 		t.Fatalf("baseline snapshot: %v", err)
@@ -132,7 +140,7 @@ func TestPostgresRunLogRetentionAtomicReplayAndConcurrency(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "run_log_retention")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Now().UTC()
 	finished := now.Add(-48 * time.Hour)
 	for _, id := range []string{"retention_run_a", "retention_run_b"} {
@@ -217,7 +225,7 @@ func TestPostgresFencedDeploymentAttemptHTTPAndRollback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "deployment_fence")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Now().UTC()
 	suffix := strconv.FormatInt(now.UnixNano(), 36)
 	serviceID, environmentID := "svc_fenced_"+suffix, "env_fenced_"+suffix
@@ -1177,12 +1185,13 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 	if err := database.QueryRow(ctx, `SELECT status FROM deployments WHERE id=$1`, successRace.ID).Scan(&successRaceStatus); err != nil {
 		t.Fatal(err)
 	}
-	if successRaceStatus == domain.DeploymentSucceeded {
+	switch successRaceStatus {
+	case domain.DeploymentSucceeded:
 		if successRaceRec.Code != http.StatusOK || cancelRaceRec.Code != http.StatusConflict {
 			t.Fatalf("success winner cancel=%d success=%d", cancelRaceRec.Code, successRaceRec.Code)
 		}
 		assertTerminalLifecycle(successRace, claimSuccess, domain.RunSucceeded)
-	} else if successRaceStatus == domain.DeploymentCancelRequested {
+	case domain.DeploymentCancelRequested:
 		if cancelRaceRec.Code != http.StatusOK || successRaceRec.Code != http.StatusConflict {
 			t.Fatalf("cancel winner cancel=%d success=%d", cancelRaceRec.Code, successRaceRec.Code)
 		}
@@ -1190,7 +1199,7 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 		if err := database.QueryRow(ctx, `SELECT count(*) FROM run_leases WHERE run_id=$1 AND status='active'`, claimSuccess.Run.ID).Scan(&active); err != nil || active != 1 {
 			t.Fatalf("cancel winner authority active=%d err=%v", active, err)
 		}
-	} else {
+	default:
 		t.Fatalf("illegal cancel/success race status=%q", successRaceStatus)
 	}
 }
@@ -1199,7 +1208,7 @@ func TestPostgresClaimAndApprovalAuditRollback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "claim_approval_audit")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Now().UTC()
 	suffix := strconv.FormatInt(now.UnixNano(), 36)
 	runnerID, runID := "runner_audit_"+suffix, "run_audit_"+suffix
@@ -1270,7 +1279,7 @@ func TestPostgresDeploymentRequestSerializesOneActiveEnvironment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, _ := openPostgresIntegrationStore(t, ctx, "deployment_lock")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Now().UTC()
 	suffix := strconv.FormatInt(now.UnixNano(), 36)
 	serviceID, environmentID := "svc_lock_"+suffix, "env_lock_"+suffix
@@ -1314,7 +1323,7 @@ func TestPostgresIntegrationSQLCRoundTripsPaginationAndRollback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "sqlc")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	project := domain.Project{ID: "proj_sqlc_roundtrip", Name: "sqlc round trip", Description: "native pgx", CreatedAt: now}
@@ -1408,7 +1417,7 @@ func TestPostgresIntegrationRunnerReplayIdempotency(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "replay")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 
 	now := time.Now().UTC()
 	runnerID := "runner_replay"
@@ -1578,7 +1587,7 @@ func TestPostgresIntegrationSecretAccessUsesOnlyCurrentWorkflowStep(t *testing.T
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "secret_workflow")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Now().UTC()
 	runnerID := "runner_secret_workflow"
 	if _, err := pg.RegisterRunner(ctx, domain.Runner{ID: runnerID, Name: runnerID, Tags: []string{"local"}, Capabilities: []string{"shell"}, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
@@ -1668,7 +1677,7 @@ func TestPostgresIntegrationRunnerEnrollmentOneTimeReplayAndRace(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "runner_enrollment")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Now().UTC()
 	create := func(id, tokenHash, runnerID string, ttl time.Duration) domain.RunnerEnrollment {
 		t.Helper()
@@ -1806,7 +1815,7 @@ func TestPostgresIntegrationControlPlanePrimitives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal(err)
@@ -1964,7 +1973,7 @@ func TestPostgresIntegrationTwoRunnerFencingAndBoundedClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal(err)
@@ -2202,7 +2211,7 @@ func TestPostgresIntegrationSameRunnerClaimsSerializeCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Now().UTC()
 	if _, err := pg.RegisterRunner(ctx, domain.Runner{ID: "runner_serial", Name: "serial", Tags: []string{"local"}, Capabilities: []string{"shell"}, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
 		t.Fatal(err)
@@ -2328,17 +2337,17 @@ func TestPostgresIntegrationClaimAndWorkflowCompletionLockOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer setupStore.Close()
+	defer closePostgresStore(t, setupStore)
 	completionStore, err := store.OpenPostgres(ctx, databaseURLWithApplicationName(t, schemaURL, completionApplication))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer completionStore.Close()
+	defer closePostgresStore(t, completionStore)
 	claimStore, err := store.OpenPostgres(ctx, databaseURLWithApplicationName(t, schemaURL, claimApplication))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer claimStore.Close()
+	defer closePostgresStore(t, claimStore)
 
 	now := time.Now().UTC()
 	if _, err := setupStore.RegisterRunner(ctx, domain.Runner{ID: "runner_lock_order", Name: "lock-order", Tags: []string{"local"}, Capabilities: []string{"shell"}, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
@@ -2364,7 +2373,11 @@ func TestPostgresIntegrationClaimAndWorkflowCompletionLockOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer barrier.Rollback(ctx)
+	defer func() {
+		if err := barrier.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Errorf("rollback barrier transaction: %v", err)
+		}
+	}()
 	if _, err := barrier.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, runBarrierKey); err != nil {
 		t.Fatal(err)
 	}
@@ -2454,7 +2467,7 @@ func TestPostgresIntegrationClaimMaintenanceIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 
 	const (
 		expectedExpiryBatch = 64 // Must match the store's transaction bound.
@@ -2581,7 +2594,7 @@ func TestPostgresIntegrationRequeuedRunAdvancesPastDurableCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 
 	now := time.Now().UTC()
 	for _, runnerID := range []string{"runner_requeue_owner", "runner_requeue_seeker"} {
@@ -2692,7 +2705,7 @@ func TestPostgresIntegrationApprovedRunAdvancesPastDurableCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Now().UTC()
 	if _, err := pg.RegisterRunner(ctx, domain.Runner{ID: "runner_approval_order", Name: "approval-order", Tags: []string{"local"}, Capabilities: []string{"shell"}, Status: domain.RunnerActive, RegisteredAt: now, LastHeartbeatAt: now}); err != nil {
 		t.Fatal(err)
@@ -2806,7 +2819,7 @@ func TestPostgresIntegrationFencingMigrationCompatibility(t *testing.T) {
 		}
 	}
 	if preMigration, err := store.OpenPostgres(ctx, schemaURL); err == nil {
-		preMigration.Close()
+		closePostgresStore(t, preMigration)
 		t.Fatal("current store accepted a pre-fencing schema")
 	}
 	if err := applyEmbeddedMigrations(ctx, database, "0010_service_account_tokens.sql", ""); err != nil {
@@ -2868,7 +2881,7 @@ func TestPostgresIntegrationFencingMigrationCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	claim, err := pg.ClaimRun(ctx, "runner_upgrade", time.Now().UTC(), 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -2941,7 +2954,7 @@ func TestPostgresIntegrationProvenanceMigratesLegacyAndAllowsPendingSiblings(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	for _, id := range []string{"rev_pending_one", "rev_pending_two"} {
 		if _, err = pg.CreateRevision(ctx, domain.Revision{ID: id, ServiceID: "svc_legacy", RequestedRef: id, CreatedBy: "usr_bootstrap", CreatedAt: now}); err != nil {
 			t.Fatalf("create %s: %v", id, err)
@@ -3058,13 +3071,13 @@ func TestPostgresIntegrationRejectsPartialSchedulerSchema(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s current schema rejected: %v", label, err)
 		}
-		candidate.Close()
+		closePostgresStore(t, candidate)
 	}
 	assertRejected := func(label string) {
 		t.Helper()
 		candidate, err := store.OpenPostgres(ctx, schemaURL)
 		if err == nil {
-			candidate.Close()
+			closePostgresStore(t, candidate)
 			t.Fatalf("%s partial scheduler schema accepted", label)
 		}
 	}
@@ -3116,12 +3129,12 @@ func TestPostgresRepositoryPolicyReceiptSchemaGuard(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "policy_schema_guard")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	assertRejected := func(label string) {
 		t.Helper()
 		candidate, err := store.OpenPostgres(ctx, database.Config().ConnString())
 		if err == nil {
-			candidate.Close()
+			closePostgresStore(t, candidate)
 			t.Fatalf("%s malformed receipt schema accepted", label)
 		}
 	}
@@ -3131,7 +3144,7 @@ func TestPostgresRepositoryPolicyReceiptSchemaGuard(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s repaired receipt schema rejected: %v", label, err)
 		}
-		candidate.Close()
+		closePostgresStore(t, candidate)
 	}
 	assertAccepted("current")
 	mutations := []struct{ breakDB, repair string }{
@@ -3188,7 +3201,7 @@ func TestPostgresIntegrationCancelRacesRemainCoherent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal(err)
@@ -3324,7 +3337,7 @@ func TestPostgresRepositoryPolicyConfigurationReceipts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "policy_receipts")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal(err)
@@ -3453,7 +3466,7 @@ func TestPostgresBootstrapAdminIsAtomicAndAudited(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresEmptyIntegrationStore(t, ctx, "bootstrap")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal(err)
@@ -3498,7 +3511,7 @@ func TestPostgresSessionMetadataSurvivesRestartAndAdminRevocation(t *testing.T) 
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "session_metadata")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	newService := func() *app.Service {
 		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
@@ -3598,7 +3611,7 @@ func TestPostgresAuditEventsAreAppendOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	pg, database := openPostgresIntegrationStore(t, ctx, "audit_append_only")
-	defer pg.Close()
+	defer closePostgresStore(t, pg)
 	event := domain.AuditEvent{ID: "aud_append_only", ActorID: "system", Action: "test.audit", TargetID: "target", Metadata: map[string]any{}, CreatedAt: time.Now().UTC()}
 	if err := pg.CreateAuditEvent(ctx, event); err != nil {
 		t.Fatal(err)
@@ -3730,7 +3743,11 @@ func postgresRowLocked(t *testing.T, ctx context.Context, database *pgxpool.Pool
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil {
+			t.Errorf("rollback transaction: %v", err)
+		}
+	}()
 	var value string
 	err = tx.QueryRow(ctx, query).Scan(&value)
 	if err == nil {

@@ -13,6 +13,7 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// ListRunners implements the corresponding repository operation.
 func (s *PostgresStore) ListRunners(ctx context.Context) ([]domain.Runner, error) {
 	rows, err := s.queries.ListRunners(ctx)
 	if err != nil {
@@ -25,6 +26,7 @@ func (s *PostgresStore) ListRunners(ctx context.Context) ([]domain.Runner, error
 	return runners, nil
 }
 
+// GetRunnerByID implements the corresponding repository operation.
 func (s *PostgresStore) GetRunnerByID(ctx context.Context, id string) (domain.Runner, error) {
 	row, err := s.queries.GetRunnerByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -36,6 +38,7 @@ func (s *PostgresStore) GetRunnerByID(ctx context.Context, id string) (domain.Ru
 	return runnerFromSQLC(row), nil
 }
 
+// RegisterRunner implements the corresponding repository operation.
 func (s *PostgresStore) RegisterRunner(ctx context.Context, runner domain.Runner, opts ...MutationOption) (domain.Runner, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -52,7 +55,7 @@ func (s *PostgresStore) RegisterRunner(ctx context.Context, runner domain.Runner
 	if err != nil {
 		return domain.Runner{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.RegisterRunner(ctx, sqlcgen.RegisterRunnerParams{ID: runner.ID, Name: runner.Name, Tags: runner.Tags, Capabilities: runner.Capabilities, Status: runner.Status, RegisteredAt: runner.RegisteredAt, LastHeartbeatAt: runner.LastHeartbeatAt, TokenHash: runner.TokenHash})
 	if err != nil {
@@ -67,12 +70,13 @@ func (s *PostgresStore) RegisterRunner(ctx context.Context, runner domain.Runner
 	return runnerFromSQLC(row), nil
 }
 
+// CreateRunnerEnrollment implements the corresponding repository operation.
 func (s *PostgresStore) CreateRunnerEnrollment(ctx context.Context, enrollment domain.RunnerEnrollment, audit domain.AuditEvent) (domain.RunnerEnrollment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.RunnerEnrollment{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	ttl := enrollment.ExpiresAt.Sub(enrollment.CreatedAt)
 	created, err := queries.CreateRunnerEnrollment(ctx, sqlcgen.CreateRunnerEnrollmentParams{ID: enrollment.ID, TokenHash: enrollment.TokenHash, RunnerID: enrollment.RunnerID, RunnerName: enrollment.RunnerName, Tags: enrollment.Tags, Capabilities: enrollment.Capabilities, CreatedBy: enrollment.CreatedBy, TtlMicroseconds: ttl.Microseconds()})
@@ -91,12 +95,13 @@ func (s *PostgresStore) CreateRunnerEnrollment(ctx context.Context, enrollment d
 	return runnerEnrollmentFromSQLC(created), nil
 }
 
+// RevokeRunnerEnrollment implements the corresponding repository operation.
 func (s *PostgresStore) RevokeRunnerEnrollment(ctx context.Context, enrollmentID string, audit domain.AuditEvent) (domain.RunnerEnrollment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.RunnerEnrollment{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	revoked, err := queries.RevokeUnusedRunnerEnrollment(ctx, enrollmentID)
 	if err == pgx.ErrNoRows {
@@ -114,12 +119,13 @@ func (s *PostgresStore) RevokeRunnerEnrollment(ctx context.Context, enrollmentID
 	return runnerEnrollmentFromSQLC(revoked), nil
 }
 
+// ConsumeRunnerEnrollment implements the corresponding repository operation.
 func (s *PostgresStore) ConsumeRunnerEnrollment(ctx context.Context, consume domain.RunnerEnrollmentConsume, audit domain.AuditEvent) (domain.Runner, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Runner{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	enrollment, err := queries.LockRunnerEnrollmentByTokenHash(ctx, consume.TokenHash)
 	if err == pgx.ErrNoRows {
@@ -166,6 +172,7 @@ func (s *PostgresStore) ConsumeRunnerEnrollment(ctx context.Context, consume dom
 	return runnerFromSQLC(runnerRow), nil
 }
 
+// UpdateRunnerToken implements the corresponding repository operation.
 func (s *PostgresStore) UpdateRunnerToken(ctx context.Context, runnerID string, tokenHash string, status string, updatedAt time.Time, opts ...MutationOption) (domain.Runner, error) {
 	audit := resolveMutationOptions(opts)
 	if audit == nil {
@@ -182,7 +189,7 @@ func (s *PostgresStore) UpdateRunnerToken(ctx context.Context, runnerID string, 
 	if err != nil {
 		return domain.Runner{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
 	row, err := q.UpdateRunnerToken(ctx, sqlcgen.UpdateRunnerTokenParams{ID: runnerID, TokenHash: tokenHash, Status: status, LastHeartbeatAt: updatedAt})
 	if err == pgx.ErrNoRows {
@@ -200,6 +207,7 @@ func (s *PostgresStore) UpdateRunnerToken(ctx context.Context, runnerID string, 
 	return runnerFromSQLC(row), nil
 }
 
+// GetRunnerByTokenHash implements the corresponding repository operation.
 func (s *PostgresStore) GetRunnerByTokenHash(ctx context.Context, tokenHash string) (domain.Runner, error) {
 	runner, err := s.queries.GetRunnerByTokenHash(ctx, tokenHash)
 	if err == pgx.ErrNoRows {
@@ -211,6 +219,7 @@ func (s *PostgresStore) GetRunnerByTokenHash(ctx context.Context, tokenHash stri
 	return runnerFromSQLC(runner), nil
 }
 
+// HeartbeatRunner implements the corresponding repository operation.
 func (s *PostgresStore) HeartbeatRunner(ctx context.Context, id string, heartbeatAt time.Time) (domain.Runner, error) {
 	runner, err := s.queries.HeartbeatRunner(ctx, sqlcgen.HeartbeatRunnerParams{ID: id, LastHeartbeatAt: heartbeatAt})
 	if err == pgx.ErrNoRows {
@@ -222,13 +231,14 @@ func (s *PostgresStore) HeartbeatRunner(ctx context.Context, id string, heartbea
 	return runnerFromSQLC(runner), nil
 }
 
+// ClaimRun implements the corresponding repository operation.
 func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.Time, ttl time.Duration, opts ...MutationOption) (domain.ClaimedRun, error) {
 	audit := resolveMutationOptions(opts)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.ClaimedRun{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	markedStale, err := queries.MarkStaleRunnerForClaim(ctx, sqlcgen.MarkStaleRunnerForClaimParams{RunnerID: runnerID, StaleBefore: now.Add(-2 * ttl)})
 	if err != nil {
@@ -379,12 +389,13 @@ func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.
 	return domain.ClaimedRun{Lease: lease, Run: *claimedRun, PrimitivePlan: primitivePlanForRun(*claimedRun)}, nil
 }
 
+// ExpireLeases implements the corresponding repository operation.
 func (s *PostgresStore) ExpireLeases(ctx context.Context, now time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	if err := expireLeasesAtDBClock(ctx, s.queries.WithTx(tx)); err != nil {
 		return fmt.Errorf("expire leases at db clock: %w", err)
 	}
@@ -414,6 +425,7 @@ func expireLeasesAtDBClock(ctx context.Context, queries *sqlcgen.Queries) error 
 	return nil
 }
 
+// RenewLease implements the corresponding repository operation.
 func (s *PostgresStore) RenewLease(ctx context.Context, runnerID, leaseID, fence string, attempt int, now time.Time, ttl time.Duration) (domain.RunLease, error) {
 	// The WHERE clause is the fencing CAS: identity, generation, opaque fence and
 	// unexpired active state must all still match at the instant of extension.
@@ -426,6 +438,7 @@ func (s *PostgresStore) RenewLease(ctx context.Context, runnerID, leaseID, fence
 	return runLeaseFromSQLC(lease), nil
 }
 
+// CompleteLeaseRequest implements the corresponding repository operation.
 func (s *PostgresStore) CompleteLeaseRequest(ctx context.Context, leaseID string, runnerID string, status string, attempt int, fence string, completionKey string, completedAt time.Time, runStatus string, finishedAt *time.Time, workflowState *domain.WorkflowState, logs []domain.RunLog, audit domain.AuditEvent) (domain.RunLease, error) {
 	metadata, err := json.Marshal(audit.Metadata)
 	if err != nil {
@@ -443,7 +456,7 @@ func (s *PostgresStore) CompleteLeaseRequest(ctx context.Context, leaseID string
 	if err != nil {
 		return domain.RunLease{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	runID, err := queries.GetLeaseRunID(ctx, leaseID)
 	if err == pgx.ErrNoRows {
@@ -503,6 +516,7 @@ func (s *PostgresStore) CompleteLeaseRequest(ctx context.Context, leaseID string
 	return lease, nil
 }
 
+// GetLeaseForCompletion implements the corresponding repository operation.
 func (s *PostgresStore) GetLeaseForCompletion(ctx context.Context, leaseID, runnerID string, attempt int, fence string) (domain.RunLease, error) {
 	lease, err := s.queries.GetLeaseForCompletion(ctx, sqlcgen.GetLeaseForCompletionParams{LeaseID: leaseID, RunnerID: runnerID, Attempt: int32(attempt), Fence: fence})
 	if err == pgx.ErrNoRows {
@@ -514,12 +528,13 @@ func (s *PostgresStore) GetLeaseForCompletion(ctx context.Context, leaseID, runn
 	return runLeaseFromSQLC(lease), nil
 }
 
+// AuthorizeSecretAccess implements the corresponding repository operation.
 func (s *PostgresStore) AuthorizeSecretAccess(ctx context.Context, request domain.SecretAccessRequest) (domain.SecretAccessGrant, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.SecretAccessGrant{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	// The exact lease row is locked before idempotency lookup. A prior audit can
 	// therefore never authorize a read after DB-clock expiry or reassignment.
@@ -592,6 +607,7 @@ func (s *PostgresStore) AuthorizeSecretAccess(ctx context.Context, request domai
 	return secretAccessGrant(request, created.CreatedAt), nil
 }
 
+// CancelRunRequest implements the corresponding repository operation.
 func (s *PostgresStore) CancelRunRequest(ctx context.Context, runID string, canceledAt time.Time, log domain.RunLog, audit domain.AuditEvent) (domain.TaskRun, error) {
 	metadata, err := json.Marshal(audit.Metadata)
 	if err != nil {
@@ -601,7 +617,7 @@ func (s *PostgresStore) CancelRunRequest(ctx context.Context, runID string, canc
 	if err != nil {
 		return domain.TaskRun{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	status, err := queries.LockCancellableRunStatus(ctx, runID)
 	if err == pgx.ErrNoRows {
@@ -650,6 +666,7 @@ func (s *PostgresStore) CancelRunRequest(ctx context.Context, runID string, canc
 	return run, nil
 }
 
+// ActiveLeaseForRun implements the corresponding repository operation.
 func (s *PostgresStore) ActiveLeaseForRun(ctx context.Context, runID string) (domain.RunLease, error) {
 	lease, err := s.queries.GetActiveLeaseForRun(ctx, runID)
 	if err == pgx.ErrNoRows {
@@ -661,6 +678,7 @@ func (s *PostgresStore) ActiveLeaseForRun(ctx context.Context, runID string) (do
 	return runLeaseFromSQLC(lease), nil
 }
 
+// GetLeaseForRunner implements the corresponding repository operation.
 func (s *PostgresStore) GetLeaseForRunner(ctx context.Context, leaseID string, runnerID string) (domain.RunLease, error) {
 	lease, err := s.queries.GetActiveLeaseForRunner(ctx, sqlcgen.GetActiveLeaseForRunnerParams{LeaseID: leaseID, RunnerID: runnerID})
 	if err == pgx.ErrNoRows {

@@ -6,6 +6,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListTemplates implements the corresponding repository operation.
 func (s *MemoryStore) ListTemplates(_ context.Context, projectID string) ([]domain.TaskTemplate, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -18,6 +19,7 @@ func (s *MemoryStore) ListTemplates(_ context.Context, projectID string) ([]doma
 	return out, nil
 }
 
+// GetTemplate implements the corresponding repository operation.
 func (s *MemoryStore) GetTemplate(_ context.Context, id string) (domain.TaskTemplate, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -29,6 +31,7 @@ func (s *MemoryStore) GetTemplate(_ context.Context, id string) (domain.TaskTemp
 	return domain.TaskTemplate{}, ErrNotFound
 }
 
+// CreateTemplate implements the corresponding repository operation.
 func (s *MemoryStore) CreateTemplate(_ context.Context, template domain.TaskTemplate, opts ...MutationOption) (domain.TaskTemplate, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
@@ -40,6 +43,7 @@ func (s *MemoryStore) CreateTemplate(_ context.Context, template domain.TaskTemp
 	return template, nil
 }
 
+// UpdateTemplate implements the corresponding repository operation.
 func (s *MemoryStore) UpdateTemplate(_ context.Context, template domain.TaskTemplate, opts ...MutationOption) (domain.TaskTemplate, error) {
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()

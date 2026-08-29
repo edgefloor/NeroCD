@@ -13,11 +13,13 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ProcessEvent is one stream chunk emitted by a runner process.
 type ProcessEvent struct {
 	Stream  string
 	Message string
 }
 
+// ProcessResult records an executed process outcome.
 type ProcessResult struct {
 	ExitCode  int
 	TimedOut  bool
@@ -40,6 +42,7 @@ const (
 	processOutputCloseTimeout  = time.Second
 )
 
+// ExecuteProcess runs spec and emits its captured output.
 func ExecuteProcess(ctx context.Context, spec domain.ProcessSpec, emit func(ProcessEvent)) (ProcessResult, error) {
 	if len(spec.Command) == 0 {
 		return ProcessResult{ExitCode: -1}, errors.New("process command is required")

@@ -14,6 +14,7 @@ import (
 // OperationalSnapshot reads authoritative aggregate state in one database
 // statement. DB clock supplies all ages so an application host clock cannot
 // make stale queue/lease signals go backwards.
+// OperationalSnapshot implements the corresponding repository operation.
 func (s *PostgresStore) OperationalSnapshot(ctx context.Context) (observability.Snapshot, error) {
 	base, err := s.queries.OperationalSnapshotBase(ctx)
 	if err != nil {
@@ -56,6 +57,7 @@ func (s *PostgresStore) OperationalSnapshot(ctx context.Context) (observability.
 	return snapshot, nil
 }
 
+// RecordRunnerOperationalObservation implements the corresponding repository operation.
 func (s *PostgresStore) RecordRunnerOperationalObservation(ctx context.Context, runnerID string, journalDepth, retryCount, renewFailures int) error {
 	if journalDepth < 0 || journalDepth > 8192 || retryCount < 0 || retryCount > 100000 || renewFailures < 0 || renewFailures > 100000 {
 		return ErrConflict
@@ -63,6 +65,7 @@ func (s *PostgresStore) RecordRunnerOperationalObservation(ctx context.Context, 
 	return s.queries.UpsertRunnerOperationalObservation(ctx, sqlcgen.UpsertRunnerOperationalObservationParams{RunnerID: runnerID, JournalDepth: int32(journalDepth), RetryCount: int32(retryCount), RenewFailures: int32(renewFailures)})
 }
 
+// RunnerOperationalObservation implements the corresponding repository operation.
 func (s *PostgresStore) RunnerOperationalObservation(ctx context.Context, runnerID string) (RunnerOperationalObservation, error) {
 	value, err := s.queries.GetRunnerOperationalObservation(ctx, runnerID)
 	if errors.Is(err, pgx.ErrNoRows) {

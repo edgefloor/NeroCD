@@ -14,12 +14,14 @@ type RunLogRetentionPolicy struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// RunLogRetentionPreview estimates the logs eligible for a retention run.
 type RunLogRetentionPreview struct {
 	Cutoff        time.Time `json:"cutoff"`
 	EligibleLogs  int64     `json:"eligible_logs"`
 	EligibleBytes int64     `json:"eligible_bytes"`
 }
 
+// RunLogRetentionExecution records the result of an idempotent retention run.
 type RunLogRetentionExecution struct {
 	RequestID    string                 `json:"request_id"`
 	Policy       RunLogRetentionPolicy  `json:"policy"`

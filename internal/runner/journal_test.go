@@ -44,7 +44,7 @@ func TestAttemptJournalPersistsAndRecoversAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() { _ = reopened.Close() }()
 	snapshot := reopened.Snapshot()
 	if len(snapshot.Events) != 1 || snapshot.Events[0] != event || len(snapshot.Completions) != 1 || snapshot.Completions[0] != completion {
 		t.Fatalf("recovered snapshot = %#v", snapshot)
@@ -113,7 +113,7 @@ func TestAttemptJournalDuplicateConflictAndLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() { _ = j.Close() }()
 	event := JournalEvent{ID: "stable", Attempt: testJournalAuthority(), Sequence: 4, Stream: "stdout", Message: "same", CreatedAt: time.Now().UTC()}
 	if _, err := j.AppendEvent(event); err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestAttemptJournalProvenanceIsStableAndAcknowledgedAtomically(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() { _ = j.Close() }()
 	commit := strings.Repeat("a", 40)
 	pending := JournalProvenance{ID: "provenance_stable", Attempt: testJournalAuthority(), DeploymentID: "deployment_1", GitCommit: commit, ComposeHash: "sha256:" + strings.Repeat("b", 64), ImageDigests: []string{"sha256:" + strings.Repeat("c", 64)}, ContentIdentity: commit + ":sha256:" + strings.Repeat("b", 64), CreatedAt: time.Now().UTC()}
 	if _, err := j.AppendProvenance(pending); err != nil {
@@ -224,7 +224,7 @@ func TestAttemptJournalExclusiveLockRejectsSecondOpenerAndReleasesOnClose(t *tes
 	if err != nil {
 		t.Fatalf("open after close: %v", err)
 	}
-	defer next.Close()
+	defer func() { _ = next.Close() }()
 	if len(next.Snapshot().Events) != 1 {
 		t.Fatalf("state lost after lock handoff: %#v", next.Snapshot())
 	}
@@ -307,7 +307,7 @@ func TestAttemptJournalLockReleasedWhenHolderProcessExits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open after holder exit: %v", err)
 	}
-	defer opened.Close()
+	defer func() { _ = opened.Close() }()
 	if got := opened.Snapshot(); len(got.Events) != 1 || got.Events[0].ID != "seed_event" {
 		t.Fatalf("state after subprocess holder = %#v", got)
 	}
@@ -321,7 +321,7 @@ func TestAttemptJournalLockHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() { _ = j.Close() }()
 	if _, err := os.Stdout.WriteString("locked\n"); err != nil {
 		t.Fatal(err)
 	}

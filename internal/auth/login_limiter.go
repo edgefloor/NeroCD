@@ -25,6 +25,7 @@ type loginLimitEntry struct {
 	fails   int
 }
 
+// NewLoginLimiter constructs an in-memory login-attempt limiter.
 func NewLoginLimiter(now func() time.Time, limit int, window time.Duration, maxKeys int) *LoginLimiter {
 	if now == nil {
 		now = time.Now
@@ -120,6 +121,7 @@ func (l *LoginLimiter) Failed(account, source string) {
 	}
 }
 
+// Succeeded clears failed-attempt state for account.
 func (l *LoginLimiter) Succeeded(account string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

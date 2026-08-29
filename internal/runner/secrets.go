@@ -11,6 +11,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// SecretClassificationDevelopment marks a development-only environment secret.
 const SecretClassificationDevelopment = "development"
 
 var (
@@ -21,14 +22,17 @@ var (
 	secretAccessIDPattern    = regexp.MustCompile(`^secret_access_[0-9a-f]{32}$`)
 )
 
+// SecretAuthorizer verifies access to one secret binding.
 type SecretAuthorizer func(context.Context, domain.SecretBinding) error
 
+// PreparedSecrets contains process environment and output redaction material.
 type PreparedSecrets struct {
 	Environment map[string]string
 	Redactor    *Redactor
 	Count       int
 }
 
+// ValidateSecretBinding verifies binding syntax and provider constraints.
 func ValidateSecretBinding(binding domain.SecretBinding) error {
 	name := strings.TrimSpace(binding.Name)
 	provider := strings.ToLower(strings.TrimSpace(binding.Provider))
@@ -80,6 +84,7 @@ func ValidateSecretBinding(binding domain.SecretBinding) error {
 	return nil
 }
 
+// ValidateSecretAccessMetadata verifies recorded secret access metadata.
 func ValidateSecretAccessMetadata(accessID, binding, provider, version string) error {
 	if !secretAccessIDPattern.MatchString(strings.TrimSpace(accessID)) {
 		return errors.New("secret access id is invalid")
@@ -101,6 +106,7 @@ func ValidateSecretAccessMetadata(accessID, binding, provider, version string) e
 	return nil
 }
 
+// PrepareSecrets authorizes and resolves bindings for a runner process.
 func PrepareSecrets(ctx context.Context, bindings []domain.SecretBinding, secretRoot string, authorize SecretAuthorizer) (PreparedSecrets, error) {
 	if len(bindings) == 0 {
 		return PreparedSecrets{Redactor: NewRedactor(nil)}, nil
@@ -127,7 +133,7 @@ func PrepareSecrets(ctx context.Context, bindings []domain.SecretBinding, secret
 		if err != nil {
 			return PreparedSecrets{}, fmt.Errorf("open runner secret root: %w", err)
 		}
-		defer resolver.Close()
+		defer func() { _ = resolver.Close() }()
 	}
 	environment := make(map[string]string, len(bindings))
 	materials := make([]SecretMaterial, 0, len(bindings))

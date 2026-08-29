@@ -7,6 +7,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// ListTemplates lists authorized templates.
 func (s *Service) ListTemplates(ctx context.Context, projectID string) ([]domain.TaskTemplate, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -26,6 +27,7 @@ func (s *Service) ListTemplates(ctx context.Context, projectID string) ([]domain
 	return s.filterTemplatesForPrincipal(ctx, principal, templates)
 }
 
+// ListRepositories lists authorized repositories.
 func (s *Service) ListRepositories(ctx context.Context, projectID string) ([]domain.Repository, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -45,6 +47,7 @@ func (s *Service) ListRepositories(ctx context.Context, projectID string) ([]dom
 	return s.filterRepositoriesForPrincipal(ctx, principal, repositories)
 }
 
+// ListAccessKeys lists authorized access keys.
 func (s *Service) ListAccessKeys(ctx context.Context, projectID string) ([]domain.AccessKey, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -64,6 +67,7 @@ func (s *Service) ListAccessKeys(ctx context.Context, projectID string) ([]domai
 	return s.filterAccessKeysForPrincipal(ctx, principal, keys)
 }
 
+// ListInventories lists authorized inventories.
 func (s *Service) ListInventories(ctx context.Context, projectID string) ([]domain.Inventory, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {

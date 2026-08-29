@@ -12,6 +12,7 @@ import (
 	"nerocd/internal/source"
 )
 
+// ExecuteCheckout performs plan in an isolated directory beneath workRoot.
 func ExecuteCheckout(ctx context.Context, plan domain.CheckoutPlan, workRoot string, emit func(ProcessEvent)) (string, error) {
 	repository := plan.Repository
 	repoURL := strings.TrimSpace(repository.URL)

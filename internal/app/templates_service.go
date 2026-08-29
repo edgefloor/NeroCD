@@ -17,6 +17,7 @@ import (
 	"nerocd/internal/store"
 )
 
+// TemplateInput supplies task-template attributes for creation or update.
 type TemplateInput struct {
 	ProjectID   string          `json:"project_id"`
 	Name        string          `json:"name"`
@@ -27,6 +28,7 @@ type TemplateInput struct {
 	RequiresAck bool            `json:"requires_ack"`
 }
 
+// RepositoryInput supplies an authorized repository registration request.
 type RepositoryInput struct {
 	ProjectID  string                  `json:"project_id"`
 	Name       string                  `json:"name"`
@@ -40,6 +42,7 @@ func validateRepositoryPolicy(p domain.RepositoryPolicy) error {
 	return (source.RepositoryPolicy{Version: p.Version, State: p.State, Mode: p.Mode, AllowedSchemes: p.AllowedSchemes, AllowedHosts: p.AllowedHosts, AllowedCIDRs: p.AllowedCIDRs, RedirectHosts: p.RedirectHosts, SSHHostFingerprints: p.SSHHostFingerprints, CredentialReferenceID: p.CredentialReferenceID, AllowInternal: p.AllowInternal}).ValidatePolicy()
 }
 
+// CreateRepository creates an authorized repository.
 func (s *Service) CreateRepository(ctx context.Context, input RepositoryInput) (domain.Repository, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -95,6 +98,7 @@ func (s *Service) CreateRepository(ctx context.Context, input RepositoryInput) (
 	return s.sources.CreateRepository(ctx, repository, store.WithAudit(audit))
 }
 
+// RepositoryPolicyInput supplies an idempotent repository-policy configuration.
 type RepositoryPolicyInput struct {
 	ID              string                  `json:"id"`
 	ProjectID       string                  `json:"project_id"`
@@ -157,6 +161,7 @@ func canonicalRepositoryPolicy(policy domain.RepositoryPolicy) (domain.Repositor
 	return policy, encoded, err
 }
 
+// ConfigureRepositoryPolicy applies an authorized repository policy configuration.
 func (s *Service) ConfigureRepositoryPolicy(ctx context.Context, input RepositoryPolicyInput) (domain.Repository, error) {
 	p, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -183,6 +188,7 @@ func (s *Service) ConfigureRepositoryPolicy(ctx context.Context, input Repositor
 	return s.sources.ConfigureRepositoryPolicy(ctx, store.RepositoryPolicyConfiguration{RepositoryID: input.ID, ProjectID: input.ProjectID, ActorID: p.ID, ConfigurationID: input.ConfigurationID, Policy: policy, PolicyHash: hex.EncodeToString(hash[:]), Audit: audit})
 }
 
+// CreateTemplate creates an authorized template.
 func (s *Service) CreateTemplate(ctx context.Context, input TemplateInput) (domain.TaskTemplate, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -207,6 +213,7 @@ func (s *Service) CreateTemplate(ctx context.Context, input TemplateInput) (doma
 	return s.templates.CreateTemplate(ctx, template, store.WithAudit(audit))
 }
 
+// UpdateTemplate updates the authorized template.
 func (s *Service) UpdateTemplate(ctx context.Context, id string, input TemplateInput) (domain.TaskTemplate, error) {
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {

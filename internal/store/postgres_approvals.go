@@ -11,6 +11,7 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// ListApprovals implements the corresponding repository operation.
 func (s *PostgresStore) ListApprovals(ctx context.Context, status string) ([]domain.Approval, error) {
 	rows, err := s.queries.ListApprovals(ctx, status)
 	if err != nil {
@@ -23,6 +24,7 @@ func (s *PostgresStore) ListApprovals(ctx context.Context, status string) ([]dom
 	return approvals, nil
 }
 
+// CreateApproval implements the corresponding repository operation.
 func (s *PostgresStore) CreateApproval(ctx context.Context, approval domain.Approval) (domain.Approval, error) {
 	if err := rejectGenericDeploymentRun(ctx, s.queries, approval.RunID); err != nil {
 		return domain.Approval{}, fmt.Errorf("reject generic deployment run: %w", err)
@@ -34,13 +36,14 @@ func (s *PostgresStore) CreateApproval(ctx context.Context, approval domain.Appr
 	return approvalFromSQLC(inserted), nil
 }
 
+// ApproveRun implements the corresponding repository operation.
 func (s *PostgresStore) ApproveRun(ctx context.Context, runID string, actorID string, approvedAt time.Time, opts ...MutationOption) (domain.Approval, error) {
 	audit := resolveMutationOptions(opts)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Approval{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	if err := rejectGenericDeploymentRun(ctx, queries, runID); err != nil {
 		return domain.Approval{}, fmt.Errorf("reject generic deployment run: %w", err)
@@ -70,13 +73,14 @@ func (s *PostgresStore) ApproveRun(ctx context.Context, runID string, actorID st
 	return approvalFromSQLC(updated), nil
 }
 
+// RejectRun implements the corresponding repository operation.
 func (s *PostgresStore) RejectRun(ctx context.Context, runID string, actorID string, rejectedAt time.Time, opts ...MutationOption) (domain.Approval, error) {
 	audit := resolveMutationOptions(opts)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Approval{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	if err := rejectGenericDeploymentRun(ctx, queries, runID); err != nil {
 		return domain.Approval{}, fmt.Errorf("reject generic deployment run: %w", err)

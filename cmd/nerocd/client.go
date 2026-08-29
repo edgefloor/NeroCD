@@ -46,7 +46,7 @@ func callAPI(args []string, path string) error {
 	if err != nil {
 		return fmt.Errorf("%w\nhint: set --addr or NEROCD_ADDR to the server URL, for example http://127.0.0.1:18080", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return errors.New(resp.Status)
 	}
@@ -120,7 +120,7 @@ func runLogRetention(args []string) error {
 	if err != nil {
 		return errors.New("run-log-retention request failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= http.StatusBadRequest {
 		return fmt.Errorf("run-log-retention returned %s", response.Status)
 	}
@@ -150,7 +150,7 @@ func callReady(args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w\nhint: set --addr or NEROCD_ADDR to the server URL, for example http://127.0.0.1:18080", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("readiness returned %s", resp.Status)
 	}
@@ -193,7 +193,7 @@ func postAPINoResponse(url string, body any, token string) error {
 	if err != nil {
 		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), StatusCode: resp.StatusCode, Status: resp.Status}
 	}
@@ -214,7 +214,7 @@ func postAPIIntoContext(ctx context.Context, url string, body any, token string,
 	if err != nil {
 		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), StatusCode: resp.StatusCode, Status: resp.Status, Detail: strings.TrimSpace(string(body))}
@@ -246,7 +246,7 @@ func getAPIIntoContext(ctx context.Context, url string, token string, result any
 	if err != nil {
 		return &runnerAPIError{Method: http.MethodGet, URL: runnerRequestLabel(url), Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return &runnerAPIError{Method: http.MethodGet, URL: runnerRequestLabel(url), StatusCode: resp.StatusCode, Status: resp.Status, Detail: strings.TrimSpace(string(body))}
@@ -348,7 +348,7 @@ func printAPIResponse(req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return errors.New(resp.Status)
 	}
@@ -367,7 +367,7 @@ func expectOK(req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("%s %s returned %s: %s", req.Method, req.URL.Path, resp.Status, strings.TrimSpace(string(body)))
