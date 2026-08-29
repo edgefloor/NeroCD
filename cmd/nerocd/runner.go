@@ -228,8 +228,16 @@ func runRunner(args []string) error {
 	workDir := fs.String("work-dir", os.TempDir(), "runner workspace root for checkouts")
 	journalDir := fs.String("journal-dir", os.Getenv("NEROCD_RUNNER_JOURNAL_DIR"), "owner-only durable runner event/completion journal directory")
 	secretRoot := fs.String("secret-root", os.Getenv("NEROCD_RUNNER_SECRET_ROOT"), "owner-only mode-0700 root for logical runner_file secrets")
+	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	imagePolicy, err := parseComposeImagePolicy(*imagePolicyFlag)
+	if err != nil {
+		return err
+	}
+	if err := validateRunnerOperatingGuardrails(*server, *workDir); err != nil {
 		return err
 	}
 	registrationToken := strings.TrimSpace(*token)
@@ -332,7 +340,7 @@ func runRunner(args []string) error {
 			return err
 		}
 		if *execute {
-			if err := executeClaimWithJournalAndSecretRootAndCounters(*server, runnerToken, claim, *workDir, *cancelPollInterval, journal, *secretRoot, operational); err != nil {
+			if err := executeClaimWithJournalAndSecretRootAndCounters(*server, runnerToken, claim, *workDir, *cancelPollInterval, journal, *secretRoot, imagePolicy, operational); err != nil {
 				return err
 			}
 		} else if *completeStatus != "" {
@@ -377,10 +385,10 @@ func executeClaim(server string, token string, claim domain.ClaimedRun, workDir 
 }
 
 func executeClaimWithJournalAndSecretRoot(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string) error {
-	return executeClaimWithJournalAndSecretRootAndCounters(server, token, claim, workDir, cancelPollInterval, journal, secretRoot, &runnerOperationalCounters{})
+	return executeClaimWithJournalAndSecretRootAndCounters(server, token, claim, workDir, cancelPollInterval, journal, secretRoot, composeImagePolicyPreloaded, &runnerOperationalCounters{})
 }
 
-func executeClaimWithJournalAndSecretRootAndCounters(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, operational *runnerOperationalCounters) error {
+func executeClaimWithJournalAndSecretRootAndCounters(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters) error {
 	sequence := 4
 	var sequenceMu sync.Mutex
 	var supervisor *attemptSupervisor
@@ -451,7 +459,7 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {
 			// Resolution is read-only: it cannot start containers or settle the
 			// deployment successfully. A later fenced adapter owns application.
-			return resolveComposeClaim(supervisor, journal, reporter, server, token, workDir, secretRoot, claim)
+			return resolveComposeClaim(supervisor, journal, reporter, server, token, workDir, secretRoot, imagePolicy, claim)
 		}
 		if err := completeReportedAttempt(supervisor, watcher, renewer, reporter, journal, server, token, claim.Run.ID, claim.Lease, "failed", nil); err != nil {
 			return err

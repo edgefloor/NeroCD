@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -32,6 +33,16 @@ type PreparedSecrets struct {
 	Count       int
 }
 
+// PreparedComposeSecrets is an attempt-local Compose override. Its descriptor
+// contains only generated file paths and safe Compose secret names; values
+// remain in mode-0600 files until Cleanup removes the entire private directory.
+type PreparedComposeSecrets struct {
+	OverridePath string
+	Redactor     *Redactor
+	Count        int
+	Cleanup      func()
+}
+
 // ValidateSecretBinding verifies binding syntax and provider constraints.
 func ValidateSecretBinding(binding domain.SecretBinding) error {
 	name := strings.TrimSpace(binding.Name)
@@ -44,8 +55,11 @@ func ValidateSecretBinding(binding domain.SecretBinding) error {
 	if !secretLogicalPattern.MatchString(name) || name == "." || name == ".." {
 		return errors.New("secret binding name is invalid")
 	}
-	if _, err := secretEnvTarget(target); err != nil {
+	if _, err := secretTarget(target); err != nil {
 		return fmt.Errorf("secret binding %q: %w", name, err)
+	}
+	if strings.HasPrefix(target, "file:") && !binding.Required {
+		return fmt.Errorf("secret binding %q compose file targets must be required", name)
 	}
 	switch provider {
 	case domain.ProviderRunnerFile:
@@ -80,6 +94,120 @@ func ValidateSecretBinding(binding domain.SecretBinding) error {
 			return fmt.Errorf("secret binding %q redaction encodings must be unique", name)
 		}
 		seenEncoding[encoding] = struct{}{}
+	}
+	return nil
+}
+
+// PrepareComposeSecrets authorizes runner_file bindings and materializes each
+// value into a generated attempt-local file for Compose's file-secret
+// descriptor. It never returns secret values or user-controlled filenames.
+func PrepareComposeSecrets(ctx context.Context, bindings []domain.SecretBinding, secretRoot, workspace string, authorize SecretAuthorizer) (PreparedComposeSecrets, error) {
+	if len(bindings) == 0 {
+		return PreparedComposeSecrets{Redactor: NewRedactor(nil), Cleanup: func() {}}, nil
+	}
+	if authorize == nil {
+		return PreparedComposeSecrets{}, errors.New("secret access authorizer is required")
+	}
+	if strings.TrimSpace(workspace) == "" {
+		return PreparedComposeSecrets{}, errors.New("compose secret workspace is required")
+	}
+	for _, binding := range bindings {
+		if err := ValidateSecretBinding(binding); err != nil {
+			return PreparedComposeSecrets{}, err
+		}
+		if _, err := composeSecretTarget(binding.Target); err != nil {
+			return PreparedComposeSecrets{}, fmt.Errorf("secret binding %q: %w", binding.Name, err)
+		}
+		if !strings.EqualFold(strings.TrimSpace(binding.Provider), domain.ProviderRunnerFile) {
+			return PreparedComposeSecrets{}, fmt.Errorf("secret binding %q uses an unsupported compose provider", binding.Name)
+		}
+	}
+	resolver, err := OpenFileSecretResolver(strings.TrimSpace(secretRoot))
+	if err != nil {
+		return PreparedComposeSecrets{}, fmt.Errorf("open runner secret root: %w", err)
+	}
+	defer func() { _ = resolver.Close() }()
+
+	directory, err := os.MkdirTemp(workspace, ".nerocd-compose-secrets-")
+	if err != nil {
+		return PreparedComposeSecrets{}, fmt.Errorf("create compose secret directory: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(directory) }
+	if err := os.Chmod(directory, 0700); err != nil {
+		cleanup()
+		return PreparedComposeSecrets{}, fmt.Errorf("secure compose secret directory: %w", err)
+	}
+	seen := make(map[string]struct{}, len(bindings))
+	materials := make([]SecretMaterial, 0, len(bindings))
+	entries := make([]composeSecretEntry, 0, len(bindings))
+	for index, binding := range bindings {
+		if err := ctx.Err(); err != nil {
+			cleanup()
+			return PreparedComposeSecrets{}, err
+		}
+		name, _ := composeSecretTarget(binding.Target)
+		if _, exists := seen[name]; exists {
+			cleanup()
+			return PreparedComposeSecrets{}, fmt.Errorf("secret binding %q reuses compose secret target", binding.Name)
+		}
+		seen[name] = struct{}{}
+		if err := authorize(ctx, binding); err != nil {
+			cleanup()
+			return PreparedComposeSecrets{}, fmt.Errorf("authorize secret binding %q: %w", binding.Name, err)
+		}
+		value, readErr := resolver.ReadBytes(strings.TrimSpace(binding.Reference))
+		if readErr != nil {
+			if !binding.Required && errors.Is(readErr, os.ErrNotExist) {
+				continue
+			}
+			cleanup()
+			return PreparedComposeSecrets{}, fmt.Errorf("resolve secret binding %q: %w", binding.Name, readErr)
+		}
+		path := filepath.Join(directory, fmt.Sprintf("secret-%03d", index+1))
+		file, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if createErr != nil {
+			cleanup()
+			return PreparedComposeSecrets{}, fmt.Errorf("create compose secret file: %w", createErr)
+		}
+		if _, writeErr := file.Write(value); writeErr != nil {
+			_ = file.Close()
+			cleanup()
+			return PreparedComposeSecrets{}, fmt.Errorf("write compose secret file: %w", writeErr)
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			cleanup()
+			return PreparedComposeSecrets{}, fmt.Errorf("close compose secret file: %w", closeErr)
+		}
+		entries = append(entries, composeSecretEntry{Name: name, Path: path})
+		materials = append(materials, SecretMaterial{Value: string(value), Encodings: binding.RedactEncodings})
+	}
+	overridePath := filepath.Join(directory, "compose-secrets.yaml")
+	if err := writeComposeSecretOverride(overridePath, entries); err != nil {
+		cleanup()
+		return PreparedComposeSecrets{}, err
+	}
+	return PreparedComposeSecrets{OverridePath: overridePath, Redactor: NewRedactor(materials), Count: len(materials), Cleanup: cleanup}, nil
+}
+
+type composeSecretEntry struct{ Name, Path string }
+
+func writeComposeSecretOverride(path string, entries []composeSecretEntry) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("create compose secret override: %w", err)
+	}
+	if _, err := file.WriteString("secrets:\n"); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write compose secret override: %w", err)
+	}
+	for _, entry := range entries {
+		if _, err := fmt.Fprintf(file, "  %q:\n    file: %q\n", entry.Name, entry.Path); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("write compose secret override: %w", err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close compose secret override: %w", err)
 	}
 	return nil
 }
@@ -184,6 +312,25 @@ func secretEnvTarget(target string) (string, error) {
 	name := strings.TrimSpace(strings.TrimPrefix(target, prefix))
 	if !envNamePattern.MatchString(name) {
 		return "", errors.New("target must use a valid environment variable name")
+	}
+	return name, nil
+}
+
+func secretTarget(target string) (string, error) {
+	if value, err := secretEnvTarget(target); err == nil {
+		return value, nil
+	}
+	return composeSecretTarget(target)
+}
+
+func composeSecretTarget(target string) (string, error) {
+	const prefix = "file:"
+	if !strings.HasPrefix(target, prefix) {
+		return "", errors.New("target must use env:NAME or file:NAME")
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(target, prefix))
+	if !secretLogicalPattern.MatchString(name) || name == "." || name == ".." {
+		return "", errors.New("target must use a valid Compose secret name")
 	}
 	return name, nil
 }

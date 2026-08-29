@@ -172,6 +172,73 @@ func TestPrepareRunnerFileSecretAuthorizesBeforeRead(t *testing.T) {
 	}
 }
 
+func TestPrepareComposeSecretsUsesPrivateFilesAndCleansUp(t *testing.T) {
+	root := filepath.Join(physicalTempDir(t), "secrets")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const secret = "line-one\nline-two\n"
+	if err := os.WriteFile(filepath.Join(root, "database-password"), []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspace := physicalTempDir(t)
+	prepared, err := PrepareComposeSecrets(t.Context(), []domain.SecretBinding{{
+		Name: "database-password", Provider: domain.ProviderRunnerFile, Reference: "database-password", Target: "file:app_db_password", Required: true, Version: "v1",
+	}}, root, workspace, func(context.Context, domain.SecretBinding) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Count != 1 || prepared.OverridePath == "" {
+		t.Fatalf("PrepareComposeSecrets count=%d override=%q, want one private override", prepared.Count, prepared.OverridePath)
+	}
+	defer prepared.Cleanup()
+	info, err := os.Stat(filepath.Dir(prepared.OverridePath))
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("compose secret directory mode=%v err=%v, want 0700", info.Mode().Perm(), err)
+	}
+	contents, err := os.ReadFile(filepath.Join(filepath.Dir(prepared.OverridePath), "secret-001"))
+	if err != nil || string(contents) != secret {
+		t.Fatalf("attempt-local secret contents=%q err=%v, want original bytes", contents, err)
+	}
+	secretInfo, err := os.Stat(filepath.Join(filepath.Dir(prepared.OverridePath), "secret-001"))
+	if err != nil || secretInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("attempt-local secret mode=%v err=%v, want 0600", secretInfo.Mode().Perm(), err)
+	}
+	override, err := os.ReadFile(prepared.OverridePath)
+	if err != nil || strings.Contains(string(override), secret) || strings.Contains(string(override), "database-password") {
+		t.Fatalf("compose override disclosed a value or reference: %q err=%v", override, err)
+	}
+	directory := filepath.Dir(prepared.OverridePath)
+	prepared.Cleanup()
+	if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("PrepareComposeSecrets cleanup stat error=%v, want not exist", err)
+	}
+}
+
+func TestPrepareComposeSecretsRejectsUnsafeOrDuplicateTargets(t *testing.T) {
+	root := filepath.Join(physicalTempDir(t), "secrets")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "first"), []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "second"), []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, bindings := range [][]domain.SecretBinding{
+		{{Name: "first", Provider: domain.ProviderRunnerFile, Reference: "first", Target: "file:../escape", Required: true, Version: "v1"}},
+		{
+			{Name: "first", Provider: domain.ProviderRunnerFile, Reference: "first", Target: "file:shared", Required: true, Version: "v1"},
+			{Name: "second", Provider: domain.ProviderRunnerFile, Reference: "second", Target: "file:shared", Required: true, Version: "v1"},
+		},
+	} {
+		if _, err := PrepareComposeSecrets(t.Context(), bindings, root, physicalTempDir(t), func(context.Context, domain.SecretBinding) error { return nil }); err == nil {
+			t.Fatalf("PrepareComposeSecrets(%#v) succeeded, want unsafe target rejection", bindings)
+		}
+	}
+}
+
 func physicalTempDir(t *testing.T) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(t.TempDir())

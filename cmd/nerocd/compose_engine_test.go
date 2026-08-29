@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -120,12 +122,65 @@ func TestComposeEngineRejectsMutationProneInputs(t *testing.T) {
 		t.Fatal("expected invalid project rejection")
 	}
 	plan = composeTestPlan()
-	plan.SecretBindings = []domain.SecretBinding{{Name: "db", Provider: domain.ProviderRunnerFile, Reference: "db", Target: "env:DB", Version: "v1"}}
+	plan.SecretBindings = []domain.SecretBinding{{Name: "db", Provider: domain.ProviderRunnerFile, Reference: "db", Target: "file:db", Version: "v1"}}
 	if _, cleanup, err := composeInvocation(plan, t.TempDir(), composeTestResolved().GitCommit); err == nil {
 		if cleanup != nil {
 			cleanup()
 		}
 		t.Fatal("expected secret injection rejection")
+	}
+}
+
+func TestComposeEngineAcceptsOnlyPrivateFileSecretOverride(t *testing.T) {
+	plan := composeTestPlan()
+	plan.SecretBindings = []domain.SecretBinding{{Name: "db", Provider: domain.ProviderRunnerFile, Reference: "db", Target: "file:db", Version: "v1"}}
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("secrets:\n  db:\n    file: /private/generated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &fakeComposeCommand{}
+	if err := newComposeEngine(cmd, &fakeComposeHealth{}).Apply(context.Background(), plan, t.TempDir(), composeTestResolved(), override); err != nil {
+		t.Fatal(err)
+	}
+	if len(cmd.calls) == 0 || !slices.Contains(cmd.calls[0], override) {
+		t.Fatalf("compose call %#v omitted private override %q", cmd.calls, override)
+	}
+	if err := os.Chmod(override, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := composeInvocation(plan, t.TempDir(), composeTestResolved().GitCommit, override); err == nil {
+		t.Fatal("accepted a non-0600 compose secret override")
+	}
+}
+
+func TestComposeImagePolicyPullsExactDigestBeforeInspection(t *testing.T) {
+	resolved := composeTestResolved()
+	cmd := &fakeComposeCommand{}
+	if err := newComposeEngine(cmd, &fakeComposeHealth{}, composeImagePolicyPull).EnsureAvailability(context.Background(), composeTestPlan(), t.TempDir(), resolved); err != nil {
+		t.Fatal(err)
+	}
+	if len(cmd.calls) != 2 || !slices.Equal(cmd.calls[0][len(cmd.calls[0])-2:], []string{"pull", "--ignore-buildable"}) || !slices.Equal(cmd.calls[1], []string{"image", "inspect", resolved.ImageDigests[0]}) {
+		t.Fatalf("image policy calls=%#v, want pull then inspect exact digest", cmd.calls)
+	}
+	for _, value := range []string{"repo:latest", "repo@sha256:not-a-digest", "sha256:" + strings.Repeat("A", 64)} {
+		if err := newComposeEngine(&fakeComposeCommand{}, &fakeComposeHealth{}, composeImagePolicyPull).EnsureAvailability(context.Background(), composeTestPlan(), t.TempDir(), resolvedProvenance{ImageDigests: []string{value}}); err == nil {
+			t.Fatalf("EnsureAvailability(%q) succeeded, want immutable digest rejection", value)
+		}
+	}
+}
+
+func TestComposeImagePolicyPullFailurePrecedesComposeMutation(t *testing.T) {
+	resolved := composeTestResolved()
+	cmd := &fakeComposeCommand{failAt: "pull"}
+	engine := newComposeEngine(cmd, &fakeComposeHealth{}, composeImagePolicyPull)
+	if err := engine.EnsureAvailability(context.Background(), composeTestPlan(), t.TempDir(), resolved); err == nil {
+		t.Fatal("pull failure unexpectedly succeeded")
+	}
+	if len(cmd.calls) != 1 || !slices.Contains(cmd.calls[0], "pull") {
+		t.Fatalf("failed pull calls=%#v, want only one pull", cmd.calls)
+	}
+	if _, err := parseComposeImagePolicy("latest"); err == nil {
+		t.Fatal("accepted invalid runner-owned image policy")
 	}
 }
 

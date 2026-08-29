@@ -200,7 +200,7 @@ func (w *deploymentStatusWatcher) Receipt() string {
 // never falls back to a generic process plan: all Compose mutation is through
 // the small engine below, and every terminal state is reported through the
 // deployment endpoints rather than lease completion.
-func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token, workDir, secretRoot string, claim domain.ClaimedRun) error {
+func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token, workDir, secretRoot string, imagePolicy composeImagePolicy, claim domain.ClaimedRun) error {
 	deploymentID, _ := claim.Run.RunSpec.Inputs["deployment_id"].(string)
 	if strings.TrimSpace(deploymentID) == "" {
 		return errors.New("compose deployment is missing deployment_id")
@@ -290,12 +290,20 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 		if err := journal.AckProvenance(pending.ID); err != nil {
 			return err
 		}
-		engine := newComposeEngine(nil, nil)
-		if err := engine.EnsureAvailability(operationCtx, workspace, value); err != nil {
+		engine := newComposeEngine(nil, nil, imagePolicy)
+		if err := engine.EnsureAvailability(operationCtx, plan, workspace, value); err != nil {
 			if plan.Status == domain.DeploymentPreparing {
 				return composePreApplyFailure(transition, claim, isRollback, "resolved_image_unavailable", err)
 			}
 			return composePostApplyFailure(supervisor, server, token, plan, claim, isRollback, plan.Status, "resolved_image_unavailable", err)
+		}
+		apply := func() error {
+			prepared, err := runner.PrepareComposeSecrets(operationCtx, composeApplicationSecretBindings(plan.SecretBindings), secretRoot, workspace, authorizeCredential)
+			if err != nil {
+				return err
+			}
+			defer prepared.Cleanup()
+			return engine.Apply(operationCtx, plan, workspace, value, prepared.OverridePath)
 		}
 		// A new attempt after apply must inspect the server-owned project before
 		// deciding whether mutation is necessary. Verifying may only continue if
@@ -320,7 +328,7 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 				return transition(domain.DeploymentVerifying, target, attemptMutationKey("compose-resume-terminal", claim.Lease.ID, claim.Lease.Attempt, ""), "", &passed)
 			}
 			if !reconciled {
-				if err := engine.Apply(operationCtx, plan, workspace, value); err != nil {
+				if err := apply(); err != nil {
 					return composePostApplyFailure(supervisor, server, token, plan, claim, isRollback, domain.DeploymentApplying, "compose_apply_failed", err)
 				}
 			}
@@ -356,10 +364,18 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 			passed := true
 			return transition(domain.DeploymentVerifying, target, attemptMutationKey("compose-reconcile-terminal", claim.Lease.ID, claim.Lease.Attempt, ""), "", &passed)
 		}
+		// Materialize and authorize before entering the mutation state. A missing
+		// or stale secret therefore remains a pre-apply failure and cannot cause
+		// a rollback of an untouched deployment.
+		prepared, err := runner.PrepareComposeSecrets(operationCtx, composeApplicationSecretBindings(plan.SecretBindings), secretRoot, workspace, authorizeCredential)
+		if err != nil {
+			return composePreApplyFailure(transition, claim, isRollback, "compose_secret_prepare_failed", err)
+		}
+		defer prepared.Cleanup()
 		if err := transition(domain.DeploymentPreparing, domain.DeploymentApplying, attemptMutationKey("compose-apply", claim.Lease.ID, claim.Lease.Attempt, ""), "", nil); err != nil {
 			return err
 		}
-		if err := engine.Apply(operationCtx, plan, workspace, value); err != nil {
+		if err := engine.Apply(operationCtx, plan, workspace, value, prepared.OverridePath); err != nil {
 			return composePostApplyFailure(supervisor, server, token, plan, claim, isRollback, domain.DeploymentApplying, "compose_apply_failed", err)
 		}
 		if err := transition(domain.DeploymentApplying, domain.DeploymentVerifying, attemptMutationKey("compose-verify", claim.Lease.ID, claim.Lease.Attempt, ""), "", nil); err != nil {
@@ -413,6 +429,19 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 	}
 	_ = value
 	return nil
+}
+
+// composeApplicationSecretBindings selects the file-target bindings used by
+// the application. Repository credentials remain confined to provenance
+// transport setup and are never exposed to Compose.
+func composeApplicationSecretBindings(bindings []domain.SecretBinding) []domain.SecretBinding {
+	selected := make([]domain.SecretBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if strings.HasPrefix(strings.TrimSpace(binding.Target), "file:") {
+			selected = append(selected, binding)
+		}
+	}
+	return selected
 }
 
 func composeCancellationRollback(supervisor *attemptSupervisor, server, token string, plan domain.DeploymentPlan, claim domain.ClaimedRun, receipt string) error {

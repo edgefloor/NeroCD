@@ -45,9 +45,17 @@ type composeHealthContract struct {
 }
 
 type composeEngine struct {
-	command composeCommand
-	health  composeHealth
+	command     composeCommand
+	health      composeHealth
+	imagePolicy composeImagePolicy
 }
+
+type composeImagePolicy string
+
+const (
+	composeImagePolicyPreloaded composeImagePolicy = "preloaded"
+	composeImagePolicyPull      composeImagePolicy = "pull"
+)
 
 type composeReconciliationState struct{ Project, Commit, ComposeHash string }
 
@@ -55,21 +63,29 @@ type composeReconciliationState struct{ Project, Commit, ComposeHash string }
 // file may pass it to its health endpoint, but cannot choose its value.
 const deploymentRevisionEnv = "NEROCD_DEPLOYMENT_REVISION"
 
-func newComposeEngine(command composeCommand, health composeHealth) composeEngine {
+func newComposeEngine(command composeCommand, health composeHealth, imagePolicies ...composeImagePolicy) composeEngine {
 	if command == nil {
 		command = osProvenanceCommand{}
 	}
 	if health == nil {
 		health = httpComposeHealth{}
 	}
-	return composeEngine{command: command, health: health}
+	policy := composeImagePolicyPreloaded
+	if len(imagePolicies) == 1 {
+		policy = imagePolicies[0]
+	}
+	return composeEngine{command: command, health: health, imagePolicy: policy}
 }
 
 // Apply performs only the external mutation half.  It deliberately receives
 // no secret values and creates its own empty env file so checkout-controlled
 // .env files and ambient process credentials cannot alter Compose behavior.
-func (e composeEngine) Apply(ctx context.Context, plan domain.DeploymentPlan, workspace string, resolved resolvedProvenance) error {
-	args, cleanup, err := composeInvocation(plan, workspace, resolved.GitCommit)
+func (e composeEngine) Apply(ctx context.Context, plan domain.DeploymentPlan, workspace string, resolved resolvedProvenance, secretOverrides ...string) error {
+	secretOverride, err := composeSecretOverride(secretOverrides)
+	if err != nil {
+		return err
+	}
+	args, cleanup, err := composeInvocation(plan, workspace, resolved.GitCommit, secretOverride)
 	if err != nil {
 		return err
 	}
@@ -93,11 +109,21 @@ func (e composeEngine) Apply(ctx context.Context, plan domain.DeploymentPlan, wo
 	return nil
 }
 
+func composeSecretOverride(overrides []string) (string, error) {
+	if len(overrides) > 1 {
+		return "", errors.New("multiple compose secret overrides are invalid")
+	}
+	if len(overrides) == 0 {
+		return "", nil
+	}
+	return overrides[0], nil
+}
+
 // Reconcile reads durable, non-secret per-environment state and asks Docker
 // for the controlled project before any mutation. A matching verified state is
 // a retry/restart no-op; a missing or changed identity proceeds to Apply.
 func (e composeEngine) Reconcile(ctx context.Context, plan domain.DeploymentPlan, workspace string, resolved resolvedProvenance) (bool, error) {
-	args, cleanup, err := composeInvocation(plan, workspace, resolved.GitCommit)
+	args, cleanup, err := composeInvocation(plan, workspace, resolved.GitCommit, "")
 	if err != nil {
 		return false, err
 	}
@@ -180,12 +206,39 @@ func writeComposeReconciliationState(workspace string, state composeReconciliati
 	return os.Rename(name, filepath.Join(root, "state.json"))
 }
 
-// EnsureAvailability is a read-only local image inspection. Pulling is an
-// explicit operator-controlled supply-chain operation, never an incidental
-// side effect of a deployment retry.
-func (e composeEngine) EnsureAvailability(ctx context.Context, workspace string, resolved resolvedProvenance) error {
+// EnsureAvailability checks or obtains only already-resolved immutable images.
+// The policy is runner-owned; neither a checkout nor a deployment payload can
+// choose a pull operation.
+func (e composeEngine) EnsureAvailability(ctx context.Context, plan domain.DeploymentPlan, workspace string, resolved resolvedProvenance) error {
+	if e.imagePolicy != composeImagePolicyPreloaded && e.imagePolicy != composeImagePolicyPull {
+		return errors.New("runner compose image policy is invalid")
+	}
 	if len(resolved.ImageDigests) == 0 {
 		return errors.New("resolved deployment has no image digests")
+	}
+	for _, digest := range resolved.ImageDigests {
+		if !immutableImageDigest(digest) {
+			return errors.New("resolved image is not an exact immutable digest")
+		}
+	}
+	if e.imagePolicy == composeImagePolicyPull {
+		// The canonical provenance record stores content digests, not mutable
+		// image names. Compose therefore performs the pull from the already
+		// validated checkout configuration, whose service images were accepted
+		// only when pinned to those exact digests.
+		pullPlan := plan
+		// Pull has no secret transport: Compose reads only the already-validated
+		// checked-out image references. File descriptors are needed exclusively
+		// for the later application mutation.
+		pullPlan.SecretBindings = nil
+		args, cleanup, err := composeInvocation(pullPlan, workspace, resolved.GitCommit)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		if _, err := e.command.Run(ctx, "docker", append(args, "pull", "--ignore-buildable"), workspace); err != nil {
+			return fmt.Errorf("pull resolved images: %w", err)
+		}
 	}
 	for _, digest := range resolved.ImageDigests {
 		if _, err := e.command.Run(ctx, "docker", []string{"image", "inspect", digest}, workspace); err != nil {
@@ -203,7 +256,11 @@ func (e composeEngine) Verify(ctx context.Context, plan domain.DeploymentPlan, r
 	return e.health.Check(ctx, contract)
 }
 
-func composeInvocation(plan domain.DeploymentPlan, workspace, revision string) ([]string, func(), error) {
+func composeInvocation(plan domain.DeploymentPlan, workspace, revision string, secretOverrides ...string) ([]string, func(), error) {
+	secretOverride, err := composeSecretOverride(secretOverrides)
+	if err != nil {
+		return nil, nil, err
+	}
 	if !composeProjectName(plan.ComposeProject) {
 		return nil, nil, errors.New("invalid server-owned compose project name")
 	}
@@ -214,15 +271,20 @@ func composeInvocation(plan domain.DeploymentPlan, workspace, revision string) (
 	if filepath.IsAbs(composePath) || composePath == "." || strings.HasPrefix(composePath, ".."+string(os.PathSeparator)) {
 		return nil, nil, errors.New("compose path escapes immutable workspace")
 	}
-	if len(plan.SecretBindings) > 0 {
-		// Compose env interpolation is a mutation-prone secret transport. The
-		// typed adapter admits runner_file bindings for controlled Git only; a
-		// future Compose secrets adapter must use descriptor-confined files.
-		for _, binding := range plan.SecretBindings {
-			if strings.EqualFold(strings.TrimSpace(binding.Provider), domain.ProviderRunnerFile) && strings.TrimSpace(binding.Reference) == strings.TrimSpace(plan.RepositoryPolicy.CredentialReferenceID) {
-				continue
-			}
-			return nil, nil, errors.New("compose deployment secret injection is not supported by the production adapter")
+	requiresSecretOverride := false
+	for _, binding := range plan.SecretBindings {
+		if strings.HasPrefix(strings.TrimSpace(binding.Target), "file:") {
+			requiresSecretOverride = true
+			break
+		}
+	}
+	if requiresSecretOverride && strings.TrimSpace(secretOverride) == "" {
+		return nil, nil, errors.New("compose deployment file secrets require an attempt-local override")
+	}
+	if strings.TrimSpace(secretOverride) != "" {
+		info, err := os.Stat(secretOverride)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+			return nil, nil, errors.New("compose secret override is unsafe")
 		}
 	}
 	envFile := filepath.Join(workspace, ".nerocd-compose-empty.env")
@@ -230,6 +292,9 @@ func composeInvocation(plan domain.DeploymentPlan, workspace, revision string) (
 		return nil, nil, err
 	}
 	args := []string{"compose", "--project-name", plan.ComposeProject, "--env-file", envFile, "--file", composePath}
+	if strings.TrimSpace(secretOverride) != "" {
+		args = append(args, "--file", secretOverride)
+	}
 	for _, profile := range plan.Profiles {
 		if strings.TrimSpace(profile) == "" || strings.ContainsAny(profile, "\x00\r\n") {
 			_ = os.Remove(envFile)
@@ -238,6 +303,19 @@ func composeInvocation(plan domain.DeploymentPlan, workspace, revision string) (
 		args = append(args, "--profile", profile)
 	}
 	return args, func() { _ = os.Remove(envFile) }, nil
+}
+
+func immutableImageDigest(value string) bool {
+	digest := strings.TrimSpace(value)
+	if !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 {
+		return false
+	}
+	for _, r := range digest[7:] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func healthContract(raw domain.HealthPolicy, commit string, timeoutSeconds int) (composeHealthContract, error) {

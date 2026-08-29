@@ -218,6 +218,26 @@ func (s *Service) CreateEnvironment(ctx context.Context, in EnvironmentInput) (d
 			return domain.Environment{}, errors.New("invalid environment secret binding")
 		}
 	}
+	service, e := r.GetService(ctx, in.ServiceID)
+	if e != nil {
+		return domain.Environment{}, e
+	}
+	repositories, e := s.sources.ListRepositories(ctx, service.ProjectID)
+	if e != nil {
+		return domain.Environment{}, e
+	}
+	for _, repository := range repositories {
+		if repository.ID != service.RepositoryID {
+			continue
+		}
+		credentialReference := strings.TrimSpace(repository.Policy.CredentialReferenceID)
+		for _, binding := range in.SecretBindings {
+			if credentialReference != "" && strings.EqualFold(strings.TrimSpace(binding.Provider), domain.ProviderRunnerFile) && strings.TrimSpace(binding.Reference) == credentialReference && strings.HasPrefix(strings.TrimSpace(binding.Target), "file:") {
+				return domain.Environment{}, errors.New("repository credential binding must use an env target")
+			}
+		}
+		break
+	}
 	id, e := prefixedID("env")
 	if e != nil {
 		return domain.Environment{}, e

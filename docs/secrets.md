@@ -1,9 +1,8 @@
 # Secret Backend Design
 
-NeroCD currently executes only the local `env` secret provider. `database` and
-`vault` bindings are accepted as references in templates and runs, but the
-runner does not resolve their values. This is intentional until encrypted value
-storage and secret-read audit are implemented.
+NeroCD currently executes only local `runner_file` and development-only `env`
+providers. `database` and `vault` remain planned until encrypted value storage
+and secret-read audit are implemented.
 
 ## Binding Contract
 
@@ -12,15 +11,23 @@ storage and secret-read audit are implemented.
 - `name`: display/audit label.
 - `provider`: `env`, `database`, or `vault`.
 - `reference`: provider-specific lookup key.
-- `target`: process injection target, currently only `env:NAME`.
+- `target`: either `env:NAME` for a process or `file:NAME` for a Compose
+  top-level secret. Compose services must reference `NAME` in their checked-in
+  `secrets:` configuration; the runner supplies only its generated `file:`
+  descriptor at deployment time.
 
 Secret values must never appear in API responses, run specs, audit metadata, log
 messages, artifact records, or runner primitive plans.
 
 ## Providers
 
-- `env`: resolved by the runner from its own host environment. This is the only
-  executable provider today.
+- `runner_file`: resolved from the runner's owner-only secret root. For
+  Compose `file:NAME` targets, the runner authorizes the lease first, writes
+  the bytes to a generated attempt-local mode-0600 file, provides Compose a
+  mode-0600 descriptor, then removes the private directory on every exit path.
+- `env`: resolved by the runner from its own host environment and allowed only
+  with the `development` classification. It is not a production Compose
+  secret transport.
 - `database`: planned encrypted-at-rest values scoped to a project or variable
   group. Required before use: envelope encryption, key rotation story, secret
   read audit, masked display metadata, and RBAC checks.
@@ -48,3 +55,5 @@ Before encrypted database values are accepted, add:
   reference, target name, or value.
 - Required secret failures fail the current step and complete the lease as
   failed.
+- Repository credentials are confined to provenance transport and must retain
+  an `env:` target; they cannot be repurposed as application Compose secrets.
