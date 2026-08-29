@@ -3,10 +3,32 @@ package store
 import (
 	"context"
 	"nerocd/internal/domain"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestExistingProvenanceImagesEquivalentLegacyDigest(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	full := "registry.example/ns/api@" + digest
+	if !existingProvenanceImagesEquivalent([]string{digest}, []string{full}) {
+		t.Fatalf("existingProvenanceImagesEquivalent(%q, %q) = false, want true", digest, full)
+	}
+	for _, incoming := range []string{
+		"registry.example/ns/api@sha256:" + strings.Repeat("b", 64),
+		"registry.example/ns/api:latest@" + digest,
+		"sha256:" + strings.Repeat("a", 64),
+		"registry.example/ns/api\n@" + digest,
+	} {
+		if existingProvenanceImagesEquivalent([]string{digest}, []string{incoming}) {
+			t.Fatalf("existingProvenanceImagesEquivalent(%q, %q) = true, want false", digest, incoming)
+		}
+	}
+	if existingProvenanceImagesEquivalent([]string{digest, digest}, []string{full, full}) {
+		t.Fatal("multi-image legacy provenance must not use suffix-only equivalence")
+	}
+}
 
 func TestMemoryDeploymentControlPlaneInvariant(t *testing.T) {
 	s := NewMemoryStore()

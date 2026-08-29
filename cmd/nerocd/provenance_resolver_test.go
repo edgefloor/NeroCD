@@ -163,6 +163,30 @@ func TestCanonicalComposeAcceptsAndExcludesEffectiveServerProjectName(t *testing
 	}
 }
 
+func TestCanonicalComposeFileSecretsAreStableAcrossAttemptsAndRollback(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	bindings := []domain.SecretBinding{{Name: "database-password", Provider: domain.ProviderRunnerFile, Reference: "database_password", Target: "file:db_password", Version: "v1", Required: true}}
+	first := []byte(`{"services":{"api":{"image":"registry.example/api@sha256:` + digest + `","secrets":["db_password"]}},"secrets":{"db_password":{"file":"/work/.nerocd-compose-secrets-first/secret-001"}}}`)
+	recovered := []byte(`{"services":{"api":{"image":"registry.example/api@sha256:` + digest + `","secrets":["db_password"]}},"secrets":{"db_password":{"file":"/work/.nerocd-compose-secrets-recovered/secret-001"}}}`)
+	rollback := []byte(`{"services":{"api":{"image":"registry.example/api@sha256:` + digest + `","secrets":["db_password"]}},"secrets":{"db_password":{"file":"/work/.nerocd-compose-secrets-rollback/secret-001"}}}`)
+	firstCanonical, _, err := canonicalCompose(first, "server-owned", bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range [][]byte{recovered, rollback} {
+		canonical, _, canonicalErr := canonicalCompose(raw, "server-owned", bindings)
+		if canonicalErr != nil {
+			t.Fatal(canonicalErr)
+		}
+		if string(canonical) != string(firstCanonical) {
+			t.Fatalf("canonicalCompose attempt hash input = %s, want %s", canonical, firstCanonical)
+		}
+	}
+	if strings.Contains(string(firstCanonical), ".nerocd-compose-secrets-") {
+		t.Fatalf("canonicalCompose retained generated secret path: %s", firstCanonical)
+	}
+}
+
 func TestSSHProvenanceUsesFencedRunnerFileAndPinnedHostKey(t *testing.T) {
 	previous := lookupRepositoryIP
 	lookupRepositoryIP = func(context.Context, string, string) ([]netip.Addr, error) {

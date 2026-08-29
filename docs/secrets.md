@@ -25,6 +25,13 @@ messages, artifact records, or runner primitive plans.
   Compose `file:NAME` targets, the runner authorizes the lease first, writes
   the bytes to a generated attempt-local mode-0600 file, provides Compose a
   mode-0600 descriptor, then removes the private directory on every exit path.
+  The descriptor's real path is retained for execution but replaced with a
+  stable `file:NAME`-derived placeholder before provenance hashing, so retry,
+  recovery, and rollback are deterministic without recording a secret path.
+  The private file must be reachable by the same Compose daemon that consumes
+  the descriptor. A runner container talking to a host Docker socket cannot
+  safely use its container-private secret volume as that source; use a runner
+  deployment topology with a daemon-visible private secret directory instead.
 - `env`: resolved by the runner from its own host environment and allowed only
   with the `development` classification. It is not a production Compose
   secret transport.
@@ -57,3 +64,7 @@ Before encrypted database values are accepted, add:
   failed.
 - Repository credentials are confined to provenance transport and must retain
   an `env:` target; they cannot be repurposed as application Compose secrets.
+- Provenance migrations retain historical bare `sha256:` image values for
+  reading. A legacy resolved revision is replay-compatible only for a
+  single-service image whose new untagged `repository@sha256:` suffix exactly
+  matches; all new receipts persist complete immutable references.

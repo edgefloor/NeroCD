@@ -643,7 +643,7 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	if err != nil {
 		return resolvedProvenance{}, commandFailure("docker compose config", err)
 	}
-	canonical, images, err := canonicalCompose(compose, plan.ComposeProject)
+	canonical, images, err := canonicalCompose(compose, plan.ComposeProject, composeApplicationSecretBindings(plan.SecretBindings))
 	if err != nil {
 		return resolvedProvenance{}, err
 	}
@@ -926,7 +926,7 @@ func isHexCommit(v string) bool {
 	return true
 }
 
-func canonicalCompose(raw []byte, serverProject string) ([]byte, []string, error) {
+func canonicalCompose(raw []byte, serverProject string, secretBindings ...[]domain.SecretBinding) ([]byte, []string, error) {
 	if len(raw) > 4<<20 {
 		return nil, nil, errors.New("compose config exceeds limit")
 	}
@@ -943,6 +943,14 @@ func canonicalCompose(raw []byte, serverProject string) ([]byte, []string, error
 			return nil, nil, errors.New("compose config overrides the server-owned project name")
 		}
 		delete(doc, "name")
+	}
+	if len(secretBindings) > 1 {
+		return nil, nil, errors.New("compose canonicalization accepts one secret binding set")
+	}
+	if len(secretBindings) == 1 {
+		if err := normalizeComposeSecretDescriptors(doc, secretBindings[0]); err != nil {
+			return nil, nil, err
+		}
 	}
 	// A deployment may not attach itself to pre-existing engine objects.  The
 	// later adapter creates only a controlled project namespace.
@@ -985,4 +993,39 @@ func canonicalCompose(raw []byte, serverProject string) ([]byte, []string, error
 	}
 	canonical, err := json.Marshal(doc) // encoding/json deterministically sorts map keys
 	return canonical, images, err
+}
+
+// normalizeComposeSecretDescriptors removes attempt-specific file paths from
+// the provenance input. Runtime Compose still receives the real private paths;
+// only the content hash sees stable placeholders derived from validated binding
+// targets, never from secret values.
+func normalizeComposeSecretDescriptors(doc map[string]any, bindings []domain.SecretBinding) error {
+	if len(bindings) == 0 {
+		return nil
+	}
+	secrets, ok := doc["secrets"].(map[string]any)
+	if !ok {
+		return errors.New("compose secret override was not retained")
+	}
+	seen := make(map[string]struct{}, len(bindings))
+	for _, binding := range bindings {
+		target := strings.TrimSpace(binding.Target)
+		name, ok := strings.CutPrefix(target, "file:")
+		if !ok || name == "" {
+			return errors.New("compose secret binding target is invalid")
+		}
+		if _, exists := seen[name]; exists {
+			return errors.New("compose secret binding target is duplicated")
+		}
+		seen[name] = struct{}{}
+		descriptor, ok := secrets[name].(map[string]any)
+		if !ok {
+			return fmt.Errorf("compose secret override missing target %q", name)
+		}
+		if _, ok := descriptor["file"].(string); !ok {
+			return fmt.Errorf("compose secret override for target %q is invalid", name)
+		}
+		descriptor["file"] = "nerocd-secret://" + name
+	}
+	return nil
 }

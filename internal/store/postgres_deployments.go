@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -256,7 +257,7 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 		// A rollback child deliberately reuses the last healthy revision. It
 		// must attest to the same immutable provenance under its own fence,
 		// rather than treating an already resolved revision as an error.
-		if v.GitCommit != commit || v.ComposeHash != hash || !reflect.DeepEqual(v.ImageDigests, digests) {
+		if v.GitCommit != commit || v.ComposeHash != hash || !existingProvenanceImagesEquivalent(v.ImageDigests, digests) {
 			return domain.Revision{}, ErrConflict
 		}
 	} else {
@@ -289,6 +290,56 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 		return domain.Revision{}, fmt.Errorf("commit transaction: %w", err)
 	}
 	return v, nil
+}
+
+// existingProvenanceImagesEquivalent permits only a narrow legacy upgrade
+// bridge. Replays remain byte-for-byte strict. A legacy revision may match one
+// current image only when its sole bare sha256 suffix exactly matches the sole
+// validated full reference for that deployment service.
+func existingProvenanceImagesEquivalent(existing, incoming []string) bool {
+	if reflect.DeepEqual(existing, incoming) {
+		for _, image := range incoming {
+			if !validFullImageReference(image) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(existing) != 1 || len(incoming) != 1 {
+		return false
+	}
+	legacy := strings.TrimSpace(existing[0])
+	full := strings.TrimSpace(incoming[0])
+	if !validBareImageDigest(legacy) || !validFullImageReference(full) {
+		return false
+	}
+	_, digest, found := strings.Cut(full, "@")
+	return found && digest == legacy
+}
+
+func validBareImageDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, character := range value[len("sha256:"):] {
+		if character < '0' || character > '9' && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validFullImageReference(value string) bool {
+	repository, digest, found := strings.Cut(value, "@")
+	if !found || repository == "" || strings.LastIndex(repository, ":") > strings.LastIndex(repository, "/") {
+		return false
+	}
+	for index, character := range repository {
+		if !((character >= 'a' && character <= 'z') || (index > 0 && character >= '0' && character <= '9') || character == '.' || character == '_' || character == '/' || character == ':' || character == '-') {
+			return false
+		}
+	}
+	return validBareImageDigest(digest)
 }
 
 // provenanceReplay returns only a byte-for-byte authority/body match.  A

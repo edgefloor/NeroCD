@@ -189,7 +189,10 @@ while ((SECONDS < partition_deadline)); do
   public_status "$dep_partition" >/dev/null || fail 'operator observation was unavailable during runner-only partition'
   sleep 1
 done
-[[ "$partition_expired" == true && "$(psql_query "select status from run_leases where id='$partition_lease'")" == expired ]] || fail 'DB-clock lease expiry was not observed during 60s partition'
+partition_final_lease=$(psql_query "select 'status='||status||',expires_at='||to_char(expires_at at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')||',db_now='||to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') from run_leases where id='$partition_lease'" || true)
+partition_reaper=$(psql_query "select 'active_leases='||count(*)||',expired_leases='||(select count(*) from run_leases where status='expired') from run_leases where status='active'" || true)
+record "partition_lease_final=$partition_final_lease reaper=$partition_reaper"
+[[ "$partition_expired" == true && "$partition_final_lease" == status=expired,* ]] || fail 'DB-clock lease expiry was not observed during 60s partition'
 stale_code=$(http GET "$base/api/v1/runners/deployments/status?deployment_id=$dep_partition&run_id=$partition_run&lease_id=$partition_lease&attempt=$partition_attempt&fence=$partition_fence" "$token" '' "$dir/partition-stale.json")
 [[ "$stale_code" == 403 ]] || fail "expired partition fence status code=$stale_code want=403"
 stale_log=$(http POST "$base/api/v1/runners/logs" "$token" "$(jq -cn --arg r "$partition_run" --arg l "$partition_lease" --arg f "$partition_fence" '{run_id:$r,lease_id:$l,attempt:1,fence:$f,sequence:99,stream:"system",message:"stale-partition-log",event_key:"partition-stale-log"}')" "$dir/partition-stale-log.json")
