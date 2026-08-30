@@ -13,8 +13,46 @@ passed=false
 record() { printf '%s\n' "$*" >>"$evidence"; }
 fail() { record "FAIL: $*"; printf 'runtime-enrollment-gate: %s\n' "$*" >&2; exit 1; }
 compose() { NEROCD_RUNTIME_IMAGE="$image" docker compose --project-name "$project" --file "$compose_file" "$@"; }
+redact_diagnostics() {
+  sed -E \
+    -e 's#(postgres(ql)?)://[^@[:space:]]+@#\1://[REDACTED]@#g' \
+    -e 's#[Bb]earer[[:space:]]+[^[:space:]",}]+#Bearer [REDACTED]#g' \
+    -e 's#("[^"]*([Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt])[^"]*"[[:space:]]*:[[:space:]]*)"[^"]*"#\1"[REDACTED]"#g' \
+    -e 's#(([Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt])([_-]?[[:alnum:].]+)*=)[^[:space:]]+#\1[REDACTED]#g'
+}
+capture_failure_diagnostics() {
+  local raw="$runtime_dir/failure-diagnostics.raw" redacted="$runtime_dir/failure-diagnostics.txt"
+  local proxy_id proxy_state restart_count
+  {
+    printf '%s\n' 'failure_diagnostics_begin'
+    printf '%s\n' 'compose_services='
+    compose ps --all --format json 2>/dev/null |
+      jq -cs '[.[] | if type == "array" then .[] else . end | {Service,State,Health,ExitCode}] | sort_by(.Service)' || printf '%s\n' 'unavailable'
+    printf '%s\n' 'proxy_container='
+    proxy_id=$(compose ps -q proxy 2>/dev/null | head -n 1)
+    if [[ "$proxy_id" =~ ^[0-9a-f]{12,64}$ ]]; then
+      proxy_state=$(docker inspect --format '{{json .State}}' "$proxy_id" 2>/dev/null) || proxy_state=''
+      restart_count=$(docker inspect --format '{{.RestartCount}}' "$proxy_id" 2>/dev/null) || restart_count=''
+      if [[ -n "$proxy_state" && "$restart_count" =~ ^[0-9]+$ ]]; then
+        jq -cn --argjson state "$proxy_state" --argjson restart "$restart_count" \
+          '{State:{Status:$state.Status,ExitCode:$state.ExitCode,OOMKilled:$state.OOMKilled,Error:$state.Error,StartedAt:$state.StartedAt,FinishedAt:$state.FinishedAt},RestartCount:$restart}'
+      else
+        printf '%s\n' 'unavailable'
+      fi
+    else
+      printf '%s\n' 'unavailable'
+    fi
+    printf '%s\n' 'proxy_logs_begin'
+    compose logs --no-color --tail 80 proxy 2>&1 | head -c 16384
+    printf '\n%s\n' 'proxy_logs_end' 'failure_diagnostics_end'
+  } >"$raw"
+  redact_diagnostics <"$raw" >"$redacted"
+  cat "$redacted" >>"$evidence"
+  cat "$redacted" >&2
+}
 cleanup() {
   result=$?; set +e; cleanup_failed=false
+  if [[ $result -ne 0 || "$passed" != true ]]; then capture_failure_diagnostics; fi
   if [[ "$project" =~ ^nerocd-enrollment-[0-9a-f]{12}$ ]]; then
     compose down --volumes --remove-orphans --rmi local --timeout 5 >/dev/null 2>&1
     docker ps -aq --filter "label=nerocd.runtime.project=$project" | xargs -r docker rm -f >/dev/null 2>&1
@@ -46,7 +84,7 @@ compose up -d --wait postgres >"$runtime_dir/postgres-up.txt" 2>&1 || fail "post
 compose run --rm --no-deps --entrypoint nerocd server migrate >"$runtime_dir/migrate.txt" 2>&1 || fail "migration failed"
 tail -n 1 "$runtime_dir/browser.credentials" | compose run --rm --no-deps --entrypoint nerocd server bootstrap-admin --email "$admin_email" --name 'Runtime enrollment admin' --password-stdin >"$runtime_dir/bootstrap.txt" 2>&1 || fail "bootstrap failed"
 unset admin_password
-compose up -d --wait server proxy >"$runtime_dir/compose-up.txt" 2>&1 || { compose ps >>"$evidence" 2>&1 || true; compose logs --no-color postgres server proxy 2>&1 | sed -E 's#postgres://[^@[:space:]]+@#postgres://[REDACTED]@#g' | tail -n 80 >>"$evidence"; fail "isolated stack failed"; }
+compose up -d --wait server proxy >"$runtime_dir/compose-up.txt" 2>&1 || fail "isolated stack failed"
 server_port=$(compose port server 8080 | tail -n1); server_port=${server_port##*:}
 proxy_port=$(compose port proxy 8081 | tail -n1); proxy_port=${proxy_port##*:}
 base="http://127.0.0.1:$server_port"; proxy_control="http://127.0.0.1:$proxy_port/__control"
@@ -58,8 +96,29 @@ http_json() {
   args+=("$url"); curl "${args[@]}"
 }
 sql() { compose exec --no-TTY postgres psql -U nerocd -d nerocd -At -F '|' -v ON_ERROR_STOP=1 -c "$1" | sed '/^[[:space:]]*$/d'; }
-proxy_status() { curl -fsS --max-time 5 "$proxy_control/status"; }
-proxy_post() { curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -X POST "$proxy_control/$1"; }
+proxy_control_request() {
+  local method=$1 path=$2 response=$3 output curl_code remaining deadline=$((SECONDS+10))
+  local -a response_args
+  case "$response" in
+    body) response_args=(-fsS -o -) ;;
+    code) response_args=(-sS -o /dev/null -w '%{http_code}') ;;
+    *) return 2 ;;
+  esac
+  while :; do
+    remaining=$((deadline-SECONDS))
+    (( remaining > 0 )) || return 7
+    if output=$(curl "${response_args[@]}" --connect-timeout "$remaining" --max-time "$remaining" -X "$method" "$proxy_control/$path"); then
+      printf '%s' "$output"
+      return 0
+    else
+      curl_code=$?
+    fi
+    [[ $curl_code -eq 7 ]] || return "$curl_code"
+    sleep 0.2
+  done
+}
+proxy_status() { proxy_control_request GET status body; }
+proxy_post() { proxy_control_request POST "$1" code; }
 create_enrollment() {
   local runner_id=$1 ttl=$2 output=$3
   local body code
@@ -102,7 +161,7 @@ code=$(http_json POST "$base/api/v1/runner-enrollments/revoke" "$admin_token" "$
 printf '%s\n' "$race_token" | compose run --rm --no-deps -T winner_init >"$runtime_dir/winner-init.txt" 2>&1 || fail "winner identity init failed"
 printf '%s\n' "$race_token" | compose run --rm --no-deps -T loser_init >"$runtime_dir/loser-init.txt" 2>&1 || fail "loser identity init failed"
 [[ "$(proxy_post drop-enrollment)" == 204 ]] || fail "could not arm lost enrollment response"
-compose up -d runner_a runner_b >"$runtime_dir/runners-up.txt" 2>&1 || fail "runner race start failed"
+compose up -d --no-deps runner_a runner_b >"$runtime_dir/runners-up.txt" 2>&1 || fail "runner race start failed"
 compose exec --no-TTY postgres sh -c ': >/dev/null' >/dev/null
 compose exec --no-TTY runner_a touch /state/release-runners
 
@@ -219,7 +278,6 @@ if [[ "$process_started" != true ]]; then
   revocation_runner=$(sql "SELECT id||':'||status||':'||array_to_string(capabilities,',') FROM runners WHERE id='runner_enrollment_runtime'")
   record "revocation_run_diagnostic=$revocation_runs"
   record "revocation_runner_diagnostic=$revocation_runner"
-  compose logs --no-color "$winner_service" 2>&1 | tail -n 30 >>"$evidence" || true
 fi
 [[ "$process_started" == true ]] || fail "enrolled runner process did not start"
 # The browser observes this active runner on its query-free public admin detail
