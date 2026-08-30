@@ -16,7 +16,9 @@ trap cleanup EXIT
 
 mkdir "$temp_root/positive" "$temp_root/merge" "$temp_root/merge-whitespace" "$temp_root/unquoted-command" \
   "$temp_root/server-entrypoint" "$temp_root/server-entrypoint-space" "$temp_root/server-entrypoint-quoted" \
-  "$temp_root/server-healthcheck" "$temp_root/server-volumes"
+  "$temp_root/server-healthcheck" "$temp_root/server-volumes" "$temp_root/ingress-capability" \
+  "$temp_root/postgres-source-secret" "$temp_root/migrate-postgres-secret" "$temp_root/role-init-capability" \
+  "$temp_root/source-descriptor"
 cp "$root/compose.production.yaml" "$temp_root/positive/compose.production.yaml"
 awk -v expected_server_command="$expected_server_command" '
   $0 == expected_server_command { print "    command: [server, --addr, :8080]"; next }
@@ -68,6 +70,54 @@ for variant in server-entrypoint server-entrypoint-space server-entrypoint-quote
     exit 1
   fi
 done
+
+replace_service_line() {
+  local destination=$1 service=$2 original=$3 replacement=$4
+  awk -v target="$service" -v original="$original" -v replacement="$replacement" '
+  $0 == "  " target ":" { selected=1 }
+  selected && /^  [a-z0-9-]+:$/ && $0 != "  " target ":" { selected=0 }
+  selected && $0 == original { print replacement; changed=1; next }
+  { print }
+  END { if (!changed) exit 1 }
+  ' "$root/compose.production.yaml" >"$destination/compose.production.yaml"
+}
+
+replace_service_line "$temp_root/ingress-capability" secret-init \
+  '    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]' \
+  '    cap_add: [CHOWN, FOWNER]'
+replace_service_line "$temp_root/migrate-postgres-secret" migrate \
+  '    volumes: [runtime-owner-secrets:/runtime-owner:ro]' \
+  '    volumes: [runtime-owner-secrets:/runtime-owner:ro, runtime-postgres-secrets:/runtime-postgres:ro]'
+awk '
+  $0 == "  postgres:" { postgres=1 }
+  postgres && /^  [a-z0-9-]+:$/ && $0 != "  postgres:" { postgres=0 }
+  postgres && /^    depends_on:/ { print "    secrets: [postgres_password]" }
+  { print }
+' "$root/compose.production.yaml" >"$temp_root/postgres-source-secret/compose.production.yaml"
+awk '
+  $0 == "  role-init:" { role_init=1 }
+  role_init && /^  [a-z0-9-]+:$/ && $0 != "  role-init:" { role_init=0 }
+  role_init && $0 == "    cap_drop: [ALL]" { print; print "    cap_add: [DAC_OVERRIDE]"; next }
+  { print }
+' "$root/compose.production.yaml" >"$temp_root/role-init-capability/compose.production.yaml"
+
+for variant in ingress-capability postgres-source-secret migrate-postgres-secret role-init-capability; do
+  if PATH=/usr/bin:/bin bash "$gate" "$temp_root/$variant"; then
+    printf 'production compose policy test: %s secret-ingress violation was accepted\n' "$variant" >&2
+    exit 1
+  fi
+done
+awk '
+  $0 == "  postgres_password: {file: \"${NEROCD_POSTGRES_PASSWORD_SECRET:?set secret file}\"}" {
+    print "  postgres_password: {environment: NEROCD_POSTGRES_PASSWORD}"
+    next
+  }
+  { print }
+' "$root/compose.production.yaml" >"$temp_root/source-descriptor/compose.production.yaml"
+if PATH=/usr/bin:/bin bash "$gate" "$temp_root/source-descriptor"; then
+  printf '%s\n' 'production compose policy test: environment-backed source descriptor was accepted' >&2
+  exit 1
+fi
 
 write_merge_mutation() {
   local destination=$1 merge_key=$2

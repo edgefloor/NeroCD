@@ -53,13 +53,15 @@ This starts PostgreSQL, runs tracked migrations through `nerocd migrate`, applie
 `compose.production.yaml` is deliberately separate from the development stack.
 Copy `.env.production.example` outside the repository, supply a canonical
 `repository@sha256:<digest>` server image, an existing external proxy network,
-two absolute URL secret-file paths, and distinct owner/app PostgreSQL role
-names. Protect the inputs with mode `0400`; the one-shot initializer places
-the owner and app URL in separate private runtime volumes. The migrator sees
-only the owner file, the server sees only the app file, and role-init is the
-only short-lived service that sees both. Production rejects environment/argument
-database URLs, equal credentials, mutable image names, development seeding,
-and the memory store.
+two absolute URL secret-file paths, an absolute PostgreSQL password-file path,
+and distinct owner/app PostgreSQL role names. Keep all three operator-owned
+inputs at mode `0400`; do not change their ownership for a container UID. Two
+networkless one-shot ingress services copy them into separate private runtime
+volumes as mode `0400`, owned by the consuming UID. The migrator sees only the
+owner file, the server sees only the app file, PostgreSQL sees only its password,
+and role-init is the only short-lived consumer that sees both URLs. Production
+rejects environment/argument database URLs, equal credentials, mutable image
+names, development seeding, and the memory store.
 
 ```sh
 docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml up -d

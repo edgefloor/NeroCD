@@ -11,7 +11,25 @@ services:
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
-    cap_add: [CHOWN, FOWNER]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    restart: "no"
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.25
+    logging: {driver: local, options: {max-size: 1m, max-file: "2"}}
+  postgres-secret-init:
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command: ["umask 077; install -d -m 0700 /runtime-postgres; install -m 0400 /run/secrets/postgres_password /runtime-postgres/postgres_password; chown 70:70 /runtime-postgres/postgres_password /runtime-postgres"]
+    secrets: [postgres_password]
+    volumes: [runtime-postgres-secrets:/runtime-postgres]
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
     restart: "no"
     pids_limit: 32
     mem_limit: 64m
@@ -54,10 +72,9 @@ services:
   postgres:
     image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     user: "70:70"
-    environment: {POSTGRES_DB: nerocd, POSTGRES_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password, POSTGRES_HOST_AUTH_METHOD: scram-sha-256, PGDATA: /var/lib/postgresql/data/pgdata}
-    secrets: [postgres_password]
-    depends_on: {pgdata-init: {condition: service_completed_successfully}}
-    volumes: [postgres-data:/var/lib/postgresql/data, postgres-run:/var/run/postgresql]
+    environment: {POSTGRES_DB: nerocd, POSTGRES_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", POSTGRES_PASSWORD_FILE: /runtime-postgres/postgres_password, POSTGRES_HOST_AUTH_METHOD: scram-sha-256, PGDATA: /var/lib/postgresql/data/pgdata}
+    depends_on: {postgres-secret-init: {condition: service_completed_successfully}, pgdata-init: {condition: service_completed_successfully}}
+    volumes: [postgres-data:/var/lib/postgresql/data, postgres-run:/var/run/postgresql, runtime-postgres-secrets:/runtime-postgres:ro]
     networks: [private]
     read_only: true
     tmpfs: [/tmp]
@@ -186,6 +203,7 @@ volumes:
   postgres-run: {}
   runtime-owner-secrets: {}
   runtime-app-secrets: {}
+  runtime-postgres-secrets: {}
   backup-data: {}
 networks:
   private: {internal: true}

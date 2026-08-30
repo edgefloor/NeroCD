@@ -49,7 +49,7 @@ emit_startup_diagnostics(){
     tail -n "$startup_diagnostic_lines" "$dir/up.log"
     printf '%s\n' '--- production-profile startup diagnostics: compose ps -a ---'
     compose ps -a
-    for service in secret-init pgdata-init backup-data-init postgres migrate role-init server backup-scheduler; do
+    for service in secret-init postgres-secret-init pgdata-init backup-data-init postgres migrate role-init server backup-scheduler; do
       printf '%s\n' "--- production-profile startup diagnostics: $service (last $startup_diagnostic_lines lines) ---"
       compose logs --no-color --tail "$startup_diagnostic_lines" "$service"
     done
@@ -183,33 +183,66 @@ printf 'postgres://%s:%s@postgres:5432/nerocd?sslmode=disable\n' "$owner_role" "
 printf 'postgres://%s:%s@postgres:5432/nerocd?sslmode=disable\n' "$app_role" "$app_password" >"$dir/app-database-url"
 printf '%s\n' "$owner_password" >"$dir/postgres-password"
 chmod 0400 "$dir/database-url" "$dir/app-database-url" "$dir/postgres-password"
-if [[ $(id -u) -eq 0 ]]; then chown 10001:10001 "$dir/database-url"; fi
+host_secret_metadata(){
+  stat -c '%u:%g %a' "$1" 2>/dev/null || stat -f '%u:%g %Lp' "$1"
+}
+owner_source_metadata=$(host_secret_metadata "$dir/database-url")
+app_source_metadata=$(host_secret_metadata "$dir/app-database-url")
+postgres_source_metadata=$(host_secret_metadata "$dir/postgres-password")
+[[ "$owner_source_metadata" == *' 400' && "$app_source_metadata" == *' 400' && "$postgres_source_metadata" == *' 400' ]] || fail 'operator source secrets are not mode 0400'
 compose_ready=true
 
 docker network create "$proxy" >/dev/null || fail 'external proxy network create failed'
 proxy_created=true
 COMPOSE_PROFILES=tools compose config >"$dir/rendered.yaml"
+rendered_service_block(){
+  local service=$1
+  awk -v target="$service" '
+    $0 == "services:" { in_services=1; next }
+    in_services && /^[^[:space:]]/ { exit }
+    in_services && $0 == "  " target ":" { capture=1 }
+    capture && /^  [^[:space:]][^:]*:$/ && $0 != "  " target ":" { exit }
+    capture { print }
+  ' "$dir/rendered.yaml"
+}
 rg -q "image: $image_ref" "$dir/rendered.yaml" || fail 'render did not retain canonical server digest'
 ! rg -q '^\s*build:' "$dir/rendered.yaml" || fail 'production profile enables build'
 ! rg -q '^\s*ports:' "$dir/rendered.yaml" || fail 'production profile publishes a host port'
 rg -q 'service_completed_successfully' "$dir/rendered.yaml" || fail 'render lacks one-shot dependency barriers'
-for service in secret-init pgdata-init backup-data-init postgres migrate server database-tools backup-scheduler; do
-  rg -A100 "^  $service:" "$dir/rendered.yaml" | rg -q 'read_only: true' || fail "$service lacks read-only root filesystem"
-  rg -A100 "^  $service:" "$dir/rendered.yaml" | rg -q 'cap_drop:' || fail "$service lacks dropped capabilities"
-  rg -A100 "^  $service:" "$dir/rendered.yaml" | rg -q 'logging:' || fail "$service lacks bounded logs"
+for service in secret-init postgres-secret-init pgdata-init backup-data-init postgres migrate role-init server database-tools backup-scheduler; do
+  service_render=$(rendered_service_block "$service")
+  rg -q 'read_only: true' <<<"$service_render" || fail "$service lacks read-only root filesystem"
+  rg -q 'cap_drop:' <<<"$service_render" || fail "$service lacks dropped capabilities"
+  rg -q 'logging:' <<<"$service_render" || fail "$service lacks bounded logs"
 done
-tool_render=$(rg -A100 '^  database-tools:' "$dir/rendered.yaml")
+secret_init_render=$(rendered_service_block secret-init)
+postgres_secret_init_render=$(rendered_service_block postgres-secret-init)
+rg -q 'network_mode: none' <<<"$secret_init_render" || fail 'owner/app secret ingress has a network namespace'
+rg -q 'DAC_OVERRIDE' <<<"$secret_init_render" || fail 'owner/app secret ingress cannot read operator-owned mode-0400 inputs'
+rg -q 'owner_database_url' <<<"$secret_init_render" || fail 'owner/app secret ingress lacks owner source'
+rg -q 'app_database_url' <<<"$secret_init_render" || fail 'owner/app secret ingress lacks app source'
+! rg -q 'postgres_password|runtime-postgres' <<<"$secret_init_render" || fail 'owner/app secret ingress receives PostgreSQL password'
+rg -q 'network_mode: none' <<<"$postgres_secret_init_render" || fail 'PostgreSQL secret ingress has a network namespace'
+rg -q 'DAC_OVERRIDE' <<<"$postgres_secret_init_render" || fail 'PostgreSQL secret ingress cannot read operator-owned mode-0400 input'
+rg -q 'postgres_password' <<<"$postgres_secret_init_render" || fail 'PostgreSQL secret ingress lacks its source'
+! rg -q 'owner_database_url|app_database_url|runtime-owner|runtime-app' <<<"$postgres_secret_init_render" || fail 'PostgreSQL secret ingress receives application database URLs'
+for service in postgres migrate role-init server backup-scheduler; do
+  service_render=$(rendered_service_block "$service")
+  rg -q 'cap_drop:' <<<"$service_render" || fail "$service does not drop capabilities"
+  ! rg -q 'cap_add:' <<<"$service_render" || fail "$service adds a capability"
+done
+tool_render=$(rendered_service_block database-tools)
 rg -q 'profiles:' <<<"$tool_render" || fail 'database tools are not an explicit profile'
 rg -q '/runtime-owner' <<<"$tool_render" || fail 'database tools lack owner secret mount'
 ! rg -q '/runtime-app' <<<"$tool_render" || fail 'database tools receive application secret mount'
 ! rg -q 'proxy' <<<"$tool_render" || fail 'database tools receive proxy network'
-scheduler_render=$(rg -A100 '^  backup-scheduler:' "$dir/rendered.yaml")
+scheduler_render=$(rendered_service_block backup-scheduler)
 rg -q '/runtime-owner' <<<"$scheduler_render" || fail 'backup scheduler lacks owner secret mount'
 rg -q '/backups' <<<"$scheduler_render" || fail 'backup scheduler lacks private backup volume'
 ! rg -q '/runtime-app' <<<"$scheduler_render" || fail 'backup scheduler receives application secret mount'
 ! rg -q 'proxy' <<<"$scheduler_render" || fail 'backup scheduler receives proxy network'
 rg -q -- '--enabled=false' <<<"$scheduler_render" || fail 'backup scheduler is not opt-in by default'
-rg -A100 '^  server:' "$dir/rendered.yaml" | rg -q 'stop_grace_period: 35s' || fail 'production server stop grace is not longer than lifecycle grace'
+rendered_service_block server | rg -q 'stop_grace_period: 35s' || fail 'production server stop grace is not longer than lifecycle grace'
 for key in NEROCD_IMAGE NEROCD_PROXY_NETWORK NEROCD_PUBLIC_ORIGIN NEROCD_OWNER_DATABASE_USER NEROCD_APP_DATABASE_USER NEROCD_DATABASE_URL_SECRET NEROCD_APP_DATABASE_URL_SECRET NEROCD_POSTGRES_PASSWORD_SECRET; do
   rg -q "^${key}=" "$root/.env.production.example" || fail "production env template lacks $key"
 done
@@ -248,6 +281,37 @@ for id in "$server_id" "$postgres_id" "$scheduler_id"; do
   [[ $(docker inspect -f '{{.HostConfig.PidsLimit}}' "$id") != 0 ]] || fail "container $id has no PID bound"
 done
 
+secret_init_id=$(compose ps -aq secret-init); postgres_secret_init_id=$(compose ps -aq postgres-secret-init)
+[[ -n "$secret_init_id" && -n "$postgres_secret_init_id" ]] || fail 'source-secret ingress containers missing'
+for id in "$secret_init_id" "$postgres_secret_init_id"; do
+  [[ $(docker inspect -f '{{.HostConfig.NetworkMode}}' "$id") == none ]] || fail "secret ingress $id has network access"
+  docker inspect "$id" | jq -e '.[0].HostConfig.CapDrop == ["ALL"] and ((.[0].HostConfig.CapAdd // [] | map(sub("^CAP_"; "")) | sort) == ["CHOWN", "DAC_OVERRIDE", "FOWNER"])' >/dev/null || fail "secret ingress $id lacks the exact minimal capability set"
+done
+secret_init_mounts=$(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' "$secret_init_id")
+postgres_secret_init_mounts=$(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' "$postgres_secret_init_id")
+for destination in /run/secrets/owner_database_url /run/secrets/app_database_url /runtime-owner /runtime-app; do
+  rg -qx "$destination" <<<"$secret_init_mounts" || fail "owner/app secret ingress lacks $destination"
+done
+[[ $(wc -w <<<"$secret_init_mounts" | tr -d ' ') == 4 ]] || fail 'owner/app secret ingress has an unexpected mount'
+! rg -q 'postgres_password|runtime-postgres' <<<"$secret_init_mounts" || fail 'owner/app secret ingress can reach PostgreSQL password'
+for destination in /run/secrets/postgres_password /runtime-postgres; do
+  rg -qx "$destination" <<<"$postgres_secret_init_mounts" || fail "PostgreSQL secret ingress lacks $destination"
+done
+[[ $(wc -w <<<"$postgres_secret_init_mounts" | tr -d ' ') == 2 ]] || fail 'PostgreSQL secret ingress has an unexpected mount'
+! rg -q 'owner_database_url|app_database_url|runtime-owner|runtime-app' <<<"$postgres_secret_init_mounts" || fail 'PostgreSQL secret ingress can reach application database URLs'
+
+for id in $(compose ps -aq); do
+  if [[ "$id" != "$secret_init_id" && "$id" != "$postgres_secret_init_id" ]]; then
+    mounts=$(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' "$id")
+    ! rg -q '^/run/secrets/' <<<"$mounts" || fail "non-ingress container $id can reach an operator source secret"
+    docker inspect "$id" | jq -e '((.[0].HostConfig.CapAdd // []) | map(sub("^CAP_"; "")) | index("DAC_OVERRIDE")) == null' >/dev/null || fail "non-ingress container $id has DAC_OVERRIDE"
+  fi
+done
+[[ $(host_secret_metadata "$dir/database-url") == "$owner_source_metadata" ]] || fail 'owner source secret ownership or mode changed'
+[[ $(host_secret_metadata "$dir/app-database-url") == "$app_source_metadata" ]] || fail 'app source secret ownership or mode changed'
+[[ $(host_secret_metadata "$dir/postgres-password") == "$postgres_source_metadata" ]] || fail 'PostgreSQL source secret ownership or mode changed'
+record 'operator_secret_sources_mode_0400_unchanged=true source_secret_mounts_ingress_only=true dac_override_ingress_only=true ingress_network_none=true'
+
 # The server mounts only the app file.  The completed one-shot containers are
 # still inspectable, so their mount metadata proves migration sees only owner
 # and role-init is the sole short-lived service with both inputs.
@@ -255,11 +319,17 @@ server_mounts=$(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{en
 rg -qx '/runtime-app' <<<"$server_mounts" || fail 'server lacks app-only secret mount'
 ! rg -q '/runtime-owner' <<<"$server_mounts" || fail 'server can mount owner secret path'
 docker exec "$server_id" sh -ec 'test -r /runtime-app/app_database_url && test ! -e /runtime-owner/owner_database_url' || fail 'server filesystem exposes owner credential'
+[[ $(docker exec "$server_id" stat -c '%u:%g %a' /runtime-app/app_database_url) == '10001:10001 400' ]] || fail 'app runtime credential owner or mode is not 10001:10001 0400'
 scheduler_mounts=$(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' "$scheduler_id")
 rg -qx '/runtime-owner' <<<"$scheduler_mounts" || fail 'scheduler lacks owner-only secret mount'
 rg -qx '/backups' <<<"$scheduler_mounts" || fail 'scheduler lacks backup volume mount'
 ! rg -q '/runtime-app' <<<"$scheduler_mounts" || fail 'scheduler can mount app secret path'
 docker exec "$scheduler_id" sh -ec 'test -r /runtime-owner/owner_database_url && test ! -e /runtime-app/app_database_url && test -d /backups' || fail 'scheduler filesystem does not enforce owner-only inputs'
+[[ $(docker exec "$scheduler_id" stat -c '%u:%g %a' /runtime-owner/owner_database_url) == '10001:10001 400' ]] || fail 'owner runtime credential owner or mode is not 10001:10001 0400'
+postgres_mounts=$(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' "$postgres_id")
+rg -qx '/runtime-postgres' <<<"$postgres_mounts" || fail 'PostgreSQL lacks its private runtime credential mount'
+! rg -q '^/run/secrets/|runtime-owner|runtime-app' <<<"$postgres_mounts" || fail 'PostgreSQL can reach an unapproved source or runtime credential'
+[[ $(docker exec "$postgres_id" stat -c '%u:%g %a' /runtime-postgres/postgres_password) == '70:70 400' ]] || fail 'PostgreSQL runtime credential owner or mode is not 70:70 0400'
 migrator_id=$(compose ps -aq migrate); role_init_id=$(compose ps -aq role-init)
 [[ -n "$migrator_id" && -n "$role_init_id" ]] || fail 'secret chain one-shot containers missing'
 migrator_mounts=$(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' "$migrator_id")
@@ -274,7 +344,7 @@ probe_env=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$prob
 ! rg -q 'runtime-owner|runtime-app' <<<"$probe_mounts" || fail 'HTTP probe unnecessarily receives database credential mount'
 ! rg -q '^NEROCD_DATABASE_URL_FILE=' <<<"$probe_env" || fail 'HTTP probe unnecessarily receives database credential environment'
 docker rm -f "$probe_id" >/dev/null || fail 'could not remove credential-free probe inspection container'
-record 'credential_mount_separation=server_app_only,migrator_owner_only,scheduler_owner_backup_only,role_init_ephemeral_both,probe_none'
+record 'credential_mount_separation=server_app_only,migrator_owner_only,scheduler_owner_backup_only,role_init_ephemeral_both,postgres_password_only,probe_none runtime_secret_modes=0400 runtime_secret_owners=10001,70'
 
 migrations=$(find "$root/db/migrations" -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')
 applied=$(owner_psql -Atc 'select count(*) from schema_migrations')
