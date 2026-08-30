@@ -1088,8 +1088,12 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
 		}
 	}
-	if _, err := database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, claimExpiry.Lease.ID); err != nil {
+	expiredLease, err := database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, claimExpiry.Lease.ID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if rows := expiredLease.RowsAffected(); rows != 1 {
+		t.Fatalf("expiry race lease update id=%q rows=%d, want 1", claimExpiry.Lease.ID, rows)
 	}
 	expiryStart := make(chan struct{})
 	expiryCancel := make(chan *httptest.ResponseRecorder, 1)
