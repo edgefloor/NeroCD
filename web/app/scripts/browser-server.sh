@@ -30,6 +30,7 @@ browser_database="nerocd_browser_${browser_port}_${browser_run_id}"
 browser_container_name="nerocd-browser-postgres-${browser_port}-${browser_run_id}"
 browser_container_label="nerocd.browser.fixture=${browser_run_id}"
 browser_runtime_dir=""
+browser_runtime_link="$browser_runtime_base/nerocd-browser-${browser_run_id}"
 browser_container_id=""
 browser_server_pid=""
 
@@ -55,6 +56,9 @@ cleanup() {
   if [ -n "$browser_container_id" ]; then
     docker rm -f "$browser_container_id" >/dev/null 2>&1 || true
   fi
+  if [ -L "$browser_runtime_link" ] && [ "$(readlink "$browser_runtime_link")" = "$browser_runtime_dir" ]; then
+    rm -f -- "$browser_runtime_link"
+  fi
   case "$browser_runtime_dir" in
     "$browser_runtime_base"/nerocd-browser-"$browser_port"-"$browser_run_id".*) rm -rf -- "$browser_runtime_dir" ;;
   esac
@@ -72,6 +76,7 @@ case "$browser_runtime_dir" in
   *) echo "browser runtime directory is outside the approved temporary prefix" >&2; exit 2 ;;
 esac
 [ -d "$browser_runtime_dir" ] || exit 2
+ln -s "$browser_runtime_dir" "$browser_runtime_link"
 
 umask 077
 browser_email="browser-$(od -An -N12 -tx1 /dev/urandom | tr -d '[:space:]')@example.invalid"

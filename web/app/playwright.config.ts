@@ -11,6 +11,9 @@ process.env.NEROCD_BROWSER_RUN_ID = browserRunID;
 
 export default defineConfig({
   testDir: "./tests/browser",
+  metadata: {
+    NEROCD_BROWSER_RUN_ID: browserRunID,
+  },
   timeout: 30_000,
   expect: {
     timeout: 10_000,
