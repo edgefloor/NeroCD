@@ -12,16 +12,36 @@ awk -v expected="$expected" '
     count = split(services, names, " ")
     for (position = 1; position <= count; position++) required[names[position]] = 1
   }
-  /^  [a-z0-9-]+:$/ {
+  $0 == "services:" {
+    in_services = 1
+    services_seen = 1
+    service = ""
+    next
+  }
+  in_services && /^[^[:space:]#][^:]*:/ {
+    in_services = 0
+    service = ""
+  }
+  in_services && /^  [a-z0-9-]+:$/ {
     service = substr($0, 3, length($0) - 3)
     next
   }
   /^[[:space:]]*image:[[:space:]].*NEROCD_IMAGE/ { image_count++ }
   $0 == expected {
     quoted_count++
-    if (service in required) service_images[service]++
+  }
+  in_services && service in required && /^    <<:/ {
+    merge_keys[service]++
+  }
+  in_services && service in required && /^    image:[[:space:]]/ {
+    direct_images[service]++
+    if ($0 == expected) exact_images[service]++
   }
   END {
+    if (!services_seen) {
+      print "production compose policy: top-level services mapping is missing" > "/dev/stderr"
+      exit 1
+    }
     if (image_count != 8) {
       print "production compose policy: expected exactly 8 NEROCD_IMAGE image fields" > "/dev/stderr"
       exit 1
@@ -31,8 +51,12 @@ awk -v expected="$expected" '
       exit 1
     }
     for (position = 1; position <= count; position++) {
-      if (service_images[names[position]] != 1) {
-        print "production compose policy: " names[position] " lacks exactly one quoted image field" > "/dev/stderr"
+      if (merge_keys[names[position]] != 0) {
+        print "production compose policy: " names[position] " must not use YAML image merges" > "/dev/stderr"
+        exit 1
+      }
+      if (direct_images[names[position]] != 1 || exact_images[names[position]] != 1) {
+        print "production compose policy: " names[position] " lacks exactly one direct quoted image field" > "/dev/stderr"
         exit 1
       }
     }

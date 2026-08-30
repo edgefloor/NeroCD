@@ -105,6 +105,7 @@ docker-build:
 
 production-compose-policy-gate:
 	bash scripts/production-compose-policy-gate.sh
+	bash scripts/production-compose-policy-gate-test.sh
 
 local-image-registry-gate:
 	bash scripts/local-image-registry-gate.sh
