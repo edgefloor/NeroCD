@@ -5,6 +5,7 @@
 set -Eeuo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$root/scripts/local-image-registry.sh"
 evidence=/tmp/nerocd-production-profile.txt
 dir=$(mktemp -d /tmp/nerocd-production-profile.XXXXXXXX)
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
@@ -48,6 +49,7 @@ cleanup(){
   compose logs --no-color >>"$evidence" 2>&1 || true
   compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1 || true
   docker network rm "$proxy" >/dev/null 2>&1 || true
+  local_registry_cleanup
   docker image rm -f "$image_tag" >/dev/null 2>&1 || true
   rem=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
   [[ -z "$rem" ]] || { docker rm -f $rem >/dev/null 2>&1 || true; code=1; }
@@ -68,13 +70,14 @@ for x in docker jq rg od; do command -v "$x" >/dev/null || fail "missing depende
 docker info >/dev/null || fail 'Docker unavailable'
 [[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
 
-# The gate owns the release candidate image and uses the engine's immutable ID
-# as its local canonical digest.  Compose receives no tag-only image name.
+# The gate owns the release candidate image and publishes it through a private,
+# loopback-only registry so clean Linux engines get a real repository digest.
 docker build -t "$image_tag" "$root" >"$dir/build.log" 2>&1 || fail 'production server image build failed'
 image_id=$(docker image inspect --format '{{.Id}}' "$image_tag")
 [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || fail 'built server image has no canonical digest'
-image_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image_tag")
-[[ "$image_ref" =~ ^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$ ]] || fail 'engine did not publish canonical repository digest for built server image'
+local_registry_publish "$image_tag" "$suffix" || fail 'local registry did not publish canonical server digest'
+image_ref=$local_registry_image_ref
+[[ "$image_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-gate-${suffix}@sha256:[a-f0-9]{64}$ ]] || fail 'local registry returned malformed canonical repository digest'
 docker image inspect "$image_ref" >/dev/null 2>&1 || fail 'engine did not resolve canonical server digest'
 record "server_image=$image_ref"
 

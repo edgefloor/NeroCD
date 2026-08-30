@@ -4,6 +4,7 @@
 set -Eeuo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$root/scripts/local-image-registry.sh"
 evidence=/tmp/nerocd-backup-restore.txt
 dir=$(mktemp -d /tmp/nerocd-backup-restore.XXXXXXXX)
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
@@ -24,6 +25,7 @@ cleanup(){
   set +e
   docker rm -f "$tls_proxy" "$source_server" "$target_server" "$source" "$target" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  local_registry_cleanup
   docker image rm -f "$image_tag" >/dev/null 2>&1 || true
   rm -rf -- "$dir"
   [[ "$pass" == true && $code -eq 0 ]] && record 'PASS: source-to-empty-target backup/restore gate'
@@ -37,8 +39,10 @@ for x in docker jq od rg bun openssl; do command -v "$x" >/dev/null || fail "mis
 docker info >/dev/null || fail 'Docker unavailable'
 
 docker build -t "$image_tag" "$root" >"$dir/build.log" 2>&1 || fail 'backup tool image build failed'
-image_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image_tag")
-[[ "$image_ref" =~ ^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$ ]] || fail 'local build has no canonical image digest reference'
+local_registry_publish "$image_tag" "$suffix" || fail 'local registry did not publish canonical backup image digest'
+image_ref=$local_registry_image_ref
+[[ "$image_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-gate-${suffix}@sha256:[a-f0-9]{64}$ ]] || fail 'local registry returned malformed canonical backup image digest'
+docker image inspect "$image_ref" >/dev/null 2>&1 || fail 'engine did not resolve canonical backup digest'
 docker pull caddy:2.10.2-alpine >"$dir/tls-proxy-pull.log" 2>&1 || fail 'TLS proxy image pull failed'
 tls_proxy_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' caddy:2.10.2-alpine)
 [[ "$tls_proxy_ref" =~ ^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$ ]] || fail 'TLS proxy image has no canonical digest reference'

@@ -6,6 +6,7 @@
 set -Eeuo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$root/scripts/local-image-registry.sh"
 evidence=/tmp/nerocd-backup-scheduler.txt
 work=$(mktemp -d /tmp/nerocd-backup-scheduler.XXXXXXXX)
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
@@ -25,6 +26,7 @@ cleanup(){
   set +e
   docker rm -f "$schedule_a" "$schedule_b" "$source" "$target" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  local_registry_cleanup
   docker image rm -f "$image_tag" >/dev/null 2>&1 || true
   rm -rf -- "$work"
   [[ "$pass" == true && $code -eq 0 ]] && record 'PASS: durable local backup scheduler gate'
@@ -37,8 +39,10 @@ trap 'fail "unexpected command failure at line $LINENO"' ERR
 for command in docker jq od; do command -v "$command" >/dev/null || fail "missing dependency $command"; done
 docker info >/dev/null || fail 'Docker unavailable'
 docker build -t "$image_tag" "$root" >"$work/build.log" 2>&1 || fail 'scheduler image build failed'
-image_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image_tag")
-[[ "$image_ref" =~ ^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$ ]] || fail 'local image has no canonical digest reference'
+local_registry_publish "$image_tag" "$suffix" || fail 'local registry did not publish canonical scheduler image digest'
+image_ref=$local_registry_image_ref
+[[ "$image_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-gate-${suffix}@sha256:[a-f0-9]{64}$ ]] || fail 'local registry returned malformed canonical scheduler image digest'
+docker image inspect "$image_ref" >/dev/null 2>&1 || fail 'engine did not resolve canonical scheduler digest'
 docker network create "$network" >/dev/null
 
 owner="owner_$suffix"
