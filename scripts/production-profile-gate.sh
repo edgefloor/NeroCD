@@ -141,6 +141,7 @@ if [[ "${1:-}" == '--cleanup-pre-compose-test' ]]; then
   [[ $# -eq 2 ]] || { printf '%s\n' 'usage: production-profile-gate.sh --cleanup-pre-compose-test TRACE_FILE' >&2; exit 64; }
   cleanup_test_trace=$2
   printf 'cleanup_dir=%s\n' "$dir" >>"$cleanup_test_trace"
+  image_built=true
   local_registry_cleanup(){
     printf '%s\n' local_registry_cleanup >>"$cleanup_test_trace"
     [[ "${NEROCD_CLEANUP_TEST_MODE:-success}" != registry-cleanup-failure ]]

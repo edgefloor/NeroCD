@@ -149,7 +149,7 @@ fi
 rg -Fqx 'docker image rm registry-image' "$cleanup_trace"
 rg -Fqx 'docker rm -f registry-container' "$cleanup_trace"
 : >"$cleanup_trace"
-if PATH="$mock_bin:$PATH" NEROCD_CLEANUP_TEST_TRACE="$cleanup_trace" NEROCD_CLEANUP_TEST_MODE=registry-survivor bash -c '
+if ! PATH="$mock_bin:$PATH" NEROCD_CLEANUP_TEST_TRACE="$cleanup_trace" NEROCD_CLEANUP_TEST_MODE=registry-survivor bash -c '
   set -Eeuo pipefail
   source "$1"
   local_registry_container_id=registry-container
