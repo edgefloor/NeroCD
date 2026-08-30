@@ -51,7 +51,7 @@ stop_server() {
 
 cleanup() {
   browser_status=$?
-  trap - EXIT HUP INT TERM
+  trap - 0 HUP INT TERM
   stop_server
   if [ -n "$browser_container_id" ]; then
     docker rm -f "$browser_container_id" >/dev/null 2>&1 || true
@@ -65,7 +65,7 @@ cleanup() {
   exit "$browser_status"
 }
 
-trap cleanup EXIT
+trap cleanup 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
