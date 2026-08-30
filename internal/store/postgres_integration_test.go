@@ -1079,7 +1079,7 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 	if _, err := pg.HeartbeatRunner(ctx, runnerID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	claimExpiry, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), 10*time.Millisecond)
+	claimExpiry, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1088,7 +1088,9 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
 		}
 	}
-	time.Sleep(25 * time.Millisecond)
+	if _, err := database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, claimExpiry.Lease.ID); err != nil {
+		t.Fatal(err)
+	}
 	expiryStart := make(chan struct{})
 	expiryCancel := make(chan *httptest.ResponseRecorder, 1)
 	expiryReap := make(chan error, 1)
