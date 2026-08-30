@@ -11,67 +11,142 @@ project="nerocd-provenance-$suffix" image="nerocd-runtime-provenance:$suffix" re
 : >"$evidence"; record(){ printf '%s\n' "$*" >>"$evidence"; }; fail(){ trap - ERR; record "FAIL: $*"; printf 'runtime-provenance: %s\n' "$*" >&2; exit 1; }
 compose(){ NEROCD_RUNTIME_IMAGE="$image" NEROCD_RESOLVER_IMAGE="$resolver" NEROCD_GIT_FIXTURE_IMAGE="$gitimg" docker compose -p "$project" -f "$file" "$@"; }
 diag_emit(){ record "$*"; printf '%s\n' "$*" >&2; }
-redact_stream(){
-  sed -E \
-    -e '/PRIVATE KEY/Ic\
-[REDACTED_PRIVATE_KEY_MATERIAL]' \
-    -e 's#(postgres(ql)?|ssh)://[^[:space:]"]+#[REDACTED_URL]#Ig' \
-    -e 's#Bearer[[:space:]]+[^[:space:]"]+#[REDACTED_BEARER]#Ig' \
-    -e 's#/(secrets|git/keys)/[^[:space:]"]+#[REDACTED_PRIVATE_PATH]#Ig' \
-    -e 's#((token|password|credential|secret|fence)[[:alnum:]_.-]*[[:space:]]*[:=][[:space:]]*)[^,}[:space:]"]+#\1[REDACTED]#Ig' \
-    -e 's#((token|password|credential|secret|fence)[[:alnum:]_.-]*[[:space:]]+)[^,}[:space:]"]+#\1[REDACTED]#Ig'
+active_buildx_builder(){
+  local parsed count name
+  parsed=$(jq -sr '
+    if length == 0 or any(.[]; type != "object" or (.Current | type) != "boolean" or (.Name | type) != "string")
+    then error("invalid buildx listing")
+    else [.[] | select(.Current == true) | .Name] | unique | .[]
+    end
+  ') || return 2
+  count=$(awk 'NF { count++ } END { print count + 0 }' <<<"$parsed")
+  [[ $count -gt 0 ]] || return 3
+  [[ $count -eq 1 ]] || return 4
+  name=$(awk 'NF { print; exit }' <<<"$parsed")
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || return 5
+  printf '%s' "$name"
 }
-safe_log_tail(){
-  local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" safe="$dir/diagnostic-$1.safe"
+engine_builder_running(){
+  local candidate=$1 inspect_file=$2 driver statuses
+  docker buildx inspect "$candidate" >"$inspect_file" 2>"$inspect_file.err" || return 2
+  driver=$(awk '$1 == "Driver:" { print $2 }' "$inspect_file")
+  [[ "$driver" == docker ]] || return 3
+  statuses=$(awk '$1 == "Status:" { print $2 }' "$inspect_file" | sort -u)
+  [[ "$statuses" == running ]] || return 4
+}
+select_engine_builder(){
+  local active rc listing="$dir/buildx-ls.json"
+  engine_builder=''; builder_source=''; builder_diagnostic=selection_started
+  if engine_builder_running default "$dir/buildx-default.inspect"; then
+    engine_builder=default; builder_source=default; builder_diagnostic=default_selected
+    return 0
+  fi
+  if ! docker buildx ls --format '{{json .}}' >"$listing" 2>"$dir/buildx-ls.err"; then
+    builder_diagnostic=active_list_unavailable
+    return 1
+  fi
+  if active=$(active_buildx_builder <"$listing" 2>"$dir/buildx-parse.err"); then rc=0; else rc=$?; fi
+  case "$rc" in
+    0) ;;
+    2) builder_diagnostic=active_list_invalid; return 1 ;;
+    3) builder_diagnostic=active_builder_missing; return 1 ;;
+    4) builder_diagnostic=active_builder_ambiguous; return 1 ;;
+    5) builder_diagnostic=active_builder_unsafe; return 1 ;;
+    *) builder_diagnostic=active_list_invalid; return 1 ;;
+  esac
+  if engine_builder_running "$active" "$dir/buildx-active.inspect"; then
+    rc=0
+  else
+    rc=$?
+    case "$rc" in
+      2) builder_diagnostic=active_builder_unavailable ;;
+      3) builder_diagnostic=active_builder_wrong_driver ;;
+      4) builder_diagnostic=active_builder_not_running ;;
+      *) builder_diagnostic=active_builder_unavailable ;;
+    esac
+    return 1
+  fi
+  engine_builder=$active; builder_source=active; builder_diagnostic=active_selected
+}
+classify_log(){
+  local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
   if [[ ! -f "$source" ]] || ! tail -n 80 "$source" 2>/dev/null | tail -c 16384 >"$raw"; then
-    diag_emit "diagnostic_${label}=unavailable"
-    return
+    available=false
+    class=unavailable
+  else
+    lines=$(awk 'END { print NR + 0 }' "$raw")
+    bytes=$(wc -c <"$raw" | tr -d '[:space:]')
+    if [[ $bytes -eq 0 ]]; then
+      class=empty
+    else
+      case "$label" in
+        resolver_build)
+          if grep -Eiq 'failed to resolve source metadata|pull access denied|repository does not exist' "$raw"; then class=source_metadata_resolution
+          elif grep -Eiq 'no such image|not found|manifest unknown' "$raw"; then class=base_unavailable
+          elif grep -Eiq 'failed to build|failed to solve|error:' "$raw"; then class=build_failed
+          elif grep -Eq '(^|[[:space:]])DONE([[:space:]]|$)' "$raw"; then class=build_progress
+          fi
+          ;;
+        runner_ready)
+          if grep -Eiq 'failed|error' "$raw"; then class=runner_start_failed
+          elif grep -Eq ' (Started|Starting|Created|Creating)[[:space:]]*$' "$raw"; then class=runner_start_progress
+          fi
+          ;;
+        proxy)
+          if grep -Eiq 'listen[^[:alnum:]]+failed|address already in use' "$raw"; then class=proxy_listener_failed
+          fi
+          ;;
+        runner)
+          if grep -Eq 'provenance stage=git_fetch status=failed_' "$raw"; then class=git_fetch_failed
+          elif grep -Eq 'provenance stage=docker_compose_config status=failed_' "$raw"; then class=compose_config_failed
+          elif grep -Eq 'provenance stage=resolve status=start|"event":"claimed_run"' "$raw"; then class=runner_activity
+          fi
+          ;;
+      esac
+    fi
   fi
-  if grep -Eiq 'PRIVATE[[:space:]]+KEY|^[A-Za-z0-9+/]{40,}={0,2}$|[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.' "$raw"; then
-    diag_emit "diagnostic_${label}=unavailable"
-    return
-  fi
-  if ! redact_stream <"$raw" | tail -c 16384 >"$safe"; then
-    diag_emit "diagnostic_${label}=unavailable"
-    return
-  fi
-  if grep -Eiq '(postgres(ql)?|ssh)://|Bearer[[:space:]]+[^[]|PRIVATE[[:space:]]+KEY|/(secrets|git/keys)/|((token|password|credential|secret|fence)[[:alnum:]_.-]*[[:space:]]*([:=][[:space:]]*|[[:space:]]+))[^[]' "$safe"; then
-    diag_emit "diagnostic_${label}=unavailable"
-    return
-  fi
-  diag_emit "diagnostic_${label}_begin=true"
-  while IFS= read -r line || [[ -n "$line" ]]; do diag_emit "$line"; done <"$safe"
-  diag_emit "diagnostic_${label}_end=true"
+  diag_emit "diagnostic_${label}=$(jq -cn --argjson available "$available" --argjson lines "$lines" --argjson bytes "$bytes" --arg class "$class" '{log_available:$available,line_count:$lines,byte_count:$bytes,class:$class}')"
 }
 diagnose(){
   local output rc runner_id state_file="$dir/diagnostic-runner-state.json"
   set +e
   diag_emit 'diagnostic_begin=true'
+  diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
   output=$(compose ps --all --format json 2>"$dir/diagnostic-compose-status.err")
   rc=$?
   if [[ $rc -eq 0 ]]; then
-    output=$(jq -cs '[.[] | if type == "array" then .[] else . end | {Service,Name,State,Health,ExitCode}] | sort_by(.Service,.Name)' <<<"$output" 2>/dev/null)
+    output=$(jq -cs '
+      def allowed_service: . == "postgres" or . == "server" or . == "proxy" or . == "git" or . == "runner";
+      def state: if . == "created" or . == "running" or . == "paused" or . == "restarting" or . == "removing" or . == "exited" or . == "dead" then . else "unknown" end;
+      def health: if . == "healthy" or . == "unhealthy" or . == "starting" then . elif . == "" or . == null then "none" else "unknown" end;
+      [.[] | if type == "array" then .[] else . end
+        | select((.Service | type) == "string" and (.Service | allowed_service))
+        | {service:.Service,state:(.State | state),health:(.Health | health),exit_code:(if (.ExitCode | type) == "number" then .ExitCode else null end)}]
+      | sort_by(.service)
+    ' <<<"$output" 2>/dev/null)
     rc=$?
   fi
-  if [[ $rc -eq 0 ]] && output=$(printf '%s' "$output" | redact_stream); then
-    diag_emit "compose_status=$output"
-  else
+  if [[ $rc -eq 0 ]]; then diag_emit "compose_status=$output"; else
     diag_emit 'compose_status=unavailable'
   fi
   runner_id=$(compose ps --all --quiet runner 2>"$dir/diagnostic-runner-id.err")
   rc=$?
   if [[ $rc -eq 0 && "$runner_id" =~ ^[0-9a-f]{12,64}$ ]] && docker container inspect --format '{{json .State}}' "$runner_id" >"$state_file" 2>/dev/null; then
-    output=$(jq -c '{Status,Running,Paused,Restarting,OOMKilled,Dead,Pid,ExitCode,Error,StartedAt,FinishedAt,Health:(if .Health then {Status:.Health.Status,FailingStreak:.Health.FailingStreak} else null end)}' "$state_file" 2>/dev/null)
-    if [[ $? -eq 0 ]] && output=$(printf '%s' "$output" | redact_stream); then diag_emit "runner_state=$output"; else diag_emit 'runner_state=unavailable'; fi
+    output=$(jq -c '
+      def status: if . == "created" or . == "running" or . == "paused" or . == "restarting" or . == "removing" or . == "exited" or . == "dead" then . else "unknown" end;
+      def health: if . == "healthy" or . == "unhealthy" or . == "starting" then . else "unknown" end;
+      {status:(.Status | status),running:(.Running == true),paused:(.Paused == true),restarting:(.Restarting == true),oom_killed:(.OOMKilled == true),dead:(.Dead == true),pid:(if (.Pid | type) == "number" then .Pid else null end),exit_code:(if (.ExitCode | type) == "number" then .ExitCode else null end),error_present:((.Error | type) == "string" and (.Error | length) > 0),health:(if .Health then {status:(.Health.Status | health),failing_streak:(if (.Health.FailingStreak | type) == "number" then .Health.FailingStreak else null end)} else null end)}
+    ' "$state_file" 2>/dev/null)
+    if [[ $? -eq 0 ]]; then diag_emit "runner_state=$output"; else diag_emit 'runner_state=unavailable'; fi
   elif [[ $rc -eq 0 && -z "$runner_id" ]]; then
     diag_emit 'runner_state=absent'
   else
     diag_emit 'runner_state=unavailable'
   fi
-  safe_log_tail resolver_build "$dir/resolver-build.log"
-  safe_log_tail runner_ready "$dir/runner-ready.log"
-  if compose logs --no-color --tail 80 proxy >"$dir/diagnostic-proxy.log" 2>/dev/null; then safe_log_tail proxy "$dir/diagnostic-proxy.log"; else diag_emit 'diagnostic_proxy=unavailable'; fi
-  if compose logs --no-color --tail 80 runner >"$dir/diagnostic-runner.log" 2>/dev/null; then safe_log_tail runner "$dir/diagnostic-runner.log"; else diag_emit 'diagnostic_runner=unavailable'; fi
+  classify_log resolver_build "$dir/resolver-build.log"
+  classify_log runner_ready "$dir/runner-ready.log"
+  if compose logs --no-color --tail 80 proxy >"$dir/diagnostic-proxy.log" 2>/dev/null; then classify_log proxy "$dir/diagnostic-proxy.log"; else classify_log proxy /nonexistent; fi
+  if compose logs --no-color --tail 80 runner >"$dir/diagnostic-runner.log" 2>/dev/null; then classify_log runner "$dir/diagnostic-runner.log"; else classify_log runner /nonexistent; fi
   diag_emit 'diagnostic_end=true'
 }
 cleanup(){
@@ -120,19 +195,8 @@ trap cleanup EXIT; trap 'fail "unexpected command failure line $LINENO"' ERR
 for x in docker curl jq od; do command -v "$x" >/dev/null || fail "missing $x"; done; docker info >/dev/null || fail 'Docker unavailable'
 record "source_commit=$(git -C "$root" rev-parse HEAD)"; record "project=$project"; record "docker=$(docker version --format '{{.Server.Version}}')"; record "compose=$(docker compose version --short)"
 docker buildx version >/dev/null 2>&1 || fail 'Docker Buildx unavailable'
-engine_builder=''
-current_context=$(docker context show 2>/dev/null) || fail 'Docker context unavailable'
-for candidate in default "$current_context"; do
-  [[ -n "$candidate" ]] || continue
-  if docker buildx inspect --bootstrap "$candidate" >"$dir/buildx.inspect" 2>"$dir/buildx.err" \
-    && [[ $(awk '$1 == "Driver:" {print $2}' "$dir/buildx.inspect") == docker ]] \
-    && [[ $(awk '$1 == "Status:" {print $2}' "$dir/buildx.inspect" | sort -u) == running ]]; then
-    engine_builder=$candidate
-    break
-  fi
-done
-[[ -n "$engine_builder" ]] || fail 'no running engine-backed Buildx builder'
-record "resolver_builder=$engine_builder driver=docker load=true"
+select_engine_builder || fail 'no unambiguous running engine-backed Buildx builder'
+record "resolver_builder_source=$builder_source driver=docker load=true"
 docker build --pull -t "$image" "$root" >"$dir/build.log" 2>&1 || fail 'fresh image build failed'
 docker buildx build --builder "$engine_builder" --load \
   --file "$root/acceptance/runtime-provenance/Dockerfile" \
