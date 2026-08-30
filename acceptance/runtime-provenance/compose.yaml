@@ -93,6 +93,7 @@ services:
     volumes: [runner-credential:/credentials:ro, runner-journal:/journal, runner-workspace:/workspace, runner-secrets:/secrets:ro]
     networks: [runtime]
     read_only: true
+    tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     stop_grace_period: 2s
