@@ -34,6 +34,7 @@ browser_runtime_dir=""
 browser_runtime_link="$browser_runtime_base/nerocd-browser-${browser_run_id}"
 browser_container_id=""
 browser_server_pid=""
+browser_term_requested=false
 
 browser_postgres_ready() {
   docker exec "$browser_container_id" pg_isready -h 127.0.0.1 -U nerocd -d "$browser_database" >/dev/null 2>&1
@@ -67,7 +68,7 @@ cleanup() {
   case "$browser_runtime_dir" in
     "$browser_runtime_base"/nerocd-browser-"$browser_port"-"$browser_run_id".*) rm -rf -- "$browser_runtime_dir" ;;
   esac
-  if [ "$browser_status" -ne 0 ]; then
+  if [ "$browser_status" -ne 0 ] && { [ "$browser_term_requested" != true ] || [ "$browser_stage" != server ] || [ "$browser_status" -ne 143 ]; }; then
     printf 'browser server failed: stage=%s status=%s\n' "$browser_stage" "$browser_status" >&2
   fi
   exit "$browser_status"
@@ -76,7 +77,7 @@ cleanup() {
 trap cleanup 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'browser_term_requested=true; exit 143' TERM
 
 browser_stage=runtime-setup
 browser_runtime_dir=$(mktemp -d "$browser_runtime_base/nerocd-browser-${browser_port}-${browser_run_id}.XXXXXXXX")
