@@ -30,7 +30,7 @@ awk -v expected="$expected" '
   $0 == expected {
     quoted_count++
   }
-  in_services && service in required && /^    <<:/ {
+  in_services && service in required && /^    <<[[:space:]]*:/ {
     merge_keys[service]++
   }
   in_services && service in required && /^    image:[[:space:]]/ {
