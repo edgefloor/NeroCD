@@ -45,8 +45,11 @@ jobs:
         with:
           bun-version: 1.3.6
 
+      - name: Install web dependencies
+        run: cd web/app && bun install --frozen-lockfile
+
       - name: Install browser dependencies
-        run: cd web/app && bunx playwright install --with-deps chromium
+        run: cd web/app && bunx --no-install playwright install --with-deps chromium
 
       - name: Run checks
         run: make check
