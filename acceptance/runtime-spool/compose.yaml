@@ -81,6 +81,8 @@ services:
       proxy:
         condition: service_started
     entrypoint: ["/bin/sh", "/fixtures/runner-wrapper.sh"]
+    environment:
+      NEROCD_MODE: development
     command: ["nerocd", "runner", "--server", "http://proxy:8081", "--credential-file", "/credentials/token", "--journal-dir", "/journal", "--id", "runner_spool", "--tags", "runtime-spool", "--capabilities", "shell", "--poll-interval", "1s", "--cancel-poll-interval", "1s", "--work-dir", "/work"]
     read_only: true
     tmpfs: ["/tmp", "/work"]

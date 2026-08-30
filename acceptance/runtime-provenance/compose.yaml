@@ -84,6 +84,7 @@ services:
     image: ${NEROCD_RESOLVER_IMAGE:?set NEROCD_RESOLVER_IMAGE}
     depends_on: {proxy: {condition: service_started}, git: {condition: service_started}}
     entrypoint: [nerocd, runner]
+    environment: {NEROCD_MODE: development}
     command: [--server, http://proxy:8081, --credential-file, /credentials/token, --journal-dir, /journal, --secret-root, /secrets/root, --id, runner_provenance, --tags, provenance-runtime, --capabilities, compose-deploy, --poll-interval, 1s, --work-dir, /workspace]
     user: "10001:10001"
     volumes: [runner-credential:/credentials:ro, runner-journal:/journal, runner-workspace:/workspace, runner-secrets:/secrets:ro]

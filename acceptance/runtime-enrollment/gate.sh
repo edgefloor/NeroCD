@@ -152,7 +152,7 @@ record "consume_race=one_bound_runner one_safe_audit loser_rejected lost_commit_
 # enrollment files may reach the consume endpoint.
 consume_before_negative=$(jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0' <<<"$(proxy_status)")
 negative_runner() {
-  if docker exec --user 10001:10001 "$loser_cid" nerocd runner \
+  if docker exec --user 10001:10001 -e NEROCD_MODE=development "$loser_cid" nerocd runner \
     --server http://proxy:8081 --enrollment-file /identity/enrollment \
     --credential-file /identity/negative-credential --journal-dir /journal \
     --id runner_enrollment_runtime --tags enrollment-runtime --capabilities shell --once \

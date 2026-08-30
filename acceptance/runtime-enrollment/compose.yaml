@@ -69,7 +69,7 @@ services:
     image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
     depends_on: { proxy: { condition: service_started } }
     entrypoint: ["/bin/sh", "/fixtures/runner-wrapper.sh"]
-    environment: { RUNNER_SLOT: "a" }
+    environment: { RUNNER_SLOT: "a", NEROCD_MODE: development }
     read_only: true
     tmpfs: ["/tmp", "/work"]
     volumes:
@@ -85,7 +85,7 @@ services:
     image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
     depends_on: { proxy: { condition: service_started } }
     entrypoint: ["/bin/sh", "/fixtures/runner-wrapper.sh"]
-    environment: { RUNNER_SLOT: "b" }
+    environment: { RUNNER_SLOT: "b", NEROCD_MODE: development }
     read_only: true
     tmpfs: ["/tmp", "/work"]
     volumes:
