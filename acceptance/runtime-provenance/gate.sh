@@ -68,6 +68,83 @@ select_engine_builder(){
   fi
   engine_builder=$active; builder_source=active; builder_diagnostic=active_selected
 }
+parse_replay_snapshot(){
+  local status=$1
+  jq -er '
+    def counter:
+      type == "number" and . >= 0 and . == floor;
+    def trace_envelope:
+      "^(?<timestamp>[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?Z) (?<event>[^[:cntrl:]]{1,512})$";
+    def trace_event:
+      if test(trace_envelope) then capture(trace_envelope).event else error("invalid trace envelope") end;
+    if type != "object" or
+       (.lost_provenance_responses | counter | not) or
+       (.requests | type) != "object" or
+       ((.requests["/api/v1/runners/deployments/provenance"] // 0) | counter | not) or
+       (.trace | type) != "array" or
+       (.trace | length) == 0 or
+       (all(.trace[]; type == "string") | not)
+    then error("invalid replay snapshot")
+    else
+      .lost_provenance_responses as $lost |
+      (.requests["/api/v1/runners/deployments/provenance"] // 0) as $posts |
+      .trace as $trace |
+      [$trace[] | trace_event] as $events |
+      [range(0; $events | length) | select($events[.] == "committed-response-lost:provenance")] as $lostMarkers |
+      if ($lostMarkers | length) == 1 then
+        $lostMarkers[0] as $lostIndex |
+        [range($lostIndex + 1; $events | length) | select($events[.] == "response:/api/v1/runners/deployments/provenance:200")] as $replayResponses |
+        (($replayResponses | length) > 0) as $ordered |
+        (if $ordered then
+           $replayResponses[0] as $replayIndex |
+           ([range($lostIndex + 1; $replayIndex) | select($events[.] | test("^response:/api/v1/runners/(heartbeat|claim):"))] | length) == 0
+         else
+           false
+         end) as $betweenClean |
+        [$lost, $posts, ($trace | length), ($lostMarkers | length), $ordered, $betweenClean] | @tsv
+      else
+        [$lost, $posts, ($trace | length), ($lostMarkers | length), false, false] | @tsv
+      end
+    end
+  ' <<<"$status" 2>/dev/null
+}
+replay_snapshot_converged(){
+  local fields=$1 journal_length=$2 lost posts trace_count marker_count ordered between_clean
+  IFS=$'\t' read -r lost posts trace_count marker_count ordered between_clean <<<"$fields"
+  [[ "$journal_length" == 0 && "$lost" == 1 && "$posts" =~ ^[0-9]+$ && "$posts" -ge 2 && "$trace_count" =~ ^[1-9][0-9]*$ && "$marker_count" == 1 && "$ordered" == true && "$between_clean" == true ]]
+}
+replay_reconciliation_selftest(){
+  local fields
+  if ! fields=$(parse_replay_snapshot '{"lost_provenance_responses":1,"requests":{"/api/v1/runners/deployments/provenance":2},"trace":["2026-08-31T12:00:00Z control:drop-provenance-armed","2026-08-31T12:00:00.123456789Z committed-response-lost:provenance","2026-08-31T12:00:01Z response:/api/v1/runners/deployments/provenance:200"]}'); then
+    return 1
+  fi
+  replay_snapshot_converged "$fields" 0 || return 1
+  if replay_snapshot_converged "$fields" 1; then
+    return 1
+  fi
+  for status in \
+    '{"lost_provenance_responses":1,"requests":{"/api/v1/runners/deployments/provenance":2},"trace":["2026-08-31T12:00:00Z committed-response-lost:provenance"]}' \
+    '{"lost_provenance_responses":1,"requests":{"/api/v1/runners/deployments/provenance":2},"trace":["2026-08-31T12:00:00Z response:/api/v1/runners/deployments/provenance:200","2026-08-31T12:00:01Z committed-response-lost:provenance"]}' \
+    '{"lost_provenance_responses":1,"requests":{"/api/v1/runners/deployments/provenance":2},"trace":["2026-08-31T12:00:00Z committed-response-lost:provenance","2026-08-31T12:00:01Z committed-response-lost:provenance","2026-08-31T12:00:02Z response:/api/v1/runners/deployments/provenance:200"]}'; do
+    if fields=$(parse_replay_snapshot "$status") && replay_snapshot_converged "$fields" 0; then
+      return 1
+    fi
+  done
+  for status in \
+    '{"lost_provenance_responses":1,"requests":{"/api/v1/runners/deployments/provenance":2},"trace":[]}' \
+    '{"lost_provenance_responses":1,"requests":{"/api/v1/runners/deployments/provenance":2},"trace":"not-an-array"}' \
+    '{"lost_provenance_responses":1,"requests":{"/api/v1/runners/deployments/provenance":2},"trace":["committed-response-lost:provenance"]}' \
+    '{"lost_provenance_responses":1,"requests":{"/api/v1/runners/deployments/provenance":2},"trace":["2026-13-31T12:00:00Z committed-response-lost:provenance"]}'; do
+    if parse_replay_snapshot "$status" >/dev/null 2>&1; then
+      return 1
+    fi
+  done
+  return 0
+}
+selftest_cleanup(){
+  [[ "$dir" =~ ^/tmp/nerocd-runtime-provenance\.[A-Za-z0-9]{8}$ && -d "$dir" && ! -L "$dir" ]] || return 1
+  rm -rf -- "$dir"
+}
 classify_log(){
   local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
   if [[ ! -f "$source" ]] || ! tail -n 80 "$source" 2>/dev/null | tail -c 16384 >"$raw"; then
@@ -149,6 +226,16 @@ diagnose(){
   if compose logs --no-color --tail 80 runner >"$dir/diagnostic-runner.log" 2>/dev/null; then classify_log runner "$dir/diagnostic-runner.log"; else classify_log runner /nonexistent; fi
   diag_emit 'diagnostic_end=true'
 }
+if [[ "${NEROCD_RUNTIME_PROVENANCE_RECONCILIATION_SELFTEST:-}" == 1 ]]; then
+  if ! replay_reconciliation_selftest; then
+    selftest_cleanup || true
+    printf 'runtime-provenance: reconciliation selftest failed\n' >&2
+    exit 1
+  fi
+  selftest_cleanup || { printf 'runtime-provenance: reconciliation selftest cleanup failed\n' >&2; exit 1; }
+  printf 'runtime-provenance: reconciliation selftest passed\n'
+  exit 0
+fi
 cleanup(){
   local original=$? final cleanup_complete=true output rc candidate error_file="$dir/cleanup-query.err"
   trap - ERR
@@ -259,23 +346,10 @@ if ! compose exec -T -e NEROCD_GIT_IP="$git_ip" runner sh -ec '
 record 'runner_preflight=actual_uid_tools_ssh_fetch_compose_config'
 docker pause "$runner_cid" >/dev/null || fail 'runner pause before deployment A'
 resolve(){ local label=$1 target_env=${2:-$env_id}; code=$(http POST "$base/api/v1/revisions" "$admin" "$(jq -cn --arg s "$svc" '{service_id:$s,requested_ref:"main"}')" "$dir/rev-$label.json"); [[ $code == 201 ]] || { record "revision_status=$code"; fail "revision $label"; }; rev=$(jq -er .id "$dir/rev-$label.json"); code=$(http POST "$base/api/v1/deployments" "$admin" "$(jq -cn --arg e "$target_env" --arg r "$rev" --arg k "runtime-$label" '{environment_id:$e,desired_revision_id:$r,idempotency_key:$k}')" "$dir/deploy-$label.json"); [[ $code == 201 ]] || { record "deployment_status=$code"; fail "deployment $label"; }; echo "$rev"; }
-control_call POST provenance-hold/on >/dev/null; control_call POST drop-provenance >/dev/null; proxy_before=$(control_call GET status); rev_a=$(resolve a); docker unpause "$runner_cid" >/dev/null || fail 'runner unpause for deployment A'
+control_call POST provenance-hold/on >/dev/null; control_call POST drop-provenance >/dev/null; rev_a=$(resolve a); docker unpause "$runner_cid" >/dev/null || fail 'runner unpause for deployment A'
 jvol=$(docker volume ls -q --filter label=com.docker.compose.project=$project --filter label=com.docker.compose.volume=runner-journal | head -1); [[ -n "$jvol" ]] || fail 'journal volume missing'; deadline=$((SECONDS+45)); held=false; while ((SECONDS<deadline)); do state=$(control_call GET status); if [[ $(jq -r .held_provenance_requests <<<"$state") -ge 1 ]]; then held=true; break; fi; sleep .25; done; [[ "$held" == true ]] || fail 'runner did not journal and reach held provenance request'; journal_exists=false; deadline=$((SECONDS+10)); while ((SECONDS<deadline)); do if docker run --rm --network none -v "$jvol:/j:ro" "$gitimg" sh -ec 'test -f /j/journal.json'; then journal_exists=true; break; fi; sleep .25; done; [[ "$journal_exists" == true ]] || fail 'journal.json was not created before provenance send'; docker run --rm --network none -v "$jvol:/j:ro" "$gitimg" cat /j/journal.json >"$dir/journal-pending.json"; jq -e '(.provenance|length)==1' "$dir/journal-pending.json" >/dev/null || fail 'journal did not contain exactly one pending provenance record'; control_call POST provenance-hold/off >/dev/null
-compose stop runner >/dev/null; before=$(sha256sum "$dir/journal-pending.json" | awk '{print $1}'); compose start runner >/dev/null; deadline=$((SECONDS+60)); replayed=false; state=''; last_status=unavailable; last_lost=unavailable; last_posts=unavailable; last_journal=unavailable; while ((SECONDS<deadline)); do
-  if state=$(control_call GET status); then
-    if replay_fields=$(jq -er '
-      if (.lost_provenance_responses | type) != "number" or (.lost_provenance_responses < 0) or (.lost_provenance_responses != (.lost_provenance_responses | floor)) or (.requests | type) != "object" or ((.requests["/api/v1/runners/deployments/provenance"] // 0) | type) != "number" or ((.requests["/api/v1/runners/deployments/provenance"] // 0) < 0) or ((.requests["/api/v1/runners/deployments/provenance"] // 0) != ((.requests["/api/v1/runners/deployments/provenance"] // 0) | floor)) then error("invalid replay status")
-      else [ .lost_provenance_responses, (.requests["/api/v1/runners/deployments/provenance"] // 0) ] | @tsv
-      end
-    ' <<<"$state" 2>/dev/null); then
-      IFS=$'\t' read -r lost posts <<<"$replay_fields"
-      last_status=valid; last_lost=$lost; last_posts=$posts
-    else
-      last_status=invalid
-    fi
-  else
-    last_status=unavailable
-  fi
+compose stop runner >/dev/null; before=$(sha256sum "$dir/journal-pending.json" | awk '{print $1}'); compose start runner >/dev/null; deadline=$((SECONDS+60)); replayed=false; state=''; last_status=unavailable; last_lost=unavailable; last_posts=unavailable; last_trace=unavailable; last_markers=unavailable; last_ordered=false; last_between_clean=false; last_journal=unavailable; while ((SECONDS<deadline)); do
+  last_status=unavailable; last_lost=unavailable; last_posts=unavailable; last_trace=unavailable; last_markers=unavailable; last_ordered=false; last_between_clean=false
   if docker run --rm --network none -v "$jvol:/j:ro" "$gitimg" cat /j/journal.json >"$dir/journal-replay.json" 2>/dev/null; then
     if pending_count=$(jq -er 'if (.provenance | type) == "array" then (.provenance | length) else error("invalid provenance journal") end' "$dir/journal-replay.json" 2>/dev/null); then
       last_journal=$pending_count
@@ -285,26 +359,25 @@ compose stop runner >/dev/null; before=$(sha256sum "$dir/journal-pending.json" |
   else
     last_journal=unavailable
   fi
-  if [[ "$last_status" == valid && "$last_lost" == 1 && "$last_posts" -ge 2 && "$last_journal" == 0 ]]; then
-    replayed=true
-    break
+  if state=$(control_call GET status); then
+    if replay_fields=$(parse_replay_snapshot "$state"); then
+      IFS=$'\t' read -r last_lost last_posts last_trace last_markers last_ordered last_between_clean <<<"$replay_fields"
+      last_status=valid
+      if replay_snapshot_converged "$replay_fields" "$last_journal"; then
+        replayed=true
+        break
+      fi
+    else
+      last_status=invalid
+    fi
+  else
+    last_status=unavailable
   fi
   sleep .5
 done
-record "replay_reconciliation=status=$last_status lost_provenance_responses=$last_lost provenance_posts=$last_posts journal_provenance_length=$last_journal"
+diag_emit "replay_reconciliation=status=$last_status lost_provenance_responses=$last_lost provenance_posts=$last_posts trace_count=$last_trace lost_marker_count=$last_markers ordered_replay=$last_ordered no_heartbeat_claim_between=$last_between_clean journal_provenance_length=$last_journal"
 [[ "$replayed" == true ]] || fail 'lost provenance response did not replay and drain before deadline'
-if trace=$(jq -er 'if (.trace | type) == "array" and all(.trace[]; type == "string") then .trace[] else error("invalid replay trace") end' <<<"$state" 2>/dev/null); then
-  :
-else
-  record 'replay_trace=invalid'
-  fail 'proxy trace was malformed after provenance replay'
-fi
-lost_line=$(awk '/committed-response-lost:provenance/ { print NR; exit }' <<<"$trace")
-replay_line=$(awk '/response:\/api\/v1\/runners\/deployments\/provenance:200/ { line = NR } END { if (line) print line }' <<<"$trace")
-[[ -n "$lost_line" && -n "$replay_line" && "$replay_line" -gt "$lost_line" ]] || fail 'proxy trace lacks ordered second provenance replay'
-between_lost_and_replay=$(sed -n "$((lost_line+1)),$((replay_line-1))p" <<<"$trace")
-! grep -Eq 'response:/api/v1/runners/(heartbeat|claim):' <<<"$between_lost_and_replay" || fail 'heartbeat or claim occurred before replay reconciliation'
-record "replay_posts=$last_posts ordered_before_heartbeat_claim=true journal_pending=0"
+record "replay_posts=$last_posts ordered_before_heartbeat_claim=$last_between_clean journal_pending=$last_journal"
 row=$(compose exec -T postgres psql -U nerocd -d nerocd -Atc "select git_commit,compose_hash,array_to_string(image_digests,','),content_identity,provenance_state from revisions where id='$rev_a'"); origin_a=$(docker run --rm --network none -v "$gitvol:/git:ro" "$gitimg" sh -ec 'git --git-dir=/git/repo.git rev-parse refs/heads/main'); [[ "$origin_a" =~ ^[0-9a-f]{40,64}$ ]] || fail 'origin A is not a full commit'; IFS='|' read -r a_commit a_hash a_digests a_identity a_state <<<"$row"; [[ "$a_commit" == "$origin_a" && "$a_hash" =~ ^sha256:[0-9a-f]{64}$ && "$a_digests" =~ ^[a-z0-9][a-z0-9._/:@-]*@sha256:[0-9a-f]{64}(,[a-z0-9][a-z0-9._/:@-]*@sha256:[0-9a-f]{64})*$ && "$a_identity" == "$a_commit:$a_hash" && "$a_state" == resolved ]] || fail 'A provenance was not canonical exact evidence'; a_receipts=$(compose exec -T postgres psql -U nerocd -d nerocd -Atc "select count(*) from provenance_resolutions where revision_id='$rev_a'"); a_audits=$(compose exec -T postgres psql -U nerocd -d nerocd -Atc "select count(*) from audit_events where target_id=(select id from deployments where desired_revision_id='$rev_a') and action='runner.deployment.provenance.resolve'"); [[ "$a_receipts" == 1 && "$a_audits" == 1 ]] || fail 'A replay did not converge to one receipt/audit'; record "A=$row receipt=$a_receipts audit=$a_audits journal_before=$before"
 origin_b=$(compose run --rm --no-deps git_advance | tail -1); [[ "$origin_b" =~ ^[0-9a-f]{40,64}$ && "$origin_a" != "$origin_b" ]] || fail 'fixture A/B refs are not distinct full commits'; record "fixture_A=$origin_a fixture_B=$origin_b"
 env_b=$(jq -cn --arg svc "$svc" '{service_id:$svc,name:"runtime-b",runner_selector:["provenance-runtime"],compose_project:"must-not-exist-b",timeout_seconds:60,rollback_safe:true,secret_bindings:[{name:"git",provider:"runner_file",reference:"cred_git_deploy",target:"env:GIT_SSH_KEY",required:true,version:"v1",fingerprint:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}'); code=$(http POST "$base/api/v1/environments" "$admin" "$env_b" "$dir/env-b.json"); [[ $code == 201 ]] || fail 'environment B create'; env_b_id=$(jq -er .id "$dir/env-b.json")
