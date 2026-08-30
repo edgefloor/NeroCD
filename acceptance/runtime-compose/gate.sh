@@ -95,7 +95,7 @@ runner_terminal_class(){
   local source=$1
   if [[ ! -f "$source" ]]; then printf '%s' unavailable
   elif grep -Eq 'provenance stage=docker_compose_config status=failed_' "$source"; then printf '%s' config_failure
-  elif grep -Eq 'provenance stage=(git_|ssh_)' "$source" && grep -Eq 'status=failed_' "$source"; then printf '%s' provenance_failure
+  elif grep -Eq 'provenance stage=(git_|ssh_).*status=failed_' "$source"; then printf '%s' provenance_failure
   elif grep -Eq 'status=failed_(image_reference|image_unavailable|image_access)_exit_-?[0-9]+$' "$source"; then printf '%s' image_failure
   elif grep -Eiq 'confirm lease authority|lease authority' "$source"; then printf '%s' authority_failure
   elif grep -Eiq 'connection refused|network is unreachable|i/o timeout|context deadline exceeded' "$source"; then printf '%s' transport_failure
@@ -245,6 +245,11 @@ JSON
 JSON
 ) || return 1
   jq -e '.[0].failure_code == "other"' <<<"$outcomes" >/dev/null || return 1
+  outcomes=$(sanitize_deployment_outcomes <<'JSON'
+[{"status":"failed","failure_code":"compose_apply_failed","health_passed":null,"rollback_child":false,"rollback_safe":true,"previous_healthy":false}]
+JSON
+) || return 1
+  [[ "$outcomes" == '[{"status":"failed","failure_code":"compose_apply_failed","health":"unknown","rollback":{"child":false,"safe":true,"previous_healthy":false,"manual_intervention":false}}]' ]] || return 1
   while IFS='|' read -r line expected; do
     printf '%s\n' "$line" >"$input"
     class=$(runner_terminal_class "$input")
@@ -257,6 +262,8 @@ confirm lease authority|authority_failure
 connection refused|transport_failure
 Authorization: Bearer super-secret-token|unclassified
 CASES
+  printf '%s\n' 'provenance stage=git_fetch status=completed' 'provenance stage=resolve status=failed_image_unavailable_exit_1' >"$input"
+  [[ $(runner_terminal_class "$input") == image_failure ]] || return 1
   outcomes=$(sanitize_deployment_outcomes <<'JSON'
 [{"status":"failed","failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true}]
 JSON
