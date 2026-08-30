@@ -3,6 +3,7 @@
 # create deployment objects; psql below is read-only acceptance evidence.
 set -Eeuo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+source "$root/scripts/local-image-registry.sh"
 file="$root/acceptance/runtime-compose/compose.yaml" evidence=/tmp/nerocd-compose-runtime.txt
 runtime_profile=${NEROCD_RUNTIME_PROFILE:-development}
 case "$runtime_profile" in development|production) ;; *) printf 'runtime-compose: invalid NEROCD_RUNTIME_PROFILE\n' >&2; exit 2 ;; esac
@@ -12,6 +13,8 @@ suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 project="nerocd-compose-$suffix" image="nerocd-compose-runtime:$suffix" runner_image="nerocd-compose-runner:$suffix" git_image="nerocd-compose-git:$suffix"
 fixture_a="nerocd-compose-fixture-a:$suffix" fixture_b="nerocd-compose-fixture-b:$suffix" fixture_c="nerocd-compose-fixture-c:$suffix" pass=false
 fixture_a_ref=$fixture_a fixture_b_ref=$fixture_b fixture_c_ref=$fixture_c socket_gid=0
+fixture_registry_container_id='' fixture_registry_port='' fixture_registry_diagnostic=not_started
+fixture_a_registry_tag='' fixture_b_registry_tag='' fixture_c_registry_tag=''
 cleanup_helper_image='alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412'
 runner_workdir="$dir/runner-workspace"; runner_secret_root="$dir/runner-secrets"; mkdir -m 0700 "$runner_workdir" "$runner_secret_root"; export NEROCD_RUNTIME_WORKDIR="$runner_workdir" NEROCD_RUNTIME_SECRET_ROOT="$runner_secret_root"
 : >"$evidence"; record(){ printf '%s\n' "$*" >>"$evidence"; }; fail(){ trap - ERR; record "FAIL: $*"; printf 'runtime-compose: %s\n' "$*" >&2; exit 1; }
@@ -125,6 +128,7 @@ diagnose(){
   set +e
   diag_emit 'diagnostic_begin=true'
   diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
+  diag_emit "fixture_registry=${fixture_registry_diagnostic:-not_started}"
   output=$(compose ps --all --format json 2>"$dir/diagnostic-compose-status.err")
   rc=$?
   if [[ $rc -eq 0 ]]; then
@@ -165,6 +169,176 @@ diagnose(){
   if compose logs --no-color --tail 80 runner >"$dir/diagnostic-runner.log" 2>/dev/null; then classify_log runner "$dir/diagnostic-runner.log"; else classify_log runner /nonexistent; fi
   diag_emit 'diagnostic_end=true'
 }
+start_fixture_registry(){
+  local port_line ready=false attempt
+  fixture_registry_diagnostic=start_started
+  fixture_registry_container_id=$(docker run -d \
+    --name "${project}-registry" \
+    --label "com.docker.compose.project=$project" \
+    --label "nerocd.acceptance.runtime-compose=$suffix" \
+    --cap-drop ALL --security-opt no-new-privileges --read-only \
+    --tmpfs /var/lib/registry:rw,noexec,nosuid,nodev \
+    -p 127.0.0.1::5000 "$LOCAL_REGISTRY_IMAGE" 2>"$dir/registry-start.err") || {
+      fixture_registry_diagnostic=start_failed
+      return 1
+    }
+  if [[ ! "$fixture_registry_container_id" =~ ^[a-f0-9]{64}$ ]]; then
+    fixture_registry_diagnostic=container_id_invalid
+    return 1
+  fi
+  port_line=$(docker port "$fixture_registry_container_id" 5000/tcp 2>"$dir/registry-port.err") || {
+    fixture_registry_diagnostic=port_unavailable
+    return 1
+  }
+  if [[ ! "$port_line" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})$ ]]; then
+    fixture_registry_diagnostic=port_binding_invalid
+    return 1
+  fi
+  fixture_registry_port=${BASH_REMATCH[1]}
+  if ((10#$fixture_registry_port > 65535)); then
+    fixture_registry_diagnostic=port_binding_invalid
+    return 1
+  fi
+  for attempt in 1 2 3 4 5; do
+    if curl --fail --silent --show-error --max-time 1 "http://127.0.0.1:${fixture_registry_port}/v2/" >/dev/null 2>"$dir/registry-ready.err"; then
+      ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ready" != true ]]; then
+    fixture_registry_diagnostic=readiness_failed
+    return 1
+  fi
+  fixture_registry_diagnostic=ready
+}
+repository_digest_is_member(){
+  local image=$1 repository=$2 candidate=$3 repo_digests
+  [[ "$repository" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-compose-fixture-[abc]-[a-f0-9]{12}$ ]] || return 2
+  [[ "$candidate" == "$repository@sha256:"* && "${candidate#"$repository@sha256:"}" =~ ^[a-f0-9]{64}$ ]] || return 2
+  repo_digests=$(docker image inspect --format '{{json .RepoDigests}}' "$image" 2>"$dir/registry-repodigests.err") || return 2
+  jq -e --arg candidate "$candidate" 'type == "array" and any(.[]; type == "string" and . == $candidate)' <<<"$repo_digests" >/dev/null 2>"$dir/registry-repodigests-jq.err" || {
+    [[ $? -eq 1 ]] && return 1
+    return 2
+  }
+}
+publish_fixture_digest(){
+  local source_tag=$1 label=$2 repository registry_tag source_id repo_digests resolved image_id_candidate membership_rc attempt
+  [[ "$source_tag" =~ ^nerocd-compose-fixture-[abc]:[a-f0-9]{12}$ && "$label" =~ ^[abc]$ ]] || {
+    fixture_registry_diagnostic=publish_input_invalid
+    return 1
+  }
+  repository="127.0.0.1:${fixture_registry_port}/nerocd-compose-fixture-${label}-${suffix}"
+  registry_tag="${repository}:candidate"
+  case "$label" in
+    a) fixture_a_registry_tag=$registry_tag ;;
+    b) fixture_b_registry_tag=$registry_tag ;;
+    c) fixture_c_registry_tag=$registry_tag ;;
+  esac
+  source_id=$(docker image inspect --format '{{.Id}}' "$source_tag" 2>"$dir/registry-${label}-source-inspect.err") || {
+    fixture_registry_diagnostic=source_inspect_failed
+    return 1
+  }
+  [[ "$source_id" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+    fixture_registry_diagnostic=source_id_invalid
+    return 1
+  }
+  docker tag "$source_tag" "$registry_tag" 2>"$dir/registry-${label}-tag.err" || {
+    fixture_registry_diagnostic=tag_failed
+    return 1
+  }
+  for attempt in 1 2 3 4 5; do
+    if docker push "$registry_tag" >"$dir/registry-${label}-push.log" 2>&1; then break; fi
+    if [[ "$attempt" == 5 ]]; then
+      fixture_registry_diagnostic=push_failed
+      return 1
+    fi
+    sleep 1
+  done
+  repo_digests=$(docker image inspect --format '{{json .RepoDigests}}' "$registry_tag" 2>"$dir/registry-${label}-repodigests.err") || {
+    fixture_registry_diagnostic=repodigests_unavailable
+    return 1
+  }
+  resolved=$(jq -er --arg prefix "${repository}@sha256:" '
+    if type != "array" then error("invalid")
+    else [.[] | select(type == "string" and startswith($prefix))] | unique
+      | if length == 1 then .[0] else error("ambiguous") end
+    end
+  ' <<<"$repo_digests" 2>"$dir/registry-${label}-repodigests-jq.err") || {
+    fixture_registry_diagnostic=repodigest_missing_or_ambiguous
+    return 1
+  }
+  if [[ "$resolved" != "$repository@sha256:"* || ! "${resolved#"$repository@sha256:"}" =~ ^[a-f0-9]{64}$ ]]; then
+    fixture_registry_diagnostic=repodigest_invalid
+    return 1
+  fi
+  case "$label" in
+    a) fixture_a_ref=$resolved ;;
+    b) fixture_b_ref=$resolved ;;
+    c) fixture_c_ref=$resolved ;;
+  esac
+  repository_digest_is_member "$registry_tag" "$repository" "$resolved" || {
+    fixture_registry_diagnostic=repodigest_not_member
+    return 1
+  }
+  image_id_candidate="${repository}@${source_id}"
+  if repository_digest_is_member "$registry_tag" "$repository" "$image_id_candidate"; then
+    if [[ "$image_id_candidate" != "$resolved" ]]; then
+      fixture_registry_diagnostic=image_id_membership_inconsistent
+      return 1
+    fi
+    published_fixture_image_id_distinct=false
+  else
+    membership_rc=$?
+    if [[ $membership_rc -ne 1 ]]; then
+      fixture_registry_diagnostic=image_id_membership_unavailable
+      return 1
+    fi
+    published_fixture_image_id_distinct=true
+  fi
+  docker image rm "$registry_tag" "$source_tag" >/dev/null 2>"$dir/registry-${label}-alias-remove.err" || {
+    fixture_registry_diagnostic=alias_remove_failed
+    return 1
+  }
+  local_registry_remove_image "$resolved" || {
+    fixture_registry_diagnostic=digest_cache_remove_failed
+    return 1
+  }
+  if local_registry_image_state "$resolved"; then
+    fixture_registry_diagnostic=digest_cache_remained
+    return 1
+  elif [[ "$local_registry_last_query_state" != absent ]]; then
+    fixture_registry_diagnostic=digest_cache_query_failed
+    return 1
+  fi
+  for attempt in 1 2 3 4 5; do
+    if docker pull "$resolved" >"$dir/registry-${label}-pull.log" 2>&1; then break; fi
+    if [[ "$attempt" == 5 ]]; then
+      fixture_registry_diagnostic=digest_pull_failed
+      return 1
+    fi
+    sleep 1
+  done
+  docker image inspect "$resolved" >/dev/null 2>"$dir/registry-${label}-digest-inspect.err" || {
+    fixture_registry_diagnostic=digest_resolution_failed
+    return 1
+  }
+  docker tag "$resolved" "$source_tag" 2>"$dir/registry-${label}-source-retag.err" || {
+    fixture_registry_diagnostic=source_retag_failed
+    return 1
+  }
+  published_fixture_ref=$resolved
+  published_fixture_registry_tag=$registry_tag
+  published_fixture_id=$(docker image inspect --format '{{.Id}}' "$resolved" 2>"$dir/registry-${label}-resolved-inspect.err") || {
+    fixture_registry_diagnostic=resolved_id_unavailable
+    return 1
+  }
+  [[ "$published_fixture_id" == "$source_id" ]] || {
+    fixture_registry_diagnostic=resolved_content_changed
+    return 1
+  }
+  fixture_registry_diagnostic=published
+}
 remove_project_resources(){
   local exact_project=$1 kind output rc resource cleanup_ok=true error_file="$dir/cleanup-query.err"
   [[ "$exact_project" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || { diag_emit 'cleanup_project_name_safe=false'; return 1; }
@@ -199,7 +373,14 @@ remove_project_resources(){
 }
 remove_exact_image(){
   local exact_image=$1 output rc
-  [[ "$exact_image" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || { diag_emit 'cleanup_image_name_safe=false'; return 1; }
+  if [[ "$exact_image" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+    :
+  elif [[ "$exact_image" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] && ((10#${BASH_REMATCH[1]} <= 65535)); then
+    :
+  else
+    diag_emit 'cleanup_image_name_safe=false'
+    return 1
+  fi
   output=$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=$exact_image" 2>"$dir/cleanup-image-query.err")
   rc=$?
   [[ $rc -eq 0 ]] || { diag_emit 'cleanup_exact_image_query=false'; return 1; }
@@ -219,7 +400,14 @@ cleanup(){
   if [[ $? -ne 0 ]]; then cleanup_complete=false; diag_emit 'cleanup_compose_down=false'; fi
   remove_project_resources "$project" || cleanup_complete=false
   if [[ -n "$target" ]]; then remove_project_resources "$target" || cleanup_complete=false; fi
-  for candidate in "$image" "$runner_image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" "${fixture_a_repo:-}" "${fixture_b_repo:-}" "${fixture_c_repo:-}" "${project}-proxy:latest"; do
+  if [[ -n "$fixture_registry_container_id" ]] && ! local_registry_remove_container "$fixture_registry_container_id"; then
+    cleanup_complete=false; diag_emit 'cleanup_fixture_registry_container=false'
+  fi
+  for candidate in "${fixture_a_ref:-}" "${fixture_b_ref:-}" "${fixture_c_ref:-}"; do
+    [[ -n "$candidate" ]] || continue
+    if ! local_registry_remove_image "$candidate"; then cleanup_complete=false; diag_emit 'cleanup_fixture_digest_ref=false'; fi
+  done
+  for candidate in "$image" "$runner_image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" "${fixture_a_registry_tag:-}" "${fixture_b_registry_tag:-}" "${fixture_c_registry_tag:-}" "${project}-proxy:latest"; do
     [[ -n "$candidate" ]] || continue
     remove_exact_image "$candidate" || cleanup_complete=false
   done
@@ -267,7 +455,15 @@ docker build --pull -f "$root/acceptance/runtime-compose/GitDockerfile" -t "$git
 docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --build-arg VERSION=A --build-arg MODE=good --build-arg BUILD_NONCE="$suffix" -t "$fixture_a" "$root/acceptance/runtime-compose" >"$dir/a.log" 2>&1 || fail 'fixture A build failed'
 docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --build-arg VERSION=B --build-arg MODE=good --build-arg BUILD_NONCE="$suffix" -t "$fixture_b" "$root/acceptance/runtime-compose" >"$dir/b.log" 2>&1 || fail 'fixture B build failed'
 docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --build-arg VERSION=C --build-arg MODE=slow --build-arg BUILD_NONCE="$suffix" -t "$fixture_c" "$root/acceptance/runtime-compose" >"$dir/c.log" 2>&1 || fail 'fixture C build failed'
-fixture_a_id=$(docker image inspect -f '{{.Id}}' "$fixture_a"); fixture_b_id=$(docker image inspect -f '{{.Id}}' "$fixture_b"); fixture_c_id=$(docker image inspect -f '{{.Id}}' "$fixture_c"); [[ "$fixture_a_id" =~ ^sha256: && "$fixture_b_id" =~ ^sha256: && "$fixture_c_id" =~ ^sha256: ]] || fail 'fixture image IDs are not digests'; fixture_a_repo="local.invalid/nerocd-fixture-a-$suffix"; fixture_b_repo="local.invalid/nerocd-fixture-b-$suffix"; fixture_c_repo="local.invalid/nerocd-fixture-c-$suffix"; docker tag "$fixture_a" "$fixture_a_repo"; docker tag "$fixture_b" "$fixture_b_repo"; docker tag "$fixture_c" "$fixture_c_repo"; fixture_a_ref="$fixture_a_repo@$fixture_a_id"; fixture_b_ref="$fixture_b_repo@$fixture_b_id"; fixture_c_ref="$fixture_c_repo@$fixture_c_id"
+start_fixture_registry || fail 'fixture registry did not start safely'
+publish_fixture_digest "$fixture_a" a || fail 'fixture A repository digest publication failed'; fixture_a_ref=$published_fixture_ref; fixture_a_registry_tag=$published_fixture_registry_tag; fixture_a_id=$published_fixture_id
+publish_fixture_digest "$fixture_b" b || fail 'fixture B repository digest publication failed'; fixture_b_ref=$published_fixture_ref; fixture_b_registry_tag=$published_fixture_registry_tag; fixture_b_id=$published_fixture_id
+publish_fixture_digest "$fixture_c" c || fail 'fixture C repository digest publication failed'; fixture_c_ref=$published_fixture_ref; fixture_c_registry_tag=$published_fixture_registry_tag; fixture_c_id=$published_fixture_id
+for candidate in "$fixture_a_ref" "$fixture_b_ref" "$fixture_c_ref"; do
+  docker run --rm --network none -v /var/run/docker.sock:/var/run/docker.sock --entrypoint docker "$runner_image" image inspect "$candidate" >/dev/null 2>"$dir/registry-runner-socket-inspect.err" || fail 'runner socket engine could not resolve fixture repository digest'
+done
+fixture_registry_diagnostic=verified
+record 'fixture_registry loopback_only=true docker_assigned_port=true pinned_image=true image_id_not_trusted=true exact_repodigest=true fresh_pull=true runner_socket_resolution=true'
 admin_email=admin@example.local admin_password=admin
 if [[ "$runtime_profile" == production ]]; then
   owner_role="nerocd_owner_$suffix"; app_role="nerocd_app_$suffix"
@@ -463,6 +659,7 @@ record 'compose_trace_c_begin=true'; compose_trace "$trace_before" >>"$evidence"
 # child.  Doing it after the source reports its failure races the runner's next
 # claim, allowing the child to pass its preflight before this forced failure is
 # established.
+local_registry_remove_container "$fixture_registry_container_id" || fail 'fixture registry could not be removed before forced artifact unavailability'; fixture_registry_diagnostic=removed_for_forced_unavailability; record 'fixture_registry_removed_before_forced_unavailability=true'
 ids=$(docker ps -aq --filter "ancestor=$fixture_b"); [[ -z "$ids" ]] || docker rm -f $ids >/dev/null || fail 'forced rollback fixture container removal failed'; docker image rm -f "$fixture_b_id" >/dev/null || fail 'forced rollback image removal failed'; docker image inspect "$fixture_b_id" >/dev/null 2>&1 && fail 'forced rollback image remained available'; record 'rollback_artifact_unavailable_before_d=true'
 compose run --rm --no-deps git_advance_d >"$dir/advance-d.log"; read -r rev_d dep_d <<<"$(deploy d)"; wait_status "$dep_d" rollback_failed; revision_observation "$rev_d" "$d_commit" "$d_hash" "$fixture_c_ref"; provenance_receipt "$dep_d" "$rev_d" "$d_commit" "$d_hash" "$fixture_c_ref" 1; child_d=$(psql_query "select id from deployments where rollback_of_id='$dep_d'"); child_d_count=$(psql_query "select count(*) from deployments where rollback_of_id='$dep_d'"); [[ "$child_d_count" == 1 && -n "$child_d" && "$(status "$child_d")" == rollback_failed ]] || fail 'forced rollback failure did not have exactly one loud child'; rollback_lifecycle "$dep_d" "$child_d" rollback_failed rollback_failed 1; child_d_rev=$(psql_query "select desired_revision_id from deployments where id='$child_d'"); [[ "$child_d_rev" == "$rev_b" ]] || fail 'forced rollback failure child did not retain B provenance'; revision_observation "$child_d_rev" "$b_commit" "$b_hash" "$fixture_b_ref"; provenance_receipt "$child_d" "$child_d_rev" "$b_commit" "$b_hash" "$fixture_b_ref" 1; pointer=$(psql_query "select current_healthy_revision_id from environments where id='$env_id'"); [[ "$pointer" == "$rev_b" ]] || fail 'rollback failure changed healthy pointer'; record "rollback_failure source=$dep_d child=$child_d pointer=B operator_visible=true immutable_provenance=true"
 anonymous_metrics=$(curl -sS --max-time 10 -o "$dir/metrics-anonymous.txt" -w '%{http_code}' "$base/metrics")
