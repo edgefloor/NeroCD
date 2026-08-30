@@ -15,6 +15,8 @@ image_tag="nerocd-production-server:$suffix"
 pass=false
 owner_password=''
 app_password=''
+compose_ready=false
+startup_diagnostic_lines=80
 : >"$evidence"
 record(){ printf '%s\n' "$*" >>"$evidence"; }
 fail(){ trap - ERR; record "FAIL: $*"; printf 'production-profile: %s\n' "$*" >&2; exit 1; }
@@ -42,12 +44,12 @@ emit_startup_diagnostics(){
   local raw="$dir/startup-diagnostics.raw"
   {
     printf '%s\n' '--- production-profile startup diagnostics: compose up output ---'
-    cat "$dir/up.log"
+    tail -n "$startup_diagnostic_lines" "$dir/up.log"
     printf '%s\n' '--- production-profile startup diagnostics: compose ps -a ---'
     compose ps -a
     for service in secret-init pgdata-init backup-data-init postgres migrate role-init server backup-scheduler; do
-      printf '%s\n' "--- production-profile startup diagnostics: $service (last 80 lines) ---"
-      compose logs --no-color --tail 80 "$service"
+      printf '%s\n' "--- production-profile startup diagnostics: $service (last $startup_diagnostic_lines lines) ---"
+      compose logs --no-color --tail "$startup_diagnostic_lines" "$service"
     done
   } >"$raw" 2>&1 || true
   redact_stream <"$raw" | tee -a "$evidence" >&2
@@ -57,6 +59,13 @@ if [[ "${1:-}" == '--redact-stdin' ]]; then
   owner_password=$2
   app_password=$3
   redact_stream
+  exit 0
+fi
+if [[ "${1:-}" == '--redact-tail-stdin' ]]; then
+  [[ $# -eq 3 ]] || { printf '%s\n' 'usage: production-profile-gate.sh --redact-tail-stdin OWNER_PASSWORD APP_PASSWORD' >&2; exit 64; }
+  owner_password=$2
+  app_password=$3
+  tail -n "$startup_diagnostic_lines" | redact_stream
   exit 0
 fi
 owner_psql(){ compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$owner_role" -d nerocd "$@"; }
@@ -88,9 +97,11 @@ cleanup(){
   local code=$?
   trap - ERR
   set +e
-  compose logs --no-color >"$dir/cleanup-compose.log" 2>&1 || true
-  append_redacted_file "$dir/cleanup-compose.log"
-  compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1 || true
+  if [[ "$compose_ready" == true ]]; then
+    compose logs --no-color >"$dir/cleanup-compose.log" 2>&1 || true
+    append_redacted_file "$dir/cleanup-compose.log"
+    compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1 || true
+  fi
   docker network rm "$proxy" >/dev/null 2>&1 || true
   local_registry_cleanup
   docker image rm -f "$image_tag" >/dev/null 2>&1 || true
@@ -108,6 +119,13 @@ cleanup(){
 }
 trap cleanup EXIT
 trap 'fail "unexpected command failure at line $LINENO"' ERR
+
+if [[ "${1:-}" == '--cleanup-pre-compose-test' ]]; then
+  [[ $# -eq 2 ]] || { printf '%s\n' 'usage: production-profile-gate.sh --cleanup-pre-compose-test TRACE_FILE' >&2; exit 64; }
+  cleanup_test_trace=$2
+  local_registry_cleanup(){ printf '%s\n' local_registry_cleanup >>"$cleanup_test_trace"; }
+  exit 1
+fi
 
 for x in docker jq rg od; do command -v "$x" >/dev/null || fail "missing dependency $x"; done
 docker info >/dev/null || fail 'Docker unavailable'
@@ -136,6 +154,7 @@ printf 'postgres://%s:%s@postgres:5432/nerocd?sslmode=disable\n' "$app_role" "$a
 printf '%s\n' "$owner_password" >"$dir/postgres-password"
 chmod 0400 "$dir/database-url" "$dir/app-database-url" "$dir/postgres-password"
 if [[ $(id -u) -eq 0 ]]; then chown 10001:10001 "$dir/database-url"; fi
+compose_ready=true
 
 docker network create "$proxy" >/dev/null || fail 'external proxy network create failed'
 COMPOSE_PROFILES=tools compose config >"$dir/rendered.yaml"
