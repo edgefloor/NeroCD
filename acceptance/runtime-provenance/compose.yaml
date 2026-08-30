@@ -29,6 +29,9 @@ services:
     networks: [runtime]
     read_only: true
     tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck: {test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8081/__control/status], interval: 1s, timeout: 2s, retries: 30}
   git:
     build: {context: ., dockerfile: GitDockerfile}
     image: ${NEROCD_GIT_FIXTURE_IMAGE:?set NEROCD_GIT_FIXTURE_IMAGE}
@@ -37,6 +40,7 @@ services:
     volumes: [git-data:/git:ro]
     networks: [runtime]
     tmpfs: [/tmp, /run]
+    healthcheck: {test: [CMD-SHELL, "sshd -t -f /git/sshd_config && ssh-keyscan -T 2 -p 2222 127.0.0.1 >/dev/null 2>&1"], interval: 1s, timeout: 3s, retries: 30}
   git_init:
     image: ${NEROCD_GIT_FIXTURE_IMAGE:?set NEROCD_GIT_FIXTURE_IMAGE}
     profiles: [tools]
@@ -80,15 +84,15 @@ services:
     command: ["umask 077; IFS= read -r t; test -n \"$${t}\"; printf '%s\\n' \"$${t}\" >/credentials/token; chmod 0600 /credentials/token; chown 10001:10001 /credentials/token; install -d -m 0700 -o 10001 -g 10001 /journal /workspace /secrets/root"]
     volumes: [runner-credential:/credentials, runner-journal:/journal, runner-workspace:/workspace, runner-secrets:/secrets]
   runner:
-    build: {context: ., args: {BASE: "${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}"}}
     image: ${NEROCD_RESOLVER_IMAGE:?set NEROCD_RESOLVER_IMAGE}
-    depends_on: {proxy: {condition: service_started}, git: {condition: service_started}}
+    depends_on: {proxy: {condition: service_healthy}, git: {condition: service_healthy}}
     entrypoint: [nerocd, runner]
     environment: {NEROCD_MODE: development}
     command: [--server, http://proxy:8081, --credential-file, /credentials/token, --journal-dir, /journal, --secret-root, /secrets/root, --id, runner_provenance, --tags, provenance-runtime, --capabilities, compose-deploy, --poll-interval, 1s, --work-dir, /workspace]
     user: "10001:10001"
     volumes: [runner-credential:/credentials:ro, runner-journal:/journal, runner-workspace:/workspace, runner-secrets:/secrets:ro]
     networks: [runtime]
+    read_only: true
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     stop_grace_period: 2s
