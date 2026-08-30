@@ -12,6 +12,7 @@ local_registry_container_id=''
 local_registry_source_tag=''
 local_registry_tag=''
 local_registry_image_ref=''
+local_registry_last_query_state=''
 
 local_registry_fail() {
   printf 'local registry fixture: %s\n' "$*" >&2
@@ -81,18 +82,81 @@ local_registry_publish() {
 
 # local_registry_cleanup removes only resources whose exact IDs/tags were
 # created by local_registry_publish. It never searches or prunes by name.
+local_registry_image_state() {
+  local image_ref=$1 output
+  if output=$(docker image inspect "$image_ref" 2>&1); then
+    local_registry_last_query_state=present
+    return 0
+  fi
+  output=$(printf '%s' "$output" | tr '[:upper:]' '[:lower:]')
+  if [[ "$output" == *'no such object'* || "$output" == *'no such image'* ]]; then
+    local_registry_last_query_state=absent
+    return 1
+  fi
+  local_registry_last_query_state=error
+  return 1
+}
+
+local_registry_container_state() {
+  local container_id=$1 output
+  if output=$(docker inspect "$container_id" 2>&1); then
+    local_registry_last_query_state=present
+    return 0
+  fi
+  output=$(printf '%s' "$output" | tr '[:upper:]' '[:lower:]')
+  if [[ "$output" == *'no such container'* || "$output" == *'no such object'* ]]; then
+    local_registry_last_query_state=absent
+    return 1
+  fi
+  local_registry_last_query_state=error
+  return 1
+}
+
+local_registry_remove_image() {
+  local image_ref=$1
+  if local_registry_image_state "$image_ref"; then
+    docker image rm "$image_ref" >/dev/null 2>&1 || return 1
+  elif [[ "$local_registry_last_query_state" != absent ]]; then
+    return 1
+  fi
+  if local_registry_image_state "$image_ref"; then
+    return 1
+  fi
+  [[ "$local_registry_last_query_state" == absent ]]
+}
+
+local_registry_remove_container() {
+  local container_id=$1
+  if local_registry_container_state "$container_id"; then
+    docker rm -f "$container_id" >/dev/null 2>&1 || return 1
+  elif [[ "$local_registry_last_query_state" != absent ]]; then
+    return 1
+  fi
+  if local_registry_container_state "$container_id"; then
+    return 1
+  fi
+  [[ "$local_registry_last_query_state" == absent ]]
+}
+
 local_registry_cleanup() {
-  if [[ -n "$local_registry_image_ref" ]]; then
-    docker image rm "$local_registry_image_ref" >/dev/null 2>&1 || true
+  local container_id=$local_registry_container_id source_tag=$local_registry_source_tag
+  local registry_tag=$local_registry_tag image_ref=$local_registry_image_ref cleanup_complete=true
+
+  if [[ -n "$image_ref" ]]; then
+    local_registry_remove_image "$image_ref" || cleanup_complete=false
   fi
-  if [[ -n "$local_registry_tag" ]]; then
-    docker image rm "$local_registry_tag" >/dev/null 2>&1 || true
+  if [[ -n "$registry_tag" ]]; then
+    local_registry_remove_image "$registry_tag" || cleanup_complete=false
   fi
-  if [[ -n "$local_registry_source_tag" ]]; then
-    docker image rm "$local_registry_source_tag" >/dev/null 2>&1 || true
+  if [[ -n "$source_tag" ]]; then
+    local_registry_remove_image "$source_tag" || cleanup_complete=false
   fi
-  if [[ -n "$local_registry_container_id" ]]; then
-    docker rm -f "$local_registry_container_id" >/dev/null 2>&1 || true
+  if [[ -n "$container_id" ]]; then
+    local_registry_remove_container "$container_id" || cleanup_complete=false
+  fi
+  if [[ "$cleanup_complete" != true ]]; then
+    printf '%s\n' 'local registry fixture: cleanup left an exact run-owned resource behind' >&2
+    return 1
   fi
   local_registry_container_id=''
   local_registry_source_tag=''

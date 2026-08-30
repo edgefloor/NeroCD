@@ -16,6 +16,8 @@ pass=false
 owner_password=''
 app_password=''
 compose_ready=false
+image_built=false
+proxy_created=false
 startup_diagnostic_lines=80
 : >"$evidence"
 record(){ printf '%s\n' "$*" >>"$evidence"; }
@@ -95,6 +97,8 @@ require_app_denied(){
 }
 cleanup(){
   local code=$?
+  local cleanup_complete=true containers volumes networks
+  local remaining_containers remaining_volumes remaining_networks
   trap - ERR
   set +e
   if [[ "$compose_ready" == true ]]; then
@@ -102,19 +106,18 @@ cleanup(){
     append_redacted_file "$dir/cleanup-compose.log"
     compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1 || true
   fi
-  docker network rm "$proxy" >/dev/null 2>&1 || true
-  local_registry_cleanup
-  docker image rm -f "$image_tag" >/dev/null 2>&1 || true
-  containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
-  [[ -z "$containers" ]] || { docker rm -f $containers >/dev/null 2>&1 || true; code=1; }
-  volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
-  [[ -z "$volumes" ]] || { docker volume rm $volumes >/dev/null 2>&1 || true; code=1; }
-  networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
-  [[ -z "$networks" ]] || { docker network rm $networks >/dev/null 2>&1 || true; code=1; }
-  remaining_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
-  remaining_volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
-  remaining_networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
-  cleanup_complete=true
+  if [[ "$proxy_created" == true ]] && ! docker network rm "$proxy" >/dev/null 2>&1; then cleanup_complete=false; code=1; fi
+  if ! local_registry_cleanup; then cleanup_complete=false; code=1; fi
+  if [[ "$image_built" == true ]] && ! docker image rm -f "$image_tag" >/dev/null 2>&1; then cleanup_complete=false; code=1; fi
+  if ! containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project"); then containers=''; cleanup_complete=false; code=1; fi
+  if [[ -n "$containers" ]] && ! docker rm -f $containers >/dev/null 2>&1; then cleanup_complete=false; code=1; fi
+  if ! volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project"); then volumes=''; cleanup_complete=false; code=1; fi
+  if [[ -n "$volumes" ]] && ! docker volume rm $volumes >/dev/null 2>&1; then cleanup_complete=false; code=1; fi
+  if ! networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project"); then networks=''; cleanup_complete=false; code=1; fi
+  if [[ -n "$networks" ]] && ! docker network rm $networks >/dev/null 2>&1; then cleanup_complete=false; code=1; fi
+  if ! remaining_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project"); then remaining_containers=''; cleanup_complete=false; code=1; fi
+  if ! remaining_volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project"); then remaining_volumes=''; cleanup_complete=false; code=1; fi
+  if ! remaining_networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project"); then remaining_networks=''; cleanup_complete=false; code=1; fi
   if [[ -n "$remaining_containers" || -n "$remaining_volumes" || -n "$remaining_networks" ]]; then
     cleanup_complete=false
     code=1
@@ -131,7 +134,10 @@ trap 'fail "unexpected command failure at line $LINENO"' ERR
 if [[ "${1:-}" == '--cleanup-pre-compose-test' ]]; then
   [[ $# -eq 2 ]] || { printf '%s\n' 'usage: production-profile-gate.sh --cleanup-pre-compose-test TRACE_FILE' >&2; exit 64; }
   cleanup_test_trace=$2
-  local_registry_cleanup(){ printf '%s\n' local_registry_cleanup >>"$cleanup_test_trace"; }
+  local_registry_cleanup(){
+    printf '%s\n' local_registry_cleanup >>"$cleanup_test_trace"
+    [[ "${NEROCD_CLEANUP_TEST_MODE:-success}" != registry-cleanup-failure ]]
+  }
   exit 1
 fi
 
@@ -143,6 +149,7 @@ docker info >/dev/null || fail 'Docker unavailable'
 # The gate owns the release candidate image and publishes it through a private,
 # loopback-only registry so clean Linux engines get a real repository digest.
 docker build -t "$image_tag" "$root" >"$dir/build.log" 2>&1 || fail 'production server image build failed'
+image_built=true
 image_id=$(docker image inspect --format '{{.Id}}' "$image_tag")
 [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || fail 'built server image has no canonical digest'
 local_registry_publish "$image_tag" "$suffix" || fail 'local registry did not publish canonical server digest'
@@ -165,6 +172,7 @@ if [[ $(id -u) -eq 0 ]]; then chown 10001:10001 "$dir/database-url"; fi
 compose_ready=true
 
 docker network create "$proxy" >/dev/null || fail 'external proxy network create failed'
+proxy_created=true
 COMPOSE_PROFILES=tools compose config >"$dir/rendered.yaml"
 rg -q "image: $image_ref" "$dir/rendered.yaml" || fail 'render did not retain canonical server digest'
 ! rg -q '^\s*build:' "$dir/rendered.yaml" || fail 'production profile enables build'
