@@ -567,7 +567,7 @@ func (s *Service) CancelDeployment(ctx context.Context, in DeploymentCancelInput
 	if err != nil {
 		return domain.Deployment{}, err
 	}
-	audit, err := s.auditEvent(ctx, p.ID, "deployment.cancel", id, map[string]any{"request_id": requestID})
+	audit, err := s.auditEvent(ctx, p.ID, "deployment.cancel", id, map[string]any{"cancellation_request_id": requestID})
 	if err != nil {
 		return domain.Deployment{}, err
 	}

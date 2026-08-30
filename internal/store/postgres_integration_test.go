@@ -1122,7 +1122,7 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 	if err := database.QueryRow(ctx, `SELECT
 		(SELECT status FROM deployments WHERE id=$1),
 		(SELECT count(*) FROM deployment_cancellations WHERE deployment_id=$1 AND request_id=$2),
-		(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='deployment.cancel' AND metadata->>'request_id'=$2),
+		(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='deployment.cancel' AND metadata->>'cancellation_request_id'=$2),
 		(SELECT status FROM task_runs WHERE id=$3),
 		(SELECT runner_id IS NULL FROM task_runs WHERE id=$3),
 		(SELECT finished_at IS NULL FROM task_runs WHERE id=$3),
