@@ -1113,15 +1113,29 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 		t.Fatalf("expiry race reaper: %v", err)
 	}
 	expiryCancelRec := <-expiryCancel
-	if expiryCancelRec.Code != http.StatusOK && expiryCancelRec.Code != http.StatusConflict {
+	if expiryCancelRec.Code != http.StatusOK {
 		t.Fatalf("expiry race public cancel=%d: %s", expiryCancelRec.Code, expiryCancelRec.Body.String())
 	}
-	var expiryActiveLeases, expiryActiveAttempts int
-	if err := database.QueryRow(ctx, `SELECT (SELECT count(*) FROM run_leases WHERE run_id=$1 AND status='active'), (SELECT count(*) FROM deployment_attempts WHERE deployment_id=$2 AND status='active')`, claimExpiry.Run.ID, expiryRace.ID).Scan(&expiryActiveLeases, &expiryActiveAttempts); err != nil {
+	var expiryDeploymentStatus, expiryRunStatus, expiryLeaseStatus, expiryAttemptStatus string
+	var expiryCancellationReceipts, expiryCancellationAudits int
+	var expiryRunCleared, expiryRunUnfinished, expiryLeaseCompleted, expiryAttemptFinished bool
+	if err := database.QueryRow(ctx, `SELECT
+		(SELECT status FROM deployments WHERE id=$1),
+		(SELECT count(*) FROM deployment_cancellations WHERE deployment_id=$1 AND request_id=$2),
+		(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='deployment.cancel' AND metadata->>'request_id'=$2),
+		(SELECT status FROM task_runs WHERE id=$3),
+		(SELECT runner_id IS NULL FROM task_runs WHERE id=$3),
+		(SELECT finished_at IS NULL FROM task_runs WHERE id=$3),
+		(SELECT status FROM run_leases WHERE id=$4),
+		(SELECT completed_at IS NOT NULL FROM run_leases WHERE id=$4),
+		(SELECT status FROM deployment_attempts WHERE deployment_id=$1 AND run_id=$3 AND lease_id=$4 AND attempt=$5 AND fence=$6),
+		(SELECT finished_at IS NOT NULL FROM deployment_attempts WHERE deployment_id=$1 AND run_id=$3 AND lease_id=$4 AND attempt=$5 AND fence=$6)`,
+		expiryRace.ID, "ac12-expiry-race", claimExpiry.Run.ID, claimExpiry.Lease.ID, claimExpiry.Lease.Attempt, claimExpiry.Lease.Fence,
+	).Scan(&expiryDeploymentStatus, &expiryCancellationReceipts, &expiryCancellationAudits, &expiryRunStatus, &expiryRunCleared, &expiryRunUnfinished, &expiryLeaseStatus, &expiryLeaseCompleted, &expiryAttemptStatus, &expiryAttemptFinished); err != nil {
 		t.Fatal(err)
 	}
-	if expiryActiveLeases != 0 || expiryActiveAttempts != 0 {
-		t.Fatalf("expiry/cancel left orphan authority leases=%d attempts=%d", expiryActiveLeases, expiryActiveAttempts)
+	if expiryDeploymentStatus != domain.DeploymentCancelRequested || expiryCancellationReceipts != 1 || expiryCancellationAudits != 1 || expiryRunStatus != domain.RunQueued || !expiryRunCleared || !expiryRunUnfinished || expiryLeaseStatus != "expired" || !expiryLeaseCompleted || expiryAttemptStatus != domain.RunFailed || !expiryAttemptFinished {
+		t.Fatalf("expiry/cancel durable state deployment=%q receipts=%d audits=%d run=%q cleared=%t unfinished=%t lease=%q completed=%t attempt=%q finished=%t", expiryDeploymentStatus, expiryCancellationReceipts, expiryCancellationAudits, expiryRunStatus, expiryRunCleared, expiryRunUnfinished, expiryLeaseStatus, expiryLeaseCompleted, expiryAttemptStatus, expiryAttemptFinished)
 	}
 	staleExpiryStatus := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/runners/deployments/status?deployment_id=%s&run_id=%s&lease_id=%s&attempt=%d&fence=%s", expiryRace.ID, claimExpiry.Run.ID, claimExpiry.Lease.ID, claimExpiry.Lease.Attempt, claimExpiry.Lease.Fence), nil)
 	staleExpiryStatus.Header.Set("Authorization", "Bearer "+runnerToken)
@@ -1130,30 +1144,28 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 	if staleExpiryRec.Code != http.StatusForbidden {
 		t.Fatalf("expired fence observed status %d: %s", staleExpiryRec.Code, staleExpiryRec.Body.String())
 	}
-	// If cancellation won, the reaper requeues the run but preserves the
-	// receipt. A fresh fence, never the expired one, owns the explicit manual
-	// fallback because this isolated environment has no healthy target.
-	if expiryCancelRec.Code == http.StatusOK {
-		if _, err := pg.HeartbeatRunner(ctx, runnerID, time.Now().UTC()); err != nil {
-			t.Fatal(err)
-		}
-		claimExpiry2, claimErr := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
-		if claimErr != nil || claimExpiry2.Run.ID != claimExpiry.Run.ID || claimExpiry2.Lease.Attempt <= claimExpiry.Lease.Attempt {
-			t.Fatalf("fresh expiry claim %#v err=%v", claimExpiry2.Lease, claimErr)
-		}
-		body := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"ac12-expiry-race","cancellation_request_id":"ac12-expiry-race","expected_status":"cancel_requested","failure_code":"cancellation_requested"}`, expiryRace.ID, claimExpiry2.Run.ID, claimExpiry2.Lease.ID, claimExpiry2.Lease.Attempt, claimExpiry2.Lease.Fence)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(body))
-		req.Header.Set("Authorization", "Bearer "+runnerToken)
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		server.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("fresh expiry cancellation handoff %d: %s", rec.Code, rec.Body.String())
-		}
-		var expiryStatus string
-		if err := database.QueryRow(ctx, `SELECT status FROM deployments WHERE id=$1`, expiryRace.ID).Scan(&expiryStatus); err != nil || expiryStatus != domain.DeploymentManualIntervention {
-			t.Fatalf("expiry cancellation fallback status=%q err=%v", expiryStatus, err)
-		}
+	// The expired fence cannot perform the handoff. A fresh fence owns the
+	// explicit manual fallback because this isolated environment has no healthy
+	// target.
+	if _, err := pg.HeartbeatRunner(ctx, runnerID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	claimExpiry2, claimErr := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if claimErr != nil || claimExpiry2.Run.ID != claimExpiry.Run.ID || claimExpiry2.Lease.Attempt <= claimExpiry.Lease.Attempt {
+		t.Fatalf("fresh expiry claim %#v err=%v", claimExpiry2.Lease, claimErr)
+	}
+	body := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"ac12-expiry-race","cancellation_request_id":"ac12-expiry-race","expected_status":"cancel_requested","failure_code":"cancellation_requested"}`, expiryRace.ID, claimExpiry2.Run.ID, claimExpiry2.Lease.ID, claimExpiry2.Lease.Attempt, claimExpiry2.Lease.Fence)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer "+runnerToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fresh expiry cancellation handoff %d: %s", rec.Code, rec.Body.String())
+	}
+	var expiryStatus string
+	if err := database.QueryRow(ctx, `SELECT status FROM deployments WHERE id=$1`, expiryRace.ID).Scan(&expiryStatus); err != nil || expiryStatus != domain.DeploymentManualIntervention {
+		t.Fatalf("expiry cancellation fallback status=%q err=%v", expiryStatus, err)
 	}
 
 	// A real public cancel races the only legal runner terminal transition.
