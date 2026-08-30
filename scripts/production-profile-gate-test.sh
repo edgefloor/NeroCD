@@ -47,6 +47,10 @@ mkdir "$mock_bin"
 cat >"$mock_bin/docker" <<'EOF'
 #!/bin/sh
 printf 'docker %s\n' "$*" >>"$NEROCD_CLEANUP_TEST_TRACE"
+case "${NEROCD_CLEANUP_TEST_MODE:-success}:$*" in
+  survivor:ps\ -aq\ --filter\ *) printf '%s\n' surviving-container ;;
+  survivor:rm\ -f\ surviving-container) exit 1 ;;
+esac
 exit 0
 EOF
 chmod +x "$mock_bin/docker"
@@ -57,3 +61,13 @@ fi
 rg -Fqx 'local_registry_cleanup' "$cleanup_trace"
 rg -Fq 'docker image rm -f nerocd-production-server:' "$cleanup_trace"
 ! rg -Fq 'docker compose' "$cleanup_trace"
+rg -Fqx 'cleanup_complete=true' /tmp/nerocd-production-profile.txt
+
+: >"$cleanup_trace"
+if PATH="$mock_bin:$PATH" NEROCD_CLEANUP_TEST_TRACE="$cleanup_trace" NEROCD_CLEANUP_TEST_MODE=survivor bash "$gate" --cleanup-pre-compose-test "$cleanup_trace"; then
+  printf '%s\n' 'production profile cleanup test: surviving resource unexpectedly succeeded' >&2
+  exit 1
+fi
+rg -Fqx 'local_registry_cleanup' "$cleanup_trace"
+rg -Fqx 'docker rm -f surviving-container' "$cleanup_trace"
+rg -Fqx 'cleanup_complete=false' /tmp/nerocd-production-profile.txt

@@ -105,14 +105,22 @@ cleanup(){
   docker network rm "$proxy" >/dev/null 2>&1 || true
   local_registry_cleanup
   docker image rm -f "$image_tag" >/dev/null 2>&1 || true
-  rem=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
-  [[ -z "$rem" ]] || { docker rm -f $rem >/dev/null 2>&1 || true; code=1; }
-  rem=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
-  [[ -z "$rem" ]] || { docker volume rm $rem >/dev/null 2>&1 || true; code=1; }
-  rem=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
-  [[ -z "$rem" ]] || { docker network rm $rem >/dev/null 2>&1 || true; code=1; }
+  containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
+  [[ -z "$containers" ]] || { docker rm -f $containers >/dev/null 2>&1 || true; code=1; }
+  volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+  [[ -z "$volumes" ]] || { docker volume rm $volumes >/dev/null 2>&1 || true; code=1; }
+  networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
+  [[ -z "$networks" ]] || { docker network rm $networks >/dev/null 2>&1 || true; code=1; }
+  remaining_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
+  remaining_volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+  remaining_networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
+  cleanup_complete=true
+  if [[ -n "$remaining_containers" || -n "$remaining_volumes" || -n "$remaining_networks" ]]; then
+    cleanup_complete=false
+    code=1
+  fi
   rm -rf -- "$dir"
-  record "cleanup_complete=$([[ -z "$rem" ]] && echo true || echo false)"
+  record "cleanup_complete=$cleanup_complete"
   [[ "$pass" == true && $code -eq 0 ]] && record 'PASS: live production profile startup and durable restart gate'
   printf 'production profile evidence: %s\n' "$evidence"
   exit "$code"
