@@ -40,7 +40,7 @@ services:
     volumes: [git-data:/git:ro]
     networks: [runtime]
     tmpfs: [/tmp, /run]
-    healthcheck: {test: [CMD-SHELL, "sshd -t -f /git/sshd_config && ssh-keyscan -T 2 -p 2222 127.0.0.1 >/dev/null 2>&1"], interval: 1s, timeout: 3s, retries: 30}
+    healthcheck: {test: [CMD-SHELL, "sshd -t -f /git/sshd_config && ssh-keyscan -t ed25519 -T 2 -p 2222 127.0.0.1 >/dev/null 2>&1"], interval: 2s, timeout: 3s, retries: 30}
   git_init:
     image: ${NEROCD_GIT_FIXTURE_IMAGE:?set NEROCD_GIT_FIXTURE_IMAGE}
     profiles: [tools]
