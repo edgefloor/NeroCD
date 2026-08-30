@@ -15,10 +15,45 @@ record() { printf '%s\n' "$*" >>"$evidence"; }
 fail() { record "FAIL: $*"; printf 'runtime-spool-gate: %s\n' "$*" >&2; exit 1; }
 compose() { NEROCD_RUNTIME_IMAGE="$image" docker compose --project-name "$project" --file "$compose_file" "$@"; }
 
+diagnostic_record() {
+  record "$*"
+  printf 'runtime-spool-diagnostic: %s\n' "$*" >&2
+}
+
+diagnose_failure() {
+  local compose_status inspect_format proxy_cid proxy_state proxy_logs line
+  set +e
+  diagnostic_record "diagnostic_begin=true"
+  if compose_status=$(compose ps --all --format json 2>/dev/null | jq -sc 'flatten | map({Service,State,Health,ExitCode}) | sort_by(.Service)'); then
+    diagnostic_record "compose_services=$compose_status"
+  else
+    diagnostic_record "compose_services=unavailable"
+  fi
+  proxy_cid=$(compose ps --all --quiet proxy 2>/dev/null)
+  proxy_cid=${proxy_cid%%$'\n'*}
+  inspect_format='{"State":{"Status":{{json .State.Status}},"ExitCode":{{json .State.ExitCode}},"OOMKilled":{{json .State.OOMKilled}},"Error":{{json .State.Error}},"StartedAt":{{json .State.StartedAt}},"FinishedAt":{{json .State.FinishedAt}}},"RestartCount":{{json .RestartCount}}}'
+  if [[ "$proxy_cid" =~ ^[0-9a-f]{12,64}$ ]] && proxy_state=$(docker inspect --format "$inspect_format" "$proxy_cid" 2>/dev/null); then
+    diagnostic_record "proxy_container=$proxy_state"
+    diagnostic_record "proxy_logs=tail_lines_80 byte_cap_16384 redacted=true"
+    proxy_logs=$(docker logs --timestamps --tail 80 "$proxy_cid" 2>&1 | sed -E 's#(postgres(ql)?://)[^@[:space:]]+@#\1[REDACTED]@#g; s#(Bearer[[:space:]]+)[^[:space:]]+#\1[REDACTED]#g; s#(([Tt]oken|[Pp]assword|[Cc]redential|[Ss]ecret)[=:][[:space:]]*)[^[:space:]]+#\1[REDACTED]#g' | tail -c 16384)
+    while IFS= read -r line; do
+      diagnostic_record "proxy_log=$line"
+    done <<<"$proxy_logs"
+  else
+    diagnostic_record "proxy_container=unavailable"
+    diagnostic_record "proxy_logs=unavailable"
+  fi
+  diagnostic_record "diagnostic_end=true"
+}
+
 cleanup() {
-  status=$?
+  local status=$?
+  trap - ERR
   set +e
   cleanup_failed=false
+  if [[ $status -ne 0 || "$passed" != true ]]; then
+    diagnose_failure
+  fi
   if [[ "$project" =~ ^nerocd-spool-[0-9a-f]{12}$ ]]; then
     compose down --volumes --remove-orphans --rmi local --timeout 5 >/dev/null 2>&1
     while IFS= read -r resource; do [[ -n "$resource" ]] && docker container rm --force "$resource" >/dev/null 2>&1; done < <(docker container ls --all --quiet --filter "label=com.docker.compose.project=$project")
@@ -81,8 +116,29 @@ http_json() {
   args+=(--data "$body" "$url")
   curl "${args[@]}"
 }
-proxy_post() { curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' --request POST "$proxy_control/$1"; }
-proxy_status() { curl --silent --show-error --max-time 5 "$proxy_control/status"; }
+proxy_control_curl() {
+  local attempt=0 result curl_status deadline=$((SECONDS + 10))
+  while :; do
+    ((attempt += 1))
+    if result=$(curl "$@"); then
+      printf '%s' "$result"
+      return 0
+    else
+      curl_status=$?
+    fi
+    if (( curl_status != 7 )); then
+      printf 'proxy control request failed after %d attempt(s) (curl exit %d)\n' "$attempt" "$curl_status" >&2
+      return "$curl_status"
+    fi
+    if (( SECONDS >= deadline )); then
+      printf 'proxy control request exceeded its 10s connection-refusal deadline after %d attempt(s)\n' "$attempt" >&2
+      return "$curl_status"
+    fi
+    sleep 0.2
+  done
+}
+proxy_post() { proxy_control_curl --silent --show-error --connect-timeout 1 --max-time 5 --output /dev/null --write-out '%{http_code}' --request POST "$proxy_control/$1"; }
+proxy_status() { proxy_control_curl --silent --show-error --connect-timeout 1 --max-time 5 "$proxy_control/status"; }
 sql() {
   compose exec --no-TTY postgres psql --username nerocd --dbname nerocd --tuples-only --no-align --field-separator '|' --set ON_ERROR_STOP=1 --command "$1" | sed '/^[[:space:]]*$/d'
 }
@@ -110,7 +166,7 @@ record "run_id=$run_id"
 
 printf '%s\n' "$runner_token" | compose run --rm --no-deps --no-TTY credential_init >"$runtime_dir/credential-init.txt" 2>&1 || fail "credential/journal initialization failed"
 [[ "$(proxy_post drop-event)" == 204 ]] || fail "could not arm committed event response loss"
-compose up --detach runner >"$runtime_dir/runner-up.txt" 2>&1 || fail "runner failed to start"
+compose up --detach --no-deps runner >"$runtime_dir/runner-up.txt" 2>&1 || fail "runner failed to start"
 runner_cid=$(compose ps --quiet runner)
 [[ -n "$runner_cid" ]] || fail "runner container id missing"
 journal_volume=$(docker volume ls --quiet --filter "label=com.docker.compose.project=$project" --filter 'label=com.docker.compose.volume=runner-journal' | head -n1)

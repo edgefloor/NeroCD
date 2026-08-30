@@ -64,17 +64,28 @@ func main() {
 	if err != nil || upstream.Scheme == "" || upstream.Host == "" {
 		log.Fatal("UPSTREAM_URL must be an absolute URL")
 	}
-	state := &proxyState{requests: map[string]int{}}
+	state := newProxyState()
 	client := &http.Client{Timeout: 8 * time.Second}
-	handler := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+	server := &http.Server{
+		Addr:              ":8081",
+		Handler:           newProxyHandler(state, upstream, client),
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
+}
+
+func newProxyState() *proxyState {
+	return &proxyState{requests: make(map[string]int)}
+}
+
+func newProxyHandler(state *proxyState, upstream *url.URL, client *http.Client) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/__control/") {
 			state.control(w, request)
 			return
 		}
 		state.forward(w, request, upstream, client)
 	})
-	server := &http.Server{Addr: ":8081", Handler: handler, ReadHeaderTimeout: 3 * time.Second}
-	log.Fatal(server.ListenAndServe())
 }
 
 func (s *proxyState) control(w http.ResponseWriter, request *http.Request) {

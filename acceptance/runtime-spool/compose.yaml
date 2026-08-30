@@ -53,6 +53,11 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/__control/status"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
 
   credential_init:
     image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
@@ -79,7 +84,7 @@ services:
     image: ${NEROCD_RUNTIME_IMAGE:?set NEROCD_RUNTIME_IMAGE}
     depends_on:
       proxy:
-        condition: service_started
+        condition: service_healthy
     entrypoint: ["/bin/sh", "/fixtures/runner-wrapper.sh"]
     environment:
       NEROCD_MODE: development
