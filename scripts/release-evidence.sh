@@ -34,7 +34,7 @@ fi
 
 cd "$root"
 fail(){ printf 'release-evidence: %s\n' "$*" >&2; exit 1; }
-for tool in git go bun node docker jq tar gzip shasum strings cmp awk sed file; do command -v "$tool" >/dev/null || fail "missing required tool: $tool"; done
+for tool in git go bun node docker jq tar gzip shasum strings cmp awk sed file rg; do command -v "$tool" >/dev/null || fail "missing required tool: $tool"; done
 docker buildx version >/dev/null 2>&1 || fail 'Docker buildx is unavailable'
 docker info >/dev/null 2>&1 || fail 'Docker daemon is unavailable'
 

@@ -37,6 +37,11 @@ sed -i.bak '/make release-evidence-gate/d' "$tmp/missing-evidence/.github/workfl
 rm -f "$tmp/missing-evidence/.github/workflows/release.yml.bak"
 expect_reject missing-evidence
 
+candidate missing-ripgrep
+sed -i.bak '/sudo apt-get install --yes ripgrep/d' "$tmp/missing-ripgrep/.github/workflows/release.yml"
+rm -f "$tmp/missing-ripgrep/.github/workflows/release.yml.bak"
+expect_reject missing-ripgrep
+
 candidate no-environment
 perl -0pi -e 's/\n    environment:\n      name: release//' "$tmp/no-environment/.github/workflows/release.yml"
 expect_reject no-environment

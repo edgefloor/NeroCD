@@ -13,7 +13,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for tool in go docker strings rg; do command -v "$tool" >/dev/null; done
+for tool in go docker strings rg; do
+  command -v "$tool" >/dev/null || { printf 'identity artifact scan: missing required tool: %s\n' "$tool" >&2; exit 1; }
+done
 go build -trimpath -o "$dir/nerocd" "$root/cmd/nerocd"
 docker build -t "$tag" "$root" >/dev/null
 container=$(docker create "$tag")

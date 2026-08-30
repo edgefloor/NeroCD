@@ -29,6 +29,11 @@ rg -q 'postgres:17\.6-alpine@sha256:[0-9a-f]{64}' "$check" || fail 'check Postgr
 rg -q "github.repository_owner == 'edgefloor'" "$release" || fail 'release must be owner fenced'
 rg -q '^      name: release$' "$release" || fail 'publish must require the protected release environment'
 rg -q 'make release-evidence-gate' "$release" || fail 'release evidence is not a prerequisite'
+evidence_job=$(sed -n '/^  evidence:/,/^  publish:/p' "$release")
+printf '%s\n' "$evidence_job" | rg -q 'sudo apt-get install --yes ripgrep' || fail 'release evidence must install ripgrep'
+evidence_ripgrep_line=$(printf '%s\n' "$evidence_job" | rg -n 'sudo apt-get install --yes ripgrep' | head -n1 | cut -d: -f1)
+evidence_gate_line=$(printf '%s\n' "$evidence_job" | rg -n 'make release-evidence-gate' | head -n1 | cut -d: -f1)
+(( evidence_ripgrep_line < evidence_gate_line )) || fail 'release evidence must install ripgrep before its gate'
 [[ $(rg -c 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' "$release") -ge 3 ]] || fail 'publish and verify must download named evidence/trust artifacts with a pinned action'
 rg -q 'bash scripts/verify-release-evidence.sh release-evidence' "$release" || fail 'publish/verify do not recompute transferred evidence checksums'
 rg -q 'bash scripts/verify-release-trust.sh release-evidence release-trust' "$release" || fail 'verify does not validate release-trust evidence binding'
