@@ -1,14 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 async function signIn(page: Page): Promise<void> {
   await ensureBootstrapped(page);
   const port = new URL(page.url()).port;
   if (!port) throw new Error("browser smoke credentials are unavailable");
-  const bootstrapCredentialFile = join(tmpdir(), `nerocd-browser-${port}`, "credentials");
+  const bootstrapCredentialFile = join(browserRuntimeDir(port), "credentials");
   const [bootstrapEmail, bootstrapPassword] = readFileSync(bootstrapCredentialFile, "utf8").trim().split("\n");
   if (!bootstrapEmail || !bootstrapPassword) throw new Error("browser smoke credentials are unavailable");
   await page.getByLabel("Email").fill(bootstrapEmail);
@@ -17,7 +16,7 @@ async function signIn(page: Page): Promise<void> {
 }
 
 function bootstrapAdmin(port: string): void {
-  const runtimeDir = join(tmpdir(), `nerocd-browser-${port}`);
+  const runtimeDir = browserRuntimeDir(port);
   const [email] = readFileSync(join(runtimeDir, "credentials"), "utf8").trim().split("\n");
   const databaseURL = readFileSync(join(runtimeDir, "database-url"), "utf8");
   if (!email || !databaseURL) throw new Error("browser bootstrap fixture is unavailable");
@@ -26,6 +25,14 @@ function bootstrapAdmin(port: string): void {
     env: { ...process.env, NEROCD_DATABASE_URL: databaseURL, GOCACHE: "/private/tmp/nerocd-gocache" },
     stdio: "pipe",
   });
+}
+
+function browserRuntimeDir(port: string): string {
+  if (!/^\d+$/.test(port) || Number(port) < 1024 || Number(port) > 65535) throw new Error("browser smoke port is invalid");
+  const prefix = `nerocd-browser-${port}-`;
+  const matches = readdirSync("/tmp", { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix));
+  if (matches.length !== 1) throw new Error("browser runtime directory is unavailable");
+  return join("/tmp", matches[0]!.name);
 }
 
 async function ensureBootstrapped(page: Page): Promise<void> {
