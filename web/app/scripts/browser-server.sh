@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+browser_stage=argument-validation
 browser_port=${1:?browser port is required}
 browser_origin=${2:?browser origin is required}
 if [ "$#" -ne 2 ]; then
@@ -34,6 +35,10 @@ browser_runtime_link="$browser_runtime_base/nerocd-browser-${browser_run_id}"
 browser_container_id=""
 browser_server_pid=""
 
+browser_postgres_ready() {
+  docker exec "$browser_container_id" pg_isready -h 127.0.0.1 -U nerocd -d "$browser_database" >/dev/null 2>&1
+}
+
 stop_server() {
   [ -n "$browser_server_pid" ] || return 0
   if kill -0 "$browser_server_pid" >/dev/null 2>&1; then
@@ -62,6 +67,9 @@ cleanup() {
   case "$browser_runtime_dir" in
     "$browser_runtime_base"/nerocd-browser-"$browser_port"-"$browser_run_id".*) rm -rf -- "$browser_runtime_dir" ;;
   esac
+  if [ "$browser_status" -ne 0 ]; then
+    printf 'browser server failed: stage=%s status=%s\n' "$browser_stage" "$browser_status" >&2
+  fi
   exit "$browser_status"
 }
 
@@ -70,6 +78,7 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+browser_stage=runtime-setup
 browser_runtime_dir=$(mktemp -d "$browser_runtime_base/nerocd-browser-${browser_port}-${browser_run_id}.XXXXXXXX")
 case "$browser_runtime_dir" in
   "$browser_runtime_base"/nerocd-browser-"$browser_port"-"$browser_run_id".*) ;;
@@ -84,6 +93,7 @@ browser_password=$(od -An -N32 -tx1 /dev/urandom | tr -d '[:space:]')
 printf %s "$browser_password" >"$browser_runtime_dir/password"
 printf '%s\n%s\n' "$browser_email" "$browser_password" >"$browser_runtime_dir/credentials"
 
+browser_stage=postgres-start
 browser_container_id=$(docker run -d --rm --name "$browser_container_name" --label "$browser_container_label" \
   -e POSTGRES_DB="$browser_database" \
   -e POSTGRES_USER=nerocd \
@@ -93,20 +103,25 @@ browser_container_id=$(docker run -d --rm --name "$browser_container_name" --lab
 browser_inspected_id=$(docker inspect --format '{{.Id}}' "$browser_container_id")
 [ "$browser_inspected_id" = "$browser_container_id" ] || exit 1
 
+browser_stage=postgres-readiness
 for _ in $(seq 1 30); do
-  if docker exec "$browser_container_id" pg_isready -U nerocd -d "$browser_database" >/dev/null 2>&1; then break; fi
+  if browser_postgres_ready; then break; fi
   sleep 1
 done
-docker exec "$browser_container_id" pg_isready -U nerocd -d "$browser_database" >/dev/null
+browser_postgres_ready
 
+browser_stage=postgres-port
 browser_database_port=$(docker port "$browser_container_id" 5432/tcp | tail -1 | sed 's/.*://')
 browser_database_url="postgres://nerocd:nerocd_browser@127.0.0.1:${browser_database_port}/${browser_database}?sslmode=disable"
 printf %s "$browser_database_url" >"$browser_runtime_dir/database-url"
 
 browser_root=$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)
 cd "$browser_root"
+browser_stage=build
 GOCACHE="$browser_runtime_dir/go-cache" go build -o "$browser_runtime_dir/nerocd" ./cmd/nerocd
+browser_stage=migrate
 NEROCD_DATABASE_URL="$browser_database_url" "$browser_runtime_dir/nerocd" migrate
+browser_stage=server
 NEROCD_DATABASE_URL="$browser_database_url" NEROCD_COOKIE_SECURE=false NEROCD_PUBLIC_ORIGIN="$browser_origin" "$browser_runtime_dir/nerocd" server --addr "127.0.0.1:${browser_port}" &
 browser_server_pid=$!
 wait "$browser_server_pid"
