@@ -469,11 +469,17 @@ WHERE da.deployment_id=$1 AND da.attempt=$2`, deployment.ID, claim.Lease.Attempt
 	if _, err = pg.HeartbeatRunner(ctx, runnerID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	claimC1, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), 10*time.Millisecond)
+	claimC1, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(30 * time.Millisecond)
+	leaseUpdate, err := database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp() - interval '1 second' WHERE id=$1`, claimC1.Lease.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows := leaseUpdate.RowsAffected(); rows != 1 {
+		t.Fatalf("expire lease %q updated %d rows, want 1", claimC1.Lease.ID, rows)
+	}
 	if err = pg.ExpireLeases(ctx, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
