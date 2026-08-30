@@ -4,6 +4,7 @@ set -Eeuo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 gate="$root/scripts/production-compose-policy-gate.sh"
 expected='    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"'
+expected_server_command='    command: [server, --addr, ":8080"]'
 temp_root=$(mktemp -d /tmp/nerocd-production-compose-policy.XXXXXXXX)
 
 cleanup() {
@@ -13,9 +14,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir "$temp_root/positive" "$temp_root/merge" "$temp_root/merge-whitespace"
+mkdir "$temp_root/positive" "$temp_root/merge" "$temp_root/merge-whitespace" "$temp_root/unquoted-command"
 cp "$root/compose.production.yaml" "$temp_root/positive/compose.production.yaml"
+awk -v expected_server_command="$expected_server_command" '
+  $0 == expected_server_command { print "    command: [server, --addr, :8080]"; next }
+  { print }
+' "$root/compose.production.yaml" >"$temp_root/unquoted-command/compose.production.yaml"
 PATH=/usr/bin:/bin bash "$gate" "$temp_root/positive"
+if PATH=/usr/bin:/bin bash "$gate" "$temp_root/unquoted-command"; then
+  printf '%s\n' 'production compose policy test: unquoted server command was accepted' >&2
+  exit 1
+fi
 
 write_merge_mutation() {
   local destination=$1 merge_key=$2
@@ -61,8 +70,11 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
       NEROCD_POSTGRES_PASSWORD_SECRET="$temp_root/postgres" \
       docker compose -f "$1" config
   }
-  for variant in merge merge-whitespace; do
+  for variant in positive merge merge-whitespace; do
     render_compose "$temp_root/$variant/compose.production.yaml" >"$temp_root/rendered-$variant.yaml"
+    if [[ "$variant" == positive ]]; then
+      continue
+    fi
     if ! awk '/image: ghcr.io\/example\/evil:latest/ { found=1 } END { exit(found ? 0 : 1) }' "$temp_root/rendered-$variant.yaml"; then
       printf 'production compose policy test: %s malicious merge did not render as expected\n' "$variant" >&2
       exit 1

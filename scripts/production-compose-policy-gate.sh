@@ -4,9 +4,10 @@ set -Eeuo pipefail
 root=${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 compose_file="$root/compose.production.yaml"
 expected='    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"'
+expected_server_command='    command: [server, --addr, ":8080"]'
 
 [[ -f "$compose_file" ]] || { printf '%s\n' 'production compose policy: compose file is missing' >&2; exit 1; }
-awk -v expected="$expected" '
+awk -v expected="$expected" -v expected_server_command="$expected_server_command" '
   BEGIN {
     services = "secret-init backup-data-init migrate role-init server probe database-tools backup-scheduler"
     count = split(services, names, " ")
@@ -37,6 +38,10 @@ awk -v expected="$expected" '
     direct_images[service]++
     if ($0 == expected) exact_images[service]++
   }
+  in_services && service == "server" && /^    command:[[:space:]]/ {
+    server_commands++
+    if ($0 == expected_server_command) exact_server_commands++
+  }
   END {
     if (!services_seen) {
       print "production compose policy: top-level services mapping is missing" > "/dev/stderr"
@@ -48,6 +53,10 @@ awk -v expected="$expected" '
     }
     if (quoted_count != 8) {
       print "production compose policy: every NEROCD_IMAGE image field must be quoted" > "/dev/stderr"
+      exit 1
+    }
+    if (server_commands != 1 || exact_server_commands != 1) {
+      print "production compose policy: server lacks exactly one direct quoted :8080 command" > "/dev/stderr"
       exit 1
     }
     for (position = 1; position <= count; position++) {
