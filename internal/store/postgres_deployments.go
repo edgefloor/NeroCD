@@ -788,9 +788,9 @@ func (s *PostgresStore) CancelDeploymentRequest(ctx context.Context, req domain.
 	return deploymentFromSQLC(updated), nil
 }
 
-// FailDeploymentAndCreateRollback is the post-apply failure boundary.  It
-// deliberately uses one transaction: a source deployment cannot be marked
-// failed and release the environment before its rollback run exists.
+// FailDeploymentAndCreateRollback is the post-apply failure boundary. It uses
+// one transaction for source settlement and either rollback creation or a loud
+// manual fallback when no safe immutable rollback target exists.
 // FailDeploymentAndCreateRollback implements the corresponding repository operation.
 func (s *PostgresStore) FailDeploymentAndCreateRollback(ctx context.Context, req domain.DeploymentFailureRollbackRequest, failedAudit, rollbackAudit domain.AuditEvent) (domain.DeploymentFailureRollbackResult, error) {
 	if (req.ExpectedStatus != domain.DeploymentApplying && req.ExpectedStatus != domain.DeploymentVerifying && req.ExpectedStatus != domain.DeploymentCancelRequested) || req.RequestID == "" || (req.ExpectedStatus == domain.DeploymentCancelRequested && req.CancellationRequestID == "") {
@@ -843,15 +843,8 @@ func (s *PostgresStore) FailDeploymentAndCreateRollback(ctx context.Context, req
 	if e != nil {
 		return domain.DeploymentFailureRollbackResult{}, e
 	}
-	if req.ExpectedStatus == domain.DeploymentCancelRequested && source.Status == domain.DeploymentManualIntervention {
-		transition, transitionErr := q.GetDeploymentTransitionReplay(ctx, sqlcgen.GetDeploymentTransitionReplayParams{DeploymentID: req.DeploymentID, TransitionKey: "failure:" + req.RequestID})
-		if transitionErr != nil || transition.TargetStatus != domain.DeploymentManualIntervention || transition.ExpectedStatus != req.ExpectedStatus || transition.FailureCode != req.FailureCode {
-			return domain.DeploymentFailureRollbackResult{}, ErrConflict
-		}
-		if err = tx.Commit(ctx); err != nil {
-			return domain.DeploymentFailureRollbackResult{}, err
-		}
-		return domain.DeploymentFailureRollbackResult{Failed: deploymentFromSQLC(source)}, nil
+	if source.Status == domain.DeploymentManualIntervention {
+		return replayFailedDeploymentManualIntervention(ctx, tx, q, req, source)
 	}
 	if req.ExpectedStatus == domain.DeploymentCancelRequested {
 		receipt, receiptErr := q.GetDeploymentCancellation(ctx, req.DeploymentID)
@@ -888,14 +881,9 @@ func (s *PostgresStore) FailDeploymentAndCreateRollback(ctx context.Context, req
 	if e != nil {
 		return domain.DeploymentFailureRollbackResult{}, e
 	}
-	if req.ExpectedStatus == domain.DeploymentCancelRequested && (source.PreviousHealthyRevisionID == nil || !environment.RollbackSafe || environment.CurrentHealthyRevisionID == nil || (source.PreviousHealthyRevisionID != nil && *environment.CurrentHealthyRevisionID != *source.PreviousHealthyRevisionID)) {
-		return finishCancellationManualIntervention(ctx, tx, q, req, failedAudit)
-	}
-	if source.PreviousHealthyRevisionID == nil {
-		return domain.DeploymentFailureRollbackResult{}, ErrConflict
-	}
-	if !environment.RollbackSafe || environment.CurrentHealthyRevisionID == nil || *environment.CurrentHealthyRevisionID != *source.PreviousHealthyRevisionID {
-		return domain.DeploymentFailureRollbackResult{}, ErrConflict
+	rollbackUnsafe := source.PreviousHealthyRevisionID == nil || !environment.RollbackSafe || environment.CurrentHealthyRevisionID == nil || (source.PreviousHealthyRevisionID != nil && *environment.CurrentHealthyRevisionID != *source.PreviousHealthyRevisionID)
+	if rollbackUnsafe {
+		return finishFailureManualIntervention(ctx, tx, q, req, failedAudit)
 	}
 	metadata, e := json.Marshal(req.Metadata)
 	if e != nil {
@@ -966,16 +954,16 @@ func (s *PostgresStore) FailDeploymentAndCreateRollback(ctx context.Context, req
 	return domain.DeploymentFailureRollbackResult{Failed: deploymentFromSQLC(updated), Rollback: deploymentFromSQLC(rollback)}, nil
 }
 
-// finishCancellationManualIntervention is the deliberate loud fallback when a
-// cancel receipt is real but there is no safe immutable rollback target. It
+// finishFailureManualIntervention is the deliberate loud fallback when a
+// post-apply failure has no safe immutable rollback target. It
 // uses the same fence and transaction as the normal handoff, but never creates
 // a child that could overwrite an unknown target.
-func finishCancellationManualIntervention(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, req domain.DeploymentFailureRollbackRequest, audit domain.AuditEvent) (domain.DeploymentFailureRollbackResult, error) {
+func finishFailureManualIntervention(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, req domain.DeploymentFailureRollbackRequest, audit domain.AuditEvent) (domain.DeploymentFailureRollbackResult, error) {
 	metadata, err := json.Marshal(req.Metadata)
 	if err != nil {
 		return domain.DeploymentFailureRollbackResult{}, err
 	}
-	updated, err := q.FencedTransitionDeployment(ctx, sqlcgen.FencedTransitionDeploymentParams{ID: req.DeploymentID, Status: domain.DeploymentCancelRequested, Status_2: domain.DeploymentManualIntervention, FailureCode: req.FailureCode, Terminal: true})
+	updated, err := q.FencedTransitionDeployment(ctx, sqlcgen.FencedTransitionDeploymentParams{ID: req.DeploymentID, Status: req.ExpectedStatus, Status_2: domain.DeploymentManualIntervention, FailureCode: req.FailureCode, Terminal: true})
 	if err != nil {
 		return domain.DeploymentFailureRollbackResult{}, ErrConflict
 	}
@@ -999,6 +987,34 @@ func finishCancellationManualIntervention(ctx context.Context, tx pgx.Tx, q *sql
 		return domain.DeploymentFailureRollbackResult{}, err
 	}
 	return domain.DeploymentFailureRollbackResult{Failed: deploymentFromSQLC(updated)}, nil
+}
+
+func replayFailedDeploymentManualIntervention(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, req domain.DeploymentFailureRollbackRequest, source sqlcgen.Deployment) (domain.DeploymentFailureRollbackResult, error) {
+	attempt, err := q.LockDeploymentAttempt(ctx, sqlcgen.LockDeploymentAttemptParams{DeploymentID: req.DeploymentID, RunID: req.RunID, LeaseID: req.LeaseID, RunnerID: req.RunnerID, Attempt: int32(req.Attempt), Fence: req.Fence})
+	if err == pgx.ErrNoRows {
+		return domain.DeploymentFailureRollbackResult{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.DeploymentFailureRollbackResult{}, err
+	}
+	metadata, err := json.Marshal(req.Metadata)
+	if err != nil {
+		return domain.DeploymentFailureRollbackResult{}, err
+	}
+	transition, err := q.GetDeploymentTransitionReplay(ctx, sqlcgen.GetDeploymentTransitionReplayParams{DeploymentID: req.DeploymentID, TransitionKey: "failure:" + req.RequestID})
+	if err == pgx.ErrNoRows {
+		return domain.DeploymentFailureRollbackResult{}, ErrConflict
+	}
+	if err != nil {
+		return domain.DeploymentFailureRollbackResult{}, err
+	}
+	if attempt.Status != "failed" || !deploymentTransitionReplayMatches(transition, domain.DeploymentTransitionRequest{Attempt: req.Attempt, ExpectedStatus: req.ExpectedStatus, TargetStatus: domain.DeploymentManualIntervention, FailureCode: req.FailureCode, Metadata: req.Metadata}, metadata) {
+		return domain.DeploymentFailureRollbackResult{}, ErrConflict
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.DeploymentFailureRollbackResult{}, err
+	}
+	return domain.DeploymentFailureRollbackResult{Failed: deploymentFromSQLC(source)}, nil
 }
 
 // replayFailedDeploymentRollback accepts a response-loss retry only if it is

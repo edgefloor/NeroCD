@@ -161,6 +161,61 @@ func TestMemoryPostApplyFailureAtomicallyQueuesRollback(t *testing.T) {
 	}
 }
 
+func TestMemoryPostApplyFailureWithoutSafeRollbackRequiresManualIntervention(t *testing.T) {
+	tests := []struct {
+		name                    string
+		status                  domain.DeploymentStatus
+		previousHealthyRevision *string
+		currentHealthyRevision  *string
+	}{
+		{name: "missing previous healthy revision while applying", status: domain.DeploymentApplying, currentHealthyRevision: stringPointer("rev_a")},
+		{name: "stale healthy pointer while verifying", status: domain.DeploymentVerifying, previousHealthyRevision: stringPointer("rev_a"), currentHealthyRevision: stringPointer("rev_other")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewMemoryStore()
+			now := time.Now().UTC()
+			runnerID := "runner"
+			s.services = []domain.Service{{ID: "svc", ProjectID: "proj"}}
+			s.environments = []domain.Environment{{ID: "env", ServiceID: "svc", RollbackSafe: true, CurrentHealthyRevisionID: tt.currentHealthyRevision}}
+			s.runs = []domain.TaskRun{{ID: "run_b", ProjectID: "proj", Status: domain.RunRunning, RunnerID: &runnerID}}
+			s.leases = []domain.RunLease{{ID: "lease", RunID: "run_b", RunnerID: runnerID, Status: domain.LeaseActive, Attempt: 1, Fence: "fence", ExpiresAt: now.Add(time.Minute)}}
+			s.deployments = []domain.Deployment{{ID: "dep_b", EnvironmentID: "env", DesiredRevisionID: "rev_b", PreviousHealthyRevisionID: tt.previousHealthyRevision, TaskRunID: stringPointer("run_b"), Status: tt.status}}
+			s.deploymentAttempts = []domain.DeploymentAttempt{{DeploymentID: "dep_b", RunID: "run_b", LeaseID: "lease", RunnerID: runnerID, Attempt: 1, Fence: "fence", Status: "active"}}
+			req := domain.DeploymentFailureRollbackRequest{DeploymentID: "dep_b", RunID: "run_b", LeaseID: "lease", RunnerID: runnerID, Attempt: 1, Fence: "fence", RequestID: "unsafe-target", ExpectedStatus: tt.status, FailureCode: "compose_failed", Metadata: map[string]any{"stage": tt.status}}
+			result, err := s.FailDeploymentAndCreateRollback(context.Background(), req, domain.AuditEvent{ID: "audit_failed"}, domain.AuditEvent{ID: "audit_rollback"})
+			if err != nil {
+				t.Fatalf("FailDeploymentAndCreateRollback(%s) error = %v, want nil", tt.name, err)
+			}
+			if result.Failed.Status != domain.DeploymentManualIntervention || result.Failed.FailureCode != req.FailureCode || result.Failed.FinishedAt == nil || result.Rollback.ID != "" {
+				t.Errorf("FailDeploymentAndCreateRollback(%s) result = %#v, want terminal manual intervention without rollback", tt.name, result)
+			}
+			if len(s.deployments) != 1 || len(s.runs) != 1 || len(s.auditEvents) != 1 || s.auditEvents[0].ID != "audit_failed" {
+				t.Errorf("FailDeploymentAndCreateRollback(%s) side effects deployments=%d runs=%d audits=%#v, want one source, one run, failure audit only", tt.name, len(s.deployments), len(s.runs), s.auditEvents)
+			}
+			if s.runs[0].Status != domain.RunFailed || s.runs[0].RunnerID != nil || s.runs[0].FinishedAt == nil || s.leases[0].Status != domain.RunFailed || s.leases[0].CompletedAt == nil || s.deploymentAttempts[0].Status != "failed" || s.deploymentAttempts[0].FinishedAt == nil {
+				t.Errorf("FailDeploymentAndCreateRollback(%s) lifecycle run=%#v lease=%#v attempt=%#v, want all failed and complete", tt.name, s.runs[0], s.leases[0], s.deploymentAttempts[0])
+			}
+
+			s.leases[0].ExpiresAt = now.Add(-time.Minute)
+			replay, err := s.FailDeploymentAndCreateRollback(context.Background(), req, domain.AuditEvent{ID: "duplicate_failed"}, domain.AuditEvent{ID: "duplicate_rollback"})
+			if err != nil || replay.Failed.Status != domain.DeploymentManualIntervention || len(s.auditEvents) != 1 {
+				t.Errorf("FailDeploymentAndCreateRollback(%s exact replay) result=%#v error=%v audits=%d, want ACK without duplicate audit", tt.name, replay, err, len(s.auditEvents))
+			}
+			changed := req
+			changed.FailureCode = "changed"
+			if _, err = s.FailDeploymentAndCreateRollback(context.Background(), changed, domain.AuditEvent{}, domain.AuditEvent{}); err != ErrConflict {
+				t.Errorf("FailDeploymentAndCreateRollback(%s changed replay) error=%v, want %v", tt.name, err, ErrConflict)
+			}
+			stale := req
+			stale.Fence = "stale"
+			if _, err = s.FailDeploymentAndCreateRollback(context.Background(), stale, domain.AuditEvent{}, domain.AuditEvent{}); err != ErrNotFound {
+				t.Errorf("FailDeploymentAndCreateRollback(%s stale replay) error=%v, want %v", tt.name, err, ErrNotFound)
+			}
+		})
+	}
+}
+
 func TestMemoryCancellationReceiptQueuesRollback(t *testing.T) {
 	s := NewMemoryStore()
 	now := time.Now().UTC()

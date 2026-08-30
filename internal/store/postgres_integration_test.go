@@ -911,8 +911,8 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 		t.Fatalf("failed rollback settlement source=%q child=%q pointer=%q err=%v", sourceAfterFailure, childAfterFailure, pointerAfterFailure, err)
 	}
 
-	// A stale healthy pointer invalidates rollback safety before *any* source,
-	// run, lease, attempt, audit, or child mutation is committed.
+	// A stale healthy pointer cannot authorize a rollback child. The fenced
+	// failure instead settles the source loudly and atomically for an operator.
 	source3 := create("dep_fenced_rollback_mismatch_source_"+suffix, "run_fenced_rollback_mismatch_source_"+suffix, revisionA, "rollback-mismatch-source")
 	claimSource3, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
 	if err != nil {
@@ -924,34 +924,96 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 	if rec := postTransition(source3, claimSource3, domain.DeploymentPreparing, domain.DeploymentApplying, "source3-apply", claimSource3.Lease.Fence, nil); rec.Code != http.StatusOK {
 		t.Fatalf("source3 apply %d: %s", rec.Code, rec.Body.String())
 	}
+	if rec := postTransition(source3, claimSource3, domain.DeploymentApplying, domain.DeploymentVerifying, "source3-verify", claimSource3.Lease.Fence, nil); rec.Code != http.StatusOK {
+		t.Fatalf("source3 verify %d: %s", rec.Code, rec.Body.String())
+	}
 	if _, err = database.Exec(ctx, `UPDATE environments SET current_healthy_revision_id=$2 WHERE id=$1`, environmentID, revisionA); err != nil {
 		t.Fatal(err)
 	}
-	var beforeStatus, afterStatus string
-	var beforeChild, afterChild, beforeLease, afterLease, beforeAttempt, afterAttempt, beforeAudit, afterAudit int
-	if err = database.QueryRow(ctx, `SELECT d.status,(SELECT count(*) FROM deployments WHERE rollback_of_id=$1),(SELECT count(*) FROM run_leases WHERE run_id=$2),(SELECT count(*) FROM deployment_attempts WHERE deployment_id=$1),(SELECT count(*) FROM audit_events WHERE target_id=$1) FROM deployments d WHERE d.id=$1`, source3.ID, claimSource3.Run.ID).Scan(&beforeStatus, &beforeChild, &beforeLease, &beforeAttempt, &beforeAudit); err != nil {
-		t.Fatal(err)
+	mismatchBody := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"failure-mismatch","expected_status":"verifying","failure_code":"health_failed"}`, source3.ID, claimSource3.Run.ID, claimSource3.Lease.ID, claimSource3.Lease.Attempt, claimSource3.Lease.Fence)
+	postMismatch := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+runnerToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
 	}
-	mismatchBody := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"failure-mismatch","expected_status":"applying","failure_code":"health_failed"}`, source3.ID, claimSource3.Run.ID, claimSource3.Lease.ID, claimSource3.Lease.Attempt, claimSource3.Lease.Fence)
-	mismatchReq := httptest.NewRequest(http.MethodPost, "/api/v1/runners/deployments/fail-and-rollback", bytes.NewBufferString(mismatchBody))
-	mismatchReq.Header.Set("Authorization", "Bearer "+runnerToken)
-	mismatchReq.Header.Set("Content-Type", "application/json")
-	mismatchRec := httptest.NewRecorder()
-	server.ServeHTTP(mismatchRec, mismatchReq)
-	if mismatchRec.Code != http.StatusConflict {
+	if mismatchRec := postMismatch(mismatchBody); mismatchRec.Code != http.StatusOK {
 		t.Fatalf("pointer mismatch response %d: %s", mismatchRec.Code, mismatchRec.Body.String())
 	}
-	if err = database.QueryRow(ctx, `SELECT d.status,(SELECT count(*) FROM deployments WHERE rollback_of_id=$1),(SELECT count(*) FROM run_leases WHERE run_id=$2),(SELECT count(*) FROM deployment_attempts WHERE deployment_id=$1),(SELECT count(*) FROM audit_events WHERE target_id=$1) FROM deployments d WHERE d.id=$1`, source3.ID, claimSource3.Run.ID).Scan(&afterStatus, &afterChild, &afterLease, &afterAttempt, &afterAudit); err != nil {
+	assertTerminalLifecycle(source3, claimSource3, domain.RunFailed)
+	mismatchChildID, mismatchRunID := domain.RollbackObjectIDs(source3.ID, "failure-mismatch")
+	var mismatchStatus, mismatchFailureCode string
+	var mismatchChildren, mismatchRollbackRuns, mismatchFailureAudits, mismatchRollbackAudits, mismatchTransitions int
+	var mismatchLeaseCompleted, mismatchAttemptFinished bool
+	if err = database.QueryRow(ctx, `SELECT
+		d.status,d.failure_code,
+		(SELECT count(*) FROM deployments WHERE rollback_of_id=$1),
+		(SELECT count(*) FROM task_runs WHERE id=$5),
+		(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='runner.deployment.failed'),
+		(SELECT count(*) FROM audit_events WHERE target_id=$2 AND action='runner.deployment.rollback_queued'),
+		(SELECT count(*) FROM deployment_transitions WHERE deployment_id=$1 AND transition_key='failure:failure-mismatch'),
+		(SELECT completed_at IS NOT NULL FROM run_leases WHERE id=$3),
+		(SELECT finished_at IS NOT NULL FROM deployment_attempts WHERE deployment_id=$1 AND attempt=$4)
+		FROM deployments d WHERE d.id=$1`, source3.ID, mismatchChildID, claimSource3.Lease.ID, claimSource3.Lease.Attempt, mismatchRunID).Scan(&mismatchStatus, &mismatchFailureCode, &mismatchChildren, &mismatchRollbackRuns, &mismatchFailureAudits, &mismatchRollbackAudits, &mismatchTransitions, &mismatchLeaseCompleted, &mismatchAttemptFinished); err != nil {
 		t.Fatal(err)
 	}
-	if afterStatus != beforeStatus || afterChild != beforeChild || afterLease != beforeLease || afterAttempt != beforeAttempt || afterAudit != beforeAudit {
-		t.Fatalf("pointer mismatch mutated source=%q/%q child=%d/%d lease=%d/%d attempt=%d/%d audit=%d/%d", beforeStatus, afterStatus, beforeChild, afterChild, beforeLease, afterLease, beforeAttempt, afterAttempt, beforeAudit, afterAudit)
+	if mismatchStatus != domain.DeploymentManualIntervention || mismatchFailureCode != "health_failed" || mismatchChildren != 0 || mismatchRollbackRuns != 0 || mismatchFailureAudits != 1 || mismatchRollbackAudits != 0 || mismatchTransitions != 1 || !mismatchLeaseCompleted || !mismatchAttemptFinished {
+		t.Fatalf("pointer mismatch settlement status=%q failure=%q children=%d rollback_runs=%d failure_audits=%d rollback_audits=%d transitions=%d lease_completed=%t attempt_finished=%t", mismatchStatus, mismatchFailureCode, mismatchChildren, mismatchRollbackRuns, mismatchFailureAudits, mismatchRollbackAudits, mismatchTransitions, mismatchLeaseCompleted, mismatchAttemptFinished)
 	}
-	if rec := postTransition(source3, claimSource3, domain.DeploymentApplying, domain.DeploymentCancelRequested, "source3-cleanup-request", claimSource3.Lease.Fence, nil); rec.Code != http.StatusOK {
-		t.Fatalf("source3 cleanup cancellation request %d: %s", rec.Code, rec.Body.String())
+	if _, err = database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp() - interval '1 minute' WHERE id=$1`, claimSource3.Lease.ID); err != nil {
+		t.Fatal(err)
 	}
-	if rec := postTransition(source3, claimSource3, domain.DeploymentCancelRequested, domain.DeploymentManualIntervention, "source3-cleanup-manual", claimSource3.Lease.Fence, nil); rec.Code != http.StatusOK {
-		t.Fatalf("source3 cleanup manual intervention %d: %s", rec.Code, rec.Body.String())
+	if err = pg.ExpireLeases(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postMismatch(mismatchBody); rec.Code != http.StatusOK {
+		t.Fatalf("pointer mismatch exact terminal replay %d: %s", rec.Code, rec.Body.String())
+	}
+	changedMismatchBody := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"failure-mismatch","expected_status":"verifying","failure_code":"changed"}`, source3.ID, claimSource3.Run.ID, claimSource3.Lease.ID, claimSource3.Lease.Attempt, claimSource3.Lease.Fence)
+	if rec := postMismatch(changedMismatchBody); rec.Code != http.StatusConflict {
+		t.Fatalf("pointer mismatch changed terminal replay %d: %s", rec.Code, rec.Body.String())
+	}
+	staleMismatchBody := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":"stale","request_id":"failure-mismatch","expected_status":"verifying","failure_code":"health_failed"}`, source3.ID, claimSource3.Run.ID, claimSource3.Lease.ID, claimSource3.Lease.Attempt)
+	if rec := postMismatch(staleMismatchBody); rec.Code != http.StatusForbidden {
+		t.Fatalf("pointer mismatch stale terminal replay %d: %s", rec.Code, rec.Body.String())
+	}
+	if err = database.QueryRow(ctx, `SELECT (SELECT count(*) FROM deployments WHERE rollback_of_id=$1),(SELECT count(*) FROM task_runs WHERE id=$2),(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='runner.deployment.failed'),(SELECT count(*) FROM audit_events WHERE target_id=$3 AND action='runner.deployment.rollback_queued'),(SELECT count(*) FROM deployment_transitions WHERE deployment_id=$1 AND transition_key='failure:failure-mismatch')`, source3.ID, mismatchRunID, mismatchChildID).Scan(&mismatchChildren, &mismatchRollbackRuns, &mismatchFailureAudits, &mismatchRollbackAudits, &mismatchTransitions); err != nil {
+		t.Fatal(err)
+	}
+	if mismatchChildren != 0 || mismatchRollbackRuns != 0 || mismatchFailureAudits != 1 || mismatchRollbackAudits != 0 || mismatchTransitions != 1 {
+		t.Fatalf("pointer mismatch replays duplicated side effects children=%d rollback_runs=%d failure_audits=%d rollback_audits=%d transitions=%d", mismatchChildren, mismatchRollbackRuns, mismatchFailureAudits, mismatchRollbackAudits, mismatchTransitions)
+	}
+
+	// A missing deployment snapshot is the same unsafe condition even when the
+	// environment still has a current healthy revision.
+	source4 := create("dep_fenced_missing_previous_source_"+suffix, "run_fenced_missing_previous_source_"+suffix, revisionB, "missing-previous-source")
+	claimSource4, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "source4-prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "source4-apply"}} {
+		if rec := postTransition(source4, claimSource4, step[0], step[1], step[2], claimSource4.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	if _, err = database.Exec(ctx, `UPDATE deployments SET previous_healthy_revision_id=NULL WHERE id=$1`, source4.ID); err != nil {
+		t.Fatal(err)
+	}
+	missingBody := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"failure-missing-previous","expected_status":"applying","failure_code":"compose_failed"}`, source4.ID, claimSource4.Run.ID, claimSource4.Lease.ID, claimSource4.Lease.Attempt, claimSource4.Lease.Fence)
+	if rec := postMismatch(missingBody); rec.Code != http.StatusOK {
+		t.Fatalf("missing previous response %d: %s", rec.Code, rec.Body.String())
+	}
+	assertTerminalLifecycle(source4, claimSource4, domain.RunFailed)
+	var missingStatus string
+	var missingChildren, missingRollbackRuns, missingFailureAudits, missingRollbackAudits int
+	missingChildID, missingRunID := domain.RollbackObjectIDs(source4.ID, "failure-missing-previous")
+	if err = database.QueryRow(ctx, `SELECT d.status,(SELECT count(*) FROM deployments WHERE rollback_of_id=$1),(SELECT count(*) FROM task_runs WHERE id=$3),(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='runner.deployment.failed'),(SELECT count(*) FROM audit_events WHERE target_id=$2 AND action='runner.deployment.rollback_queued') FROM deployments d WHERE d.id=$1`, source4.ID, missingChildID, missingRunID).Scan(&missingStatus, &missingChildren, &missingRollbackRuns, &missingFailureAudits, &missingRollbackAudits); err != nil {
+		t.Fatal(err)
+	}
+	if missingStatus != domain.DeploymentManualIntervention || missingChildren != 0 || missingRollbackRuns != 0 || missingFailureAudits != 1 || missingRollbackAudits != 0 {
+		t.Fatalf("missing previous settlement status=%q children=%d rollback_runs=%d failure_audits=%d rollback_audits=%d", missingStatus, missingChildren, missingRollbackRuns, missingFailureAudits, missingRollbackAudits)
 	}
 
 	// AC12: the maintainer cancellation receipt and the runner-authenticated

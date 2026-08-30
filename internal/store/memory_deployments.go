@@ -655,17 +655,39 @@ func (s *MemoryStore) CancelDeploymentRequest(_ context.Context, req domain.Depl
 // FailDeploymentAndCreateRollback is intentionally not expressed as two
 // calls to TransitionDeploymentAttempt/CreateDeploymentRequest.  Between
 // those calls another deployment could acquire the environment.  Holding the
-// store lock makes the source terminalization, lease settlement and rollback
-// queue insertion one all-or-nothing fenced mutation.
+// store lock makes the source settlement, lease completion, and either
+// rollback queue insertion or manual fallback one all-or-nothing mutation.
 // FailDeploymentAndCreateRollback implements the corresponding repository operation.
 func (s *MemoryStore) FailDeploymentAndCreateRollback(_ context.Context, req domain.DeploymentFailureRollbackRequest, failedAudit, rollbackAudit domain.AuditEvent) (domain.DeploymentFailureRollbackResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if (req.ExpectedStatus != domain.DeploymentApplying && req.ExpectedStatus != domain.DeploymentVerifying && req.ExpectedStatus != domain.DeploymentCancelRequested) || req.RequestID == "" || (req.ExpectedStatus == domain.DeploymentCancelRequested && req.CancellationRequestID == "") {
+		return domain.DeploymentFailureRollbackResult{}, ErrConflict
+	}
 	if req.ExpectedStatus == domain.DeploymentCancelRequested {
 		receipt, ok := s.deploymentCancels[req.DeploymentID+"\x00"+req.CancellationRequestID]
 		if !ok || req.CancellationRequestID == "" || receipt.RequestID != req.CancellationRequestID || req.RequestID != req.CancellationRequestID {
 			return domain.DeploymentFailureRollbackResult{}, ErrConflict
 		}
+	}
+	manualTransition := domain.DeploymentTransitionRequest{DeploymentID: req.DeploymentID, RunID: req.RunID, LeaseID: req.LeaseID, RunnerID: req.RunnerID, Attempt: req.Attempt, Fence: req.Fence, TransitionKey: "failure:" + req.RequestID, ExpectedStatus: req.ExpectedStatus, TargetStatus: domain.DeploymentManualIntervention, FailureCode: req.FailureCode, Metadata: req.Metadata}
+	for _, source := range s.deployments {
+		if source.ID != req.DeploymentID || source.Status != domain.DeploymentManualIntervention {
+			continue
+		}
+		if source.TaskRunID == nil || *source.TaskRunID != req.RunID {
+			return domain.DeploymentFailureRollbackResult{}, ErrConflict
+		}
+		for _, attempt := range s.deploymentAttempts {
+			if attempt.DeploymentID == req.DeploymentID && attempt.RunID == req.RunID && attempt.LeaseID == req.LeaseID && attempt.RunnerID == req.RunnerID && attempt.Attempt == req.Attempt && attempt.Fence == req.Fence {
+				stored, ok := s.deploymentTransitions[source.ID+"\x00failure:"+req.RequestID]
+				if attempt.Status == "failed" && ok && sameDeploymentTransition(stored, manualTransition) {
+					return domain.DeploymentFailureRollbackResult{Failed: source}, nil
+				}
+				return domain.DeploymentFailureRollbackResult{}, ErrConflict
+			}
+		}
+		return domain.DeploymentFailureRollbackResult{}, ErrNotFound
 	}
 	rollbackDeploymentID, rollbackRunID := domain.RollbackObjectIDs(req.DeploymentID, req.RequestID)
 	now := time.Now().UTC()
@@ -728,7 +750,7 @@ func (s *MemoryStore) FailDeploymentAndCreateRollback(_ context.Context, req dom
 		return domain.DeploymentFailureRollbackResult{}, ErrNotFound
 	}
 	source := s.deployments[depIndex]
-	if source.Status != req.ExpectedStatus || (source.Status != domain.DeploymentApplying && source.Status != domain.DeploymentVerifying && source.Status != domain.DeploymentCancelRequested) || source.PreviousHealthyRevisionID == nil {
+	if source.Status != req.ExpectedStatus || (source.Status != domain.DeploymentApplying && source.Status != domain.DeploymentVerifying && source.Status != domain.DeploymentCancelRequested) {
 		return domain.DeploymentFailureRollbackResult{}, ErrConflict
 	}
 	if req.ExpectedStatus == domain.DeploymentCancelRequested {
@@ -746,12 +768,27 @@ func (s *MemoryStore) FailDeploymentAndCreateRollback(_ context.Context, req dom
 			break
 		}
 	}
-	if env.ID == "" || !env.RollbackSafe {
-		return domain.DeploymentFailureRollbackResult{}, ErrConflict
+	if env.ID == "" {
+		return domain.DeploymentFailureRollbackResult{}, ErrNotFound
 	}
-	// Ensure the recorded previous revision remains the last verified target.
-	if env.CurrentHealthyRevisionID == nil || *env.CurrentHealthyRevisionID != *source.PreviousHealthyRevisionID {
-		return domain.DeploymentFailureRollbackResult{}, ErrConflict
+	rollbackUnsafe := source.PreviousHealthyRevisionID == nil || !env.RollbackSafe || env.CurrentHealthyRevisionID == nil || (source.PreviousHealthyRevisionID != nil && *env.CurrentHealthyRevisionID != *source.PreviousHealthyRevisionID)
+	if rollbackUnsafe {
+		source.Status, source.FailureCode, source.UpdatedAt, source.FinishedAt = domain.DeploymentManualIntervention, req.FailureCode, now, &now
+		s.deployments[depIndex] = source
+		lease := s.leases[leaseIndex]
+		lease.Status, lease.CompletedAt = domain.RunFailed, &now
+		s.leases[leaseIndex] = lease
+		run := s.runs[runIndex]
+		run.Status, run.RunnerID, run.FinishedAt = domain.RunFailed, nil, &now
+		s.runs[runIndex] = run
+		s.deploymentAttempts[attemptIndex].Status, s.deploymentAttempts[attemptIndex].FinishedAt = "failed", &now
+		if s.deploymentTransitions == nil {
+			s.deploymentTransitions = map[string]domain.DeploymentTransitionRequest{}
+		}
+		s.deploymentTransitions[source.ID+"\x00failure:"+req.RequestID] = manualTransition
+		failedAudit.CreatedAt = now
+		s.auditEvents = append([]domain.AuditEvent{failedAudit}, s.auditEvents...)
+		return domain.DeploymentFailureRollbackResult{Failed: source}, nil
 	}
 	for _, d := range s.deployments {
 		if d.EnvironmentID == source.EnvironmentID && !domain.IsTerminalDeploymentStatus(d.Status) && d.ID != source.ID {
