@@ -42,6 +42,9 @@ awk -v expected="$expected" -v expected_server_command="$expected_server_command
     server_commands++
     if ($0 == expected_server_command) exact_server_commands++
   }
+  in_services && service == "server" && /^    entrypoint:[[:space:]]/ {
+    server_entrypoints++
+  }
   END {
     if (!services_seen) {
       print "production compose policy: top-level services mapping is missing" > "/dev/stderr"
@@ -57,6 +60,10 @@ awk -v expected="$expected" -v expected_server_command="$expected_server_command
     }
     if (server_commands != 1 || exact_server_commands != 1) {
       print "production compose policy: server lacks exactly one direct quoted :8080 command" > "/dev/stderr"
+      exit 1
+    }
+    if (server_entrypoints != 0) {
+      print "production compose policy: server must not override the immutable image entrypoint" > "/dev/stderr"
       exit 1
     }
     for (position = 1; position <= count; position++) {
