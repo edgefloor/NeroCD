@@ -105,7 +105,7 @@ printf %s "$browser_database_url" >"$browser_runtime_dir/database-url"
 
 browser_root=$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)
 cd "$browser_root"
-GOCACHE=/private/tmp/nerocd-gocache go build -o "$browser_runtime_dir/nerocd" ./cmd/nerocd
+GOCACHE="$browser_runtime_dir/go-cache" go build -o "$browser_runtime_dir/nerocd" ./cmd/nerocd
 NEROCD_DATABASE_URL="$browser_database_url" "$browser_runtime_dir/nerocd" migrate
 NEROCD_DATABASE_URL="$browser_database_url" NEROCD_COOKIE_SECURE=false NEROCD_PUBLIC_ORIGIN="$browser_origin" "$browser_runtime_dir/nerocd" server --addr "127.0.0.1:${browser_port}" &
 browser_server_pid=$!

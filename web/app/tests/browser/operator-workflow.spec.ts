@@ -20,9 +20,8 @@ function bootstrapAdmin(port: string): void {
   const [email] = readFileSync(join(runtimeDir, "credentials"), "utf8").trim().split("\n");
   const databaseURL = readFileSync(join(runtimeDir, "database-url"), "utf8");
   if (!email || !databaseURL) throw new Error("browser bootstrap fixture is unavailable");
-  execFileSync("go", ["run", "../../cmd/nerocd", "bootstrap-admin", "--email", email, "--name", "Browser Administrator", "--password-file", join(runtimeDir, "password")], {
-    cwd: process.cwd(),
-    env: { ...process.env, NEROCD_DATABASE_URL: databaseURL, GOCACHE: "/private/tmp/nerocd-gocache" },
+  execFileSync(join(runtimeDir, "nerocd"), ["bootstrap-admin", "--email", email, "--name", "Browser Administrator", "--password-file", join(runtimeDir, "password")], {
+    env: { ...process.env, NEROCD_DATABASE_URL: databaseURL },
     stdio: "pipe",
   });
 }
