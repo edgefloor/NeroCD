@@ -960,16 +960,8 @@ func canonicalComposeWithSecretSources(raw []byte, serverProject string, binding
 	if err := normalizeComposeSecretDescriptors(doc, serverProject, bindings, sources); err != nil {
 		return nil, nil, err
 	}
-	// A deployment may not attach itself to pre-existing engine objects.  The
-	// later adapter creates only a controlled project namespace.
-	for _, section := range []string{"networks", "volumes"} {
-		if values, exists := doc[section].(map[string]any); exists {
-			for _, rawValue := range values {
-				if value, ok := rawValue.(map[string]any); ok && value["external"] == true {
-					return nil, nil, fmt.Errorf("compose uses external %s", section)
-				}
-			}
-		}
+	if err := validateComposeExternalResources(doc, serverProject); err != nil {
+		return nil, nil, err
 	}
 	services, ok := doc["services"].(map[string]any)
 	if !ok || len(services) == 0 || len(services) > 128 {
@@ -1001,6 +993,99 @@ func canonicalComposeWithSecretSources(raw []byte, serverProject string, binding
 	}
 	canonical, err := json.Marshal(doc) // encoding/json deterministically sorts map keys
 	return canonical, images, err
+}
+
+func validateComposeExternalResources(doc map[string]any, serverProject string) error {
+	if err := validateComposeNetworks(doc, serverProject); err != nil {
+		return err
+	}
+	return validateComposeVolumes(doc)
+}
+
+func validateComposeNetworks(doc map[string]any, serverProject string) error {
+	rawNetworks, exists := doc["networks"]
+	if !exists {
+		return nil
+	}
+	networks, ok := rawNetworks.(map[string]any)
+	if !ok {
+		return errors.New("compose networks are invalid")
+	}
+	for key, rawDescriptor := range networks {
+		descriptor, ok := rawDescriptor.(map[string]any)
+		if !ok {
+			return errors.New("compose network descriptor is invalid")
+		}
+		external, exists := descriptor["external"]
+		if !exists {
+			continue
+		}
+		isExternal, ok := external.(bool)
+		if !ok {
+			return errors.New("compose network descriptor is invalid")
+		}
+		if !isExternal {
+			continue
+		}
+		if err := validateControlledHealthNetwork(key, descriptor, serverProject); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateControlledHealthNetwork permits the one server-owned bridge used by
+// the runner's health check. The strict key, name, and shape prevent a checkout
+// from attaching a deployment to any other pre-existing engine network.
+func validateControlledHealthNetwork(key string, descriptor map[string]any, serverProject string) error {
+	if key != "health" {
+		return errors.New("compose uses external network")
+	}
+	if len(descriptor) != 3 {
+		return errors.New("compose external health network descriptor is invalid")
+	}
+	external, ok := descriptor["external"].(bool)
+	if !ok || !external {
+		return errors.New("compose external health network descriptor is invalid")
+	}
+	name, ok := descriptor["name"].(string)
+	if !ok || name != serverProject+"_health" {
+		return errors.New("compose external health network is invalid")
+	}
+	ipam, ok := descriptor["ipam"].(map[string]any)
+	if !ok || len(ipam) != 0 {
+		return errors.New("compose external health network descriptor is invalid")
+	}
+	return nil
+}
+
+func validateComposeVolumes(doc map[string]any) error {
+	rawVolumes, exists := doc["volumes"]
+	if !exists {
+		return nil
+	}
+	volumes, ok := rawVolumes.(map[string]any)
+	if !ok {
+		return errors.New("compose volumes are invalid")
+	}
+	for _, rawDescriptor := range volumes {
+		descriptor, ok := rawDescriptor.(map[string]any)
+		if !ok {
+			return errors.New("compose volume descriptor is invalid")
+		}
+		external, exists := descriptor["external"]
+		if !exists {
+			continue
+		}
+		isExternal, ok := external.(bool)
+		if !ok {
+			return errors.New("compose volume descriptor is invalid")
+		}
+		if isExternal {
+			return errors.New("compose uses external volumes")
+		}
+	}
+	return nil
 }
 
 // normalizeComposeSecretDescriptors removes attempt-specific file paths from

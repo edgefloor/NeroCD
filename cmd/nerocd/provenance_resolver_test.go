@@ -163,6 +163,57 @@ func TestCanonicalComposeAcceptsAndExcludesEffectiveServerProjectName(t *testing
 	}
 }
 
+func TestCanonicalComposeControlledExternalHealthNetwork(t *testing.T) {
+	const (
+		project = "server-owned"
+		image   = "registry.example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	service := `{"api":{"image":"` + image + `"}}`
+	accepted := `{"services":` + service + `,"networks":{"health":{"external":true,"name":"server-owned_health","ipam":{}}}}`
+
+	canonical, images, err := canonicalCompose([]byte(accepted), project)
+	if err != nil {
+		t.Fatalf("canonicalCompose(%s) error = %v, want nil", accepted, err)
+	}
+	wantCanonical := `{"networks":{"health":{"external":true,"ipam":{},"name":"server-owned_health"}},"services":{"api":{"image":"` + image + `"}}}`
+	if got := string(canonical); got != wantCanonical {
+		t.Errorf("canonicalCompose(%s) = %s, want %s", accepted, got, wantCanonical)
+	}
+	if wantImages := []string{image}; !slices.Equal(images, wantImages) {
+		t.Errorf("canonicalCompose(%s) images = %v, want %v", accepted, images, wantImages)
+	}
+	reordered := `{"networks":{"health":{"ipam":{},"name":"server-owned_health","external":true}},"services":` + service + `}`
+	reorderedCanonical, reorderedImages, err := canonicalCompose([]byte(reordered), project)
+	if err != nil {
+		t.Fatalf("canonicalCompose(%s) error = %v, want nil", reordered, err)
+	}
+	if got := string(reorderedCanonical); got != string(canonical) {
+		t.Errorf("canonicalCompose(%s) = %s, want deterministic result %s", reordered, got, canonical)
+	}
+	if !slices.Equal(reorderedImages, images) {
+		t.Errorf("canonicalCompose(%s) images = %v, want deterministic images %v", reordered, reorderedImages, images)
+	}
+
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "wrong_logical_key", raw: `{"services":` + service + `,"networks":{"other":{"external":true,"name":"server-owned_health","ipam":{}}}}`},
+		{name: "wrong_name", raw: `{"services":` + service + `,"networks":{"health":{"external":true,"name":"other_health","ipam":{}}}}`},
+		{name: "extra_fields", raw: `{"services":` + service + `,"networks":{"health":{"external":true,"name":"server-owned_health","ipam":{},"driver":"bridge"}}}`},
+		{name: "second_external_network", raw: `{"services":` + service + `,"networks":{"health":{"external":true,"name":"server-owned_health","ipam":{}},"other":{"external":true,"name":"other","ipam":{}}}}`},
+		{name: "external_volume", raw: `{"services":` + service + `,"volumes":{"data":{"external":true}}}`},
+		{name: "malformed_descriptor", raw: `{"services":` + service + `,"networks":{"health":{"external":"true","name":"server-owned_health","ipam":{}}}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, gotErr := canonicalCompose([]byte(tt.raw), project); gotErr == nil {
+				t.Errorf("canonicalCompose(%s) error = nil, want rejection", tt.raw)
+			}
+		})
+	}
+}
+
 func TestCanonicalComposeFileSecretsAreStableAcrossAttemptsAndRollback(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	bindings := []domain.SecretBinding{{Name: "database-password", Provider: domain.ProviderRunnerFile, Reference: "database_password", Target: "file:db_password", Version: "v1", Required: true}}
