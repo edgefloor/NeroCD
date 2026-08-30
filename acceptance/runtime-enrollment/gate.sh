@@ -72,15 +72,33 @@ cleanup() {
   trap - ERR
   set +e
   cleanup_failed=false
+  verification_output=''
   if [[ $result -ne 0 || "$passed" != true ]]; then capture_failure_diagnostics || true; fi
   if [[ "$project" =~ ^nerocd-enrollment-[0-9a-f]{12}$ ]]; then
-    compose down --volumes --remove-orphans --rmi local --timeout 5 >/dev/null 2>&1
-    docker ps -aq --filter "label=nerocd.runtime.project=$project" | xargs -r docker rm -f >/dev/null 2>&1
-    docker volume ls -q --filter "label=nerocd.runtime.project=$project" | xargs -r docker volume rm -f >/dev/null 2>&1
-    remaining=$(docker ps -aq --filter "label=com.docker.compose.project=$project"; docker volume ls -q --filter "label=com.docker.compose.project=$project"; docker network ls -q --filter "label=com.docker.compose.project=$project"; docker volume ls -q --filter "label=nerocd.runtime.project=$project")
-    [[ -z "$remaining" ]] || cleanup_failed=true
+    compose down --volumes --remove-orphans --rmi local --timeout 5 >/dev/null 2>&1 || true
+    docker ps -aq --filter "label=nerocd.runtime.project=$project" | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker volume ls -q --filter "label=nerocd.runtime.project=$project" | xargs -r docker volume rm -f >/dev/null 2>&1 || true
+
+    if ! verification_output=$(docker ps -aq --filter "label=com.docker.compose.project=$project" 2>/dev/null) || [[ -n "$verification_output" ]]; then cleanup_failed=true; fi
+    if ! verification_output=$(docker ps -aq --filter "label=nerocd.runtime.project=$project" 2>/dev/null) || [[ -n "$verification_output" ]]; then cleanup_failed=true; fi
+    if ! verification_output=$(docker volume ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null) || [[ -n "$verification_output" ]]; then cleanup_failed=true; fi
+    if ! verification_output=$(docker volume ls -q --filter "label=nerocd.runtime.project=$project" 2>/dev/null) || [[ -n "$verification_output" ]]; then cleanup_failed=true; fi
+    if ! verification_output=$(docker network ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null) || [[ -n "$verification_output" ]]; then cleanup_failed=true; fi
   else cleanup_failed=true; fi
-  [[ "$image" =~ ^nerocd-runtime-enrollment:[0-9a-f]{12}$ ]] && docker image rm -f "$image" >/dev/null 2>&1
+  if [[ "$image" =~ ^nerocd-runtime-enrollment:[0-9a-f]{12}$ ]]; then
+    image_present=false
+    if docker image inspect "$image" >/dev/null 2>&1; then
+      image_present=true
+    elif verification_output=$(docker image ls --quiet --no-trunc "$image" 2>/dev/null); then
+      if [[ -n "$verification_output" ]]; then cleanup_failed=true; image_present=true; fi
+    else
+      cleanup_failed=true
+    fi
+    if [[ "$image_present" == true ]]; then docker image rm -f "$image" >/dev/null 2>&1 || true; fi
+    if ! verification_output=$(docker image ls --quiet --no-trunc "$image" 2>/dev/null) || [[ -n "$verification_output" ]]; then cleanup_failed=true; fi
+  else
+    cleanup_failed=true
+  fi
   case "$runtime_dir" in /tmp/nerocd-runtime-enrollment.*) rm -rf -- "$runtime_dir" ;; esac
   if [[ "$cleanup_failed" == true ]]; then result=1; record "cleanup_complete=false"; else record "cleanup_complete=true"; fi
   if [[ "$passed" == true && "$cleanup_failed" == false ]]; then record "PASS: one-time runner enrollment gate"; elif [[ $result -eq 0 ]]; then result=1; record "FAIL: incomplete assertions"; fi
