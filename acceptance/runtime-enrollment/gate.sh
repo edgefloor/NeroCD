@@ -15,21 +15,25 @@ fail() { record "FAIL: $*"; printf 'runtime-enrollment-gate: %s\n' "$*" >&2; exi
 compose() { NEROCD_RUNTIME_IMAGE="$image" docker compose --project-name "$project" --file "$compose_file" "$@"; }
 redact_diagnostics() {
   sed -E \
-    -e 's#(postgres(ql)?)://[^@[:space:]]+@#\1://[REDACTED]@#g' \
+    -e 's#[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss]([Qq][Ll])?://[^[:space:]",}]+#[REDACTED_DB_URL]#g' \
     -e 's#[Bb]earer[[:space:]]+[^[:space:]",}]+#Bearer [REDACTED]#g' \
     -e 's#("[^"]*([Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt])[^"]*"[[:space:]]*:[[:space:]]*)"[^"]*"#\1"[REDACTED]"#g' \
     -e 's#(([Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt])([_-]?[[:alnum:].]+)*=)[^[:space:]]+#\1[REDACTED]#g'
 }
 capture_failure_diagnostics() {
   local raw="$runtime_dir/failure-diagnostics.raw" redacted="$runtime_dir/failure-diagnostics.txt"
-  local proxy_id proxy_state restart_count
-  {
+  local proxy_id proxy_logs="$runtime_dir/proxy-logs.txt" proxy_state restart_count services
+  if ! {
     printf '%s\n' 'failure_diagnostics_begin'
     printf '%s\n' 'compose_services='
-    compose ps --all --format json 2>/dev/null |
-      jq -cs '[.[] | if type == "array" then .[] else . end | {Service,State,Health,ExitCode}] | sort_by(.Service)' || printf '%s\n' 'unavailable'
+    if services=$(compose ps --all --format json 2>/dev/null |
+      jq -cs '[.[] | if type == "array" then .[] else . end | {Service,State,Health,ExitCode}] | sort_by(.Service)'); then
+      printf '%s\n' "$services"
+    else
+      printf '%s\n' 'unavailable'
+    fi
     printf '%s\n' 'proxy_container='
-    proxy_id=$(compose ps -q proxy 2>/dev/null | head -n 1)
+    proxy_id=$(compose ps -q proxy 2>/dev/null | head -n 1) || proxy_id=''
     if [[ "$proxy_id" =~ ^[0-9a-f]{12,64}$ ]]; then
       proxy_state=$(docker inspect --format '{{json .State}}' "$proxy_id" 2>/dev/null) || proxy_state=''
       restart_count=$(docker inspect --format '{{.RestartCount}}' "$proxy_id" 2>/dev/null) || restart_count=''
@@ -43,16 +47,32 @@ capture_failure_diagnostics() {
       printf '%s\n' 'unavailable'
     fi
     printf '%s\n' 'proxy_logs_begin'
-    compose logs --no-color --tail 80 proxy 2>&1 | head -c 16384
+    if compose logs --no-color --tail 80 proxy 2>&1 | tail -c 16384 >"$proxy_logs"; then
+      cat "$proxy_logs"
+    else
+      printf '%s\n' 'unavailable'
+    fi
     printf '\n%s\n' 'proxy_logs_end' 'failure_diagnostics_end'
-  } >"$raw"
-  redact_diagnostics <"$raw" >"$redacted"
-  cat "$redacted" >>"$evidence"
-  cat "$redacted" >&2
+  } >"$raw"; then
+    printf '%s\n' 'failure_diagnostics=unavailable' >>"$evidence" 2>/dev/null || true
+    printf '%s\n' 'failure_diagnostics=unavailable' >&2
+    return 0
+  fi
+  if ! redact_diagnostics <"$raw" >"$redacted"; then
+    printf '%s\n' 'failure_diagnostics=unavailable' >>"$evidence" 2>/dev/null || true
+    printf '%s\n' 'failure_diagnostics=unavailable' >&2
+    return 0
+  fi
+  cat "$redacted" >>"$evidence" 2>/dev/null || printf '%s\n' 'failure_diagnostics_record=unavailable' >&2
+  cat "$redacted" >&2 || printf '%s\n' 'failure_diagnostics_stderr=unavailable' >&2
+  return 0
 }
 cleanup() {
-  result=$?; set +e; cleanup_failed=false
-  if [[ $result -ne 0 || "$passed" != true ]]; then capture_failure_diagnostics; fi
+  result=$?
+  trap - ERR
+  set +e
+  cleanup_failed=false
+  if [[ $result -ne 0 || "$passed" != true ]]; then capture_failure_diagnostics || true; fi
   if [[ "$project" =~ ^nerocd-enrollment-[0-9a-f]{12}$ ]]; then
     compose down --volumes --remove-orphans --rmi local --timeout 5 >/dev/null 2>&1
     docker ps -aq --filter "label=nerocd.runtime.project=$project" | xargs -r docker rm -f >/dev/null 2>&1
@@ -97,7 +117,7 @@ http_json() {
 }
 sql() { compose exec --no-TTY postgres psql -U nerocd -d nerocd -At -F '|' -v ON_ERROR_STOP=1 -c "$1" | sed '/^[[:space:]]*$/d'; }
 proxy_control_request() {
-  local method=$1 path=$2 response=$3 output curl_code remaining deadline=$((SECONDS+10))
+  local method=$1 path=$2 response=$3 output curl_code remaining deadline=$((SECONDS+9))
   local -a response_args
   case "$response" in
     body) response_args=(-fsS -o -) ;;
@@ -114,7 +134,9 @@ proxy_control_request() {
       curl_code=$?
     fi
     [[ $curl_code -eq 7 ]] || return "$curl_code"
-    sleep 0.2
+    remaining=$((deadline-SECONDS))
+    (( remaining > 0 )) || return 7
+    sleep 0.1
   done
 }
 proxy_status() { proxy_control_request GET status body; }
@@ -168,7 +190,7 @@ compose exec --no-TTY runner_a touch /state/release-runners
 deadline=$((SECONDS+40)); enrollment_state=''; proxy=''
 while (( SECONDS < deadline )); do
   enrollment_state=$(sql "SELECT (used_at IS NOT NULL)::text,(consume_request_id IS NOT NULL)::text,(credential_hash IS NOT NULL)::text,(SELECT count(*) FROM runners WHERE id='runner_enrollment_runtime'),(SELECT count(*) FROM audit_events WHERE action='runner.enrollment.consume' AND target_id='runner_enrollment_runtime') FROM runner_enrollments WHERE id='$race_enrollment_id';" || true)
-  proxy=$(proxy_status || true)
+  proxy=$(proxy_status)
   [[ "$enrollment_state" == 'true|true|true|1|1' && "$(jq -r '.lost_enrollment_responses // 0' <<<"$proxy")" == 1 ]] && break
   sleep 0.2
 done
@@ -180,7 +202,7 @@ done
 # enrollment attempts to settle before asserting the transport evidence.
 deadline=$((SECONDS+20)); consume_requests=0
 while (( SECONDS < deadline )); do
-  proxy=$(proxy_status || true)
+  proxy=$(proxy_status)
   consume_requests=$(jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0' <<<"$proxy")
   settled=0
   for slot in a b; do
