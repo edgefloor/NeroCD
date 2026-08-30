@@ -68,7 +68,8 @@ trap 'fail "unexpected command failure at line $LINENO"' ERR
 
 for x in docker jq rg od; do command -v "$x" >/dev/null || fail "missing dependency $x"; done
 docker info >/dev/null || fail 'Docker unavailable'
-[[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
+# Docker Desktop and OrbStack may expose a user-scoped Docker endpoint rather
+# than /var/run/docker.sock. docker info above is the portable capability check.
 
 # The gate owns the release candidate image and publishes it through a private,
 # loopback-only registry so clean Linux engines get a real repository digest.

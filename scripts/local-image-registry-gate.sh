@@ -5,6 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$root/scripts/local-image-registry.sh"
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 source_tag="nerocd-local-registry-fixture:${suffix}"
+scratch_dir=$(mktemp -d /tmp/nerocd-local-registry.XXXXXXXX)
 registry_id=''
 published_tag=''
 published_ref=''
@@ -18,7 +19,7 @@ cleanup() {
   published_tag=$local_registry_tag
   published_ref=$local_registry_image_ref
   local_registry_cleanup
-  docker image rm -f "$source_tag" >/dev/null 2>&1 || true
+  rm -rf -- "$scratch_dir"
   if [[ -n "$registry_id" ]] && docker inspect "$registry_id" >/dev/null 2>&1; then
     printf '%s\n' 'local image registry gate left its captured container behind' >&2
     code=1
@@ -39,8 +40,9 @@ trap 'exit 1' ERR
 
 for command in docker od; do command -v "$command" >/dev/null; done
 docker info >/dev/null
-docker pull "$LOCAL_REGISTRY_IMAGE" >/dev/null
-docker image tag "$LOCAL_REGISTRY_IMAGE" "$source_tag"
+printf '%s\n' 'local-registry-scratch-payload' >"$scratch_dir/payload"
+printf '%s\n' 'FROM scratch' 'COPY payload /payload' >"$scratch_dir/Dockerfile"
+docker build -t "$source_tag" "$scratch_dir" >/dev/null
 local_registry_publish "$source_tag" "$suffix"
 [[ "$local_registry_image_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-gate-${suffix}@sha256:[a-f0-9]{64}$ ]]
 docker image inspect "$local_registry_image_ref" >/dev/null
