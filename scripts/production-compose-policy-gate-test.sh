@@ -14,7 +14,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir "$temp_root/positive" "$temp_root/merge" "$temp_root/merge-whitespace" "$temp_root/unquoted-command" "$temp_root/server-entrypoint"
+mkdir "$temp_root/positive" "$temp_root/merge" "$temp_root/merge-whitespace" "$temp_root/unquoted-command" \
+  "$temp_root/server-entrypoint" "$temp_root/server-entrypoint-space" "$temp_root/server-entrypoint-quoted" \
+  "$temp_root/server-comment-continuation"
 cp "$root/compose.production.yaml" "$temp_root/positive/compose.production.yaml"
 awk -v expected_server_command="$expected_server_command" '
   $0 == expected_server_command { print "    command: [server, --addr, :8080]"; next }
@@ -25,20 +27,43 @@ if PATH=/usr/bin:/bin bash "$gate" "$temp_root/unquoted-command"; then
   printf '%s\n' 'production compose policy test: unquoted server command was accepted' >&2
   exit 1
 fi
-awk -v expected="$expected" '
+write_server_direct_key_mutation() {
+  local destination=$1 override=$2
+  awk -v expected="$expected" -v override="$override" '
   /^  server:$/ { server=1 }
   server && $0 == expected {
     print
-    print "    entrypoint: [/bin/sh, -c, \"cat /runtime-app/app_database_url >&2; exec sleep 600\"]"
+    print "    " override
     server=0
     next
   }
   { print }
-' "$root/compose.production.yaml" >"$temp_root/server-entrypoint/compose.production.yaml"
-if PATH=/usr/bin:/bin bash "$gate" "$temp_root/server-entrypoint"; then
-  printf '%s\n' 'production compose policy test: server entrypoint override was accepted' >&2
-  exit 1
-fi
+  ' "$root/compose.production.yaml" >"$destination/compose.production.yaml"
+}
+
+write_server_direct_key_mutation "$temp_root/server-entrypoint" 'entrypoint: [/bin/sh, -c, "cat /runtime-app/app_database_url >&2; exec sleep 600"]'
+write_server_direct_key_mutation "$temp_root/server-entrypoint-space" 'entrypoint : [/bin/sh, -c, "cat /runtime-app/app_database_url >&2; exec sleep 600"]'
+write_server_direct_key_mutation "$temp_root/server-entrypoint-quoted" '"entrypoint": [/bin/sh, -c, "cat /runtime-app/app_database_url >&2; exec sleep 600"]'
+
+for variant in server-entrypoint server-entrypoint-space server-entrypoint-quoted; do
+  if PATH=/usr/bin:/bin bash "$gate" "$temp_root/$variant"; then
+    printf 'production compose policy test: %s override was accepted\n' "$variant" >&2
+    exit 1
+  fi
+done
+
+awk '
+  /^  server:$/ { server=1; print; print "    # the immutable image supplies the entrypoint"; next }
+  server && /^    logging: / {
+    print "    logging:"
+    print "      driver: local"
+    print "      options: {max-size: 10m, max-file: \"3\"}"
+    next
+  }
+  /^  probe:$/ { server=0 }
+  { print }
+' "$root/compose.production.yaml" >"$temp_root/server-comment-continuation/compose.production.yaml"
+PATH=/usr/bin:/bin bash "$gate" "$temp_root/server-comment-continuation"
 
 write_merge_mutation() {
   local destination=$1 merge_key=$2
@@ -84,12 +109,12 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
       NEROCD_POSTGRES_PASSWORD_SECRET="$temp_root/postgres" \
       docker compose -f "$1" config
   }
-  for variant in positive merge merge-whitespace server-entrypoint; do
+  for variant in positive merge merge-whitespace server-entrypoint server-entrypoint-space server-entrypoint-quoted server-comment-continuation; do
     render_compose "$temp_root/$variant/compose.production.yaml" >"$temp_root/rendered-$variant.yaml"
-    if [[ "$variant" == positive ]]; then
+    if [[ "$variant" == positive || "$variant" == server-comment-continuation ]]; then
       continue
     fi
-    if [[ "$variant" == server-entrypoint ]]; then
+    if [[ "$variant" == server-entrypoint || "$variant" == server-entrypoint-space || "$variant" == server-entrypoint-quoted ]]; then
       if ! awk '/entrypoint:/ { found=1 } /cat \/runtime-app\/app_database_url/ { payload=1 } END { exit(found && payload ? 0 : 1) }' "$temp_root/rendered-$variant.yaml"; then
         printf '%s\n' 'production compose policy test: server entrypoint override did not render as expected' >&2
         exit 1

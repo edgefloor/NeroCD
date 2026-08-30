@@ -42,8 +42,10 @@ awk -v expected="$expected" -v expected_server_command="$expected_server_command
     server_commands++
     if ($0 == expected_server_command) exact_server_commands++
   }
-  in_services && service == "server" && /^    entrypoint:[[:space:]]/ {
-    server_entrypoints++
+  in_services && service == "server" && /^    [^[:space:]#]/ {
+    if ($0 !~ /^    (image|command|environment|depends_on|volumes|networks|read_only|tmpfs|security_opt|cap_drop|user|restart|stop_grace_period|pids_limit|mem_limit|cpus|logging|healthcheck):/) {
+      server_unknown_keys++
+    }
   }
   END {
     if (!services_seen) {
@@ -62,8 +64,8 @@ awk -v expected="$expected" -v expected_server_command="$expected_server_command
       print "production compose policy: server lacks exactly one direct quoted :8080 command" > "/dev/stderr"
       exit 1
     }
-    if (server_entrypoints != 0) {
-      print "production compose policy: server must not override the immutable image entrypoint" > "/dev/stderr"
+    if (server_unknown_keys != 0) {
+      print "production compose policy: server has an unknown or noncanonical direct service key" > "/dev/stderr"
       exit 1
     }
     for (position = 1; position <= count; position++) {
