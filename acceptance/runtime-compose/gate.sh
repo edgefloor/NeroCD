@@ -91,6 +91,17 @@ select_engine_builder(){
   fi
   engine_builder=$active; builder_source=active; builder_diagnostic=active_selected
 }
+runner_terminal_class(){
+  local source=$1
+  if [[ ! -f "$source" ]]; then printf '%s' unavailable
+  elif grep -Eq 'provenance stage=docker_compose_config status=failed_' "$source"; then printf '%s' config_failure
+  elif grep -Eq 'provenance stage=(git_|ssh_)' "$source" && grep -Eq 'status=failed_' "$source"; then printf '%s' provenance_failure
+  elif grep -Eq 'status=failed_(image_reference|image_unavailable|image_access)_exit_-?[0-9]+$' "$source"; then printf '%s' image_failure
+  elif grep -Eiq 'confirm lease authority|lease authority' "$source"; then printf '%s' authority_failure
+  elif grep -Eiq 'connection refused|network is unreachable|i/o timeout|context deadline exceeded' "$source"; then printf '%s' transport_failure
+  else printf '%s' unclassified
+  fi
+}
 classify_log(){
   local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
   if [[ ! -f "$source" ]] || ! tail -n 80 "$source" 2>/dev/null | tail -c 16384 >"$raw"; then
@@ -115,8 +126,11 @@ classify_log(){
           fi
           ;;
         runner)
-          if grep -Eq 'status=failed_' "$raw"; then class=runner_operation_failed
-          elif grep -Eq 'stage=(resolve|compose_) status=start|"event":"claimed_run"' "$raw"; then class=runner_activity
+          class=$(runner_terminal_class "$raw")
+          if [[ "$class" == unclassified ]]; then
+            if grep -Eq 'status=failed_' "$raw"; then class=runner_operation_failed
+            elif grep -Eq 'stage=(resolve|compose_) status=start|"event":"claimed_run"' "$raw"; then class=runner_activity
+            fi
           fi
           ;;
       esac
@@ -124,8 +138,43 @@ classify_log(){
   fi
   diag_emit "diagnostic_${label}=$(jq -cn --argjson available "$available" --argjson lines "$lines" --argjson bytes "$bytes" --arg class "$class" '{log_available:$available,line_count:$lines,byte_count:$bytes,class:$class}')"
 }
+sanitize_deployment_outcomes(){
+  jq -ce '
+    def deployment_status:
+      if . == "queued" or . == "waiting_confirmation" or . == "assigned" or . == "preparing" or . == "applying" or . == "verifying" or . == "succeeded" or . == "failed" or . == "canceled" or . == "cancel_requested" or . == "rolling_back" or . == "rolled_back" or . == "rollback_failed" or . == "manual_intervention" then . else error("invalid deployment status") end;
+    def failure_code:
+      if . == "" then "none"
+      elif . == "validation_failed" or . == "health_failed" or . == "apply_failed" or . == "compose_failed" or . == "resolved_image_unavailable" or . == "compose_reconcile_failed" or . == "compose_apply_failed" or . == "compose_transition_failed" or . == "compose_health_failed" or . == "provenance_resolution_failed" or . == "cancellation_requested" then .
+      else "other" end;
+    if type != "array" or length > 12 then error("invalid deployment outcome list")
+    else [ .[] |
+      if type != "object" or (.status | type) != "string" or (.failure_code | type) != "string" or ((.health_passed != null) and (.health_passed | type) != "boolean") or (.rollback_child | type) != "boolean" or (.rollback_safe | type) != "boolean" or (.previous_healthy | type) != "boolean" then error("invalid deployment outcome")
+      else {
+        status:(.status | deployment_status),
+        failure_code:(.failure_code | failure_code),
+        health:(if .health_passed == true then "passed" elif .health_passed == false then "failed" else "unknown" end),
+        rollback:{child:.rollback_child,safe:.rollback_safe,previous_healthy:.previous_healthy,manual_intervention:(.status == "manual_intervention")}
+      } end
+    ] end
+  '
+}
+terminal_classes(){
+  local outcomes=$1 runner_class=$2
+  jq -cn --argjson outcomes "$outcomes" --arg runner_class "$runner_class" '
+    def outcome_class:
+      if .failure_code == "resolved_image_unavailable" then "image_failure"
+      elif .failure_code == "compose_apply_failed" or .failure_code == "apply_failed" then "apply_failure"
+      elif .failure_code == "compose_health_failed" or .failure_code == "health_failed" then "health_failure"
+      elif .failure_code == "provenance_resolution_failed" then "provenance_failure"
+      elif .failure_code == "compose_transition_failed" or .failure_code == "compose_reconcile_failed" or .failure_code == "cancellation_requested" or .status == "rollback_failed" or .status == "manual_intervention" then "settlement_failure"
+      else empty end;
+    ([ $outcomes[] | outcome_class ] +
+      (if $runner_class == "transport_failure" or $runner_class == "authority_failure" or $runner_class == "provenance_failure" or $runner_class == "image_failure" or $runner_class == "config_failure" then [$runner_class] else [] end))
+    | unique | sort | .[:8]
+  '
+}
 diagnose(){
-  local output rc runner_id state_file="$dir/diagnostic-runner-state.json"
+  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class
   set +e
   diag_emit 'diagnostic_begin=true'
   diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
@@ -165,11 +214,61 @@ diagnose(){
   else
     diag_emit 'database_counts=unavailable'
   fi
+  output=$(psql_query "SELECT COALESCE(json_agg(outcome ORDER BY created_at DESC), '[]'::json)::text FROM (SELECT json_build_object('status',d.status,'failure_code',d.failure_code,'health_passed',d.health_passed,'rollback_child',(d.rollback_of_id IS NOT NULL),'rollback_safe',e.rollback_safe,'previous_healthy',(d.previous_healthy_revision_id IS NOT NULL)) AS outcome,d.created_at FROM deployments d JOIN environments e ON e.id=d.environment_id ORDER BY d.created_at DESC LIMIT 12) deployment_outcomes" 2>"$dir/diagnostic-deployments.err")
+  if [[ $? -eq 0 ]] && outcomes=$(sanitize_deployment_outcomes <<<"$output" 2>/dev/null); then
+    diag_emit "deployment_outcomes=$outcomes"
+  else
+    outcomes='[]'
+    diag_emit 'deployment_outcomes=unavailable'
+  fi
   classify_log runner_build "$dir/runner-build.log"
   classify_log runner_ready "$dir/runner.log"
   if compose logs --no-color --tail 80 runner >"$dir/diagnostic-runner.log" 2>/dev/null; then classify_log runner "$dir/diagnostic-runner.log"; else classify_log runner /nonexistent; fi
+  # The class is a fixed vocabulary derived from private capped log text; the
+  # text itself is never copied to stderr or the evidence file.
+  runner_class=$(runner_terminal_class "$dir/diagnostic-runner.raw")
+  if output=$(terminal_classes "$outcomes" "$runner_class" 2>/dev/null); then diag_emit "terminal_classes=$output"; else diag_emit 'terminal_classes=unavailable'; fi
   diag_emit 'diagnostic_end=true'
 }
+diagnostic_selftest(){
+  local outcomes class input="$dir/diagnostic-selftest.log"
+  outcomes=$(sanitize_deployment_outcomes <<'JSON'
+[{"status":"manual_intervention","failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true},{"status":"rolled_back","failure_code":"","health_passed":true,"rollback_child":true,"rollback_safe":true,"previous_healthy":true}]
+JSON
+) || return 1
+  jq -e 'length == 2 and .[0].status == "manual_intervention" and .[0].failure_code == "compose_health_failed" and .[0].rollback.manual_intervention == true' <<<"$outcomes" >/dev/null || return 1
+  sanitize_deployment_outcomes <<'JSON' >/dev/null 2>&1 && return 1
+[{"status":1,"failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true}]
+JSON
+  outcomes=$(sanitize_deployment_outcomes <<'JSON'
+[{"status":"failed","failure_code":"bearer_super_secret_token","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true}]
+JSON
+) || return 1
+  jq -e '.[0].failure_code == "other"' <<<"$outcomes" >/dev/null || return 1
+  while IFS='|' read -r line expected; do
+    printf '%s\n' "$line" >"$input"
+    class=$(runner_terminal_class "$input")
+    [[ "$class" == "$expected" ]] || return 1
+  done <<'CASES'
+provenance stage=docker_compose_config status=failed_unknown_exit_1|config_failure
+provenance stage=git_fetch status=failed_unknown_exit_1|provenance_failure
+provenance stage=resolve status=failed_image_unavailable_exit_1|image_failure
+confirm lease authority|authority_failure
+connection refused|transport_failure
+Authorization: Bearer super-secret-token|unclassified
+CASES
+  outcomes=$(sanitize_deployment_outcomes <<'JSON'
+[{"status":"failed","failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true}]
+JSON
+) || return 1
+  [[ $(terminal_classes "$outcomes" unclassified) == '["health_failure"]' ]] || return 1
+}
+if [[ "${NEROCD_RUNTIME_COMPOSE_DIAGNOSTIC_SELFTEST:-}" == 1 ]]; then
+  diagnostic_selftest
+  rm -rf -- "$dir"
+  printf 'runtime-compose: diagnostic selftest passed\n'
+  exit 0
+fi
 start_fixture_registry(){
   local port_line ready=false attempt
   fixture_registry_diagnostic=start_started
