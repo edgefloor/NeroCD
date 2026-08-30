@@ -165,11 +165,13 @@ func TestMemoryPostApplyFailureWithoutSafeRollbackRequiresManualIntervention(t *
 	tests := []struct {
 		name                    string
 		status                  domain.DeploymentStatus
+		rollbackSafe            bool
 		previousHealthyRevision *string
 		currentHealthyRevision  *string
 	}{
-		{name: "missing previous healthy revision while applying", status: domain.DeploymentApplying, currentHealthyRevision: stringPointer("rev_a")},
-		{name: "stale healthy pointer while verifying", status: domain.DeploymentVerifying, previousHealthyRevision: stringPointer("rev_a"), currentHealthyRevision: stringPointer("rev_other")},
+		{name: "missing previous healthy revision while applying", status: domain.DeploymentApplying, rollbackSafe: true, currentHealthyRevision: stringPointer("rev_a")},
+		{name: "stale healthy pointer while verifying", status: domain.DeploymentVerifying, rollbackSafe: true, previousHealthyRevision: stringPointer("rev_a"), currentHealthyRevision: stringPointer("rev_other")},
+		{name: "rollback disabled with matching healthy evidence", status: domain.DeploymentApplying, rollbackSafe: false, previousHealthyRevision: stringPointer("rev_a"), currentHealthyRevision: stringPointer("rev_a")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -177,7 +179,7 @@ func TestMemoryPostApplyFailureWithoutSafeRollbackRequiresManualIntervention(t *
 			now := time.Now().UTC()
 			runnerID := "runner"
 			s.services = []domain.Service{{ID: "svc", ProjectID: "proj"}}
-			s.environments = []domain.Environment{{ID: "env", ServiceID: "svc", RollbackSafe: true, CurrentHealthyRevisionID: tt.currentHealthyRevision}}
+			s.environments = []domain.Environment{{ID: "env", ServiceID: "svc", RollbackSafe: tt.rollbackSafe, CurrentHealthyRevisionID: tt.currentHealthyRevision}}
 			s.runs = []domain.TaskRun{{ID: "run_b", ProjectID: "proj", Status: domain.RunRunning, RunnerID: &runnerID}}
 			s.leases = []domain.RunLease{{ID: "lease", RunID: "run_b", RunnerID: runnerID, Status: domain.LeaseActive, Attempt: 1, Fence: "fence", ExpiresAt: now.Add(time.Minute)}}
 			s.deployments = []domain.Deployment{{ID: "dep_b", EnvironmentID: "env", DesiredRevisionID: "rev_b", PreviousHealthyRevisionID: tt.previousHealthyRevision, TaskRunID: stringPointer("run_b"), Status: tt.status}}

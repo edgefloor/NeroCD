@@ -1016,6 +1016,49 @@ WHERE d.id=$1`, depE.ID, claimE.Lease.Attempt).Scan(&deploymentStatus, &pendingA
 		t.Fatalf("missing previous settlement status=%q children=%d rollback_runs=%d failure_audits=%d rollback_audits=%d", missingStatus, missingChildren, missingRollbackRuns, missingFailureAudits, missingRollbackAudits)
 	}
 
+	// Rollback policy remains authoritative even when the deployment snapshot
+	// and environment healthy pointer otherwise identify the same safe target.
+	source5 := create("dep_fenced_rollback_disabled_source_"+suffix, "run_fenced_rollback_disabled_source_"+suffix, revisionB, "rollback-disabled-source")
+	claimSource5, err := pg.ClaimRun(ctx, runnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][3]string{{domain.DeploymentAssigned, domain.DeploymentPreparing, "source5-prepare"}, {domain.DeploymentPreparing, domain.DeploymentApplying, "source5-apply"}} {
+		if rec := postTransition(source5, claimSource5, step[0], step[1], step[2], claimSource5.Lease.Fence, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s response %d: %s", step[2], rec.Code, rec.Body.String())
+		}
+	}
+	if _, err = database.Exec(ctx, `UPDATE environments SET rollback_safe=false WHERE id=$1`, environmentID); err != nil {
+		t.Fatal(err)
+	}
+	disabledBody := fmt.Sprintf(`{"deployment_id":%q,"run_id":%q,"lease_id":%q,"attempt":%d,"fence":%q,"request_id":"failure-rollback-disabled","expected_status":"applying","failure_code":"compose_failed"}`, source5.ID, claimSource5.Run.ID, claimSource5.Lease.ID, claimSource5.Lease.Attempt, claimSource5.Lease.Fence)
+	if rec := postMismatch(disabledBody); rec.Code != http.StatusOK {
+		t.Fatalf("rollback disabled response %d: %s", rec.Code, rec.Body.String())
+	}
+	assertTerminalLifecycle(source5, claimSource5, domain.RunFailed)
+	disabledChildID, disabledRunID := domain.RollbackObjectIDs(source5.ID, "failure-rollback-disabled")
+	var disabledStatus, disabledFailureCode, disabledPrevious, disabledCurrent string
+	var disabledChildren, disabledRollbackRuns, disabledFailureAudits, disabledRollbackAudits, disabledTransitions int
+	var disabledRollbackSafe, disabledLeaseCompleted, disabledAttemptFinished bool
+	if err = database.QueryRow(ctx, `SELECT
+		d.status,d.failure_code,d.previous_healthy_revision_id,e.current_healthy_revision_id,e.rollback_safe,
+		(SELECT count(*) FROM deployments WHERE rollback_of_id=$1),
+		(SELECT count(*) FROM task_runs WHERE id=$3),
+		(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='runner.deployment.failed'),
+		(SELECT count(*) FROM audit_events WHERE target_id=$2 AND action='runner.deployment.rollback_queued'),
+		(SELECT count(*) FROM deployment_transitions WHERE deployment_id=$1 AND transition_key='failure:failure-rollback-disabled'),
+		(SELECT completed_at IS NOT NULL FROM run_leases WHERE id=$4),
+		(SELECT finished_at IS NOT NULL FROM deployment_attempts WHERE deployment_id=$1 AND attempt=$5)
+		FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE d.id=$1`, source5.ID, disabledChildID, disabledRunID, claimSource5.Lease.ID, claimSource5.Lease.Attempt).Scan(&disabledStatus, &disabledFailureCode, &disabledPrevious, &disabledCurrent, &disabledRollbackSafe, &disabledChildren, &disabledRollbackRuns, &disabledFailureAudits, &disabledRollbackAudits, &disabledTransitions, &disabledLeaseCompleted, &disabledAttemptFinished); err != nil {
+		t.Fatal(err)
+	}
+	if disabledStatus != domain.DeploymentManualIntervention || disabledFailureCode != "compose_failed" || disabledPrevious != revisionA || disabledCurrent != revisionA || disabledRollbackSafe || disabledChildren != 0 || disabledRollbackRuns != 0 || disabledFailureAudits != 1 || disabledRollbackAudits != 0 || disabledTransitions != 1 || !disabledLeaseCompleted || !disabledAttemptFinished {
+		t.Fatalf("rollback disabled settlement status=%q failure=%q previous=%q current=%q rollback_safe=%t children=%d rollback_runs=%d failure_audits=%d rollback_audits=%d transitions=%d lease_completed=%t attempt_finished=%t", disabledStatus, disabledFailureCode, disabledPrevious, disabledCurrent, disabledRollbackSafe, disabledChildren, disabledRollbackRuns, disabledFailureAudits, disabledRollbackAudits, disabledTransitions, disabledLeaseCompleted, disabledAttemptFinished)
+	}
+	if _, err = database.Exec(ctx, `UPDATE environments SET rollback_safe=true WHERE id=$1`, environmentID); err != nil {
+		t.Fatal(err)
+	}
+
 	// AC12: the maintainer cancellation receipt and the runner-authenticated
 	// rollback handoff are separate HTTP transactions.  The former is a stable
 	// operator request; the latter is the only authority allowed to create the
