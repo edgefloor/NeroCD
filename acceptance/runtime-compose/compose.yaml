@@ -45,7 +45,7 @@ services:
     user: "0:0"
     network_mode: none
     entrypoint: [/bin/sh, -ec]
-    environment: {IMAGE_A: "${NEROCD_FIXTURE_A:?set NEROCD_FIXTURE_A}", IMAGE_B: "${NEROCD_FIXTURE_B:?set NEROCD_FIXTURE_B}", IMAGE_C: "${NEROCD_FIXTURE_C:?set NEROCD_FIXTURE_C}"}
+    environment: {IMAGE_A: "${NEROCD_FIXTURE_A:?set NEROCD_FIXTURE_A}", IMAGE_B: "${NEROCD_FIXTURE_B:?set NEROCD_FIXTURE_B}", IMAGE_C: "${NEROCD_FIXTURE_C:?set NEROCD_FIXTURE_C}", HEALTH_NETWORK: "${NEROCD_HEALTH_NETWORK:?set NEROCD_HEALTH_NETWORK}", HEALTH_HOST: "${NEROCD_HEALTH_HOST:?set NEROCD_HEALTH_HOST}"}
     command:
       - |
         set -eu; umask 077
@@ -57,10 +57,10 @@ services:
         cp /git/keys/deploy.pub /git/home/.ssh/authorized_keys; chmod 700 /git/home/.ssh; chmod 600 /git/home/.ssh/authorized_keys /git/keys/*
         git init --bare /git/repo.git >/dev/null; git config --global user.email gate@local; git config --global user.name gate
         git init /git/work >/dev/null; cd /git/work
-        make_compose() { printf 'services:\n  fixture:\n    image: %s\n    environment:\n      REVISION: $${NEROCD_DEPLOYMENT_REVISION:?server-owned revision required}\n      REQUIRE_FILE_SECRET: "true"\n    secrets:\n      - source: app_secret\n        target: /run/secrets/app_secret\n    ports: ["127.0.0.1:18080:8080"]\n' "$1" > compose.yaml; }
-        make_compose "$${IMAGE_A}"; git add compose.yaml; git commit -qm A; git branch -M main; a_commit=$$(git rev-parse HEAD); git remote add origin /git/repo.git; git push -q origin main
-        make_compose "$${IMAGE_B}"; git add compose.yaml; git commit -qm B; git branch -f fixture-b; git reset --hard "$$a_commit" >/dev/null
-        make_compose "$${IMAGE_C}"; git add compose.yaml; git commit -qm C; git branch -f fixture-c
+        make_compose() { printf 'services:\n  fixture:\n    image: %s\n    environment:\n      REVISION: $${NEROCD_DEPLOYMENT_REVISION:?server-owned revision required}\n      REQUIRE_FILE_SECRET: "true"\n    secrets:\n      - source: app_secret\n        target: /run/secrets/app_secret\n    networks:\n      health:\n        aliases: [%s]\nnetworks:\n  health:\n    external: true\n    name: %s\n' "$1" "$3" "$2" > compose.yaml; }
+        make_compose "$${IMAGE_A}" "$${HEALTH_NETWORK}" "$${HEALTH_HOST}"; git add compose.yaml; git commit -qm A; git branch -M main; a_commit=$$(git rev-parse HEAD); git remote add origin /git/repo.git; git push -q origin main
+        make_compose "$${IMAGE_B}" "$${HEALTH_NETWORK}" "$${HEALTH_HOST}"; git add compose.yaml; git commit -qm B; git branch -f fixture-b; git reset --hard "$$a_commit" >/dev/null
+        make_compose "$${IMAGE_C}" "$${HEALTH_NETWORK}" "$${HEALTH_HOST}"; git add compose.yaml; git commit -qm C; git branch -f fixture-c
         printf '# D\n' >>compose.yaml; git add compose.yaml; git commit -qm D; git branch -f fixture-d; git reset --hard "$$a_commit" >/dev/null; git push -q --force origin main fixture-b fixture-c fixture-d
         printf 'Port 2222\nListenAddress 0.0.0.0\nHostKey /git/keys/host\nAuthorizedKeysFile /git/home/.ssh/authorized_keys\nPidFile /tmp/sshd.pid\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\nPermitRootLogin no\nAllowUsers git\n' >/git/sshd_config
         chown -R 10002:10002 /git/home /git/repo.git; chmod 755 /git /git/repo.git
@@ -103,10 +103,16 @@ services:
     user: "10001:10001"
     group_add: ["${NEROCD_DOCKER_GID:?set NEROCD_DOCKER_GID}"]
     volumes: [runner-credential:/credentials:ro, runner-journal:/journal, "${NEROCD_RUNTIME_WORKDIR:?set NEROCD_RUNTIME_WORKDIR}:${NEROCD_RUNTIME_WORKDIR:?set NEROCD_RUNTIME_WORKDIR}", "${NEROCD_RUNTIME_SECRET_ROOT:?set NEROCD_RUNTIME_SECRET_ROOT}:${NEROCD_RUNTIME_SECRET_ROOT:?set NEROCD_RUNTIME_SECRET_ROOT}:ro", /var/run/docker.sock:/var/run/docker.sock]
-    extra_hosts: ["host.docker.internal:host-gateway"]
-    networks: [runtime]
+    networks: [runtime, health]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     stop_grace_period: 2s
 volumes: {postgres-data: {}, runner-credential: {}, runner-journal: {}, git-data: {}}
-networks: {runtime: {driver: bridge}}
+networks:
+  runtime: {driver: bridge}
+  # The runner and deployed fixture share this engine-local network, avoiding
+  # host-gateway/loopback differences between native Linux and desktop VMs.
+  health:
+    name: "${NEROCD_HEALTH_NETWORK:?set NEROCD_HEALTH_NETWORK}"
+    driver: bridge
+    internal: true
