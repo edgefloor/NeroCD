@@ -53,6 +53,7 @@ postgres-test:
 	GOCACHE="$(GOCACHE_DIR)" go test ./internal/store
 
 production-profile-gate:
+	bash scripts/production-profile-gate-test.sh
 	bash scripts/production-profile-gate.sh
 
 backup-restore-gate:

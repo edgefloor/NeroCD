@@ -13,10 +13,52 @@ project="nerocd-production-$suffix"
 proxy="nerocd-production-proxy-$suffix"
 image_tag="nerocd-production-server:$suffix"
 pass=false
+owner_password=''
+app_password=''
 : >"$evidence"
 record(){ printf '%s\n' "$*" >>"$evidence"; }
 fail(){ trap - ERR; record "FAIL: $*"; printf 'production-profile: %s\n' "$*" >&2; exit 1; }
 compose(){ NEROCD_IMAGE="$image_ref" NEROCD_PROXY_NETWORK="$proxy" NEROCD_PUBLIC_ORIGIN='https://nerocd.example.invalid' NEROCD_OWNER_DATABASE_USER="$owner_role" NEROCD_APP_DATABASE_USER="$app_role" NEROCD_DATABASE_URL_SECRET="$dir/database-url" NEROCD_APP_DATABASE_URL_SECRET="$dir/app-database-url" NEROCD_POSTGRES_PASSWORD_SECRET="$dir/postgres-password" docker compose -p "$project" -f "$root/compose.production.yaml" "$@"; }
+# Compose and Docker diagnostics can include command environments. Keep the
+# two generated credentials out of terminal output and retained evidence.
+redact_stream(){
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "$owner_password" ]]; then
+      line=${line//"$owner_password"/'[REDACTED_OWNER_PASSWORD]'}
+    fi
+    if [[ -n "$app_password" ]]; then
+      line=${line//"$app_password"/'[REDACTED_APP_PASSWORD]'}
+    fi
+    printf '%s\n' "$line"
+  done
+}
+append_redacted_file(){
+  local file=$1
+  [[ -f "$file" ]] || return 0
+  redact_stream <"$file" >>"$evidence"
+}
+emit_startup_diagnostics(){
+  local raw="$dir/startup-diagnostics.raw"
+  {
+    printf '%s\n' '--- production-profile startup diagnostics: compose up output ---'
+    cat "$dir/up.log"
+    printf '%s\n' '--- production-profile startup diagnostics: compose ps -a ---'
+    compose ps -a
+    for service in secret-init pgdata-init backup-data-init postgres migrate role-init server backup-scheduler; do
+      printf '%s\n' "--- production-profile startup diagnostics: $service (last 80 lines) ---"
+      compose logs --no-color --tail 80 "$service"
+    done
+  } >"$raw" 2>&1 || true
+  redact_stream <"$raw" | tee -a "$evidence" >&2
+}
+if [[ "${1:-}" == '--redact-stdin' ]]; then
+  [[ $# -eq 3 ]] || { printf '%s\n' 'usage: production-profile-gate.sh --redact-stdin OWNER_PASSWORD APP_PASSWORD' >&2; exit 64; }
+  owner_password=$2
+  app_password=$3
+  redact_stream
+  exit 0
+fi
 owner_psql(){ compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$owner_role" -d nerocd "$@"; }
 # The password is only passed to this short-lived exec environment.  It is
 # never put in an SQL command, evidence, Docker inspect, or service logs.
@@ -46,7 +88,8 @@ cleanup(){
   local code=$?
   trap - ERR
   set +e
-  compose logs --no-color >>"$evidence" 2>&1 || true
+  compose logs --no-color >"$dir/cleanup-compose.log" 2>&1 || true
+  append_redacted_file "$dir/cleanup-compose.log"
   compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1 || true
   docker network rm "$proxy" >/dev/null 2>&1 || true
   local_registry_cleanup
@@ -132,7 +175,10 @@ if NEROCD_MODE=production NEROCD_IMAGE_REF="$image_ref" NEROCD_PUBLIC_ORIGIN='ht
 ! rg -Fq "$owner_password" "$dir/doctor.err" "$dir/equal.err" || fail 'doctor disclosed owner secret while validating credential files'
 ! rg -Fq "$app_password" "$dir/doctor.err" "$dir/equal.err" || fail 'doctor disclosed app secret while validating credential files'
 
-compose up -d --wait postgres server backup-scheduler >"$dir/up.log" 2>&1 || fail 'production stack failed to reach healthy server'
+if ! compose up -d --wait postgres server backup-scheduler >"$dir/up.log" 2>&1; then
+  emit_startup_diagnostics
+  fail 'production stack failed to reach healthy server'
+fi
 for i in {1..30}; do
   compose run --rm --no-deps probe >"$dir/probe.log" 2>&1 && break
   sleep 1
