@@ -104,7 +104,7 @@ cleanup(){
   if [[ "$compose_ready" == true ]]; then
     compose logs --no-color >"$dir/cleanup-compose.log" 2>&1 || true
     append_redacted_file "$dir/cleanup-compose.log"
-    compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1 || true
+    if ! compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1; then cleanup_complete=false; code=1; fi
   fi
   if [[ "$proxy_created" == true ]] && ! docker network rm "$proxy" >/dev/null 2>&1; then cleanup_complete=false; code=1; fi
   if ! local_registry_cleanup; then cleanup_complete=false; code=1; fi
@@ -122,7 +122,13 @@ cleanup(){
     cleanup_complete=false
     code=1
   fi
-  rm -rf -- "$dir"
+  if ! rm -rf -- "$dir"; then
+    cleanup_complete=false
+    code=1
+  elif [[ -e "$dir" ]]; then
+    cleanup_complete=false
+    code=1
+  fi
   record "cleanup_complete=$cleanup_complete"
   [[ "$pass" == true && $code -eq 0 ]] && record 'PASS: live production profile startup and durable restart gate'
   printf 'production profile evidence: %s\n' "$evidence"
@@ -134,10 +140,18 @@ trap 'fail "unexpected command failure at line $LINENO"' ERR
 if [[ "${1:-}" == '--cleanup-pre-compose-test' ]]; then
   [[ $# -eq 2 ]] || { printf '%s\n' 'usage: production-profile-gate.sh --cleanup-pre-compose-test TRACE_FILE' >&2; exit 64; }
   cleanup_test_trace=$2
+  printf 'cleanup_dir=%s\n' "$dir" >>"$cleanup_test_trace"
   local_registry_cleanup(){
     printf '%s\n' local_registry_cleanup >>"$cleanup_test_trace"
     [[ "${NEROCD_CLEANUP_TEST_MODE:-success}" != registry-cleanup-failure ]]
   }
+  if [[ "${NEROCD_CLEANUP_TEST_MODE:-success}" == compose-down-failure ]]; then
+    compose_ready=true
+    compose(){
+      printf 'compose %s\n' "$*" >>"$cleanup_test_trace"
+      [[ "$1" != down ]]
+    }
+  fi
   exit 1
 fi
 

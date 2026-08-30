@@ -65,6 +65,15 @@ esac
 exit 0
 EOF
 chmod +x "$mock_bin/docker"
+cat >"$mock_bin/rm" <<'EOF'
+#!/bin/sh
+case "${NEROCD_CLEANUP_TEST_MODE:-success}" in
+  dir-rm-failure) exit 1 ;;
+  dir-survivor) exit 0 ;;
+esac
+exec /bin/rm "$@"
+EOF
+chmod +x "$mock_bin/rm"
 if PATH="$mock_bin:$PATH" NEROCD_CLEANUP_TEST_TRACE="$cleanup_trace" bash "$gate" --cleanup-pre-compose-test "$cleanup_trace"; then
   printf '%s\n' 'production profile cleanup test: pre-compose failure unexpectedly succeeded' >&2
   exit 1
@@ -98,6 +107,29 @@ if PATH="$mock_bin:$PATH" NEROCD_CLEANUP_TEST_TRACE="$cleanup_trace" NEROCD_CLEA
 fi
 rg -Fqx 'local_registry_cleanup' "$cleanup_trace"
 rg -Fqx 'cleanup_complete=false' /tmp/nerocd-production-profile.txt
+
+: >"$cleanup_trace"
+if PATH="$mock_bin:$PATH" NEROCD_CLEANUP_TEST_TRACE="$cleanup_trace" NEROCD_CLEANUP_TEST_MODE=compose-down-failure bash "$gate" --cleanup-pre-compose-test "$cleanup_trace"; then
+  printf '%s\n' 'production profile cleanup test: compose down failure unexpectedly succeeded' >&2
+  exit 1
+fi
+rg -Fqx 'compose down --volumes --remove-orphans --rmi local --timeout 10' "$cleanup_trace"
+rg -Fqx 'cleanup_complete=false' /tmp/nerocd-production-profile.txt
+! rg -Fq 'PASS: live production profile startup and durable restart gate' /tmp/nerocd-production-profile.txt
+
+for mode in dir-rm-failure dir-survivor; do
+  : >"$cleanup_trace"
+  if PATH="$mock_bin:$PATH" NEROCD_CLEANUP_TEST_TRACE="$cleanup_trace" NEROCD_CLEANUP_TEST_MODE="$mode" bash "$gate" --cleanup-pre-compose-test "$cleanup_trace"; then
+    printf 'production profile cleanup test: %s unexpectedly succeeded\n' "$mode" >&2
+    exit 1
+  fi
+  cleanup_dir=$(awk -F= '/^cleanup_dir=/{print $2}' "$cleanup_trace")
+  [[ "$cleanup_dir" =~ ^/tmp/nerocd-production-profile\.[A-Za-z0-9]+$ ]] || { printf '%s\n' 'production profile cleanup test: unsafe cleanup directory' >&2; exit 1; }
+  [[ -d "$cleanup_dir" ]] || { printf '%s\n' 'production profile cleanup test: mocked directory did not survive' >&2; exit 1; }
+  rg -Fqx 'cleanup_complete=false' /tmp/nerocd-production-profile.txt
+  ! rg -Fq 'PASS: live production profile startup and durable restart gate' /tmp/nerocd-production-profile.txt
+  /bin/rm -rf -- "$cleanup_dir"
+done
 
 registry_helper="$root/scripts/local-image-registry.sh"
 : >"$cleanup_trace"
