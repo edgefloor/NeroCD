@@ -65,7 +65,7 @@ services:
         git add compose.yaml; git commit -qm A; git branch -M main; git remote add origin /git/repo.git; git push -q origin main
         printf '# B\n' >> compose.yaml; git add compose.yaml; git commit -qm B; git branch fixture-b; git reset --hard HEAD~1; git push -q --force origin main fixture-b
         git --git-dir=/git/repo.git symbolic-ref HEAD refs/heads/main
-        printf 'Port 2222\nListenAddress 0.0.0.0\nHostKey /git/keys/host\nAuthorizedKeysFile /git/home/.ssh/authorized_keys\nPidFile /tmp/sshd.pid\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\nPermitRootLogin no\nAllowUsers git\nSubsystem sftp internal-sftp\n' > /git/sshd_config
+        printf 'Port 2222\nListenAddress 0.0.0.0\nHostKey /git/keys/host\nAuthorizedKeysFile /git/home/.ssh/authorized_keys\nPidFile /tmp/sshd.pid\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\nPermitRootLogin no\nAllowUsers git\nPerSourcePenalties no\nSubsystem sftp internal-sftp\n' > /git/sshd_config
         chown -R 10002:10002 /git/home /git/repo.git; chmod 755 /git /git/repo.git
     volumes: [git-data:/git, runner-secrets:/runner-secrets]
   git_advance:
