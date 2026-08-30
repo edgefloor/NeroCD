@@ -3,6 +3,10 @@ set -eu
 
 browser_port=${1:?browser port is required}
 browser_origin=${2:?browser origin is required}
+if [ "$#" -ne 2 ]; then
+  echo "browser server accepts only a port and origin" >&2
+  exit 2
+fi
 
 case "$browser_port" in
   ''|*[!0-9]*) echo "browser port must be numeric" >&2; exit 2 ;;
