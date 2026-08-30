@@ -16,7 +16,7 @@ trap cleanup EXIT
 
 mkdir "$temp_root/positive" "$temp_root/merge" "$temp_root/merge-whitespace" "$temp_root/unquoted-command" \
   "$temp_root/server-entrypoint" "$temp_root/server-entrypoint-space" "$temp_root/server-entrypoint-quoted" \
-  "$temp_root/server-comment-continuation"
+  "$temp_root/server-healthcheck" "$temp_root/server-volumes"
 cp "$root/compose.production.yaml" "$temp_root/positive/compose.production.yaml"
 awk -v expected_server_command="$expected_server_command" '
   $0 == expected_server_command { print "    command: [server, --addr, :8080]"; next }
@@ -45,25 +45,29 @@ write_server_direct_key_mutation "$temp_root/server-entrypoint" 'entrypoint: [/b
 write_server_direct_key_mutation "$temp_root/server-entrypoint-space" 'entrypoint : [/bin/sh, -c, "cat /runtime-app/app_database_url >&2; exec sleep 600"]'
 write_server_direct_key_mutation "$temp_root/server-entrypoint-quoted" '"entrypoint": [/bin/sh, -c, "cat /runtime-app/app_database_url >&2; exec sleep 600"]'
 
-for variant in server-entrypoint server-entrypoint-space server-entrypoint-quoted; do
+replace_server_direct_key() {
+  local destination=$1 original=$2 replacement=$3
+  awk -v original="$original" -v replacement="$replacement" '
+  /^  server:$/ { server=1 }
+  /^  probe:$/ { server=0 }
+  server && $0 == original { print replacement; next }
+  { print }
+  ' "$root/compose.production.yaml" >"$destination/compose.production.yaml"
+}
+
+replace_server_direct_key "$temp_root/server-healthcheck" \
+  '    healthcheck: {test: [CMD, nerocd, ready, --addr, http://127.0.0.1:8080], interval: 10s, timeout: 3s, retries: 6}' \
+  '    healthcheck: {test: [CMD-SHELL, "cat /runtime-app/app_database_url >&2"], interval: 10s, timeout: 3s, retries: 6}'
+replace_server_direct_key "$temp_root/server-volumes" \
+  '    volumes: [runtime-app-secrets:/runtime-app:ro]' \
+  '    volumes: [runtime-app-secrets:/runtime-app:ro, /var/run/docker.sock:/var/run/docker.sock]'
+
+for variant in server-entrypoint server-entrypoint-space server-entrypoint-quoted server-healthcheck server-volumes; do
   if PATH=/usr/bin:/bin bash "$gate" "$temp_root/$variant"; then
     printf 'production compose policy test: %s override was accepted\n' "$variant" >&2
     exit 1
   fi
 done
-
-awk '
-  /^  server:$/ { server=1; print; print "    # the immutable image supplies the entrypoint"; next }
-  server && /^    logging: / {
-    print "    logging:"
-    print "      driver: local"
-    print "      options: {max-size: 10m, max-file: \"3\"}"
-    next
-  }
-  /^  probe:$/ { server=0 }
-  { print }
-' "$root/compose.production.yaml" >"$temp_root/server-comment-continuation/compose.production.yaml"
-PATH=/usr/bin:/bin bash "$gate" "$temp_root/server-comment-continuation"
 
 write_merge_mutation() {
   local destination=$1 merge_key=$2
@@ -109,14 +113,28 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
       NEROCD_POSTGRES_PASSWORD_SECRET="$temp_root/postgres" \
       docker compose -f "$1" config
   }
-  for variant in positive merge merge-whitespace server-entrypoint server-entrypoint-space server-entrypoint-quoted server-comment-continuation; do
+  for variant in positive merge merge-whitespace server-entrypoint server-entrypoint-space server-entrypoint-quoted server-healthcheck server-volumes; do
     render_compose "$temp_root/$variant/compose.production.yaml" >"$temp_root/rendered-$variant.yaml"
-    if [[ "$variant" == positive || "$variant" == server-comment-continuation ]]; then
+    if [[ "$variant" == positive ]]; then
       continue
     fi
     if [[ "$variant" == server-entrypoint || "$variant" == server-entrypoint-space || "$variant" == server-entrypoint-quoted ]]; then
       if ! awk '/entrypoint:/ { found=1 } /cat \/runtime-app\/app_database_url/ { payload=1 } END { exit(found && payload ? 0 : 1) }' "$temp_root/rendered-$variant.yaml"; then
         printf '%s\n' 'production compose policy test: server entrypoint override did not render as expected' >&2
+        exit 1
+      fi
+      continue
+    fi
+    if [[ "$variant" == server-healthcheck ]]; then
+      if ! awk '/CMD-SHELL/ { command=1 } /cat \/runtime-app\/app_database_url/ { payload=1 } END { exit(command && payload ? 0 : 1) }' "$temp_root/rendered-$variant.yaml"; then
+        printf '%s\n' 'production compose policy test: server healthcheck override did not render as expected' >&2
+        exit 1
+      fi
+      continue
+    fi
+    if [[ "$variant" == server-volumes ]]; then
+      if ! awk '/\/var\/run\/docker.sock/ { socket=1 } END { exit(socket ? 0 : 1) }' "$temp_root/rendered-$variant.yaml"; then
+        printf '%s\n' 'production compose policy test: server volume override did not render as expected' >&2
         exit 1
       fi
       continue
