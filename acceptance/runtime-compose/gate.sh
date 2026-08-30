@@ -11,6 +11,8 @@ dir=$(mktemp -d /tmp/nerocd-runtime-compose.XXXXXXXX)
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 project="nerocd-compose-$suffix" image="nerocd-compose-runtime:$suffix" runner_image="nerocd-compose-runner:$suffix" git_image="nerocd-compose-git:$suffix"
 fixture_a="nerocd-compose-fixture-a:$suffix" fixture_b="nerocd-compose-fixture-b:$suffix" fixture_c="nerocd-compose-fixture-c:$suffix" pass=false
+fixture_a_ref=$fixture_a fixture_b_ref=$fixture_b fixture_c_ref=$fixture_c socket_gid=0
+cleanup_helper_image='alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412'
 runner_workdir="$dir/runner-workspace"; runner_secret_root="$dir/runner-secrets"; mkdir -m 0700 "$runner_workdir" "$runner_secret_root"; export NEROCD_RUNTIME_WORKDIR="$runner_workdir" NEROCD_RUNTIME_SECRET_ROOT="$runner_secret_root"
 : >"$evidence"; record(){ printf '%s\n' "$*" >>"$evidence"; }; fail(){ trap - ERR; record "FAIL: $*"; printf 'runtime-compose: %s\n' "$*" >&2; exit 1; }
 # Docker Desktop can remap the host socket group inside containers. Derive the
@@ -27,12 +29,240 @@ compose(){
 }
 db_user=${NEROCD_RUNTIME_OWNER_DATABASE_USER:-nerocd}
 psql_query(){ compose exec -T postgres psql -U "$db_user" -d nerocd -Atc "$1"; }
-diagnose(){ set +e; record diagnostic_begin=true; compose ps --format json >>"$evidence" 2>/dev/null || true; compose logs --no-color runner 2>/dev/null | sed -E 's/(Bearer |fence|PRIVATE KEY)[^[:space:]]*/[REDACTED]/g' | tail -n 120 >>"$evidence"; compose logs --no-color server git postgres secret-init pgdata-init migrate role-init 2>/dev/null | sed -E 's#postgres://[^@[:space:]]+@#postgres://[REDACTED]@#g;s/(Bearer |fence|PRIVATE KEY)[^[:space:]]*/[REDACTED]/g' | tail -n 160 >>"$evidence"; psql_query "select 'deployments='||count(*) from deployments union all select 'attempts='||count(*) from deployment_attempts union all select 'audits='||count(*) from audit_events union all select 'deployment_state='||d.id||':'||d.status||':'||coalesce(d.failure_code,'')||':desired='||d.desired_revision_id||':previous='||coalesce(d.previous_healthy_revision_id,'') from deployments d order by 1; select 'revision='||id||':'||requested_ref||':'||git_commit||':'||compose_hash||':'||array_to_string(image_digests,',') from revisions order by id" >>"$evidence" 2>/dev/null || true; record diagnostic_end=true; }
-cleanup(){ local code=$? ids rem target=${compose_project:-}; trap - ERR; set +e; [[ "$pass" == true ]] || diagnose; [[ -z "$target" ]] || docker compose -p "$target" down --volumes --remove-orphans --timeout 4 >/dev/null 2>&1 || true; compose down --volumes --remove-orphans --rmi local --timeout 4 >/dev/null 2>&1 || true; for labeled_project in "$project" "$target"; do [[ -z "$labeled_project" ]] && continue; ids=$(docker ps -aq --filter "label=com.docker.compose.project=$labeled_project"); [[ -z "$ids" ]] || docker rm -f $ids >/dev/null 2>&1 || true; ids=$(docker volume ls -q --filter "label=com.docker.compose.project=$labeled_project"); [[ -z "$ids" ]] || docker volume rm $ids >/dev/null 2>&1 || true; ids=$(docker network ls -q --filter "label=com.docker.compose.project=$labeled_project"); [[ -z "$ids" ]] || docker network rm $ids >/dev/null 2>&1 || true; done; docker image rm -f "$image" "$runner_image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" >/dev/null 2>&1 || true; rem=$(for labeled_project in "$project" "$target"; do [[ -z "$labeled_project" ]] || docker ps -aq --filter "label=com.docker.compose.project=$labeled_project"; [[ -z "$labeled_project" ]] || docker volume ls -q --filter "label=com.docker.compose.project=$labeled_project"; [[ -z "$labeled_project" ]] || docker network ls -q --filter "label=com.docker.compose.project=$labeled_project"; done); [[ -z "$rem" ]] || code=1; record "cleanup_complete=$([[ -z "$rem" ]] && echo true || echo false)"; [[ "$pass" != true || $code -ne 0 ]] || record 'PASS: real typed Compose A/B/C rollback and restart gate'; rm -rf -- "$dir"; printf 'runtime compose evidence: %s\n' "$evidence"; exit "$code"; }
+diag_emit(){ record "$*"; printf '%s\n' "$*" >&2; }
+active_buildx_builder(){
+  local parsed count name
+  parsed=$(jq -sr '
+    if length == 0 or any(.[]; type != "object" or (.Current | type) != "boolean" or (.Name | type) != "string")
+    then error("invalid buildx listing")
+    else [.[] | select(.Current == true) | .Name] | unique | .[]
+    end
+  ') || return 2
+  count=$(awk 'NF { count++ } END { print count + 0 }' <<<"$parsed")
+  [[ $count -gt 0 ]] || return 3
+  [[ $count -eq 1 ]] || return 4
+  name=$(awk 'NF { print; exit }' <<<"$parsed")
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || return 5
+  printf '%s' "$name"
+}
+engine_builder_running(){
+  local candidate=$1 inspect_file=$2 driver statuses
+  docker buildx inspect "$candidate" >"$inspect_file" 2>"$inspect_file.err" || return 2
+  driver=$(awk '$1 == "Driver:" { print $2 }' "$inspect_file")
+  [[ "$driver" == docker ]] || return 3
+  statuses=$(awk '$1 == "Status:" { print $2 }' "$inspect_file" | sort -u)
+  [[ "$statuses" == running ]] || return 4
+}
+select_engine_builder(){
+  local active rc listing="$dir/buildx-ls.json"
+  engine_builder=''; builder_source=''; builder_diagnostic=selection_started
+  if engine_builder_running default "$dir/buildx-default.inspect"; then
+    engine_builder=default; builder_source=default; builder_diagnostic=default_selected
+    return 0
+  fi
+  if ! docker buildx ls --format '{{json .}}' >"$listing" 2>"$dir/buildx-ls.err"; then
+    builder_diagnostic=active_list_unavailable
+    return 1
+  fi
+  if active=$(active_buildx_builder <"$listing" 2>"$dir/buildx-parse.err"); then rc=0; else rc=$?; fi
+  case "$rc" in
+    0) ;;
+    2) builder_diagnostic=active_list_invalid; return 1 ;;
+    3) builder_diagnostic=active_builder_missing; return 1 ;;
+    4) builder_diagnostic=active_builder_ambiguous; return 1 ;;
+    5) builder_diagnostic=active_builder_unsafe; return 1 ;;
+    *) builder_diagnostic=active_list_invalid; return 1 ;;
+  esac
+  if engine_builder_running "$active" "$dir/buildx-active.inspect"; then
+    rc=0
+  else
+    rc=$?
+    case "$rc" in
+      2) builder_diagnostic=active_builder_unavailable ;;
+      3) builder_diagnostic=active_builder_wrong_driver ;;
+      4) builder_diagnostic=active_builder_not_running ;;
+      *) builder_diagnostic=active_builder_unavailable ;;
+    esac
+    return 1
+  fi
+  engine_builder=$active; builder_source=active; builder_diagnostic=active_selected
+}
+classify_log(){
+  local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
+  if [[ ! -f "$source" ]] || ! tail -n 80 "$source" 2>/dev/null | tail -c 16384 >"$raw"; then
+    available=false; class=unavailable
+  else
+    lines=$(awk 'END { print NR + 0 }' "$raw")
+    bytes=$(wc -c <"$raw" | tr -d '[:space:]')
+    if [[ $bytes -eq 0 ]]; then
+      class=empty
+    else
+      case "$label" in
+        runner_build)
+          if grep -Eiq 'failed to resolve source metadata|pull access denied|repository does not exist' "$raw"; then class=source_metadata_resolution
+          elif grep -Eiq 'no such image|not found|manifest unknown' "$raw"; then class=base_unavailable
+          elif grep -Eiq 'failed to build|failed to solve|error:' "$raw"; then class=build_failed
+          elif grep -Eq '(^|[[:space:]])DONE([[:space:]]|$)' "$raw"; then class=build_progress
+          fi
+          ;;
+        runner_ready)
+          if grep -Eiq 'failed|error' "$raw"; then class=runner_start_failed
+          elif grep -Eq ' (Started|Starting|Created|Creating)[[:space:]]*$' "$raw"; then class=runner_start_progress
+          fi
+          ;;
+        runner)
+          if grep -Eq 'status=failed_' "$raw"; then class=runner_operation_failed
+          elif grep -Eq 'stage=(resolve|compose_) status=start|"event":"claimed_run"' "$raw"; then class=runner_activity
+          fi
+          ;;
+      esac
+    fi
+  fi
+  diag_emit "diagnostic_${label}=$(jq -cn --argjson available "$available" --argjson lines "$lines" --argjson bytes "$bytes" --arg class "$class" '{log_available:$available,line_count:$lines,byte_count:$bytes,class:$class}')"
+}
+diagnose(){
+  local output rc runner_id state_file="$dir/diagnostic-runner-state.json"
+  set +e
+  diag_emit 'diagnostic_begin=true'
+  diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
+  output=$(compose ps --all --format json 2>"$dir/diagnostic-compose-status.err")
+  rc=$?
+  if [[ $rc -eq 0 ]]; then
+    output=$(jq -cs '
+      def allowed_service: . == "postgres" or . == "server" or . == "proxy" or . == "git" or . == "runner" or . == "secret-dir-init" or . == "secret-init" or . == "pgdata-init" or . == "migrate" or . == "role-init";
+      def state: if . == "created" or . == "running" or . == "paused" or . == "restarting" or . == "removing" or . == "exited" or . == "dead" then . else "unknown" end;
+      def health: if . == "healthy" or . == "unhealthy" or . == "starting" then . elif . == "" or . == null then "none" else "unknown" end;
+      [.[] | if type == "array" then .[] else . end
+        | select((.Service | type) == "string" and (.Service | allowed_service))
+        | {service:.Service,state:(.State | state),health:(.Health | health),exit_code:(if (.ExitCode | type) == "number" then .ExitCode else null end)}]
+      | sort_by(.service)
+    ' <<<"$output" 2>/dev/null)
+    rc=$?
+  fi
+  if [[ $rc -eq 0 ]]; then diag_emit "compose_status=$output"; else diag_emit 'compose_status=unavailable'; fi
+  runner_id=$(compose ps --all --quiet runner 2>"$dir/diagnostic-runner-id.err")
+  rc=$?
+  if [[ $rc -eq 0 && "$runner_id" =~ ^[0-9a-f]{12,64}$ ]] && docker container inspect --format '{{json .State}}' "$runner_id" >"$state_file" 2>/dev/null; then
+    output=$(jq -c '
+      def status: if . == "created" or . == "running" or . == "paused" or . == "restarting" or . == "removing" or . == "exited" or . == "dead" then . else "unknown" end;
+      def health: if . == "healthy" or . == "unhealthy" or . == "starting" then . else "unknown" end;
+      {status:(.Status | status),running:(.Running == true),paused:(.Paused == true),restarting:(.Restarting == true),oom_killed:(.OOMKilled == true),dead:(.Dead == true),exit_code:(if (.ExitCode | type) == "number" then .ExitCode else null end),error_present:((.Error | type) == "string" and (.Error | length) > 0),health:(if .Health then {status:(.Health.Status | health),failing_streak:(if (.Health.FailingStreak | type) == "number" then .Health.FailingStreak else null end)} else null end)}
+    ' "$state_file" 2>/dev/null)
+    if [[ $? -eq 0 ]]; then diag_emit "runner_state=$output"; else diag_emit 'runner_state=unavailable'; fi
+  elif [[ $rc -eq 0 && -z "$runner_id" ]]; then
+    diag_emit 'runner_state=absent'
+  else
+    diag_emit 'runner_state=unavailable'
+  fi
+  output=$(psql_query "select json_build_object('deployments',(select count(*) from deployments),'attempts',(select count(*) from deployment_attempts),'audits',(select count(*) from audit_events),'revisions',(select count(*) from revisions))" 2>"$dir/diagnostic-database.err")
+  if [[ $? -eq 0 ]] && output=$(jq -ce 'select(type == "object" and ([.deployments,.attempts,.audits,.revisions] | all(type == "number")))' <<<"$output" 2>/dev/null); then
+    diag_emit "database_counts=$output"
+  else
+    diag_emit 'database_counts=unavailable'
+  fi
+  classify_log runner_build "$dir/runner-build.log"
+  classify_log runner_ready "$dir/runner.log"
+  if compose logs --no-color --tail 80 runner >"$dir/diagnostic-runner.log" 2>/dev/null; then classify_log runner "$dir/diagnostic-runner.log"; else classify_log runner /nonexistent; fi
+  diag_emit 'diagnostic_end=true'
+}
+remove_project_resources(){
+  local exact_project=$1 kind output rc resource cleanup_ok=true error_file="$dir/cleanup-query.err"
+  [[ "$exact_project" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || { diag_emit 'cleanup_project_name_safe=false'; return 1; }
+  for kind in container volume network; do
+    case "$kind" in
+      container) output=$(docker ps --all --quiet --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+      volume) output=$(docker volume ls --quiet --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+      network) output=$(docker network ls --quiet --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+    esac
+    if [[ $rc -ne 0 ]]; then diag_emit "cleanup_${kind}_query=false"; cleanup_ok=false; continue; fi
+    while IFS= read -r resource; do
+      [[ -n "$resource" ]] || continue
+      case "$kind" in
+        container|network) [[ "$resource" =~ ^[0-9a-f]{12,64}$ ]] ;;
+        volume) [[ "$resource" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,255}$ ]] ;;
+      esac || { diag_emit "cleanup_${kind}_identifier_safe=false"; cleanup_ok=false; continue; }
+      case "$kind" in
+        container) docker rm --force "$resource" >/dev/null 2>"$dir/cleanup-container-rm.err" ;;
+        volume) docker volume rm --force "$resource" >/dev/null 2>"$dir/cleanup-volume-rm.err" ;;
+        network) docker network rm "$resource" >/dev/null 2>"$dir/cleanup-network-rm.err" ;;
+      esac
+      if [[ $? -ne 0 ]]; then diag_emit "cleanup_${kind}_remove=false"; cleanup_ok=false; fi
+    done <<<"$output"
+    case "$kind" in
+      container) output=$(docker ps --all --quiet --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+      volume) output=$(docker volume ls --quiet --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+      network) output=$(docker network ls --quiet --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+    esac
+    if [[ $rc -ne 0 || -n "$output" ]]; then diag_emit "cleanup_${kind}_query_or_residual=true"; cleanup_ok=false; fi
+  done
+  [[ "$cleanup_ok" == true ]]
+}
+remove_exact_image(){
+  local exact_image=$1 output rc
+  [[ "$exact_image" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || { diag_emit 'cleanup_image_name_safe=false'; return 1; }
+  output=$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=$exact_image" 2>"$dir/cleanup-image-query.err")
+  rc=$?
+  [[ $rc -eq 0 ]] || { diag_emit 'cleanup_exact_image_query=false'; return 1; }
+  if [[ -n "$output" && "$output" != "$exact_image" ]]; then diag_emit 'cleanup_exact_image_query_ambiguous=true'; return 1; fi
+  if [[ "$output" == "$exact_image" ]] && ! docker image rm --force "$exact_image" >/dev/null 2>"$dir/cleanup-image-rm.err"; then diag_emit 'cleanup_exact_image_remove=false'; return 1; fi
+  output=$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=$exact_image" 2>"$dir/cleanup-image-query.err")
+  rc=$?
+  [[ $rc -eq 0 && -z "$output" ]] || { diag_emit 'cleanup_exact_image_residual_or_query_failure=true'; return 1; }
+}
+cleanup(){
+  local original=$? final cleanup_complete=true target=${compose_project:-} candidate host_uid host_gid
+  trap - ERR
+  set +e
+  final=$original
+  if [[ "$pass" != true ]]; then diagnose; fi
+  compose down --volumes --remove-orphans --rmi local --timeout 4 >/dev/null 2>"$dir/cleanup-down.err"
+  if [[ $? -ne 0 ]]; then cleanup_complete=false; diag_emit 'cleanup_compose_down=false'; fi
+  remove_project_resources "$project" || cleanup_complete=false
+  if [[ -n "$target" ]]; then remove_project_resources "$target" || cleanup_complete=false; fi
+  for candidate in "$image" "$runner_image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" "${fixture_a_repo:-}" "${fixture_b_repo:-}" "${fixture_c_repo:-}" "${project}-proxy:latest"; do
+    [[ -n "$candidate" ]] || continue
+    remove_exact_image "$candidate" || cleanup_complete=false
+  done
+  host_uid=$(id -u); host_gid=$(id -g)
+  if [[ ! "$host_uid" =~ ^[0-9]+$ || ! "$host_gid" =~ ^[0-9]+$ ]]; then
+    cleanup_complete=false; diag_emit 'cleanup_host_identity=false'
+  elif [[ -d "$runner_secret_root" || -d "$runner_workdir" ]]; then
+    docker run --rm --name "${project}-cleanup-ownership" --label "com.docker.compose.project=$project" --privileged --network none --user 0:0 -e "HOST_UID=$host_uid" -e "HOST_GID=$host_gid" -v "$dir:/gate-run" "$cleanup_helper_image" sh -ec '
+      test -d /gate-run
+      for path in /gate-run/runner-secrets /gate-run/runner-workspace; do
+        if test -e "$path"; then chown -R "$HOST_UID:$HOST_GID" "$path"; fi
+      done
+    ' >/dev/null 2>"$dir/cleanup-ownership.err"
+    if [[ $? -ne 0 ]]; then cleanup_complete=false; diag_emit 'cleanup_ownership_remediation=false'; fi
+    if [[ -d "$runner_secret_root" && ( ! -O "$runner_secret_root" || ! -r "$runner_secret_root" || ! -x "$runner_secret_root" ) ]]; then cleanup_complete=false; diag_emit 'cleanup_secret_root_host_access=false'; fi
+    if [[ -d "$runner_workdir" && ( ! -O "$runner_workdir" || ! -r "$runner_workdir" || ! -x "$runner_workdir" ) ]]; then cleanup_complete=false; diag_emit 'cleanup_workdir_host_access=false'; fi
+  fi
+  remove_project_resources "$project" || cleanup_complete=false
+  if [[ ! "$dir" =~ ^/tmp/nerocd-runtime-compose\.[A-Za-z0-9]{8}$ || ! -d "$dir" || -L "$dir" ]]; then
+    cleanup_complete=false; diag_emit 'cleanup_temp_guard=false'
+  elif ! rm -rf -- "$dir"; then
+    cleanup_complete=false; diag_emit 'cleanup_temp_remove=false'
+  fi
+  if [[ -e "$dir" ]]; then cleanup_complete=false; diag_emit 'cleanup_temp_residual=true'; fi
+  record "cleanup_complete=$cleanup_complete"
+  if [[ "$cleanup_complete" != true && $original -eq 0 ]]; then final=1; fi
+  if [[ "$pass" == true && $original -eq 0 && "$cleanup_complete" == true ]]; then record 'PASS: real typed Compose A/B/C rollback and restart gate'; fi
+  printf 'runtime compose evidence: %s\n' "$evidence"
+  exit "$final"
+}
 trap cleanup EXIT; trap 'fail "unexpected command failure line $LINENO"' ERR
 for x in docker curl jq git od; do command -v "$x" >/dev/null || fail "missing $x"; done; docker info >/dev/null || fail 'Docker unavailable'; [[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
 socket_gid=$(docker_gid); [[ "$socket_gid" =~ ^[0-9]+$ ]] || fail 'Docker socket GID unavailable'; record "project=$project docker_gid=$socket_gid socket_root_equivalent=true"
 docker build --pull -t "$image" "$root" >"$dir/build.log" 2>&1 || fail 'fresh server image build failed'
+docker buildx version >/dev/null 2>&1 || fail 'Docker Buildx unavailable'
+select_engine_builder || fail 'no unambiguous running engine-backed Buildx builder'
+record "runner_builder_source=$builder_source driver=docker load=true"
+docker buildx build --builder "$engine_builder" --load \
+  --file "$root/acceptance/runtime-compose/RunnerDockerfile" \
+  --build-arg "BASE=$image" --build-arg "DOCKER_GID=$socket_gid" --tag "$runner_image" \
+  "$root/acceptance/runtime-compose" >"$dir/runner-build.log" 2>&1 || fail 'runner image build failed'
+[[ $(docker image inspect --format '{{.Config.User}}' "$runner_image") == nerocd ]] || fail 'runner image user changed'
+docker run --rm --network none --entrypoint /bin/sh "$runner_image" -ec 'test "$(id -u)" = 10001; for tool in nerocd git ssh docker; do command -v "$tool"; done; docker compose version' >"$dir/runner-tools.log" 2>&1 || fail 'runner image tools or uid unavailable'
 docker build --pull -f "$root/acceptance/runtime-compose/GitDockerfile" -t "$git_image" "$root/acceptance/runtime-compose" >"$dir/git.log" 2>&1 || fail 'git fixture image build failed'
 docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --build-arg VERSION=A --build-arg MODE=good --build-arg BUILD_NONCE="$suffix" -t "$fixture_a" "$root/acceptance/runtime-compose" >"$dir/a.log" 2>&1 || fail 'fixture A build failed'
 docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --build-arg VERSION=B --build-arg MODE=good --build-arg BUILD_NONCE="$suffix" -t "$fixture_b" "$root/acceptance/runtime-compose" >"$dir/b.log" 2>&1 || fail 'fixture B build failed'
@@ -72,8 +302,8 @@ code=$(http POST "$base/api/v1/sessions" '' "$(jq -cn --arg email "$admin_email"
 code=$(http POST "$base/api/v1/projects" "$admin" "$(jq -cn --arg n "compose-$suffix" '{name:$n,description:"ephemeral compose acceptance"}')" "$dir/project.json"); [[ "$code" == 201 ]] || fail 'project create failed'; project_id=$(jq -er .id "$dir/project.json")
 code=$(http POST "$base/api/v1/runners/register" "$admin" '{"id":"runner_compose","name":"runner_compose","tags":["compose-runtime"],"capabilities":["compose-deploy"]}' "$dir/runner.json"); [[ "$code" == 201 ]] || fail 'runner registration failed'; token=$(jq -er .token "$dir/runner.json")
 printf '%s\n' "$token" | compose run --rm --no-deps credential_init >"$dir/credential.log" 2>&1 || fail 'runner credential initialization failed'
-compose build runner >"$dir/runner-build.log" 2>&1 || fail 'runner image build failed'; compose up -d runner >"$dir/runner.log" 2>&1 || fail 'runner start failed'; runner_cid=$(compose ps -q runner); [[ -n "$runner_cid" ]] || fail 'runner unavailable'
-uid=$(compose exec -T runner id -u); [[ "$uid" == 10001 ]] || fail 'runner is not non-root'; if ! compose exec -T runner sh -ec 'id; ls -ln /var/run/docker.sock; test -S /var/run/docker.sock; docker version >/dev/null' >"$dir/socket.log" 2>&1; then record "socket_error=$(tail -n 8 "$dir/socket.log" | tr '\n' ' ')"; fail 'non-root runner cannot use declared Docker socket'; fi
+compose up -d runner >"$dir/runner.log" 2>&1 || fail 'runner start failed'; runner_cid=$(compose ps -q runner); [[ -n "$runner_cid" ]] || fail 'runner unavailable'
+uid=$(compose exec -T runner id -u); [[ "$uid" == 10001 ]] || fail 'runner is not non-root'; if ! compose exec -T runner sh -ec 'id; ls -ln /var/run/docker.sock; test -S /var/run/docker.sock; docker version >/dev/null' >"$dir/socket.log" 2>&1; then record 'socket_check=false'; fail 'non-root runner cannot use declared Docker socket'; fi
 host_ip=$(compose exec -T runner sh -ec "getent ahostsv4 host.docker.internal | awk 'NR==1 {print \$1}'"); [[ "$host_ip" =~ ^[0-9.]+$ ]] || fail 'runner host gateway resolution failed'
 git_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(compose ps -q git)"); fp=$(docker run --rm --network none -v "$(docker volume ls -q --filter label=com.docker.compose.project=$project --filter label=com.docker.compose.volume=git-data | head -1):/git:ro" "$git_image" sh -c 'ssh-keygen -lf /git/keys/host.pub' | awk '{print $2}')
 repo=$(jq -cn --arg p "$project_id" '{project_id:$p,name:"compose-fixture",url:"ssh://git@git:2222/repo.git",provider:"git",default_ref:"main"}'); code=$(http POST "$base/api/v1/repositories" "$admin" "$repo" "$dir/repo.json"); [[ "$code" == 201 ]] || fail 'repository create failed'; repo_id=$(jq -er .id "$dir/repo.json")
