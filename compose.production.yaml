@@ -1,6 +1,6 @@
 services:
   secret-init:
-    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
     user: "0:0"
     entrypoint: [/bin/sh, -ec]
     command: ["umask 077; install -d -m 0700 /runtime-owner /runtime-app; install -m 0400 /run/secrets/owner_database_url /runtime-owner/owner_database_url; install -m 0400 /run/secrets/app_database_url /runtime-app/app_database_url; chown 10001:10001 /runtime-owner/owner_database_url /runtime-app/app_database_url /runtime-owner /runtime-app"]
@@ -35,7 +35,7 @@ services:
     cpus: 0.25
     logging: {driver: local, options: {max-size: 1m, max-file: "2"}}
   backup-data-init:
-    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
     user: "0:0"
     entrypoint: [/bin/sh, -ec]
     command: ["install -d -m 0700 -o 10001 -g 10001 /backups"]
@@ -70,7 +70,7 @@ services:
     logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
     healthcheck: {test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"'], interval: 5s, timeout: 3s, retries: 12}
   migrate:
-    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
     command: [migrate, --seed=false]
     environment: {NEROCD_MODE: production, NEROCD_IMAGE_REF: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}", NEROCD_DATABASE_CREDENTIAL: owner, NEROCD_OWNER_DATABASE_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", NEROCD_DATABASE_URL_FILE: /runtime-owner/owner_database_url}
     depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}}
@@ -86,7 +86,7 @@ services:
     cpus: 0.50
     logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
   role-init:
-    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
     user: "10001:10001"
     command: [provision-app-role, --owner-file, /runtime-owner/owner_database_url, --app-file, /runtime-app/app_database_url]
     environment: {NEROCD_OWNER_DATABASE_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", NEROCD_APP_DATABASE_USER: "${NEROCD_APP_DATABASE_USER:?set application database role}"}
@@ -103,7 +103,7 @@ services:
     cpus: 0.50
     logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
   server:
-    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
     command: [server, --addr, :8080]
     environment: {NEROCD_MODE: production, NEROCD_IMAGE_REF: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}", NEROCD_PUBLIC_ORIGIN: "${NEROCD_PUBLIC_ORIGIN:?set HTTPS public origin}", NEROCD_TRUSTED_PROXY_CIDRS: "${NEROCD_TRUSTED_PROXY_CIDRS:-}", NEROCD_DATABASE_CREDENTIAL: app, NEROCD_APP_DATABASE_USER: "${NEROCD_APP_DATABASE_USER:?set application database role}", NEROCD_DATABASE_URL_FILE: /runtime-app/app_database_url}
     depends_on: {secret-init: {condition: service_completed_successfully}, postgres: {condition: service_healthy}, migrate: {condition: service_completed_successfully}, role-init: {condition: service_completed_successfully}}
@@ -121,7 +121,7 @@ services:
     logging: {driver: local, options: {max-size: 10m, max-file: "3"}}
     healthcheck: {test: [CMD, nerocd, ready, --addr, http://127.0.0.1:8080], interval: 10s, timeout: 3s, retries: 6}
   probe:
-    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
     profiles: [tools]
     entrypoint: [nerocd]
     command: [ready, --addr, http://server:8080]
@@ -139,7 +139,7 @@ services:
     # /secure/backups:/backups database-tools backup --output-dir /backups`.
     # It mounts only the migration-owner credential; an operator supplies any
     # backup destination or runner-file root as an explicit read-only/run bind.
-    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
     profiles: [tools]
     entrypoint: [nerocd]
     command: [backup]
@@ -160,7 +160,7 @@ services:
   backup-scheduler:
     # Separate owner-only local scheduler. It is the sole service that writes
     # the private backup volume; the API/server has no scheduler mutation.
-    image: ${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}
+    image: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}"
     command: [backup-scheduler, --output-dir, /backups, "--enabled=${NEROCD_BACKUP_SCHEDULE_ENABLED:-false}", --interval-seconds, "${NEROCD_BACKUP_INTERVAL_SECONDS:-86400}", --retention-count, "${NEROCD_BACKUP_RETENTION_COUNT:-7}"]
     user: "10001:10001"
     environment: {NEROCD_MODE: production, NEROCD_IMAGE_REF: "${NEROCD_IMAGE:?set canonical digest NEROCD_IMAGE}", NEROCD_DATABASE_CREDENTIAL: owner, NEROCD_OWNER_DATABASE_USER: "${NEROCD_OWNER_DATABASE_USER:?set migration owner role}", NEROCD_DATABASE_URL_FILE: /runtime-owner/owner_database_url}
