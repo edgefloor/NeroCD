@@ -107,6 +107,11 @@ compose_config_failure_signature(){
   [[ -f "$source" ]] || return 0
   sed -nE 's/.*(provenance stage=docker_compose_config status=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^0-9].*|$)/\1/p' "$source" | tail -n 1
 }
+provenance_stage_tail(){
+  local source=$1
+  [[ -f "$source" ]] || return 0
+  sed -nE 's/.*provenance stage=(resolve|deployment_cancellation|ssh_credential|ssh_transport|ssh_keyscan|ssh_fingerprint|git|git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config) status=(start|watching|receipt_observed|available|ready|matched|failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^A-Za-z0-9_-].*|$)/\1=\2/p' "$source" | tail -n 24 | jq -Rsc 'split("\n") | map(select(length > 0))'
+}
 classify_log(){
   local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
   if [[ ! -f "$source" ]] || ! tail -n 80 "$source" 2>/dev/null | tail -c 16384 >"$raw"; then
@@ -179,7 +184,7 @@ terminal_classes(){
   '
 }
 diagnose(){
-  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature
+  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature provenance_tail
   set +e
   diag_emit 'diagnostic_begin=true'
   diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
@@ -234,11 +239,13 @@ diagnose(){
   runner_class=$(runner_terminal_class "$dir/diagnostic-runner.raw")
   config_signature=$(compose_config_failure_signature "$dir/diagnostic-runner.raw")
   if [[ -n "$config_signature" ]]; then diag_emit "runner_config_failure_signature=$config_signature"; else diag_emit 'runner_config_failure_signature=unavailable'; fi
+  provenance_tail=$(provenance_stage_tail "$dir/diagnostic-runner.raw")
+  if [[ "$provenance_tail" =~ ^\[.*\]$ ]] && jq -e 'type == "array" and length <= 24 and all(.[]; type == "string" and test("^(resolve|deployment_cancellation|ssh_credential|ssh_transport|ssh_keyscan|ssh_fingerprint|git|git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config)=(start|watching|receipt_observed|available|ready|matched|failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$"))' <<<"$provenance_tail" >/dev/null 2>&1; then diag_emit "runner_provenance_tail=$provenance_tail"; else diag_emit 'runner_provenance_tail=unavailable'; fi
   if output=$(terminal_classes "$outcomes" "$runner_class" 2>/dev/null); then diag_emit "terminal_classes=$output"; else diag_emit 'terminal_classes=unavailable'; fi
   diag_emit 'diagnostic_end=true'
 }
 diagnostic_selftest(){
-  local outcomes class signature input="$dir/diagnostic-selftest.log"
+  local outcomes class signature provenance_tail input="$dir/diagnostic-selftest.log"
   outcomes=$(sanitize_deployment_outcomes <<'JSON'
 [{"status":"manual_intervention","failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true},{"status":"rolled_back","failure_code":"","health_passed":true,"rollback_child":true,"rollback_safe":true,"previous_healthy":true}]
 JSON
@@ -278,6 +285,17 @@ CASES
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_ secret-token' >"$input"
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
+  printf '%s\n' 'runner-1  | provenance stage=resolve status=start secret-token' 'runner-1  | provenance stage=git status=available' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' 'provenance stage=attacker status=failed_unknown_exit_1' >"$input"
+  provenance_tail=$(provenance_stage_tail "$input")
+  jq -e '. == ["resolve=start","git=available","docker_compose_config=failed_unknown_exit_1"]' <<<"$provenance_tail" >/dev/null || return 1
+  : >"$input"
+  for n in {1..25}; do
+    if (( n % 2 )); then printf '%s\n' 'runner-1  | provenance stage=resolve status=start'; else printf '%s\n' 'runner-1  | provenance stage=resolve status=available'; fi
+  done >"$input"
+  provenance_tail=$(provenance_stage_tail "$input")
+  jq -e 'length == 24 and .[0] == "resolve=available" and .[-1] == "resolve=start"' <<<"$provenance_tail" >/dev/null || return 1
+  printf '%s\n%s\n' 'runner-1  | provenance stage=resolve status=failed_unknown_exit_1x secret-token' 'provenance stage=attacker status=start' >"$input"
+  [[ $(provenance_stage_tail "$input") == '[]' ]] || return 1
   printf '%s\n' 'provenance stage=git_fetch status=completed' 'provenance stage=resolve status=failed_image_unavailable_exit_1' >"$input"
   [[ $(runner_terminal_class "$input") == image_failure ]] || return 1
   outcomes=$(sanitize_deployment_outcomes <<'JSON'
