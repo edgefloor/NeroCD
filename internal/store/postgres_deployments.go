@@ -339,8 +339,8 @@ func validFullImageReference(value string) bool {
 	if !found || repository == "" || strings.LastIndex(repository, ":") > strings.LastIndex(repository, "/") {
 		return false
 	}
-	for index, character := range repository {
-		if (character < 'a' || character > 'z') && (index == 0 || character < '0' || character > '9') && character != '.' && character != '_' && character != '/' && character != ':' && character != '-' {
+	for _, character := range repository {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '.' && character != '_' && character != '/' && character != ':' && character != '-' {
 			return false
 		}
 	}

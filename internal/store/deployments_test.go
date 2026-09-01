@@ -30,6 +30,25 @@ func TestExistingProvenanceImagesEquivalentLegacyDigest(t *testing.T) {
 	}
 }
 
+func TestExistingProvenanceImagesEquivalentFullReference(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	full := "127.0.0.1:5000/ns/api@" + digest
+	if !existingProvenanceImagesEquivalent([]string{full}, []string{full}) {
+		t.Fatalf("existingProvenanceImagesEquivalent(%q, %q) = false, want true", full, full)
+	}
+
+	for _, incoming := range []string{
+		"127.0.0.1:5000/ns/other@" + digest,
+		"127.0.0.1:5000/ns/api@sha256:" + strings.Repeat("b", 64),
+		"127.0.0.1:5000/ns/api:latest@" + digest,
+		"127.0.0.1:5000/ns/api@sha256:" + strings.Repeat("A", 64),
+	} {
+		if existingProvenanceImagesEquivalent([]string{full}, []string{incoming}) {
+			t.Fatalf("existingProvenanceImagesEquivalent(%q, %q) = true, want false", full, incoming)
+		}
+	}
+}
+
 func TestMemoryDeploymentControlPlaneInvariant(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
