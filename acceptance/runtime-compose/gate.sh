@@ -107,10 +107,14 @@ compose_config_failure_signature(){
   [[ -f "$source" ]] || return 0
   sed -nE 's/.*(provenance stage=docker_compose_config status=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^0-9].*|$)/\1/p' "$source" | tail -n 1
 }
+provenance_tail_pair_pattern(){
+  printf '%s' '^(resolve=start|deployment_cancellation=(watching|receipt_observed)|ssh_credential=start|ssh_transport=ready|ssh_keyscan=start|ssh_fingerprint=matched|git=available|(git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config)=start|(git_init|git_remote_add|git_fetch|git_checkout|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile)=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$'
+}
 provenance_stage_tail(){
-  local source=$1
+  local source=$1 pair_pattern
   [[ -f "$source" ]] || return 0
-  sed -nE 's/.*provenance stage=(resolve|deployment_cancellation|ssh_credential|ssh_transport|ssh_keyscan|ssh_fingerprint|git|git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config) status=(start|watching|receipt_observed|available|ready|matched|failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^A-Za-z0-9_-].*|$)/\1=\2/p' "$source" | tail -n 24 | jq -Rsc 'split("\n") | map(select(length > 0))'
+  pair_pattern=$(provenance_tail_pair_pattern)
+  sed -nE 's/.*provenance stage=(resolve|deployment_cancellation|ssh_credential|ssh_transport|ssh_keyscan|ssh_fingerprint|git|git_init|git_remote|git_remote_add|git_fetch|git_checkout|git_rev_parse|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile) status=(start|watching|receipt_observed|available|ready|matched|failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^A-Za-z0-9_-].*|$)/\1=\2/p' "$source" | sed -nE -e "/$pair_pattern/p" | tail -n 24 | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 classify_log(){
   local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
@@ -184,7 +188,7 @@ terminal_classes(){
   '
 }
 diagnose(){
-  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature provenance_tail
+  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature provenance_tail pair_pattern
   set +e
   diag_emit 'diagnostic_begin=true'
   diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
@@ -240,7 +244,8 @@ diagnose(){
   config_signature=$(compose_config_failure_signature "$dir/diagnostic-runner.raw")
   if [[ -n "$config_signature" ]]; then diag_emit "runner_config_failure_signature=$config_signature"; else diag_emit 'runner_config_failure_signature=unavailable'; fi
   provenance_tail=$(provenance_stage_tail "$dir/diagnostic-runner.raw")
-  if [[ "$provenance_tail" =~ ^\[.*\]$ ]] && jq -e 'type == "array" and length <= 24 and all(.[]; type == "string" and test("^(resolve|deployment_cancellation|ssh_credential|ssh_transport|ssh_keyscan|ssh_fingerprint|git|git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config)=(start|watching|receipt_observed|available|ready|matched|failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$"))' <<<"$provenance_tail" >/dev/null 2>&1; then diag_emit "runner_provenance_tail=$provenance_tail"; else diag_emit 'runner_provenance_tail=unavailable'; fi
+  pair_pattern=$(provenance_tail_pair_pattern)
+  if [[ "$provenance_tail" =~ ^\[.*\]$ ]] && jq -e --arg pair_pattern "$pair_pattern" 'type == "array" and length <= 24 and all(.[]; type == "string" and test($pair_pattern))' <<<"$provenance_tail" >/dev/null 2>&1; then diag_emit "runner_provenance_tail=$provenance_tail"; else diag_emit 'runner_provenance_tail=unavailable'; fi
   if output=$(terminal_classes "$outcomes" "$runner_class" 2>/dev/null); then diag_emit "terminal_classes=$output"; else diag_emit 'terminal_classes=unavailable'; fi
   diag_emit 'diagnostic_end=true'
 }
@@ -285,16 +290,16 @@ CASES
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_ secret-token' >"$input"
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
-  printf '%s\n' 'runner-1  | provenance stage=resolve status=start secret-token' 'runner-1  | provenance stage=git status=available' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' 'provenance stage=attacker status=failed_unknown_exit_1' >"$input"
+  printf '%s\n' 'runner-1  | provenance stage=resolve status=start secret-token' 'runner-1  | provenance stage=git status=available' 'runner-1  | provenance stage=git_remote_add status=failed_unknown_exit_1 secret-token' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' 'provenance stage=attacker status=failed_unknown_exit_1' >"$input"
   provenance_tail=$(provenance_stage_tail "$input")
-  jq -e '. == ["resolve=start","git=available","docker_compose_config=failed_unknown_exit_1"]' <<<"$provenance_tail" >/dev/null || return 1
+  jq -e '. == ["resolve=start","git=available","git_remote_add=failed_unknown_exit_1","docker_compose_config=failed_unknown_exit_1"]' <<<"$provenance_tail" >/dev/null || return 1
   : >"$input"
   for n in {1..25}; do
-    if (( n % 2 )); then printf '%s\n' 'runner-1  | provenance stage=resolve status=start'; else printf '%s\n' 'runner-1  | provenance stage=resolve status=available'; fi
+    if (( n % 2 )); then printf '%s\n' 'runner-1  | provenance stage=resolve status=start'; else printf '%s\n' 'runner-1  | provenance stage=git status=available'; fi
   done >"$input"
   provenance_tail=$(provenance_stage_tail "$input")
-  jq -e 'length == 24 and .[0] == "resolve=available" and .[-1] == "resolve=start"' <<<"$provenance_tail" >/dev/null || return 1
-  printf '%s\n%s\n' 'runner-1  | provenance stage=resolve status=failed_unknown_exit_1x secret-token' 'provenance stage=attacker status=start' >"$input"
+  jq -e 'length == 24 and .[0] == "git=available" and .[-1] == "resolve=start"' <<<"$provenance_tail" >/dev/null || return 1
+  printf '%s\n%s\n%s\n%s\n%s\n' 'runner-1  | provenance stage=resolve status=failed_unknown_exit_1x secret-token' 'provenance stage=resolve status=available' 'provenance stage=ssh_transport status=start' 'provenance stage=git_remote status=failed_unknown_exit_1' 'provenance stage=attacker status=start' >"$input"
   [[ $(provenance_stage_tail "$input") == '[]' ]] || return 1
   printf '%s\n' 'provenance stage=git_fetch status=completed' 'provenance stage=resolve status=failed_image_unavailable_exit_1' >"$input"
   [[ $(runner_terminal_class "$input") == image_failure ]] || return 1
