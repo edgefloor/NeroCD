@@ -110,6 +110,11 @@ compose_config_failure_signature(){
 legacy_revision_unique_state(){
   case "$1" in present|absent) printf '%s' "$1" ;; *) printf '%s' unavailable ;; esac
 }
+provenance_conflict_class(){
+  local source=$1
+  [[ -f "$source" ]] || return 0
+  sed -nE 's/.*provenance_conflict_class=(commit_mismatch|compose_hash_mismatch|image_mismatch|replay_key|unique)([[:space:]\"]|$).*/\1/p' "$source" | tail -n 1
+}
 provenance_tail_pair_pattern(){
   printf '%s' '^(resolve=start|deployment_cancellation=(watching|receipt_observed)|ssh_credential=start|ssh_transport=ready|ssh_keyscan=start|ssh_fingerprint=matched|git=available|(git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config|compose_canonicalize|provenance_callback|provenance_journal_append|provenance_replay|provenance_journal_ack)=start|(compose_canonicalize|provenance_callback|provenance_journal_append|provenance_journal_ack)=failed|provenance_replay=(failed_conflict|failed_authority|failed_transient|failed_permanent)|(git_init|git_remote_add|git_fetch|git_checkout|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile)=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$'
 }
@@ -191,7 +196,7 @@ terminal_classes(){
   '
 }
 diagnose(){
-  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature provenance_tail pair_pattern legacy_revision_unique
+  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature provenance_tail pair_pattern legacy_revision_unique conflict_class
   set +e
   diag_emit 'diagnostic_begin=true'
   diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
@@ -252,6 +257,12 @@ diagnose(){
   provenance_tail=$(provenance_stage_tail "$dir/diagnostic-runner.raw")
   pair_pattern=$(provenance_tail_pair_pattern)
   if [[ "$provenance_tail" =~ ^\[.*\]$ ]] && jq -e --arg pair_pattern "$pair_pattern" 'type == "array" and length <= 24 and all(.[]; type == "string" and test($pair_pattern))' <<<"$provenance_tail" >/dev/null 2>&1; then diag_emit "runner_provenance_tail=$provenance_tail"; else diag_emit 'runner_provenance_tail=unavailable'; fi
+  if compose logs --no-color --tail 80 server 2>/dev/null | tail -c 16384 >"$dir/diagnostic-server.log"; then
+    conflict_class=$(provenance_conflict_class "$dir/diagnostic-server.log")
+  else
+    conflict_class=''
+  fi
+  if [[ -n "$conflict_class" ]]; then diag_emit "provenance_conflict_class=$conflict_class"; else diag_emit 'provenance_conflict_class=unavailable'; fi
   if output=$(terminal_classes "$outcomes" "$runner_class" 2>/dev/null); then diag_emit "terminal_classes=$output"; else diag_emit 'terminal_classes=unavailable'; fi
   diag_emit 'diagnostic_end=true'
 }
@@ -260,6 +271,15 @@ diagnostic_selftest(){
   [[ $(legacy_revision_unique_state present) == present ]] || return 1
   [[ $(legacy_revision_unique_state absent) == absent ]] || return 1
   [[ $(legacy_revision_unique_state 'attacker-controlled catalog output') == unavailable ]] || return 1
+
+  for class in commit_mismatch compose_hash_mismatch image_mismatch replay_key unique; do
+    printf '%s\n' "server-1 | level=WARN msg=\"provenance conflict\" provenance_conflict_class=$class secret-token" >"$input"
+    [[ $(provenance_conflict_class "$input") == "$class" ]] || return 1
+  done
+  printf '%s\n' 'server-1 | provenance_conflict_class=attacker_controlled secret-token' >"$input"
+  [[ -z $(provenance_conflict_class "$input") ]] || return 1
+  printf '%s\n' 'server-1 | provenance_conflict_class=unique-attacker secret-token' >"$input"
+  [[ -z $(provenance_conflict_class "$input") ]] || return 1
   outcomes=$(sanitize_deployment_outcomes <<'JSON'
 [{"status":"manual_intervention","failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true},{"status":"rolled_back","failure_code":"","health_passed":true,"rollback_child":true,"rollback_safe":true,"previous_healthy":true}]
 JSON

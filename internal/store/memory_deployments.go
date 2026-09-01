@@ -226,7 +226,7 @@ func (s *MemoryStore) ResolveRevisionProvenance(_ context.Context, deploymentID,
 		if replay.runID == runID && replay.leaseID == leaseID && replay.runnerID == runnerID && replay.attempt == attempt && replay.fence == fence && replay.commit == commit && replay.hash == hash && reflect.DeepEqual(replay.digests, digests) {
 			return replay.revision, nil
 		}
-		return domain.Revision{}, ErrConflict
+		return domain.Revision{}, provenanceConflict(provenanceConflictReplayKey)
 	}
 	now := time.Now().UTC()
 	valid := false
@@ -262,7 +262,7 @@ func (s *MemoryStore) ResolveRevisionProvenance(_ context.Context, deploymentID,
 					// Rollback children reuse an already attested revision but still
 					// need a per-attempt provenance receipt under their new fence.
 					if r.GitCommit != commit || r.ComposeHash != hash || !reflect.DeepEqual(r.ImageDigests, digests) {
-						return domain.Revision{}, ErrConflict
+						return domain.Revision{}, provenanceContentConflict(r.GitCommit, r.ComposeHash, commit, hash, reflect.DeepEqual(r.ImageDigests, digests))
 					}
 				} else {
 					if r.ProvenanceState != "pending" {

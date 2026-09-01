@@ -261,8 +261,9 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 		// A rollback child deliberately reuses the last healthy revision. It
 		// must attest to the same immutable provenance under its own fence,
 		// rather than treating an already resolved revision as an error.
-		if v.GitCommit != commit || v.ComposeHash != hash || !existingProvenanceImagesEquivalent(v.ImageDigests, digests) {
-			return domain.Revision{}, ErrConflict
+		imagesEqual := existingProvenanceImagesEquivalent(v.ImageDigests, digests)
+		if v.GitCommit != commit || v.ComposeHash != hash || !imagesEqual {
+			return domain.Revision{}, provenanceContentConflict(v.GitCommit, v.ComposeHash, commit, hash, imagesEqual)
 		}
 	} else {
 		if v.ProvenanceState != "pending" {
@@ -270,7 +271,7 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 		}
 		updated, err := q.ResolveRevisionProvenance(ctx, sqlcgen.ResolveRevisionProvenanceParams{ID: v.ID, GitCommit: commit, ComposeHash: hash, ImageDigests: digests})
 		if isUniqueViolation(err) {
-			return domain.Revision{}, ErrConflict
+			return domain.Revision{}, provenanceConflict(provenanceConflictUnique)
 		}
 		if err != nil {
 			return domain.Revision{}, fmt.Errorf("resolve revision provenance query: %w", err)
@@ -285,7 +286,7 @@ func (s *PostgresStore) ResolveRevisionProvenance(ctx context.Context, deploymen
 	}
 	err = q.CreateProvenanceResolutionReplay(ctx, sqlcgen.CreateProvenanceResolutionReplayParams{DeploymentID: deploymentID, Attempt: int32(attempt), ResolutionID: resolutionID, RunID: runID, LeaseID: leaseID, RunnerID: runnerID, Fence: fence, RevisionID: v.ID, GitCommit: commit, ComposeHash: hash, ImageDigests: digests, ContentIdentity: commit + ":" + hash, AuditID: audit.ID})
 	if isUniqueViolation(err) {
-		return domain.Revision{}, ErrConflict
+		return domain.Revision{}, provenanceConflict(provenanceConflictUnique)
 	}
 	if err != nil {
 		return domain.Revision{}, fmt.Errorf("create provenance resolution replay query: %w", err)
@@ -357,7 +358,7 @@ func provenanceReplay(ctx context.Context, q *sqlcgen.Queries, deploymentID, res
 		return domain.Revision{}, false, fmt.Errorf("get provenance resolution replay query: %w", err)
 	}
 	if row.RunID != runID || row.LeaseID != leaseID || row.RunnerID != runnerID || int(row.Attempt) != attempt || row.Fence != fence || row.ReplayGitCommit != commit || row.ReplayComposeHash != hash || !reflect.DeepEqual(row.ReplayImageDigests, digests) {
-		return domain.Revision{}, false, ErrConflict
+		return domain.Revision{}, false, provenanceConflict(provenanceConflictReplayKey)
 	}
 	return revisionFromSQLC(sqlcgen.Revision{ID: row.ID, ServiceID: row.ServiceID, RequestedRef: row.RequestedRef, GitCommit: row.GitCommit, ComposeHash: row.ComposeHash, ImageDigests: row.ImageDigests, ContentIdentity: row.ContentIdentity, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ProvenanceState: row.ProvenanceState, ProvenanceResolved: row.ProvenanceResolved, ResolvedAt: row.ResolvedAt}), true, nil
 }

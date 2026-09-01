@@ -702,6 +702,24 @@ func TestPanicRecoveryReturnsSafeJSONAndServerRemainsUsable(t *testing.T) {
 	}
 }
 
+func TestGenericProvenanceConflictKeepsResponseAndDoesNotLog(t *testing.T) {
+	server, _ := newTestServer()
+	var logs bytes.Buffer
+	server.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	server.logProvenanceConflict(store.ErrConflict)
+	if got := logs.String(); got != "" {
+		t.Fatalf("logProvenanceConflict(generic conflict) logs = %q, want empty", got)
+	}
+	rec := httptest.NewRecorder()
+	writeError(rec, store.ErrConflict)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("writeError(generic conflict) status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	if got := rec.Body.String(); got != "{\"code\":\"conflict\",\"error\":\"request conflicts with current state\"}\n" {
+		t.Errorf("writeError(generic conflict) body = %q, want unchanged conflict envelope", got)
+	}
+}
+
 func TestCreatedSessionAuthenticatesCurrentPrincipal(t *testing.T) {
 	server, _ := newTestServer()
 

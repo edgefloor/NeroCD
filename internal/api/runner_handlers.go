@@ -7,6 +7,7 @@ import (
 
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
+	"nerocd/internal/store"
 )
 
 func (s *Server) runnersHandler(w http.ResponseWriter, r *http.Request) {
@@ -227,10 +228,17 @@ func (s *Server) resolveDeploymentProvenance(w http.ResponseWriter, r *http.Requ
 	}
 	v, err := s.app.ResolveDeploymentProvenance(r.Context(), req)
 	if err != nil {
+		s.logProvenanceConflict(err)
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+func (s *Server) logProvenanceConflict(err error) {
+	if reason := store.ProvenanceConflictReason(err); reason != "" {
+		s.logger.Warn("provenance conflict", "provenance_conflict_class", reason)
+	}
 }
 
 func (s *Server) failDeploymentAndCreateRollback(w http.ResponseWriter, r *http.Request) {
