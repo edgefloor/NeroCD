@@ -111,9 +111,7 @@ legacy_revision_unique_state(){
   case "$1" in present|absent) printf '%s' "$1" ;; *) printf '%s' unavailable ;; esac
 }
 provenance_conflict_class(){
-  local source=$1
-  [[ -f "$source" ]] || return 0
-  sed -nE 's/.*provenance_conflict_class=(commit_mismatch|compose_hash_mismatch|image_mismatch|replay_key|unique)([[:space:]\"]|$).*/\1/p' "$source" | tail -n 1
+  sed -nE 's/.*provenance_conflict_class=(commit_mismatch|compose_hash_mismatch|image_mismatch|replay_key|unique)([[:space:]\"]|$).*/\1/p' | tail -n 1
 }
 provenance_tail_pair_pattern(){
   printf '%s' '^(resolve=start|deployment_cancellation=(watching|receipt_observed)|ssh_credential=start|ssh_transport=ready|ssh_keyscan=start|ssh_fingerprint=matched|git=available|(git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config|compose_canonicalize|provenance_callback|provenance_journal_append|provenance_replay|provenance_journal_ack)=start|(compose_canonicalize|provenance_callback|provenance_journal_append|provenance_journal_ack)=failed|provenance_replay=(failed_conflict|failed_authority|failed_transient|failed_permanent)|(git_init|git_remote_add|git_fetch|git_checkout|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile)=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$'
@@ -257,8 +255,11 @@ diagnose(){
   provenance_tail=$(provenance_stage_tail "$dir/diagnostic-runner.raw")
   pair_pattern=$(provenance_tail_pair_pattern)
   if [[ "$provenance_tail" =~ ^\[.*\]$ ]] && jq -e --arg pair_pattern "$pair_pattern" 'type == "array" and length <= 24 and all(.[]; type == "string" and test($pair_pattern))' <<<"$provenance_tail" >/dev/null 2>&1; then diag_emit "runner_provenance_tail=$provenance_tail"; else diag_emit 'runner_provenance_tail=unavailable'; fi
-  if compose logs --no-color --tail 80 server 2>/dev/null | tail -c 16384 >"$dir/diagnostic-server.log"; then
-    conflict_class=$(provenance_conflict_class "$dir/diagnostic-server.log")
+  # `compose logs` without --follow terminates after the ephemeral server
+  # snapshot. Stream it through the allowlist parser so later request traffic
+  # cannot bury an early fixed marker and no raw server log is retained.
+  if conflict_class=$(compose logs --no-color server 2>/dev/null | provenance_conflict_class); then
+    :
   else
     conflict_class=''
   fi
@@ -274,12 +275,19 @@ diagnostic_selftest(){
 
   for class in commit_mismatch compose_hash_mismatch image_mismatch replay_key unique; do
     printf '%s\n' "server-1 | level=WARN msg=\"provenance conflict\" provenance_conflict_class=$class secret-token" >"$input"
-    [[ $(provenance_conflict_class "$input") == "$class" ]] || return 1
+    [[ $(provenance_conflict_class <"$input") == "$class" ]] || return 1
   done
-  printf '%s\n' 'server-1 | provenance_conflict_class=attacker_controlled secret-token' >"$input"
-  [[ -z $(provenance_conflict_class "$input") ]] || return 1
-  printf '%s\n' 'server-1 | provenance_conflict_class=unique-attacker secret-token' >"$input"
-  [[ -z $(provenance_conflict_class "$input") ]] || return 1
+  {
+    printf '%s\n' 'server-1 | provenance_conflict_class=commit_mismatch secret-token'
+    for _ in {1..81}; do printf '%s\n' 'server-1 | request status=200 secret-token'; done
+  } | provenance_conflict_class >"$input"
+  [[ $(<"$input") == commit_mismatch ]] || return 1
+  printf '%s\n' 'server-1 | provenance_conflict_class=commit_mismatch' 'server-1 | provenance_conflict_class=unique' | provenance_conflict_class >"$input"
+  [[ $(<"$input") == unique ]] || return 1
+  printf '%s\n' 'server-1 | provenance_conflict_class=attacker_controlled secret-token' 'server-1 | provenance_conflict_class=unique-attacker secret-token' | provenance_conflict_class >"$input"
+  [[ -z $(<"$input") ]] || return 1
+  if cat "$dir/diagnostic-selftest-missing.log" 2>/dev/null | provenance_conflict_class >"$input"; then return 1; fi
+  [[ -z $(<"$input") ]] || return 1
   outcomes=$(sanitize_deployment_outcomes <<'JSON'
 [{"status":"manual_intervention","failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true},{"status":"rolled_back","failure_code":"","health_passed":true,"rollback_child":true,"rollback_safe":true,"previous_healthy":true}]
 JSON
