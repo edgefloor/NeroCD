@@ -135,7 +135,7 @@ provenance_conflict_class(){
 server_log_bound(){
   if jq -e '
     type == "object" and (keys | sort) == ["Config", "Type"] and
-    .Type == "local" and (.Config | type) == "object" and
+    .Type == "json-file" and (.Config | type) == "object" and
     (.Config | keys | sort) == ["max-file", "max-size"] and
     .Config["max-size"] == "1m" and .Config["max-file"] == "1"
   ' >/dev/null 2>&1; then
@@ -293,7 +293,7 @@ diagnose(){
     log_bound=unavailable
   fi
   diag_emit "server_log_bound=$log_bound"
-  # The verified local driver retains one approximately 1 MiB file. Keep only
+  # The verified json-file driver retains one approximately 1 MiB file. Keep only
   # the final 2 MiB plus one byte, then fail closed if the parser sees more
   # than 2 MiB. No raw server log or inspect data is retained or emitted.
   if [[ "$log_bound" == verified ]] && conflict_class=$(compose logs --no-color server 2>/dev/null | tail -c 2097153 | provenance_conflict_class); then :; else conflict_class=''; fi
@@ -306,11 +306,11 @@ diagnostic_selftest(){
   [[ $(legacy_revision_unique_state present) == present ]] || return 1
   [[ $(legacy_revision_unique_state absent) == absent ]] || return 1
   [[ $(legacy_revision_unique_state 'attacker-controlled catalog output') == unavailable ]] || return 1
-  [[ $(printf '%s' '{"Type":"local","Config":{"max-file":"1","max-size":"1m"}}' | server_log_bound) == verified ]] || return 1
-  [[ $(printf '%s' '{"Type":"local","Config":{"max-file":"2","max-size":"1m"}}' | server_log_bound) == unavailable ]] || return 1
-  [[ $(printf '%s' '{"Type":"local","Config":{"max-file":"1","max-size":"1m","tag":"attacker"}}' | server_log_bound) == unavailable ]] || return 1
-  [[ $(printf '%s' '{"Type":"json-file","Config":{"max-file":"1","max-size":"1m"}}' | server_log_bound) == unavailable ]] || return 1
-  [[ $(printf '%s' '{"Type":"local"' | server_log_bound) == unavailable ]] || return 1
+  [[ $(printf '%s' '{"Type":"json-file","Config":{"max-file":"1","max-size":"1m"}}' | server_log_bound) == verified ]] || return 1
+  [[ $(printf '%s' '{"Type":"json-file","Config":{"max-file":"2","max-size":"1m"}}' | server_log_bound) == unavailable ]] || return 1
+  [[ $(printf '%s' '{"Type":"json-file","Config":{"max-file":"1","max-size":"1m","tag":"attacker"}}' | server_log_bound) == unavailable ]] || return 1
+  [[ $(printf '%s' '{"Type":"local","Config":{"max-file":"1","max-size":"1m"}}' | server_log_bound) == unavailable ]] || return 1
+  [[ $(printf '%s' '{"Type":"json-file"' | server_log_bound) == unavailable ]] || return 1
 
   for class in commit_mismatch compose_hash_mismatch image_mismatch replay_key unique; do
     printf '%s\n' "server-1 | level=WARN msg=\"provenance conflict\" provenance_conflict_class=$class secret-token" >"$input"
