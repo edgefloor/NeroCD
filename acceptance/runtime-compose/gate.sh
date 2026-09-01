@@ -111,7 +111,26 @@ legacy_revision_unique_state(){
   case "$1" in present|absent) printf '%s' "$1" ;; *) printf '%s' unavailable ;; esac
 }
 provenance_conflict_class(){
-  sed -nE 's/.*provenance_conflict_class=(commit_mismatch|compose_hash_mismatch|image_mismatch|replay_key|unique)([[:space:]]|$).*/\1/p' | tail -n 1
+  local max_bytes=${1:-1048576}
+  [[ "$max_bytes" =~ ^[1-9][0-9]*$ ]] || return 2
+  LC_ALL=C awk -v max_bytes="$max_bytes" '
+    {
+      bytes += length($0) + 1
+      if (bytes > max_bytes) {
+        overflow = 1
+        exit 1
+      }
+      if ($0 ~ /(^|[[:space:]])provenance_conflict_class=commit_mismatch([[:space:]]|$)/) last = "commit_mismatch"
+      if ($0 ~ /(^|[[:space:]])provenance_conflict_class=compose_hash_mismatch([[:space:]]|$)/) last = "compose_hash_mismatch"
+      if ($0 ~ /(^|[[:space:]])provenance_conflict_class=image_mismatch([[:space:]]|$)/) last = "image_mismatch"
+      if ($0 ~ /(^|[[:space:]])provenance_conflict_class=replay_key([[:space:]]|$)/) last = "replay_key"
+      if ($0 ~ /(^|[[:space:]])provenance_conflict_class=unique([[:space:]]|$)/) last = "unique"
+    }
+    END {
+      if (!overflow && last != "") print last
+      exit overflow
+    }
+  '
 }
 provenance_tail_pair_pattern(){
   printf '%s' '^(resolve=start|deployment_cancellation=(watching|receipt_observed)|ssh_credential=start|ssh_transport=ready|ssh_keyscan=start|ssh_fingerprint=matched|git=available|(git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config|compose_canonicalize|provenance_callback|provenance_journal_append|provenance_replay|provenance_journal_ack)=start|(compose_canonicalize|provenance_callback|provenance_journal_append|provenance_journal_ack)=failed|provenance_replay=(failed_conflict|failed_authority|failed_transient|failed_permanent)|(git_init|git_remote_add|git_fetch|git_checkout|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile)=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$'
@@ -255,10 +274,10 @@ diagnose(){
   provenance_tail=$(provenance_stage_tail "$dir/diagnostic-runner.raw")
   pair_pattern=$(provenance_tail_pair_pattern)
   if [[ "$provenance_tail" =~ ^\[.*\]$ ]] && jq -e --arg pair_pattern "$pair_pattern" 'type == "array" and length <= 24 and all(.[]; type == "string" and test($pair_pattern))' <<<"$provenance_tail" >/dev/null 2>&1; then diag_emit "runner_provenance_tail=$provenance_tail"; else diag_emit 'runner_provenance_tail=unavailable'; fi
-  # `compose logs` without --follow terminates after the ephemeral server
-  # snapshot. Stream it through the allowlist parser so later request traffic
-  # cannot bury an early fixed marker and no raw server log is retained.
-  if conflict_class=$(compose logs --no-color server 2>/dev/null | provenance_conflict_class); then
+  # The non-following snapshot is bounded to 1,024 records. Keep only the
+  # final 1 MiB plus one byte, then fail closed if the parser sees more than
+  # 1 MiB. No raw server log is retained or emitted.
+  if conflict_class=$(compose logs --no-color --tail 1024 server 2>/dev/null | tail -c 1048577 | provenance_conflict_class); then
     :
   else
     conflict_class=''
@@ -285,6 +304,10 @@ diagnostic_selftest(){
   printf '%s\n' 'server-1 | provenance_conflict_class=commit_mismatch' 'server-1 | provenance_conflict_class=unique' | provenance_conflict_class >"$input"
   [[ $(<"$input") == unique ]] || return 1
   printf '%s\n' 'server-1 | provenance_conflict_class=attacker_controlled secret-token' 'server-1 | provenance_conflict_class=unique-attacker secret-token' 'server-1 | provenance_conflict_class=unique"attacker secret-token' 'server-1 | provenance_conflict_class=unique" attacker secret-token' | provenance_conflict_class >"$input"
+  [[ -z $(<"$input") ]] || return 1
+  printf '%s\n' 'server-1 | attackerprovenance_conflict_class=unique secret-token' | provenance_conflict_class >"$input"
+  [[ -z $(<"$input") ]] || return 1
+  if { printf '%s\n' 'server-1 | provenance_conflict_class=unique'; printf '%040d\n' 0; } | provenance_conflict_class 32 >"$input"; then return 1; fi
   [[ -z $(<"$input") ]] || return 1
   if cat "$dir/diagnostic-selftest-missing.log" 2>/dev/null | provenance_conflict_class >"$input"; then return 1; fi
   [[ -z $(<"$input") ]] || return 1
