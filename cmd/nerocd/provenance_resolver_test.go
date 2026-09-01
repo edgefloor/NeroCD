@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -20,6 +21,112 @@ import (
 
 	"nerocd/internal/domain"
 )
+
+func captureProvenanceDiagnostics(t *testing.T, run func() error) (string, error) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("captureProvenanceDiagnostics pipe error = %v", err)
+	}
+	previous := os.Stderr
+	os.Stderr = writer
+	t.Cleanup(func() {
+		os.Stderr = previous
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	runErr := run()
+	if err := writer.Close(); err != nil {
+		t.Fatalf("captureProvenanceDiagnostics close error = %v", err)
+	}
+	os.Stderr = previous
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("captureProvenanceDiagnostics read error = %v", err)
+	}
+	return string(output), runErr
+}
+
+func provenanceStageDiagnostics(output, stage string) []string {
+	prefix := "provenance stage=" + stage + " "
+	var markers []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			markers = append(markers, line)
+		}
+	}
+	return markers
+}
+
+func resolverDiagnosticTestPlan() domain.DeploymentPlan {
+	return domain.DeploymentPlan{
+		RepositoryURL:  "https://git.example/repo",
+		RequestedRef:   "main",
+		ComposePath:    "compose.yaml",
+		ComposeProject: "test",
+		RepositoryPolicy: domain.RepositoryPolicy{
+			Version:        1,
+			State:          "configured",
+			Mode:           "public",
+			AllowedSchemes: []string{"https"},
+			AllowedHosts:   []string{"git.example"},
+		},
+	}
+}
+
+func TestResolveProvenanceCanonicalizationFailureEmitsFixedDiagnostic(t *testing.T) {
+	previous := lookupRepositoryIP
+	lookupRepositoryIP = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+	}
+	defer func() { lookupRepositoryIP = previous }()
+	const unsafeCompose = `{"services":{"api":{"image":"example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","privileged":true}}}`
+	output, err := captureProvenanceDiagnostics(t, func() error {
+		_, err := resolveDeploymentProvenance(context.Background(), resolverDiagnosticTestPlan(), t.TempDir(), &fakeProvenanceCommand{compose: unsafeCompose})
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("resolveDeploymentProvenance(canonicalization failure) error = %v, want original canonicalization failure", err)
+	}
+	if strings.Contains(output, unsafeCompose) {
+		t.Fatal("canonicalization diagnostic exposed compose input")
+	}
+	wantMarkers := []string{
+		"provenance stage=compose_canonicalize status=start",
+		"provenance stage=compose_canonicalize status=failed",
+	}
+	if got := provenanceStageDiagnostics(output, "compose_canonicalize"); !slices.Equal(got, wantMarkers) {
+		t.Errorf("canonicalization diagnostic markers = %v, want %v", got, wantMarkers)
+	}
+}
+
+func TestResolveProvenanceCallbackFailureEmitsFixedDiagnostic(t *testing.T) {
+	previous := lookupRepositoryIP
+	lookupRepositoryIP = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+	}
+	defer func() { lookupRepositoryIP = previous }()
+	callbackErr := errors.New("callback failure")
+	output, err := captureProvenanceDiagnostics(t, func() error {
+		_, err := resolveDeploymentProvenanceWithCredentialWorkspace(context.Background(), resolverDiagnosticTestPlan(), t.TempDir(), &fakeProvenanceCommand{compose: `{"services":{"api":{"image":"example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`}, "", nil, nil, func(resolvedProvenance, string, string) error {
+			return callbackErr
+		})
+		return err
+	})
+	if !errors.Is(err, callbackErr) {
+		t.Fatalf("resolveDeploymentProvenanceWithCredentialWorkspace(callback failure) error = %v, want %v", err, callbackErr)
+	}
+	if strings.Contains(output, callbackErr.Error()) {
+		t.Fatal("callback diagnostic exposed callback error")
+	}
+	wantMarkers := []string{
+		"provenance stage=provenance_callback status=start",
+		"provenance stage=provenance_callback status=failed",
+	}
+	if got := provenanceStageDiagnostics(output, "provenance_callback"); !slices.Equal(got, wantMarkers) {
+		t.Errorf("callback diagnostic markers = %v, want %v", got, wantMarkers)
+	}
+}
 
 func TestComposePreApplyFailureRollbackTerminalizationIsNonfatal(t *testing.T) {
 	claim := domain.ClaimedRun{Lease: domain.RunLease{ID: "lease", Attempt: 7}}

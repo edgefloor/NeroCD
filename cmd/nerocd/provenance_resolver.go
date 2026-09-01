@@ -664,14 +664,18 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	if err != nil {
 		return resolvedProvenance{}, commandFailure("docker compose config", err)
 	}
+	provenanceDiagnostic("compose_canonicalize", "start")
 	canonical, images, err := canonicalComposeWithSecretSources(compose, plan.ComposeProject, composeApplicationSecretBindings(plan.SecretBindings), secretSources)
 	if err != nil {
+		provenanceDiagnostic("compose_canonicalize", "failed")
 		return resolvedProvenance{}, err
 	}
 	sum := sha256.Sum256(canonical)
 	resolved := resolvedProvenance{GitCommit: commit, ComposeHash: "sha256:" + hex.EncodeToString(sum[:]), ImageDigests: images}
 	if afterResolved != nil {
+		provenanceDiagnostic("provenance_callback", "start")
 		if err := afterResolved(resolved, workspace, secretOverride); err != nil {
+			provenanceDiagnostic("provenance_callback", "failed")
 			return resolvedProvenance{}, err
 		}
 	}
