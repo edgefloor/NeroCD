@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/runner"
 )
 
 func captureProvenanceDiagnostics(t *testing.T, run func() error) (string, error) {
@@ -52,6 +54,16 @@ func provenanceStageDiagnostics(output, stage string) []string {
 	var markers []string
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		if strings.HasPrefix(line, prefix) {
+			markers = append(markers, line)
+		}
+	}
+	return markers
+}
+
+func allProvenanceDiagnostics(output string) []string {
+	var markers []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if strings.HasPrefix(line, "provenance stage=") {
 			markers = append(markers, line)
 		}
 	}
@@ -125,6 +137,143 @@ func TestResolveProvenanceCallbackFailureEmitsFixedDiagnostic(t *testing.T) {
 	}
 	if got := provenanceStageDiagnostics(output, "provenance_callback"); !slices.Equal(got, wantMarkers) {
 		t.Errorf("callback diagnostic markers = %v, want %v", got, wantMarkers)
+	}
+}
+
+func TestCommitProvenanceJournalEmitsFixedFailureBoundaries(t *testing.T) {
+	pending := runner.JournalProvenance{ID: "resolution"}
+	for _, tc := range []struct {
+		name       string
+		append     error
+		replay     error
+		ack        error
+		markers    []string
+		operations []string
+	}{
+		{
+			name:   "append",
+			append: errors.New("append secret-token"),
+			markers: []string{
+				"provenance stage=provenance_journal_append status=start",
+				"provenance stage=provenance_journal_append status=failed",
+			},
+			operations: []string{"append"},
+		},
+		{
+			name:   "replay conflict",
+			replay: &runnerAPIError{StatusCode: http.StatusConflict, Detail: "secret-token"},
+			markers: []string{
+				"provenance stage=provenance_journal_append status=start",
+				"provenance stage=provenance_replay status=start",
+				"provenance stage=provenance_replay status=failed_conflict",
+			},
+			operations: []string{"append", "replay"},
+		},
+		{
+			name:   "replay authority",
+			replay: &runnerAPIError{StatusCode: http.StatusForbidden, Detail: "secret-token"},
+			markers: []string{
+				"provenance stage=provenance_journal_append status=start",
+				"provenance stage=provenance_replay status=start",
+				"provenance stage=provenance_replay status=failed_authority",
+			},
+			operations: []string{"append", "replay"},
+		},
+		{
+			name:   "replay transient",
+			replay: &runnerAPIError{StatusCode: http.StatusTooManyRequests, Detail: "secret-token"},
+			markers: []string{
+				"provenance stage=provenance_journal_append status=start",
+				"provenance stage=provenance_replay status=start",
+				"provenance stage=provenance_replay status=failed_transient",
+			},
+			operations: []string{"append", "replay"},
+		},
+		{
+			name:   "replay acknowledgement mismatch",
+			replay: errors.New("provenance acknowledgement content mismatch secret-token"),
+			markers: []string{
+				"provenance stage=provenance_journal_append status=start",
+				"provenance stage=provenance_replay status=start",
+				"provenance stage=provenance_replay status=failed_permanent",
+			},
+			operations: []string{"append", "replay"},
+		},
+		{
+			name: "acknowledgement",
+			ack:  errors.New("ack secret-token"),
+			markers: []string{
+				"provenance stage=provenance_journal_append status=start",
+				"provenance stage=provenance_replay status=start",
+				"provenance stage=provenance_journal_ack status=start",
+				"provenance stage=provenance_journal_ack status=failed",
+			},
+			operations: []string{"append", "replay", "ack"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var order []string
+			output, err := captureProvenanceDiagnostics(t, func() error {
+				return commitProvenanceJournal(pending, provenanceJournalOperations{
+					append: func(pending runner.JournalProvenance) (runner.JournalProvenance, error) {
+						order = append(order, "append")
+						return pending, tc.append
+					},
+					replay: func(runner.JournalProvenance) error {
+						order = append(order, "replay")
+						return tc.replay
+					},
+					ack: func(string) error {
+						order = append(order, "ack")
+						return tc.ack
+					},
+				})
+			})
+			wantErr := tc.append
+			if wantErr == nil {
+				wantErr = tc.replay
+			}
+			if wantErr == nil {
+				wantErr = tc.ack
+			}
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("commitProvenanceJournal error = %v, want original %v", err, wantErr)
+			}
+			if strings.Contains(output, "secret-token") {
+				t.Fatalf("journal diagnostic exposed unsafe error content: %q", output)
+			}
+			if got := allProvenanceDiagnostics(output); !slices.Equal(got, tc.markers) {
+				t.Errorf("journal diagnostic markers = %v, want %v", got, tc.markers)
+			}
+			if !slices.Equal(order, tc.operations) {
+				t.Errorf("journal operation order = %v, want %v", order, tc.operations)
+			}
+		})
+	}
+}
+
+func TestProvenanceReplayFailureDiagnosticClassifiesFixedOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "conflict", err: &runnerAPIError{StatusCode: http.StatusConflict}, want: "failed_conflict"},
+		{name: "unauthorized", err: &runnerAPIError{StatusCode: http.StatusUnauthorized}, want: "failed_authority"},
+		{name: "forbidden", err: &runnerAPIError{StatusCode: http.StatusForbidden}, want: "failed_authority"},
+		{name: "not found", err: &runnerAPIError{StatusCode: http.StatusNotFound}, want: "failed_authority"},
+		{name: "request timeout", err: &runnerAPIError{StatusCode: http.StatusRequestTimeout}, want: "failed_transient"},
+		{name: "rate limited", err: &runnerAPIError{StatusCode: http.StatusTooManyRequests}, want: "failed_transient"},
+		{name: "server", err: &runnerAPIError{StatusCode: http.StatusBadGateway}, want: "failed_transient"},
+		{name: "deadline", err: context.DeadlineExceeded, want: "failed_transient"},
+		{name: "network", err: &net.DNSError{IsTimeout: true}, want: "failed_transient"},
+		{name: "acknowledgement mismatch", err: errors.New("provenance acknowledgement content mismatch"), want: "failed_permanent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := provenanceReplayFailureDiagnostic(tc.err); got != tc.want {
+				t.Errorf("provenanceReplayFailureDiagnostic() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

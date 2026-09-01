@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
@@ -35,6 +36,44 @@ import (
 
 type provenanceCommand interface {
 	Run(context.Context, string, []string, string) ([]byte, error)
+}
+
+type provenanceJournalOperations struct {
+	append func(runner.JournalProvenance) (runner.JournalProvenance, error)
+	replay func(runner.JournalProvenance) error
+	ack    func(string) error
+}
+
+func provenanceReplayFailureDiagnostic(err error) string {
+	switch {
+	case runnerHTTPStatus(err, http.StatusConflict):
+		return "failed_conflict"
+	case runnerHTTPStatus(err, http.StatusUnauthorized), runnerHTTPStatus(err, http.StatusForbidden), runnerHTTPStatus(err, http.StatusNotFound):
+		return "failed_authority"
+	case classifyRunnerFailure(err) == runnerFailureTransient:
+		return "failed_transient"
+	default:
+		return "failed_permanent"
+	}
+}
+
+func commitProvenanceJournal(pending runner.JournalProvenance, operations provenanceJournalOperations) error {
+	provenanceDiagnostic("provenance_journal_append", "start")
+	if _, err := operations.append(pending); err != nil {
+		provenanceDiagnostic("provenance_journal_append", "failed")
+		return fmt.Errorf("journal provenance before send: %w", err)
+	}
+	provenanceDiagnostic("provenance_replay", "start")
+	if err := operations.replay(pending); err != nil {
+		provenanceDiagnostic("provenance_replay", provenanceReplayFailureDiagnostic(err))
+		return err
+	}
+	provenanceDiagnostic("provenance_journal_ack", "start")
+	if err := operations.ack(pending.ID); err != nil {
+		provenanceDiagnostic("provenance_journal_ack", "failed")
+		return err
+	}
+	return nil
 }
 
 type provenanceCommandWithEnvironment interface {
@@ -319,13 +358,13 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 	value, err := resolveDeploymentProvenanceWithCredentialWorkspace(operationCtx, plan, workDir, nil, secretRoot, authorizeCredential, prepareWorkspace, func(value resolvedProvenance, workspace, secretOverride string) error {
 		resolutionID := attemptMutationKey("provenance", claim.Lease.ID, claim.Lease.Attempt, value.GitCommit)
 		pending := runner.JournalProvenance{ID: resolutionID, Attempt: journalAttemptIdentity(plan.RunID, claim.Lease, supervisor), DeploymentID: plan.DeploymentID, GitCommit: value.GitCommit, ComposeHash: value.ComposeHash, ImageDigests: append([]string(nil), value.ImageDigests...), ContentIdentity: value.GitCommit + ":" + value.ComposeHash, CreatedAt: time.Now().UTC()}
-		if _, err := journal.AppendProvenance(pending); err != nil {
-			return fmt.Errorf("journal provenance before send: %w", err)
-		}
-		if err := replayJournalProvenance(server, token, supervisor, pending); err != nil {
-			return err
-		}
-		if err := journal.AckProvenance(pending.ID); err != nil {
+		if err := commitProvenanceJournal(pending, provenanceJournalOperations{
+			append: journal.AppendProvenance,
+			replay: func(pending runner.JournalProvenance) error {
+				return replayJournalProvenance(server, token, supervisor, pending)
+			},
+			ack: journal.AckProvenance,
+		}); err != nil {
 			return err
 		}
 		engine := newComposeEngine(nil, nil, imagePolicy)

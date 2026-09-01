@@ -107,14 +107,17 @@ compose_config_failure_signature(){
   [[ -f "$source" ]] || return 0
   sed -nE 's/.*(provenance stage=docker_compose_config status=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^0-9].*|$)/\1/p' "$source" | tail -n 1
 }
+legacy_revision_unique_state(){
+  case "$1" in present|absent) printf '%s' "$1" ;; *) printf '%s' unavailable ;; esac
+}
 provenance_tail_pair_pattern(){
-  printf '%s' '^(resolve=start|deployment_cancellation=(watching|receipt_observed)|ssh_credential=start|ssh_transport=ready|ssh_keyscan=start|ssh_fingerprint=matched|git=available|(git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config|compose_canonicalize|provenance_callback)=start|(compose_canonicalize|provenance_callback)=failed|(git_init|git_remote_add|git_fetch|git_checkout|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile)=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$'
+  printf '%s' '^(resolve=start|deployment_cancellation=(watching|receipt_observed)|ssh_credential=start|ssh_transport=ready|ssh_keyscan=start|ssh_fingerprint=matched|git=available|(git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config|compose_canonicalize|provenance_callback|provenance_journal_append|provenance_replay|provenance_journal_ack)=start|(compose_canonicalize|provenance_callback|provenance_journal_append|provenance_journal_ack)=failed|provenance_replay=(failed_conflict|failed_authority|failed_transient|failed_permanent)|(git_init|git_remote_add|git_fetch|git_checkout|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile)=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$'
 }
 provenance_stage_tail(){
   local source=$1 pair_pattern
   [[ -f "$source" ]] || return 0
   pair_pattern=$(provenance_tail_pair_pattern)
-  sed -nE 's/.*provenance stage=(resolve|deployment_cancellation|ssh_credential|ssh_transport|ssh_keyscan|ssh_fingerprint|git|git_init|git_remote|git_remote_add|git_fetch|git_checkout|git_rev_parse|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile|compose_canonicalize|provenance_callback) status=(start|watching|receipt_observed|available|ready|matched|failed|failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^A-Za-z0-9_-].*|$)/\1=\2/p' "$source" | sed -nE -e "/$pair_pattern/p" | tail -n 24 | jq -Rsc 'split("\n") | map(select(length > 0))'
+  sed -nE 's/.*provenance stage=(resolve|deployment_cancellation|ssh_credential|ssh_transport|ssh_keyscan|ssh_fingerprint|git|git_init|git_remote|git_remote_add|git_fetch|git_checkout|git_rev_parse|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile|compose_canonicalize|provenance_callback|provenance_journal_append|provenance_replay|provenance_journal_ack) status=(start|watching|receipt_observed|available|ready|matched|failed|failed_(conflict|authority|transient|permanent)|failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^A-Za-z0-9_-].*|$)/\1=\2/p' "$source" | sed -nE -e "/$pair_pattern/p" | tail -n 24 | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 classify_log(){
   local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
@@ -188,7 +191,7 @@ terminal_classes(){
   '
 }
 diagnose(){
-  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature provenance_tail pair_pattern
+  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature provenance_tail pair_pattern legacy_revision_unique
   set +e
   diag_emit 'diagnostic_begin=true'
   diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
@@ -228,6 +231,9 @@ diagnose(){
   else
     diag_emit 'database_counts=unavailable'
   fi
+  output=$(psql_query "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class t ON t.oid = c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace WHERE c.conname = 'provenance_resolutions_revision_id_key' AND t.relname = 'provenance_resolutions' AND n.nspname = 'public') THEN 'present' ELSE 'absent' END" 2>"$dir/diagnostic-legacy-revision-unique.err")
+  if [[ $? -eq 0 ]]; then legacy_revision_unique=$(legacy_revision_unique_state "$output"); else legacy_revision_unique=unavailable; fi
+  diag_emit "provenance_schema_legacy_revision_unique=$legacy_revision_unique"
   output=$(psql_query "SELECT COALESCE(json_agg(outcome ORDER BY created_at DESC), '[]'::json)::text FROM (SELECT json_build_object('status',d.status,'failure_code',d.failure_code,'health_passed',d.health_passed,'rollback_child',(d.rollback_of_id IS NOT NULL),'rollback_safe',e.rollback_safe,'previous_healthy',(d.previous_healthy_revision_id IS NOT NULL)) AS outcome,d.created_at FROM deployments d JOIN environments e ON e.id=d.environment_id ORDER BY d.created_at DESC LIMIT 12) deployment_outcomes" 2>"$dir/diagnostic-deployments.err")
   if [[ $? -eq 0 ]] && outcomes=$(sanitize_deployment_outcomes <<<"$output" 2>/dev/null); then
     diag_emit "deployment_outcomes=$outcomes"
@@ -251,6 +257,9 @@ diagnose(){
 }
 diagnostic_selftest(){
   local outcomes class signature provenance_tail input="$dir/diagnostic-selftest.log"
+  [[ $(legacy_revision_unique_state present) == present ]] || return 1
+  [[ $(legacy_revision_unique_state absent) == absent ]] || return 1
+  [[ $(legacy_revision_unique_state 'attacker-controlled catalog output') == unavailable ]] || return 1
   outcomes=$(sanitize_deployment_outcomes <<'JSON'
 [{"status":"manual_intervention","failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true},{"status":"rolled_back","failure_code":"","health_passed":true,"rollback_child":true,"rollback_safe":true,"previous_healthy":true}]
 JSON
@@ -290,16 +299,16 @@ CASES
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_ secret-token' >"$input"
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
-  printf '%s\n' 'runner-1  | provenance stage=resolve status=start secret-token' 'runner-1  | provenance stage=git status=available' 'runner-1  | provenance stage=compose_canonicalize status=start' 'runner-1  | provenance stage=compose_canonicalize status=failed secret-token' 'runner-1  | provenance stage=provenance_callback status=start' 'runner-1  | provenance stage=provenance_callback status=failed secret-token' 'runner-1  | provenance stage=git_remote_add status=failed_unknown_exit_1 secret-token' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' 'provenance stage=attacker status=failed_unknown_exit_1' >"$input"
+  printf '%s\n' 'runner-1  | provenance stage=resolve status=start secret-token' 'runner-1  | provenance stage=git status=available' 'runner-1  | provenance stage=compose_canonicalize status=start' 'runner-1  | provenance stage=compose_canonicalize status=failed secret-token' 'runner-1  | provenance stage=provenance_callback status=start' 'runner-1  | provenance stage=provenance_callback status=failed secret-token' 'runner-1  | provenance stage=provenance_journal_append status=start' 'runner-1  | provenance stage=provenance_journal_append status=failed secret-token' 'runner-1  | provenance stage=provenance_replay status=start' 'runner-1  | provenance stage=provenance_replay status=failed_conflict secret-token' 'runner-1  | provenance stage=provenance_replay status=failed_authority secret-token' 'runner-1  | provenance stage=provenance_replay status=failed_transient secret-token' 'runner-1  | provenance stage=provenance_replay status=failed_permanent secret-token' 'runner-1  | provenance stage=provenance_journal_ack status=start' 'runner-1  | provenance stage=provenance_journal_ack status=failed secret-token' 'runner-1  | provenance stage=git_remote_add status=failed_unknown_exit_1 secret-token' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' 'provenance stage=attacker status=failed_unknown_exit_1' >"$input"
   provenance_tail=$(provenance_stage_tail "$input")
-  jq -e '. == ["resolve=start","git=available","compose_canonicalize=start","compose_canonicalize=failed","provenance_callback=start","provenance_callback=failed","git_remote_add=failed_unknown_exit_1","docker_compose_config=failed_unknown_exit_1"]' <<<"$provenance_tail" >/dev/null || return 1
+  jq -e '. == ["resolve=start","git=available","compose_canonicalize=start","compose_canonicalize=failed","provenance_callback=start","provenance_callback=failed","provenance_journal_append=start","provenance_journal_append=failed","provenance_replay=start","provenance_replay=failed_conflict","provenance_replay=failed_authority","provenance_replay=failed_transient","provenance_replay=failed_permanent","provenance_journal_ack=start","provenance_journal_ack=failed","git_remote_add=failed_unknown_exit_1","docker_compose_config=failed_unknown_exit_1"]' <<<"$provenance_tail" >/dev/null || return 1
   : >"$input"
   for n in {1..25}; do
     if (( n % 2 )); then printf '%s\n' 'runner-1  | provenance stage=resolve status=start'; else printf '%s\n' 'runner-1  | provenance stage=git status=available'; fi
   done >"$input"
   provenance_tail=$(provenance_stage_tail "$input")
   jq -e 'length == 24 and .[0] == "git=available" and .[-1] == "resolve=start"' <<<"$provenance_tail" >/dev/null || return 1
-  printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' 'runner-1  | provenance stage=resolve status=failed_unknown_exit_1x secret-token' 'provenance stage=resolve status=available' 'provenance stage=ssh_transport status=start' 'provenance stage=git_remote status=failed_unknown_exit_1' 'provenance stage=compose_canonicalize status=failed_unknown_exit_1' 'provenance stage=provenance_callback status=failed_unknown_exit_1' 'provenance stage=attacker status=start' >"$input"
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' 'runner-1  | provenance stage=resolve status=failed_unknown_exit_1x secret-token' 'provenance stage=resolve status=available' 'provenance stage=ssh_transport status=start' 'provenance stage=git_remote status=failed_unknown_exit_1' 'provenance stage=compose_canonicalize status=failed_unknown_exit_1' 'provenance stage=provenance_callback status=failed_unknown_exit_1' 'provenance stage=provenance_journal_append status=failed_authority' 'provenance stage=provenance_replay status=failed_unknown_exit_1' 'provenance stage=provenance_journal_ack status=failed_transient' 'provenance stage=attacker status=start' >"$input"
   [[ $(provenance_stage_tail "$input") == '[]' ]] || return 1
   printf '%s\n' 'provenance stage=git_fetch status=completed' 'provenance stage=resolve status=failed_image_unavailable_exit_1' >"$input"
   [[ $(runner_terminal_class "$input") == image_failure ]] || return 1
