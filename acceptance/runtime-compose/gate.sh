@@ -111,7 +111,7 @@ legacy_revision_unique_state(){
   case "$1" in present|absent) printf '%s' "$1" ;; *) printf '%s' unavailable ;; esac
 }
 provenance_conflict_class(){
-  sed -nE 's/.*provenance_conflict_class=(commit_mismatch|compose_hash_mismatch|image_mismatch|replay_key|unique)([[:space:]\"]|$).*/\1/p' | tail -n 1
+  sed -nE 's/.*provenance_conflict_class=(commit_mismatch|compose_hash_mismatch|image_mismatch|replay_key|unique)([[:space:]]|$).*/\1/p' | tail -n 1
 }
 provenance_tail_pair_pattern(){
   printf '%s' '^(resolve=start|deployment_cancellation=(watching|receipt_observed)|ssh_credential=start|ssh_transport=ready|ssh_keyscan=start|ssh_fingerprint=matched|git=available|(git_init|git_remote|git_fetch|git_checkout|git_rev_parse|docker_compose_config|compose_canonicalize|provenance_callback|provenance_journal_append|provenance_replay|provenance_journal_ack)=start|(compose_canonicalize|provenance_callback|provenance_journal_append|provenance_journal_ack)=failed|provenance_replay=(failed_conflict|failed_authority|failed_transient|failed_permanent)|(git_init|git_remote_add|git_fetch|git_checkout|git_rev-parse|docker_compose_config|docker_compose_apply|docker_compose_reconcile)=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})$'
@@ -284,7 +284,7 @@ diagnostic_selftest(){
   [[ $(<"$input") == commit_mismatch ]] || return 1
   printf '%s\n' 'server-1 | provenance_conflict_class=commit_mismatch' 'server-1 | provenance_conflict_class=unique' | provenance_conflict_class >"$input"
   [[ $(<"$input") == unique ]] || return 1
-  printf '%s\n' 'server-1 | provenance_conflict_class=attacker_controlled secret-token' 'server-1 | provenance_conflict_class=unique-attacker secret-token' | provenance_conflict_class >"$input"
+  printf '%s\n' 'server-1 | provenance_conflict_class=attacker_controlled secret-token' 'server-1 | provenance_conflict_class=unique-attacker secret-token' 'server-1 | provenance_conflict_class=unique"attacker secret-token' 'server-1 | provenance_conflict_class=unique" attacker secret-token' | provenance_conflict_class >"$input"
   [[ -z $(<"$input") ]] || return 1
   if cat "$dir/diagnostic-selftest-missing.log" 2>/dev/null | provenance_conflict_class >"$input"; then return 1; fi
   [[ -z $(<"$input") ]] || return 1
