@@ -290,16 +290,16 @@ CASES
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_ secret-token' >"$input"
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
-  printf '%s\n' 'runner-1  | provenance stage=resolve status=start secret-token' 'runner-1  | provenance stage=git status=available' 'runner-1  | provenance stage=compose_canonicalize status=start' 'runner-1  | provenance stage=compose_canonicalize status=failed secret-token' 'runner-1  | provenance stage=git_remote_add status=failed_unknown_exit_1 secret-token' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' 'provenance stage=attacker status=failed_unknown_exit_1' >"$input"
+  printf '%s\n' 'runner-1  | provenance stage=resolve status=start secret-token' 'runner-1  | provenance stage=git status=available' 'runner-1  | provenance stage=compose_canonicalize status=start' 'runner-1  | provenance stage=compose_canonicalize status=failed secret-token' 'runner-1  | provenance stage=provenance_callback status=start' 'runner-1  | provenance stage=provenance_callback status=failed secret-token' 'runner-1  | provenance stage=git_remote_add status=failed_unknown_exit_1 secret-token' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' 'provenance stage=attacker status=failed_unknown_exit_1' >"$input"
   provenance_tail=$(provenance_stage_tail "$input")
-  jq -e '. == ["resolve=start","git=available","compose_canonicalize=start","compose_canonicalize=failed","git_remote_add=failed_unknown_exit_1","docker_compose_config=failed_unknown_exit_1"]' <<<"$provenance_tail" >/dev/null || return 1
+  jq -e '. == ["resolve=start","git=available","compose_canonicalize=start","compose_canonicalize=failed","provenance_callback=start","provenance_callback=failed","git_remote_add=failed_unknown_exit_1","docker_compose_config=failed_unknown_exit_1"]' <<<"$provenance_tail" >/dev/null || return 1
   : >"$input"
   for n in {1..25}; do
     if (( n % 2 )); then printf '%s\n' 'runner-1  | provenance stage=resolve status=start'; else printf '%s\n' 'runner-1  | provenance stage=git status=available'; fi
   done >"$input"
   provenance_tail=$(provenance_stage_tail "$input")
   jq -e 'length == 24 and .[0] == "git=available" and .[-1] == "resolve=start"' <<<"$provenance_tail" >/dev/null || return 1
-  printf '%s\n%s\n%s\n%s\n%s\n%s\n' 'runner-1  | provenance stage=resolve status=failed_unknown_exit_1x secret-token' 'provenance stage=resolve status=available' 'provenance stage=ssh_transport status=start' 'provenance stage=git_remote status=failed_unknown_exit_1' 'provenance stage=compose_canonicalize status=failed_unknown_exit_1' 'provenance stage=attacker status=start' >"$input"
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' 'runner-1  | provenance stage=resolve status=failed_unknown_exit_1x secret-token' 'provenance stage=resolve status=available' 'provenance stage=ssh_transport status=start' 'provenance stage=git_remote status=failed_unknown_exit_1' 'provenance stage=compose_canonicalize status=failed_unknown_exit_1' 'provenance stage=provenance_callback status=failed_unknown_exit_1' 'provenance stage=attacker status=start' >"$input"
   [[ $(provenance_stage_tail "$input") == '[]' ]] || return 1
   printf '%s\n' 'provenance stage=git_fetch status=completed' 'provenance stage=resolve status=failed_image_unavailable_exit_1' >"$input"
   [[ $(runner_terminal_class "$input") == image_failure ]] || return 1
