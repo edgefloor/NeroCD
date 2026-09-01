@@ -146,9 +146,9 @@ type deploymentCancellationLifecycle interface {
 	Receipt() string
 }
 
-type noDeploymentCancellationWatcher struct{}
+type noDeploymentCancellationWatcher struct{ cancel context.CancelFunc }
 
-func (noDeploymentCancellationWatcher) Stop()           {}
+func (w noDeploymentCancellationWatcher) Stop()         { w.cancel() }
 func (noDeploymentCancellationWatcher) Receipt() string { return "" }
 
 // deploymentCancellationReceipt is deliberately a second, fenced read of the
@@ -216,7 +216,7 @@ func (w *deploymentStatusWatcher) Receipt() string {
 
 func startComposeCancellationLifecycle(isRollback bool, parent context.Context, supervisor *attemptSupervisor, server, token string, plan domain.DeploymentPlan, operationCancel context.CancelFunc) deploymentCancellationLifecycle {
 	if isRollback {
-		return noDeploymentCancellationWatcher{}
+		return noDeploymentCancellationWatcher{cancel: operationCancel}
 	}
 	return startDeploymentStatusWatcher(parent, supervisor, server, token, plan, operationCancel)
 }

@@ -149,6 +149,12 @@ func TestRollbackComposeCancellationLifecycleDoesNotPollDeploymentStatus(t *test
 	if watcher.Receipt() != "" {
 		t.Fatalf("rollback cancellation lifecycle receipt = %q, want empty", watcher.Receipt())
 	}
+	watcher.Stop()
+	select {
+	case <-operation.Done():
+	case <-time.After(time.Second):
+		t.Fatal("rollback cancellation lifecycle stop did not cancel operation")
+	}
 }
 
 func TestRollbackComposeOperationRetainsSupervisorCancellation(t *testing.T) {
