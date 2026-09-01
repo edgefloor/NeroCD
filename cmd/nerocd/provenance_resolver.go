@@ -221,6 +221,16 @@ func startComposeCancellationLifecycle(isRollback bool, parent context.Context, 
 	return startDeploymentStatusWatcher(parent, supervisor, server, token, plan, operationCancel)
 }
 
+func failedComposeCancellationReceipt(isRollback bool, watcher deploymentCancellationLifecycle, fallback func() string) string {
+	if isRollback {
+		return ""
+	}
+	if receipt := watcher.Receipt(); receipt != "" {
+		return receipt
+	}
+	return fallback()
+}
+
 // resolveComposeClaim owns the complete fenced typed deployment protocol. It
 // never falls back to a generic process plan: all Compose mutation is through
 // the small engine below, and every terminal state is reported through the
@@ -408,11 +418,10 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 		return transition(domain.DeploymentVerifying, target, attemptMutationKey("compose-terminal", claim.Lease.ID, claim.Lease.Attempt, ""), "", &passed)
 	})
 	if err != nil {
-		receipt := cancelWatcher.Receipt()
-		if receipt == "" {
-			receipt = deploymentCancellationReceipt(supervisor, server, token, plan)
-		}
-		if receipt != "" && !isRollback {
+		receipt := failedComposeCancellationReceipt(isRollback, cancelWatcher, func() string {
+			return deploymentCancellationReceipt(supervisor, server, token, plan)
+		})
+		if receipt != "" {
 			return composeCancellationRollback(supervisor, server, token, plan, claim, receipt)
 		}
 		// A pre-apply cancel revokes the lease in the same transaction as the

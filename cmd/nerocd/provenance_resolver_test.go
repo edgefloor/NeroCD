@@ -172,6 +172,41 @@ func TestRollbackComposeOperationRetainsSupervisorCancellation(t *testing.T) {
 	}
 }
 
+type staticDeploymentCancellationLifecycle struct{ receipt string }
+
+func (staticDeploymentCancellationLifecycle) Stop() {}
+func (w staticDeploymentCancellationLifecycle) Receipt() string {
+	return w.receipt
+}
+
+func TestFailedComposeCancellationReceiptSkipsRollbackFallback(t *testing.T) {
+	fallbackCalls := 0
+	got := failedComposeCancellationReceipt(true, staticDeploymentCancellationLifecycle{receipt: "unexpected"}, func() string {
+		fallbackCalls++
+		return "unexpected"
+	})
+	if got != "" {
+		t.Errorf("failedComposeCancellationReceipt(rollback) = %q, want empty", got)
+	}
+	if fallbackCalls != 0 {
+		t.Errorf("failedComposeCancellationReceipt(rollback) fallback calls = %d, want 0", fallbackCalls)
+	}
+}
+
+func TestFailedComposeCancellationReceiptRetainsRootFallback(t *testing.T) {
+	fallbackCalls := 0
+	got := failedComposeCancellationReceipt(false, staticDeploymentCancellationLifecycle{}, func() string {
+		fallbackCalls++
+		return "cancel-receipt"
+	})
+	if got != "cancel-receipt" {
+		t.Errorf("failedComposeCancellationReceipt(root) = %q, want %q", got, "cancel-receipt")
+	}
+	if fallbackCalls != 1 {
+		t.Errorf("failedComposeCancellationReceipt(root) fallback calls = %d, want 1", fallbackCalls)
+	}
+}
+
 type fakeProvenanceCommand struct {
 	calls   [][]string
 	compose string
