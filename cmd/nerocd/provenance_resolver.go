@@ -141,6 +141,16 @@ type deploymentStatusWatcher struct {
 	receipt string
 }
 
+type deploymentCancellationLifecycle interface {
+	Stop()
+	Receipt() string
+}
+
+type noDeploymentCancellationWatcher struct{}
+
+func (noDeploymentCancellationWatcher) Stop()           {}
+func (noDeploymentCancellationWatcher) Receipt() string { return "" }
+
 // deploymentCancellationReceipt is deliberately a second, fenced read of the
 // dedicated status capability.  A cancelled process can return concurrently
 // with its polling goroutine, so the owner must not infer "not cancelled" from
@@ -202,6 +212,13 @@ func (w *deploymentStatusWatcher) Receipt() string {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.receipt
+}
+
+func startComposeCancellationLifecycle(isRollback bool, parent context.Context, supervisor *attemptSupervisor, server, token string, plan domain.DeploymentPlan, operationCancel context.CancelFunc) deploymentCancellationLifecycle {
+	if isRollback {
+		return noDeploymentCancellationWatcher{}
+	}
+	return startDeploymentStatusWatcher(parent, supervisor, server, token, plan, operationCancel)
 }
 
 // resolveComposeClaim owns the complete fenced typed deployment protocol. It
@@ -271,8 +288,9 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 	if plan.Status != domain.DeploymentPreparing && plan.Status != domain.DeploymentApplying && plan.Status != domain.DeploymentVerifying {
 		return errors.New("deployment is not resumable by this attempt")
 	}
+	isRollback := plan.RollbackOfID != nil && strings.TrimSpace(*plan.RollbackOfID) != ""
 	operationCtx, stopOperation := context.WithCancel(supervisor.Context())
-	cancelWatcher := startDeploymentStatusWatcher(supervisor.Context(), supervisor, server, token, plan, stopOperation)
+	cancelWatcher := startComposeCancellationLifecycle(isRollback, supervisor.Context(), supervisor, server, token, plan, stopOperation)
 	defer cancelWatcher.Stop()
 	authorizeCredential := func(ctx context.Context, binding domain.SecretBinding) error {
 		accessID := attemptMutationKey("secret_access", claim.Lease.ID, claim.Lease.Attempt, strings.TrimSpace(binding.Name))
@@ -285,7 +303,6 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 		}
 		return nil
 	}
-	isRollback := plan.RollbackOfID != nil && strings.TrimSpace(*plan.RollbackOfID) != ""
 	prepareWorkspace := func(ctx context.Context, workspace string) (runner.PreparedComposeSecrets, error) {
 		return runner.PrepareComposeSecrets(ctx, composeApplicationSecretBindings(plan.SecretBindings), secretRoot, workspace, authorizeCredential)
 	}

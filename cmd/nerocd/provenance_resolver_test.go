@@ -103,7 +103,7 @@ func TestDeploymentStatusWatcherCancelsOnlyComposeOperation(t *testing.T) {
 	}))
 	defer server.Close()
 	operation, cancelOperation := context.WithCancel(supervisor.Context())
-	watcher := startDeploymentStatusWatcher(supervisor.Context(), supervisor, server.URL, "token", domain.DeploymentPlan{DeploymentID: "dep", RunID: "run", LeaseID: "lease", Attempt: 1, Fence: "fence"}, cancelOperation)
+	watcher := startComposeCancellationLifecycle(false, supervisor.Context(), supervisor, server.URL, "token", domain.DeploymentPlan{DeploymentID: "dep", RunID: "run", LeaseID: "lease", Attempt: 1, Fence: "fence"}, cancelOperation)
 	defer watcher.Stop()
 	select {
 	case <-operation.Done():
@@ -115,6 +115,54 @@ func TestDeploymentStatusWatcherCancelsOnlyComposeOperation(t *testing.T) {
 	}
 	if watcher.Receipt() != "cancel-receipt" {
 		t.Fatalf("receipt=%q", watcher.Receipt())
+	}
+}
+
+func TestRollbackComposeCancellationLifecycleDoesNotPollDeploymentStatus(t *testing.T) {
+	lease := domain.RunLease{ID: "lease", RunID: "run", RunnerID: "runner", Attempt: 1, Fence: "fence", ExpiresAt: time.Now().Add(time.Minute)}
+	supervisor := newAttemptSupervisor(lease)
+	defer supervisor.Close()
+	requested := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case requested <- struct{}{}:
+		default:
+		}
+		receipt := "cancel-receipt"
+		_ = json.NewEncoder(w).Encode(domain.DeploymentPlan{DeploymentID: "dep", RunID: "run", LeaseID: "lease", Attempt: 1, Fence: "fence", Status: domain.DeploymentCancelRequested, CancellationRequestID: &receipt})
+	}))
+	defer server.Close()
+	operation, cancelOperation := context.WithCancel(supervisor.Context())
+	rollbackOfID := "root-deployment"
+	watcher := startComposeCancellationLifecycle(true, supervisor.Context(), supervisor, server.URL, "token", domain.DeploymentPlan{DeploymentID: "dep", RunID: "run", LeaseID: "lease", Attempt: 1, Fence: "fence", RollbackOfID: &rollbackOfID}, cancelOperation)
+	defer watcher.Stop()
+	select {
+	case <-operation.Done():
+		t.Fatal("rollback cancellation lifecycle canceled operation")
+	case <-time.After(300 * time.Millisecond):
+	}
+	select {
+	case <-requested:
+		t.Fatal("rollback cancellation lifecycle polled deployment status")
+	default:
+	}
+	if watcher.Receipt() != "" {
+		t.Fatalf("rollback cancellation lifecycle receipt = %q, want empty", watcher.Receipt())
+	}
+}
+
+func TestRollbackComposeOperationRetainsSupervisorCancellation(t *testing.T) {
+	lease := domain.RunLease{ID: "lease", RunID: "run", RunnerID: "runner", Attempt: 1, Fence: "fence", ExpiresAt: time.Now().Add(time.Minute)}
+	supervisor := newAttemptSupervisor(lease)
+	operation, cancelOperation := context.WithCancel(supervisor.Context())
+	rollbackOfID := "root-deployment"
+	watcher := startComposeCancellationLifecycle(true, supervisor.Context(), supervisor, "", "", domain.DeploymentPlan{RollbackOfID: &rollbackOfID}, cancelOperation)
+	defer watcher.Stop()
+	supervisor.Close()
+	select {
+	case <-operation.Done():
+	case <-time.After(time.Second):
+		t.Fatal("rollback operation did not inherit supervisor cancellation")
 	}
 }
 
