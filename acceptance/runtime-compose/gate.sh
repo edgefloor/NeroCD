@@ -276,6 +276,8 @@ CASES
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_12345678901' >"$input"
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
+  printf '%s\n' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_ secret-token' >"$input"
+  [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'provenance stage=git_fetch status=completed' 'provenance stage=resolve status=failed_image_unavailable_exit_1' >"$input"
   [[ $(runner_terminal_class "$input") == image_failure ]] || return 1
   outcomes=$(sanitize_deployment_outcomes <<'JSON'
