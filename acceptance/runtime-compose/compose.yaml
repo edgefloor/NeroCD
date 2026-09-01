@@ -57,7 +57,7 @@ services:
         cp /git/keys/deploy.pub /git/home/.ssh/authorized_keys; chmod 700 /git/home/.ssh; chmod 600 /git/home/.ssh/authorized_keys /git/keys/*
         git init --bare /git/repo.git >/dev/null; git config --global user.email gate@local; git config --global user.name gate
         git init /git/work >/dev/null; cd /git/work
-        make_compose() { printf 'services:\n  fixture:\n    image: %s\n    environment:\n      REVISION: $${NEROCD_DEPLOYMENT_REVISION:?server-owned revision required}\n      REQUIRE_FILE_SECRET: "true"\n    secrets:\n      - source: app_secret\n        target: /run/secrets/app_secret\n    networks:\n      health:\n        aliases: [%s]\nnetworks:\n  health:\n    external: true\n    name: %s\n' "$1" "$3" "$2" > compose.yaml; }
+        make_compose() { printf 'services:\n  fixture:\n    image: %s\n    user: "10001:10001"\n    environment:\n      REVISION: $${NEROCD_DEPLOYMENT_REVISION:?server-owned revision required}\n      REQUIRE_FILE_SECRET: "true"\n    secrets:\n      - source: app_secret\n        target: /run/secrets/app_secret\n    networks:\n      health:\n        aliases: [%s]\nnetworks:\n  health:\n    external: true\n    name: %s\n' "$1" "$3" "$2" > compose.yaml; }
         make_compose "$${IMAGE_A}" "$${HEALTH_NETWORK}" "$${HEALTH_HOST}"; git add compose.yaml; git commit -qm A; git branch -M main; a_commit=$$(git rev-parse HEAD); git remote add origin /git/repo.git; git push -q origin main
         make_compose "$${IMAGE_B}" "$${HEALTH_NETWORK}" "$${HEALTH_HOST}"; git add compose.yaml; git commit -qm B; git branch -f fixture-b; git reset --hard "$$a_commit" >/dev/null
         make_compose "$${IMAGE_C}" "$${HEALTH_NETWORK}" "$${HEALTH_HOST}"; git add compose.yaml; git commit -qm C; git branch -f fixture-c
