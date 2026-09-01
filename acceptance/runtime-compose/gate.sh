@@ -102,6 +102,11 @@ runner_terminal_class(){
   else printf '%s' unclassified
   fi
 }
+compose_config_failure_signature(){
+  local source=$1
+  [[ -f "$source" ]] || return 0
+  grep -Ex 'provenance stage=docker_compose_config status=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10}' "$source" | tail -n 1
+}
 classify_log(){
   local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
   if [[ ! -f "$source" ]] || ! tail -n 80 "$source" 2>/dev/null | tail -c 16384 >"$raw"; then
@@ -174,7 +179,7 @@ terminal_classes(){
   '
 }
 diagnose(){
-  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class
+  local output rc runner_id state_file="$dir/diagnostic-runner-state.json" outcomes runner_class config_signature
   set +e
   diag_emit 'diagnostic_begin=true'
   diag_emit "builder_resolution=${builder_diagnostic:-not_started}"
@@ -227,11 +232,13 @@ diagnose(){
   # The class is a fixed vocabulary derived from private capped log text; the
   # text itself is never copied to stderr or the evidence file.
   runner_class=$(runner_terminal_class "$dir/diagnostic-runner.raw")
+  config_signature=$(compose_config_failure_signature "$dir/diagnostic-runner.raw")
+  if [[ -n "$config_signature" ]]; then diag_emit "runner_config_failure_signature=$config_signature"; else diag_emit 'runner_config_failure_signature=unavailable'; fi
   if output=$(terminal_classes "$outcomes" "$runner_class" 2>/dev/null); then diag_emit "terminal_classes=$output"; else diag_emit 'terminal_classes=unavailable'; fi
   diag_emit 'diagnostic_end=true'
 }
 diagnostic_selftest(){
-  local outcomes class input="$dir/diagnostic-selftest.log"
+  local outcomes class signature input="$dir/diagnostic-selftest.log"
   outcomes=$(sanitize_deployment_outcomes <<'JSON'
 [{"status":"manual_intervention","failure_code":"compose_health_failed","health_passed":false,"rollback_child":false,"rollback_safe":true,"previous_healthy":true},{"status":"rolled_back","failure_code":"","health_passed":true,"rollback_child":true,"rollback_safe":true,"previous_healthy":true}]
 JSON
@@ -262,6 +269,13 @@ confirm lease authority|authority_failure
 connection refused|transport_failure
 Authorization: Bearer super-secret-token|unclassified
 CASES
+  printf '%s\n' 'provenance stage=docker_compose_config status=failed_canceled_exit_-1' >"$input"
+  signature=$(compose_config_failure_signature "$input")
+  [[ "$signature" == 'provenance stage=docker_compose_config status=failed_canceled_exit_-1' ]] || return 1
+  printf '%s\n' 'provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' >"$input"
+  [[ -z $(compose_config_failure_signature "$input") ]] || return 1
+  printf '%s\n' 'provenance stage=docker_compose_config status=failed_attacker_controlled_exit_1' >"$input"
+  [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'provenance stage=git_fetch status=completed' 'provenance stage=resolve status=failed_image_unavailable_exit_1' >"$input"
   [[ $(runner_terminal_class "$input") == image_failure ]] || return 1
   outcomes=$(sanitize_deployment_outcomes <<'JSON'

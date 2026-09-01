@@ -102,11 +102,19 @@ func (osProvenanceCommand) RunEnvironment(ctx context.Context, name string, args
 	var output boundedCommandOutput
 	c.Stdout, c.Stderr = &output, &output
 	err := c.Run()
-	if ctx.Err() != nil {
+	contextErr := ctx.Err()
+	if contextErr != nil {
 		killProvenanceProcess(c)
 	}
 	if err != nil {
-		return output.Bytes(), &provenanceExecutionError{err: err, reason: classifyProvenanceCommandOutput(output.Bytes())}
+		reason := classifyProvenanceCommandOutput(output.Bytes())
+		switch {
+		case errors.Is(contextErr, context.Canceled):
+			reason = "canceled"
+		case errors.Is(contextErr, context.DeadlineExceeded):
+			reason = "deadline"
+		}
+		return output.Bytes(), &provenanceExecutionError{err: err, reason: reason}
 	}
 	return output.Bytes(), err
 }
@@ -397,26 +405,11 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 		if supervisor.Context().Err() != nil {
 			return nil
 		}
-		if supervisor.Context().Err() == nil {
-			// Once the callback has started it reports post-apply failures through
-			// the atomic rollback protocol. A failure still in preparation is safe
-			// to terminalize directly.
-			target := domain.DeploymentFailed
-			if isRollback {
-				// A rollback child has no ordinary failed terminal.  Even a
-				// preparation failure is reported through its explicit rollback
-				// verification path so the source settles loudly and atomically.
-				_ = transition(domain.DeploymentPreparing, domain.DeploymentApplying, attemptMutationKey("rollback-prepare-failed-apply", claim.Lease.ID, claim.Lease.Attempt, ""), "", nil)
-				_ = transition(domain.DeploymentApplying, domain.DeploymentVerifying, attemptMutationKey("rollback-prepare-failed-verify", claim.Lease.ID, claim.Lease.Attempt, ""), "", nil)
-				target = domain.DeploymentRollbackFailed
-			}
-			expected := domain.DeploymentPreparing
-			if isRollback {
-				expected = domain.DeploymentVerifying
-			}
-			_ = transition(expected, target, attemptMutationKey("provenance-fail", claim.Lease.ID, claim.Lease.Attempt, ""), "provenance_resolution_failed", nil)
-		}
-		return err
+		// The callback has not started, so no mutation can have occurred. Settle
+		// the fenced deployment through the pre-apply path. A successful durable
+		// terminal transition is nonfatal to the long-lived runner; an authority
+		// or transition failure remains fatal for the runner to surface.
+		return composePreApplyFailure(transition, claim, isRollback, "provenance_resolution_failed", err)
 	}
 	_ = value
 	return nil

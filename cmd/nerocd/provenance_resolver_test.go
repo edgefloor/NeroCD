@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -19,6 +20,75 @@ import (
 
 	"nerocd/internal/domain"
 )
+
+func TestComposePreApplyFailureRollbackTerminalizationIsNonfatal(t *testing.T) {
+	claim := domain.ClaimedRun{Lease: domain.RunLease{ID: "lease", Attempt: 7}}
+	var transitions [][2]string
+	err := composePreApplyFailure(func(expected, target, _, _ string, _ *bool) error {
+		transitions = append(transitions, [2]string{expected, target})
+		return nil
+	}, claim, true, "provenance_resolution_failed", errors.New("resolver failed"))
+	if err != nil {
+		t.Fatalf("composePreApplyFailure(rollback) error = %v, want nil", err)
+	}
+	want := [][2]string{
+		{domain.DeploymentPreparing, domain.DeploymentApplying},
+		{domain.DeploymentApplying, domain.DeploymentVerifying},
+		{domain.DeploymentVerifying, domain.DeploymentRollbackFailed},
+	}
+	if !slices.Equal(transitions, want) {
+		t.Errorf("composePreApplyFailure(rollback) transitions = %v, want %v", transitions, want)
+	}
+}
+
+func TestComposePreApplyFailureRollbackTransitionFailureIsFatal(t *testing.T) {
+	transitionErr := errors.New("transition rejected")
+	claim := domain.ClaimedRun{Lease: domain.RunLease{ID: "lease", Attempt: 7}}
+	err := composePreApplyFailure(func(_, target, _, _ string, _ *bool) error {
+		if target == domain.DeploymentRollbackFailed {
+			return transitionErr
+		}
+		return nil
+	}, claim, true, "provenance_resolution_failed", errors.New("resolver failed"))
+	if !errors.Is(err, transitionErr) {
+		t.Errorf("composePreApplyFailure(rollback transition failure) error = %v, want %v", err, transitionErr)
+	}
+}
+
+func TestOSProvenanceCommandClassifiesCanceledAndDeadlineContexts(t *testing.T) {
+	command := osProvenanceCommand{}
+	tests := []struct {
+		name       string
+		newContext func() (context.Context, context.CancelFunc)
+		want       string
+	}{
+		{name: "canceled", newContext: func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx, func() {}
+		}, want: "canceled"},
+		{name: "deadline", newContext: func() (context.Context, context.CancelFunc) {
+			return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		}, want: "deadline"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := tt.newContext()
+			defer cancel()
+			_, err := command.Run(ctx, "sh", []string{"-c", "exit 0"}, t.TempDir())
+			var execution *provenanceExecutionError
+			if !errors.As(err, &execution) {
+				t.Fatalf("osProvenanceCommand.Run(%s) error = %v, want provenance execution error", tt.name, err)
+			}
+			if execution.reason != tt.want {
+				t.Errorf("osProvenanceCommand.Run(%s) reason = %q, want %q", tt.name, execution.reason, tt.want)
+			}
+		})
+	}
+	if _, err := command.Run(context.Background(), "sh", []string{"-c", "exit 0"}, t.TempDir()); err != nil {
+		t.Errorf("osProvenanceCommand.Run(fresh context) error = %v, want nil", err)
+	}
+}
 
 func TestDeploymentStatusWatcherCancelsOnlyComposeOperation(t *testing.T) {
 	lease := domain.RunLease{ID: "lease", RunID: "run", RunnerID: "runner", Attempt: 1, Fence: "fence", ExpiresAt: time.Now().Add(time.Minute)}
