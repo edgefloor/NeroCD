@@ -105,7 +105,7 @@ runner_terminal_class(){
 compose_config_failure_signature(){
   local source=$1
   [[ -f "$source" ]] || return 0
-  grep -Ex 'provenance stage=docker_compose_config status=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10}' "$source" | tail -n 1
+  sed -nE 's/.*(provenance stage=docker_compose_config status=failed_(image_reference|image_unavailable|image_access|port_conflict|docker_access|host_key|authentication|repository|permissions|unavailable|unknown|canceled|deadline)_exit_-?[0-9]{1,10})([^0-9].*|$)/\1/p' "$source" | tail -n 1
 }
 classify_log(){
   local label=$1 source=$2 raw="$dir/diagnostic-$1.raw" available=true lines=0 bytes=0 class=unclassified
@@ -269,12 +269,12 @@ confirm lease authority|authority_failure
 connection refused|transport_failure
 Authorization: Bearer super-secret-token|unclassified
 CASES
-  printf '%s\n' 'provenance stage=docker_compose_config status=failed_canceled_exit_-1' >"$input"
+  printf '%s\n' 'runner-1  | provenance stage=docker_compose_config status=failed_canceled_exit_-1 secret-token' >"$input"
   signature=$(compose_config_failure_signature "$input")
   [[ "$signature" == 'provenance stage=docker_compose_config status=failed_canceled_exit_-1' ]] || return 1
-  printf '%s\n' 'provenance stage=docker_compose_config status=failed_unknown_exit_1 secret-token' >"$input"
-  [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'provenance stage=docker_compose_config status=failed_attacker_controlled_exit_1' >"$input"
+  [[ -z $(compose_config_failure_signature "$input") ]] || return 1
+  printf '%s\n' 'runner-1  | provenance stage=docker_compose_config status=failed_unknown_exit_12345678901' >"$input"
   [[ -z $(compose_config_failure_signature "$input") ]] || return 1
   printf '%s\n' 'provenance stage=git_fetch status=completed' 'provenance stage=resolve status=failed_image_unavailable_exit_1' >"$input"
   [[ $(runner_terminal_class "$input") == image_failure ]] || return 1
