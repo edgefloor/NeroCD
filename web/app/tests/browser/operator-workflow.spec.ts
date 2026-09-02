@@ -124,6 +124,71 @@ test("system administrators can open the bounded Operations summary", async ({ p
   await expect(page.getByRole("dialog", { name: "Mobile navigation" }).getByRole("link", { name: "Operations" })).toBeVisible();
 });
 
+test("mobile shell keeps primary navigation usable and safely contained", async ({ page }) => {
+  await page.goto("/");
+  await signIn(page);
+  const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
+  const actionNames = ["Home", "Runs", "Deployments", "Runners", "Approvals"];
+
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(primaryNavigation).toBeVisible();
+    await expect(primaryNavigation.getByRole("button")).toHaveCount(5);
+    for (const name of actionNames) {
+      await expect(primaryNavigation.getByRole("button", { name })).toBeVisible();
+    }
+
+    const mobileMetrics = await page.evaluate(() => {
+      const navigation = document.querySelector<HTMLElement>(".mobile-bottom-navigation");
+      const content = document.querySelector<HTMLElement>(".mobile-shell-content");
+      if (!navigation || !content) throw new Error("mobile shell is unavailable");
+      const itemTops = Array.from(navigation.querySelectorAll<HTMLElement>("button"), (button) => button.getBoundingClientRect().top);
+      return {
+        contentPaddingBottom: Number.parseFloat(window.getComputedStyle(content).paddingBottom),
+        documentClientWidth: document.documentElement.clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        navigationHeight: navigation.getBoundingClientRect().height,
+        itemTops,
+      };
+    });
+    expect(mobileMetrics.documentScrollWidth).toBeLessThanOrEqual(mobileMetrics.documentClientWidth);
+    expect(mobileMetrics.contentPaddingBottom).toBeGreaterThanOrEqual(mobileMetrics.navigationHeight);
+    expect(new Set(mobileMetrics.itemTops)).toHaveSize(1);
+  }
+
+  expect(await page.locator('meta[name="viewport"]').getAttribute("content")).toContain("viewport-fit=cover");
+
+  await page.getByRole("button", { name: "Open mobile navigation" }).click();
+  const drawer = page.getByRole("dialog", { name: "Mobile navigation" });
+  await expect(drawer).toBeVisible();
+  const drawerMetrics = await drawer.evaluate((element) => {
+    const drawer = element as HTMLElement;
+    const rect = drawer.getBoundingClientRect();
+    const style = window.getComputedStyle(drawer);
+    const alpha = style.backgroundColor.match(/^rgba\\([^,]+,[^,]+,[^,]+,\\s*([^)]+)\\)$/)?.[1];
+    return {
+      backgroundColor: style.backgroundColor,
+      backgroundAlpha: alpha === undefined ? 1 : Number(alpha),
+      bottom: rect.bottom,
+      overflowY: style.overflowY,
+      right: rect.right,
+      viewportHeight: window.innerHeight,
+      viewportWidth: window.innerWidth,
+    };
+  });
+  expect(drawerMetrics.backgroundColor).not.toBe("transparent");
+  expect(drawerMetrics.backgroundAlpha).toBe(1);
+  expect(drawerMetrics.overflowY).toBe("auto");
+  expect(drawerMetrics.right).toBeLessThanOrEqual(drawerMetrics.viewportWidth);
+  expect(drawerMetrics.bottom).toBeLessThanOrEqual(drawerMetrics.viewportHeight);
+
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1024, height: 844 });
+  await expect(primaryNavigation).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open mobile navigation" })).toBeHidden();
+  await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
+});
+
 test("runner enrollment stays local to the reveal dialog and browser avoids runner-only APIs", async ({ page }) => {
   const forbiddenRunnerCalls: string[] = [];
   await page.route("**/api/v1/runners/**", async (route) => {

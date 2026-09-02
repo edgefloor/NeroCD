@@ -38,9 +38,9 @@ const navItems: Array<{ key: ViewKey; label: string; mobileLabel?: string; icon:
   { key: "deployments", label: "Deployments", icon: Rocket, mobile: true },
   { key: "runners", label: "Runners", icon: Bot, mobile: true },
   { key: "operations", label: "Operations", icon: Gauge, configure: true },
-  { key: "approvals", label: "Approvals", mobileLabel: "Inbox", icon: ShieldCheck, mobile: true },
-  { key: "templates", label: "Templates", icon: Layers3, mobile: true },
-  { key: "logs", label: "Logs", icon: Terminal, mobile: true },
+  { key: "approvals", label: "Approvals", icon: ShieldCheck, mobile: true },
+  { key: "templates", label: "Templates", icon: Layers3 },
+  { key: "logs", label: "Logs", icon: Terminal },
   { key: "projects", label: "Projects", icon: FolderKanban, configure: true },
   { key: "audit", label: "Audit", icon: FileText, configure: true },
   { key: "settings", label: "Settings", icon: Settings, configure: true },
@@ -129,7 +129,7 @@ export function Shell({
   }, [mobileMenuOpen]);
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="mobile-app-shell bg-background text-foreground">
       {/* Desktop Sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-sidebar-border bg-sidebar lg:flex lg:flex-col">
         <div className="flex h-14 items-center gap-2.5 px-4 border-b border-sidebar-border">
@@ -140,7 +140,7 @@ export function Shell({
           />
           <strong className="text-base font-semibold tracking-tight">NeroCD</strong>
         </div>
-        <nav className="flex-1 py-3 px-2.5 space-y-0.5">
+        <nav className="flex-1 py-3 px-2.5 space-y-0.5" aria-label="Desktop navigation">
           {navItems.map((item) => (
             <NavButton key={item.key} item={{ ...item, href: viewPaths[item.key] }} active={view === item.key} pending={pending} onClick={() => setView(item.key)} />
           ))}
@@ -166,7 +166,7 @@ export function Shell({
             className="fixed inset-0 z-40 bg-black/40 lg:hidden"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="fixed inset-y-0 left-0 z-50 w-60 border-r border-sidebar-border bg-sidebar flex flex-col lg:hidden" role="dialog" aria-label="Mobile navigation">
+          <aside className="mobile-navigation-drawer fixed inset-y-0 left-0 z-50 w-60 border-r border-sidebar-border flex flex-col lg:hidden" role="dialog" aria-label="Mobile navigation">
             <div className="flex h-14 items-center justify-between px-4 border-b border-sidebar-border">
               <div className="flex items-center gap-2.5">
                 <img
@@ -192,7 +192,7 @@ export function Shell({
       {/* Main Content Area */}
       <section className="min-w-0 lg:pl-60">
         {/* Header */}
-        <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur-sm lg:px-6">
+        <header className="mobile-shell-header sticky top-0 z-20 flex h-14 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur-sm lg:px-6">
           <div className="flex items-center gap-3 shrink-0">
             <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full lg:hidden" aria-label="Open mobile navigation" onClick={() => setMobileMenuOpen(true)}>
               <Menu className="h-4 w-4" />
@@ -246,11 +246,11 @@ export function Shell({
         </header>
         
         {/* Page Content */}
-        <div className="mx-auto max-w-[1400px] px-4 py-6 pb-24 lg:px-6 lg:pb-8">{children}</div>
+        <div className="mobile-shell-content mx-auto max-w-[1400px] px-4 py-6 pb-24 lg:px-6 lg:pb-8">{children}</div>
       </section>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur-sm px-2 pb-[calc(env(safe-area-inset-bottom)+0.25rem)] pt-1 lg:hidden">
+      <nav className="mobile-bottom-navigation fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur-sm px-2 pb-[calc(env(safe-area-inset-bottom)+0.25rem)] pt-1 lg:hidden" aria-label="Primary navigation">
         <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
           {navItems
             .filter((item) => item.mobile)
@@ -266,6 +266,7 @@ export function Shell({
                     isActive && "text-foreground",
                   )}
                   type="button"
+                  aria-label={item.label}
                   aria-current={isActive ? "page" : undefined}
                   onClick={() => setView(item.key)}
                 >
