@@ -31,10 +31,10 @@ services:
     build: {context: ../runtime-spool/proxy}
     environment: {UPSTREAM_URL: http://server:8080}
     depends_on: {server: {condition: service_healthy}}
-    ports: ["127.0.0.1::8081"]
     networks: [runtime]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
+    healthcheck: {test: [CMD, curl, -fsS, --max-time, "2", http://127.0.0.1:8081/__control/status], interval: 1s, timeout: 2s, retries: 30}
   git:
     image: ${NEROCD_GIT_IMAGE:?set NEROCD_GIT_IMAGE}
     entrypoint: [/bin/sh, -ec]

@@ -716,10 +716,9 @@ fi
 compose run --rm --no-deps git_init >"$dir/git-init.log" 2>&1 || fail 'git fixture initialization failed'
 compose up -d --wait postgres server git proxy >"$dir/up.log" 2>&1 || fail 'control stack failed'
 server_port=$(compose port server 8080 | tail -1); base="http://127.0.0.1:${server_port##*:}"
-proxy_port=$(compose port proxy 8081 | tail -1); proxy_control="http://127.0.0.1:${proxy_port##*:}/__control"
 http(){ local method=$1 url=$2 token=$3 body=$4 out=$5; local -a args=(-sS --max-time 15 -o "$out" -w '%{http_code}' -X "$method" -H 'Content-Type: application/json'); [[ -z "$token" ]] || args+=(-H "Authorization: Bearer $token"); args+=(--data "$body" "$url"); curl "${args[@]}"; }
-proxy_status(){ curl -fsS --max-time 5 "$proxy_control/status"; }
-proxy_post(){ curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -X POST "$proxy_control/$1"; }
+proxy_status(){ compose exec -T proxy curl -fsS --max-time 5 http://127.0.0.1:8081/__control/status; }
+proxy_post(){ compose exec -T proxy curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:8081/__control/$1"; }
 if [[ "$runtime_profile" == production ]]; then
   printf '%s\n' "$admin_password" | compose run --rm --no-deps --entrypoint nerocd server bootstrap-admin --email "$admin_email" --name 'Dogfood Admin' --password-stdin >"$dir/bootstrap.log" 2>&1 || fail 'production bootstrap-admin failed'
 fi
@@ -810,8 +809,17 @@ metrics_before=$(curl -fsS --max-time 10 -H "Authorization: Bearer $admin" "$bas
 retry_before=$(awk '$1=="nerocd_runner_retry_count" {print $2}' <<<"$metrics_before"); renew_before=$(awk '$1=="nerocd_runner_renew_failures" {print $2}' <<<"$metrics_before"); [[ "$retry_before" =~ ^[0-9]+$ && "$renew_before" =~ ^[0-9]+$ ]] || fail 'missing pre-failure runner counters'
 compose exec -T runner sh -ec 'rm -f /journal/compose-barrier-up-entered /journal/compose-barrier-up-descendant.pid; : >/journal/compose-barrier-up'
 read -r rev_metric dep_metric <<<"$(deploy_existing telemetry "$rev_during")"; wait_runner_barrier up; wait_public_status "$dep_metric" applying
-renew_requests_before=$(jq -r '.requests["/api/v1/runners/renew"] // 0' <<<"$(proxy_status)"); failed_before=$(jq -r '.failed_renewals // 0' <<<"$(proxy_status)"); [[ "$(proxy_post fail-renew)" == 204 ]] || fail 'could not arm one-shot transient renewal failure'
-deadline=$((SECONDS+20)); failed_renewals=$failed_before; while ((SECONDS<deadline)); do proxy_state=$(proxy_status); failed_renewals=$(jq -r '.failed_renewals // 0' <<<"$proxy_state"); renew_requests=$(jq -r '.requests["/api/v1/runners/renew"] // 0' <<<"$proxy_state"); [[ "$failed_renewals" == $((failed_before+1)) && "$renew_requests" -ge $((renew_requests_before+2)) ]] && break; sleep .2; done; [[ "$failed_renewals" == $((failed_before+1)) && "$renew_requests" -ge $((renew_requests_before+2)) ]] || fail "renewal transient failure/recovery was not observed failed=$failed_renewals requests=$renew_requests"
+if ! proxy_state=$(proxy_status); then fail 'proxy status unavailable before renewal fault'; fi
+renew_requests_before=$(jq -er '.requests["/api/v1/runners/renew"] // 0 | if type == "number" then . else error("renew count must be numeric") end' <<<"$proxy_state") || fail 'proxy renewal count was invalid before renewal fault'
+failed_before=$(jq -er '.failed_renewals // 0 | if type == "number" then . else error("failed renewal count must be numeric") end' <<<"$proxy_state") || fail 'proxy failed-renewal count was invalid before renewal fault'
+[[ "$(proxy_post fail-renew)" == 204 ]] || fail 'could not arm one-shot transient renewal failure'
+deadline=$((SECONDS+20)); failed_renewals=$failed_before; while ((SECONDS<deadline)); do
+  if ! proxy_state=$(proxy_status); then fail 'proxy status unavailable during renewal recovery'; fi
+  failed_renewals=$(jq -er '.failed_renewals // 0 | if type == "number" then . else error("failed renewal count must be numeric") end' <<<"$proxy_state") || fail 'proxy failed-renewal count was invalid during renewal recovery'
+  renew_requests=$(jq -er '.requests["/api/v1/runners/renew"] // 0 | if type == "number" then . else error("renew count must be numeric") end' <<<"$proxy_state") || fail 'proxy renewal count was invalid during renewal recovery'
+  [[ "$failed_renewals" == $((failed_before+1)) && "$renew_requests" -ge $((renew_requests_before+2)) ]] && break
+  sleep .2
+done; [[ "$failed_renewals" == $((failed_before+1)) && "$renew_requests" -ge $((renew_requests_before+2)) ]] || fail "renewal transient failure/recovery was not observed failed=$failed_renewals requests=$renew_requests"
 cancel_deployment "$dep_metric" telemetry-renewal-receipt; wait_status "$dep_metric" rolled_back
 deadline=$((SECONDS+15)); retry_reported=''; renew_reported=''; while ((SECONDS<deadline)); do metrics_now=$(curl -fsS --max-time 10 -H "Authorization: Bearer $admin" "$base/metrics"); retry_reported=$(awk '$1=="nerocd_runner_retry_count" {print $2}' <<<"$metrics_now"); renew_reported=$(awk '$1=="nerocd_runner_renew_failures" {print $2}' <<<"$metrics_now"); [[ "$retry_reported" == $((retry_before+1)) && "$renew_reported" == $((renew_before+1)) ]] && break; sleep .2; done; [[ "$retry_reported" == $((retry_before+1)) && "$renew_reported" == $((renew_before+1)) ]] || fail "runner counter telemetry deltas retry=$retry_before->$retry_reported renew=$renew_before->$renew_reported want=+1/+1"
 record "runner_counter_fault transient_renew_failure=1 retry_recovery=1 telemetry_delta=1/1"
@@ -832,7 +840,8 @@ read -r partition_run partition_lease partition_attempt partition_fence <<<"$(ps
 [[ -n "$partition_run" && -n "$partition_lease" && "$partition_attempt" == 1 && -n "$partition_fence" ]] || fail 'partition did not bind initial fenced attempt'
 partition_event_deadline=$((SECONDS+15)); partition_log_before=0; held_events=0
 while ((SECONDS < partition_event_deadline)); do
-  held_events=$(jq -r '.held_event_responses // 0' <<<"$(proxy_status)")
+  if ! proxy_state=$(proxy_status); then fail 'proxy status unavailable while event response was held'; fi
+  held_events=$(jq -er '.held_event_responses // 0 | if type == "number" then . else error("held event count must be numeric") end' <<<"$proxy_state") || fail 'proxy held-event count was invalid while event response was held'
   partition_log_before=$(psql_query "select count(*) from run_logs where run_id='$partition_run' and message='compose-stage-resolution'")
   [[ "$held_events" == 1 && "$partition_log_before" == 1 ]] && break
   sleep .1
