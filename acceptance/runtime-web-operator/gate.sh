@@ -61,16 +61,47 @@ remove_project_resources(){
   done
   [[ "$cleanup_ok" == true ]]
 }
-remove_exact_image(){
-  local candidate=$1 exact_image output rc
+cleanup_image_name_is_safe(){
+  local candidate=$1 port
+  [[ "$candidate" =~ ^local\.invalid/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$ ]] && return 0
   if [[ "$candidate" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
-    exact_image=$candidate
-  elif [[ "$candidate" =~ ^local\.invalid/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$ ]]; then
-    exact_image="${candidate}:latest"
-  else
+    return 0
+  fi
+  if [[ "$candidate" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+    port=${BASH_REMATCH[1]}
+    ((10#$port <= 65535)) && return 0
+  fi
+  return 1
+}
+cleanup_image_name_selftest(){
+  local candidate
+  local -a valid=(
+    'nerocd-web-fixture-a:0123456789ab'
+    'local.invalid/nerocd-web-fixture-a-0123456789ab'
+    '127.0.0.1:5000/nerocd-web-fixture-a-0123456789ab:candidate'
+    '127.0.0.1:65535/nerocd-web-fixture-c-0123456789ab:candidate'
+  ) invalid=(
+    '127.0.0.1:65536/nerocd-web-fixture-a-0123456789ab:candidate'
+    '127.0.0.1:0/nerocd-web-fixture-a-0123456789ab:candidate'
+    '127.0.0.1:/nerocd-web-fixture-a-0123456789ab:candidate'
+    '127.0.0.1:abc/nerocd-web-fixture-a-0123456789ab:candidate'
+    'localhost:5000/nerocd-web-fixture-a-0123456789ab:candidate'
+    '127.0.0.1:5000/unsafe;name:candidate'
+    '127.0.0.1:5000/nerocd-web-fixture-a-0123456789ab'
+  )
+  for candidate in "${valid[@]}"; do cleanup_image_name_is_safe "$candidate" || return 1; done
+  for candidate in "${invalid[@]}"; do
+    if cleanup_image_name_is_safe "$candidate"; then return 1; fi
+  done
+  return 0
+}
+remove_exact_image(){
+  local candidate=$1 exact_image=$1 output rc
+  if ! cleanup_image_name_is_safe "$candidate"; then
     record 'cleanup_image_name_safe=false'
     return 1
   fi
+  if [[ "$candidate" =~ ^local\.invalid/ ]]; then exact_image="${candidate}:latest"; fi
   output=$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=$exact_image" 2>"$dir/cleanup-image-query.err")
   rc=$?
   [[ $rc -eq 0 ]] || { record 'cleanup_exact_image_query=false'; return 1; }
@@ -192,6 +223,12 @@ cleanup(){
   printf 'runtime web operator evidence: %s\n' "$evidence"
   exit "$final"
 }
+if [[ "${NEROCD_RUNTIME_WEB_OPERATOR_CLEANUP_SELFTEST:-}" == 1 ]]; then
+  cleanup_image_name_selftest
+  rmdir -- "$runner_workdir" "$runner_secret_root" "$dir"
+  printf 'runtime-web-operator cleanup image grammar selftest passed\n'
+  exit 0
+fi
 trap cleanup EXIT; trap 'fail "unexpected command failure line $LINENO"' ERR
 for x in docker curl jq git bun od shasum; do command -v "$x" >/dev/null || fail "missing $x"; done
 docker info >/dev/null || fail 'Docker unavailable'; [[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
