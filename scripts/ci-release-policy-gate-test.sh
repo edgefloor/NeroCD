@@ -62,6 +62,22 @@ candidate missing-blob-bundle-check
 perl -0pi -e 's/^.*cosign verify-blob.*\n//mg' "$tmp/missing-blob-bundle-check/.github/workflows/release.yml"
 expect_reject missing-blob-bundle-check
 
+candidate wrong-cosign-version
+perl -0pi -e 's/cosign-release: v3\.0\.6/cosign-release: v3.0.5/g' "$tmp/wrong-cosign-version/.github/workflows/release.yml"
+expect_reject wrong-cosign-version
+
+candidate missing-cosign-flag-preflight
+perl -0pi -e 's/^.*require_cosign_flag verify-blob --new-bundle-format.*\n//mg' "$tmp/missing-cosign-flag-preflight/.github/workflows/release.yml"
+expect_reject missing-cosign-flag-preflight
+
+candidate missing-publish-cosign-preflight
+perl -0pi -e 's/(^  publish:.*?)(^      - name: Preflight pinned Cosign CLI contract\n.*?)(?=^      - name: Set up Buildx)/$1/ms' "$tmp/missing-publish-cosign-preflight/.github/workflows/release.yml"
+expect_reject missing-publish-cosign-preflight
+
+candidate unsupported-image-bundle-verify
+printf '\n      - name: Unsupported retained image-bundle verification\n        run: cosign verify --bundle release-trust/image.bundle "$IMAGE@$DIGEST"\n' >>"$tmp/unsupported-image-bundle-verify/.github/workflows/release.yml"
+expect_reject unsupported-image-bundle-verify
+
 candidate missing-trust-binding
 perl -0pi -e 's/^.*verify-release-trust\.sh.*\n//mg' "$tmp/missing-trust-binding/.github/workflows/release.yml"
 expect_reject missing-trust-binding

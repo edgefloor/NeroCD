@@ -100,6 +100,33 @@ jobs:
       - name: Install release evidence tools
         run: sudo apt-get update && sudo apt-get install --yes ripgrep
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+
+      - name: Preflight pinned Cosign CLI contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cosign_version=$(cosign version 2>&1)
+          printf '%s\n' "$cosign_version"
+          printf '%s\n' "$cosign_version" | grep -Eq '^GitVersion:[[:space:]]+v3\.0\.6$'
+          require_cosign_flag() {
+            local command=$1
+            local flag=$2
+            local help
+            help=$(cosign "$command" --help)
+            printf '%s\n' "$help" | grep -Eq -- "(^|[[:space:]])${flag}([=[:space:]]|$)"
+          }
+          require_cosign_flag sign --bundle
+          require_cosign_flag sign --new-bundle-format
+          require_cosign_flag sign-blob --bundle
+          require_cosign_flag sign-blob --new-bundle-format
+          require_cosign_flag verify --new-bundle-format
+          require_cosign_flag verify-blob --bundle
+          require_cosign_flag verify-blob --new-bundle-format
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
@@ -148,6 +175,33 @@ jobs:
         env:
           REVISION: ${{ needs.validate.outputs.revision }}
         run: bash scripts/verify-release-evidence.sh release-evidence "$REVISION"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+
+      - name: Preflight pinned Cosign CLI contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cosign_version=$(cosign version 2>&1)
+          printf '%s\n' "$cosign_version"
+          printf '%s\n' "$cosign_version" | grep -Eq '^GitVersion:[[:space:]]+v3\.0\.6$'
+          require_cosign_flag() {
+            local command=$1
+            local flag=$2
+            local help
+            help=$(cosign "$command" --help)
+            printf '%s\n' "$help" | grep -Eq -- "(^|[[:space:]])${flag}([=[:space:]]|$)"
+          }
+          require_cosign_flag sign --bundle
+          require_cosign_flag sign --new-bundle-format
+          require_cosign_flag sign-blob --bundle
+          require_cosign_flag sign-blob --new-bundle-format
+          require_cosign_flag verify --new-bundle-format
+          require_cosign_flag verify-blob --bundle
+          require_cosign_flag verify-blob --new-bundle-format
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
@@ -239,9 +293,6 @@ jobs:
           printf '%s@%s\n' "$IMAGE" "$DIGEST" >artifacts/release-trust/image-digest.txt
           rm -f artifacts/release-trust/evidence-hashes.json
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
-
       - name: Sign exact published digest with GitHub OIDC and retain bundle
         env:
           IMAGE: ${{ needs.validate.outputs.image }}
@@ -249,13 +300,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          cosign sign --yes --bundle artifacts/release-trust/image.bundle "$IMAGE@$DIGEST"
+          cosign sign --yes --new-bundle-format=true --bundle artifacts/release-trust/image.bundle "$IMAGE@$DIGEST"
 
       - name: Sign canonical release-trust manifest and retain bundle
         shell: bash
         run: |
           set -Eeuo pipefail
-          cosign sign-blob --yes --bundle artifacts/release-trust/release-trust.bundle artifacts/release-trust/release-trust.json
+          cosign sign-blob --yes --new-bundle-format=true --bundle artifacts/release-trust/release-trust.bundle artifacts/release-trust/release-trust.json
           (
             cd artifacts/release-trust
             sha256sum github-attestation.json image.bundle image-digest.txt release-trust.bundle release-trust.json >trust.sha256
@@ -317,6 +368,33 @@ jobs:
           bash scripts/verify-release-evidence.sh release-evidence "$REVISION"
           bash scripts/verify-release-trust.sh release-evidence release-trust "$REPOSITORY" "$TAG" "$REVISION" "$IMAGE" "$DIGEST"
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+
+      - name: Preflight pinned Cosign CLI contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cosign_version=$(cosign version 2>&1)
+          printf '%s\n' "$cosign_version"
+          printf '%s\n' "$cosign_version" | grep -Eq '^GitVersion:[[:space:]]+v3\.0\.6$'
+          require_cosign_flag() {
+            local command=$1
+            local flag=$2
+            local help
+            help=$(cosign "$command" --help)
+            printf '%s\n' "$help" | grep -Eq -- "(^|[[:space:]])${flag}([=[:space:]]|$)"
+          }
+          require_cosign_flag sign --bundle
+          require_cosign_flag sign --new-bundle-format
+          require_cosign_flag sign-blob --bundle
+          require_cosign_flag sign-blob --new-bundle-format
+          require_cosign_flag verify --new-bundle-format
+          require_cosign_flag verify-blob --bundle
+          require_cosign_flag verify-blob --new-bundle-format
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
@@ -326,9 +404,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
 
       - name: Verify published immutable digest and both platforms
         env:
@@ -342,6 +417,7 @@ jobs:
           docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" >index.json
           jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort == ["amd64", "arm64"]' index.json >/dev/null
           cosign verify \
+            --new-bundle-format=true \
             --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/$TAG" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$IMAGE@$DIGEST" >/dev/null
@@ -354,21 +430,9 @@ jobs:
           set -Eeuo pipefail
           cosign verify-blob release-trust/release-trust.json \
             --bundle release-trust/release-trust.bundle \
+            --new-bundle-format=true \
             --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/$TAG" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
-
-      - name: Verify retained image bundle when supported by Cosign
-        env:
-          IMAGE: ${{ needs.publish.outputs.image }}
-          DIGEST: ${{ needs.publish.outputs.digest }}
-          TAG: ${{ needs.validate.outputs.tag }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cosign verify --bundle release-trust/image.bundle \
-            --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/$TAG" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "$IMAGE@$DIGEST" >/dev/null
 
       - name: Verify GitHub provenance attestation
         env:

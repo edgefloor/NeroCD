@@ -30,10 +30,67 @@ rg -q "github.repository_owner == 'edgefloor'" "$release" || fail 'release must 
 rg -q '^      name: release$' "$release" || fail 'publish must require the protected release environment'
 rg -q 'make release-evidence-gate' "$release" || fail 'release evidence is not a prerequisite'
 evidence_job=$(sed -n '/^  evidence:/,/^  publish:/p' "$release")
+publish_job=$(sed -n '/^  publish:/,/^  verify:/p' "$release")
+verify_job=$(sed -n '/^  verify:/,$p' "$release")
 printf '%s\n' "$evidence_job" | rg -q 'sudo apt-get install --yes ripgrep' || fail 'release evidence must install ripgrep'
 evidence_ripgrep_line=$(printf '%s\n' "$evidence_job" | rg -n 'sudo apt-get install --yes ripgrep' | head -n1 | cut -d: -f1)
 evidence_gate_line=$(printf '%s\n' "$evidence_job" | rg -n 'make release-evidence-gate' | head -n1 | cut -d: -f1)
 (( evidence_ripgrep_line < evidence_gate_line )) || fail 'release evidence must install ripgrep before its gate'
+printf '%s\n' "$publish_job" | rg -Fq 'needs: [validate, evidence]' || fail 'publish must depend on pre-approval evidence'
+! printf '%s\n' "$evidence_job" | rg -q '^    environment:' || fail 'evidence and Cosign preflight must run before release-environment approval'
+
+cosign_installer='sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6'
+[[ $(rg -Fc "$cosign_installer" "$release") -eq 3 ]] || fail 'evidence, publish, and verify must use the pinned Cosign installer v4.1.2 commit'
+[[ $(rg -c '^[[:space:]]+cosign-release: v3\.0\.6$' "$release") -eq 3 ]] || fail 'every Cosign install must explicitly select v3.0.6'
+
+require_cosign_contract() {
+  local job_name=$1
+  local job=$2
+  [[ $(printf '%s\n' "$job" | rg -Fc "$cosign_installer") -eq 1 ]] || fail "$job_name must contain exactly one pinned Cosign installer"
+  [[ $(printf '%s\n' "$job" | rg -c '^[[:space:]]+cosign-release: v3\.0\.6$') -eq 1 ]] || fail "$job_name must explicitly install Cosign v3.0.6"
+  printf '%s\n' "$job" | rg -Uq "uses: $cosign_installer[^\\n]*\\n        with:\\n          cosign-release: v3\\.0\\.6" || fail "$job_name must bind Cosign v3.0.6 to the pinned installer block"
+  [[ $(printf '%s\n' "$job" | rg -Fc 'Preflight pinned Cosign CLI contract') -eq 1 ]] || fail "$job_name must contain exactly one Cosign CLI preflight"
+  printf '%s\n' "$job" | rg -q '^[[:space:]]+cosign_version=\$\(cosign version 2>&1\)$' || fail "$job_name preflight must inspect Cosign version"
+  printf '%s\n' "$job" | rg -Fq "printf '%s\\n' \"\$cosign_version\" | grep -Eq '^GitVersion:[[:space:]]+v3\\.0\\.6$'" || fail "$job_name preflight must fail closed on GitVersion v3.0.6"
+  local assertion
+  for assertion in \
+    'require_cosign_flag sign --bundle' \
+    'require_cosign_flag sign --new-bundle-format' \
+    'require_cosign_flag sign-blob --bundle' \
+    'require_cosign_flag sign-blob --new-bundle-format' \
+    'require_cosign_flag verify --new-bundle-format' \
+    'require_cosign_flag verify-blob --bundle' \
+    'require_cosign_flag verify-blob --new-bundle-format'
+  do
+    printf '%s\n' "$job" | rg -q "^[[:space:]]+$assertion$" || fail "$job_name preflight lacks required flag assertion: $assertion"
+  done
+}
+require_cosign_contract evidence "$evidence_job"
+require_cosign_contract publish "$publish_job"
+require_cosign_contract verify "$verify_job"
+
+first_job_line() {
+  local job=$1
+  local marker=$2
+  printf '%s\n' "$job" | rg -n -F "$marker" | head -n1 | cut -d: -f1
+}
+evidence_cosign_line=$(first_job_line "$evidence_job" "$cosign_installer")
+evidence_preflight_line=$(first_job_line "$evidence_job" 'Preflight pinned Cosign CLI contract')
+(( evidence_cosign_line < evidence_preflight_line && evidence_preflight_line < evidence_gate_line )) || fail 'evidence Cosign preflight must run before the pre-approval evidence gate'
+
+publish_cosign_line=$(first_job_line "$publish_job" "$cosign_installer")
+publish_preflight_line=$(first_job_line "$publish_job" 'Preflight pinned Cosign CLI contract')
+publish_buildx_line=$(first_job_line "$publish_job" 'docker/setup-buildx-action@')
+publish_login_line=$(first_job_line "$publish_job" 'docker/login-action@')
+publish_build_line=$(first_job_line "$publish_job" 'Build and publish immutable OCI index')
+(( publish_cosign_line < publish_preflight_line && publish_preflight_line < publish_buildx_line && publish_preflight_line < publish_login_line && publish_preflight_line < publish_build_line )) || fail 'publish Cosign preflight must precede Buildx, login, and registry publication'
+
+verify_cosign_line=$(first_job_line "$verify_job" "$cosign_installer")
+verify_preflight_line=$(first_job_line "$verify_job" 'Preflight pinned Cosign CLI contract')
+verify_image_line=$(first_job_line "$verify_job" 'cosign verify \')
+verify_blob_line=$(first_job_line "$verify_job" 'cosign verify-blob release-trust/release-trust.json')
+(( verify_cosign_line < verify_preflight_line && verify_preflight_line < verify_image_line && verify_preflight_line < verify_blob_line )) || fail 'verify Cosign preflight must precede image and trust-manifest verification'
+
 [[ $(rg -c 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' "$release") -ge 3 ]] || fail 'publish and verify must download named evidence/trust artifacts with a pinned action'
 rg -q 'bash scripts/verify-release-evidence.sh release-evidence' "$release" || fail 'publish/verify do not recompute transferred evidence checksums'
 rg -q 'bash scripts/verify-release-trust.sh release-evidence release-trust' "$release" || fail 'verify does not validate release-trust evidence binding'
@@ -49,15 +106,30 @@ rg -q 'platforms: linux/amd64,linux/arm64' "$release" || fail 'release must publ
 rg -q 'push: true' "$release" || fail 'release does not publish its OCI index'
 rg -q 'Capture exact registry digest and reject tag/digest divergence' "$release" || fail 'publish does not capture and compare the registry digest'
 rg -q 'registry_digest.*==.*BUILDX_DIGEST' "$release" || fail 'publish does not reject registry digest divergence'
-rg -q 'cosign sign --yes --bundle' "$release" || fail 'release lacks keyless Cosign bundle signing'
-rg -q 'cosign sign-blob --yes --bundle .*release-trust.bundle .*release-trust.json' "$release" || fail 'release-trust manifest has no retained verifiable bundle'
+rg -Fq 'cosign sign --yes --new-bundle-format=true --bundle artifacts/release-trust/image.bundle "$IMAGE@$DIGEST"' "$release" || fail 'release lacks exact-digest keyless signing with the retained v3 bundle format'
+rg -Fq 'cosign sign-blob --yes --new-bundle-format=true --bundle artifacts/release-trust/release-trust.bundle artifacts/release-trust/release-trust.json' "$release" || fail 'release-trust manifest lacks a retained v3 bundle over its exact bytes'
+rg -q 'sha256sum github-attestation\.json image\.bundle image-digest\.txt release-trust\.bundle release-trust\.json >trust\.sha256' "$release" || fail 'retained image bundle must remain in the checksummed trust artifact'
 rg -q 'actions/attest-build-provenance@[0-9a-f]{40}' "$release" || fail 'release lacks pinned provenance attestation'
 rg -q 'docker buildx imagetools inspect --raw' "$release" || fail 'release lacks immutable digest platform verification'
 rg -q -- '--certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/\$TAG"' "$release" || fail 'release signature verification is not bound to this workflow identity'
 rg -q 'certificate-oidc-issuer https://token.actions.githubusercontent.com' "$release" || fail 'release lacks OIDC signature verification'
 rg -q 'gh attestation verify "oci://\$IMAGE@\$DIGEST"' "$release" || fail 'release lacks GitHub OCI provenance verification'
-rg -q 'cosign verify-blob release-trust/release-trust.json' "$release" || fail 'verify does not validate the retained release-trust bundle bytes'
-rg -q 'cosign verify --bundle release-trust/image.bundle' "$release" || fail 'verify does not validate the retained image bundle'
+image_verify_command=$(printf '%s\n' "$verify_job" | sed -n '/^[[:space:]]*cosign verify \\$/,/"\$IMAGE@\$DIGEST"/p')
+trust_verify_command=$(printf '%s\n' "$verify_job" | sed -n '/^[[:space:]]*cosign verify-blob release-trust\/release-trust.json \\$/,/certificate-oidc-issuer/p')
+printf '%s\n' "$image_verify_command" | rg -q '^[[:space:]]+cosign verify \\$' || fail 'verify lacks registry-backed exact-digest image verification'
+printf '%s\n' "$image_verify_command" | rg -q '^[[:space:]]+--new-bundle-format=true \\$' || fail 'image verification must explicitly select the v3 bundle format'
+printf '%s\n' "$image_verify_command" | rg -Fq '"$IMAGE@$DIGEST"' || fail 'image verification must use the exact immutable registry digest'
+printf '%s\n' "$trust_verify_command" | rg -q 'cosign verify-blob release-trust/release-trust.json' || fail 'verify does not validate the retained release-trust bundle bytes'
+printf '%s\n' "$trust_verify_command" | rg -q '^[[:space:]]+--bundle release-trust/release-trust\.bundle \\$' || fail 'trust-manifest verification must consume its retained bundle'
+printf '%s\n' "$trust_verify_command" | rg -q '^[[:space:]]+--new-bundle-format=true \\$' || fail 'trust-manifest verification must explicitly select the v3 bundle format'
+if awk '
+  /cosign verify([[:space:]\\]|$)/ { in_verify=1 }
+  in_verify && /--bundle([=[:space:]]|$)/ { found=1 }
+  in_verify && $0 !~ /\\[[:space:]]*$/ { in_verify=0 }
+  END { exit found ? 0 : 1 }
+' "$release"; then
+  fail 'cosign verify --bundle is unsupported; retained image.bundle is checksummed audit evidence only'
+fi
 ! rg -q 'docker[[:space:]]+push' "$workflows"/*.yml || fail 'direct docker push is forbidden; use pinned build-push-action'
 ! rg -q 'pull_request_target|permissions:[[:space:]]+write-all|@v[0-9]|@main|@master|:latest' "$workflows"/*.yml || fail 'workflow includes a mutable or privileged policy escape'
 printf 'ci-release-policy PASS workflows=%s\n' "$workflows"
