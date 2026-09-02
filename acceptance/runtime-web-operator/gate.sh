@@ -223,13 +223,9 @@ cleanup(){
   printf 'runtime web operator evidence: %s\n' "$evidence"
   exit "$final"
 }
-if [[ "${NEROCD_RUNTIME_WEB_OPERATOR_CLEANUP_SELFTEST:-}" == 1 ]]; then
-  cleanup_image_name_selftest
-  rmdir -- "$runner_workdir" "$runner_secret_root" "$dir"
-  printf 'runtime-web-operator cleanup image grammar selftest passed\n'
-  exit 0
-fi
 trap cleanup EXIT; trap 'fail "unexpected command failure line $LINENO"' ERR
+cleanup_image_name_selftest || fail 'cleanup image grammar selftest failed'
+record 'cleanup_image_grammar_selftest=true'
 for x in docker curl jq git bun od shasum; do command -v "$x" >/dev/null || fail "missing $x"; done
 docker info >/dev/null || fail 'Docker unavailable'; [[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
 socket_gid=$(docker_gid); [[ "$socket_gid" =~ ^[0-9]+$ ]] || fail 'Docker socket GID unavailable'
