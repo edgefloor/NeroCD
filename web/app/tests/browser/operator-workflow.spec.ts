@@ -153,7 +153,7 @@ test("mobile shell keeps primary navigation usable and safely contained", async 
     });
     expect(mobileMetrics.documentScrollWidth).toBeLessThanOrEqual(mobileMetrics.documentClientWidth);
     expect(mobileMetrics.contentPaddingBottom).toBeGreaterThanOrEqual(mobileMetrics.navigationHeight);
-    expect(new Set(mobileMetrics.itemTops)).toHaveSize(1);
+    expect(new Set(mobileMetrics.itemTops).size).toBe(1);
   }
 
   expect(await page.locator('meta[name="viewport"]').getAttribute("content")).toContain("viewport-fit=cover");
