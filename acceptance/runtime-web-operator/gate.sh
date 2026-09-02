@@ -29,15 +29,15 @@ diagnose(){
   done
 }
 remove_project_resources(){
-  local exact_project=$1 kind output resource cleanup_ok=true
+  local exact_project=$1 kind output rc resource cleanup_ok=true error_file="$dir/cleanup-query.err"
   [[ "$exact_project" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || return 1
   for kind in container volume network; do
     case "$kind" in
-      container) output=$(docker ps -aq --filter "label=com.docker.compose.project=$exact_project" 2>/dev/null) ;;
-      volume) output=$(docker volume ls -q --filter "label=com.docker.compose.project=$exact_project" 2>/dev/null) ;;
-      network) output=$(docker network ls -q --filter "label=com.docker.compose.project=$exact_project" 2>/dev/null) ;;
+      container) output=$(docker ps -aq --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+      volume) output=$(docker volume ls -q --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+      network) output=$(docker network ls -q --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
     esac
-    [[ $? -eq 0 ]] || { record "cleanup_${kind}_query=false"; cleanup_ok=false; continue; }
+    [[ $rc -eq 0 ]] || { record "cleanup_${kind}_query=false"; cleanup_ok=false; continue; }
     while IFS= read -r resource; do
       [[ -z "$resource" ]] && continue
       case "$kind" in
@@ -51,8 +51,36 @@ remove_project_resources(){
       esac
       [[ $? -eq 0 ]] || { record "cleanup_${kind}_remove=false"; cleanup_ok=false; }
     done <<<"$output"
+    case "$kind" in
+      container) output=$(docker ps -aq --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+      volume) output=$(docker volume ls -q --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+      network) output=$(docker network ls -q --filter "label=com.docker.compose.project=$exact_project" 2>"$error_file"); rc=$? ;;
+    esac
+    [[ $rc -eq 0 && -z "$output" ]] || { record "cleanup_${kind}_query_or_residual=true"; cleanup_ok=false; }
   done
   [[ "$cleanup_ok" == true ]]
+}
+remove_exact_image(){
+  local candidate=$1 exact_image output rc
+  if [[ "$candidate" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+    exact_image=$candidate
+  elif [[ "$candidate" =~ ^local\.invalid/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$ ]]; then
+    exact_image="${candidate}:latest"
+  else
+    record 'cleanup_image_name_safe=false'
+    return 1
+  fi
+  output=$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=$exact_image" 2>"$dir/cleanup-image-query.err")
+  rc=$?
+  [[ $rc -eq 0 ]] || { record 'cleanup_exact_image_query=false'; return 1; }
+  [[ -z "$output" || "$output" == "$exact_image" ]] || { record 'cleanup_exact_image_query_ambiguous=true'; return 1; }
+  if [[ "$output" == "$exact_image" ]] && ! docker image rm -f "$exact_image" >/dev/null 2>"$dir/cleanup-image-rm.err"; then
+    record 'cleanup_exact_image_remove=false'
+    return 1
+  fi
+  output=$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=$exact_image" 2>"$dir/cleanup-image-query.err")
+  rc=$?
+  [[ $rc -eq 0 && -z "$output" ]] || { record 'cleanup_exact_image_residual_or_query_failure=true'; return 1; }
 }
 cleanup(){
   local original=$? final cleanup_complete=true target=${compose_project:-} host_uid host_gid
@@ -65,10 +93,7 @@ cleanup(){
   remove_project_resources "$project" || cleanup_complete=false
   [[ -z "$target" ]] || remove_project_resources "$target" || cleanup_complete=false
   for image_ref in "$image" "$runner_image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" "$fixture_a_repo" "$fixture_b_repo" "$fixture_c_repo"; do
-    [[ -z "$image_ref" ]] && continue
-    if docker image inspect "$image_ref" >/dev/null 2>&1 && ! docker image rm -f "$image_ref" >/dev/null 2>&1; then
-      cleanup_complete=false; record 'cleanup_image_remove=false'
-    fi
+    [[ -z "$image_ref" ]] || remove_exact_image "$image_ref" || cleanup_complete=false
   done
   host_uid=$(id -u); host_gid=$(id -g)
   if [[ ! "$host_uid" =~ ^[0-9]+$ || ! "$host_gid" =~ ^[0-9]+$ ]]; then
@@ -108,10 +133,10 @@ docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --bu
 fixture_a_id=$(docker image inspect -f '{{.Id}}' "$fixture_a"); fixture_b_id=$(docker image inspect -f '{{.Id}}' "$fixture_b"); fixture_c_id=$(docker image inspect -f '{{.Id}}' "$fixture_c"); fixture_a_repo="local.invalid/nerocd-web-fixture-a-$suffix"; fixture_b_repo="local.invalid/nerocd-web-fixture-b-$suffix"; fixture_c_repo="local.invalid/nerocd-web-fixture-c-$suffix"; docker tag "$fixture_a" "$fixture_a_repo"; docker tag "$fixture_b" "$fixture_b_repo"; docker tag "$fixture_c" "$fixture_c_repo"; fixture_a_ref="$fixture_a_repo@$fixture_a_id"; fixture_b_ref="$fixture_b_repo@$fixture_b_id"; fixture_c_ref="$fixture_c_repo@$fixture_c_id"
 [[ "$fixture_b_id" =~ ^sha256: && "$fixture_c_id" =~ ^sha256: ]] || fail 'fixture images are not immutable digests'
 compose config -q >"$dir/compose-config.log" 2>&1 || fail 'shared compose config preflight failed'
-docker build --pull --build-arg BASE="$image" --build-arg DOCKER_GID="$socket_gid" -f "$root/acceptance/runtime-compose/RunnerDockerfile" -t "$runner_image" "$root/acceptance/runtime-compose" >"$dir/runner-build.log" 2>&1 || fail 'runner image build failed'
+docker build --build-arg BASE="$image" --build-arg DOCKER_GID="$socket_gid" -f "$root/acceptance/runtime-compose/RunnerDockerfile" -t "$runner_image" "$root/acceptance/runtime-compose" >"$dir/runner-build.log" 2>&1 || fail 'runner image build failed'
 [[ "$(docker image inspect -f '{{.Config.User}}' "$runner_image" 2>/dev/null)" == nerocd ]] || fail 'runner image default user is not nerocd'
-[[ "$(docker run --rm --network none "$runner_image" id -u 2>/dev/null)" == 10001 ]] || fail 'runner image default UID is not 10001'
-docker run --rm --network none --entrypoint sh "$runner_image" -ec 'command -v nerocd >/dev/null && command -v docker >/dev/null && command -v git >/dev/null && command -v ssh >/dev/null' >"$dir/runner-tools.log" 2>&1 || fail 'runner image required tools unavailable'
+[[ "$(docker run --rm --network none --entrypoint id "$runner_image" -u 2>/dev/null)" == 10001 ]] || fail 'runner image default UID is not 10001'
+docker run --rm --network none --entrypoint sh "$runner_image" -ec 'command -v nerocd >/dev/null && command -v docker >/dev/null && command -v git >/dev/null && command -v ssh >/dev/null && command -v wget >/dev/null && docker compose version >/dev/null' >"$dir/runner-tools.log" 2>&1 || fail 'runner image required tools unavailable'
 record 'runner_image_built=true runner_image_default_user=nerocd runner_image_uid_10001=true runner_image_tools=true'
 compose run --rm --no-deps git_init >"$dir/git-init.log" 2>&1 || fail 'git fixture initialization failed'
 compose up -d --wait postgres >"$dir/postgres.log" 2>&1 || fail 'postgres startup failed'
