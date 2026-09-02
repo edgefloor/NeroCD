@@ -3,12 +3,13 @@
 # the shipped UI; HTTP/psql below are fixture setup and independent evidence.
 set -Eeuo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+source "$root/scripts/local-image-registry.sh"
 evidence=/tmp/nerocd-runtime-web-operator.txt
 dir=$(mktemp -d /tmp/nerocd-runtime-web-operator.XXXXXXXX)
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 project="nerocd-web-operator-$suffix" image="nerocd-web-operator:$suffix" runner_image="nerocd-web-runner:$suffix" git_image="nerocd-web-git:$suffix"
 compose_project="target_web_$suffix" health_network="${compose_project}_health" health_host="runtime-health-$suffix" health_url="http://${health_host}:8080/cgi-bin/health"
-fixture_a="nerocd-web-fixture-a:$suffix" fixture_b="nerocd-web-fixture-b:$suffix" fixture_c="nerocd-web-fixture-c:$suffix" fixture_a_repo='' fixture_b_repo='' fixture_c_repo='' fixture_a_ref='' fixture_b_ref='' fixture_c_ref='' pass=false
+fixture_a="nerocd-web-fixture-a:$suffix" fixture_b="nerocd-web-fixture-b:$suffix" fixture_c="nerocd-web-fixture-c:$suffix" fixture_a_repo='' fixture_b_repo='' fixture_c_repo='' fixture_a_ref='' fixture_b_ref='' fixture_c_ref='' fixture_a_registry_tag='' fixture_b_registry_tag='' fixture_c_registry_tag='' fixture_registry_container_id='' fixture_registry_port='' pass=false
 cleanup_helper_image='alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412'
 runner_workdir="$dir/runner-workspace"; runner_secret_root="$dir/runner-secrets"; mkdir -m 0700 "$runner_workdir" "$runner_secret_root"; export NEROCD_RUNTIME_WORKDIR="$runner_workdir" NEROCD_RUNTIME_SECRET_ROOT="$runner_secret_root"
 : >"$evidence"; record(){ printf '%s\n' "$*" >>"$evidence"; }; fail(){ trap - ERR; record "FAIL: $*"; printf 'runtime-web-operator: %s\n' "$*" >&2; exit 1; }
@@ -82,6 +83,72 @@ remove_exact_image(){
   rc=$?
   [[ $rc -eq 0 && -z "$output" ]] || { record 'cleanup_exact_image_residual_or_query_failure=true'; return 1; }
 }
+start_fixture_registry(){
+  local port_line ready=false attempt
+  fixture_registry_container_id=$(docker run -d \
+    --name "${project}-registry" \
+    --label "nerocd.acceptance.runtime-web-operator=$suffix" \
+    --cap-drop ALL --security-opt no-new-privileges --read-only \
+    --tmpfs /var/lib/registry:rw,noexec,nosuid,nodev \
+    -p 127.0.0.1::5000 "$LOCAL_REGISTRY_IMAGE" 2>"$dir/registry-start.err") || return 1
+  [[ "$fixture_registry_container_id" =~ ^[a-f0-9]{64}$ ]] || return 1
+  port_line=$(docker port "$fixture_registry_container_id" 5000/tcp 2>"$dir/registry-port.err") || return 1
+  [[ "$port_line" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})$ ]] || return 1
+  fixture_registry_port=${BASH_REMATCH[1]}
+  ((10#$fixture_registry_port <= 65535)) || return 1
+  for attempt in 1 2 3 4 5; do
+    if curl --fail --silent --show-error --max-time 1 "http://127.0.0.1:${fixture_registry_port}/v2/" >/dev/null 2>"$dir/registry-ready.err"; then ready=true; break; fi
+    sleep 1
+  done
+  [[ "$ready" == true ]]
+}
+repository_digest_is_member(){
+  local image_ref=$1 repository=$2 candidate=$3 repo_digests
+  [[ "$repository" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-web-fixture-[abc]-[a-f0-9]{12}$ ]] || return 2
+  [[ "$candidate" == "$repository@sha256:"* && "${candidate#"$repository@sha256:"}" =~ ^[a-f0-9]{64}$ ]] || return 2
+  repo_digests=$(docker image inspect --format '{{json .RepoDigests}}' "$image_ref" 2>"$dir/registry-repodigests.err") || return 2
+  jq -e --arg candidate "$candidate" 'type == "array" and any(.[]; type == "string" and . == $candidate)' <<<"$repo_digests" >/dev/null 2>"$dir/registry-repodigests-jq.err"
+}
+publish_fixture_digest(){
+  local source_tag=$1 label=$2 repository registry_tag source_id repo_digests resolved attempt
+  [[ "$source_tag" =~ ^nerocd-web-fixture-[abc]:[a-f0-9]{12}$ && "$label" =~ ^[abc]$ ]] || return 1
+  [[ "$fixture_registry_port" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+  repository="127.0.0.1:${fixture_registry_port}/nerocd-web-fixture-${label}-${suffix}"
+  registry_tag="${repository}:candidate"
+  source_id=$(docker image inspect --format '{{.Id}}' "$source_tag" 2>"$dir/registry-${label}-source-inspect.err") || return 1
+  [[ "$source_id" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+  docker tag "$source_tag" "$registry_tag" 2>"$dir/registry-${label}-tag.err" || return 1
+  case "$label" in a) fixture_a_repo=$repository; fixture_a_registry_tag=$registry_tag ;; b) fixture_b_repo=$repository; fixture_b_registry_tag=$registry_tag ;; c) fixture_c_repo=$repository; fixture_c_registry_tag=$registry_tag ;; esac
+  for attempt in 1 2 3 4 5; do
+    if docker push "$registry_tag" >"$dir/registry-${label}-push.log" 2>&1; then break; fi
+    [[ "$attempt" != 5 ]] || return 1
+    sleep 1
+  done
+  repo_digests=$(docker image inspect --format '{{json .RepoDigests}}' "$registry_tag" 2>"$dir/registry-${label}-repodigests.err") || return 1
+  resolved=$(jq -er --arg prefix "${repository}@sha256:" 'if type != "array" then error("invalid") else [.[] | select(type == "string" and startswith($prefix))] | unique | if length == 1 then .[0] else error("ambiguous") end end' <<<"$repo_digests" 2>"$dir/registry-${label}-repodigests-jq.err") || return 1
+  [[ "$resolved" == "$repository@sha256:"* && "${resolved#"$repository@sha256:"}" =~ ^[a-f0-9]{64}$ ]] || return 1
+  repository_digest_is_member "$registry_tag" "$repository" "$resolved" || return 1
+  [[ "$resolved" != "$repository@$source_id" ]] || return 1
+  docker image rm "$registry_tag" "$source_tag" >/dev/null 2>"$dir/registry-${label}-alias-remove.err" || return 1
+  local_registry_remove_image "$resolved" || return 1
+  if local_registry_image_state "$resolved"; then return 1; elif [[ "$local_registry_last_query_state" != absent ]]; then return 1; fi
+  for attempt in 1 2 3 4 5; do
+    if docker pull "$resolved" >"$dir/registry-${label}-pull.log" 2>&1; then break; fi
+    [[ "$attempt" != 5 ]] || return 1
+    sleep 1
+  done
+  docker image inspect "$resolved" >/dev/null 2>"$dir/registry-${label}-digest-inspect.err" || return 1
+  [[ "$(docker image inspect --format '{{.Id}}' "$resolved" 2>"$dir/registry-${label}-resolved-inspect.err")" == "$source_id" ]] || return 1
+  case "$label" in a) fixture_a_ref=$resolved ;; b) fixture_b_ref=$resolved ;; c) fixture_c_ref=$resolved ;; esac
+}
+browser_failure_class(){
+  local result=$1 mode class
+  [[ -f "$result" && ! -L "$result" && -O "$result" ]] || { printf '%s' unavailable; return 0; }
+  if mode=$(stat -c '%a' "$result" 2>/dev/null); then :; else mode=$(stat -f '%Lp' "$result" 2>/dev/null) || { printf '%s' unavailable; return 0; }; fi
+  [[ "$mode" == 600 ]] || { printf '%s' unavailable; return 0; }
+  class=$(jq -er 'if type == "object" and (keys == ["failure_class"]) and (.failure_class | type == "string" and IN("navigation"; "csp"; "session"; "ui_action"; "deployment_creation"; "deployment_terminal_failure"; "deployment_terminal_timeout"; "unavailable")) then .failure_class else error("invalid") end' "$result" 2>/dev/null) || { printf '%s' unavailable; return 0; }
+  printf '%s' "$class"
+}
 cleanup(){
   local original=$? final cleanup_complete=true target=${compose_project:-} host_uid host_gid
   trap - ERR
@@ -92,9 +159,13 @@ cleanup(){
   compose down --volumes --remove-orphans --rmi local --timeout 4 >/dev/null 2>&1 || { cleanup_complete=false; record 'cleanup_compose_down=false'; }
   remove_project_resources "$project" || cleanup_complete=false
   [[ -z "$target" ]] || remove_project_resources "$target" || cleanup_complete=false
-  for image_ref in "$runner_image" "$image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" "$fixture_a_repo" "$fixture_b_repo" "$fixture_c_repo"; do
+  for image_ref in "$runner_image" "$image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" "$fixture_a_registry_tag" "$fixture_b_registry_tag" "$fixture_c_registry_tag"; do
     [[ -z "$image_ref" ]] || remove_exact_image "$image_ref" || cleanup_complete=false
   done
+  for image_ref in "$fixture_a_ref" "$fixture_b_ref" "$fixture_c_ref"; do
+    [[ -z "$image_ref" ]] || local_registry_remove_image "$image_ref" || cleanup_complete=false
+  done
+  [[ -z "$fixture_registry_container_id" ]] || local_registry_remove_container "$fixture_registry_container_id" || cleanup_complete=false
   host_uid=$(id -u); host_gid=$(id -g)
   if [[ ! "$host_uid" =~ ^[0-9]+$ || ! "$host_gid" =~ ^[0-9]+$ ]]; then
     cleanup_complete=false; record 'cleanup_host_identity=false'
@@ -131,8 +202,12 @@ docker build --pull -f "$root/acceptance/runtime-compose/GitDockerfile" -t "$git
 docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --build-arg VERSION=A --build-arg MODE=good --build-arg BUILD_NONCE="$suffix" -t "$fixture_a" "$root/acceptance/runtime-compose" >"$dir/a-build.log" 2>&1 || fail 'fixture A build failed'
 docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --build-arg VERSION=B --build-arg MODE=good --build-arg BUILD_NONCE="$suffix" -t "$fixture_b" "$root/acceptance/runtime-compose" >"$dir/b-build.log" 2>&1 || fail 'fixture B build failed'
 docker build --pull -f "$root/acceptance/runtime-compose/FixtureDockerfile" --build-arg VERSION=C --build-arg MODE=slow --build-arg BUILD_NONCE="$suffix" -t "$fixture_c" "$root/acceptance/runtime-compose" >"$dir/c-build.log" 2>&1 || fail 'fixture C build failed'
-fixture_a_id=$(docker image inspect -f '{{.Id}}' "$fixture_a"); fixture_b_id=$(docker image inspect -f '{{.Id}}' "$fixture_b"); fixture_c_id=$(docker image inspect -f '{{.Id}}' "$fixture_c"); fixture_a_repo="local.invalid/nerocd-web-fixture-a-$suffix"; fixture_b_repo="local.invalid/nerocd-web-fixture-b-$suffix"; fixture_c_repo="local.invalid/nerocd-web-fixture-c-$suffix"; docker tag "$fixture_a" "$fixture_a_repo"; docker tag "$fixture_b" "$fixture_b_repo"; docker tag "$fixture_c" "$fixture_c_repo"; fixture_a_ref="$fixture_a_repo@$fixture_a_id"; fixture_b_ref="$fixture_b_repo@$fixture_b_id"; fixture_c_ref="$fixture_c_repo@$fixture_c_id"
-[[ "$fixture_b_id" =~ ^sha256: && "$fixture_c_id" =~ ^sha256: ]] || fail 'fixture images are not immutable digests'
+start_fixture_registry || fail 'fixture registry setup failed'
+publish_fixture_digest "$fixture_a" a || fail 'fixture A registry digest publication failed'
+publish_fixture_digest "$fixture_b" b || fail 'fixture B registry digest publication failed'
+publish_fixture_digest "$fixture_c" c || fail 'fixture C registry digest publication failed'
+[[ "$fixture_a_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-web-fixture-a-[a-f0-9]{12}@sha256:[a-f0-9]{64}$ && "$fixture_b_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-web-fixture-b-[a-f0-9]{12}@sha256:[a-f0-9]{64}$ && "$fixture_c_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-web-fixture-c-[a-f0-9]{12}@sha256:[a-f0-9]{64}$ ]] || fail 'fixture references are not exact repository digests'
+record 'fixture_registry=true fixture_manifest_digests=true fixture_config_ids_rejected=true'
 compose config -q >"$dir/compose-config.log" 2>&1 || fail 'shared compose config preflight failed'
 docker build --build-arg BASE="$image" --build-arg DOCKER_GID="$socket_gid" -f "$root/acceptance/runtime-compose/RunnerDockerfile" -t "$runner_image" "$root/acceptance/runtime-compose" >"$dir/runner-build.log" 2>&1 || fail 'runner image build failed'
 [[ "$(docker image inspect -f '{{.Config.User}}' "$runner_image" 2>/dev/null)" == nerocd ]] || fail 'runner image default user is not nerocd'
@@ -178,10 +253,10 @@ compose run --rm --no-deps git_advance_b >"$dir/advance-b.log"; b_commit=$(compo
 compose_hash(){ local commit=$1 override="$dir/compose-secrets.yaml"; compose exec -T git sh -ec "git config --global --add safe.directory /git/repo.git; git --git-dir=/git/repo.git show '$commit:compose.yaml'" >"$dir/compose.yaml"; printf 'secrets:\n  app_secret:\n    file: %s\n' "$runner_secret_root/app_secret" >"$override"; NEROCD_DEPLOYMENT_REVISION="$commit" docker compose -p "$compose_project" -f "$dir/compose.yaml" -f "$override" config --format json | jq -cS 'del(.name) | .secrets.app_secret.file = "nerocd-secret://app_secret"' | shasum -a 256 | awk '{print "sha256:"$1}'; }
 b_hash=$(compose_hash "$b_commit"); code=$(http POST /api/v1/revisions "$(jq -cn --arg s "$service_id" '{service_id:$s,requested_ref:"main"}')" "$dir/rev-b.json"); [[ "$code" == 201 ]] || fail 'B revision setup failed'; rev_b=$(jq -er .id "$dir/rev-b.json")
 jq -n --arg base "$base" --arg credential "$dir/operator.credentials" --arg project "$project_id" --arg service "$service_id" --arg environment "$env_id" --arg b "$rev_b" --arg commit "$b_commit" --arg hash "$b_hash" --arg image "$fixture_b_ref" '{base:$base,credential_file:$credential,project_id:$project,service_id:$service,environment_id:$environment,revision_b:$b,commit_b:$commit,compose_hash_b:$hash,image_b:$image}' >"$dir/operator.json"; chmod 0600 "$dir/operator.json"
-cd "$root/web/app" && bun "$root/acceptance/runtime-web-operator/operator.mjs" "$dir/operator.json" b "$dir/browser-b.json" >"$dir/browser-b.log" 2>&1 || fail 'browser B deployment failed'; dep_b=$(jq -er .deployment_id "$dir/browser-b.json")
+if ! (cd "$root/web/app" && bun "$root/acceptance/runtime-web-operator/operator.mjs" "$dir/operator.json" b "$dir/browser-b.json" >"$dir/browser-b.log" 2>&1); then browser_class=$(browser_failure_class "$dir/browser-b.json"); record "browser_failure_class=$browser_class"; printf 'runtime-web-operator: browser_failure_class=%s\n' "$browser_class" >&2; fail 'browser B deployment failed'; fi; dep_b=$(jq -er .deployment_id "$dir/browser-b.json")
 wait_status(){ local id=$1 want=$2 got='' deadline=$((SECONDS+100)); while ((SECONDS<deadline)); do got=$(compose exec -T postgres psql -U nerocd -d nerocd -Atc "select status from deployments where id='$id'"); [[ "$got" == "$want" ]] && return; sleep .5; done; fail "deployment lifecycle did not settle"; }
 wait_status "$dep_b" succeeded; [[ "$(fixture_health_body)" == B ]] || fail 'B target health failed'; jq -e '.csp_inline_script_blocked == true and .csp_external_script_blocked == true' "$dir/browser-b.json" >/dev/null || fail 'browser CSP probe did not pass'; record 'ui_B=true nonterminal_polling=true immutable_provenance=true health_B=true csp_inline_external_script_blocked=true'
 compose run --rm --no-deps git_advance_c >"$dir/advance-c.log"; code=$(http POST /api/v1/revisions "$(jq -cn --arg s "$service_id" '{service_id:$s,requested_ref:"main"}')" "$dir/rev-c.json"); [[ "$code" == 201 ]] || fail 'C revision setup failed'; rev_c=$(jq -er .id "$dir/rev-c.json"); jq --arg c "$rev_c" '.revision_c=$c' "$dir/operator.json" >"$dir/operator-c.json"
-cd "$root/web/app" && bun "$root/acceptance/runtime-web-operator/operator.mjs" "$dir/operator-c.json" c "$dir/browser-c.json" >"$dir/browser-c.log" 2>&1 || fail 'browser C deployment failed'; dep_c=$(jq -er .deployment_id "$dir/browser-c.json")
+if ! (cd "$root/web/app" && bun "$root/acceptance/runtime-web-operator/operator.mjs" "$dir/operator-c.json" c "$dir/browser-c.json" >"$dir/browser-c.log" 2>&1); then browser_class=$(browser_failure_class "$dir/browser-c.json"); record "browser_failure_class=$browser_class"; printf 'runtime-web-operator: browser_failure_class=%s\n' "$browser_class" >&2; fail 'browser C deployment failed'; fi; dep_c=$(jq -er .deployment_id "$dir/browser-c.json")
 wait_status "$dep_c" rolled_back; child=$(compose exec -T postgres psql -U nerocd -d nerocd -Atc "select id from deployments where rollback_of_id='$dep_c'"); [[ -n "$child" && "$(compose exec -T postgres psql -U nerocd -d nerocd -Atc "select status from deployments where id='$child'")" == rolled_back ]] || fail 'C did not create one successful rollback child'; [[ "$(compose exec -T postgres psql -U nerocd -d nerocd -Atc "select count(*) from deployments where rollback_of_id='$dep_c'")" == 1 ]] || fail 'rollback child cardinality failed'; [[ "$(fixture_health_body)" == B ]] || fail 'rollback target health did not return B'; [[ "$(compose exec -T postgres psql -U nerocd -d nerocd -Atc "select current_healthy_revision_id from environments where id='$env_id'")" == "$rev_b" ]] || fail 'healthy pointer did not retain B'
 ! grep -Eiq 'Bearer [A-Za-z0-9._-]+|BEGIN (OPENSSH|RSA|EC|DSA) PRIVATE KEY|runner_web' "$dir/browser-b.log" "$dir/browser-c.log" "$evidence" || fail 'browser evidence leaked credential or private runner detail'; record 'ui_C=true applying_or_verifying_failure=true rollback_source_child=true pointer_B=true health_B=true'; record "browser_runner_endpoints=0 page_errors=0 console_nonresource_errors=0 console_resource_diagnostics=$(jq -r .console_resource_diagnostics "$dir/browser-b.json") query_free_reload_history_mobile=true"; record 'browser_cancel=not_claimed; covered_by=runtime-compose-gate'; pass=true
