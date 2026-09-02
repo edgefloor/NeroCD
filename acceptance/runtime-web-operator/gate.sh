@@ -92,7 +92,7 @@ cleanup(){
   compose down --volumes --remove-orphans --rmi local --timeout 4 >/dev/null 2>&1 || { cleanup_complete=false; record 'cleanup_compose_down=false'; }
   remove_project_resources "$project" || cleanup_complete=false
   [[ -z "$target" ]] || remove_project_resources "$target" || cleanup_complete=false
-  for image_ref in "$image" "$runner_image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" "$fixture_a_repo" "$fixture_b_repo" "$fixture_c_repo"; do
+  for image_ref in "$runner_image" "$image" "$git_image" "$fixture_a" "$fixture_b" "$fixture_c" "$fixture_a_repo" "$fixture_b_repo" "$fixture_c_repo"; do
     [[ -z "$image_ref" ]] || remove_exact_image "$image_ref" || cleanup_complete=false
   done
   host_uid=$(id -u); host_gid=$(id -g)
@@ -108,6 +108,7 @@ cleanup(){
     [[ ! -d "$runner_secret_root" || ( -O "$runner_secret_root" && -r "$runner_secret_root" && -x "$runner_secret_root" ) ]] || { cleanup_complete=false; record 'cleanup_secret_root_host_access=false'; }
     [[ ! -d "$runner_workdir" || ( -O "$runner_workdir" && -r "$runner_workdir" && -x "$runner_workdir" ) ]] || { cleanup_complete=false; record 'cleanup_workdir_host_access=false'; }
   fi
+  remove_project_resources "$project" || cleanup_complete=false
   if [[ ! "$dir" =~ ^/tmp/nerocd-runtime-web-operator\.[A-Za-z0-9]{8}$ || ! -d "$dir" || -L "$dir" ]]; then
     cleanup_complete=false; record 'cleanup_temp_guard=false'
   elif ! rm -rf -- "$dir"; then
