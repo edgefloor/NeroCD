@@ -3,7 +3,7 @@ import { Ban, FileText, Terminal } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import type { ApiSnapshot, TaskRun, Project, TaskTemplate } from "@/api";
+import type { ApiSnapshot, RunLog, TaskRun, Project, TaskTemplate } from "@/api";
 import { cancelRun } from "@/api/compat";
 import type { MutateFn } from "@/hooks/useApi";
 import { StatusBadge } from "@/components/common/StatusBadge";
@@ -154,23 +154,52 @@ export function RunsView({
   busy,
   mutate,
   loading,
+  selectedRunID,
+  selectedLogs,
+  logsLoading,
+  logsError,
+  logsFollowing,
+  onSelectRun,
+  onCloseLogs,
 }: {
   snapshot: ApiSnapshot;
   token: string;
   busy: string;
   mutate: MutateFn;
   loading?: boolean;
+  selectedRunID?: string;
+  selectedLogs?: RunLog[];
+  logsLoading?: boolean;
+  logsError?: Error;
+  logsFollowing?: boolean;
+  onSelectRun?: (runID: string) => void;
+  onCloseLogs?: () => void;
 }): ReactNode {
-  const [terminalRunID, setTerminalRunID] = useState("");
+  const [localTerminalRunID, setLocalTerminalRunID] = useState("");
   const [terminalRunFallback, setTerminalRunFallback] = useState<TaskRun | undefined>();
-  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [localTerminalOpen, setLocalTerminalOpen] = useState(false);
+  const controlledLogs = onSelectRun !== undefined;
+  const terminalRunID = controlledLogs ? selectedRunID ?? "" : localTerminalRunID;
+  const terminalOpen = controlledLogs ? Boolean(selectedRunID) : localTerminalOpen;
   const terminalRun = snapshot.runs.find((run) => run.id === terminalRunID) ?? (terminalRunFallback?.id === terminalRunID ? terminalRunFallback : undefined);
-  const terminalLogs = snapshot.logs.filter((log) => log.run_id === terminalRunID);
+  const terminalLogs = controlledLogs ? selectedLogs ?? [] : snapshot.logs.filter((log) => log.run_id === terminalRunID);
 
   function openTerminal(runID: string): void {
-    setTerminalRunID(runID);
     setTerminalRunFallback(snapshot.runs.find((run) => run.id === runID));
-    setTerminalOpen(true);
+    if (controlledLogs) {
+      onSelectRun(runID);
+      return;
+    }
+    setLocalTerminalRunID(runID);
+    setLocalTerminalOpen(true);
+  }
+
+  function changeTerminalOpen(open: boolean): void {
+    if (controlledLogs) {
+      if (!open) onCloseLogs?.();
+      return;
+    }
+    setLocalTerminalOpen(open);
   }
 
   if (loading) {
@@ -199,7 +228,7 @@ export function RunsView({
           />
         </CardContent>
       </Card>
-      <TerminalLogDialog run={terminalRun} logs={terminalLogs} open={terminalOpen} onOpenChange={setTerminalOpen} />
+      <TerminalLogDialog run={terminalRun} logs={terminalLogs} loading={controlledLogs && logsLoading} error={controlledLogs ? logsError : undefined} following={controlledLogs && logsFollowing} open={terminalOpen} onOpenChange={changeTerminalOpen} />
     </section>
   );
 }

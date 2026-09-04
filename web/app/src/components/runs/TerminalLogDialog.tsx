@@ -1,5 +1,5 @@
 import { ReactNode, useMemo, useRef } from "react";
-import { X } from "lucide-react";
+import { LoaderCircle, X } from "lucide-react";
 import type { RunLog, TaskRun } from "@/api";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -14,11 +14,17 @@ export function rememberTerminalLogOpener(opener: HTMLElement): void {
 export function TerminalLogDialog({
   run,
   logs,
+  loading = false,
+  error,
+  following = false,
   open,
   onOpenChange,
 }: {
   run?: TaskRun;
   logs: RunLog[];
+  loading?: boolean;
+  error?: Error;
+  following?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }): ReactNode {
@@ -33,6 +39,7 @@ export function TerminalLogDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
+        aria-describedby={undefined}
         className="max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-4xl border-border bg-background"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
@@ -70,9 +77,17 @@ export function TerminalLogDialog({
             <div className="mb-3 grid gap-1 border-b border-border pb-3 text-xs text-muted-foreground">
               <span>$ nerocd runs inspect {run.id}</span>
               <span>project={run.project_id} template={run.template_id ?? "adhoc"}</span>
+              {following ? <span aria-live="polite">Following active run output.</span> : null}
             </div>
           ) : null}
-          {orderedLogs.length === 0 ? (
+          {loading ? (
+            <div className="flex items-center gap-2 text-muted-foreground" role="status">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              Loading run output...
+            </div>
+          ) : error ? (
+            <div className="text-destructive" role="alert">Unable to load run output: {error.message}</div>
+          ) : orderedLogs.length === 0 ? (
             <div className="text-muted-foreground">
               <span className="text-success">system</span> waiting for runner output...
             </div>

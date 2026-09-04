@@ -47,7 +47,7 @@ async function ensureBootstrapped(page: Page): Promise<void> {
 
 async function postJSON<T>(page: Page, path: string, data: unknown, headers: Record<string, string> = {}): Promise<T> {
   const response = await page.request.post(path, { data, headers: { Origin: new URL(page.url()).origin, "X-NeroCD-CSRF": "1", ...headers } });
-  if (!response.ok()) throw new Error(`browser fixture request ${path} failed with ${response.status()}`);
+  if (!response.ok()) throw new Error(`browser fixture request ${path} failed with ${response.status()}: ${(await response.text()).slice(0, 256)}`);
   return await response.json() as T;
 }
 
@@ -70,6 +70,23 @@ async function createDetailFixture(page: Page): Promise<{ deploymentID: string }
   const revision = await postJSON<{ id: string }>(page, "/api/v1/revisions", { service_id: service.id, requested_ref: "main" });
   const deployment = await postJSON<{ id: string }>(page, "/api/v1/deployments", { environment_id: environment.id, desired_revision_id: revision.id, idempotency_key: `browser-detail-${suffix}` });
   return { deploymentID: deployment.id };
+}
+
+async function createRunLogFixture(page: Page): Promise<{ runID: string; secondRunID: string }> {
+  const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Browser logs ${suffix}`, description: "run-log fixture" });
+  const template = await postJSON<{ id: string }>(page, "/api/v1/templates", {
+    project_id: project.id,
+    name: `browser-logs-${suffix}`,
+    kind: "shell",
+    run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "browser-log-fixture"] } },
+    workflow: { steps: [] },
+    runner_tags: ["shell"],
+    requires_ack: false,
+  });
+  const first = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
+  const second = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
+  return { runID: first.id, secondRunID: second.id };
 }
 
 test("browser observes CLI-only bootstrap guidance before a supported CLI bootstrap", async ({ page }) => {
@@ -95,6 +112,42 @@ test("authenticated navigation and sign out work with runtime-only credentials",
   await expect(page.locator("h1")).toBeVisible();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
+test("runs list fetches, follows, closes, and switches terminal logs", async ({ page }) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  const { runID, secondRunID } = await createRunLogFixture(page);
+  await page.reload();
+  const firstLogRequest = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/v1/run-logs" && url.searchParams.get("run_id") === runID;
+  });
+  await page.locator(`[data-run-log-trigger="${runID}"]`).last().click();
+  expect((await firstLogRequest).status()).toBe(200);
+  const dialog = page.getByRole("dialog", { name: `run ${runID}` });
+  await expect(dialog).toContainText("Run requested");
+  await expect(dialog).toContainText("Following active run output.");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  const secondLogRequest = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/v1/run-logs" && url.searchParams.get("run_id") === secondRunID;
+  });
+  await page.locator(`[data-run-log-trigger="${secondRunID}"]`).last().click();
+  expect((await secondLogRequest).status()).toBe(200);
+  await expect(page.getByRole("dialog", { name: `run ${secondRunID}` })).toContainText("Run requested");
+  await page.keyboard.press("Escape");
+
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.locator(`[data-run-log-trigger="${runID}"]`).first().click();
+    await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.keyboard.press("Escape");
+  }
 });
 
 test("system administrators can open the bounded Operations summary", async ({ page }) => {
