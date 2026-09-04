@@ -33,6 +33,9 @@ type processWaitOutcome struct {
 	received bool
 }
 
+type processGroupProbe func(int) (bool, error)
+type processGroupSignaler func(int, processGroupSignal) error
+
 const processTerminationGrace = 500 * time.Millisecond
 
 const (
@@ -181,15 +184,16 @@ func drainProcessScanners(wg *sync.WaitGroup, stdoutReader, stderrReader *os.Fil
 // cleanRemainingProcessGroup preserves ordinary leader exit semantics while
 // ensuring a detached descendant cannot survive the attempt.
 func cleanRemainingProcessGroup(pid int, waitCh <-chan error, waitOutcome processWaitOutcome) error {
-	alive, err := processGroupAlive(pid)
-	if err != nil {
-		return err
-	}
-	if !alive {
+	return cleanRemainingProcessGroupWith(pid, waitCh, waitOutcome, processGroupAlive, signalProcessGroup)
+}
+
+func cleanRemainingProcessGroupWith(pid int, waitCh <-chan error, waitOutcome processWaitOutcome, probe processGroupProbe, signal processGroupSignaler) error {
+	alive, probeErr := probe(pid)
+	if probeErr == nil && !alive {
 		return nil
 	}
-	_, err = terminateProcessGroupAndWait(pid, waitCh, waitOutcome)
-	return err
+	_, cleanupErr := terminateProcessGroupAndWaitWith(pid, waitCh, waitOutcome, probe, signal)
+	return errors.Join(probeErr, cleanupErr)
 }
 
 // terminateProcessGroupAndWait does not let an exited leader hide a surviving
@@ -197,10 +201,15 @@ func cleanRemainingProcessGroup(pid int, waitCh <-chan error, waitOutcome proces
 // any remaining member to KILL, then consumes the direct child's Wait result
 // unless its caller already did so.
 func terminateProcessGroupAndWait(pid int, waitCh <-chan error, waitOutcome processWaitOutcome) (processWaitOutcome, error) {
+	return terminateProcessGroupAndWaitWith(pid, waitCh, waitOutcome, processGroupAlive, signalProcessGroup)
+}
+
+func terminateProcessGroupAndWaitWith(pid int, waitCh <-chan error, waitOutcome processWaitOutcome, probe processGroupProbe, signal processGroupSignaler) (processWaitOutcome, error) {
 	var terminationErr error
-	if err := signalProcessGroup(pid, processSignalTerm); err != nil {
+	if err := signal(pid, processSignalTerm); err != nil {
 		terminationErr = err
 	}
+	var inspectionErr error
 
 	ticker := time.NewTicker(processGroupPollInterval)
 	defer ticker.Stop()
@@ -210,31 +219,31 @@ func terminateProcessGroupAndWait(pid int, waitCh <-chan error, waitOutcome proc
 	leaderWait := waitCh
 
 	for {
-		alive, err := processGroupAlive(pid)
-		if err != nil && terminationErr == nil {
-			terminationErr = err
+		alive, err := probe(pid)
+		if err != nil && inspectionErr == nil {
+			inspectionErr = err
 		}
-		if !alive {
+		if err == nil && !alive {
 			if !waitOutcome.received {
 				var received bool
 				waitOutcome, received = receiveProcessWait(leaderWait, processGroupCleanupTimeout)
 				if !received {
-					return waitOutcome, fmt.Errorf("process leader wait did not complete after group %d exited", pid)
+					return waitOutcome, errors.Join(terminationErr, inspectionErr, fmt.Errorf("process leader wait did not complete after group %d exited", pid))
 				}
 			}
-			return waitOutcome, terminationErr
+			return waitOutcome, errors.Join(terminationErr, inspectionErr)
 		}
 
 		now := time.Now()
 		if !killed && !now.Before(graceDeadline) {
-			if err := signalProcessGroup(pid, processSignalKill); err != nil && terminationErr == nil {
+			if err := signal(pid, processSignalKill); err != nil && terminationErr == nil {
 				terminationErr = err
 			}
 			killed = true
 			cleanupDeadline = now.Add(processGroupCleanupTimeout)
 		}
 		if killed && !now.Before(cleanupDeadline) {
-			return waitOutcome, fmt.Errorf("process group %d survived SIGKILL", pid)
+			return waitOutcome, errors.Join(terminationErr, inspectionErr, fmt.Errorf("process group %d survived SIGKILL", pid))
 		}
 
 		select {

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -101,5 +102,80 @@ func TestReceiveProcessWaitHasBoundedDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < 20*time.Millisecond || elapsed > 300*time.Millisecond {
 		t.Fatalf("unexpected wait duration: %v", elapsed)
+	}
+}
+
+func TestCleanRemainingProcessGroupProbeErrorStillEscalates(t *testing.T) {
+	probeErr := errors.New("transient process-group inspection failure")
+	const pid = 4242
+	var signals []processGroupSignal
+	killed := false
+	probeCalls := 0
+	probe := func(gotPID int) (bool, error) {
+		if gotPID != pid {
+			t.Fatalf("probe pid = %d, want %d", gotPID, pid)
+		}
+		probeCalls++
+		if probeCalls == 1 {
+			return false, probeErr
+		}
+		return !killed, nil
+	}
+	signal := func(gotPID int, gotSignal processGroupSignal) error {
+		if gotPID != pid {
+			t.Fatalf("signal pid = %d, want %d", gotPID, pid)
+		}
+		signals = append(signals, gotSignal)
+		if gotSignal == processSignalKill {
+			killed = true
+		}
+		return nil
+	}
+
+	start := time.Now()
+	err := cleanRemainingProcessGroupWith(pid, nil, processWaitOutcome{received: true}, probe, signal)
+	if !errors.Is(err, probeErr) {
+		t.Fatalf("cleanup error = %v, want original probe error", err)
+	}
+	if len(signals) != 2 || signals[0] != processSignalTerm || signals[1] != processSignalKill {
+		t.Fatalf("signals = %v, want TERM then KILL", signals)
+	}
+	if elapsed := time.Since(start); elapsed < processTerminationGrace-100*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("expected bounded TERM grace before KILL, elapsed=%v", elapsed)
+	}
+}
+
+func TestTerminateProcessGroupPersistentProbeErrorIsBounded(t *testing.T) {
+	probeErr := errors.New("persistent process-group inspection failure")
+	const pid = 4242
+	var signals []processGroupSignal
+	probe := func(gotPID int) (bool, error) {
+		if gotPID != pid {
+			t.Fatalf("probe pid = %d, want %d", gotPID, pid)
+		}
+		return false, probeErr
+	}
+	signal := func(gotPID int, gotSignal processGroupSignal) error {
+		if gotPID != pid {
+			t.Fatalf("signal pid = %d, want %d", gotPID, pid)
+		}
+		signals = append(signals, gotSignal)
+		return nil
+	}
+
+	start := time.Now()
+	_, err := terminateProcessGroupAndWaitWith(pid, nil, processWaitOutcome{received: true}, probe, signal)
+	if !errors.Is(err, probeErr) {
+		t.Fatalf("cleanup error = %v, want original probe error", err)
+	}
+	if !strings.Contains(err.Error(), "survived SIGKILL") {
+		t.Fatalf("cleanup error = %v, want bounded SIGKILL failure", err)
+	}
+	if len(signals) != 2 || signals[0] != processSignalTerm || signals[1] != processSignalKill {
+		t.Fatalf("signals = %v, want TERM then KILL", signals)
+	}
+	minimum := processTerminationGrace + processGroupCleanupTimeout - 100*time.Millisecond
+	if elapsed := time.Since(start); elapsed < minimum || elapsed > 3*time.Second {
+		t.Fatalf("persistent probe error cleanup was not bounded as expected: %v", elapsed)
 	}
 }
