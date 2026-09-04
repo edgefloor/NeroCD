@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { projectsQuery, runsQuery, templatesQuery, type RunLog, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "@/api";
+import { shouldPollSelectedLogs } from "@/api/queries";
 import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
 import { RunsView } from "@/pages/RunsView";
 import { validateSearch } from "@/router/search";
@@ -24,6 +25,11 @@ export function RunsRoute({ runId, q: _q }: RunsRouteProps = {}) {
   const { busy, mutate } = useSnapshotMutation();
   const [selectedRunID, setSelectedRunID] = useState(runId ?? "");
   const [selectedLogs, setSelectedLogs] = useState<SelectedLogsState>({ runID: "", logs: [], loading: false });
+  useEffect(() => {
+    if (!runId) return;
+    setSelectedRunID(runId);
+    setSelectedLogs({ runID: "", logs: [], loading: false });
+  }, [runId]);
   const queries = [runs, projects, templates];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
@@ -41,7 +47,7 @@ export function RunsRoute({ runId, q: _q }: RunsRouteProps = {}) {
       selectedLogs={logsMatchSelection ? selectedLogs.logs : []}
       logsLoading={Boolean(selectedRunID) && (!logsMatchSelection || selectedLogs.loading)}
       logsError={logsMatchSelection ? selectedLogs.error : undefined}
-      logsFollowing={Boolean(selectedRunID) && !["succeeded", "failed", "canceled", "rejected"].includes(runs.data?.find((run) => run.id === selectedRunID)?.status ?? "")}
+      logsFollowing={shouldPollSelectedLogs(selectedRunID, runs.data)}
       onSelectRun={setSelectedRunID}
       onCloseLogs={() => {
         setSelectedRunID("");

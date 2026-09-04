@@ -120,6 +120,24 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   const { runID, secondRunID } = await createRunLogFixture(page);
   await page.reload();
+  let scopedLogRequests = 0;
+  await page.route("**/api/v1/run-logs?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("run_id") !== runID || ++scopedLogRequests === 1) return route.continue();
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          { id: "log_browser_initial", run_id: runID, sequence: 1, stream: "system", message: "Run requested" },
+          { id: "log_browser_refetch", run_id: runID, sequence: 2, stream: "stdout", message: "Fresh polled output" },
+        ],
+        count: 2,
+        total: 2,
+        limit: 100,
+        offset: 0,
+      }),
+    });
+  });
   const firstLogRequest = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return url.pathname === "/api/v1/run-logs" && url.searchParams.get("run_id") === runID;
@@ -129,6 +147,8 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   const dialog = page.getByRole("dialog", { name: `run ${runID}` });
   await expect(dialog).toContainText("Run requested");
   await expect(dialog).toContainText("Following active run output.");
+  await expect(dialog).toContainText("Fresh polled output");
+  expect(scopedLogRequests).toBeGreaterThanOrEqual(2);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 

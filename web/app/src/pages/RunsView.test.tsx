@@ -66,12 +66,13 @@ test("selected run remains identifiable when the refreshed list drops it", () =>
       if (selectedRunID) setRuns([]);
     }, [selectedRunID]);
     return <>
-      <RunsView snapshot={apiSnapshot({ runs, projects: [{ id: "proj_logs", name: "Logs project" } as never], templates: [{ id: "tmpl_logs", name: "Logs template" } as never] })} token="" busy="" mutate={vi.fn() as never} selectedRunID={selectedRunID} selectedLogs={[]} onSelectRun={setSelectedRunID} onCloseLogs={() => setSelectedRunID("")} />
+      <RunsView snapshot={apiSnapshot({ runs, projects: [{ id: "proj_logs", name: "Logs project" } as never], templates: [{ id: "tmpl_logs", name: "Logs template" } as never] })} token="" busy="" mutate={vi.fn() as never} selectedRunID={selectedRunID} selectedLogs={[]} logsFollowing={false} onSelectRun={setSelectedRunID} onCloseLogs={() => setSelectedRunID("")} />
     </>;
   }
   render(<Harness />);
   fireEvent.click(screen.getAllByRole("button", { name: "Logs" })[0]!);
   expect(screen.getByRole("dialog", { name: "run run_logs" })).toBeTruthy();
+  expect(screen.queryByText("Following active run output.")).toBeNull();
 });
 
 test("selected run keeps the dialog clear when fetching output fails", () => {
