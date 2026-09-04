@@ -60,14 +60,61 @@ kind=real
 out="artifacts/release-evidence"
 rm -rf -- "$out"
 mkdir -p "$out/a" "$out/b"
+active_first_pid=''
+active_second_pid=''
+terminate_and_reap_children(){
+  local pid pids
+  # Monitor mode gives each copy its own process group. Include the shell's job
+  # table so a signal in the tiny launch-to-PID-recording window still finds
+  # the child, then terminate its whole group before reaping the wrapper.
+  set +m
+  pids="$active_first_pid $active_second_pid $(jobs -pr)"
+  for pid in $pids; do
+    [[ -n "$pid" ]] || continue
+    kill -TERM -- "-$pid" >/dev/null 2>&1 || kill "$pid" >/dev/null 2>&1 || true
+  done
+  for pid in $pids; do
+    [[ -n "$pid" ]] || continue
+    wait "$pid" >/dev/null 2>&1 || true
+  done
+  active_first_pid=''
+  active_second_pid=''
+}
 cleanup(){
   local status=$?
   # A cleanup success must never convert a failed evidence check into a pass.
   trap - EXIT HUP INT TERM
+  terminate_and_reap_children
   rm -rf -- "$out/oci-expanded-a" "$out/oci-expanded-b" "$out/tamper"
   exit "$status"
 }
-trap cleanup EXIT HUP INT TERM
+on_signal(){
+  local status=$1
+  # EXIT owns child termination and filesystem cleanup; retain a conventional
+  # nonzero signal status instead of depending on the interrupted command.
+  trap - HUP INT TERM
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'on_signal 129' HUP
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+
+wait_for_pair(){
+  local label=$1 first_pid=$2 second_pid=$3
+  local first_status=0 second_status=0
+  if wait "$first_pid"; then first_status=0; else first_status=$?; fi
+  if wait "$second_pid"; then second_status=0; else second_status=$?; fi
+  active_first_pid=''
+  active_second_pid=''
+  if (( first_status != 0 )); then
+    printf 'release-evidence: %s copy A failed (status %d)\n' "$label" "$first_status" >&2
+  fi
+  if (( second_status != 0 )); then
+    printf 'release-evidence: %s copy B failed (status %d)\n' "$label" "$second_status" >&2
+  fi
+  (( first_status == 0 && second_status == 0 ))
+}
 
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 export NEROCD_RELEASE_VERSION="$release_version"
@@ -84,9 +131,22 @@ else
 fi
 
 ldflags="-buildid= -X main.version=${release_version}"
+build_binary_copy(){
+  local destination=$1 arch
+  for arch in amd64 arm64; do
+    GOOS=linux GOARCH="$arch" CGO_ENABLED=0 GOCACHE="$root/.cache/go-build" go build -trimpath -buildvcs=false -ldflags="$ldflags" -o "$destination/nerocd-linux-$arch" ./cmd/nerocd
+  done
+}
+set -m
+build_binary_copy "$out/a" &
+binary_a_pid=$!
+active_first_pid=$binary_a_pid
+build_binary_copy "$out/b" &
+binary_b_pid=$!
+active_second_pid=$binary_b_pid
+set +m
+wait_for_pair 'Go binary build' "$binary_a_pid" "$binary_b_pid" || fail 'one or more Go binary reproducibility copies failed'
 for arch in amd64 arm64; do
-  GOOS=linux GOARCH="$arch" CGO_ENABLED=0 GOCACHE="$root/.cache/go-build" go build -trimpath -buildvcs=false -ldflags="$ldflags" -o "$out/a/nerocd-linux-$arch" ./cmd/nerocd
-  GOOS=linux GOARCH="$arch" CGO_ENABLED=0 GOCACHE="$root/.cache/go-build" go build -trimpath -buildvcs=false -ldflags="$ldflags" -o "$out/b/nerocd-linux-$arch" ./cmd/nerocd
   cmp "$out/a/nerocd-linux-$arch" "$out/b/nerocd-linux-$arch" || fail "binary is not reproducible for linux/$arch"
   file "$out/a/nerocd-linux-$arch" | rg -q "(x86-64|aarch64|ARM aarch64)" || fail "binary architecture inspection failed for linux/$arch"
 done
@@ -110,8 +170,15 @@ build_oci(){
     --build-arg SOURCE_DATE_EPOCH="$source_date_epoch" --build-arg NEROCD_VERSION="$release_version" \
     --output "type=oci,dest=$destination" .
 }
-build_oci "$out/a/nerocd.oci.tar"
-build_oci "$out/b/nerocd.oci.tar"
+set -m
+build_oci "$out/a/nerocd.oci.tar" &
+oci_a_pid=$!
+active_first_pid=$oci_a_pid
+build_oci "$out/b/nerocd.oci.tar" &
+oci_b_pid=$!
+active_second_pid=$oci_b_pid
+set +m
+wait_for_pair 'OCI build' "$oci_a_pid" "$oci_b_pid" || fail 'one or more OCI reproducibility copies failed'
 mkdir "$out/oci-expanded-a" "$out/oci-expanded-b"
 tar -C "$out/oci-expanded-a" -xf "$out/a/nerocd.oci.tar"
 tar -C "$out/oci-expanded-b" -xf "$out/b/nerocd.oci.tar"

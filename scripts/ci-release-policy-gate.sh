@@ -9,8 +9,10 @@ root=$(cd "$root" && pwd)
 workflows="$root/.github/workflows"
 check="$workflows/check.yml"
 release="$workflows/release.yml"
+makefile="$root/Makefile"
+observability_gate="$root/scripts/observability-gate.sh"
 fail() { printf 'ci-release-policy: %s\n' "$*" >&2; exit 1; }
-[[ -f "$check" && -f "$release" ]] || fail 'check.yml and release.yml are required'
+[[ -f "$check" && -f "$release" && -f "$makefile" && -f "$observability_gate" ]] || fail 'workflows, Makefile, and observability gate are required'
 
 # GitHub resolves an action reference as source code. A full immutable commit
 # is mandatory for every action, including artifact and signing helpers.
@@ -25,6 +27,33 @@ rg -q '^[[:space:]]+contents: read$' "$check" || fail 'check workflow must be co
 ! rg -q '(^|[[:space:]])(write-all|id-token: write|packages: write|attestations: write)' "$check" || fail 'check workflow has release privileges'
 rg -q 'persist-credentials: false' "$check" || fail 'check checkout must disable persisted credentials'
 rg -q 'postgres:17\.6-alpine@sha256:[0-9a-f]{64}' "$check" || fail 'check PostgreSQL service must be digest pinned'
+check_triggers=$(sed -n '/^on:/,/^permissions:/p' "$check")
+printf '%s\n' "$check_triggers" | rg -q '^  push:$' || fail 'check workflow must run on pushes'
+printf '%s\n' "$check_triggers" | rg -q "^      - '\*\*'\$" || fail 'check workflow must explicitly include all branches'
+! printf '%s\n' "$check_triggers" | rg -q '^    tags:' || fail 'check workflow must exclude tag pushes'
+printf '%s\n' "$check_triggers" | rg -q '^  pull_request:$' || fail 'check workflow must run on pull requests'
+
+cache_action='actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae'
+expected_cache_paths=$(printf '%s\n' '.cache/go-build' '~/go/pkg/mod' '~/.bun/install/cache' '~/.cache/ms-playwright')
+require_safe_cache() {
+  local workflow_name=$1
+  local workflow=$2
+  local cache_block cache_paths
+  [[ $(rg -Fc "$cache_action" "$workflow") -eq 1 ]] || fail "$workflow_name must use exactly one pinned actions/cache v5.0.5 action"
+  cache_block=$(sed -n "/uses: actions\\/cache@/,/^[[:space:]]*key:/p" "$workflow")
+  cache_paths=$(printf '%s\n' "$cache_block" | sed -n '/^[[:space:]]*path: |$/,/^[[:space:]]*key:/p' | sed '1d;$d;s/^[[:space:]]*//')
+  [[ "$cache_paths" == "$expected_cache_paths" ]] || fail "$workflow_name cache paths must be the exact safe Go, Bun, and Playwright allowlist"
+  printf '%s\n' "$cache_block" | rg -Fq '${{ runner.os }}-${{ runner.arch }}' || fail "$workflow_name cache key must include runner platform"
+  printf '%s\n' "$cache_block" | rg -Fq "hashFiles('go.mod', 'go.sum', 'web/app/bun.lock')" || fail "$workflow_name cache key must bind locked Go and Bun inputs"
+  rg -Fq "key: nerocd-toolchain-\${{ runner.os }}-\${{ runner.arch }}-go-bun-playwright-\${{ hashFiles('go.mod', 'go.sum', 'web/app/bun.lock') }}" "$workflow" || fail "$workflow_name must share the lock-bound tool cache namespace"
+  rg -Fq 'nerocd-toolchain-${{ runner.os }}-${{ runner.arch }}-go-bun-playwright-' "$workflow" || fail "$workflow_name must use the bounded shared tool-cache restore prefix"
+  ! printf '%s\n' "$cache_block" | rg -qi 'node_modules|(^|/)(bin|web/dist|artifacts|release-evidence|playwright-report|test-results|reports?|credentials)(/|$)|docker' || fail "$workflow_name cache includes an unsafe generated, credential, report, or Docker path"
+  while IFS= read -r install; do
+    [[ "$install" == *'bun install --frozen-lockfile'* ]] || fail "$workflow_name contains a non-frozen Bun install"
+  done < <(rg -N 'bun install' "$workflow")
+}
+require_safe_cache check "$check"
+require_safe_cache release "$release"
 
 rg -q "github.repository_owner == 'edgefloor'" "$release" || fail 'release must be owner fenced'
 rg -q '^      name: release$' "$release" || fail 'publish must require the protected release environment'
@@ -32,6 +61,7 @@ rg -q 'make release-evidence-gate' "$release" || fail 'release evidence is not a
 evidence_job=$(sed -n '/^  evidence:/,/^  publish:/p' "$release")
 publish_job=$(sed -n '/^  publish:/,/^  verify:/p' "$release")
 verify_job=$(sed -n '/^  verify:/,$p' "$release")
+[[ $(printf '%s\n' "$evidence_job" | rg -Fc "$cache_action") -eq 1 ]] || fail 'release caches must be confined to the pre-approval evidence job'
 printf '%s\n' "$evidence_job" | rg -q 'sudo apt-get install --yes ripgrep' || fail 'release evidence must install ripgrep'
 evidence_ripgrep_line=$(printf '%s\n' "$evidence_job" | rg -n 'sudo apt-get install --yes ripgrep' | head -n1 | cut -d: -f1)
 evidence_gate_line=$(printf '%s\n' "$evidence_job" | rg -n 'make release-evidence-gate' | head -n1 | cut -d: -f1)
@@ -132,4 +162,31 @@ if awk '
 fi
 ! rg -q 'docker[[:space:]]+push' "$workflows"/*.yml || fail 'direct docker push is forbidden; use pinned build-push-action'
 ! rg -q 'pull_request_target|permissions:[[:space:]]+write-all|@v[0-9]|@main|@master|:latest' "$workflows"/*.yml || fail 'workflow includes a mutable or privileged policy escape'
+
+accepted_gates=$(sed -n '/^release-evidence-accepted-gates:/,/^release-evidence-gate:/p' "$makefile")
+core_line=$(printf '%s\n' "$accepted_gates" | rg -F '$(MAKE) --jobs=1' || true)
+runtime_line=$(printf '%s\n' "$accepted_gates" | rg -F '$(MAKE) --jobs=4' || true)
+[[ -n "$core_line" ]] || fail 'accepted core gates must remain explicitly serial'
+[[ -n "$runtime_line" ]] || fail 'accepted runtime gates must use the bounded --jobs=4 aggregate'
+for gate in ci-release-policy-gate test web-test build browser-smoke web-policy contract check-generated docker-build identity-artifact-gate production-profile-gate; do
+  [[ " $core_line " == *" $gate "* ]] || fail "serial accepted core inventory is missing $gate"
+done
+[[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }' <<<"$core_line") -eq 1 ]] || fail 'serial accepted core inventory must contain ci-release-policy-gate exactly once'
+for gate in runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate; do
+  [[ " $runtime_line " == *" $gate "* ]] || fail "parallel accepted runtime inventory is missing $gate"
+done
+rg -q '^observability-gate: runtime-compose-gate backup-restore-gate$' "$makefile" || fail 'observability gate must depend on Compose and backup evidence producers'
+! rg -q '^[[:space:]]*bash (acceptance/runtime-compose/gate\.sh|scripts/backup-restore-gate\.sh)' "$observability_gate" || fail 'observability gate must reuse prerequisite evidence instead of rerunning runtime gates'
+rg -q '^compose_evidence=/tmp/nerocd-compose-runtime\.txt$' "$observability_gate" || fail 'observability gate must reuse Compose evidence'
+rg -q '^backup_evidence=/tmp/nerocd-backup-restore\.txt$' "$observability_gate" || fail 'observability gate must reuse backup evidence'
+rg -q '^\[\[ -s "\$compose_evidence" && -s "\$backup_evidence" \]\]$' "$observability_gate" || fail 'observability gate must fail closed on missing prerequisite evidence'
+clean_target=$(sed -n '/^clean:/,/^run:/p' "$makefile")
+! printf '%s\n' "$clean_target" | rg -q 'GOCACHE_DIR|node_modules' || fail 'clean must preserve reusable Go and frozen-install dependency caches'
+for generated in '$(BIN_DIR)' 'playwright-report' 'test-results' '$(WEB_DIST_DIR)' 'artifacts/'; do
+  printf '%s\n' "$clean_target" | rg -Fq "$generated" || fail "clean must still remove generated output: $generated"
+done
+policy_target=$(sed -n '/^ci-release-policy-gate:/,/^contract:/p' "$makefile")
+[[ $(printf '%s\n' "$policy_target" | rg -Fc 'bash scripts/release-evidence-concurrency-test.sh') -eq 1 ]] || fail 'CI release policy target must run the evidence concurrency mutation exactly once'
+check_target=$(sed -n '/^check:/,/^clean:/p' "$makefile")
+[[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }' <<<"$check_target") -eq 1 ]] || fail 'ordinary make check must run ci-release-policy-gate exactly once'
 printf 'ci-release-policy PASS workflows=%s\n' "$workflows"

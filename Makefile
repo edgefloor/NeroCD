@@ -69,7 +69,7 @@ dogfood-gate:
 # the System Operations browser lifecycle before, during, and after backup.
 system-operations-gate: backup-restore-gate
 
-observability-gate:
+observability-gate: runtime-compose-gate backup-restore-gate
 	bash scripts/observability-gate.sh
 
 generate:
@@ -148,7 +148,8 @@ release-artifacts: build web-policy
 # skips an accepted gate. The evidence script invokes this exact target from a
 # clean source checkout (real or the clearly labelled disposable harness).
 release-evidence-accepted-gates:
-	$(MAKE) test web-test build browser-smoke web-policy contract check-generated docker-build identity-artifact-gate production-profile-gate runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate
+	$(MAKE) --jobs=1 ci-release-policy-gate test web-test build browser-smoke web-policy contract check-generated docker-build identity-artifact-gate production-profile-gate
+	$(MAKE) --jobs=4 runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate
 
 release-evidence-gate:
 	bash scripts/release-evidence.sh --real
@@ -161,22 +162,23 @@ release-evidence-synthetic-gate:
 release-evidence-post-gate-check:
 	bash scripts/release-evidence.sh --synthetic-post-gate
 
-# Static workflow checks only. This target intentionally never calls GitHub,
-# GHCR, a signer, or any publication endpoint.
+# Static CI/release orchestration checks only. This target intentionally never
+# calls GitHub, GHCR, a signer, or any publication endpoint.
 ci-release-policy-gate:
 	bash scripts/ci-release-policy-gate.sh .
 	bash scripts/ci-release-policy-gate-test.sh
 	bash scripts/release-artifact-verifier-test.sh
+	bash scripts/release-evidence-concurrency-test.sh
 
 contract:
 	GOCACHE="$(GOCACHE_DIR)" go run ./cmd/nerocd contract
 
 check:
 	$(MAKE) clean
-	$(MAKE) verify web-test build browser-smoke web-policy contract check-generated production-compose-policy-gate local-image-registry-gate docker-build
+	$(MAKE) ci-release-policy-gate verify web-test build browser-smoke web-policy contract check-generated production-compose-policy-gate local-image-registry-gate docker-build
 
 clean:
-	rm -rf -- "$(GOCACHE_DIR)" "$(BIN_DIR)" "$(WEB_APP_DIR)/node_modules" "$(WEB_APP_DIR)/playwright-report" "$(WEB_APP_DIR)/test-results"
+	rm -rf -- "$(BIN_DIR)" "$(WEB_APP_DIR)/playwright-report" "$(WEB_APP_DIR)/test-results"
 	mkdir -p "$(WEB_DIST_DIR)"
 	find "$(WEB_DIST_DIR)" -mindepth 1 ! -name .gitkeep -exec rm -rf -- {} +
 	touch "$(WEB_DIST_DIR)/.gitkeep"
