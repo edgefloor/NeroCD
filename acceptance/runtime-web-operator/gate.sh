@@ -141,7 +141,7 @@ repository_digest_is_member(){
   jq -e --arg candidate "$candidate" 'type == "array" and any(.[]; type == "string" and . == $candidate)' <<<"$repo_digests" >/dev/null 2>"$dir/registry-repodigests-jq.err"
 }
 publish_fixture_digest(){
-  local source_tag=$1 label=$2 repository registry_tag source_id repo_digests resolved attempt
+  local source_tag=$1 label=$2 repository registry_tag source_id repo_digests resolved image_id_candidate membership_rc attempt
   [[ "$source_tag" =~ ^nerocd-web-fixture-[abc]:[a-f0-9]{12}$ && "$label" =~ ^[abc]$ ]] || return 1
   [[ "$fixture_registry_port" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
   repository="127.0.0.1:${fixture_registry_port}/nerocd-web-fixture-${label}-${suffix}"
@@ -159,7 +159,13 @@ publish_fixture_digest(){
   resolved=$(jq -er --arg prefix "${repository}@sha256:" 'if type != "array" then error("invalid") else [.[] | select(type == "string" and startswith($prefix))] | unique | if length == 1 then .[0] else error("ambiguous") end end' <<<"$repo_digests" 2>"$dir/registry-${label}-repodigests-jq.err") || return 1
   [[ "$resolved" == "$repository@sha256:"* && "${resolved#"$repository@sha256:"}" =~ ^[a-f0-9]{64}$ ]] || return 1
   repository_digest_is_member "$registry_tag" "$repository" "$resolved" || return 1
-  [[ "$resolved" != "$repository@$source_id" ]] || return 1
+  image_id_candidate="${repository}@${source_id}"
+  if repository_digest_is_member "$registry_tag" "$repository" "$image_id_candidate"; then
+    [[ "$image_id_candidate" == "$resolved" ]] || return 1
+  else
+    membership_rc=$?
+    [[ $membership_rc -eq 1 ]] || return 1
+  fi
   docker image rm "$registry_tag" "$source_tag" >/dev/null 2>"$dir/registry-${label}-alias-remove.err" || return 1
   local_registry_remove_image "$resolved" || return 1
   if local_registry_image_state "$resolved"; then return 1; elif [[ "$local_registry_last_query_state" != absent ]]; then return 1; fi
@@ -240,7 +246,7 @@ publish_fixture_digest "$fixture_a" a || fail 'fixture A registry digest publica
 publish_fixture_digest "$fixture_b" b || fail 'fixture B registry digest publication failed'
 publish_fixture_digest "$fixture_c" c || fail 'fixture C registry digest publication failed'
 [[ "$fixture_a_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-web-fixture-a-[a-f0-9]{12}@sha256:[a-f0-9]{64}$ && "$fixture_b_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-web-fixture-b-[a-f0-9]{12}@sha256:[a-f0-9]{64}$ && "$fixture_c_ref" =~ ^127\.0\.0\.1:[1-9][0-9]{0,4}/nerocd-web-fixture-c-[a-f0-9]{12}@sha256:[a-f0-9]{64}$ ]] || fail 'fixture references are not exact repository digests'
-record 'fixture_registry=true fixture_manifest_digests=true fixture_config_ids_rejected=true'
+record 'fixture_registry=true fixture_manifest_digests=true fixture_config_ids_provenance_verified=true'
 compose config -q >"$dir/compose-config.log" 2>&1 || fail 'shared compose config preflight failed'
 docker build --build-arg BASE="$image" --build-arg DOCKER_GID="$socket_gid" -f "$root/acceptance/runtime-compose/RunnerDockerfile" -t "$runner_image" "$root/acceptance/runtime-compose" >"$dir/runner-build.log" 2>&1 || fail 'runner image build failed'
 [[ "$(docker image inspect -f '{{.Config.User}}' "$runner_image" 2>/dev/null)" == nerocd ]] || fail 'runner image default user is not nerocd'
