@@ -1,0 +1,31 @@
+{
+  "record_type": "result",
+  "schema_version": 1,
+  "task_id": "replace-with-task-id",
+  "mode": "WORKER",
+  "packet_digest": "sha256:442a0b6a8452fd18147fb817af65733646a52e4c716094892628ff47aebe763b",
+  "base_sha": "0000000000000000000000000000000000000000",
+  "candidate_sha": "0000000000000000000000000000000000000000",
+  "outcome": "no_change",
+  "changed_paths": [],
+  "checks": [
+    {
+      "id": "unit",
+      "status": "passed",
+      "summary": "Replace with a bounded observed result summary.",
+      "location": "Replace with an artifact or command-output location."
+    }
+  ],
+  "evidence": [
+    {
+      "summary": "Replace with bounded evidence; do not paste secret-bearing logs.",
+      "location": "Replace with a file, symbol, or stored artifact location."
+    }
+  ],
+  "completion": {
+    "source": "complete",
+    "artifact": "not_applicable",
+    "published": "not_applicable",
+    "deployed": "not_applicable"
+  }
+}

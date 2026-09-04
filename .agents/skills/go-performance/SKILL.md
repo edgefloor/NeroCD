@@ -1,6 +1,6 @@
 ---
 name: go-performance
-description: Use when optimizing Go code, investigating slow performance, or writing performance-critical sections. Also use when a user mentions slow Go code, string concatenation in loops, or asks about benchmarking, even if the user doesn't explicitly mention performance patterns. Does not cover concurrent performance patterns (see go-concurrency).
+description: Investigate or optimize measurable Go performance, including allocation, string construction, benchmarking, or profiling. Use go-concurrency when synchronization or parallelism is the main concern.
 allowed-tools: Bash(bash:*)
 ---
 

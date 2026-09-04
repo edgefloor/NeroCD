@@ -1,6 +1,6 @@
 ---
 name: go-packages
-description: Use when creating Go packages, organizing imports, managing dependencies, or deciding how to structure Go code into packages. Also use when starting a new Go project or splitting a growing codebase into packages, even if the user doesn't explicitly ask about package organization. Does not cover naming individual identifiers (see go-naming).
+description: Design Go package boundaries, imports, dependency organization, or a package split. Use go-naming for identifiers within an established package.
 ---
 
 # Go Packages and Imports

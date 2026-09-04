@@ -1,6 +1,6 @@
 ---
 name: go-code-review
-description: Use when reviewing Go code or checking code against community style standards. Also use proactively before submitting a Go PR or when reviewing any Go code changes, even if the user doesn't explicitly request a style review. Does not cover language-specific syntax — delegates to specialized skills.
+description: Review Go changes against the repository's documented standards and idiomatic community guidance. Use for an explicit Go review or before submitting a Go pull request; use specialized skills for focused language topics.
 allowed-tools: Bash(bash:*)
 ---
 
@@ -149,9 +149,9 @@ allowed-tools: Bash(bash:*)
 ## Testing
 
 - [ ] **Examples**: Include runnable `Example` functions or tests demonstrating usage → [go-documentation](../go-documentation/SKILL.md)
-- [ ] **Useful test failures**: Messages include what was wrong, inputs, got, and want; order is `got != want` → [go-testing](../go-testing/SKILL.md)
-- [ ] **TestMain**: Use only when all tests need common setup with teardown; prefer scoped helpers first → [go-testing](../go-testing/SKILL.md)
-- [ ] **Real transports**: Prefer `httptest.NewServer` + real client over mocking HTTP → [go-testing](../go-testing/SKILL.md)
+- [ ] **Useful test failures**: Messages include what was wrong, inputs, got, and want; order is `got != want` → [golang-testing](../golang-testing/SKILL.md)
+- [ ] **TestMain**: Use only when all tests need common setup with teardown; prefer scoped helpers first → [golang-testing](../golang-testing/SKILL.md)
+- [ ] **Real transports**: Prefer `httptest.NewServer` + real client over mocking HTTP → [golang-testing](../golang-testing/SKILL.md)
 
 ---
 
@@ -176,6 +176,6 @@ Fix any issues before proceeding to the checklist above. For linter setup and co
 - **Linting setup**: See [go-linting](../go-linting/SKILL.md) when configuring golangci-lint or adding automated checks to CI
 - **Error strategy**: See [go-error-handling](../go-error-handling/SKILL.md) when reviewing error wrapping, sentinel errors, or the handle-once pattern
 - **Naming conventions**: See [go-naming](../go-naming/SKILL.md) when evaluating identifier names, receiver names, or package-symbol stuttering
-- **Testing patterns**: See [go-testing](../go-testing/SKILL.md) when reviewing test code for table-driven structure, failure messages, or helper usage
+- **Testing patterns**: See [golang-testing](../golang-testing/SKILL.md) when reviewing test code for table-driven structure, failure messages, or helper usage
 - **Concurrency safety**: See [go-concurrency](../go-concurrency/SKILL.md) when reviewing goroutine lifetimes, channel usage, or mutex placement
 - **Logging practices**: See [go-logging](../go-logging/SKILL.md) when reviewing log usage, structured logging, or slog configuration

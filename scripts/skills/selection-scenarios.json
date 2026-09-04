@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "limitations": "These fixtures declare expected routing decisions for review. Static validation cannot prove model selection behavior, and invocation metadata is not a security sandbox.",
+  "scenarios": [
+    {
+      "name": "fenced runner replay change",
+      "kind": "overlap",
+      "request": "Fix startup replay so a journaled completion cannot be sent after its lease fence is stale, and add a regression test.",
+      "expectedSkills": [
+        "nerocd-runner-lifecycle",
+        "go-concurrency",
+        "go-context",
+        "golang-testing"
+      ],
+      "rationale": "The request crosses NeroCD's fenced lifecycle, cancellation, and Go test boundaries."
+    },
+    {
+      "name": "plain documentation typo",
+      "kind": "negative",
+      "request": "Fix a spelling error in docs/architecture.md.",
+      "expectedSkills": [],
+      "rationale": "A documentation typo does not need a Go or project verification skill."
+    },
+    {
+      "name": "mobile embedded operator flow",
+      "kind": "positive",
+      "request": "Change the mobile deployment confirmation layout and verify the Go-served built UI at narrow viewports.",
+      "expectedSkills": [
+        "nerocd-ui-artifact-verification"
+      ],
+      "rationale": "The project artifact procedure owns source-to-dist-to-embed verification; a TypeScript browser change does not activate Go testing by itself."
+    },
+    {
+      "name": "explicit bounded research",
+      "kind": "positive",
+      "request": "Use $research to compare the documented Go support windows of two dependencies and save the cited findings.",
+      "expectedSkills": [
+        "research"
+      ],
+      "rationale": "Research is selected only by explicit invocation."
+    }
+  ]
+}

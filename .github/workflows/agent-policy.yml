@@ -1,0 +1,73 @@
+name: Agent policy
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "AGENTS.md"
+      - ".agents/**"
+      - ".claude/**"
+      - ".codex/**"
+      - ".dockerignore"
+      - ".gitignore"
+      - ".github/workflows/agent-policy.yml"
+      - "agent/**"
+      - "docs/agent/**"
+      - "docs/AGENT-ORCHESTRATION.md"
+      - "orchestration/**"
+      - "scripts/orchestration/**"
+      - "scripts/skills/**"
+      - "skills-lock.json"
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - ".agents/**"
+      - ".claude/**"
+      - ".codex/**"
+      - ".dockerignore"
+      - ".gitignore"
+      - ".github/workflows/agent-policy.yml"
+      - "agent/**"
+      - "docs/agent/**"
+      - "docs/AGENT-ORCHESTRATION.md"
+      - "orchestration/**"
+      - "scripts/orchestration/**"
+      - "scripts/skills/**"
+      - "skills-lock.json"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Require Python 3.11 or newer
+        run: python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version'
+
+      - name: Validate orchestration protocol
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 -m unittest discover -s orchestration -p 'test_*.py'
+          python3 scripts/orchestration/validate.py --repo-root . config
+          python3 scripts/orchestration/validate.py packet orchestration/examples/worker-packet.json
+
+      - name: Validate canonical skills
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 -m unittest discover -s scripts/skills -p 'test_*.py'
+          python3 scripts/skills/validate.py --json
+
+      - name: Validate policy hooks
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest discover -s .codex/hooks -p 'test_*.py'

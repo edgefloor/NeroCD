@@ -33,7 +33,7 @@ TOTAL_BUDGET_SECONDS = 4.0
 PATCH_PREFIXES = ("*** Add File: ", "*** Update File: ")
 PRODUCT_DIRS = ("cmd", "internal")
 NAMING_SCRIPT_COMPONENTS = (
-    "agent",
+    ".agents",
     "skills",
     "go-naming",
     "scripts",

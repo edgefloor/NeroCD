@@ -21,7 +21,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 ADAPTER = HOOK_DIR / "product_go_advisory.py"
 REPO_ROOT = HOOK_DIR.parents[1]
 HOOKS_CONFIG = REPO_ROOT / ".codex/hooks.json"
-NAMING_CHECKER = REPO_ROOT / "agent/skills/go-naming/scripts/check-naming.sh"
+NAMING_CHECKER = REPO_ROOT / ".agents/skills/go-naming/scripts/check-naming.sh"
 
 
 class AdvisoryTest(unittest.TestCase):
@@ -35,7 +35,7 @@ class AdvisoryTest(unittest.TestCase):
         )
         for directory in ("cmd/app", "internal/core", "docs"):
             (self.root / directory).mkdir(parents=True)
-        checker = self.root / "agent/skills/go-naming/scripts/check-naming.sh"
+        checker = self.root / ".agents/skills/go-naming/scripts/check-naming.sh"
         checker.parent.mkdir(parents=True)
         shutil.copy2(NAMING_CHECKER, checker)
         checker.chmod(0o755)
@@ -409,7 +409,7 @@ class AdvisoryTest(unittest.TestCase):
 
     def test_modified_naming_script_neither_executes_nor_writes_marker(self) -> None:
         source = self.write("cmd/app/main.go", "package app\n\nconst GoodName = 1\n")
-        checker = self.root / "agent/skills/go-naming/scripts/check-naming.sh"
+        checker = self.root / ".agents/skills/go-naming/scripts/check-naming.sh"
         marker = Path(self.temp.name) / "naming-executed"
         checker.write_text(
             "#!/bin/sh\nprintf executed > \"$NAMING_MARKER\"\nexit 0\n",
@@ -423,9 +423,27 @@ class AdvisoryTest(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.assertEqual(source.read_text(encoding="utf-8"), "package app\n\nconst GoodName = 1\n")
 
+    def test_legacy_naming_checker_path_is_ignored(self) -> None:
+        self.write("cmd/app/main.go", "package app\n\nconst BAD_NAME = 1\n")
+        legacy = self.root / "agent/skills/go-naming/scripts/check-naming.sh"
+        legacy.parent.mkdir(parents=True)
+        marker = Path(self.temp.name) / "legacy-naming-executed"
+        legacy.write_text(
+            "#!/bin/sh\nprintf executed > \"$LEGACY_NAMING_MARKER\"\nexit 0\n",
+            encoding="utf-8",
+        )
+        legacy.chmod(0o755)
+        result = self.run_hook(
+            self.event("*** Update File: cmd/app/main.go"),
+            env={"LEGACY_NAMING_MARKER": str(marker)},
+        )
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("[screaming-const]", context)
+        self.assertFalse(marker.exists())
+
     def test_in_place_naming_mutation_after_verification_uses_verified_text(self) -> None:
         self.write("cmd/app/main.go", "package app\n\nconst BAD_NAME = 1\n")
-        checker = self.root / "agent/skills/go-naming/scripts/check-naming.sh"
+        checker = self.root / ".agents/skills/go-naming/scripts/check-naming.sh"
         marker = Path(self.temp.name) / "post-verification-executed"
         malicious = (
             "#!/bin/sh\nprintf executed > \"$POST_VERIFY_MARKER\"\nexit 0\n"
@@ -454,7 +472,7 @@ class AdvisoryTest(unittest.TestCase):
 
     def test_naming_script_does_not_need_executable_bit(self) -> None:
         self.write("cmd/app/main.go", "package app\n\nconst BAD_NAME = 1\n")
-        checker = self.root / "agent/skills/go-naming/scripts/check-naming.sh"
+        checker = self.root / ".agents/skills/go-naming/scripts/check-naming.sh"
         checker.chmod(0o644)
         result = self.run_hook(self.event("*** Update File: cmd/app/main.go"))
         context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]

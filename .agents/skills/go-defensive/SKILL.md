@@ -1,6 +1,6 @@
 ---
 name: go-defensive
-description: Use when hardening Go code at API boundaries — copying slices/maps, verifying interface compliance, using defer for cleanup, time.Time/time.Duration, or avoiding mutable globals. Also use when reviewing for robustness concerns like missing cleanup or unsafe crypto usage, even if the user doesn't mention "defensive programming." Does not cover error handling strategy (see go-error-handling).
+description: Harden Go API boundaries and resource handling, including copying mutable inputs, cleanup, interface compliance, time types, panic containment, and global state. Use golang-security for exploitable security risks and go-error-handling for error strategy.
 ---
 
 # Go Defensive Programming Patterns

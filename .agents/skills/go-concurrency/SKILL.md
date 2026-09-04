@@ -1,6 +1,6 @@
 ---
 name: go-concurrency
-description: Use when writing concurrent Go code — goroutines, channels, mutexes, or thread-safety guarantees. Also use when parallelizing work, fixing data races, or protecting shared state, even if the user doesn't explicitly mention concurrency primitives. Does not cover context.Context patterns (see go-context).
+description: Design or review Go concurrency involving goroutines, channels, mutexes, shared state, race fixes, or lifecycle guarantees. Use go-context for cancellation and deadline propagation.
 ---
 
 # Go Concurrency

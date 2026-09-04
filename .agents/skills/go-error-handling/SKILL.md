@@ -1,6 +1,6 @@
 ---
 name: go-error-handling
-description: Use when writing Go code that returns, wraps, or handles errors — choosing between sentinel errors, custom types, and fmt.Errorf (%w vs %v), structuring error flow, or deciding whether to log or return. Also use when propagating errors across package boundaries or using errors.Is/As, even if the user doesn't ask about error strategy. Does not cover panic/recover patterns (see go-defensive).
+description: Design or review Go error contracts, wrapping, sentinel and typed errors, errors.Is/As, propagation across package boundaries, and log-versus-return decisions. Use go-defensive for panic and recovery boundaries.
 allowed-tools: Bash(bash:*)
 ---
 
@@ -170,7 +170,7 @@ annotation adds nothing, return `err` directly.
 ## Related Skills
 
 - **Error naming**: See [go-naming](../go-naming/SKILL.md) when naming sentinel errors (`ErrFoo`) or custom error types
-- **Testing errors**: See [go-testing](../go-testing/SKILL.md) when testing error semantics with `errors.Is`/`errors.As` or writing error-checking helpers
+- **Testing errors**: See [golang-testing](../golang-testing/SKILL.md) when testing error semantics with `errors.Is`/`errors.As` or writing error-checking helpers
 - **Panic handling**: See [go-defensive](../go-defensive/SKILL.md) when deciding between panic and error returns, or writing recover guards
 - **Guard clauses**: See [go-control-flow](../go-control-flow/SKILL.md) when structuring early-return error flow or reducing nesting
 - **Logging decisions**: See [go-logging](../go-logging/SKILL.md) when choosing log levels, configuring structured logging, or deciding what context to include in log messages

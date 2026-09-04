@@ -2,6 +2,7 @@
 __MACOSX/
 .cache/
 .git/
+.delta/
 artifacts/*.json
 artifacts/*.txt
 bin/

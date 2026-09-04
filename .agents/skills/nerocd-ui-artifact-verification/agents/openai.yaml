@@ -1,0 +1,6 @@
+interface:
+  display_name: "NeroCD UI Artifact Verification"
+  short_description: "Verify source, dist, and embedded UI"
+  default_prompt: "Use $nerocd-ui-artifact-verification to verify this NeroCD UI change through the built embedded artifact."
+policy:
+  allow_implicit_invocation: true

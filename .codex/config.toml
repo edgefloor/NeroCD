@@ -10,7 +10,7 @@ interrupt_message = true
 
 [agents.read_only_explorer]
 config_file = "agents/read-only-explorer.toml"
-description = "Read-only explorer that maps code paths and gathers evidence before implementation."
+description = "Read-only Terra explorer that maps code paths and gathers evidence before implementation."
 
 [agents.mechanical_worker]
 config_file = "agents/mechanical-worker.toml"

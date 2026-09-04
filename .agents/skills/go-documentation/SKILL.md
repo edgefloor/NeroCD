@@ -1,6 +1,6 @@
 ---
 name: go-documentation
-description: Use when writing or reviewing documentation for Go packages, types, functions, or methods. Also use proactively when creating new exported types, functions, or packages, even if the user doesn't explicitly ask about documentation. Does not cover code comments for non-exported symbols (see go-style-core).
+description: Write or review Go package documentation and comments for exported packages, types, functions, methods, constants, and examples. Use go-style-core for ordinary implementation comments.
 allowed-tools: Bash(bash:*)
 ---
 
@@ -150,6 +150,6 @@ Examples appear in Godoc attached to the documented element.
 ## Related Skills
 
 - **Naming conventions**: See [go-naming](../go-naming/SKILL.md) when choosing names for the identifiers your doc comments describe
-- **Testing examples**: See [go-testing](../go-testing/SKILL.md) when writing runnable `Example` test functions that appear in godoc
+- **Testing examples**: See [golang-testing](../golang-testing/SKILL.md) when writing runnable `Example` test functions that appear in godoc
 - **Linting enforcement**: See [go-linting](../go-linting/SKILL.md) when using revive or other linters to enforce doc comment presence
 - **Style principles**: See [go-style-core](../go-style-core/SKILL.md) when balancing documentation verbosity against clarity and concision

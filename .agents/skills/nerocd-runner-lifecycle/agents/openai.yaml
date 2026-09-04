@@ -1,0 +1,6 @@
+interface:
+  display_name: "NeroCD Runner Lifecycle"
+  short_description: "Preserve fenced runner lifecycle invariants"
+  default_prompt: "Use $nerocd-runner-lifecycle to preserve lease, cancellation, journal, and replay invariants in this runner change."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,15 @@
+{
+  "record_type": "review",
+  "schema_version": 1,
+  "task_id": "replace-with-task-id",
+  "packet_digest": "sha256:442a0b6a8452fd18147fb817af65733646a52e4c716094892628ff47aebe763b",
+  "candidate_sha": "0000000000000000000000000000000000000000",
+  "lens": "code_hygiene",
+  "status": "passed",
+  "findings": [
+    {
+      "summary": "No findings, or replace with one concrete finding.",
+      "location": "Replace with an exact file or symbol location."
+    }
+  ]
+}

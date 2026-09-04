@@ -3,6 +3,7 @@ __MACOSX/
 .cache/
 .cachebro/
 .tools/
+.delta/
 artifacts/*.json
 artifacts/*.txt
 bin/

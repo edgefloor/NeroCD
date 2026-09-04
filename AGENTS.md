@@ -1,52 +1,76 @@
 # NeroCD Codex orchestration
 
-This repository uses a read-only Leader as the primary Codex agent. The Leader owns the briefing, turn control, delegation, routing, escalation, review gates, and final acceptance. The Leader must not edit files, create commits, or directly implement changes. It may inspect the workspace, run read-only checks, and coordinate agents.
+The primary agent is a read-only Leader. It owns the user brief, turn control, routing,
+interface freeze, delegation, review gates, integration approval, and final acceptance. It
+may inspect and run harmless diagnostics, but it must not edit, commit, or implement.
+
+## Packet modes
+
+Every delegated turn has one explicit mode:
+
+- `ORCHESTRATOR`: read-only discovery or coordination.
+- `WORKER`: bounded implementation in an assigned worktree.
+- `REVIEWER`: read-only review of one exact candidate SHA.
+- `INTEGRATOR`: serial integration of only Leader-approved candidates.
+
+The versioned packet contract is documented in `docs/AGENT-ORCHESTRATION.md`. A packet must
+name the absolute workspace root and exact Git base/branch in the dispatch message, a
+user-visible goal, read/write ownership, frozen interfaces, constraints, validation IDs,
+handoff evidence, route, selected skill hashes, required review lenses, completion stages,
+and any recorded authorization grants. Scope text is a proposed boundary; actual runtime
+permissions are separately attested and enforced by the host, not by a prompt or TOML file.
 
 ## Operating protocol
 
-- Keep at most three subagent threads open at once. Agents must not spawn subagents of their own.
-- Start with a read-only explorer when the affected code or interfaces are not already understood.
-- Writers may run concurrently only after the Leader freezes the relevant interfaces and assigns disjoint ownership. Each writer must stay inside its bounded ownership and must preserve unrelated user changes.
-- The Leader records the current workspace state before delegation and treats pre-existing changes as out of scope. Never reset, clean, overwrite, or delete unrelated work.
-- Workers must load the applicable Go skills from `agent/skills/` before editing, use `colgrep` as the primary code-search tool, self-verify their changes, and return evidence with absolute file paths, commands, and results. They must not broaden scope or spawn agents.
-- Reviewers are read-only and never edit. The integration steward may integrate only commits explicitly approved by the Leader and must run combined checks afterward.
-- The Leader alone accepts the result, resolves conflicting reports, and decides whether escalation is required.
+- Keep at most three child threads open. The primary Leader is not a child. No child may
+  spawn another child.
+- Start with the read-only explorer when affected code or interfaces are not understood.
+- Before any edit, preflight the exact worktree: absolute Git toplevel, branch, base, clean
+  state, runtime model/effort/tools/permissions, and selected skill hashes.
+- Parallel writers require separate worktrees, frozen interfaces, and non-overlapping write
+  ownership. Shared-host worktrees do not enforce scope. Integration is serial.
+- Every command uses the packet's absolute workspace as its explicit workdir. Patches use
+  absolute paths. A writer verifies Git toplevel, branch, and base before its first edit.
+- Preserve pre-existing and unrelated work. Never reset, clean, overwrite, or delete it.
+- Workers use `colgrep` first, load selected skills from `.agents/skills/`, self-verify, and
+  return the exact candidate SHA plus bounded evidence locations. They do not ingest or copy
+  arbitrary logs that may contain secrets.
+- Existing user authorization travels in the packet and is not requested again. A scoped
+  external action needs a recorded grant with an explicit target; a missing target is a
+  separate blocker. Harmless diagnostics need neither an exact read set nor extra approval.
+- Review routine correctness/code hygiene and specification fit independently. Add a risk
+  lens only when the changed scope warrants it. Lint/formatting is a mechanical check, not a
+  substitute for review. All required reviews pin the same candidate SHA.
+- The integration steward combines only Leader-approved candidates and runs combined checks.
+  The Leader alone accepts or escalates the result.
 
-## Required brief schema
+## Routing
 
-Every delegation brief must state:
+Use `read_only_explorer` (Terra/medium) for discovery; `mechanical_worker` (Luna/low) for
+small mechanical changes; `bounded_worker` (Terra/medium) for ordinary changes;
+`complex_worker` (Sol/medium) for multi-step work; and `critical_worker` (Sol/high) only for
+explicitly approved critical work. `integration_steward` is Terra/medium. Routine reviewers
+are Terra/medium; cryptographic correctness and critical security reviewers are Terra/high.
+`escalation_resolver` is Sol/high and acts only on a named blocker and bounded ownership.
 
-1. `goal`: the user-visible outcome.
-2. `scope`: exact files, packages, or symbols in scope.
-3. `ownership`: what this agent may change and what it must leave alone.
-4. `interfaces`: frozen contracts, assumptions, and dependencies.
-5. `constraints`: safety, compatibility, terminology, and non-goals.
-6. `validation`: commands and behavior to verify.
-7. `handoff`: evidence format, remaining risks, and commit identifier if one exists.
+Sol maps to `gpt-5.6-sol`, Terra to `gpt-5.6-terra`, and Luna to `gpt-5.6-luna`. Static
+configuration provides defaults only; preflight must consume a current runtime capability
+attestation and fails when a route, effort, tool, or needed permission is unavailable.
 
-The Leader rejects a brief that lacks bounded ownership, a validation plan, or a clear handoff.
+Critical areas are authentication, identity, authorization, permissions, credentials or
+secrets, cryptography/key material, network/protocol trust boundaries, process execution or
+sandboxing, persistence/migrations, concurrency/lifecycle/shutdown, and security-sensitive
+logging or telemetry. Add the relevant specialist review only when the diff touches one.
 
-## Routing and escalation
+## Durable handoff and limits
 
-Use the read-only explorer for discovery and evidence gathering. Use the mechanical worker for small, mechanical Luna work; the bounded worker for ordinary Terra changes; the complex worker for multi-step Sol work; and the critical worker only for high-risk Sol work. Use the integration steward after the Leader has approved commits. Route routine review to the code hygiene reviewer and specification reviewer. Route cryptographic concerns to the **cryptographic correctness reviewer**, whose findings must be concrete and scoped to actual algorithms, invariants, inputs, outputs, or failure handling. Invoke the **critical security reviewer** only when the change touches a critical application area listed below. Use the escalation resolver only when the Leader cannot resolve a material conflict, failed validation, or high-risk design choice from the available evidence.
+Packet, result, review, and checkpoint records are compact versioned JSON. Git is the source
+of truth for changed paths, including rename sources and deletions. Required checks have
+`passed`, `failed`, or `not_run`; only `passed` advances. An accepting review never overrides
+a failed or missing check. External checkpoint state is single-writer and manual.
 
-Escalate when interfaces are ambiguous, ownership overlaps, validation fails without an obvious bounded fix, a critical-area change lacks the required review, or an agent reports a security, data-loss, compatibility, or cryptographic correctness risk. The escalation resolver may write only when the Leader explicitly delegates workspace-write ownership; it still may not spawn agents.
-
-## Review gates and terminology
-
-- Gate 1 — discovery: the Leader has an explorer map or equivalent evidence.
-- Gate 2 — interface freeze: the Leader records contracts and assigns disjoint ownership before concurrent writing.
-- Gate 3 — implementation: each writer reports bounded changes, self-checks, and evidence.
-- Gate 4 — routine review: code hygiene and specification fit are reviewed independently; reviewers do not edit.
-- Gate 5 — critical review: add cryptographic correctness and/or critical security review only when the critical-area list requires it. Do not turn routine review into a generic security review.
-- Gate 6 — integration and acceptance: the integration steward combines only Leader-approved commits, runs combined checks, and returns evidence; the Leader accepts or escalates.
-
-## Critical application areas
-
-Treat changes involving any of these as critical: authentication, identity, authorization, permissions, credential or secret handling, cryptographic algorithms or key material, network/protocol input and trust boundaries, process execution or sandboxing, persistence formats and migrations, concurrency or lifecycle/shutdown guarantees, and security-sensitive logging or telemetry. Explicit critical security review is limited to these areas.
-
-## Search and validation
-
-Use `colgrep` as the primary search tool for intent and code discovery. Use narrower file reads or other commands only after that first search when needed. Every worker and reviewer must cite concrete file paths and command output in its handoff. The Leader must preserve the repository's existing instructions and run the project-appropriate checks before acceptance.
-
-Model limits are explicit: Sol uses only low, medium, high, or extra-high (`xhigh`) effort; Terra uses only medium or high; Luna may use any supported effort. The basic roles in this setup default to low, medium, or high according to their bounded task.
+This first release is validation and handoff plumbing, not an autonomous controller. It has
+no scheduler, CAS, Delta executor, OS sandbox, or model launcher. It verifies record shape,
+Git facts, and cross-record consistency; attestations remain claims by the operator/runtime.
+Use only the stop, interrupt, and archive controls actually available in the active host;
+never promise stronger lifecycle guarantees.

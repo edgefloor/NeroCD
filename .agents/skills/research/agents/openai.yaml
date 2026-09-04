@@ -1,3 +1,6 @@
 interface:
   display_name: "Research"
   short_description: "Research from high-trust sources"
+  default_prompt: "Use $research to investigate this bounded question and save an evidence-backed Markdown report."
+policy:
+  allow_implicit_invocation: false

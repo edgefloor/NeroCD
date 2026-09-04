@@ -1,6 +1,6 @@
 ---
 name: go-linting
-description: Use when setting up linting for a Go project, configuring golangci-lint, or adding Go checks to a CI/CD pipeline. Also use when starting a new Go project and deciding which linters to enable, even if the user only asks about "code quality" or "static analysis" without mentioning specific linter names. Does not cover code review process (see go-code-review).
+description: Set up or change Go static analysis, golangci-lint configuration, or lint checks in CI. Use go-code-review for reviewing code rather than configuring analyzers.
 allowed-tools: Bash(bash:*)
 ---
 
@@ -151,4 +151,4 @@ Use `--new-from-rev` to lint only changed code, keeping the feedback loop fast.
 - **Style foundations**: See [go-style-core](../go-style-core/SKILL.md) when resolving style questions that linters enforce (formatting, nesting, naming)
 - **Code review**: See [go-code-review](../go-code-review/SKILL.md) when combining linter output with a manual review checklist
 - **Error handling**: See [go-error-handling](../go-error-handling/SKILL.md) when errcheck flags unhandled errors and you need to decide how to handle them
-- **Testing**: See [go-testing](../go-testing/SKILL.md) when running linters alongside tests in CI pipelines
+- **Testing**: See [golang-testing](../golang-testing/SKILL.md) when running linters alongside tests in CI pipelines

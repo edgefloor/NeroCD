@@ -1,0 +1,32 @@
+{
+  "record_type": "packet",
+  "schema_version": 1,
+  "task_id": "replace-with-task-id",
+  "mode": "WORKER",
+  "goal": "Replace with one user-visible outcome.",
+  "repository": {
+    "workspace_root": "/absolute/path/to/worker-worktree",
+    "base_sha": "0000000000000000000000000000000000000000",
+    "branch": "codex/replace-with-branch"
+  },
+  "ownership": {
+    "read_paths": ["internal/example/"],
+    "write_paths": ["internal/example/"]
+  },
+  "interfaces": ["Replace with frozen contracts."],
+  "constraints": ["Preserve unrelated work."],
+  "validation": ["unit"],
+  "handoff": ["Return exact candidate SHA, bounded evidence, and remaining risks."],
+  "route": {
+    "role": "bounded_worker",
+    "model": "gpt-5.6-terra",
+    "effort": "medium",
+    "required_tools": ["colgrep", "python3"]
+  },
+  "authorization": {
+    "grants": []
+  },
+  "selected_skills": {},
+  "required_review_lenses": ["code_hygiene", "specification"],
+  "required_completion_stages": ["source"]
+}

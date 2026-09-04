@@ -1,6 +1,6 @@
 ---
 name: go-control-flow
-description: Use when writing conditionals, loops, or switch statements in Go — including if with initialization, early returns, for loop forms, range, switch, type switches, and blank identifier patterns. Also use when writing a simple if/else or for loop, even if the user doesn't mention guard clauses or variable scoping. Does not cover error flow patterns (see go-error-handling).
+description: Improve nontrivial Go conditionals, loops, switches, range usage, early returns, or blank-identifier patterns. Use go-error-handling when the main concern is error flow.
 ---
 
 # Go Control Flow

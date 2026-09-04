@@ -19,7 +19,7 @@ definition changing too, the previously trusted command exits silently and the
 changed adapter does not run.
 
 The adapter independently opens
-`agent/skills/go-naming/scripts/check-naming.sh` through root-relative
+`.agents/skills/go-naming/scripts/check-naming.sh` through root-relative
 `O_NOFOLLOW` descriptor traversal, verifies its separately pinned SHA-256
 digest, decodes the verified bytes as UTF-8, and closes the workspace
 descriptor. It invokes the immutable verified text with fixed `/bin/bash -c`;
