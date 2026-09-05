@@ -10,5 +10,5 @@ function RunDetailRoute() {
   const { q } = Route.useSearch();
   const runs = useQuery(runsQuery());
   const run = runs.data?.find((candidate) => candidate.id === runId);
-  return <><RunsRoute q={q} />{run ? <div className="mt-4"><WorkflowDiagnostics run={run} /></div> : null}</>;
+  return <><RunsRoute runId={runId} q={q} />{run ? <div className="mt-4"><WorkflowDiagnostics run={run} /></div> : null}</>;
 }

@@ -53,12 +53,19 @@ test("run detail keeps declared workflow diagnostics visible and contained", asy
   });
   const run = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
 
-  await page.goto(`/runs/${run.id}`);
+  await page.reload();
+  const detailLink = page.locator(`[data-run-detail-link="${run.id}"]`).last();
+  await expect(detailLink).toBeVisible();
+  await detailLink.click();
+  const logs = page.getByRole("dialog", { name: `run ${run.id}` });
+  await expect(logs).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(logs).toHaveCount(0);
   const diagnostics = page.getByRole("heading", { name: "Workflow steps" }).locator("xpath=ancestor::*[@data-slot='card']");
   await expect(diagnostics).toBeVisible();
   await expect(diagnostics).toContainText("Checkout source");
   await expect(diagnostics).toContainText("Deploy release");
-  await expect(diagnostics).toContainText("Run logs remain run-level");
+  await expect(diagnostics).toContainText("Logs cover the whole run.");
 
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });

@@ -15,7 +15,7 @@ function timestamp(value: string | undefined): string {
 
 function duration(state: WorkflowStepState): string {
   if (!state.started_at) return "Not reported";
-  if (!state.finished_at) return "In progress";
+  if (!state.finished_at) return state.status === "running" ? "In progress" : "Not reported";
   const elapsed = Math.max(0, new Date(state.finished_at).getTime() - new Date(state.started_at).getTime());
   const seconds = Math.round(elapsed / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -32,13 +32,13 @@ export function WorkflowDiagnostics({ run }: { run: TaskRun }): ReactNode {
       <CardHeader className="border-b">
         <CardTitle><h2 id="workflow-diagnostics-title">Workflow steps</h2></CardTitle>
         <CardDescription>
-          Status and timing reported for this run. Run logs remain run-level because the API does not associate them with workflow steps.
+          Status and timing reported for this run. Logs cover the whole run.
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-4">
         {declaredSteps.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No workflow steps were declared for this run. {(run.workflow_state?.steps.length ?? 0) > 0 ? "Reported step state is available, but the API does not provide a declared order." : ""}
+            No workflow steps were declared for this run. {(run.workflow_state?.steps.length ?? 0) > 0 ? "Reported step state is available, but no declared order is available." : ""}
           </p>
         ) : (
           <ol className="grid gap-3" aria-label="Workflow step timeline">
