@@ -114,6 +114,47 @@ test("authenticated navigation and sign out work with runtime-only credentials",
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("settings cards contain controls and wrap long membership text on narrow screens", async ({ page }) => {
+  await page.goto("/settings");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
+  const projectName = `Settings geometry ${"project-name-".repeat(20)}${suffix}`;
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: projectName, description: "settings layout fixture" });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("combobox").first().selectOption(project.id);
+  const response = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === "/api/v1/project-members" && candidate.request().method() === "POST");
+  await page.getByRole("button", { name: "Update access" }).click();
+  expect((await response).status()).toBe(200);
+  const accessCard = page.getByText("Project access", { exact: true }).locator('xpath=ancestor::*[@data-slot="card"]');
+  await expect(accessCard.locator("span").filter({ hasText: projectName })).toBeVisible();
+
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    const geometry = await accessCard.evaluate((card, name) => {
+      const cardBounds = card.getBoundingClientRect();
+      const controls = Array.from(card.querySelectorAll<HTMLElement>("select, input, button"), (control) => {
+        const bounds = control.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right };
+      });
+      const member = Array.from(card.querySelectorAll<HTMLElement>("span"), (element) => element.textContent?.includes(String(name)) ? element : undefined).find(Boolean);
+      if (!member) throw new Error("long membership text is unavailable");
+      return {
+        cardLeft: cardBounds.left,
+        cardRight: cardBounds.right,
+        controls,
+        memberClientWidth: member.clientWidth,
+        memberScrollWidth: member.scrollWidth,
+        documentClientWidth: document.documentElement.clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+      };
+    }, projectName);
+    expect(geometry.documentScrollWidth).toBeLessThanOrEqual(geometry.documentClientWidth);
+    expect(geometry.controls.every((control) => control.left >= geometry.cardLeft && control.right <= geometry.cardRight)).toBe(true);
+    expect(geometry.memberScrollWidth).toBeLessThanOrEqual(geometry.memberClientWidth);
+  }
+});
+
 test("dashboard reports unfinished work truthfully and shared cards keep bounded geometry", async ({ page }) => {
   await page.goto("/");
   await signIn(page);
