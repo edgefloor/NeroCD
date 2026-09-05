@@ -1,101 +1,54 @@
-# NeroCD Architecture
+# Architecture
 
-## Product Boundary
+NeroCD records automation intent and authorization, leases work to enrolled
+runners, and retains operational evidence. It is not a general CI system.
 
-NeroCD is an automation operations platform, not a CI clone. The core product surface is:
+| Component | Responsibility |
+| --- | --- |
+| `cmd/nerocd` | Server, CLI, migration, bootstrap, runner, and operations commands. |
+| `internal/api` | `/api/v1` routing, request limits, authentication, and errors. |
+| `internal/app` | Authorization, business operations, audit writes, and transactions. |
+| `internal/store` | PostgreSQL persistence and explicit disposable memory development store. |
+| `internal/runner` | Enrollment, credentials, fenced leases, execution, logs, and replay data. |
+| `web/app` | React/Vite/TanStack application built into `web/dist` and embedded in Go. |
+| `db/migrations` | Ordered PostgreSQL schema changes with checksum protection. |
 
-- Projects, teams, environments, inventories, variable groups, repositories, credentials, templates, schedules, task runs, approvals, logs, and audit events.
-- Run specs and workflows that can be created ad hoc, derived from templates, or scheduled.
-- Execution adapters for Ansible, Terraform/OpenTofu, shell, PowerShell, and Python built over shared runner primitives.
-- Remote runners with tags, heartbeats, leases, capability reporting, and log streaming.
-- Corporate identity through local auth, OIDC, SAML, LDAP, service accounts, scoped API tokens, and mandatory audit trails.
+## Flow
 
-## Stack
+1. A local session or provisioned OIDC identity authenticates a user.
+2. The API applies global and project authorization, writes audit records, and
+   stores work in PostgreSQL.
+3. A runner claims a fenced lease and executes an allowed shell or Docker
+   Compose plan sequentially.
+4. The runner reports logs, artifacts, completion, and provenance. Lease and
+   replay checks stop stale runners from completing newer work.
 
-- Language: Go for API, CLI, runner, scheduler, and release binaries.
-- HTTP: Go `net/http` with explicit middleware and versioned route groups.
-- Storage: PostgreSQL first for production, SQLite for local/small installs. The scaffold starts with repository interfaces and an in-memory store.
-- UI: Embedded static HTML/CSS/ES modules. This avoids npm runtime exposure and keeps the server deployable as one binary.
-- Packaging: `go build` and reproducible release scripts. No proprietary build or hosting requirement.
+List APIs use bounded offset pagination (`limit`, `offset`, `count`, `total`).
+Treat IDs as opaque and use [openapi.yaml](../openapi.yaml) as the contract.
 
-## Dependency Policy
+## Deployment shape
 
-Dependencies are allowed only when they are popular, actively maintained, open source, and hard to implement safely in-house.
+Development Compose owns a disposable PostgreSQL service, migration, and seed
+fixture. Production is a separate profile: migrations use an owner credential,
+the server uses an application credential, and the database is reachable only
+on an internal network. The server joins the external proxy network without a
+published host port. This arrangement keeps database administration out of the
+ordinary application process.
 
-Expected dependency classes:
+## Trust boundaries
 
-- Database driver and migrations.
-- OIDC/OAuth2, SAML, and LDAP protocol libraries.
-- SSH and Git libraries where shelling out is weaker or harder to sandbox.
-- Cryptography only through Go standard library or widely used audited packages.
+Control-plane state is separate from runners. Runner credentials, repository
+access, and file-backed secrets remain at the runner boundary; secret values
+are excluded from API responses, run specifications, audit records, logs, and
+artifact metadata. Production uses separate owner and app database roles,
+strict secret files, an internal database network, and a public proxy network.
 
-Avoid:
+OIDC accepts one configured issuer and exact pre-provisioned issuer/subject
+bindings. It does not infer identity or authorization from claims; local
+passwords remain the recovery path.
 
-- Large UI component frameworks.
-- Proprietary SaaS SDKs as core dependencies.
-- Optional enterprise features hidden behind closed-source packages.
-- Runtime code generation.
+## Current limits
 
-## Backend Modules
-
-- `api`: HTTP routing, request parsing, response envelopes, error mapping.
-- `app`: orchestration use cases and transaction boundaries.
-- `domain`: stable business types.
-- `store`: persistence interfaces.
-- `auth`: identity providers, session issuance, token verification, RBAC checks.
-- `runner`: run-spec registry, shared execution primitives, remote execution protocol, and worker lifecycle.
-- `secrets`: pluggable secret providers.
-- `audit`: append-only event writer.
-
-## Execution Model
-
-Templates are configuration sources, not the execution model. Every run captures
-an immutable `RunSpec` with a type and typed inputs. A run may reference a
-template, but the template reference is optional so ad-hoc, scheduled, and
-workflow-generated runs do not require synthetic template records.
-
-`RunSpec` also carries the shared runner primitive plan inputs: repository
-checkout metadata, process command metadata, artifact declarations, and secret
-binding references. Secret bindings are references only; secret values must not
-be serialized into run specs, audit events, logs, or primitive plans.
-
-Runner adapters must be thin wrappers over shared primitives:
-
-- Git checkout and repository provenance.
-- Process execution, cancellation, timeout, and exit-code capture.
-- Artifact collection and retention metadata.
-- Secret injection without logging secret values.
-
-Workflow support should compose multiple `RunSpec` steps into ordered, parallel,
-conditional, and approval-gated execution plans.
-
-The control-plane API exposes repository records and a runner primitive plan for
-a run. The future runner implementation should consume that plan instead of each
-adapter reimplementing checkout, process, artifact, and secret handling.
-
-## Corporate Feature Set
-
-- Auth: local bootstrap admin, OIDC, SAML, LDAP bind/search, SCIM-ready user model.
-- Authorization: organization/project roles, resource scopes, service accounts, API token scopes.
-- Audit: login, token creation, credential access, template change, approval, run start/stop, secret read, runner registration.
-- Secrets: encrypted database secrets initially; later HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, GCP Secret Manager via optional adapters.
-- Operations: health checks, metrics, structured logs, backup/restore, config validation, readiness probes.
-- Governance: approvals, environment locks, policy hooks, signed runner registration, immutable run logs.
-
-## API Principles
-
-- `/api/v1` only for public API.
-- JSON by default.
-- Stable IDs are opaque strings.
-- Pagination uses cursor fields.
-- Mutations return the changed resource.
-- Every user-visible mutation writes an audit event.
-
-## Release Shape
-
-The default release should include:
-
-- `nerocd` server/CLI binary for Linux, macOS, and Windows on amd64 and arm64.
-- `nerocd-runner` can be the same binary invoked as `nerocd runner`, or a copied binary name for operator convenience.
-- Container image built from the same binary.
-- SBOM and checksums generated by open tooling.
+NeroCD does not claim SAML, LDAP, SCIM, group mapping, automatic provisioning,
+multi-provider OIDC, general scheduling, parallel workflows, or production
+encrypted secret storage. These are product limits, not configuration switches.

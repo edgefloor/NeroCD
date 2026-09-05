@@ -1,36 +1,20 @@
 # Local release evidence
 
-`make release-evidence-gate` is a local, fail-closed evidence check. It
-requires a completely clean Git worktree and performs no registry push, image
-load, signing, upload, tag, or publication. It derives the version, revision,
-and `SOURCE_DATE_EPOCH` from Git; builds trimpath Linux amd64/arm64 binaries;
-exports a local multi-platform OCI archive with Buildx; verifies the final
-image's non-root entrypoint, pinned bases, and absence of source maps, source,
-development seed, and legacy default credential material; and writes a
-CycloneDX SBOM, checksums, canonical local manifest, and explicitly unsigned
-in-toto/SLSA-shaped provenance statement under `artifacts/release-evidence/`.
+`make release-evidence-gate` is a local, fail-closed consistency check. It
+requires a clean worktree and does not tag, push, sign, upload, or publish. It
+builds Linux amd64/arm64 artifacts, checks the image and release contents, and
+writes unsigned local evidence under `artifacts/release-evidence/`.
 
-The provenance and manifest are intentionally marked
-`UNTRUSTED_LOCAL_NO_SIGNATURE`. They are useful for local consistency and
-reproducibility review, never as a release attestation.
+Those records are marked `UNTRUSTED_LOCAL_NO_SIGNATURE`. They help review a
+candidate but are never release attestations or publication evidence. CI is the
+only path that signs, publishes, and verifies a release.
 
-For a dirty development checkout, use:
+`make release-evidence-synthetic-gate` uses a temporary synthetic commit for
+dirty-source experiments. Its output is `synthetic_untrusted` and must never be
+published or described as evidence for a repository revision. It is prohibited
+when the checkout contains `.delta`; do not create a local synthetic archive in
+that case.
 
-```sh
-make release-evidence-synthetic-gate
-```
-
-This copies the current source (including untracked source files) into a
-temporary repository, creates one disposable local commit, and runs the exact
-same gate. Its outputs are labelled `synthetic_untrusted`; they must not be
-published or described as evidence for the source repository's release commit.
-
-The gate intentionally runs every listed accepted local check through
-`release-evidence-accepted-gates`. Missing Docker Buildx, emulation, browser,
-or a required executable is an error rather than a skip. It also builds twice,
-compares the binary/SBOM and canonical OCI manifest graph, and proves that a
-tampered binary no longer matches the generated checksums.
-
-CI remains responsible for trusted release signing, identity-bound provenance,
-registry publication, retention, and any public release workflow. Those steps
-are deliberately outside this local slice.
+The gate runs its accepted local inventory and fails when required Buildx,
+emulation, browser, or executable dependencies are missing. It also compares
+repeat outputs and detects a tampered binary/checksum mismatch.

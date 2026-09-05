@@ -36,7 +36,8 @@ mounted. A Docker socket grants root-equivalent host access, so never add it to
 this service.
 
 ```sh
-docker compose --profile tools run --rm \
+docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml \
+  --profile tools run --rm \
   -v /secure/nerocd-backups:/backups \
 database-tools backup --output-dir /backups
 ```
@@ -118,7 +119,8 @@ selected backup directory read-only, and invoke the same offline tool with the
 owner credential. Do not point it at an existing stack:
 
 ```sh
-docker compose --profile tools run --rm \
+docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml \
+  --profile tools run --rm \
   -v /secure/nerocd-backups/backup-YYYYMMDDTHHMMSSZ:/restore:ro \
   -v /secure/runner-files:/runner-files:ro \
 database-tools restore --input-dir /restore --runner-file-root /runner-files \
