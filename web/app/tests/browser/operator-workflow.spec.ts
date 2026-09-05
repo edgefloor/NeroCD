@@ -114,6 +114,46 @@ test("authenticated navigation and sign out work with runtime-only credentials",
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("dashboard route states retain the shell and retry a transient loader failure", async ({ page }) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
+  const dashboardRequests = /\/api\/v1\/(health|projects|templates|runs|approvals|run-logs)(?:\?|$)/;
+  await page.route(dashboardRequests, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1_600));
+    try { await route.continue(); } catch { /* navigation cancelled this delayed request */ }
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
+  await expect(page.getByLabel("Loading dashboard")).toBeVisible({ timeout: 3_500 });
+  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await page.unroute(dashboardRequests);
+
+  await page.getByRole("link", { name: "Projects" }).click();
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await page.getByRole("link", { name: "Home" }).click();
+  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+
+  let failHealth = true;
+  await page.route("**/api/v1/health", async (route) => {
+    if (failHealth) await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "temporary dashboard failure" }) });
+    else await route.continue();
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("alert")).toContainText("We could not load the dashboard", { timeout: 16_000 });
+  await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
+  failHealth = false;
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  failHealth = true;
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByRole("alert")).toContainText("We could not load the dashboard", { timeout: 16_000 });
+  failHealth = false;
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await page.unroute("**/api/v1/health");
+});
+
 test("settings cards contain controls and wrap long membership text on narrow screens", async ({ page }) => {
   await page.goto("/settings");
   await signIn(page);
@@ -177,7 +217,7 @@ test("dashboard reports unfinished work truthfully and shared cards keep bounded
   await page.reload({ waitUntil: "networkidle" });
 
   await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
-  await expect(page.getByText(/\d+ unfinished runs/)).toBeVisible();
+  await expect(page.getByText(/\d+ unfinished run(?:s)?/)).toBeVisible();
   await expect(page.getByText("No approvals are waiting.")).toBeVisible();
   await expect(page.getByText("All Systems Green")).toHaveCount(0);
   await expect(page.getByText("currently executing")).toHaveCount(0);

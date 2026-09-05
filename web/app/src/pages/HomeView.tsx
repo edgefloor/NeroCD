@@ -73,9 +73,9 @@ export function HomeView({
         <div className="space-y-2">
           <h2 id="current-activity-heading" className="text-xl font-semibold tracking-tight">Current activity</h2>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-            <span className={cn("inline-flex items-center gap-1.5", summary.liveRunCount > 0 && "text-warning")}><Activity className="h-3.5 w-3.5" />{summary.liveRunCount} unfinished runs</span>
-            <span className={cn("inline-flex items-center gap-1.5", pending.length > 0 && "text-warning")}><Clock className="h-3.5 w-3.5" />{pending.length} pending approvals</span>
-            <span className={cn("inline-flex items-center gap-1.5", failed.length > 0 && "text-destructive")}><AlertCircle className="h-3.5 w-3.5" />{failed.length} failed runs</span>
+            <span className={cn("inline-flex items-center gap-1.5", summary.liveRunCount > 0 && "text-warning")}><Activity className="h-3.5 w-3.5" />{summary.liveRunCount} unfinished run{summary.liveRunCount === 1 ? "" : "s"}</span>
+            <span className={cn("inline-flex items-center gap-1.5", pending.length > 0 && "text-warning")}><Clock className="h-3.5 w-3.5" />{pending.length} pending approval{pending.length === 1 ? "" : "s"}</span>
+            <span className={cn("inline-flex items-center gap-1.5", failed.length > 0 && "text-destructive")}><AlertCircle className="h-3.5 w-3.5" />{failed.length} failed run{failed.length === 1 ? "" : "s"}</span>
           </div>
         </div>
         <dl aria-label="Inventory" className="grid grid-cols-3 gap-x-6 gap-y-2">
