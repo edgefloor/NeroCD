@@ -88,7 +88,16 @@ func (s *MemoryStore) OffboardUser(ctx context.Context, request UserOffboardingR
 			revokedTokens++
 		}
 	}
-	request.Audit.Metadata = auditMetadata(request.Audit.Metadata, map[string]any{"revoked_sessions": revokedSessions, "revoked_api_tokens": revokedTokens})
+	revokedServiceAccounts := 0
+	for i := range s.serviceAccounts {
+		if s.serviceAccounts[i].OwnerUserID == user.ID && s.serviceAccounts[i].Status == domain.ServiceAccountActive {
+			s.serviceAccounts[i].Status = domain.ServiceAccountRevoked
+			s.serviceAccounts[i].UpdatedAt = archivedAt
+			s.serviceAccounts[i].RevokedAt = &archivedAt
+			revokedServiceAccounts++
+		}
+	}
+	request.Audit.Metadata = auditMetadata(request.Audit.Metadata, map[string]any{"revoked_sessions": revokedSessions, "revoked_api_tokens": revokedTokens, "revoked_service_accounts": revokedServiceAccounts})
 	s.auditEvents = append([]domain.AuditEvent{request.Audit}, s.auditEvents...)
-	return domain.UserOffboardingResult{User: user, RevokedSessions: revokedSessions, RevokedAPITokens: revokedTokens}, nil
+	return domain.UserOffboardingResult{User: user, RevokedSessions: revokedSessions, RevokedAPITokens: revokedTokens, RevokedServiceAccounts: revokedServiceAccounts}, nil
 }

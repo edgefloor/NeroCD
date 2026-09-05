@@ -80,6 +80,10 @@ func (s *PostgresStore) OffboardUser(ctx context.Context, request UserOffboardin
 		return domain.UserOffboardingResult{}, fmt.Errorf("disable user: %w", err)
 	}
 	revokedAt := request.RevokedAt
+	revokedServiceAccounts, err := q.RevokeServiceAccountsOwnedByUser(ctx, sqlcgen.RevokeServiceAccountsOwnedByUserParams{OwnerUserID: user.ID, RevokedAt: &revokedAt})
+	if err != nil {
+		return domain.UserOffboardingResult{}, fmt.Errorf("revoke owned service accounts: %w", err)
+	}
 	revokedSessions, err := q.RevokeSessionsForUser(ctx, sqlcgen.RevokeSessionsForUserParams{UserID: user.ID, RevokedAt: &revokedAt})
 	if err != nil {
 		return domain.UserOffboardingResult{}, fmt.Errorf("revoke user sessions: %w", err)
@@ -88,12 +92,12 @@ func (s *PostgresStore) OffboardUser(ctx context.Context, request UserOffboardin
 	if err != nil {
 		return domain.UserOffboardingResult{}, fmt.Errorf("revoke user api tokens: %w", err)
 	}
-	request.Audit.Metadata = auditMetadata(request.Audit.Metadata, map[string]any{"revoked_sessions": revokedSessions, "revoked_api_tokens": revokedTokens})
+	request.Audit.Metadata = auditMetadata(request.Audit.Metadata, map[string]any{"revoked_sessions": revokedSessions, "revoked_api_tokens": revokedTokens, "revoked_service_accounts": revokedServiceAccounts})
 	if err = createAuditWithQueries(ctx, q, request.Audit); err != nil {
 		return domain.UserOffboardingResult{}, fmt.Errorf("create user offboarding audit: %w", err)
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return domain.UserOffboardingResult{}, fmt.Errorf("commit user offboarding: %w", err)
 	}
-	return domain.UserOffboardingResult{User: userFromSQLC(row), RevokedSessions: int(revokedSessions), RevokedAPITokens: int(revokedTokens)}, nil
+	return domain.UserOffboardingResult{User: userFromSQLC(row), RevokedSessions: int(revokedSessions), RevokedAPITokens: int(revokedTokens), RevokedServiceAccounts: int(revokedServiceAccounts)}, nil
 }

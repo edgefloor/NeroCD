@@ -54,9 +54,10 @@ type User struct {
 
 // UserOffboardingResult reports the durable effects of an offboarding request.
 type UserOffboardingResult struct {
-	User             User `json:"user"`
-	RevokedSessions  int  `json:"revoked_sessions"`
-	RevokedAPITokens int  `json:"revoked_api_tokens"`
+	User                   User `json:"user"`
+	RevokedSessions        int  `json:"revoked_sessions"`
+	RevokedAPITokens       int  `json:"revoked_api_tokens"`
+	RevokedServiceAccounts int  `json:"revoked_service_accounts"`
 }
 
 // Session is a revocable browser or local-session credential record.
@@ -73,17 +74,39 @@ type Session struct {
 
 // APIToken is a hashed, role-scoped programmatic credential record.
 type APIToken struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Kind       string     `json:"kind"`
-	TokenHash  string     `json:"-"`
-	Roles      []string   `json:"roles"`
-	Status     string     `json:"status"`
-	CreatedBy  string     `json:"created_by"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Kind             string     `json:"kind"`
+	TokenHash        string     `json:"-"`
+	Roles            []string   `json:"roles"`
+	Status           string     `json:"status"`
+	CreatedBy        string     `json:"created_by"`
+	ServiceAccountID *string    `json:"service_account_id,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+}
+
+// ServiceAccount is a stable, project-scoped automation principal owned by a
+// human user. Credentials rotate independently of this identity.
+type ServiceAccount struct {
+	ID          string     `json:"id"`
+	ProjectID   string     `json:"project_id"`
+	OwnerUserID string     `json:"owner_user_id"`
+	Name        string     `json:"name"`
+	Role        string     `json:"role"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+}
+
+// ManagedServiceAccountCredential joins safe account metadata to the hashed
+// credential that authenticated it. TokenHash remains excluded from JSON.
+type ManagedServiceAccountCredential struct {
+	ServiceAccount ServiceAccount
+	APIToken       APIToken
 }
 
 // TaskTemplate defines a reusable project automation request.

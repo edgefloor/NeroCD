@@ -35,6 +35,7 @@ type Service struct {
 	users                store.UserRepository
 	sessions             store.SessionRepository
 	apiTokens            store.APITokenRepository
+	serviceAccounts      store.ServiceAccountRepository
 	projects             store.ProjectRepository
 	members              store.ProjectMemberRepository
 	templates            store.TemplateRepository
@@ -99,6 +100,10 @@ func NewService(deps Dependencies) (*Service, error) {
 	if deps.APITokens == nil {
 		missing = append(missing, "APITokens")
 	}
+	serviceAccounts, hasServiceAccounts := deps.APITokens.(store.ServiceAccountRepository)
+	if deps.APITokens != nil && !hasServiceAccounts {
+		missing = append(missing, "ServiceAccounts")
+	}
 	if deps.Projects == nil {
 		missing = append(missing, "Projects")
 	}
@@ -147,6 +152,7 @@ func NewService(deps Dependencies) (*Service, error) {
 		users:                deps.Users,
 		sessions:             deps.Sessions,
 		apiTokens:            deps.APITokens,
+		serviceAccounts:      serviceAccounts,
 		projects:             deps.Projects,
 		members:              deps.Members,
 		templates:            deps.Templates,
@@ -582,6 +588,19 @@ func (s *Service) requireProjectRole(ctx context.Context, principal auth.Princip
 	if isSystemAdmin(principal) {
 		return nil
 	}
+	if principal.Provider == domain.PrincipalServiceAccount {
+		accountProjectID, role, err := s.serviceAccounts.ServiceAccountProjectRole(ctx, principal.ID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return auth.ErrForbidden
+			}
+			return err
+		}
+		if accountProjectID == projectID && roleRank(role) >= roleRank(minimumRole) {
+			return nil
+		}
+		return auth.ErrForbidden
+	}
 	members, err := s.members.ListProjectMembers(ctx, projectID)
 	if err != nil {
 		return err
@@ -594,14 +613,21 @@ func (s *Service) requireProjectRole(ctx context.Context, principal auth.Princip
 	return auth.ErrForbidden
 }
 
-func (s *Service) allowedProjects(ctx context.Context, userID string) (map[string]string, error) {
+func (s *Service) allowedProjects(ctx context.Context, principalID string) (map[string]string, error) {
+	projectID, role, serviceAccountErr := s.serviceAccounts.ServiceAccountProjectRole(ctx, principalID)
+	if serviceAccountErr == nil {
+		return map[string]string{projectID: role}, nil
+	}
+	if !errors.Is(serviceAccountErr, store.ErrNotFound) {
+		return nil, serviceAccountErr
+	}
 	members, err := s.members.ListProjectMembers(ctx, "")
 	if err != nil {
 		return nil, err
 	}
 	allowed := map[string]string{}
 	for _, member := range members {
-		if member.UserID == userID {
+		if member.UserID == principalID {
 			allowed[member.ProjectID] = member.Role
 		}
 	}

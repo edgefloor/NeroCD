@@ -19,17 +19,18 @@ type AccessKey struct {
 }
 
 type ApiToken struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Kind       string     `json:"kind"`
-	TokenHash  string     `json:"token_hash"`
-	Roles      []string   `json:"roles"`
-	Status     string     `json:"status"`
-	CreatedBy  string     `json:"created_by"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  *time.Time `json:"expires_at"`
-	LastUsedAt *time.Time `json:"last_used_at"`
-	RevokedAt  *time.Time `json:"revoked_at"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Kind             string     `json:"kind"`
+	TokenHash        string     `json:"token_hash"`
+	Roles            []string   `json:"roles"`
+	Status           string     `json:"status"`
+	CreatedBy        string     `json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ExpiresAt        *time.Time `json:"expires_at"`
+	LastUsedAt       *time.Time `json:"last_used_at"`
+	RevokedAt        *time.Time `json:"revoked_at"`
+	ServiceAccountID *string    `json:"service_account_id"`
 }
 
 type Approval struct {
@@ -174,6 +175,12 @@ type OidcLoginFlow struct {
 	ClientID     string    `json:"client_id"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type Principal struct {
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Project struct {
@@ -362,6 +369,18 @@ type Service struct {
 	Profiles     []string  `json:"profiles"`
 	OwnerID      string    `json:"owner_id"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type ServiceAccount struct {
+	ID          string     `json:"id"`
+	ProjectID   string     `json:"project_id"`
+	OwnerUserID string     `json:"owner_user_id"`
+	Name        string     `json:"name"`
+	Role        string     `json:"role"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	RevokedAt   *time.Time `json:"revoked_at"`
 }
 
 type Session struct {

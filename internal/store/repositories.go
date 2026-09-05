@@ -164,6 +164,18 @@ type APITokenRepository interface {
 	RevokeAPIToken(context.Context, string, time.Time, ...MutationOption) (domain.APIToken, error)
 }
 
+// ServiceAccountRepository owns managed automation identities and their
+// credentials. Compound mutations are atomic and include their audit event.
+type ServiceAccountRepository interface {
+	ListServiceAccounts(context.Context, string, Page) (PageResult[domain.ServiceAccount], error)
+	GetManagedServiceAccountCredentialByHash(context.Context, string, time.Time) (domain.ManagedServiceAccountCredential, error)
+	ServiceAccountProjectRole(context.Context, string) (string, string, error)
+	CreateServiceAccount(context.Context, domain.ServiceAccount, domain.APIToken, domain.AuditEvent) (domain.ServiceAccount, error)
+	UpdateServiceAccount(context.Context, string, string, string, domain.AuditEvent) (domain.ServiceAccount, error)
+	RotateServiceAccountCredential(context.Context, string, domain.APIToken, time.Time, domain.AuditEvent) (domain.APIToken, error)
+	RevokeServiceAccount(context.Context, string, time.Time, domain.AuditEvent) (domain.ServiceAccount, error)
+}
+
 // ApprovalRepository persists run approval decisions.
 type ApprovalRepository interface {
 	ListApprovals(context.Context, string) ([]domain.Approval, error)

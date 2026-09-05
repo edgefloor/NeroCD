@@ -202,7 +202,7 @@ func (s *MemoryStore) GetAPITokenByHash(_ context.Context, tokenHash string, now
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, token := range s.apiTokens {
-		if token.TokenHash != tokenHash || token.Status != domain.TokenActive || token.RevokedAt != nil {
+		if token.TokenHash != tokenHash || token.ServiceAccountID != nil || token.Status != domain.TokenActive || token.RevokedAt != nil {
 			continue
 		}
 		if token.ExpiresAt != nil && !token.ExpiresAt.After(now) {

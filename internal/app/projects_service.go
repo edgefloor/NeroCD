@@ -83,6 +83,19 @@ func (s *Service) ProjectRole(ctx context.Context, projectID string) (domain.Pro
 	if isSystemAdmin(principal) {
 		return projectRole(projectID, domain.RoleSystemAdmin), nil
 	}
+	if principal.Provider == domain.PrincipalServiceAccount {
+		accountProjectID, role, roleErr := s.serviceAccounts.ServiceAccountProjectRole(ctx, principal.ID)
+		if roleErr != nil {
+			if errors.Is(roleErr, store.ErrNotFound) {
+				return domain.ProjectRole{}, auth.ErrForbidden
+			}
+			return domain.ProjectRole{}, roleErr
+		}
+		if accountProjectID != projectID {
+			return domain.ProjectRole{}, auth.ErrForbidden
+		}
+		return projectRole(projectID, role), nil
+	}
 	members, err := s.members.ListProjectMembers(ctx, projectID)
 	if err != nil {
 		return domain.ProjectRole{}, err

@@ -14,7 +14,11 @@ func userFromSQLC(row sqlcgen.User) domain.User {
 }
 
 func apiTokenFromSQLC(row sqlcgen.ApiToken) domain.APIToken {
-	return domain.APIToken{ID: row.ID, Name: row.Name, Kind: row.Kind, TokenHash: row.TokenHash, Roles: append([]string(nil), row.Roles...), Status: row.Status, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt, LastUsedAt: row.LastUsedAt, RevokedAt: row.RevokedAt}
+	return domain.APIToken{ID: row.ID, Name: row.Name, Kind: row.Kind, TokenHash: row.TokenHash, Roles: append([]string(nil), row.Roles...), Status: row.Status, CreatedBy: row.CreatedBy, ServiceAccountID: row.ServiceAccountID, CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt, LastUsedAt: row.LastUsedAt, RevokedAt: row.RevokedAt}
+}
+
+func serviceAccountFromSQLC(row sqlcgen.ServiceAccount) domain.ServiceAccount {
+	return domain.ServiceAccount{ID: row.ID, ProjectID: row.ProjectID, OwnerUserID: row.OwnerUserID, Name: row.Name, Role: row.Role, Status: row.Status, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, RevokedAt: row.RevokedAt}
 }
 
 func projectFromSQLC(row sqlcgen.Project) domain.Project {
