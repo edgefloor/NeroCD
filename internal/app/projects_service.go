@@ -143,6 +143,9 @@ func (s *Service) CreateProject(ctx context.Context, input ProjectInput) (domain
 	if err != nil {
 		return domain.Project{}, err
 	}
+	if principal.Provider == domain.PrincipalServiceAccount {
+		return domain.Project{}, auth.ErrForbidden
+	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return domain.Project{}, InvalidInput(errors.New("name is required"))
@@ -170,6 +173,9 @@ func (s *Service) UpsertProjectMember(ctx context.Context, input ProjectMemberIn
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
 		return domain.ProjectMember{}, err
+	}
+	if principal.Provider == domain.PrincipalServiceAccount {
+		return domain.ProjectMember{}, auth.ErrForbidden
 	}
 	projectID := strings.TrimSpace(input.ProjectID)
 	email := strings.TrimSpace(strings.ToLower(input.Email))

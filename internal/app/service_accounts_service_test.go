@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -113,6 +115,74 @@ func TestServiceAccountManagementRequiresHumanOwnerAndBoundedExpiry(t *testing.T
 	legacyPrincipal, err := service.AuthenticateSessionToken(t.Context(), legacy.Token)
 	if err != nil || legacyPrincipal.ID != legacy.APIToken.ID || legacyPrincipal.Provider != domain.PrincipalAPIToken || len(legacyPrincipal.Roles) != 1 || legacyPrincipal.Roles[0] != domain.RoleRunnerAdmin {
 		t.Fatalf("legacy principal = %#v, %v", legacyPrincipal, err)
+	}
+}
+
+func TestServiceAccountCannotAdministerProjectsOrHumanMemberships(t *testing.T) {
+	service, mem := newServiceAccountTestService(t)
+	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	platformAccount, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "platform owner bot", Role: domain.RoleOwner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	securityAccount, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_security", Name: "security owner bot", Role: domain.RoleOwner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformPrincipal, err := service.AuthenticateSessionToken(t.Context(), platformAccount.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	securityPrincipal, err := service.AuthenticateSessionToken(t.Context(), securityAccount.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformCtx := auth.WithPrincipal(t.Context(), platformPrincipal)
+	securityCtx := auth.WithPrincipal(t.Context(), securityPrincipal)
+
+	projectsBefore, err := mem.ListProjects(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	membersBefore, err := mem.ListProjectMembers(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range []struct {
+		name  string
+		ctx   context.Context
+		input ProjectMemberInput
+	}{
+		{name: "add human", ctx: platformCtx, input: ProjectMemberInput{ProjectID: "proj_platform", Email: "viewer@example.local", Role: domain.RoleViewer}},
+		{name: "promote human", ctx: securityCtx, input: ProjectMemberInput{ProjectID: "proj_security", Email: "viewer@example.local", Role: domain.RoleOwner}},
+		{name: "demote human", ctx: securityCtx, input: ProjectMemberInput{ProjectID: "proj_security", Email: "admin@example.local", Role: domain.RoleViewer}},
+	} {
+		t.Run(attempt.name, func(t *testing.T) {
+			if _, err := service.UpsertProjectMember(attempt.ctx, attempt.input); !errors.Is(err, auth.ErrForbidden) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+	if _, err := service.CreateProject(securityCtx, ProjectInput{Name: "forbidden project"}); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("project create error = %v", err)
+	}
+	projectsAfter, err := mem.ListProjects(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	membersAfter, err := mem.ListProjectMembers(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(projectsAfter, projectsBefore) || !reflect.DeepEqual(membersAfter, membersBefore) {
+		t.Fatalf("administration state changed: projects=%#v members=%#v", projectsAfter, membersAfter)
+	}
+	visible, err := service.ListProjects(securityCtx)
+	if err != nil || len(visible) != 1 || visible[0].ID != "proj_security" {
+		t.Fatalf("allowed metadata read = %#v, %v", visible, err)
+	}
+	if _, err := service.RequestRunWithSpec(securityCtx, RunRequestInput{ProjectID: "proj_security", RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "true"}}}); err != nil {
+		t.Fatalf("allowed run: %v", err)
 	}
 }
 

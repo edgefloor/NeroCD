@@ -115,3 +115,53 @@ func TestServiceAccountHTTPRejectsUnboundedExpiryAndUnknownFields(t *testing.T) 
 		})
 	}
 }
+
+func TestServiceAccountHTTPCannotAdministerProjectsOrHumanMemberships(t *testing.T) {
+	server, _ := newTestServer()
+	adminToken := createTestSession(t, server)
+	createAccount := func(projectID, name string) app.CreatedServiceAccount {
+		t.Helper()
+		response := serviceAccountRequest(t, server, http.MethodPost, "/api/v1/service-accounts", adminToken, `{"project_id":"`+projectID+`","name":"`+name+`","role":"owner"}`)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("create account status=%d body=%s", response.Code, response.Body.String())
+		}
+		var created app.CreatedServiceAccount
+		if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		return created
+	}
+	platformAccount := createAccount("proj_platform", "HTTP platform owner")
+	securityAccount := createAccount("proj_security", "HTTP security owner")
+	projectsBefore := serviceAccountRequest(t, server, http.MethodGet, "/api/v1/projects?limit=100", adminToken, "").Body.String()
+	membersBefore := serviceAccountRequest(t, server, http.MethodGet, "/api/v1/project-members?limit=100", adminToken, "").Body.String()
+
+	for _, attempt := range []struct {
+		name  string
+		token string
+		body  string
+	}{
+		{name: "add human", token: platformAccount.Token, body: `{"project_id":"proj_platform","email":"viewer@example.local","role":"viewer"}`},
+		{name: "promote human", token: securityAccount.Token, body: `{"project_id":"proj_security","email":"viewer@example.local","role":"owner"}`},
+	} {
+		t.Run(attempt.name, func(t *testing.T) {
+			response := serviceAccountRequest(t, server, http.MethodPost, "/api/v1/project-members", attempt.token, attempt.body)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	createProject := serviceAccountRequest(t, server, http.MethodPost, "/api/v1/projects", securityAccount.Token, `{"name":"forbidden HTTP project"}`)
+	if createProject.Code != http.StatusForbidden {
+		t.Fatalf("project create status=%d body=%s", createProject.Code, createProject.Body.String())
+	}
+	projectsAfter := serviceAccountRequest(t, server, http.MethodGet, "/api/v1/projects?limit=100", adminToken, "").Body.String()
+	membersAfter := serviceAccountRequest(t, server, http.MethodGet, "/api/v1/project-members?limit=100", adminToken, "").Body.String()
+	if projectsAfter != projectsBefore || membersAfter != membersBefore {
+		t.Fatalf("administration state changed: projects=%s members=%s", projectsAfter, membersAfter)
+	}
+	role := serviceAccountRequest(t, server, http.MethodGet, "/api/v1/project-role?project_id=proj_security", securityAccount.Token, "")
+	if role.Code != http.StatusOK {
+		t.Fatalf("allowed role read status=%d body=%s", role.Code, role.Body.String())
+	}
+}
