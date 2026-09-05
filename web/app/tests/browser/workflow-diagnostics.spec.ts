@@ -59,6 +59,9 @@ test("run detail keeps declared workflow diagnostics visible and contained", asy
   await detailLink.click();
   const logs = page.getByRole("dialog", { name: `run ${run.id}` });
   await expect(logs).toBeVisible();
+  await page.reload();
+  await expect(page).toHaveURL(new RegExp(`/runs/${run.id}$`));
+  await expect(logs).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(logs).toHaveCount(0);
   const diagnostics = page.getByRole("heading", { name: "Workflow steps" }).locator("xpath=ancestor::*[@data-slot='card']");
