@@ -19,6 +19,37 @@ pass=false
 : >"$evidence"
 record(){ printf '%s\n' "$*" >>"$evidence"; }
 fail(){ trap - ERR; record "FAIL: $*"; printf 'backup-restore: %s\n' "$*" >&2; exit 1; }
+browser_phase(){
+  local phase output failure log diagnostic payload
+  phase=$1
+  output=$2
+  failure=$3
+  log="$dir/browser-$phase.log"
+  if (cd "$root/web/app" && bun "$root/acceptance/system-operations/browser.mjs" "$base" "$dir/browser.credentials" "$phase" "$output") >"$log" 2>&1; then return 0; fi
+  diagnostic=$(rg -m1 '^NEROCD_BROWSER_DIAGNOSTIC ' "$log" || true)
+  payload=${diagnostic#NEROCD_BROWSER_DIAGNOSTIC }
+  if [[ "$diagnostic" == NEROCD_BROWSER_DIAGNOSTIC\ * ]] && diagnostic=$(jq -cer --arg phase "$phase" '
+    . as $diagnostic |
+    if (type == "object" and
+      ($diagnostic | keys | sort) == ["backup_outcome", "checkpoint", "error_count", "forbidden_request_count", "http_status", "phase"] and
+      $diagnostic.phase == $phase and
+      (["browser_launch", "required_navigation", "bootstrap_status", "sign_in_navigation", "sign_in_submit", "operations_view", "command_palette", "mobile_navigation", "backup_card", "operations_reload", "disclosure_check"] | index($diagnostic.checkpoint) != null) and
+      ($diagnostic.http_status | type == "number" and floor == . and . >= 0 and . <= 599) and
+      ($diagnostic.backup_outcome == null or $diagnostic.backup_outcome == "none" or $diagnostic.backup_outcome == "success" or $diagnostic.backup_outcome == "failure") and
+      ($diagnostic.error_count | type == "number" and floor == . and . >= 0) and
+      ($diagnostic.forbidden_request_count | type == "number" and floor == . and . >= 0)) then
+      {phase: $diagnostic.phase, checkpoint: $diagnostic.checkpoint, http_status: $diagnostic.http_status, backup_outcome: $diagnostic.backup_outcome, error_count: $diagnostic.error_count, forbidden_request_count: $diagnostic.forbidden_request_count}
+    else empty end
+  ' <<<"$payload") && [[ "$diagnostic" != *$'\n'* ]]; then
+    diagnostic="NEROCD_BROWSER_DIAGNOSTIC $diagnostic"
+    record "$diagnostic"
+    printf 'backup-restore: %s\n' "$diagnostic" >&2
+  else
+    record "NEROCD_BROWSER_DIAGNOSTIC {\"phase\":\"$phase\",\"checkpoint\":\"diagnostic_contract\",\"http_status\":0,\"backup_outcome\":null,\"error_count\":0,\"forbidden_request_count\":0}"
+    printf 'backup-restore: NEROCD_BROWSER_DIAGNOSTIC {"phase":"%s","checkpoint":"diagnostic_contract","http_status":0,"backup_outcome":null,"error_count":0,"forbidden_request_count":0}\n' "$phase" >&2
+  fi
+  fail "$failure"
+}
 cleanup(){
   local code=$?
   trap - ERR
@@ -143,7 +174,7 @@ for _ in {1..30}; do curl -kfsS --max-time 3 "$base/api/v1/health" >/dev/null 2>
 if ! curl -kfsS --max-time 3 "$base/api/v1/health" | jq -e '.status == "ok"' >/dev/null; then docker logs "$tls_proxy" 2>&1 | tail -n 40 >>"$evidence" || true; fail 'TLS production browser seam was not live'; fi
 admin_email="backup-${suffix}@example.invalid"
 umask 077; printf '%s\n%s\n' "$admin_email" "$bootstrap_password" >"$dir/browser.credentials"; chmod 0600 "$dir/browser.credentials"
-cd "$root/web/app" && bun "$root/acceptance/system-operations/browser.mjs" "$base" "$dir/browser.credentials" required "$dir/browser-required.json" >"$dir/browser-required.log" 2>&1 || { tail -n 40 "$dir/browser-required.log" >>"$evidence"; fail 'browser did not render CLI-only pre-bootstrap guidance'; }
+browser_phase required "$dir/browser-required.json" 'browser did not render CLI-only pre-bootstrap guidance'
 run_app -v "$dir/bootstrap-password:/runtime/bootstrap-password:ro" "$image_ref" bootstrap-admin --email "$admin_email" --name 'Backup Admin' --password-file /runtime/bootstrap-password >"$dir/bootstrap.log" 2>&1 || fail 'supported source bootstrap failed'
 api_post(){
   local path=$1 body=$2 token=${3:-}
@@ -194,7 +225,7 @@ docker exec -i "$source" psql -v ON_ERROR_STOP=1 -U "$owner" -d nerocd >"$dir/tr
 INSERT INTO task_runs (id, project_id, status, requested_by) VALUES ('backup-run', '$project_id', 'running', '$user_id');
 INSERT INTO run_leases (id, run_id, runner_id, status, expires_at, attempt, fence) VALUES ('backup-lease', 'backup-run', '$runner_id', 'active', clock_timestamp() + interval '1 day', 1, 'backup-fence');
 SQL
-cd "$root/web/app" && bun "$root/acceptance/system-operations/browser.mjs" "$base" "$dir/browser.credentials" none "$dir/browser-none.json" >"$dir/browser-none.log" 2>&1 || { tail -n 40 "$dir/browser-none.log" >>"$evidence"; fail 'browser could not authenticate and render initial operations status'; }
+browser_phase none "$dir/browser-none.json" 'browser could not authenticate and render initial operations status'
 record 'system_operations_browser_prebootstrap_cli_guidance=true cli_bootstrap=true admin_login=true ready=true backup_initially_none=true'
 record 'source_server_ready=true supported_bootstrap_and_authenticated_api_fixture=true'
 
@@ -228,7 +259,7 @@ rg -q '^nerocd_backup_last_reason\{reason="none"\} 1$' "$dir/metrics.txt" || fai
 ! rg -Fq "$password" "$dir/metrics.txt" && ! rg -Fq "$app_password" "$dir/metrics.txt" && ! rg -Fq "$runner_id" "$dir/metrics.txt" || fail 'metrics disclosed backup credential or runtime identity'
 record 'observability_backup_scrape authenticated=true anonymous_denied=true success_result=true fixed_labels=true'
 record 'source_backup_atomic_manifest_checksum=true runner_file_inventory_metadata_only=true'
-cd "$root/web/app" && bun "$root/acceptance/system-operations/browser.mjs" "$base" "$dir/browser.credentials" success "$dir/browser-success.json" >"$dir/browser-success.log" 2>&1 || { tail -n 40 "$dir/browser-success.log" >>"$evidence"; fail 'browser did not observe successful backup status'; }
+browser_phase success "$dir/browser-success.json" 'browser did not observe successful backup status'
 # The API keeps its all-or-nothing administrative response intentionally
 # non-enumerating. Anonymous callers get no snapshot, and an incompatible
 # schema produces the same bounded 503 before a partial response is encoded.
@@ -241,7 +272,7 @@ docker exec "$source" psql -v ON_ERROR_STOP=1 -U "$owner" -d nerocd -c "CREATE O
 for _ in {1..20}; do code=$(curl -ksS --max-time 5 -o "$dir/operations-incompatible.json" -w '%{http_code}' -H "Authorization: Bearer $(jq -r .token <<<"$session")" "$base/api/v1/operations/status"); [[ "$code" == 503 ]] && break; sleep .2; done
 [[ "$code" == 503 ]] || fail 'incompatible operations status did not return 503'
 ! rg -q 'snapshot|postgres:|schema_' "$dir/operations-incompatible.json" || fail 'incompatible operations response disclosed a partial snapshot'
-cd "$root/web/app" && bun "$root/acceptance/system-operations/browser.mjs" "$base" "$dir/browser.credentials" unavailable "$dir/browser-unavailable.json" >"$dir/browser-unavailable.log" 2>&1 || { tail -n 40 "$dir/browser-unavailable.log" >>"$evidence"; fail 'browser did not render bounded unavailable operations state'; }
+browser_phase unavailable "$dir/browser-unavailable.json" 'browser did not render bounded unavailable operations state'
 printf '%s\n' "$owner_function" | docker exec -i "$source" psql -v ON_ERROR_STOP=1 -U "$owner" -d nerocd >"$dir/operations-compatible-restore.log"
 for _ in {1..20}; do curl -kfsS --max-time 5 "$base/api/v1/ready" | jq -e '.status == "ready"' >/dev/null && break; sleep .2; done
 curl -kfsS --max-time 5 "$base/api/v1/ready" | jq -e '.status == "ready"' >/dev/null || fail 'readiness did not recover after compatibility restoration'
