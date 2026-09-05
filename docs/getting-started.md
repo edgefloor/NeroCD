@@ -20,10 +20,14 @@ down`; add `-v` only when you want to remove the local volume.
 export NEROCD_DATABASE_URL='postgres://nerocd:nerocd_dev@127.0.0.1:5432/nerocd?sslmode=disable'
 make build
 ./bin/nerocd migrate --seed=false
+./bin/nerocd bootstrap-admin --email admin@example.test --name 'Local Admin' \
+  --password-stdin < /secure/nerocd-bootstrap-password
 ./bin/nerocd server --addr :8080
 ```
 
-To load the development fixture explicitly, use
+Choose a strong password outside the checkout, store it in the private input
+file, and remove the file after the one-time bootstrap succeeds. To load the
+development fixture instead, use
 `NEROCD_DEV_SEED_FILE=./db/seeds/dev.sql ./bin/nerocd seed-dev`.
 
 ## Explicit disposable memory

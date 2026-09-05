@@ -40,17 +40,23 @@ supply issuer, client ID, and client-secret file, and mount a read-only 0400
 secret reachable by UID 10001. Adding values to the env file alone does nothing.
 Keep the HTTPS public origin exact. See [OIDC](oidc.md).
 
-Bootstrap the first administrator exactly once using an owner-only password
-file. `database-tools` does not mount that file by default, so add an explicit
-operator mount and remove it after bootstrap:
+Bootstrap the first administrator exactly once. `database-tools` runs as UID
+10001, so it cannot safely read an operator-owned `0400` host file through a
+bind mount. Keep the password private on the host and redirect it to the
+existing standard input option; it never becomes a command argument or a
+container file. Export the public origin explicitly because this one-shot tool
+needs the same production configuration as the server:
 
 ```sh
+set -a; . /secure/nerocd-production.env; set +a
 docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml \
-  --profile tools run --rm \
-  -v /secure/bootstrap-password:/secure/bootstrap-password:ro \
+  --profile tools run --rm -T -e NEROCD_PUBLIC_ORIGIN="$NEROCD_PUBLIC_ORIGIN" \
   database-tools bootstrap-admin \
-  --email admin@example.com --name 'Initial Admin' --password-file /secure/bootstrap-password
+  --email admin@example.com --name 'Initial Admin' --password-stdin \
+  < /secure/bootstrap-password
 ```
+
+Remove the host password file after a successful bootstrap.
 
 ## Database operations
 
@@ -58,7 +64,7 @@ The tools profile is opt-in and must always select the production files:
 
 ```sh
 docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml \
-  --profile tools run --rm -v /secure/nerocd-backups:/backups \
+  --profile tools run --rm -T -v /secure/nerocd-backups:/backups \
   database-tools backup --output-dir /backups
 ```
 

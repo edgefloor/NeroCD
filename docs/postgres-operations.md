@@ -20,8 +20,8 @@ silently rewriting history.
 Use the bounded NeroCD wrapper for logical backups. It creates a new atomic
 backup directory, writes a versioned manifest, records a SHA-256 checksum and
 the applied migration ledger, and can inventory runner-file metadata without
-copying any secret contents. The parent directory must already be owner-only
-(mode `0700` or stricter).
+copying any secret contents. The parent directory must already be owned by the
+process running the command and have mode exactly `0700`.
 
 ```sh
 mkdir -m 0700 /secure/nerocd-backups
@@ -29,15 +29,32 @@ nerocd backup --database-url "$NEROCD_DATABASE_URL" --output-dir /secure/nerocd-
   --runner-file-root /secure/runner-files
 ```
 
-The production profile has an explicit, non-starting `tools` service. It
-receives only the migration-owner secret and no proxy network. Bind the
-owner-only backup directory for that one invocation; the Docker socket is not
-mounted. A Docker socket grants root-equivalent host access, so never add it to
-this service.
+The production profile has an opt-in, non-starting `tools` service, which runs
+as UID 10001. For a host bind, provision the directory for that effective UID:
+
+```sh
+sudo install -d -m 0700 -o 10001 -g 10001 /secure/nerocd-backups
+```
+
+Rootless engines can map container UID 10001 to a different host UID. In that
+case, create the bind directory with the engine's documented UID mapping, then
+verify that `/backups` is owned by UID 10001 and mode `0700` inside the tools
+container before backing up:
 
 ```sh
 docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml \
-  --profile tools run --rm \
+  --profile tools run --rm -T --entrypoint /bin/sh \
+  -v /secure/nerocd-backups:/backups database-tools \
+  -ec 'test "$(id -u)" = 10001; test "$(stat -c %u:%a /backups)" = 10001:700'
+```
+
+Do not change ownership of the operator-owned credential inputs. The tools
+service receives only the migration-owner secret and no proxy network; never
+mount the Docker socket.
+
+```sh
+docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml \
+  --profile tools run --rm -T \
   -v /secure/nerocd-backups:/backups \
 database-tools backup --output-dir /backups
 ```
@@ -114,18 +131,33 @@ nerocd restore --database-url "$NEROCD_RESTORE_DATABASE_URL" \
   --runner-file-root /secure/runner-files
 ```
 
-For production Compose, create an isolated empty target stack first, mount the
-selected backup directory read-only, and invoke the same offline tool with the
-owner credential. Do not point it at an existing stack:
+For production Compose, make a separate restore environment outside the
+checkout. It needs a distinct project name, PostgreSQL password secret, owner
+URL secret, app URL secret, owner role, app role, and proxy-network name. Set
+the owner URL to the isolated project's `postgres` host and its `nerocd`
+database; omit `NEROCD_DATABASE_URL` entirely. `compose.production.yaml`
+hardcodes that database name, so confirming `nerocd` is safe only because this
+is a separate cluster, network, and volumes.
+
+Start only the isolated PostgreSQL service and its required secret/data
+initializers. Do not run `up` without a service name: that would run migration
+or server services against the empty target.
 
 ```sh
-docker compose --env-file /secure/nerocd-production.env -f compose.production.yaml \
-  --profile tools run --rm \
+env -u NEROCD_DATABASE_URL docker compose --project-name nerocd_restore_20260905 \
+  --env-file /secure/nerocd-restore.env -f compose.production.yaml up -d postgres
+env -u NEROCD_DATABASE_URL docker compose --project-name nerocd_restore_20260905 \
+  --env-file /secure/nerocd-restore.env -f compose.production.yaml \
+  --profile tools run --rm -T \
   -v /secure/nerocd-backups/backup-YYYYMMDDTHHMMSSZ:/restore:ro \
   -v /secure/runner-files:/runner-files:ro \
 database-tools restore --input-dir /restore --runner-file-root /runner-files \
-  --allow-disposable-target --confirm-target-database nerocd_restore
+  --allow-disposable-target --confirm-target-database nerocd
 ```
+
+The restore command itself rejects non-empty targets and other active database
+sessions before `pg_restore`. After its checks and restore finish, stop and
+remove this restore project; do not reuse its database for production.
 
 ## Runtime Checks
 
