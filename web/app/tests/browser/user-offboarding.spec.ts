@@ -29,12 +29,34 @@ async function signInAsAdministrator(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
 }
 
+async function provisionFirstPageUsers(): Promise<void> {
+  const runtimeDir = browserRuntimeDir();
+  const databaseURL = await readFile(join(runtimeDir, "database-url"), "utf8");
+  const provider = JSON.parse(await readFile(join(runtimeDir, "oidc-provider.json"), "utf8")) as { issuer?: string };
+  if (!provider.issuer) throw new Error("browser OIDC issuer is unavailable");
+  for (let index = 0; index < 10; index += 1) {
+    execFileSync(join(runtimeDir, "nerocd"), [
+      "oidc-provision",
+      "--issuer", provider.issuer,
+      "--subject", `pagination-subject-${index}`,
+      "--email", `pagination-${index}@example.invalid`,
+      "--name", `Pagination User ${index}`,
+    ], { env: { ...process.env, NEROCD_DATABASE_URL: databaseURL }, stdio: "pipe" });
+  }
+}
+
 test("administrator offboards an OIDC user and the next provider login is denied", async ({ page }) => {
   await page.goto("/settings");
   await signInAsAdministrator(page);
   await expect(page).toHaveURL(/\/settings/);
+  await provisionFirstPageUsers();
+  await page.reload({ waitUntil: "networkidle" });
 
   const userEmail = "oidc-browser@example.invalid";
+  await expect(page.getByText(userEmail, { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Showing 1–10 of 12", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Next users" }).click();
+  await expect(page.getByText("Showing 11–12 of 12", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: `Offboard ${userEmail}` }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("disables local and OIDC sign-in");
@@ -47,8 +69,12 @@ test("administrator offboards an OIDC user and the next provider login is denied
   const userRow = page.getByText(userEmail, { exact: true }).locator("xpath=ancestor::div[contains(@class, 'rounded')][1]");
   await expect(userRow.getByText("disabled", { exact: true })).toBeVisible();
   await expect(userRow.getByRole("button", { name: /offboard/i })).toHaveCount(0);
-  await page.setViewportSize({ width: 390, height: 844 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await expect(page.getByText("Showing 11–12 of 12", { exact: true })).toBeVisible();
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await expect(page.getByRole("navigation", { name: "User pages" })).toBeVisible();
+  }
 
   const evidenceRoot = process.env.NEROCD_BROWSER_EVIDENCE_DIR;
   if (evidenceRoot) {
