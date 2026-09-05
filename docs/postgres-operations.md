@@ -139,20 +139,32 @@ database; omit `NEROCD_DATABASE_URL` entirely. `compose.production.yaml`
 hardcodes that database name, so confirming `nerocd` is safe only because this
 is a separate cluster, network, and volumes.
 
+`/secure/nerocd-restore.env` must explicitly set `NEROCD_IMAGE`,
+`NEROCD_PROXY_NETWORK`, `NEROCD_PUBLIC_ORIGIN`, `NEROCD_OWNER_DATABASE_USER`,
+`NEROCD_APP_DATABASE_USER`, `NEROCD_DATABASE_URL_SECRET`,
+`NEROCD_APP_DATABASE_URL_SECRET`, and `NEROCD_POSTGRES_PASSWORD_SECRET` for
+the restore project. It must name distinct restore secret files and roles, not
+the production inputs. Source it in a subshell so values exported earlier from
+the production environment cannot override Compose's restore inputs.
+
 Start only the isolated PostgreSQL service and its required secret/data
 initializers. Do not run `up` without a service name: that would run migration
 or server services against the empty target.
 
 ```sh
-env -u NEROCD_DATABASE_URL docker compose --project-name nerocd_restore_20260905 \
-  --env-file /secure/nerocd-restore.env -f compose.production.yaml up -d postgres
-env -u NEROCD_DATABASE_URL docker compose --project-name nerocd_restore_20260905 \
-  --env-file /secure/nerocd-restore.env -f compose.production.yaml \
-  --profile tools run --rm -T \
-  -v /secure/nerocd-backups/backup-YYYYMMDDTHHMMSSZ:/restore:ro \
-  -v /secure/runner-files:/runner-files:ro \
-database-tools restore --input-dir /restore --runner-file-root /runner-files \
-  --allow-disposable-target --confirm-target-database nerocd
+(
+  set -a; . /secure/nerocd-restore.env; set +a
+  unset NEROCD_DATABASE_URL
+  docker compose --project-name nerocd_restore_20260905 \
+    --env-file /secure/nerocd-restore.env -f compose.production.yaml up -d postgres
+  docker compose --project-name nerocd_restore_20260905 \
+    --env-file /secure/nerocd-restore.env -f compose.production.yaml \
+    --profile tools run --rm -T \
+    -v /secure/nerocd-backups/backup-YYYYMMDDTHHMMSSZ:/restore:ro \
+    -v /secure/runner-files:/runner-files:ro \
+  database-tools restore --input-dir /restore --runner-file-root /runner-files \
+    --allow-disposable-target --confirm-target-database nerocd
+)
 ```
 
 The restore command itself rejects non-empty targets and other active database
