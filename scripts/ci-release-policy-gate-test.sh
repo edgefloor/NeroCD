@@ -59,15 +59,25 @@ candidate destructive-clean
 perl -0pi -e 's#rm -rf -- "\$\(BIN_DIR\)"#rm -rf -- "$(GOCACHE_DIR)" "$(BIN_DIR)"#' "$tmp/destructive-clean/Makefile"
 expect_reject destructive-clean
 
-candidate unbounded-runtime-gates
-sed -i.bak 's/--jobs=4 runtime-fencing-gate/--jobs=8 runtime-fencing-gate/' "$tmp/unbounded-runtime-gates/Makefile"
-rm -f "$tmp/unbounded-runtime-gates/Makefile.bak"
-expect_reject unbounded-runtime-gates
+candidate parallel-runtime-gates-jobs-2
+sed -i.bak 's/--jobs=1 runtime-fencing-gate/--jobs=2 runtime-fencing-gate/' "$tmp/parallel-runtime-gates-jobs-2/Makefile"
+rm -f "$tmp/parallel-runtime-gates-jobs-2/Makefile.bak"
+expect_reject parallel-runtime-gates-jobs-2
+
+candidate parallel-runtime-gates-jobs-4
+sed -i.bak 's/--jobs=1 runtime-fencing-gate/--jobs=4 runtime-fencing-gate/' "$tmp/parallel-runtime-gates-jobs-4/Makefile"
+rm -f "$tmp/parallel-runtime-gates-jobs-4/Makefile.bak"
+expect_reject parallel-runtime-gates-jobs-4
 
 candidate missing-concurrency-policy-test
 sed -i.bak '/bash scripts\/release-evidence-concurrency-test.sh/d' "$tmp/missing-concurrency-policy-test/Makefile"
 rm -f "$tmp/missing-concurrency-policy-test/Makefile.bak"
 expect_reject missing-concurrency-policy-test
+
+candidate missing-runtime-scheduling-test
+sed -i.bak '/bash scripts\/release-runtime-scheduling-test.sh/d' "$tmp/missing-runtime-scheduling-test/Makefile"
+rm -f "$tmp/missing-runtime-scheduling-test/Makefile.bak"
+expect_reject missing-runtime-scheduling-test
 
 candidate missing-check-policy
 sed -i.bak '/^check:/,/^clean:/s/ci-release-policy-gate //' "$tmp/missing-check-policy/Makefile"

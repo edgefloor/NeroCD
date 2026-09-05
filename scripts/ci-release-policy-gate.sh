@@ -164,16 +164,17 @@ fi
 ! rg -q 'pull_request_target|permissions:[[:space:]]+write-all|@v[0-9]|@main|@master|:latest' "$workflows"/*.yml || fail 'workflow includes a mutable or privileged policy escape'
 
 accepted_gates=$(sed -n '/^release-evidence-accepted-gates:/,/^release-evidence-gate:/p' "$makefile")
-core_line=$(printf '%s\n' "$accepted_gates" | rg -F '$(MAKE) --jobs=1' || true)
-runtime_line=$(printf '%s\n' "$accepted_gates" | rg -F '$(MAKE) --jobs=4' || true)
+core_line=$(printf '%s\n' "$accepted_gates" | rg -F '$(MAKE) --jobs=1 ci-release-policy-gate' || true)
+runtime_line=$(printf '%s\n' "$accepted_gates" | rg -F '$(MAKE) --jobs=1 runtime-fencing-gate' || true)
 [[ -n "$core_line" ]] || fail 'accepted core gates must remain explicitly serial'
-[[ -n "$runtime_line" ]] || fail 'accepted runtime gates must use the bounded --jobs=4 aggregate'
+[[ -n "$runtime_line" ]] || fail 'accepted runtime gates must remain explicitly serial'
 for gate in ci-release-policy-gate test web-test build browser-smoke web-policy contract check-generated docker-build identity-artifact-gate production-profile-gate; do
   [[ " $core_line " == *" $gate "* ]] || fail "serial accepted core inventory is missing $gate"
 done
 [[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }' <<<"$core_line") -eq 1 ]] || fail 'serial accepted core inventory must contain ci-release-policy-gate exactly once'
 for gate in runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate; do
-  [[ " $runtime_line " == *" $gate "* ]] || fail "parallel accepted runtime inventory is missing $gate"
+  [[ " $runtime_line " == *" $gate "* ]] || fail "serial accepted runtime inventory is missing $gate"
+  [[ $(awk -v gate="$gate" '{ for (field = 1; field <= NF; field++) if ($field == gate) count++ } END { print count + 0 }' <<<"$runtime_line") -eq 1 ]] || fail "serial accepted runtime inventory must contain $gate exactly once"
 done
 rg -q '^observability-gate: runtime-compose-gate backup-restore-gate$' "$makefile" || fail 'observability gate must depend on Compose and backup evidence producers'
 ! rg -q '^[[:space:]]*bash (acceptance/runtime-compose/gate\.sh|scripts/backup-restore-gate\.sh)' "$observability_gate" || fail 'observability gate must reuse prerequisite evidence instead of rerunning runtime gates'
@@ -187,6 +188,7 @@ for generated in '$(BIN_DIR)' 'playwright-report' 'test-results' '$(WEB_DIST_DIR
 done
 policy_target=$(sed -n '/^ci-release-policy-gate:/,/^contract:/p' "$makefile")
 [[ $(printf '%s\n' "$policy_target" | rg -Fc 'bash scripts/release-evidence-concurrency-test.sh') -eq 1 ]] || fail 'CI release policy target must run the evidence concurrency mutation exactly once'
+[[ $(printf '%s\n' "$policy_target" | rg -Fc 'bash scripts/release-runtime-scheduling-test.sh') -eq 1 ]] || fail 'CI release policy target must run the runtime scheduling test exactly once'
 check_target=$(sed -n '/^check:/,/^clean:/p' "$makefile")
 [[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }' <<<"$check_target") -eq 1 ]] || fail 'ordinary make check must run ci-release-policy-gate exactly once'
 printf 'ci-release-policy PASS workflows=%s\n' "$workflows"

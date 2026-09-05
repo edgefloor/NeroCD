@@ -149,7 +149,7 @@ release-artifacts: build web-policy
 # clean source checkout (real or the clearly labelled disposable harness).
 release-evidence-accepted-gates:
 	$(MAKE) --jobs=1 ci-release-policy-gate test web-test build browser-smoke web-policy contract check-generated docker-build identity-artifact-gate production-profile-gate
-	$(MAKE) --jobs=4 runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate
+	$(MAKE) --jobs=1 runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate
 
 release-evidence-gate:
 	bash scripts/release-evidence.sh --real
@@ -169,6 +169,7 @@ ci-release-policy-gate:
 	bash scripts/ci-release-policy-gate-test.sh
 	bash scripts/release-artifact-verifier-test.sh
 	bash scripts/release-evidence-concurrency-test.sh
+	bash scripts/release-runtime-scheduling-test.sh
 
 contract:
 	GOCACHE="$(GOCACHE_DIR)" go run ./cmd/nerocd contract
