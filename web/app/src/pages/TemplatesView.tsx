@@ -241,7 +241,7 @@ export function TemplatesView({
 
   if (loading) {
     return (
-      <section className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+      <section className="grid items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
         <SkeletonTable rows={4} />
         <SkeletonTable rows={5} />
       </section>
@@ -249,9 +249,9 @@ export function TemplatesView({
   }
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+    <section className="grid items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle className="text-base font-semibold">Create template</CardTitle>
         </CardHeader>
         <CardContent>

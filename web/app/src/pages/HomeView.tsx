@@ -1,11 +1,10 @@
 import { ReactNode } from "react";
-import { Activity, FolderKanban, Layers3, Terminal, AlertCircle, Clock, Zap } from "lucide-react";
+import { Activity, AlertCircle, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ApiSnapshot } from "@/api";
 import type { MutateFn } from "@/hooks/useApi";
-import { MetricCard } from "@/components/common/MetricCard";
-import { EmptyState } from "@/components/common/EmptyState";
-import { SkeletonCard, SkeletonMetricCard } from "@/components/common/SkeletonCard";
+import { SkeletonCard } from "@/components/common/SkeletonCard";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SearchScope } from "@/components/common/SearchScope";
 import { RunsTable } from "./RunsView";
 import { ApprovalList } from "./ApprovalsView";
@@ -14,68 +13,8 @@ import { summarizeOverview } from "@/view-model";
 import { countFilteredItems } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-function HealthCard({ snapshot }: { snapshot: ApiSnapshot }) {
-  const summary = summarizeOverview(snapshot);
-  const pending = snapshot.approvals.filter((approval) => approval.status === "pending");
-  const failed = snapshot.runs.filter((run) => ["failed", "error"].includes(run.status));
-  const liveRuns = snapshot.runs.filter((run) => !run.finished_at);
-  const isHealthy = failed.length === 0 && pending.length === 0;
-
-  return (
-    <Card className={cn(
-      "overflow-hidden",
-      isHealthy ? "border-success/15" : "border-warning/15"
-    )}>
-      <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className={cn(
-              "grid h-6 w-6 place-items-center rounded-md",
-              isHealthy ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
-            )}>
-              {isHealthy ? <Zap className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
-            </span>
-            <h2 className={cn(
-              "text-xl font-semibold tracking-tight",
-              isHealthy ? "text-success" : "text-warning"
-            )}>
-              {isHealthy ? "All Systems Green" : "Needs Attention"}
-            </h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              {pending.length} pending
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <AlertCircle className="h-3.5 w-3.5" />
-              {failed.length} failed
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Activity className="h-3.5 w-3.5" />
-              {liveRuns.length} active
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="grid grid-cols-3 gap-2">
-            <div className="flex flex-col items-center gap-0.5 rounded-lg bg-muted/60 px-3 py-2 border border-border/40">
-              <span className="text-base font-semibold">{summary.projectCount}</span>
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-medium">Projects</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5 rounded-lg bg-muted/60 px-3 py-2 border border-border/40">
-              <span className="text-base font-semibold">{summary.templateCount}</span>
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-medium">Templates</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5 rounded-lg bg-muted/60 px-3 py-2 border border-border/40">
-              <span className="text-base font-semibold">{summary.logCount}</span>
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-medium">Logs</span>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
+function CompactEmpty({ children }: { children: ReactNode }): ReactNode {
+  return <p className="px-4 py-5 text-sm text-muted-foreground">{children}</p>;
 }
 
 export function HomeView({
@@ -99,17 +38,22 @@ export function HomeView({
 }): ReactNode {
   const summary = summarizeOverview(snapshot);
   const pending = snapshot.approvals.filter((approval) => approval.status === "pending");
+  const failed = snapshot.runs.filter((run) => ["failed", "error"].includes(run.status));
   const visiblePending = workSnapshot?.approvals.filter((approval) => approval.status === "pending") ?? pending;
 
   if (loading) {
     return (
       <div className="grid gap-6">
-        <SkeletonCard rows={1} />
-        <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <SkeletonMetricCard />
-          <SkeletonMetricCard />
-          <SkeletonMetricCard />
-          <SkeletonMetricCard />
+        <section className="grid gap-4 border-b border-border/60 pb-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <div className="space-y-2">
+            <Skeleton className="h-7 w-40 rounded-md" />
+            <Skeleton className="h-4 w-72 max-w-full rounded-md" />
+          </div>
+          <div className="grid grid-cols-3 gap-6">
+            <Skeleton className="h-10 w-16 rounded-md" />
+            <Skeleton className="h-10 w-16 rounded-md" />
+            <Skeleton className="h-10 w-16 rounded-md" />
+          </div>
         </section>
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.9fr)]">
           <SkeletonCard rows={5} />
@@ -125,28 +69,33 @@ export function HomeView({
         <SearchScope query={query} resultCount={countFilteredItems(workSnapshot ?? snapshot)} onClear={onClearQuery} />
       ) : null}
       
-      <HealthCard snapshot={snapshot} />
-
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <MetricCard label="Projects" value={summary.projectCount} caption="active domains" icon={FolderKanban} />
-        <MetricCard 
-          label="Templates" 
-          value={summary.templateCount} 
-          caption={`${summary.approvalTemplateCount} require approval`} 
-          icon={Layers3} 
-          tone={summary.approvalTemplateCount > 0 ? "warning" : "neutral"} 
-        />
-        <MetricCard 
-          label="Live Runs" 
-          value={summary.liveRunCount} 
-          caption="currently executing" 
-          icon={Activity} 
-          tone={summary.liveRunCount > 0 ? "warning" : "success"} 
-        />
-        <MetricCard label="Run Logs" value={summary.logCount} caption="indexed events" icon={Terminal} />
+      <section aria-labelledby="current-activity-heading" className="grid gap-4 border-b border-border/60 pb-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+        <div className="space-y-2">
+          <h2 id="current-activity-heading" className="text-xl font-semibold tracking-tight">Current activity</h2>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            <span className={cn("inline-flex items-center gap-1.5", summary.liveRunCount > 0 && "text-warning")}><Activity className="h-3.5 w-3.5" />{summary.liveRunCount} unfinished runs</span>
+            <span className={cn("inline-flex items-center gap-1.5", pending.length > 0 && "text-warning")}><Clock className="h-3.5 w-3.5" />{pending.length} pending approvals</span>
+            <span className={cn("inline-flex items-center gap-1.5", failed.length > 0 && "text-destructive")}><AlertCircle className="h-3.5 w-3.5" />{failed.length} failed runs</span>
+          </div>
+        </div>
+        <dl aria-label="Inventory" className="grid grid-cols-3 gap-x-6 gap-y-2">
+          <div>
+            <dt className="text-xs text-muted-foreground">Projects</dt>
+            <dd className="mt-0.5 text-lg font-semibold tracking-tight">{summary.projectCount}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Templates</dt>
+            <dd className="mt-0.5 text-lg font-semibold tracking-tight">{summary.templateCount}</dd>
+            <dd className="text-xs text-muted-foreground">{summary.approvalTemplateCount} require approval</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Logs</dt>
+            <dd className="mt-0.5 text-lg font-semibold tracking-tight">{summary.logCount}</dd>
+          </div>
+        </dl>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.9fr)]">
+      <section className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.9fr)]">
         <Card>
           <CardHeader className="border-b py-3">
             <CardTitle className="text-base font-semibold">Recent Activity</CardTitle>
@@ -155,7 +104,7 @@ export function HomeView({
             {workSnapshot && workSnapshot.runs.length > 0 ? (
               <RunsTable runs={workSnapshot.runs.slice(0, 7)} projects={workSnapshot.projects} templates={workSnapshot.templates} />
             ) : (
-              <EmptyState title="No runs yet" />
+              <CompactEmpty>{query ? "No runs match this search." : "Run activity will appear here after a run is requested."}</CompactEmpty>
             )}
           </CardContent>
         </Card>
@@ -176,7 +125,7 @@ export function HomeView({
             {visiblePending.length > 0 ? (
               <ApprovalList approvals={visiblePending} snapshot={workSnapshot ?? snapshot} token={token} busy={busy} mutate={mutate} />
             ) : (
-              <EmptyState title="No approvals waiting" />
+              <CompactEmpty>{query ? "No pending approvals match this search." : "No approvals are waiting."}</CompactEmpty>
             )}
           </CardContent>
         </Card>
@@ -191,7 +140,7 @@ export function HomeView({
             {workSnapshot && workSnapshot.logs.length > 0 ? (
               <LogViewer logs={workSnapshot.logs.slice(0, 5)} />
             ) : (
-              <EmptyState title="No logs yet" />
+              <CompactEmpty>{query ? "No logs match this search." : "Run output will appear here when logs are available."}</CompactEmpty>
             )}
           </CardContent>
         </Card>

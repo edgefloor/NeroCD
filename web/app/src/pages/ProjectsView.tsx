@@ -222,7 +222,7 @@ export function ProjectsView({
 }): ReactNode {
   if (loading) {
     return (
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="grid gap-3">
           <SkeletonCard rows={2} />
           <SkeletonCard rows={2} />
@@ -233,8 +233,8 @@ export function ProjectsView({
   }
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-      <div className="grid gap-3">
+    <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid items-start gap-3">
         <div className="xl:hidden">
           <Dialog>
             <DialogTrigger asChild>
@@ -272,8 +272,8 @@ export function ProjectsView({
           ))
         )}
       </div>
-      <Card className="hidden xl:block">
-        <CardHeader className="pb-3">
+      <Card className="hidden xl:flex">
+        <CardHeader>
           <CardTitle className="text-base font-semibold">Configure project</CardTitle>
         </CardHeader>
         <CardContent>

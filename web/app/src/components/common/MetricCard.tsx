@@ -24,7 +24,7 @@ export function MetricCard({
     )}>
       <CardContent className="p-4">
         <div className="mb-3 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</span>
+          <span className="text-xs font-medium text-muted-foreground">{label}</span>
           <span className={cn(
             "grid h-7 w-7 place-items-center rounded-lg transition-colors",
             tone === "success" && "bg-success/10 text-success",

@@ -114,6 +114,61 @@ test("authenticated navigation and sign out work with runtime-only credentials",
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("dashboard reports unfinished work truthfully and shared cards keep bounded geometry", async ({ page }) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", {
+    name: `Dashboard geometry ${suffix}`,
+    description: "dashboard layout fixture",
+  });
+  const template = await postJSON<{ id: string }>(page, "/api/v1/templates", {
+    project_id: project.id,
+    name: `dashboard-geometry-${suffix}`,
+    kind: "shell",
+    run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "dashboard-layout"] } },
+    workflow: { steps: [] },
+    runner_tags: ["shell"],
+    requires_ack: false,
+  });
+  await postJSON(page, "/api/v1/runs", { template_id: template.id });
+  await page.reload({ waitUntil: "networkidle" });
+
+  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await expect(page.getByText(/\d+ unfinished runs/)).toBeVisible();
+  await expect(page.getByText("No approvals are waiting.")).toBeVisible();
+  await expect(page.getByText("All Systems Green")).toHaveCount(0);
+  await expect(page.getByText("currently executing")).toHaveCount(0);
+
+  const activityCard = page.getByText("Recent Activity", { exact: true }).locator('xpath=ancestor::*[@data-slot="card"]');
+  const geometry = await activityCard.evaluate((card) => {
+    const header = card.querySelector<HTMLElement>('[data-slot="card-header"]');
+    const body = card.querySelector<HTMLElement>('[data-slot="card-content"]');
+    if (!header || !body) throw new Error("dashboard card slots are unavailable");
+    return {
+      bodyTop: body.getBoundingClientRect().top,
+      headerBottom: header.getBoundingClientRect().bottom,
+      headerPaddingTop: Number.parseFloat(getComputedStyle(header).paddingTop),
+    };
+  });
+  expect(geometry.bodyTop).toBe(geometry.headerBottom);
+  expect(geometry.headerPaddingTop).toBe(16);
+
+  await page.goto("/projects", { waitUntil: "networkidle" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const projectCards = page.locator('[data-slot="card"]:has([data-slot="card-content"] h3)');
+  const configureCard = page.getByText("Configure project", { exact: true }).locator('xpath=ancestor::*[@data-slot="card"]');
+  expect(await projectCards.first().evaluate((card) => card.getBoundingClientRect().height)).toBeLessThan(
+    await configureCard.evaluate((card) => card.getBoundingClientRect().height),
+  );
+
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+});
+
 test("runs list fetches, follows, closes, and switches terminal logs", async ({ page }) => {
   await page.goto("/runs");
   await signIn(page);
