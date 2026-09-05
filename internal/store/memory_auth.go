@@ -60,6 +60,24 @@ func (s *MemoryStore) CreateSession(_ context.Context, session domain.Session, t
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	active := false
+	for _, user := range s.users {
+		if user.ID == session.UserID && user.Status == domain.UserActive {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return ErrNotFound
+	}
+	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
+		return ErrConflict
+	}
+	for _, existing := range s.sessions {
+		if existing.ID == session.ID || s.tokenHashBySessionID[existing.ID] == tokenHash {
+			return ErrConflict
+		}
+	}
 	s.sessions = append(s.sessions, session)
 	s.tokenHashBySessionID[session.ID] = tokenHash
 	if audit != nil {
@@ -154,6 +172,24 @@ func (s *MemoryStore) CreateAPIToken(_ context.Context, token domain.APIToken, o
 	audit := resolveMutationOptions(opts)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	active := false
+	for _, user := range s.users {
+		if user.ID == token.CreatedBy && user.Status == domain.UserActive {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return domain.APIToken{}, ErrNotFound
+	}
+	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
+		return domain.APIToken{}, ErrConflict
+	}
+	for _, existing := range s.apiTokens {
+		if existing.ID == token.ID || existing.TokenHash == token.TokenHash {
+			return domain.APIToken{}, ErrConflict
+		}
+	}
 	s.apiTokens = append(s.apiTokens, token)
 	if audit != nil {
 		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)

@@ -136,9 +136,10 @@ const (
 	PrincipalRunner   = "runner"
 )
 
-// UserActive identifies the enabled user state.
+// UserActive and UserDisabled identify local user lifecycle states.
 const (
-	UserActive = "active"
+	UserActive   = "active"
+	UserDisabled = "disabled"
 )
 
 // TokenKindServiceAccount and TokenKindBootstrap identify API token purposes.

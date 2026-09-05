@@ -539,6 +539,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List safe local user metadata (system administrator) */
+        get: operations["listUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/offboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Atomically offboard one local user (system administrator)
+         * @description Disables login, revokes every session and every active API token issued by the user, preserves identity history, and refuses to remove the final active system administrator.
+         */
+        post: operations["offboardUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capabilities": {
         parameters: {
             query?: never;
@@ -1553,6 +1590,37 @@ export interface components {
             last_used_at?: string;
             /** Format: date-time */
             revoked_at?: string;
+        };
+        User: {
+            id: string;
+            /** Format: email */
+            email: string;
+            name: string;
+            /** @enum {string} */
+            status: "active" | "disabled" | "pending";
+            /** @enum {string} */
+            global_role: "user" | "system_admin" | "runner_admin";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            archived_at?: string;
+        };
+        UserListResponse: {
+            items: components["schemas"]["User"][];
+            limit: number;
+            offset: number;
+            count: number;
+            total: number;
+        };
+        OffboardUserInput: {
+            user_id: string;
+        };
+        UserOffboardingResult: {
+            user: components["schemas"]["User"];
+            revoked_sessions: number;
+            revoked_api_tokens: number;
         };
         Project: {
             id: string;
@@ -3176,6 +3244,62 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    listUsers: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded local user list without credential material. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserListResponse"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    offboardUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OffboardUserInput"];
+            };
+        };
+        responses: {
+            /** @description User offboarded, or an already-disabled user returned idempotently. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOffboardingResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     listCapabilities: {

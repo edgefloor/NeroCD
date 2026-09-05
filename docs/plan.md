@@ -6,8 +6,10 @@ execution, and production deployment tooling. This is the remaining work.
 
 ## Identity and authorization
 
-- Add a complete service-account lifecycle, password policy, user disablement,
-  richer roles, and stronger failure-path coverage.
+- Add a complete service-account lifecycle, password policy, user reactivation,
+  richer roles, and stronger failure-path coverage. User offboarding already
+  disables local and OIDC sign-in and atomically revokes sessions and every
+  active API token issued by that user while preserving identity history.
 - Keep OIDC explicit until a separate policy defines any claim-based mapping.
 - Do not advertise SAML, LDAP, SCIM, group mapping, or automatic signup before
   their lifecycle, authorization, audit, and recovery semantics exist.

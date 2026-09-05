@@ -614,6 +614,52 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /api/v1/users:
+    get:
+      summary: List safe local user metadata (system administrator)
+      operationId: listUsers
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Bounded local user list without credential material.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserListResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /api/v1/users/offboard:
+    post:
+      summary: Atomically offboard one local user (system administrator)
+      description: Disables login, revokes every session and every active API token issued by the user, preserves identity history, and refuses to remove the final active system administrator.
+      operationId: offboardUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OffboardUserInput"
+      responses:
+        "200":
+          description: User offboarded, or an already-disabled user returned idempotently.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserOffboardingResult"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
   /api/v1/capabilities:
     get:
       parameters:
@@ -2179,6 +2225,71 @@ components:
         revoked_at:
           type: string
           format: date-time
+    User:
+      type: object
+      required: [id, email, name, status, global_role, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        status:
+          type: string
+          enum: [active, disabled, pending]
+        global_role:
+          type: string
+          enum: [user, system_admin, runner_admin]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        archived_at:
+          type: string
+          format: date-time
+    UserListResponse:
+      type: object
+      required: [items, limit, offset, count, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        limit:
+          type: integer
+          minimum: 0
+        offset:
+          type: integer
+          minimum: 0
+        count:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+    OffboardUserInput:
+      type: object
+      additionalProperties: false
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+    UserOffboardingResult:
+      type: object
+      required: [user, revoked_sessions, revoked_api_tokens]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        revoked_sessions:
+          type: integer
+          minimum: 0
+        revoked_api_tokens:
+          type: integer
+          minimum: 0
     Project:
       type: object
       required: [id, name, description, created_at]
