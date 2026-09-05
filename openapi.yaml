@@ -280,6 +280,53 @@ paths:
       responses:
         "200": {description: Fixed bootstrap lifecycle state, content: {application/json: {schema: {$ref: "#/components/schemas/BootstrapStatus"}}}}
         "503": {description: Bootstrap state is temporarily unavailable, content: {application/json: {schema: {$ref: "#/components/schemas/OperationsUnavailable"}}}}
+  /api/v1/oidc/status:
+    get:
+      summary: Get minimal enterprise OIDC availability
+      operationId: getOIDCStatus
+      security: []
+      responses:
+        "200": {description: OIDC availability without provider configuration detail, content: {application/json: {schema: {$ref: "#/components/schemas/OIDCStatus"}}}}
+  /api/v1/oidc/login:
+    get:
+      summary: Begin an enterprise OIDC browser sign-in
+      operationId: beginOIDCLogin
+      security: []
+      parameters:
+        - name: redirect
+          in: query
+          required: false
+          schema: {type: string, maxLength: 500}
+          description: Strict application-relative return path.
+      responses:
+        "302":
+          description: Redirect to the fixed configured provider authorization endpoint.
+          headers:
+            Location: {schema: {type: string}}
+            Set-Cookie: {schema: {type: string}}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/v1/oidc/callback:
+    get:
+      summary: Complete an enterprise OIDC browser sign-in
+      operationId: completeOIDCLogin
+      security: []
+      parameters:
+        - {name: code, in: query, required: false, schema: {type: string, maxLength: 2048}, description: Required unless the provider returned an OAuth error.}
+        - {name: state, in: query, required: true, schema: {type: string, maxLength: 2048}}
+        - {name: error, in: query, required: false, schema: {type: string, pattern: "^[A-Za-z0-9._-]{1,128}$"}, description: Provider denial code; never reflected to the browser or audit.}
+        - {name: error_description, in: query, required: false, schema: {type: string}, description: Ignored provider detail.}
+        - {name: iss, in: query, required: false, schema: {type: string, maxLength: 2048}, description: "RFC 9207 issuer, checked exactly against the configured issuer when present."}
+        - {name: session_state, in: query, required: false, schema: {type: string}, description: Provider session hint ignored by NeroCD.}
+      responses:
+        "302":
+          description: Establish the existing browser session and redirect to the validated application path, or return a generic bound-flow failure to sign-in.
+          headers:
+            Location: {schema: {type: string}}
+            Set-Cookie: {schema: {type: string}}
+        "400": {$ref: "#/components/responses/Error"}
   /api/v1/operations/status:
     get:
       summary: Get authoritative administrative operations status
@@ -1836,6 +1883,12 @@ components:
       required: [status]
       properties:
         status: {type: string, enum: [required, complete]}
+    OIDCStatus:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
     OperationsUnavailable:
       type: object
       additionalProperties: false

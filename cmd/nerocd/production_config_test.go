@@ -1,11 +1,56 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestOIDCConfigurationIsAllOrNothingAndUsesExactTrustedOrigins(t *testing.T) {
+	t.Setenv("NEROCD_OIDC_ISSUER_URL", "https://idp.example.invalid/realms/ops")
+	t.Setenv("NEROCD_OIDC_CLIENT_ID", "")
+	t.Setenv("NEROCD_OIDC_CLIENT_SECRET_FILE", "")
+	if _, err := loadOIDCProvider(modeProduction, "https://nerocd.example.invalid"); err == nil {
+		t.Fatal("partial OIDC configuration was accepted")
+	}
+	secret := filepath.Join(t.TempDir(), "oidc-secret")
+	if err := os.WriteFile(secret, []byte("private-client-secret\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NEROCD_OIDC_CLIENT_ID", "nerocd")
+	t.Setenv("NEROCD_OIDC_CLIENT_SECRET_FILE", secret)
+	provider, err := loadOIDCProvider(modeProduction, "https://nerocd.example.invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.Issuer() != "https://idp.example.invalid/realms/ops" || provider.ClientID() != "nerocd" {
+		t.Fatalf("provider binding issuer=%q client=%q", provider.Issuer(), provider.ClientID())
+	}
+	if rendered := fmt.Sprintf("%#v", provider); strings.Contains(rendered, "private-client-secret") || strings.Contains(rendered, "idp.example") {
+		t.Fatalf("provider formatting leaked configuration: %s", rendered)
+	}
+	for _, origin := range []string{"http://nerocd.example.invalid", "https://nerocd.example.invalid/path", ""} {
+		if _, err := loadOIDCProvider(modeProduction, origin); err == nil {
+			t.Fatalf("unsafe OIDC public origin %q accepted", origin)
+		}
+	}
+	t.Setenv("NEROCD_OIDC_ISSUER_URL", "http://idp.example.invalid")
+	if _, err := loadOIDCProvider(modeDevelopment, "http://127.0.0.1:8080"); err == nil {
+		t.Fatal("development accepted non-loopback HTTP issuer")
+	}
+	t.Setenv("NEROCD_OIDC_ISSUER_URL", "http://127.0.0.1:8081")
+	if _, err := loadOIDCProvider(modeDevelopment, "http://127.0.0.1:8080"); err != nil {
+		t.Fatalf("development loopback fixture rejected: %v", err)
+	}
+	if err := os.Chmod(secret, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadOIDCProvider(modeDevelopment, "http://127.0.0.1:8080"); err == nil {
+		t.Fatal("group-readable OIDC client secret accepted")
+	}
+}
 
 func TestProductionConfigFailsClosedAndReadsOwnerOnlySecret(t *testing.T) {
 	t.Setenv("NEROCD_MODE", "production")

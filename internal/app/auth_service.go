@@ -332,6 +332,11 @@ func (s *Service) CreateSessionWithMetadata(ctx context.Context, email string, p
 		s.loginLimiter.Failed(email, metadata.SourceIP)
 		return CreatedSession{}, auth.ErrInvalidCredentials
 	}
+	if user.PasswordHash == "" {
+		auth.VerifyDummyPassword(password)
+		s.loginLimiter.Failed(email, metadata.SourceIP)
+		return CreatedSession{}, auth.ErrInvalidCredentials
+	}
 	valid, legacy, verifyErr := auth.VerifyPassword(password, user.PasswordHash)
 	if verifyErr != nil || !valid || (legacy && !s.allowLegacyPasswords) {
 		s.loginLimiter.Failed(email, metadata.SourceIP)

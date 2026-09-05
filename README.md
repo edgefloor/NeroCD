@@ -89,6 +89,13 @@ this CLI guidance. The unauthenticated `GET /api/v1/bootstrap-status` response
 is limited to `{"status":"required"}` or `{"status":"complete"}`; it never
 identifies users or exposes database state.
 
+Enterprise OIDC browser sign-in is available with explicit issuer and client
+configuration while local password sign-in remains the recovery path. Users
+must be provisioned by exact issuer and provider subject before sign-in; NeroCD
+does not link email claims or grant roles from provider claims. See
+[docs/oidc.md](docs/oidc.md) for provider setup, Keycloak guidance, CLI
+provisioning, trust rules, and operating limits.
+
 Useful CLI commands:
 
 ```sh

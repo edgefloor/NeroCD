@@ -280,6 +280,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/oidc/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get minimal enterprise OIDC availability */
+        get: operations["getOIDCStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oidc/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Begin an enterprise OIDC browser sign-in */
+        get: operations["beginOIDCLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oidc/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Complete an enterprise OIDC browser sign-in */
+        get: operations["completeOIDCLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operations/status": {
         parameters: {
             query?: never;
@@ -1310,6 +1361,9 @@ export interface components {
         BootstrapStatus: {
             /** @enum {string} */
             status: "required" | "complete";
+        };
+        OIDCStatus: {
+            enabled: boolean;
         };
         OperationsUnavailable: {
             /** @enum {string} */
@@ -2627,6 +2681,86 @@ export interface operations {
                     "application/json": components["schemas"]["OperationsUnavailable"];
                 };
             };
+        };
+    };
+    getOIDCStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OIDC availability without provider configuration detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OIDCStatus"];
+                };
+            };
+        };
+    };
+    beginOIDCLogin: {
+        parameters: {
+            query?: {
+                /** @description Strict application-relative return path. */
+                redirect?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the fixed configured provider authorization endpoint. */
+            302: {
+                headers: {
+                    Location?: string;
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    completeOIDCLogin: {
+        parameters: {
+            query: {
+                /** @description Required unless the provider returned an OAuth error. */
+                code?: string;
+                state: string;
+                /** @description Provider denial code; never reflected to the browser or audit. */
+                error?: string;
+                /** @description Ignored provider detail. */
+                error_description?: string;
+                /** @description RFC 9207 issuer, checked exactly against the configured issuer when present. */
+                iss?: string;
+                /** @description Provider session hint ignored by NeroCD. */
+                session_state?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Establish the existing browser session and redirect to the validated application path, or return a generic bound-flow failure to sign-in. */
+            302: {
+                headers: {
+                    Location?: string;
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
         };
     };
     getOperationsStatus: {

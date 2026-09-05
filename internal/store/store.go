@@ -85,6 +85,8 @@ type MemoryStore struct {
 	mu                    sync.RWMutex
 	users                 []domain.User
 	sessions              []domain.Session
+	oidcIdentities        []domain.OIDCExternalIdentity
+	oidcLoginFlows        []domain.OIDCLoginFlow
 	apiTokens             []domain.APIToken
 	tokenHashBySessionID  map[string]string
 	projects              []domain.Project

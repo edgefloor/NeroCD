@@ -36,7 +36,14 @@ export default defineConfig({
       },
   projects: [
     {
+      name: "oidc-setup",
+      testMatch: "oidc.spec.ts",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
       name: "chromium",
+      dependencies: ["oidc-setup"],
+      testIgnore: "oidc.spec.ts",
       use: { ...devices["Desktop Chrome"] },
     },
   ],

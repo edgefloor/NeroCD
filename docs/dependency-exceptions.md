@@ -6,9 +6,11 @@ This file is the review register for top-level dependencies. New top-level Go or
 
 | Dependency | Scope | License | Justification |
 | --- | --- | --- | --- |
+| `github.com/coreos/go-oidc/v3` | Runtime/auth | Apache-2.0 | Performs standards-based OIDC discovery and ID-token signature, issuer, audience, and expiry verification for the explicitly configured enterprise provider. Version 3.21.0 is pinned for the Go 1.25 toolchain. |
 | `github.com/getkin/kin-openapi` | Dev/check | MIT | Loads and validates `openapi.yaml` during the contract check so API route, auth, request body, and response metadata are derived from a real OpenAPI parser instead of ad hoc YAML scanning. |
 | `github.com/jackc/pgx/v5` | Runtime/store | MIT | Native PostgreSQL protocol, pooling, transactions, arrays, nullable values, and JSON transport for the repository implementation without an ORM or compatibility adapter. |
 | `github.com/sqlc-dev/sqlc` | Dev/code generation | MIT | Version 1.24.0 is pinned as a Go tool and runs inside the digest-pinned Go 1.25.7 Debian image declared in the Makefile. The supported Linux compiler environment makes checked-in pgx query generation portable and deterministic without making sqlc a runtime dependency or domain-model source. |
+| `golang.org/x/oauth2` | Runtime/auth | BSD-3-Clause | Implements the authorization-code exchange and S256 PKCE request parameters used with the verified OIDC provider; no OAuth access or refresh token is persisted. Version 0.36.0 is pinned. |
 | `golang.org/x/sys` | Runtime/runner | BSD-3-Clause | Provides the narrow Unix `openat`, `O_NOFOLLOW`, ownership/mode inspection, atomic rename, and directory fsync primitives required for a symlink-resistant, crash-consistent runner journal without storing bearer credentials. |
 
 ## Frontend

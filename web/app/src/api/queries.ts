@@ -2,7 +2,7 @@ import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import type { paths } from "./generated";
 import { ApiError } from "./errors";
 import {
-  getCurrentPrincipal, getHealth, getBootstrapStatus, getOperationsStatus, getRunLogRetentionStatus, listApprovals, listAuditEvents,
+  getCurrentPrincipal, getHealth, getBootstrapStatus, getOIDCStatus, getOperationsStatus, getRunLogRetentionStatus, listApprovals, listAuditEvents,
   listProjectMembers, listProjects, listRepositories, listRunLogs, listRuns, listTemplates, listServices, listEnvironments, listRevisions, listDeployments, getDeployment, listRunners, getRunner,
 } from "./resources";
 import type { TaskRun } from "./resources";
@@ -32,6 +32,7 @@ const filters = <T extends object>(value?: T): T => (value ?? {}) as T;
 export const queryKeys = {
   health: ["health"] as const,
   bootstrapStatus: ["bootstrapStatus"] as const,
+  oidcStatus: ["oidcStatus"] as const,
   operationsStatus: ["operationsStatus"] as const,
   runLogRetentionStatus: ["runLogRetentionStatus"] as const,
   principal: ["principal"] as const,
@@ -65,6 +66,7 @@ export const bootstrapStatusQuery = () => queryOptions({
   // remains open. Poll only until it completes, then leave it cached.
   refetchInterval: (query) => query.state.data?.status === "complete" ? false : 1_000,
 });
+export const oidcStatusQuery = () => queryOptions({ queryKey: queryKeys.oidcStatus, staleTime: 0, queryFn: ({ signal }) => getOIDCStatus({ signal }), retry: false });
 // A mounted Operations page is the only owner of this query.  Avoid polling a
 // background tab; the cached snapshot remains available for an immediate
 // render when the operator returns, then refreshes on focus.

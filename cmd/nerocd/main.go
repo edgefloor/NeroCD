@@ -59,6 +59,8 @@ func run(args []string) error {
 		return seedDevelopmentDatabase(args[1:])
 	case "bootstrap-admin":
 		return bootstrapAdmin(args[1:])
+	case "oidc-provision":
+		return oidcProvision(args[1:])
 	case "provision-app-role":
 		return provisionAppRole(args[1:])
 	case "doctor":
@@ -99,6 +101,7 @@ Usage:
 	  nerocd backup-scheduler --output-dir /secure/backups [--runner-file-root /secure/runner-files] [--interval-seconds 86400] [--retention-count 7]
 	  nerocd seed-dev [--database-url postgres://...]
 	  nerocd bootstrap-admin --email admin@example.com --name 'Initial Admin' (--password-stdin | --password-file /secure/password)
+	  nerocd oidc-provision --issuer https://idp.example/realms/ops --subject stable-subject (--email user@example.com --name 'Operator' | --user-id usr_existing)
 	  nerocd doctor
   nerocd smoke [--addr http://127.0.0.1:8080]
   nerocd contract [--openapi openapi.yaml]

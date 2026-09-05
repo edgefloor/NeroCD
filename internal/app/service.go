@@ -53,6 +53,9 @@ type Service struct {
 	allowLegacyPasswords bool
 	clock                func() time.Time
 	loginLimiter         *auth.LoginLimiter
+	oidc                 auth.OIDCProvider
+	oidcStore            store.OIDCRepository
+	oidcLimiter          *auth.LoginLimiter
 }
 
 // Dependencies names every collaborator of the application service. All
@@ -138,6 +141,7 @@ func NewService(deps Dependencies) (*Service, error) {
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("app.NewService: missing required dependencies: %s", strings.Join(missing, ", "))
 	}
+	oidcStore, _ := deps.Users.(store.OIDCRepository)
 	return &Service{
 		auth:                 deps.Auth,
 		users:                deps.Users,
@@ -161,6 +165,8 @@ func NewService(deps Dependencies) (*Service, error) {
 		allowLegacyPasswords: true,
 		clock:                time.Now,
 		loginLimiter:         auth.NewLoginLimiter(time.Now, 5, time.Minute, 10_000),
+		oidcStore:            oidcStore,
+		oidcLimiter:          auth.NewLoginLimiter(time.Now, 20, time.Minute, 10_000),
 	}, nil
 }
 

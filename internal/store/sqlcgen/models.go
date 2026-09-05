@@ -157,6 +157,25 @@ type Inventory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type OidcExternalIdentity struct {
+	Issuer    string    `json:"issuer"`
+	Subject   string    `json:"subject"`
+	UserID    string    `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type OidcLoginFlow struct {
+	ID           string    `json:"id"`
+	StateHash    string    `json:"state_hash"`
+	NonceHash    string    `json:"nonce_hash"`
+	VerifierHash string    `json:"verifier_hash"`
+	RedirectPath string    `json:"redirect_path"`
+	Issuer       string    `json:"issuer"`
+	ClientID     string    `json:"client_id"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type Project struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`

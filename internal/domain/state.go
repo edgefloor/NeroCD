@@ -120,6 +120,7 @@ func DeploymentRoleTransitionAllowed(isRollbackChild bool, from, to DeploymentSt
 
 // RoleSystemAdmin and the related constants identify authorization roles.
 const (
+	RoleUser        = "user"
 	RoleSystemAdmin = "system_admin"
 	RoleRunnerAdmin = "runner_admin"
 	RoleOwner       = "owner"

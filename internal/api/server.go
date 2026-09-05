@@ -367,7 +367,7 @@ func (s *Server) routes(static fs.FS) {
 
 func requiresAuth(path string) bool {
 	switch path {
-	case "/api/v1/health", "/api/v1/ready", "/api/v1/bootstrap-status", "/api/v1/sessions", "/api/v1/browser-sessions", "/api/v1/runner-enrollments/consume":
+	case "/api/v1/health", "/api/v1/ready", "/api/v1/bootstrap-status", "/api/v1/oidc/status", "/api/v1/oidc/login", "/api/v1/oidc/callback", "/api/v1/sessions", "/api/v1/browser-sessions", "/api/v1/runner-enrollments/consume":
 		return false
 	default:
 		return true

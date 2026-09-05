@@ -555,7 +555,13 @@ architecture document in dependency-conscious slices.
   audit persistence. CI now provisions Postgres and runs this slice.
 - Runner-admin RBAC and first failure-path audit coverage are implemented for
   denied platform-token and runner-token administration attempts.
-- OIDC first, then LDAP/SAML based on actual deployment needs.
+- Enterprise OIDC first slice implemented: one fixed discovered provider,
+  authorization code with S256 PKCE, verified ID tokens, exact explicitly
+  provisioned issuer/subject bindings, durable single-use login transactions,
+  existing revocable sessions/RBAC, local recovery sign-in, audit coverage,
+  and conditional WebUI sign-in. Multiple issuers, provider logout, automatic
+  signup, and claim-driven roles remain outside the slice. LDAP/SAML remain
+  candidates based on actual deployment needs.
 - RBAC enforcement still needs scoped authorization checks on environment,
   runner, audit, and policy paths.
 - Variable groups and encrypted credential values.

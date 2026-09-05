@@ -8,6 +8,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"nerocd/internal/auth"
 )
 
 type deploymentMode string
@@ -174,6 +176,55 @@ func validateProductionOrigin(value string) error {
 	return nil
 }
 
+func loadOIDCProvider(mode deploymentMode, publicOrigin string) (auth.OIDCProvider, error) {
+	issuer := strings.TrimSpace(os.Getenv("NEROCD_OIDC_ISSUER_URL"))
+	clientID := strings.TrimSpace(os.Getenv("NEROCD_OIDC_CLIENT_ID"))
+	secretPath := strings.TrimSpace(os.Getenv("NEROCD_OIDC_CLIENT_SECRET_FILE"))
+	present := 0
+	for _, value := range []string{issuer, clientID, secretPath} {
+		if value != "" {
+			present++
+		}
+	}
+	if present == 0 {
+		return nil, nil
+	}
+	if present != 3 {
+		return nil, errors.New("OIDC configuration requires issuer URL, client ID, and client secret file")
+	}
+	allowLoopbackHTTP := mode == modeDevelopment
+	if _, err := auth.ValidateOIDCIssuerURL(issuer, allowLoopbackHTTP); err != nil {
+		return nil, err
+	}
+	origin, err := url.Parse(strings.TrimSpace(publicOrigin))
+	if err != nil || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return nil, errors.New("OIDC requires NEROCD_PUBLIC_ORIGIN as an exact origin")
+	}
+	if origin.Scheme != "https" && (!allowLoopbackHTTP || origin.Scheme != "http" || !oidcLoopbackHost(origin.Hostname())) {
+		return nil, errors.New("OIDC public origin must use HTTPS or development loopback HTTP")
+	}
+	secret, err := readOwnerOnlyProductionSecret(secretPath)
+	if err != nil || len(secret) > 64*1024 || strings.TrimSpace(string(secret)) == "" {
+		return nil, errors.New("OIDC client secret cannot be read")
+	}
+	provider, err := auth.NewOIDCClient(auth.OIDCConfig{
+		IssuerURL: issuer, ClientID: clientID, ClientSecret: strings.TrimSpace(string(secret)),
+		RedirectURL: strings.TrimRight(origin.String(), "/") + "/api/v1/oidc/callback", AllowLoopbackHTTP: allowLoopbackHTTP,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return provider, nil
+}
+
+func oidcLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address, err := netip.ParseAddr(host)
+	return err == nil && address.IsLoopback()
+}
+
 // validateTrustedProxyCIDRs keeps doctor aligned with server startup without
 // accepting an unbounded or malformed forwarding trust boundary. Values are
 // deliberately not reported back: proxy topology is operational configuration.
@@ -218,6 +269,9 @@ func productionDoctor() error {
 	}
 	if mode == modeProduction && strings.EqualFold(strings.TrimSpace(os.Getenv("NEROCD_COOKIE_SECURE")), "false") {
 		return errors.New("production rejects insecure cookies")
+	}
+	if _, err := loadOIDCProvider(mode, strings.TrimSpace(os.Getenv("NEROCD_PUBLIC_ORIGIN"))); err != nil {
+		return err
 	}
 	fmt.Printf(`{"ok":true,"mode":%q,"database":"configured"}`+"\n", mode)
 	return nil

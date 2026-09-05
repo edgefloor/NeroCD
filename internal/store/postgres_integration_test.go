@@ -3823,6 +3823,179 @@ func TestPostgresAuditEventsAreAppendOnly(t *testing.T) {
 	}
 }
 
+func TestPostgresOIDCFlowIsDurableBoundedAndSingleUse(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "oidc_flow")
+	defer closePostgresStore(t, pg)
+	second, err := store.OpenPostgres(ctx, database.Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closePostgresStore(t, second)
+
+	var identityTable, flowTable string
+	if err := database.QueryRow(ctx, `SELECT to_regclass('oidc_external_identities')::text, to_regclass('oidc_login_flows')::text`).Scan(&identityTable, &flowTable); err != nil {
+		t.Fatal(err)
+	}
+	if identityTable != "oidc_external_identities" || flowTable != "oidc_login_flows" {
+		t.Fatalf("OIDC migration tables identity=%q flow=%q", identityTable, flowTable)
+	}
+
+	now := time.Now().UTC()
+	flow := domain.OIDCLoginFlow{ID: "oidcf_postgres", StateHash: "state", NonceHash: "nonce", VerifierHash: "verifier", RedirectPath: "/runs", Issuer: "https://idp.example/tenant/", ClientID: "client", ExpiresAt: now.Add(time.Minute), CreatedAt: now}
+	if err := pg.CreateOIDCLoginFlow(ctx, flow, now, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.CreateOIDCLoginFlow(ctx, domain.OIDCLoginFlow{ID: "oidcf_over_limit", StateHash: "other", ExpiresAt: now.Add(time.Minute), CreatedAt: now}, now, 1); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("durable active-flow limit err=%v", err)
+	}
+	if _, err := second.ConsumeOIDCLoginFlow(ctx, flow.StateHash, "wrong", flow.Issuer, flow.ClientID, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("mismatched verifier consumed flow: %v", err)
+	}
+
+	var successes int
+	var successesMu sync.Mutex
+	var group sync.WaitGroup
+	for i := range 8 {
+		group.Add(1)
+		go func(i int) {
+			defer group.Done()
+			candidate := pg
+			if i%2 == 1 {
+				candidate = second
+			}
+			if _, err := candidate.ConsumeOIDCLoginFlow(ctx, flow.StateHash, flow.VerifierHash, flow.Issuer, flow.ClientID, now); err == nil {
+				successesMu.Lock()
+				successes++
+				successesMu.Unlock()
+			} else if !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("concurrent consume: %v", err)
+			}
+		}(i)
+	}
+	group.Wait()
+	if successes != 1 {
+		t.Fatalf("concurrent consume successes=%d, want 1", successes)
+	}
+	if _, err := pg.ConsumeOIDCLoginFlow(ctx, flow.StateHash, flow.VerifierHash, flow.Issuer, flow.ClientID, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("replayed flow err=%v", err)
+	}
+
+	expired := flow
+	expired.ID, expired.StateHash, expired.ExpiresAt = "oidcf_expired", "expired", now
+	if err := pg.CreateOIDCLoginFlow(ctx, expired, now.Add(-time.Minute), 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.ConsumeOIDCLoginFlow(ctx, expired.StateHash, expired.VerifierHash, expired.Issuer, expired.ClientID, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expired flow consumed: %v", err)
+	}
+}
+
+func TestPostgresOIDCMigrationIsIndependentlyRequiredForReadiness(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	schema := fmt.Sprintf("nerocd_oidc_compatibility_%d", time.Now().UTC().UnixNano())
+	adminDB, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.Close()
+	if _, err := adminDB.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = adminDB.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`) })
+	database, err := pgxpool.New(ctx, databaseURLWithSearchPath(t, databaseURL, schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := applyEmbeddedMigrations(ctx, database, "", "0036_provenance_image_references.sql"); err != nil {
+		t.Fatal(err)
+	}
+	preMigration, err := store.OpenPostgres(ctx, database.Config().ConnString())
+	if err == nil {
+		closePostgresStore(t, preMigration)
+		t.Fatal("current store accepted a pre-OIDC schema")
+	}
+	if err := applyEmbeddedMigrations(ctx, database, "0036_provenance_image_references.sql", ""); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.OpenPostgres(ctx, database.Config().ConnString())
+	if err != nil {
+		t.Fatalf("current store rejected migrated OIDC schema: %v", err)
+	}
+	closePostgresStore(t, current)
+}
+
+func TestPostgresOIDCProvisionAndSessionTransactions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	pg, database := openPostgresIntegrationStore(t, ctx, "oidc_transactions")
+	defer closePostgresStore(t, pg)
+	now := time.Now().UTC()
+
+	user := domain.User{ID: "usr_oidc_postgres", Email: "oidc-postgres@example.invalid", Name: "OIDC User", Status: domain.UserActive, GlobalRole: domain.RoleUser, CreatedAt: now}
+	identity := domain.OIDCExternalIdentity{Issuer: "https://idp.example/tenant/", Subject: " opaque subject ", UserID: user.ID, CreatedAt: now}
+	provisionAudit := domain.AuditEvent{ID: "aud_oidc_provision", ActorID: "system", Action: "identity.oidc.provision", TargetID: user.ID, Metadata: map[string]any{"provider": "oidc"}, CreatedAt: now}
+	if err := pg.ProvisionOIDCUser(ctx, user, identity, provisionAudit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.CreateOIDCSession(ctx, identity.Issuer, strings.TrimSpace(identity.Subject), domain.Session{ID: "ses_trimmed", ExpiresAt: now.Add(time.Hour), CreatedAt: now}, "trimmed-hash", domain.AuditEvent{ID: "aud_trimmed", Action: "session.create", CreatedAt: now}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("opaque subject was normalized during lookup: %v", err)
+	}
+
+	if err := pg.ProvisionOIDCUser(ctx,
+		domain.User{ID: "usr_oidc_collision", Email: user.Email, Name: "Collision", Status: domain.UserActive, GlobalRole: domain.RoleUser, CreatedAt: now},
+		domain.OIDCExternalIdentity{Issuer: identity.Issuer, Subject: "other", UserID: "usr_oidc_collision", CreatedAt: now},
+		domain.AuditEvent{ID: "aud_oidc_collision", ActorID: "system", Action: "identity.oidc.provision", TargetID: "usr_oidc_collision", CreatedAt: now},
+	); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("email collision provision err=%v", err)
+	}
+	var collisionUsers, collisionIdentities int
+	if err := database.QueryRow(ctx, `SELECT (SELECT count(*) FROM users WHERE id='usr_oidc_collision'), (SELECT count(*) FROM oidc_external_identities WHERE user_id='usr_oidc_collision')`).Scan(&collisionUsers, &collisionIdentities); err != nil {
+		t.Fatal(err)
+	}
+	if collisionUsers != 0 || collisionIdentities != 0 {
+		t.Fatalf("collision transaction partial user=%d identities=%d", collisionUsers, collisionIdentities)
+	}
+
+	duplicateAudit := domain.AuditEvent{ID: "aud_oidc_rollback", ActorID: "system", Action: "test.seed", TargetID: "seed", Metadata: map[string]any{}, CreatedAt: now}
+	if err := pg.CreateAuditEvent(ctx, duplicateAudit); err != nil {
+		t.Fatal(err)
+	}
+	rollbackUser := domain.User{ID: "usr_oidc_rollback", Email: "rollback@example.invalid", Name: "Rollback", Status: domain.UserActive, GlobalRole: domain.RoleUser, CreatedAt: now}
+	rollbackIdentity := domain.OIDCExternalIdentity{Issuer: identity.Issuer, Subject: "rollback", UserID: rollbackUser.ID, CreatedAt: now}
+	rollbackAudit := duplicateAudit
+	rollbackAudit.Action, rollbackAudit.TargetID = "identity.oidc.provision", rollbackUser.ID
+	if err := pg.ProvisionOIDCUser(ctx, rollbackUser, rollbackIdentity, rollbackAudit); err == nil {
+		t.Fatal("duplicate audit unexpectedly committed provisioning")
+	}
+	var rollbackUsers, rollbackIdentities int
+	if err := database.QueryRow(ctx, `SELECT (SELECT count(*) FROM users WHERE id=$1), (SELECT count(*) FROM oidc_external_identities WHERE user_id=$1)`, rollbackUser.ID).Scan(&rollbackUsers, &rollbackIdentities); err != nil {
+		t.Fatal(err)
+	}
+	if rollbackUsers != 0 || rollbackIdentities != 0 {
+		t.Fatalf("audit failure partially provisioned user=%d identities=%d", rollbackUsers, rollbackIdentities)
+	}
+
+	if _, err := database.Exec(ctx, `UPDATE users SET status='disabled' WHERE id=$1`, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	matched, err := pg.CreateOIDCSession(ctx, identity.Issuer, identity.Subject, domain.Session{ID: "ses_disabled", ExpiresAt: now.Add(time.Hour), CreatedAt: now}, "disabled-hash", domain.AuditEvent{ID: "aud_disabled", Action: "session.create", CreatedAt: now})
+	if !errors.Is(err, store.ErrNotFound) || matched.ID != user.ID {
+		t.Fatalf("disabled user session user=%#v err=%v", matched, err)
+	}
+	var disabledSessions int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE id='ses_disabled'`).Scan(&disabledSessions); err != nil || disabledSessions != 0 {
+		t.Fatalf("disabled session count=%d err=%v", disabledSessions, err)
+	}
+}
+
 func openPostgresIntegrationStore(t *testing.T, ctx context.Context, label string) (*store.PostgresStore, *pgxpool.Pool) {
 	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: string; bootstrapRequired?: boolean; onSubmit: (email: string, password: string) => Promise<void> }): ReactNode {
+export function SignIn({ error, oidcEnabled = false, oidcError = false, oidcHref = "/api/v1/oidc/login", bootstrapRequired = false, onSubmit }: { error: string; oidcEnabled?: boolean; oidcError?: boolean; oidcHref?: string; bootstrapRequired?: boolean; onSubmit: (email: string, password: string) => Promise<void> }): ReactNode {
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -36,7 +36,19 @@ export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: 
                 <p className="text-sm text-muted-foreground">Bootstrap is intentionally CLI-only.</p>
                 <p className="text-sm text-muted-foreground">Create the first administrator with the bootstrap command, then return here to sign in.</p>
               </div>
-            ) : <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+            ) : <div className="space-y-4">
+              {oidcError ? <p className="text-sm text-destructive" role="alert">Single sign-on failed. Try again or use local sign-in.</p> : null}
+              {oidcEnabled ? <>
+                <Button className="w-full h-9" variant="outline" asChild>
+                  <a href={oidcHref}>Continue with SSO</a>
+                </Button>
+                <div className="flex items-center gap-3" aria-hidden="true">
+                  <span className="h-px flex-1 bg-border" />
+                  <span className="text-xs text-muted-foreground">or use local recovery</span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              </> : null}
+              <form className="space-y-4" onSubmit={(event) => void submit(event)}>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium" htmlFor="sign-in-email">Email</label>
                 <Input 
@@ -65,7 +77,8 @@ export function SignIn({ error, bootstrapRequired = false, onSubmit }: { error: 
               {error ? (
                 <p className="text-sm text-destructive">{error}</p>
               ) : null}
-            </form>}
+              </form>
+            </div>}
           </CardContent>
         </Card>
       </div>

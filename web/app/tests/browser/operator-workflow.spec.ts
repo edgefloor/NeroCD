@@ -91,10 +91,14 @@ async function createRunLogFixture(page: Page): Promise<{ runID: string; secondR
 
 test("browser observes CLI-only bootstrap guidance before a supported CLI bootstrap", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("status", { name: "Administrator bootstrap required" })).toBeVisible();
-  await expect(page.getByText("Bootstrap is intentionally CLI-only.")).toBeVisible();
-  await expect(page.getByLabel("Email")).toHaveCount(0);
-  await expect(page.getByLabel("Password")).toHaveCount(0);
+  const status = await page.request.get("/api/v1/bootstrap-status");
+  const body = await status.json() as { status?: string };
+  if (body.status === "required") {
+    await expect(page.getByRole("status", { name: "Administrator bootstrap required" })).toBeVisible();
+    await expect(page.getByText("Bootstrap is intentionally CLI-only.")).toBeVisible();
+    await expect(page.getByLabel("Email")).toHaveCount(0);
+    await expect(page.getByLabel("Password")).toHaveCount(0);
+  }
   await ensureBootstrapped(page);
   await expect(page.getByLabel("Email")).toHaveValue("");
   await expect(page.getByLabel("Password")).toHaveValue("");

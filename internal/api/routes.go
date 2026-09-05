@@ -6,6 +6,9 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodGet, Path: "/api/v1/health"},
 	{Method: http.MethodGet, Path: "/api/v1/ready"},
 	{Method: http.MethodGet, Path: "/api/v1/bootstrap-status"},
+	{Method: http.MethodGet, Path: "/api/v1/oidc/status"},
+	{Method: http.MethodGet, Path: "/api/v1/oidc/login"},
+	{Method: http.MethodGet, Path: "/api/v1/oidc/callback"},
 	{Method: http.MethodGet, Path: "/api/v1/operations/status"},
 	{Method: http.MethodGet, Path: "/api/v1/run-log-retention"},
 	{Method: http.MethodPut, Path: "/api/v1/run-log-retention"},
@@ -100,6 +103,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.ready
 	case "/api/v1/bootstrap-status":
 		return s.bootstrapStatus
+	case "/api/v1/oidc/status":
+		return s.oidcStatus
+	case "/api/v1/oidc/login":
+		return s.oidcLogin
+	case "/api/v1/oidc/callback":
+		return s.oidcCallback
 	case "/api/v1/operations/status":
 		return s.operationsStatus
 	case "/api/v1/run-log-retention":

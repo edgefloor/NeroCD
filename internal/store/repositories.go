@@ -132,6 +132,16 @@ type SessionRepository interface {
 	RevokeSessionByID(context.Context, string, time.Time, ...MutationOption) (domain.Session, error)
 }
 
+// OIDCRepository persists explicitly provisioned external identities, durable
+// browser flows, and their atomic transition into ordinary local sessions.
+type OIDCRepository interface {
+	CreateOIDCLoginFlow(context.Context, domain.OIDCLoginFlow, time.Time, int) error
+	ConsumeOIDCLoginFlow(context.Context, string, string, string, string, time.Time) (domain.OIDCLoginFlow, error)
+	ProvisionOIDCUser(context.Context, domain.User, domain.OIDCExternalIdentity, domain.AuditEvent) error
+	BindOIDCIdentity(context.Context, domain.OIDCExternalIdentity, domain.AuditEvent) error
+	CreateOIDCSession(context.Context, string, string, domain.Session, string, domain.AuditEvent) (domain.User, error)
+}
+
 // SessionLastSeenUpdateInterval bounds session activity writes. Authentication
 // remains valid on every request; only durable activity telemetry is sampled.
 const SessionLastSeenUpdateInterval = 5 * time.Minute
