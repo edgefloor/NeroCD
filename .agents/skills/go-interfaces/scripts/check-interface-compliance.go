@@ -357,11 +357,23 @@ func implements(t types.Type, iface *types.Interface) bool {
 
 func hasConcreteAssignment(values []ast.Expr) bool {
 	for _, value := range values {
-		if ident, ok := value.(*ast.Ident); !ok || ident.Name != "nil" {
+		if !isUntypedNil(value) {
 			return true
 		}
 	}
 	return false
+}
+
+func isUntypedNil(expr ast.Expr) bool {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expr = paren.X
+	}
+	ident, ok := expr.(*ast.Ident)
+	return ok && ident.Name == "nil"
 }
 
 func assertedInterface(expr ast.Expr) string {
