@@ -57,20 +57,40 @@ the password in an owner-only file outside the checkout. Create the file
 without putting the password in shell history, then run:
 
 ```sh
-password_file=$(mktemp /tmp/nerocd-bootstrap-password.XXXXXX)
-chmod 600 "$password_file"
-printf 'NeroCD development password: ' >&2
-read -r -s password
-printf '\n' >&2
-test -n "$password"
-printf '%s\n' "$password" > "$password_file"
-unset password
-bin/nerocd bootstrap-admin --email admin@example.test --name 'Local Admin' \
-	--password-stdin < "$password_file"
-rm -f "$password_file"
+(
+	password_file=$(mktemp /tmp/nerocd-bootstrap-password.XXXXXX) || exit 1
+	chmod 600 "$password_file" || { unlink "$password_file"; exit 1; }
+	printf 'NeroCD development password: ' >&2
+	if ! read -r -s password; then
+		printf '\nPassword input failed.\n' >&2
+		unlink "$password_file"
+		exit 1
+	fi
+	printf '\n' >&2
+	if [ -z "$password" ]; then
+		printf 'Password cannot be empty.\n' >&2
+		unlink "$password_file"
+		exit 1
+	fi
+	if ! printf '%s\n' "$password" > "$password_file"; then
+		unset password
+		unlink "$password_file"
+		exit 1
+	fi
+	unset password
+	if bin/nerocd bootstrap-admin --email admin@example.test --name 'Local Admin' \
+		--password-stdin < "$password_file"; then
+		unlink "$password_file"
+	else
+		printf 'bootstrap-admin failed. Fix the problem, then retry with the retained file: %s\n' \
+			"$password_file" >&2
+		exit 1
+	fi
+)
 ```
 
-The command removes the password file after a successful bootstrap. To load
+The command removes the password file after a successful bootstrap. On a
+bootstrap failure, it retains the file and prints its path for retry. To load
 the development fixture instead, run this command and do not run
 `bootstrap-admin`:
 
@@ -103,20 +123,39 @@ an absolute-path, owner-only file outside the checkout. Create the file without
 putting the password in shell history.
 
 ```sh
-password_file=$(mktemp /tmp/nerocd-dev-password.XXXXXX)
-chmod 600 "$password_file"
-printf 'NeroCD development password: ' >&2
-read -r -s password
-printf '\n' >&2
-test -n "$password"
-printf '%s\n' "$password" > "$password_file"
-unset password
-unset NEROCD_DATABASE_URL
-export NEROCD_DEV_MEMORY=true
-export NEROCD_DEV_BOOTSTRAP_EMAIL='admin@example.test'
-export NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE="$password_file"
-bin/nerocd server --addr :8080
-rm -f "$password_file"
+(
+	password_file=$(mktemp /tmp/nerocd-dev-password.XXXXXX) || exit 1
+	chmod 600 "$password_file" || { unlink "$password_file"; exit 1; }
+	printf 'NeroCD development password: ' >&2
+	if ! read -r -s password; then
+		printf '\nPassword input failed.\n' >&2
+		unlink "$password_file"
+		exit 1
+	fi
+	printf '\n' >&2
+	if [ -z "$password" ]; then
+		printf 'Password cannot be empty.\n' >&2
+		unlink "$password_file"
+		exit 1
+	fi
+	if ! printf '%s\n' "$password" > "$password_file"; then
+		unset password
+		unlink "$password_file"
+		exit 1
+	fi
+	unset password
+	unset NEROCD_DATABASE_URL
+	export NEROCD_DEV_MEMORY=true
+	export NEROCD_DEV_BOOTSTRAP_EMAIL='admin@example.test'
+	export NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE="$password_file"
+	if bin/nerocd server --addr :8080; then
+		unlink "$password_file"
+	else
+		printf 'Server startup failed. Fix the problem, then reuse the retained file: %s\n' \
+			"$password_file" >&2
+		exit 1
+	fi
+)
 ```
 
 In another terminal, check the server:
@@ -125,7 +164,8 @@ In another terminal, check the server:
 bin/nerocd ready --addr http://127.0.0.1:8080
 ```
 
-Stop the server with `Ctrl-C`. The command then removes the password file.
+Stop the server with `Ctrl-C`. The command then removes the password file. If
+startup fails, the command retains the file and prints its path for retry.
 Process exit discards every memory-store record. This mode is rejected by
 production configuration. For password-file rules and other secret handling,
 see [Secrets](secrets.md).
