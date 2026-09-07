@@ -66,16 +66,18 @@ adapter. The Leader freezes one read-only `ORCHESTRATOR` packet for
 flow, file map, and gotchas. NeroCD's handoff also requires absolute paths, symbols,
 assumptions, risks, and validation commands.
 
-The explicit route maps the `how` explainer to `gpt-5.6-terra` at medium effort. A direct
-`spawn_agent` call with `read_only_explorer` is the host equivalent of the upstream
-read-only `Task` call with `generalPurpose`. This mapping does not claim native discovery
-of Cursor configuration. Complex exploration and critique remain unpiloted, although their
-unchanged reference files are installed.
+The `how` skill remains unchanged. A direct `spawn_agent` call with `read_only_explorer` is
+the host equivalent of the upstream read-only `Task` call with `generalPurpose`; this mapping
+does not claim native discovery of Cursor configuration. Complex exploration and critique
+remain unpiloted, although their unchanged reference files are installed.
 
-The Leader launched `Explain documentation checker strict behavior` after installation.
-The read-only task derives wrapper help, version behavior, findings, and exit codes from the
-helper. It also explains the reported strict-help and strict-behavior mismatch. The outcome
-is pending, and the task makes no code or skill changes.
+The Leader launched `Explain documentation checker strict behavior` after installation and
+received a useful `SIMPLE EXPLAIN` result covering wrapper help, version behavior, findings,
+and exit codes. The pilot used one child and a clean checkout. Its actual route was Sol/high
+despite a requested Terra/medium route, so it does not validate the intended route. Manual Git
+checks did not validate detached-HEAD preflight. The explanation also overstated the helper's
+error behavior by saying all build-environment errors exit 2; only a missing Go executable is
+normalized to exit 2. The task made no code or skill changes.
 
 ## Pilot cadence
 

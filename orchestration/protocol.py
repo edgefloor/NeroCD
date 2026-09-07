@@ -195,7 +195,7 @@ def validate_packet(packet: dict[str, Any]) -> dict[str, Any]:
     if not workspace_root.is_absolute():
         _fail("packet.repository.workspace_root: expected absolute path")
     _sha(repository["base_sha"], "packet.repository.base_sha")
-    _text(repository["branch"], "packet.repository.branch")
+    _repository_branch(repository["branch"], packet["mode"], "packet.repository.branch")
 
     ownership = packet["ownership"]
     if not isinstance(ownership, dict):
@@ -378,6 +378,30 @@ def _commit_exists(repo: Path, sha: str, where: str) -> None:
         _fail(f"{where}: Git commit does not exist: {sha}")
 
 
+def _repository_branch(value: Any, mode: str, where: str) -> str | None:
+    if value is None:
+        if mode not in {"ORCHESTRATOR", "REVIEWER"}:
+            _fail(f"{where}: null is allowed only for ORCHESTRATOR and REVIEWER")
+        return None
+    return _text(value, where)
+
+
+def _validate_repository_branch(
+    packet: dict[str, Any],
+    repo: Path,
+    *,
+    mismatch_message: str,
+    attached_message: str,
+) -> None:
+    actual = _git(repo, "branch", "--show-current").strip()
+    expected = packet["repository"]["branch"]
+    if expected is None:
+        if actual:
+            _fail(attached_message)
+    elif actual != expected:
+        _fail(mismatch_message)
+
+
 def validate_preflight_repository(packet: dict[str, Any], repo: Path) -> None:
     repo = repo.resolve()
     if Path(packet["repository"]["workspace_root"]).resolve() != repo:
@@ -386,8 +410,12 @@ def validate_preflight_repository(packet: dict[str, Any], repo: Path) -> None:
         _fail(f"preflight --repo-root is not the Git toplevel for {packet['task_id']}")
     base = packet["repository"]["base_sha"]
     _commit_exists(repo, base, "packet.repository.base_sha")
-    if _git(repo, "branch", "--show-current").strip() != packet["repository"]["branch"]:
-        _fail(f"preflight branch mismatch for {packet['task_id']}")
+    _validate_repository_branch(
+        packet,
+        repo,
+        mismatch_message=f"preflight branch mismatch for {packet['task_id']}",
+        attached_message=f"preflight requires detached HEAD for {packet['task_id']}",
+    )
     if _git(repo, "rev-parse", "HEAD").strip() != base:
         _fail(f"preflight HEAD must equal packet base for {packet['task_id']}")
     if _git(repo, "status", "--porcelain", "--untracked-files=all"):
@@ -434,8 +462,12 @@ def _validate_repository_state(
     candidate = result["candidate_sha"]
     _commit_exists(repo, base, "packet.repository.base_sha")
     _commit_exists(repo, candidate, "result.candidate_sha")
-    if _git(repo, "branch", "--show-current").strip() != packet["repository"]["branch"]:
-        _fail("repository branch does not match packet.repository.branch")
+    _validate_repository_branch(
+        packet,
+        repo,
+        mismatch_message="repository branch does not match packet.repository.branch",
+        attached_message="repository must have detached HEAD for a null packet.repository.branch",
+    )
     if _git(repo, "rev-parse", "HEAD").strip() != candidate:
         _fail("repository HEAD does not match result.candidate_sha")
     ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", base, candidate], cwd=repo, check=False)

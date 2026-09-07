@@ -38,7 +38,10 @@ placeholder values, including SHAs. Packet fields are:
 
 - `task_id`, `mode`, and `goal` identify the delegation.
 - `repository` pins an absolute `workspace_root`, full lowercase `base_sha`, and expected
-  `branch`. The CLI's `--repo-root` must identify that exact Git toplevel.
+  `branch`. It is a required non-empty string for `WORKER` and `INTEGRATOR`.
+  `ORCHESTRATOR` and `REVIEWER` may instead use JSON `null`, which requires an actually
+  detached HEAD in both preflight and live result or checkpoint validation. The CLI's
+  `--repo-root` must identify that exact Git toplevel.
 - `ownership.read_paths` is advisory discovery scope. `write_paths` is enforced against Git
   changes using repository-relative exact files or directory prefixes ending in `/`.
 - `interfaces`, `constraints`, `validation`, and `handoff` carry the frozen seven-part brief.
@@ -312,6 +315,11 @@ Luna=`gpt-5.6-luna`. Explorer is Terra/medium. The config caps child threads at 
 cannot spawn children. Parallel writers need separate worktrees and non-overlapping
 ownership, then serial integration. Shared-host worktrees reduce accidental overlap but do
 not enforce it.
+
+A fresh role-specific dispatch uses `fork_turns=none`. A full-history fork inherits its
+parent route, so the dispatch record must preserve that fact. Before implementation, verify
+the actual launched model and effort and record the runtime evidence. Static TOML and an
+available-model list describe defaults or availability; neither proves which route launched.
 
 The normal gates are discovery, interface/ownership freeze, implementation, independent
 routine reviews, any applicable critical risk review, then serial integration and combined

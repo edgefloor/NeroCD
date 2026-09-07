@@ -88,6 +88,20 @@ class ProtocolTest(unittest.TestCase):
             "required_completion_stages": ["source"],
         }
 
+    def make_read_only_packet(self, task_id: str, mode: str, role: str) -> dict:
+        packet = self.make_packet(task_id, [])
+        packet["mode"] = mode
+        packet["repository"]["branch"] = None
+        packet["ownership"] = {"read_paths": ["owned/"], "write_paths": []}
+        packet["route"] = {
+            "role": role,
+            "model": "gpt-5.6-terra",
+            "effort": "medium",
+            "required_tools": ["colgrep", "python3"],
+        }
+        packet["required_review_lenses"] = []
+        return packet
+
     def commit_owned_change(self) -> str:
         (self.repo / "owned" / "file.txt").write_text("candidate\n", encoding="utf-8")
         run(self.repo, "git", "add", ".")
@@ -111,6 +125,29 @@ class ProtocolTest(unittest.TestCase):
                 "location": "test runner summary",
             }],
             "evidence": [{"summary": "One owned file changed.", "location": "owned/file.txt"}],
+            "completion": {
+                "source": "complete", "artifact": "not_applicable",
+                "published": "not_applicable", "deployed": "not_applicable",
+            },
+        }
+
+    def make_no_change_result(self, packet: dict) -> dict:
+        return {
+            "record_type": "result",
+            "schema_version": 1,
+            "task_id": packet["task_id"],
+            "mode": packet["mode"],
+            "packet_digest": digest_record(packet),
+            "base_sha": self.base,
+            "candidate_sha": self.base,
+            "outcome": "no_change",
+            "changed_paths": [],
+            "checks": [{
+                "id": "unit", "status": "passed",
+                "summary": "Synthetic read-only result for protocol tests.",
+                "location": "test runner summary",
+            }],
+            "evidence": [],
             "completion": {
                 "source": "complete", "artifact": "not_applicable",
                 "published": "not_applicable", "deployed": "not_applicable",
@@ -313,6 +350,53 @@ class ProtocolTest(unittest.TestCase):
         with self.assertRaisesRegex(ProtocolError, "branch mismatch"):
             preflight([wrong_branch], self.capabilities, [self.repo])
 
+    def test_null_branch_is_read_only_detached_checkout_contract(self) -> None:
+        for mode, role in (("ORCHESTRATOR", "read_only_explorer"), ("REVIEWER", "code_hygiene_reviewer")):
+            with self.subTest(mode=mode):
+                packet = self.make_read_only_packet(f"{mode.lower()}-a", mode, role)
+                validate_packet(packet)
+                run(self.repo, "git", "checkout", "--detach", self.base)
+                preflight([packet], self.capabilities, [self.repo])
+                result = self.make_no_change_result(packet)
+                validate_result(result, packet, self.repo)
+                records = self.root / f"{mode.lower()}-records"
+                records.mkdir()
+                packet_path = records / "packet.json"
+                result_path = records / "result.json"
+                packet_path.write_text(json.dumps(packet), encoding="utf-8")
+                result_path.write_text(json.dumps(result), encoding="utf-8")
+                state = self.root / f"{mode.lower()}-state" / "checkpoint.json"
+                advance_checkpoint(state, "accepted", packet_path, result_path, [], self.repo)
+                validate_checkpoint(state, self.repo)
+
+    def test_branch_contract_rejects_null_writers_and_checkout_mismatches(self) -> None:
+        writer = copy.deepcopy(self.packet)
+        writer["repository"]["branch"] = None
+        with self.assertRaisesRegex(ProtocolError, "null is allowed only"):
+            validate_packet(writer)
+
+        empty = copy.deepcopy(self.packet)
+        empty["repository"]["branch"] = ""
+        with self.assertRaisesRegex(ProtocolError, "non-empty string"):
+            validate_packet(empty)
+
+        read_only = self.make_read_only_packet("attached-read-only", "ORCHESTRATOR", "read_only_explorer")
+        with self.assertRaisesRegex(ProtocolError, "requires detached HEAD"):
+            preflight([read_only], self.capabilities, [self.repo])
+        with self.assertRaisesRegex(ProtocolError, "detached HEAD"):
+            validate_result(self.make_no_change_result(read_only), read_only, self.repo)
+
+        run(self.repo, "git", "checkout", "--detach", self.base)
+        with self.assertRaisesRegex(ProtocolError, "branch mismatch"):
+            preflight([self.packet], self.capabilities, [self.repo])
+        with self.assertRaisesRegex(ProtocolError, "branch does not match"):
+            validate_result(self.make_no_change_result(self.packet), self.packet, self.repo)
+
+    def test_preflight_rejects_head_that_differs_from_base(self) -> None:
+        self.commit_owned_change()
+        with self.assertRaisesRegex(ProtocolError, "HEAD must equal"):
+            preflight([self.packet], self.capabilities, [self.repo])
+
     def test_writable_packet_requires_review_and_skill_hashes_match(self) -> None:
         no_review = copy.deepcopy(self.packet)
         no_review["required_review_lenses"] = []
@@ -333,6 +417,10 @@ class ProtocolTest(unittest.TestCase):
         candidate = self.commit_owned_change()
         result = self.make_result(candidate)
         validate_result(result, self.packet, self.repo)
+        wrong_candidate = copy.deepcopy(result)
+        wrong_candidate["candidate_sha"] = self.base
+        with self.assertRaisesRegex(ProtocolError, "HEAD does not match"):
+            validate_result(wrong_candidate, self.packet, self.repo)
         (self.repo / "untracked.txt").write_text("dirty\n", encoding="utf-8")
         with self.assertRaisesRegex(ProtocolError, "dirty"):
             validate_result(result, self.packet, self.repo)

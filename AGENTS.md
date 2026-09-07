@@ -14,7 +14,8 @@ Every delegated turn has one explicit mode:
 - `INTEGRATOR`: serial integration of only Leader-approved candidates.
 
 The versioned packet contract is documented in `docs/AGENT-ORCHESTRATION.md`. A packet must
-name the absolute workspace root and exact Git base/branch in the dispatch message, a
+name the absolute workspace root and exact Git base/branch in the dispatch message (a null
+branch is reserved for an actually detached `ORCHESTRATOR` or `REVIEWER` checkout), a
 user-visible goal, read/write ownership, frozen interfaces, constraints, validation IDs,
 handoff evidence, route, selected skill hashes, required review lenses, completion stages,
 and any recorded authorization grants. Scope text is a proposed boundary; actual runtime
@@ -25,8 +26,10 @@ permissions are separately attested and enforced by the host, not by a prompt or
 - Keep at most three child threads open. The primary Leader is not a child. No child may
   spawn another child.
 - Start with the read-only explorer when affected code or interfaces are not understood.
-- Before any edit, preflight the exact worktree: absolute Git toplevel, branch, base, clean
-  state, runtime model/effort/tools/permissions, and selected skill hashes.
+- Before any edit, preflight the exact worktree: absolute Git toplevel, branch or required
+  detached HEAD, base, clean state, runtime model/effort/tools/permissions, and selected
+  skill hashes. Verify the actual launched model and effort before implementation and record
+  that runtime evidence; available models and static TOML do not prove the launched route.
 - Parallel writers require separate worktrees, frozen interfaces, and non-overlapping write
   ownership. Shared-host worktrees do not enforce scope. Integration is serial.
 - Every command uses the packet's absolute workspace as its explicit workdir. Patches use
@@ -56,6 +59,8 @@ are Terra/medium; cryptographic correctness and critical security reviewers are 
 Sol maps to `gpt-5.6-sol`, Terra to `gpt-5.6-terra`, and Luna to `gpt-5.6-luna`. Static
 configuration provides defaults only; preflight must consume a current runtime capability
 attestation and fails when a route, effort, tool, or needed permission is unavailable.
+Use `fork_turns=none` for a fresh role-specific dispatch. A full-history fork inherits the
+parent route and must not be presented as a newly selected role route.
 
 Critical areas are authentication, identity, authorization, permissions, credentials or
 secrets, cryptography/key material, network/protocol trust boundaries, process execution or
