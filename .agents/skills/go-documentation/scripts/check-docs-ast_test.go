@@ -85,6 +85,7 @@ func runChecker(t *testing.T, args ...string) (string, error) {
 		t.Fatalf("resolve check-docs.sh: %v", err)
 	}
 	command := exec.Command("bash", append([]string{wrapper}, args...)...)
+	command.Env = append(os.Environ(), "XDG_CACHE_HOME="+t.TempDir())
 	output, err := command.CombinedOutput()
 	return string(output), err
 }

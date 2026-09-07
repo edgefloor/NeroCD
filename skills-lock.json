@@ -88,7 +88,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "b5adda6937d69d7b572ba1b0f876a35bf082597ada34c9e7e5cb3452ded33b79"
+      "localHash": "e84678428d7a0e6a9a258eb60b63bc4cf5c1b1fd1d45693010353167cb26e234"
     },
     "go-error-handling": {
       "source": "cxuu/golang-skills",
