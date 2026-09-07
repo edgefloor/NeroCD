@@ -111,6 +111,7 @@ func FuzzAttemptJournalRecovery(f *testing.F) {
 			if err != nil {
 				t.Fatalf("open valid journal after recovery error: %v", err)
 			}
+			t.Cleanup(func() { _ = recovered.Close() })
 			if got := recovered.Snapshot(); !reflect.DeepEqual(got, expected) {
 				t.Fatalf("recovered valid journal snapshot = %#v, want %#v", got, expected)
 			}
@@ -121,11 +122,13 @@ func FuzzAttemptJournalRecovery(f *testing.F) {
 			if err != nil {
 				t.Fatalf("open valid journal after close: %v", err)
 			}
+			t.Cleanup(func() { _ = reopened.Close() })
 			if err := reopened.Close(); err != nil {
 				t.Fatal(err)
 			}
 			return
 		}
+		t.Cleanup(func() { _ = journal.Close() })
 		if knownInvalid {
 			_ = journal.Close()
 			t.Fatal("OpenAttemptJournal accepted a known-invalid persisted state")
@@ -144,6 +147,7 @@ func FuzzAttemptJournalRecovery(f *testing.F) {
 		if err != nil {
 			t.Fatalf("reopen recovered journal: %v", err)
 		}
+		t.Cleanup(func() { _ = recovered.Close() })
 		if got := recovered.Snapshot(); !reflect.DeepEqual(got, snapshot) {
 			_ = recovered.Close()
 			t.Fatalf("reopened snapshot = %#v, want %#v", got, snapshot)
@@ -175,6 +179,7 @@ func FuzzAttemptJournalRecovery(f *testing.F) {
 		if err != nil {
 			t.Fatalf("open after recovered acknowledgements: %v", err)
 		}
+		t.Cleanup(func() { _ = final.Close() })
 		if got := final.Snapshot(); !reflect.DeepEqual(got, remaining) {
 			_ = final.Close()
 			t.Fatalf("snapshot after recovered acknowledgements = %#v, want %#v", got, remaining)
@@ -192,6 +197,7 @@ func fuzzAttemptJournalValidState(f *testing.F) ([]byte, JournalSnapshot) {
 	if err != nil {
 		f.Fatal(err)
 	}
+	f.Cleanup(func() { _ = journal.Close() })
 	authority := testJournalAuthority()
 	for _, event := range []JournalEvent{
 		{ID: "event_recovery_one", Attempt: authority, Sequence: 1, Stream: "stdout", Message: "first", CreatedAt: authority.CreatedAt.Add(time.Second)},
