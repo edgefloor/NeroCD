@@ -299,6 +299,8 @@ func TestParallelOperations(t *testing.T) {
 
 Use fuzzing to find edge cases and bugs:
 
+Register test cleanup immediately after successful resource acquisition so fatal assertions cannot leak resources. When explicit `Close` or release behavior is under test, retain the explicit assertions and add a safe fallback cleanup that is idempotent or state-aware on failure.
+
 ```go
 func FuzzReverse(f *testing.F) {
     f.Add("hello")

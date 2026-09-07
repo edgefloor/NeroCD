@@ -128,6 +128,36 @@ The skills validator is required only when `selected_skills` is non-empty. Its h
 and canonical tree are owned and documented by the skills subsystem; orchestration compares
 the returned hashes and does not duplicate that algorithm.
 
+Use the validator's JSON output when constructing `selected_skills`. Values are canonical
+whole-package `sha256-path-content-v1` hashes, not raw `SKILL.md` checksums. The `--json`
+command accepts no skill IDs or `id:hash` positional arguments; it emits the complete map.
+From the repository root, copy the complete map or select entries in a packet-building
+script:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/skills/validate.py --json
+```
+
+```python
+import json
+import subprocess
+
+payload = subprocess.run(
+    ["python3", "scripts/skills/validate.py", "--json"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout
+all_skills = json.loads(payload)["skills"]
+selected_skills = {
+    skill_id: all_skills[skill_id]
+    for skill_id in ("golang-testing", "nerocd-runner-lifecycle")
+}
+```
+
+Carry the resulting canonical values into the packet's `selected_skills` map and handoffs
+so recipients do not recompute raw file checksums or rediscover the recipe.
+
 ## Routing and gates
 
 The configured aliases are Sol=`gpt-5.6-sol`, Terra=`gpt-5.6-terra`, and
