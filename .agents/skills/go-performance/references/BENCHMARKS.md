@@ -66,29 +66,31 @@ go test -bench=. ./...
 # Run specific benchmark with memory stats
 go test -bench=BenchmarkStrconv -benchmem ./...
 
-# Run with count for statistical significance
+# Repeat costly or variable benchmarks; adjust for their cost and observed variance
 go test -bench=. -benchmem -count=10 ./...
 ```
 
 The `-benchmem` flag reports allocations per operation. The `-count` flag runs
-each benchmark N times for statistical significance.
+each benchmark N times; it is not a significance guarantee. Compare equivalent
+before-and-after workloads and choose repetitions based on their cost and
+observed variance.
 
 ---
 
 ## Interpreting Results
 
 ```
-BenchmarkStrconv-8     18705042    64.2 ns/op    16 B/op    1 allocs/op
-BenchmarkFmtSprint-8    8249536   143.0 ns/op    16 B/op    2 allocs/op
+BenchmarkStrconv-8     <iterations>    <time> ns/op    <bytes> B/op    <allocs> allocs/op
+BenchmarkFmtSprint-8   <iterations>    <time> ns/op    <bytes> B/op    <allocs> allocs/op
 ```
 
 | Field | Meaning |
 |-------|---------|
 | `-8` | GOMAXPROCS |
-| `18705042` | Number of iterations |
-| `64.2 ns/op` | Time per operation |
-| `16 B/op` | Bytes allocated per operation |
-| `1 allocs/op` | Heap allocations per operation |
+| `<iterations>` | Number of iterations |
+| `<time> ns/op` | Time per operation |
+| `<bytes> B/op` | Bytes allocated per operation |
+| `<allocs> allocs/op` | Heap allocations per operation |
 
 ---
 
@@ -115,16 +117,16 @@ benchstat old.txt new.txt
 
 ```
 name          old time/op    new time/op    delta
-Strconv-8     64.2ns ± 2%    61.8ns ± 1%   -3.74%  (p=0.001 n=10+10)
+Strconv-8     <old>          <new>         <delta>  (p=<p> n=<counts>)
 ```
 
 - **delta**: Percentage change (negative = faster)
-- **p-value**: Statistical significance (p < 0.05 is significant)
+- **p-value**: Evidence from benchstat's comparison model, not proof of production impact
 - **n**: Number of valid samples used
 
 Tips:
-- Always use `-count=10` or higher for reliable results
-- A small p-value confirms the change is real, not noise
+- Use a repetition count appropriate for the benchmark's cost and observed variance; `-count=10` is a useful starting point for many comparisons
+- A small p-value is one piece of evidence; assess effect size, workload relevance, and measurement quality as well
 - If benchstat shows `~` (tilde), the difference is not statistically
   significant
 
@@ -134,10 +136,8 @@ Tips:
 
 ### strconv vs fmt
 
-| Approach | Speed | Allocations |
-|----------|-------|-------------|
-| `fmt.Sprint` | 143 ns/op | 2 allocs/op |
-| `strconv.Itoa` | 64.2 ns/op | 1 allocs/op |
+Benchmark these alternatives on the conversion and workload you actually have;
+their time and allocation behavior depends on the inputs and Go version.
 
 ### Repeated Byte Conversions
 
@@ -158,10 +158,8 @@ func BenchmarkSingleConversion(b *testing.B) {
 }
 ```
 
-| Approach | Speed |
-|----------|-------|
-| Repeated conversion | 22.2 ns/op |
-| Single conversion | 3.25 ns/op |
+Compare these forms with the actual writer and input. A fixed conversion may
+avoid repeated work, but its effect must be measured.
 
 ### Slice Capacity
 

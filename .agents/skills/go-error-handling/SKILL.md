@@ -163,7 +163,7 @@ Error encountered?
 **Key rules**: Place `%w` at the end. Add context callers don't have. If
 annotation adds nothing, return `err` directly.
 
-> **Validation**: After implementing error handling, run `bash scripts/check-errors.sh` to detect common anti-patterns. Then run `go vet ./...` to catch additional issues.
+> **Validation**: From the repository root, run `bash .agents/skills/go-error-handling/scripts/check-errors.sh ./...` to detect common anti-patterns. Then run `go vet ./...` to catch additional issues.
 
 ---
 

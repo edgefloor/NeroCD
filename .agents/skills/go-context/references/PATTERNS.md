@@ -51,22 +51,23 @@ func main() {
     }
 }
 
-func startBackgroundWorker() {
-    ctx := context.Background()
-    go worker(ctx)
+func startBackgroundWorker(parent context.Context) (stop func(), wait func()) {
+    ctx, cancel := context.WithCancel(parent)
+    var wg sync.WaitGroup
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        worker(ctx)
+    }()
+    return cancel, wg.Wait
 }
 ```
 
-**Default to passing a Context** even if you think you don't need to. Only use
-`context.Background()` directly if you have a good reason why passing a context
-would be a mistake:
-
-```go
-func LoadConfig(ctx context.Context) (*Config, error) {
-    // Even if not using ctx now, accepting it allows future
-    // additions without API changes
-}
-```
+Use a caller's context when work needs its cancellation, deadline, or
+request-scoped values. Do not add a context parameter solely for hypothetical
+future use. A top-level application root may start from `context.Background()`;
+the caller that starts a background worker must retain its stop and wait
+lifecycle.
 
 ---
 
@@ -236,7 +237,7 @@ place to change the implementation.
 | Request-scoped data | Appropriate for context values |
 | Sharing context | Safe — contexts are immutable |
 | `context.Background()` | Only for non-request-specific code |
-| Default | Pass context even if you think you don't need it |
+| Default | Pass the caller's context when the work needs its cancellation, deadline, or values |
 | `defer cancel()` | Always defer immediately after `WithTimeout`/`WithCancel`/`WithDeadline` |
 | Value keys | Use unexported struct types, provide accessor functions |
 | Cancellation check | `ctx.Err()` before expensive ops; `select` on `ctx.Done()` in loops |

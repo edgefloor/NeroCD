@@ -59,14 +59,9 @@ go func() { for { flush(); time.Sleep(delay) } }()
 
 > "Do not communicate by sharing memory; instead, share memory by communicating."
 
-This is Go's foundational concurrency design principle. Use **channels** for
-ownership transfer and orchestration — when one goroutine produces a value and
-another consumes it. Use **mutexes** when multiple goroutines access shared
-state and channels would add unnecessary complexity.
-
-**Default to channels.** Fall back to `sync.Mutex` / `sync.RWMutex` when the
-problem is naturally about protecting a shared data structure (e.g., a cache or
-counter) rather than passing data between goroutines.
+Choose channels when work or ownership moves between goroutines. Choose a mutex
+or RWMutex when goroutines coordinate access to shared state such as a cache or
+counter. Prefer the primitive that makes ownership and synchronization clear.
 
 ---
 

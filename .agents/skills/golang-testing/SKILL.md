@@ -44,19 +44,23 @@ package mypackage
 package mypackage_test
 ```
 
-Name the test file after the source file it tests, not after the function or method under test. Go's convention is one test file per source file (`foo.go` -> `foo_test.go`), because tools (`go test`, coverage reports, IDE "jump to test" navigation, `gotests`) and reviewers all resolve tests by source file, not by symbol. A source file usually declares several functions/methods; splitting its tests by symbol name scatters them across many files and breaks that file-to-file mapping.
+Name test files with the required `_test.go` suffix and follow the repository's
+convention. Pairing `foo.go` with `foo_test.go` often helps navigation, but
+splitting tests by concern can be clearer in large packages.
 
 ```
-// ✓ Good — one test file per source file
+// One useful source-file pairing
 helloworld.go       -> helloworld_test.go   // contains TestHelloWorld, TestAbcd, TestXyz, ...
 
-// ✗ Bad — test file named after the function/method instead of the source file
-helloworld.go       -> abcd_test.go         // wrong: should be helloworld_test.go
+// A concern-based split can also be appropriate
+helloworld.go       -> validation_test.go
 ```
 
 Very large test files can be split by concern when that helps navigation. Follow the repository's naming convention and keep related cases easy to discover rather than imposing a universal source-file-to-test-file mapping.
 
-Within a test file, order test functions to match the order their tested functions/methods appear in the source file. A reader (human or agent) scrolling `foo.go` alongside `foo_test.go` can then find the matching test by position instead of searching; drift between the two orderings compounds every time either file grows.
+Within a test file, use source order when it helps a reader connect tests to the
+implementation; otherwise group by the repository's established concern or API
+convention.
 
 ### Naming Conventions
 
@@ -142,7 +146,8 @@ Verify with a deliberately-broken case: if `go test -v -run TestName` shows `---
 
 ## Unit Tests
 
-Unit tests should be fast (< 1ms), isolated (no external dependencies), and deterministic.
+Unit tests should be fast enough for the repository's ordinary feedback loop,
+isolated from external dependencies, and deterministic.
 
 ## Testing HTTP Handlers
 

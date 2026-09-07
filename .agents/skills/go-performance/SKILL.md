@@ -18,16 +18,12 @@ Performance-specific guidelines apply only to the **hot path**. Don't prematurel
 
 ## Prefer strconv over fmt
 
-When converting primitives to/from strings, `strconv` is faster than `fmt`:
+For primitive conversions on a measured hot path, consider `strconv` instead of
+`fmt` and retain the change only when it improves the actual workload:
 
 ```go
-s := strconv.Itoa(rand.Int()) // ~2x faster than fmt.Sprint()
+s := strconv.Itoa(rand.Int())
 ```
-
-| Approach | Speed | Allocations |
-|----------|-------|-------------|
-| `fmt.Sprint` | 143 ns/op | 2 allocs/op |
-| `strconv.Itoa` | 64.2 ns/op | 1 allocs/op |
 
 ---
 
@@ -38,7 +34,7 @@ Convert a fixed string to `[]byte` once outside the loop:
 ```go
 data := []byte("Hello world")
 for b.Loop() { // Go 1.24+; use b.N loops only for older Go
-    w.Write(data) // ~7x faster than []byte("...") each iteration
+    w.Write(data)
 }
 ```
 
@@ -66,14 +62,9 @@ Provide capacity hints when initializing slices with `make()`, particularly when
 data := make([]int, 0, size)
 ```
 
-Unlike maps, slice capacity is **not a hint**—the compiler allocates exactly that much memory. Subsequent `append()` operations incur zero allocations until capacity is reached.
-
-| Approach | Time (100M iterations) |
-|----------|------------------------|
-| No capacity | 2.48s |
-| With capacity | 0.21s |
-
-The capacity version is **~12x faster** due to zero reallocations during append.
+Slice capacity is a count of elements before appending must grow the backing
+array. Appends that remain within capacity do not need that growth, but upfront
+capacity also retains memory; measure the relevant workload before choosing it.
 
 ---
 
@@ -117,21 +108,25 @@ Always measure before and after optimizing. Use Go's built-in benchmark framewor
 go test -bench=. -benchmem -count=10 ./...
 ```
 
-> **Validation**: After applying optimizations, run `bash scripts/bench-compare.sh` to measure the actual impact. Only keep optimizations with measurable improvement.
+`-count=10` is an example, not a significance guarantee; choose repetitions
+that fit the benchmark's cost and observed variance. Compare like-for-like
+before and after runs. A p-value is evidence from the comparison model, not
+proof that a change matters in production.
+
+> **Validation**: From the repository root, run `bash .agents/skills/go-performance/scripts/bench-compare.sh ./...` to measure the actual impact. Keep an optimization only when it improves the relevant workload enough to justify its cost.
 
 ---
 
 ## Quick Reference
 
-| Pattern | Bad | Good | Improvement |
-|---------|-----|------|-------------|
-| Int to string | `fmt.Sprint(n)` | `strconv.Itoa(n)` | ~2x faster |
-| Repeated `[]byte` | `[]byte("str")` in loop | Convert once outside | ~7x faster |
-| Map initialization | `make(map[K]V)` | `make(map[K]V, size)` | Fewer allocs |
-| Slice initialization | `make([]T, 0)` | `make([]T, 0, cap)` | ~12x faster |
-| Small fixed-size args | `*string`, `*io.Reader` | `string`, `io.Reader` | No indirection |
-| Simple string join | `s1 + " " + s2` | (already good) | Use `+` for few strings |
-| Loop string build | Repeated `+=` | `strings.Builder` | O(n) vs O(n²) |
+| Pattern | Consider |
+|---------|----------|
+| Primitive conversion | `strconv` when measurement supports it |
+| Repeated `[]byte` | Convert a fixed string once when it avoids relevant work |
+| Map or slice initialization | A map capacity hint or known initial slice capacity when memory trade-offs fit |
+| Small fixed-size arguments | Passing by value unless copying is a demonstrated cost |
+| Simple string join | `+` for a few strings |
+| Loop string build | `strings.Builder` |
 
 ---
 

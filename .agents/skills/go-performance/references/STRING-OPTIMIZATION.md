@@ -2,8 +2,9 @@
 
 ## strconv vs fmt
 
-When converting primitives to/from strings, `strconv` is faster than `fmt`
-because `fmt` uses reflection and handles arbitrary types.
+For primitive conversions on a measured hot path, consider `strconv` instead of
+`fmt`. Their relative time and allocation behavior depends on the conversion,
+inputs, and Go version.
 
 Benchmark snippets use `b.Loop()`, available in Go 1.24 and newer. For older
 Go versions, use `for i := 0; i < b.N; i++`.
@@ -24,12 +25,8 @@ for b.Loop() {
 }
 ```
 
-**Benchmark comparison:**
-
-| Approach | Speed | Allocations |
-|----------|-------|-------------|
-| `fmt.Sprint` | 143 ns/op | 2 allocs/op |
-| `strconv.Itoa` | 64.2 ns/op | 1 allocs/op |
+Benchmark the alternatives on the actual conversion and workload before
+trading readability for a micro-optimization.
 
 Common conversions:
 
@@ -65,15 +62,8 @@ for b.Loop() {
 }
 ```
 
-**Benchmark comparison:**
-
-| Approach | Speed |
-|----------|-------|
-| Repeated conversion | 22.2 ns/op |
-| Single conversion | 3.25 ns/op |
-
-The good version is **~7x faster** because it avoids allocating a new byte slice
-on each iteration.
+The fixed conversion may avoid repeated conversion work. Measure the actual
+writer and input before relying on that effect.
 
 ---
 

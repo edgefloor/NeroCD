@@ -157,11 +157,11 @@ allowed-tools: Bash(bash:*)
 
 ## Automated Checks
 
-Run automated pre-review checks:
+From the repository root, run automated pre-review checks:
 
 ```bash
-bash scripts/pre-review.sh ./...         # text output
-bash scripts/pre-review.sh --json ./...  # structured JSON output
+bash .agents/skills/go-code-review/scripts/pre-review.sh ./...         # text output
+bash .agents/skills/go-code-review/scripts/pre-review.sh --json ./...  # structured JSON output
 ```
 
 Or manually: `gofmt -l <path> && go vet ./... && golangci-lint run ./...`

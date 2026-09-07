@@ -126,7 +126,7 @@ Use this pattern when:
 **Don't** add these checks for every interface — only when no other static
 conversion would catch the error.
 
-> **Validation**: After defining interfaces or implementations, run `bash scripts/check-interface-compliance.sh` to verify all concrete types have compile-time `var _ I = (*T)(nil)` checks.
+> **Validation**: From the repository root, run `bash .agents/skills/go-interfaces/scripts/check-interface-compliance.sh ./...` to find candidates for review. The helper is heuristic: assess each candidate against the criteria above rather than requiring an assertion for every concrete type. Treat any nonzero exit as findings or an execution failure to investigate; do not suppress it.
 
 ---
 
