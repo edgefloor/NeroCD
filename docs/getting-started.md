@@ -16,7 +16,14 @@ development.
 
 ```sh
 docker compose up --build -d
-docker compose exec nerocd nerocd ready --addr http://127.0.0.1:8080
+attempt=0
+until docker compose exec -T nerocd nerocd ready --addr http://127.0.0.1:8080; do
+	attempt=$((attempt + 1))
+	if [ "$attempt" -eq 30 ]; then
+		exit 1
+	fi
+	sleep 1
+done
 ```
 
 The second command prints `{"status":"ready"}`. Open
@@ -45,15 +52,27 @@ bin/nerocd migrate --seed=false
 ```
 
 Choose one way to create local data. To create the first administrator, keep
-the password in an owner-only file outside the checkout, then run:
+the password in an owner-only file outside the checkout. Create the file
+without putting the password in shell history, then run:
 
 ```sh
+password_file=/secure/nerocd-bootstrap-password
+umask 077
+mkdir -p "$(dirname "$password_file")"
+printf 'NeroCD development password: ' >&2
+read -r -s password
+printf '\n' >&2
+test -n "$password"
+printf '%s\n' "$password" > "$password_file"
+unset password
 bin/nerocd bootstrap-admin --email admin@example.test --name 'Local Admin' \
-	--password-stdin < /secure/nerocd-bootstrap-password
+	--password-stdin < "$password_file"
+rm -f "$password_file"
 ```
 
-Remove the password file after a successful bootstrap. To load the development
-fixture instead, run this command and do not run `bootstrap-admin`:
+The command removes the password file after a successful bootstrap. To load
+the development fixture instead, run this command and do not run
+`bootstrap-admin`:
 
 ```sh
 NEROCD_DEV_SEED_FILE=./db/seeds/dev.sql bin/nerocd seed-dev
@@ -80,14 +99,25 @@ restore safeguards.
 
 Use this path only for a throwaway local session. You need Go 1.25 or newer,
 Bun 1.3.6, and `bin/nerocd` from `make build`. Keep the bootstrap password in
-an absolute-path, owner-only file outside the checkout.
+an absolute-path, owner-only file outside the checkout. Create the file without
+putting the password in shell history.
 
 ```sh
+password_file=/secure/nerocd-dev-password
+umask 077
+mkdir -p "$(dirname "$password_file")"
+printf 'NeroCD development password: ' >&2
+read -r -s password
+printf '\n' >&2
+test -n "$password"
+printf '%s\n' "$password" > "$password_file"
+unset password
 unset NEROCD_DATABASE_URL
 export NEROCD_DEV_MEMORY=true
 export NEROCD_DEV_BOOTSTRAP_EMAIL='admin@example.test'
-export NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE=/secure/nerocd-dev-password
+export NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE="$password_file"
 bin/nerocd server --addr :8080
+rm -f "$password_file"
 ```
 
 In another terminal, check the server:
@@ -96,6 +126,7 @@ In another terminal, check the server:
 bin/nerocd ready --addr http://127.0.0.1:8080
 ```
 
-Stop the server with `Ctrl-C`. Process exit discards every memory-store record.
-This mode is rejected by production configuration. For password-file rules and
-other secret handling, see [Secrets](secrets.md).
+Stop the server with `Ctrl-C`. The command then removes the password file.
+Process exit discards every memory-store record. This mode is rejected by
+production configuration. For password-file rules and other secret handling,
+see [Secrets](secrets.md).
