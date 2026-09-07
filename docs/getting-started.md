@@ -155,7 +155,7 @@ putting the password in shell history.
 		unlink "$password_file"
 	else
 		printf 'Server startup failed. Fix the problem, then run:\n' >&2
-		printf "unset NEROCD_DATABASE_URL; NEROCD_DEV_MEMORY=true NEROCD_DEV_BOOTSTRAP_EMAIL='admin@example.test' NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE=%s bin/nerocd server --addr :8080 && unlink %s\n" \
+		printf "( unset NEROCD_DATABASE_URL; NEROCD_DEV_MEMORY=true NEROCD_DEV_BOOTSTRAP_EMAIL='admin@example.test' NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE=%s bin/nerocd server --addr :8080 && unlink %s )\n" \
 			"$password_file" "$password_file" >&2
 		exit 1
 	fi
