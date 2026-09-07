@@ -26,7 +26,8 @@ until docker compose exec -T nerocd nerocd ready --addr http://127.0.0.1:8080; d
 done
 ```
 
-The second command prints `{"status":"ready"}`. Open
+Early readiness attempts can fail while migrations and seed loading run. The
+final successful attempt prints `{"status":"ready"}`. Open
 <http://localhost:8080> after it succeeds.
 
 To stop the stack and retain the database, run:
@@ -56,9 +57,8 @@ the password in an owner-only file outside the checkout. Create the file
 without putting the password in shell history, then run:
 
 ```sh
-password_file=/secure/nerocd-bootstrap-password
-umask 077
-mkdir -p "$(dirname "$password_file")"
+password_file=$(mktemp /tmp/nerocd-bootstrap-password.XXXXXX)
+chmod 600 "$password_file"
 printf 'NeroCD development password: ' >&2
 read -r -s password
 printf '\n' >&2
@@ -103,9 +103,8 @@ an absolute-path, owner-only file outside the checkout. Create the file without
 putting the password in shell history.
 
 ```sh
-password_file=/secure/nerocd-dev-password
-umask 077
-mkdir -p "$(dirname "$password_file")"
+password_file=$(mktemp /tmp/nerocd-dev-password.XXXXXX)
+chmod 600 "$password_file"
 printf 'NeroCD development password: ' >&2
 read -r -s password
 printf '\n' >&2
