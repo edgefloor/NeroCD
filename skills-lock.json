@@ -233,7 +233,7 @@
       "license": "MIT",
       "upstreamLocalHash": "8dc90b6844c55a1bf424fbc86e51e63d22a2c2443950e52e041a62f2bc58ebc8",
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "c7586a7ac7c828cd8e005557bfee939ff85b4d52774cce6becdf0fd5d9d8e6f7"
+      "localHash": "198b8bfa017f63ba0ace13a35600704bb6a585ef312885a41b3ca5de10ce7f62"
     },
     "nerocd-runner-lifecycle": {
       "source": "NeroCD",
