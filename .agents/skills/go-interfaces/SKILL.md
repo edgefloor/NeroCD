@@ -1,6 +1,6 @@
 ---
 name: go-interfaces
-description: Design or review Go interfaces, abstraction boundaries, embedding, type assertions, receiver choices, or mockable seams. Use go-generics for compile-time parameterization.
+description: Design Go interfaces, method sets, receivers, embedding, and test seams.
 allowed-tools: Bash(bash:*)
 ---
 

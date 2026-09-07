@@ -1,6 +1,6 @@
 ---
 name: go-control-flow
-description: Improve nontrivial Go conditionals, loops, switches, range usage, early returns, or blank-identifier patterns. Use go-error-handling when the main concern is error flow.
+description: Refine Go conditionals, loops, switches, range behavior, and early returns.
 ---
 
 # Go Control Flow

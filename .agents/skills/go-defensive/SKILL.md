@@ -1,6 +1,6 @@
 ---
 name: go-defensive
-description: Harden Go API boundaries and resource handling, including copying mutable inputs, cleanup, interface compliance, time types, panic containment, and global state. Use golang-security for exploitable security risks and go-error-handling for error strategy.
+description: Harden Go API boundaries, cleanup, mutable ownership, and panic handling.
 ---
 
 # Go Defensive Programming Patterns

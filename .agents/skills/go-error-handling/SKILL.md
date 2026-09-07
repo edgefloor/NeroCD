@@ -1,6 +1,6 @@
 ---
 name: go-error-handling
-description: Design or review Go error contracts, wrapping, sentinel and typed errors, errors.Is/As, propagation across package boundaries, and log-versus-return decisions. Use go-defensive for panic and recovery boundaries.
+description: Design Go error contracts, wrapping, errors.Is/As, and propagation.
 allowed-tools: Bash(bash:*)
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: golang-security
-description: "Review or implement Go security at trust boundaries involving authentication, authorization, secrets, cryptography, untrusted network or filesystem input, or process execution. Use for an explicit security audit or an assigned critical-area review; use go-defensive for non-exploitable robustness issues."
+description: Audit or implement Go security at authentication, authorization, cryptographic, filesystem, and process-execution boundaries.
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.

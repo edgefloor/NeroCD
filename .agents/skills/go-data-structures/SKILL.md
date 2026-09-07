@@ -1,6 +1,6 @@
 ---
 name: go-data-structures
-description: Design or review Go slices, maps, and arrays where allocation, nil-versus-empty behavior, aliasing, copying, capacity, or set representation matters. Use go-concurrency for shared collection safety.
+description: Design Go slices, maps, and arrays with correct aliasing, copying, capacity, and nil semantics.
 ---
 
 # Go Data Structures

@@ -1,6 +1,6 @@
 ---
 name: go-functional-options
-description: Decide whether and how to use functional options for a Go constructor or factory with several optional settings or an extensible configuration API. Use go-functions for general signature design.
+description: Choose functional options or configuration structs for Go constructors.
 ---
 
 # Functional Options Pattern

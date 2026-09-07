@@ -1,6 +1,6 @@
 ---
 name: go-documentation
-description: Write or review Go package documentation and comments for exported packages, types, functions, methods, constants, and examples. Use go-style-core for ordinary implementation comments.
+description: Write or review Go package docs, public API comments, and runnable examples.
 allowed-tools: Bash(bash:*)
 ---
 

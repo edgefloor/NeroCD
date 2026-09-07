@@ -11,7 +11,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "e864afd1775088564d57a15beced04ec34c5e8a59da67fa291f99e2e37b7a771"
+      "localHash": "f58dd9f9e59655830895e819419bdacc500c5cdb0b38972c0357f26cba1ad85c"
     },
     "go-concurrency": {
       "source": "cxuu/golang-skills",
@@ -22,7 +22,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "0ef21f978d7d9f6066f16a164800fd5a76ce5c1565adf8636d589d5bc09058dc"
+      "localHash": "7d5f6f39189653b1a44b79c2fa20361c5a0e10b2b81e7d2528990f30935063f9"
     },
     "go-context": {
       "source": "cxuu/golang-skills",
@@ -33,7 +33,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "a8c6f78e1a43b5bc7bbc09f92e5098797a2248517c42f987c24449229bfbd07a"
+      "localHash": "f1972252c4d2aa8990364b0c6ad6843a1bf9fa5c49a551d23418f4606486b672"
     },
     "go-control-flow": {
       "source": "cxuu/golang-skills",
@@ -44,7 +44,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "72399f449e1267e05139c035322b71becf3aa77463957ca8172d41a809ed0b36"
+      "localHash": "008b224445457fe7ec0303cd156353456093a2c5644b7b8e9874d1c9b0a9538d"
     },
     "go-data-structures": {
       "source": "cxuu/golang-skills",
@@ -55,7 +55,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "13f8a05b24a09733ca9c56d57cc676158245270acf4c3760e396cbf38b9b84dc"
+      "localHash": "e3d4c1ca6204e5b96cbfd542c3ba9e6446bdc5d075092401bba6ec296143021b"
     },
     "go-declarations": {
       "source": "cxuu/golang-skills",
@@ -66,7 +66,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "d3c5d70850ec319c7665975519a0adf049d829ded4c9b2c56f10d7b3a8e660b0"
+      "localHash": "c2bab6385b0fe1923fce78d984bca4225df0f5352e42160cd219261ac8ce54a7"
     },
     "go-defensive": {
       "source": "cxuu/golang-skills",
@@ -77,7 +77,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "015f6ce18d38a1497a30b78092cd7163bf8f0cf41424ac90feca124a6fdb1c08"
+      "localHash": "f8b94d013f9292b816d0b011d1bacb689ff3b82678ec4220059a7b896c49b819"
     },
     "go-documentation": {
       "source": "cxuu/golang-skills",
@@ -88,7 +88,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "5c583d107b3149463c9425a3d77a338219422e89836f830f621c5f3fd41b90ba"
+      "localHash": "d978797f7024fedd5948c5f957290cb012204ad5888d2e89083c4c85e3338405"
     },
     "go-error-handling": {
       "source": "cxuu/golang-skills",
@@ -99,7 +99,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "7db687222e4cda2d0f6192973571368f475a030d73224bab90ddf9d0284b50b6"
+      "localHash": "9be314edf142689268800673134696700da6e7d5e0b6f6d7ccf1ef8e1b1d65dc"
     },
     "go-functional-options": {
       "source": "cxuu/golang-skills",
@@ -110,7 +110,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "17ed1ddacd7dac2badff32102570b8804742279d1c71d123b9ed7b0468e5b164"
+      "localHash": "b8996f731c3f4643fc5b79f7c578f49266e57029b0f01a906a10f13f851d3f20"
     },
     "go-functions": {
       "source": "cxuu/golang-skills",
@@ -121,7 +121,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "b698b643ea0881cc97bb3a7c6e0c9067742b9fff4ef98128316f8bf7add77efa"
+      "localHash": "fa3acc48effeec4709cad1532cee7cfc216ea2c25ee3603f8c109ef3ab24ad3b"
     },
     "go-generics": {
       "source": "cxuu/golang-skills",
@@ -132,7 +132,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "e678f39e300dcb5f892cd59a0d37c9b58e38730574fc15622180fe0d647c1cb5"
+      "localHash": "9f650b6f3947ad61f8f5d625632b1ad17978cbbffa83058569d05363cd42c9dd"
     },
     "go-interfaces": {
       "source": "cxuu/golang-skills",
@@ -143,7 +143,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "707bf20e07a213867ac3fce4e651e29ed4b9e2c93f8c861d260a050f940054b1"
+      "localHash": "3c2aae8856bb4d6e5f1197e7f6a111a5fa4675e6b1157afae19f1c7dc4e7e212"
     },
     "go-linting": {
       "source": "cxuu/golang-skills",
@@ -154,7 +154,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "ed728f4bd005dcb977c7b6eb26bd89d64a858ae09e30f28535d7c03282412781"
+      "localHash": "780598184b44d649995e32b153e08f824cb89fa009d71b7d35c2e9f34a2e71ca"
     },
     "go-logging": {
       "source": "cxuu/golang-skills",
@@ -165,7 +165,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "f358cae8d1496ecea7918f7f77e3fcd74f84fb4f85e0813d9a28d955779a8a64"
+      "localHash": "6addacdfd0dc168243ad1eec56b54767332345416f901fcea651610c0ce6a901"
     },
     "go-naming": {
       "source": "cxuu/golang-skills",
@@ -176,7 +176,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "464636b5a44641c9d97509b1e7ad375bc0fbb4e45e0ca3f0a9122f0c1cb09b2e"
+      "localHash": "c9b66f0965b0d07b28a44cbfb006de7c6f254ca6d2629b0ce06e53b1bf673bca"
     },
     "go-packages": {
       "source": "cxuu/golang-skills",
@@ -187,7 +187,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "105ae58966fd11a8c18325b22c4501aa15687a9269dd84d3d9db69117cc70f92"
+      "localHash": "a622de0d8caa73abcf910fe2d17a5a629654d3b978b5a31a4dbc9e062f8d7fa2"
     },
     "go-performance": {
       "source": "cxuu/golang-skills",
@@ -198,7 +198,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "85e9a57a4b77ca5558182c706c93be72f38b4a99f2436c2e6fe9369b95227d6f"
+      "localHash": "eaecb36698ab60adec33400fa986b02d9965544de5552da8f660837acf0c0719"
     },
     "go-style-core": {
       "source": "cxuu/golang-skills",
@@ -209,7 +209,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "d9ccae6e03b35f5db04affc4ab7a901fa7a6bfb53705da50aa4ea5d980e0a1e4"
+      "localHash": "6a0f930e363703775b6330a472a91930db086ba507a332773819f1ec3f5cb589"
     },
     "golang-security": {
       "source": "samber/cc-skills-golang",
@@ -221,7 +221,7 @@
       "license": "MIT",
       "upstreamLocalHash": "ed6b120dae82dff9267b58bb17186c4289643698e4284c51185bdc06b4b8078f",
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "89b20ba213207c3495c8c67e89f590ea8319276bed9756ab8fd907e944fc4206"
+      "localHash": "444d63f471324c5c9ed6089d50070b3263b58017035b3cb0f70d634a80e8eba6"
     },
     "golang-testing": {
       "source": "samber/cc-skills-golang",
@@ -233,7 +233,7 @@
       "license": "MIT",
       "upstreamLocalHash": "8dc90b6844c55a1bf424fbc86e51e63d22a2c2443950e52e041a62f2bc58ebc8",
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "8cdf5c6b1b57dccc6d037f9d0a9fe3dd427d2f6a1aa8695123c2ecf852802814"
+      "localHash": "dad0a30f85f05189faad9adcf92bf559503cdbf2d46c523fdaf49096478e909d"
     },
     "nerocd-runner-lifecycle": {
       "source": "NeroCD",

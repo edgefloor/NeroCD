@@ -1,6 +1,6 @@
 ---
 name: go-linting
-description: Set up or change Go static analysis, golangci-lint configuration, or lint checks in CI. Use go-code-review for reviewing code rather than configuring analyzers.
+description: Configure golangci-lint and Go static analysis in CI.
 allowed-tools: Bash(bash:*)
 ---
 

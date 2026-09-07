@@ -1,6 +1,6 @@
 ---
 name: go-code-review
-description: Review Go changes against the repository's documented standards and idiomatic community guidance. Use for an explicit Go review or before submitting a Go pull request; use specialized skills for focused language topics.
+description: Review Go changes for repository standards and correctness; use specialists for focused questions.
 allowed-tools: Bash(bash:*)
 ---
 

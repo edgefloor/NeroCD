@@ -1,6 +1,6 @@
 ---
 name: go-performance
-description: Investigate or optimize measurable Go performance, including allocation, string construction, benchmarking, or profiling. Use go-concurrency when synchronization or parallelism is the main concern.
+description: Profile and benchmark Go performance; optimize measured runtime and allocation costs.
 allowed-tools: Bash(bash:*)
 ---
 

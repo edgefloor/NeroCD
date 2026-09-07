@@ -1,6 +1,6 @@
 ---
 name: go-declarations
-description: Refine Go declarations and initialization when var versus :=, scope, composite literals, structs, iota enums, or any versus interface{} is a material design concern. Use go-naming for identifier choices.
+description: Refine Go declarations, initialization, variable scope, composite literals, and iota.
 ---
 
 # Go Declarations and Initialization

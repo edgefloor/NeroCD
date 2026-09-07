@@ -1,6 +1,6 @@
 ---
 name: go-style-core
-description: Resolve an explicit Go formatting or core-style question involving nesting, naked returns, semicolons, line shape, or a concern not covered by a more specific Go skill.
+description: Resolve focused Go formatting, naked-return, semicolon, and implementation-comment questions.
 ---
 
 # Go Style Core Principles

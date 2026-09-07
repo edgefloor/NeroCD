@@ -1,6 +1,6 @@
 ---
 name: golang-testing
-description: "Write, review, or debug Go tests, including table-driven tests, subtests, fuzzing, fixtures, concurrency tests, coverage, integration isolation, and flaky-test diagnosis. Use when test behavior or test strategy is a material part of the task."
+description: Write, review, or debug Go tests, fuzzing, fixtures, flaky behavior, and integration isolation.
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.

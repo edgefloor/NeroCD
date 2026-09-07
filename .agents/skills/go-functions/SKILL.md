@@ -1,6 +1,6 @@
 ---
 name: go-functions
-description: Refine Go function organization, signatures, return values, or Printf-style APIs when those choices affect readability or contracts. Use go-functional-options for configurable constructors.
+description: Refine Go function signatures, return values, organization, and Printf-style APIs.
 ---
 
 # Go Function Design

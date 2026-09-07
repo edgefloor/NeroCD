@@ -1,6 +1,6 @@
 ---
 name: go-naming
-description: Choose or review names for Go packages, types, functions, methods, variables, constants, or receivers when naming clarity or convention is part of the task. Use go-packages for package boundaries.
+description: Choose idiomatic Go package, type, function, variable, and receiver names.
 allowed-tools: Bash(bash:*)
 ---
 

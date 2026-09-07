@@ -1,6 +1,6 @@
 ---
 name: go-context
-description: Design or review context.Context usage in Go, including signature placement, cancellation, deadlines, and request-scoped values. Use go-concurrency for goroutine lifecycle and synchronization.
+description: Design or review Go context.Context propagation, cancellation, deadlines, and values.
 ---
 
 # Go Context Usage

@@ -1,6 +1,6 @@
 ---
 name: go-packages
-description: Design Go package boundaries, imports, dependency organization, or a package split. Use go-naming for identifiers within an established package.
+description: Design Go package boundaries, imports, dependency direction, and command entrypoints.
 ---
 
 # Go Packages and Imports

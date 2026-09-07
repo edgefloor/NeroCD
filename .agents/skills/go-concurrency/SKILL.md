@@ -1,6 +1,6 @@
 ---
 name: go-concurrency
-description: Design or review Go concurrency involving goroutines, channels, mutexes, shared state, race fixes, or lifecycle guarantees. Use go-context for cancellation and deadline propagation.
+description: Design or review Go goroutine lifetimes, channels, mutexes, and races.
 ---
 
 # Go Concurrency

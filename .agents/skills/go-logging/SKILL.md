@@ -1,6 +1,6 @@
 ---
 name: go-logging
-description: Design or review Go logging, slog configuration, structured fields, levels, request context, or a migration from log to slog. Use go-error-handling for error propagation decisions.
+description: Configure or review Go slog, structured fields, log levels, and redaction.
 ---
 
 # Go Logging
