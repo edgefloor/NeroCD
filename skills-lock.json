@@ -143,7 +143,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "d195308738b25c389a6cf77e8e162aecee0d6fc15ede4c50202d5e85c48351ef"
+      "localHash": "ec82a88b5b821c192bdda760235e6af870487e0d77034844de48d90ff73ea0cd"
     },
     "go-linting": {
       "source": "cxuu/golang-skills",

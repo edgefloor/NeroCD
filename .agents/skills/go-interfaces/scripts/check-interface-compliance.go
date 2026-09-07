@@ -269,7 +269,7 @@ func analyzePackage(group packageGroup) (map[string]bool, []ifaceInfo, map[strin
 			case token.VAR:
 				for _, spec := range gen.Specs {
 					vs, ok := spec.(*ast.ValueSpec)
-					if !ok || vs.Type == nil || len(vs.Values) == 0 {
+					if !ok || vs.Type == nil || !hasConcreteAssignment(vs.Values) {
 						continue
 					}
 					if asserted := assertedInterface(vs.Type); asserted != "" {
@@ -353,6 +353,15 @@ func implements(t types.Type, iface *types.Interface) bool {
 		return false
 	}
 	return types.Implements(types.NewPointer(t), iface)
+}
+
+func hasConcreteAssignment(values []ast.Expr) bool {
+	for _, value := range values {
+		if ident, ok := value.(*ast.Ident); !ok || ident.Name != "nil" {
+			return true
+		}
+	}
+	return false
 }
 
 func assertedInterface(expr ast.Expr) string {
