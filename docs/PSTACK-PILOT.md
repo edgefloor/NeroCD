@@ -1,54 +1,67 @@
-# Pstack `tdd` pilot
+# Pstack skill pilots
 
-This is a narrow Stage 3 pilot of one upstream skill. It does not install or adopt the
-full pstack plugin, and it is outside NeroCD's canonical 24 repository skills.
+These pilots install selected upstream pstack skills beside NeroCD's canonical repository
+skills. The upstream packages stay unchanged.
 
-## Provenance receipt
+## Pinned installations
 
-- Source: [`cursor/plugins`](https://github.com/cursor/plugins/tree/93b00b89ef425a9c1bac0d0b317dfc49c930ac99/pstack/skills/tdd), commit `93b00b89ef425a9c1bac0d0b317dfc49c930ac99`
-- Package path: `pstack/skills/tdd`
-- Installed package: `/Users/bubble/.agents/skills/tdd`
-- Installed file: `SKILL.md`
-- Pinned `SKILL.md` SHA-256: `adad031f9e79d7f7389fa128f7af8e03344831270e282cf4e40bdacb8418c386`
+All three packages come from
+[`cursor/plugins`](https://github.com/cursor/plugins/tree/93b00b89ef425a9c1bac0d0b317dfc49c930ac99/pstack/skills)
+at commit `93b00b89ef425a9c1bac0d0b317dfc49c930ac99`.
 
-The package was installed unchanged. In particular, its upstream name, description, and
-`disable-model-invocation: true` metadata remain intact. The metadata is preserved as source
-content; this pilot does not assume any particular runtime will enforce automatic invocation.
+| Skill | Upstream path | Installed inventory | File SHA-256 | Package hash |
+| --- | --- | --- | --- | --- |
+| `tdd` | `pstack/skills/tdd` | `SKILL.md` | `adad031f9e79d7f7389fa128f7af8e03344831270e282cf4e40bdacb8418c386` | Not recorded in the Stage 3A receipt |
+| `technical-writing` | `pstack/skills/technical-writing` | `SKILL.md`, 11,522 bytes | `bd0cb21034f4fe6695cfdf8cd3561026eec943f0bb6e9300bc78a2b3340865a7` | `e5002620c6ce23fbf64f7ff2a1eff998460aa2702501734800070961f9cbdded` |
+| `unslop` | `pstack/skills/unslop` | `SKILL.md`, 6,626 bytes | `2789ab80477b7e382292e4d7acca1057784df19713fffb74622ff0f83b2f3733` | `d6156ec4fe7c75dc2b66fc3d20fdc459baf59f1ddf1736b511adcdce7cba38e9` |
 
-Reproduce the installation from a clean destination with:
+The package hashes use NeroCD's `sha256-path-content-v1` algorithm. Detached source and
+installed package inventories, file bytes, and executable modes matched. The writing
+packages contain no generated adapter or metadata files. `technical-writing` explicitly
+requires `unslop`, so Stage 3B installs both under `/Users/bubble/.agents/skills`.
+
+Reproduce the Stage 3B installation only when both destination directories are absent:
 
 ```sh
 python3 -B /Users/bubble/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
   --repo cursor/plugins \
   --ref 93b00b89ef425a9c1bac0d0b317dfc49c930ac99 \
-  --path pstack/skills/tdd \
+  --path pstack/skills/technical-writing pstack/skills/unslop \
   --dest /Users/bubble/.agents/skills
 ```
 
-Verify the installed file against the receipt with:
+## Completed TDD task
 
-```sh
-shasum -a 256 /Users/bubble/.agents/skills/tdd/SKILL.md
-```
+The Stage 3A task was `Fix interface nil evidence checker`. The final commit
+`dd0d26dfbaa68c572daca7a33d33f1e9abb67a85` passed independent review and landed on
+`main`. Its history contains two red-green cycles:
 
-Installation bytes have been verified. Fresh-task discovery and runtime invocation have not
-yet been verified; invoke the pilot explicitly as `$tdd` in the next task.
+1. `fdb234c` added the failing interface-nil regression, and `632a314` fixed it.
+2. `04b0177` added the failing parenthesized-nil regression, and `dd0d26d` fixed it.
 
-## Next real task
+The task stayed within the checker, its focused tests, and the required skill hash update.
+This result shows that the upstream `tdd` instructions could coexist with the local Go
+skills for that bounded task. It does not establish causality, token savings, or implicit
+skill selection.
 
-Give a fresh implementation task this prompt:
+The orchestration handoff corrections in `7c2c72ce6b09e8d189dccc2c9d287ed15d90d805`
+have also landed. A fresh task has not yet completed runtime validation of those corrections.
 
-> Follow repository orchestration. Use `$tdd` from `/Users/bubble/.agents/skills/tdd/SKILL.md`
-> together with NeroCD's `go-interfaces` and `golang-testing` skills to fix the
-> interface-compliance checker so `var provider Sink = nil` does not count as evidence of a
-> concrete implementation. Typed concrete nil pointers, such as `var provider Sink =
-> (*SinkImpl)(nil)`, must continue to count for both named and blank-identifier declarations;
-> an uninitialized interface declaration must remain a finding. First add a focused regression
-> test that fails for the current behavior, then make the smallest helper change and show the
-> test passing afterward. Preserve the helper's CLI options, JSON shape, exit-code semantics,
-> scan boundaries, and skill provenance. Limit changes to the helper, focused tests, and the
-> required local skill hash update. Do not redesign the analyzer broadly or modify upstream
-> pstack skills. Return the candidate commit and the failing-before and passing-after evidence.
+## Current tasks and cadence
 
-This is a product task that produces evidence for later evaluation; it is not an evaluation
-rubric or a request to score the pilot.
+The Leader launches real tasks in separate worktrees and continues independent stage work
+without waiting for them. The tasks do not receive a scoring or evaluation prompt. The user
+returns when an outcome is ready to examine.
+
+Two tasks are currently queued:
+
+- `Add Go documentation checker regression tests` starts from `7c2c72c` and is limited to
+  the go-documentation checker tests and required local hash.
+- `Make NeroCD getting started reproducible` explicitly applies the installed
+  `technical-writing` and `unslop` skills to `docs/getting-started.md` and necessary
+  `docs/index.md` links. It checks current source and configuration, then verifies the setup
+  instructions in an isolated disposable environment. It must preserve every supported mode,
+  security requirement, application behavior, and upstream skill package.
+
+Both tasks are awaiting outcomes. Their results can inform later revisions without making
+runtime-selection or writing-quality claims in advance.
