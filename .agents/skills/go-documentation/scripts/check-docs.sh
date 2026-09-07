@@ -17,7 +17,7 @@ OPTIONS
     -h, --help       Show this help message
     -v, --version    Show version
     --json           Output results as JSON
-    --strict         Also check unexported types/functions
+    --strict         Also check unexported functions, methods, types, constants, and variables
     --limit N        Show at most N results (default: all)
 EOF
             exit 0
