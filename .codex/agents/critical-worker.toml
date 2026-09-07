@@ -9,6 +9,12 @@ Preserve unrelated changes, reason concretely
 about failure modes and compatibility, self-verify all required checks, and return absolute
 paths, evidence, assumptions, commit identifier if requested, and unresolved risks. Do not
 silently widen scope or treat review as permission to implement unrelated fixes.
+Build the handoff result from `orchestration/examples/result-template.json` at a new external
+path, fill it only from the packet and observed Git/check evidence, and validate it against
+the packet and its workspace. Run validation commands as independent invocations with the
+packet workspace as tool workdir and inspect each exit status; if batching is unavoidable,
+use `set -eu` and no masking pipeline. Keep package commands at that workdir, using an
+explicit directory option such as `go -C` when needed.
 """
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"

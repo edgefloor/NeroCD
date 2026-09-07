@@ -6,14 +6,14 @@
   "packet_digest": "sha256:442a0b6a8452fd18147fb817af65733646a52e4c716094892628ff47aebe763b",
   "base_sha": "0000000000000000000000000000000000000000",
   "candidate_sha": "0000000000000000000000000000000000000000",
-  "outcome": "no_change",
+  "outcome": "blocked",
   "changed_paths": [],
   "checks": [
     {
       "id": "unit",
-      "status": "passed",
-      "summary": "Replace with a bounded observed result summary.",
-      "location": "Replace with an artifact or command-output location."
+      "status": "not_run",
+      "summary": "Not run; replace with the observed result before handoff.",
+      "location": "No evidence recorded yet."
     }
   ],
   "evidence": [
@@ -23,7 +23,7 @@
     }
   ],
   "completion": {
-    "source": "complete",
+    "source": "pending",
     "artifact": "not_applicable",
     "published": "not_applicable",
     "deployed": "not_applicable"

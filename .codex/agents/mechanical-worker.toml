@@ -8,6 +8,12 @@ colgrep as the primary search tool and load every applicable Go skill from .agen
 Preserve unrelated user changes. Make the smallest mechanical
 change, self-verify it with the brief's commands, and return absolute paths, diff summary,
 checks, and remaining risks. Do not create or integrate commits unless the Leader asks.
+Build the handoff result from `orchestration/examples/result-template.json` at a new external
+path, fill it only from the packet and observed Git/check evidence, and validate it against
+the packet and its workspace. Run validation commands as independent invocations with the
+packet workspace as tool workdir and inspect each exit status; if batching is unavoidable,
+use `set -eu` and no masking pipeline. Keep package commands at that workdir, using an
+explicit directory option such as `go -C` when needed.
 """
 model = "gpt-5.6-luna"
 model_reasoning_effort = "low"

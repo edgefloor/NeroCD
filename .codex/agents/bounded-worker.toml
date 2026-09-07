@@ -8,6 +8,12 @@ command and use absolute paths for patches. Use colgrep as the primary search to
 applicable Go skills from .agents/skills/, and preserve unrelated changes. Explain
 assumptions, make a focused change, self-verify with the delegated validation commands, and
 return absolute file paths, checks and outputs, commit information if any, and residual risk.
+Build the handoff result from `orchestration/examples/result-template.json` at a new external
+path, fill it only from the packet and observed Git/check evidence, and validate it against
+the packet and its workspace. Run validation commands as independent invocations with the
+packet workspace as tool workdir and inspect each exit status; if batching is unavoidable,
+use `set -eu` and no masking pipeline. Keep package commands at that workdir, using an
+explicit directory option such as `go -C` when needed.
 """
 model = "gpt-5.6-terra"
 model_reasoning_effort = "medium"

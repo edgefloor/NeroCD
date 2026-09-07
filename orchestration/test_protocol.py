@@ -13,7 +13,9 @@ from pathlib import Path
 from orchestration.protocol import (
     ProtocolError,
     advance_checkpoint,
+    changed_paths,
     digest_record,
+    load_json,
     preflight,
     run_skills_validator,
     validate_checkpoint,
@@ -334,6 +336,57 @@ class ProtocolTest(unittest.TestCase):
         (self.repo / "untracked.txt").write_text("dirty\n", encoding="utf-8")
         with self.assertRaisesRegex(ProtocolError, "dirty"):
             validate_result(result, self.packet, self.repo)
+
+    def test_canonical_result_template_builds_safe_blocked_rename_draft(self) -> None:
+        run(self.repo, "git", "mv", "owned/file.txt", "owned/renamed.txt")
+        run(self.repo, "git", "commit", "-m", "rename candidate")
+        candidate = run(self.repo, "git", "rev-parse", "HEAD")
+
+        source_root = Path(__file__).resolve().parents[1]
+        result = load_json(
+            source_root / "orchestration" / "examples" / "result-template.json"
+        )
+        result.update({
+            "task_id": self.packet["task_id"],
+            "mode": self.packet["mode"],
+            "packet_digest": digest_record(self.packet),
+            "base_sha": self.base,
+            "candidate_sha": candidate,
+            "changed_paths": changed_paths(self.repo, self.base, candidate),
+            "checks": [
+                {
+                    **result["checks"][0],
+                    "id": check_id,
+                }
+                for check_id in self.packet["validation"]
+            ],
+            "evidence": [],
+            "completion": {
+                stage: (
+                    "pending"
+                    if stage in self.packet["required_completion_stages"]
+                    else "not_applicable"
+                )
+                for stage in ("source", "artifact", "published", "deployed")
+            },
+        })
+
+        validate_result(result, self.packet, self.repo)
+        self.assertEqual(
+            ["owned/file.txt", "owned/renamed.txt"],
+            result["changed_paths"],
+        )
+        self.assertEqual("blocked", result["outcome"])
+        packet_path, result_path, _ = self.write_records(result, [])
+        with self.assertRaisesRegex(ProtocolError, "required checks did not pass"):
+            advance_checkpoint(
+                self.root / "state" / "checkpoint.json",
+                "accepted",
+                packet_path,
+                result_path,
+                [],
+                self.repo,
+            )
 
     def test_result_rejects_alternate_clone_and_non_toplevel(self) -> None:
         candidate = self.commit_owned_change()

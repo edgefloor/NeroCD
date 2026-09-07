@@ -78,6 +78,115 @@ Failed, blocked, and `not_run` results remain structurally valid durable records
 advance a checkpoint. This distinction permits recovery and diagnosis without calling a
 failed run acceptable.
 
+#### Construct a result from observed state
+
+Start from the canonical template after the candidate is committed and the packet workspace
+is clean. The following recipe loads rather than retypes the schema, derives identity and Git
+facts, creates one `not_run` entry for every packet check, and writes a new external result
+without overwriting existing evidence. Set the three path values explicitly and run it with
+the tool's working directory set to `WORKSPACE`. Invoke the displayed block with
+`python3 -B -` and provide it on standard input; running from the workspace makes the local
+`orchestration` package importable, while `-B` avoids bytecode artifacts.
+
+```python
+import json
+import subprocess
+from pathlib import Path
+
+from orchestration.protocol import (
+    changed_paths,
+    digest_record,
+    load_json,
+    validate_packet,
+    validate_result,
+)
+
+WORKSPACE = Path("/absolute/path/to/worker-worktree").resolve()
+PACKET_PATH = Path("/absolute/path/to/run/packet.json").resolve()
+RESULT_PATH = Path("/absolute/path/to/run/new-result.json").resolve()
+
+packet = load_json(PACKET_PATH)
+validate_packet(packet)
+if Path(packet["repository"]["workspace_root"]).resolve() != WORKSPACE:
+    raise ValueError("WORKSPACE does not match packet.repository.workspace_root")
+if RESULT_PATH == WORKSPACE or WORKSPACE in RESULT_PATH.parents:
+    raise ValueError("RESULT_PATH must be outside the product workspace")
+
+git_toplevel = Path(subprocess.run(
+    ["git", "rev-parse", "--show-toplevel"],
+    cwd=WORKSPACE,
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()).resolve()
+if git_toplevel != WORKSPACE:
+    raise ValueError("WORKSPACE must be the canonical Git toplevel")
+
+candidate = subprocess.run(
+    ["git", "rev-parse", "HEAD"],
+    cwd=WORKSPACE,
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()
+base = packet["repository"]["base_sha"]
+
+result = load_json(WORKSPACE / "orchestration/examples/result-template.json")
+result.update({
+    "task_id": packet["task_id"],
+    "mode": packet["mode"],
+    "packet_digest": digest_record(packet),
+    "base_sha": base,
+    "candidate_sha": candidate,
+    "changed_paths": changed_paths(WORKSPACE, base, candidate),
+    "checks": [
+        {
+            "id": check_id,
+            "status": "not_run",
+            "summary": "Not run; replace with the observed result before handoff.",
+            "location": "No evidence recorded yet.",
+        }
+        for check_id in packet["validation"]
+    ],
+    "evidence": [],
+    "completion": {
+        stage: (
+            "pending"
+            if stage in packet["required_completion_stages"]
+            else "not_applicable"
+        )
+        for stage in ("source", "artifact", "published", "deployed")
+    },
+})
+
+validate_result(result, packet, WORKSPACE)
+RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
+with RESULT_PATH.open("x", encoding="utf-8") as handle:
+    json.dump(result, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+```
+
+`changed_paths` includes both rename sources and destinations. The draft deliberately
+remains `blocked`, with required completion stages `pending`; it is structurally valid but
+cannot advance a checkpoint. The recipe does not execute commands from the packet.
+
+After each delegated check, record `passed` only for observed success, `failed` for an
+observed failure, and leave an unexecuted check as `not_run`; update its bounded summary and
+evidence location at the same time. Set `outcome` to `changed` or `no_change` only when
+the work is ready for advancement, and mark a required completion stage `complete` only
+when it has actually completed. Then validate the result in a separate invocation whose
+tool working directory is the packet workspace:
+
+```sh
+python3 -B scripts/orchestration/validate.py \
+  --repo-root /absolute/path/to/worker-worktree \
+  result /absolute/path/to/run/new-result.json \
+  --packet /absolute/path/to/run/packet.json
+```
+
+Inspect that command's exit status before handoff. A structurally valid blocked draft still
+cannot pass the checkpoint advancement gates.
+
 ### Review and checkpoint
 
 A review pins `task_id`, `packet_digest`, exact `candidate_sha`, `lens`, `status`, and bounded
