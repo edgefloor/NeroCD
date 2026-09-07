@@ -23,6 +23,12 @@ func TestInterfaceComplianceAssignments(t *testing.T) {
 			wantMissing: 0,
 		},
 		{
+			name:        "named_initialized_nil_interface",
+			declaration: "var provider Sink = nil",
+			wantExit:    1,
+			wantMissing: 1,
+		},
+		{
 			name:        "blank initialized assertion",
 			declaration: "var _ Sink = (*SinkImpl)(nil)",
 			wantExit:    0,
