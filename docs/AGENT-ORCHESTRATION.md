@@ -30,8 +30,11 @@ All records are JSON objects with `record_type` and integer `schema_version: 1`.
 
 ### Packet
 
-`orchestration/examples/worker-packet.json` is the editable template; the same directory
-contains result and review templates. Their placeholder SHAs must be replaced. Packet fields are:
+The checked-in templates are `orchestration/examples/worker-packet.json`,
+`orchestration/examples/runtime-capabilities.json`,
+`orchestration/examples/result-template.json`, and
+`orchestration/examples/review-template.json`. They are editable starting points; replace their
+placeholder values, including SHAs. Packet fields are:
 
 - `task_id`, `mode`, and `goal` identify the delegation.
 - `repository` pins an absolute `workspace_root`, full lowercase `base_sha`, and expected
@@ -89,34 +92,69 @@ checkpoint or an explicit future repair mechanism; it is never silently substitu
 and detects record edits after acceptance. With intact external records, `checkpoint.py` can
 reconstruct an absent state file.
 
+Record content digests, including `packet_digest`, are canonical digests of parsed JSON emitted
+by `validate.py digest`; they are not checksums of record-file bytes. Whitespace-equivalent JSON
+therefore has the same digest while its raw file checksum may differ. Copy a packet's emitted
+`sha256:...` value verbatim into the result, every review, and the checkpoint records.
+
 ## Root-relative commands
 
 Run these from the repository root. For one packet, `preflight.py` defaults `--repo-root` to
 the current directory; multiple packets require one ordered `--repo-root` per packet.
 
 ```sh
-python3 scripts/orchestration/validate.py --repo-root . config
-python3 scripts/orchestration/validate.py packet /run/records/packet.json
-python3 scripts/orchestration/validate.py digest /run/records/packet.json
-python3 scripts/orchestration/preflight.py \
+python3 -B scripts/orchestration/validate.py --repo-root . config
+python3 -B scripts/orchestration/validate.py packet /run/records/packet.json
+python3 -B scripts/orchestration/validate.py digest /run/records/packet.json
+python3 -B scripts/orchestration/preflight.py \
   --capabilities /run/records/runtime-capabilities.json \
   --packet /run/records/packet.json \
   --repo-root /absolute/path/to/worker-worktree \
   --skills-validator scripts/skills/validate.py
-python3 scripts/orchestration/validate.py --repo-root /absolute/path/to/worker-worktree \
+python3 -B scripts/orchestration/validate.py --repo-root /absolute/path/to/worker-worktree \
   result /run/records/result.json --packet /run/records/packet.json
-python3 scripts/orchestration/validate.py review /run/records/spec-review.json \
+python3 -B scripts/orchestration/validate.py review /run/records/spec-review.json \
   --packet /run/records/packet.json --candidate 0123456789abcdef0123456789abcdef01234567
-python3 scripts/orchestration/checkpoint.py \
+python3 -B scripts/orchestration/checkpoint.py \
   --repo-root /absolute/path/to/worker-worktree \
   --state /run/state/checkpoint.json --stage accepted \
   --packet /run/records/packet.json --result /run/records/result.json \
   --review /run/records/hygiene-review.json --review /run/records/spec-review.json
-python3 scripts/orchestration/validate.py --repo-root /absolute/path/to/worker-worktree \
+python3 -B scripts/orchestration/validate.py --repo-root /absolute/path/to/worker-worktree \
   checkpoint /run/state/checkpoint.json
-python3 scripts/orchestration/validate.py checkpoint /run/state/checkpoint.json \
+python3 -B scripts/orchestration/validate.py checkpoint /run/state/checkpoint.json \
   --offline-recovery
 ```
+
+For a handoff, substitute the six quoted values with the receiving worker's exact workspace,
+external packet, result, and review paths, candidate SHA, and recorded canonical packet digest.
+Run the snippet with the tool's working directory set to `HANDOFF_WORKSPACE`; it pins every
+command to that workspace instead of inferring a repository root. The fail-fast subshell verifies
+the captured digest, candidate, and records that pin it.
+
+```sh
+(
+  set -eu
+  HANDOFF_WORKSPACE='/absolute/path/to/worker-worktree'
+  HANDOFF_PACKET='/absolute/path/to/run/packet.json'
+  HANDOFF_RESULT='/absolute/path/to/run/result.json'
+  HANDOFF_REVIEW='/absolute/path/to/run/review.json'
+  HANDOFF_CANDIDATE='0123456789abcdef0123456789abcdef01234567'
+  HANDOFF_EXPECTED_PACKET_DIGEST='sha256:replace-with-the-recorded-canonical-value'
+  HANDOFF_ACTUAL_PACKET_DIGEST="$(python3 -B "$HANDOFF_WORKSPACE/scripts/orchestration/validate.py" digest "$HANDOFF_PACKET")"
+  test "$HANDOFF_ACTUAL_PACKET_DIGEST" = "$HANDOFF_EXPECTED_PACKET_DIGEST"
+  test "$(git -C "$HANDOFF_WORKSPACE" rev-parse HEAD)" = "$HANDOFF_CANDIDATE"
+  python3 -B "$HANDOFF_WORKSPACE/scripts/orchestration/validate.py" --repo-root "$HANDOFF_WORKSPACE" \
+    result "$HANDOFF_RESULT" --packet "$HANDOFF_PACKET"
+  python3 -B "$HANDOFF_WORKSPACE/scripts/orchestration/validate.py" \
+    review "$HANDOFF_REVIEW" --packet "$HANDOFF_PACKET" --candidate "$HANDOFF_CANDIDATE"
+)
+```
+
+For `validate.py`, `--json` and `--repo-root` are global options and appear before the
+subcommand, for example `python3 -B scripts/orchestration/validate.py --json digest
+/run/records/packet.json`. `--offline-recovery` belongs only to the `checkpoint` subcommand.
+`preflight.py` and `checkpoint.py` have their own ordinary options, including `--json`.
 
 Checkpoint verification normally requires the packet's exact original Git toplevel and
 rechecks its branch, candidate, cleanliness, and changed paths. If that workspace has been
@@ -135,7 +173,7 @@ From the repository root, copy the complete map or select entries in a packet-bu
 script:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 scripts/skills/validate.py --json
+python3 -B scripts/skills/validate.py --json
 ```
 
 ```python
@@ -143,7 +181,7 @@ import json
 import subprocess
 
 payload = subprocess.run(
-    ["python3", "scripts/skills/validate.py", "--json"],
+    ["python3", "-B", "scripts/skills/validate.py", "--json"],
     check=True,
     capture_output=True,
     text=True,
@@ -183,10 +221,10 @@ or violation-free.
 ## Developer validation
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s orchestration -p 'test_*.py'
-python3 scripts/orchestration/validate.py --repo-root . config
-python3 scripts/orchestration/validate.py packet orchestration/examples/worker-packet.json
-python3 - <<'PY'
+python3 -B -m unittest discover -s orchestration -p 'test_*.py'
+python3 -B scripts/orchestration/validate.py --repo-root . config
+python3 -B scripts/orchestration/validate.py packet orchestration/examples/worker-packet.json
+python3 -B - <<'PY'
 import pathlib, tomllib
 for path in sorted(pathlib.Path('.codex').rglob('*.toml')):
     tomllib.loads(path.read_text())
