@@ -16,14 +16,16 @@ development.
 
 ```sh
 docker compose up --build -d
-attempt=0
-until docker compose exec -T nerocd nerocd ready --addr http://127.0.0.1:8080; do
-	attempt=$((attempt + 1))
-	if [ "$attempt" -eq 30 ]; then
-		exit 1
-	fi
-	sleep 1
-done
+(
+	attempt=0
+	until docker compose exec -T nerocd nerocd ready --addr http://127.0.0.1:8080; do
+		attempt=$((attempt + 1))
+		if [ "$attempt" -eq 30 ]; then
+			exit 1
+		fi
+		sleep 1
+	done
+)
 ```
 
 Early readiness attempts can fail while migrations and seed loading run. The
@@ -82,8 +84,9 @@ without putting the password in shell history, then run:
 		--password-stdin < "$password_file"; then
 		unlink "$password_file"
 	else
-		printf 'bootstrap-admin failed. Fix the problem, then retry with the retained file: %s\n' \
-			"$password_file" >&2
+		printf 'bootstrap-admin failed. Fix the problem, then run:\n' >&2
+		printf "bin/nerocd bootstrap-admin --email admin@example.test --name 'Local Admin' --password-stdin < %s && unlink %s\n" \
+			"$password_file" "$password_file" >&2
 		exit 1
 	fi
 )
@@ -151,8 +154,9 @@ putting the password in shell history.
 	if bin/nerocd server --addr :8080; then
 		unlink "$password_file"
 	else
-		printf 'Server startup failed. Fix the problem, then reuse the retained file: %s\n' \
-			"$password_file" >&2
+		printf 'Server startup failed. Fix the problem, then run:\n' >&2
+		printf "unset NEROCD_DATABASE_URL; NEROCD_DEV_MEMORY=true NEROCD_DEV_BOOTSTRAP_EMAIL='admin@example.test' NEROCD_DEV_BOOTSTRAP_PASSWORD_FILE=%s bin/nerocd server --addr :8080 && unlink %s\n" \
+			"$password_file" "$password_file" >&2
 		exit 1
 	fi
 )
