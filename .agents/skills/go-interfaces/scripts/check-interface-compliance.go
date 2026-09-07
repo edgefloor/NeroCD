@@ -269,16 +269,11 @@ func analyzePackage(group packageGroup) (map[string]bool, []ifaceInfo, map[strin
 			case token.VAR:
 				for _, spec := range gen.Specs {
 					vs, ok := spec.(*ast.ValueSpec)
-					if !ok || vs.Type == nil {
+					if !ok || vs.Type == nil || len(vs.Values) == 0 {
 						continue
 					}
-					for _, name := range vs.Names {
-						if name.Name != "_" {
-							continue
-						}
-						if asserted := assertedInterface(vs.Type); asserted != "" {
-							assertions[asserted] = true
-						}
+					if asserted := assertedInterface(vs.Type); asserted != "" {
+						assertions[asserted] = true
 					}
 				}
 			case token.TYPE:
