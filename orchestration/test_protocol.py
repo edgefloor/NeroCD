@@ -385,7 +385,7 @@ class ProtocolTest(unittest.TestCase):
                 worker_mode["mode"] = "WORKER"
                 worker_mode["repository"]["branch"] = "pilot"
                 worker_mode["ownership"]["write_paths"] = ["owned/"]
-                worker_mode["required_review_lenses"] = ["code_hygiene"]
+                worker_mode["required_review_lenses"] = ["code_hygiene", "specification"]
                 with self.assertRaisesRegex(ProtocolError, "incompatible with role"):
                     validate_packet(worker_mode)
 
@@ -442,7 +442,7 @@ class ProtocolTest(unittest.TestCase):
     def test_writable_packet_requires_review_and_skill_hashes_match(self) -> None:
         no_review = copy.deepcopy(self.packet)
         no_review["required_review_lenses"] = []
-        with self.assertRaisesRegex(ProtocolError, "requires independent review"):
+        with self.assertRaisesRegex(ProtocolError, "code_hygiene and specification"):
             validate_packet(no_review)
         expected = "a" * 64
         selected = copy.deepcopy(self.packet)
@@ -454,6 +454,39 @@ class ProtocolTest(unittest.TestCase):
         )
         installed = run_skills_validator(validator)
         preflight([selected], self.capabilities, installed_skills=installed)
+
+    def test_review_lenses_require_the_mandatory_pair_and_allow_supported_risk_lenses(self) -> None:
+        for mode, role in (("WORKER", "bounded_worker"), ("INTEGRATOR", "integration_steward")):
+            with self.subTest(mode=mode):
+                packet = copy.deepcopy(self.packet)
+                packet["mode"] = mode
+                packet["route"]["role"] = role
+                for lenses, error in (
+                    ([], "code_hygiene and specification"),
+                    (["code_hygiene"], "code_hygiene and specification"),
+                    (["advisory"], "unsupported lenses"),
+                ):
+                    with self.subTest(lenses=lenses):
+                        malformed = copy.deepcopy(packet)
+                        malformed["required_review_lenses"] = lenses
+                        with self.assertRaisesRegex(ProtocolError, error):
+                            validate_packet(malformed)
+                validate_packet(packet)
+                for risk_lens in ("critical_security", "cryptographic_correctness"):
+                    with self.subTest(risk_lens=risk_lens):
+                        with_risk = copy.deepcopy(packet)
+                        with_risk["required_review_lenses"].append(risk_lens)
+                        validate_packet(with_risk)
+                for lens in ("advisory", "unknown"):
+                    malformed = copy.deepcopy(packet)
+                    malformed["required_review_lenses"].append(lens)
+                    with self.assertRaisesRegex(ProtocolError, "unsupported lenses"):
+                        validate_packet(malformed)
+
+        read_only = self.make_read_only_packet(
+            "read-only-empty-reviews", "REVIEWER", "code_hygiene_reviewer"
+        )
+        validate_packet(read_only)
 
     def test_result_uses_actual_git_paths_and_requires_clean_candidate(self) -> None:
         candidate = self.commit_owned_change()
@@ -632,6 +665,15 @@ class ProtocolTest(unittest.TestCase):
             self.make_review(candidate, lens)
             for lens in self.packet["required_review_lenses"]
         ]
+        failed_reviews = copy.deepcopy(reviews)
+        failed_reviews[0]["status"] = "failed"
+        _, result_path, failed_review_paths = self.write_records(passing, failed_reviews)
+        self.write_checkpoint_record(
+            state, packet_path, result_path, failed_review_paths, passing, failed_reviews,
+        )
+        with self.assertRaisesRegex(ProtocolError, "required review lenses failed"):
+            validate_checkpoint(state, None)
+
         _, result_path, review_paths = self.write_records(passing, reviews)
         self.write_checkpoint_record(
             state,

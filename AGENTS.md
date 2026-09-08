@@ -42,8 +42,11 @@ permissions are separately attested and enforced by the host, not by a prompt or
   external action needs a recorded grant with an explicit target; a missing target is a
   separate blocker. Harmless diagnostics need neither an exact read set nor extra approval.
 - Review routine correctness/code hygiene and specification fit independently. Add a risk
-  lens only when the changed scope warrants it. Lint/formatting is a mechanical check, not a
-  substitute for review. All required reviews pin the same candidate SHA.
+  lens only when the changed scope warrants it. `WORKER` and `INTEGRATOR` packets require both
+  `code_hygiene` and `specification`; supported risk lenses are `critical_security` and
+  `cryptographic_correctness`. Reject unknown and advisory lens declarations in every mode.
+  Lint/formatting is a mechanical check, not a substitute for review. All required reviews pin
+  the same candidate SHA.
 - The integration steward combines only Leader-approved candidates and runs combined checks.
   The Leader alone accepts or escalates the result.
 
@@ -57,6 +60,8 @@ are Terra/medium; cryptographic correctness and critical security reviewers are 
 `advisory_reviewer_sol` (Sol/medium) and `advisory_reviewer_terra` (Terra/medium) accept only
 read-only `REVIEWER` packets and return Leader-rubric advisory findings. They do not replace
 the required hygiene and specification reviews or make acceptance decisions.
+Dispatch real advisory reviews through fresh `fork_turns=none` agents, record their actual
+model and effort, and run formal preflight before accepting a report.
 `escalation_resolver` is Sol/high and acts only on a named blocker and bounded ownership.
 
 Sol maps to `gpt-5.6-sol`, Terra to `gpt-5.6-terra`, and Luna to `gpt-5.6-luna`. Static
@@ -80,5 +85,10 @@ a failed or missing check. External checkpoint state is single-writer and manual
 This first release is validation and handoff plumbing, not an autonomous controller. It has
 no scheduler, CAS, Delta executor, OS sandbox, or model launcher. It verifies record shape,
 Git facts, and cross-record consistency; attestations remain claims by the operator/runtime.
+Lens validation does not authenticate record producers. An external installer needs a valid
+named `WORKER` checkout and packet, an explicit target grant, and observed external
+verification. Version 1 cannot represent an external-only write, so record it as blocked unless
+a genuine bounded repository receipt edit also supplies write ownership. Do not add dummy edits
+or waive failed preflight.
 Use only the stop, interrupt, and archive controls actually available in the active host;
 never promise stronger lifecycle guarantees.

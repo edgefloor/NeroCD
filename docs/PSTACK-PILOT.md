@@ -28,6 +28,19 @@ rubric, and code-quality lens to native Sol or Terra reviewer routes; no Cursor 
 adapter, or unsupported default-route substitution is implied.
 `technical-writing` explicitly requires `unslop`.
 
+The staged `interrogate` inventory contains five unchanged files from the pinned commit:
+`93b00b89ef425a9c1bac0d0b317dfc49c930ac99`. Its provenance record is
+`/Users/bubble/.codex/run-evidence/nerocd-interrogate-93b00b89/provenance.json`.
+
+The task `Review advisory reviewer gate separation` used task ID
+`01a0810b-d903-7cf0-a58f-a0d8973154ea`. The actual advisory routes were Sol/medium and
+Terra/medium, and both were verified. The pilot found pre-existing arbitrary-lens and
+no-producer-identity limits. Those limits did not come from the new reviewer roles.
+
+The earlier pilot reused probe contexts and bypassed formal preflight for an invalid detached,
+external-only `WORKER` task. Treat those as limitations, not evidence of full protocol
+compliance. No next pilot run is claimed here.
+
 The `how` package contains:
 
 | Path | Bytes | SHA-256 |

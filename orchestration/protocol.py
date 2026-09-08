@@ -22,6 +22,13 @@ MODES = {"ORCHESTRATOR", "WORKER", "REVIEWER", "INTEGRATOR"}
 OUTCOMES = {"changed", "no_change", "blocked", "failed"}
 CHECK_STATUSES = {"passed", "failed", "not_run"}
 REVIEW_STATUSES = {"passed", "failed"}
+SUPPORTED_REVIEW_LENSES = {
+    "code_hygiene",
+    "specification",
+    "critical_security",
+    "cryptographic_correctness",
+}
+MANDATORY_WRITABLE_REVIEW_LENSES = {"code_hygiene", "specification"}
 COMPLETION_STATUSES = {"complete", "pending", "failed", "not_applicable"}
 COMPLETION_STAGES = ("source", "artifact", "published", "deployed")
 CHECKPOINT_STAGES = ("planned", "candidate_validated", "reviewed", "accepted")
@@ -225,8 +232,12 @@ def validate_packet(packet: dict[str, Any]) -> dict[str, Any]:
         if not SKILL_HASH_RE.fullmatch(local_hash):
             _fail(f"packet.selected_skills.{skill_id}: expected raw lowercase SHA-256")
     review_lenses = _string_list(packet["required_review_lenses"], "packet.required_review_lenses")
-    if packet["mode"] in {"WORKER", "INTEGRATOR"} and not review_lenses:
-        _fail("packet.required_review_lenses: writable work requires independent review")
+    unsupported_lenses = sorted(set(review_lenses) - SUPPORTED_REVIEW_LENSES)
+    if unsupported_lenses:
+        _fail("packet.required_review_lenses: unsupported lenses: " + ", ".join(unsupported_lenses))
+    missing_mandatory_lenses = sorted(MANDATORY_WRITABLE_REVIEW_LENSES - set(review_lenses))
+    if packet["mode"] in {"WORKER", "INTEGRATOR"} and missing_mandatory_lenses:
+        _fail("packet.required_review_lenses: writable work requires code_hygiene and specification")
     completion = _string_list(packet["required_completion_stages"], "packet.required_completion_stages")
     unknown_completion = sorted(set(completion) - set(COMPLETION_STAGES))
     if unknown_completion:

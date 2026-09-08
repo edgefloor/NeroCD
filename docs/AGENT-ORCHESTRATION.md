@@ -10,7 +10,8 @@ The validator checks JSON shape, configured routes, explicit runtime attestation
 skill hashes, Git base/branch/cleanliness, actual changed paths, review/check pinning, and
 checkpoint lineage. A capability or check record is an operator/runtime attestation: parsing
 it does not prove OS isolation, tool execution, model availability, or the truth of a
-recorded check status. Codex TOML is a default, not a permission attestation.
+recorded check status. Structural lens gates do not authenticate a packet or review producer.
+Codex TOML is a default, not a permission attestation.
 The selected-skills helper is an operator-chosen trusted local program, not sandboxed input;
 it has a 10-second timeout, but its captured output is size-checked only after process exit.
 
@@ -51,7 +52,11 @@ placeholder values, including SHAs. Packet fields are:
   emitted by `scripts/skills/validate.py --json`. It may be empty when no skill applies.
 - `authorization.grants` preserves already-issued grants. Each has `action`, explicit
   `target`, and `granted_by`. Absence of a target is a blocker, not a request to infer one.
-- `required_review_lenses` names independent reviews. Writable modes require at least one.
+- `required_review_lenses` names independent reviews. The only supported values are
+  `code_hygiene`, `specification`, `critical_security`, and `cryptographic_correctness`.
+  `WORKER` and `INTEGRATOR` packets require both `code_hygiene` and `specification`; either
+  critical lens may be added when the changed scope needs it. Read-only packets may require
+  no reviews. The validator rejects unknown and advisory lens names in every mode.
 - `required_completion_stages` selects from `source`, `artifact`, `published`, and
   `deployed`. Only relevant stages are required; publication and deployment are not assumed.
 
@@ -65,6 +70,10 @@ prompt, rubric, and code-quality lens and assesses the resulting advisory findin
 report is an external report, not a protocol review record: it cannot satisfy a required
 `code_hygiene` or `specification` lens, create an optional lens, or authorize automatic changes.
 When a change is made, the standard required reviews remain mandatory.
+
+Existing records are preserved as historical evidence. Current v1 validation rejects an older
+packet or checkpoint that omits a routine lens or names an unsupported lens. Create a new valid
+packet and new reviews before attempting new acceptance.
 
 ### Runtime capability attestation
 
@@ -332,6 +341,17 @@ The normal gates are discovery, interface/ownership freeze, implementation, inde
 routine reviews, any applicable critical risk review, then serial integration and combined
 checks. Lifecycle language is limited to controls the active host actually offers: interrupt,
 stop, wait, and archive where available.
+
+For an advisory review, dispatch a fresh role-specific agent with `fork_turns=none`. Do not
+reuse a probe context. Record the reviewer's actual model and effort before accepting its
+report, and run formal preflight before a real review.
+
+An external installer needs a valid named `WORKER` checkout and packet, an authorization grant
+that names the external target, and observed external verification. A packet cannot claim
+repository write ownership for an external-only task. Version 1 cannot represent a task with
+only external writes, so record that case as blocked. If an installer also has a genuine bounded
+repository receipt edit, that edit may provide the packet's write ownership. Do not add a dummy
+edit to bypass preflight.
 
 ## Bootstrap pilot note
 
