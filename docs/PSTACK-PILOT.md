@@ -27,6 +27,20 @@ Terra/medium routes. No Cursor configuration, adapter, or unsupported default-ro
 substitution is implied.
 `technical-writing` explicitly requires `unslop`.
 
+The next opt-in rollout installs `blast-radius` and `why` from the same pinned commit. Both
+packages are unchanged upstream directories. The full file inventory, byte counts, modes,
+file SHA-256 values, Git blob IDs, and package hashes are in
+`/Users/bubble/.codex/run-evidence/nerocd-blast-why-93b00b89/provenance.json`.
+
+| Skill | Destination | Inventory | Package hash | `SKILL.md` SHA-256 |
+| --- | --- | --- | --- | --- |
+| `blast-radius` | `/Users/bubble/.agents/skills/blast-radius` | 1 file, 4,112 bytes | `9b6460c442728faf018fc43b3ec5456c845376f3fc2a49168bb76f7e3229b821` | `b060df3ca85803eabbce9fab53f5cc024ca8d784bdde5513c1c1a784947523f8` |
+| `why` | `/Users/bubble/.agents/skills/why` | 13 files, 77,137 bytes | `ac25b89cfaa44b6ed50fdf71c4e21ac4f65bb956275f37d1be2bd607917f7392` | `a9423bb7bab7c3280d17478ebe97bb283ea6ed12d9dcae590fc2f81f41660990` |
+
+`blast-radius` uses the `why` history step and the existing `unslop` skill. A broader mode
+that depends on an arena is not part of this pilot. The HTTP product pilot is launched, but
+validation and its outcome are pending. This receipt makes no claim about success or efficiency.
+
 The `interrogate` inventory is unchanged from the pinned commit:
 `93b00b89ef425a9c1bac0d0b317dfc49c930ac99`. Its provenance record is
 `/Users/bubble/.codex/run-evidence/nerocd-interrogate-93b00b89/provenance.json`.
