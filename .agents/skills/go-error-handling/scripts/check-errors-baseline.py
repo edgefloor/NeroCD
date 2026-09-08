@@ -8,6 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 import difflib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -136,7 +137,7 @@ def materialize(root: Path, repo: Path, commit: str, path: str) -> Path:
     return selected
 
 
-def scan(repo: Path, root: Path, selected: Path) -> tuple[int, list[Finding], int]:
+def scan(repo: Path, root: Path, selected: Path, environment: dict[str, str]) -> tuple[int, list[Finding], int]:
     wrapper = root / WRAPPER
     wrapper.chmod(0o755)
     result = subprocess.run(
@@ -145,6 +146,7 @@ def scan(repo: Path, root: Path, selected: Path) -> tuple[int, list[Finding], in
         text=True,
         capture_output=True,
         check=False,
+        env=environment,
     )
     if result.returncode not in {0, 1}:
         raise ComparisonError(
@@ -206,7 +208,9 @@ def display(findings: Counter[tuple[str, int, str]]) -> tuple[list[dict[str, Any
     return expanded[:DISPLAY_LIMIT], len(expanded), len(expanded) > DISPLAY_LIMIT
 
 
-def compare_path(repo: Path, base: str, candidate: str, path: str) -> dict[str, Any]:
+def compare_path(
+    repo: Path, base: str, candidate: str, path: str, environment: dict[str, str]
+) -> dict[str, Any]:
     base_mode, _ = object_info(repo, base, path)
     candidate_mode, _ = object_info(repo, candidate, path)
     if base_mode != candidate_mode:
@@ -219,8 +223,8 @@ def compare_path(repo: Path, base: str, candidate: str, path: str) -> dict[str, 
         candidate_root = Path(candidate_dir)
         base_selected = materialize(base_root, repo, base, path)
         candidate_selected = materialize(candidate_root, repo, candidate, path)
-        base_status, baseline, base_total = scan(repo, base_root, base_selected)
-        candidate_status, current, candidate_total = scan(repo, candidate_root, candidate_selected)
+        base_status, baseline, base_total = scan(repo, base_root, base_selected, environment)
+        candidate_status, current, candidate_total = scan(repo, candidate_root, candidate_selected, environment)
     mapping = line_mapping(base_bytes, candidate_bytes)
     mapped_baseline = Counter((finding.rule, mapping[finding.line], finding.message) for finding in baseline if finding.line in mapping)
     candidate_findings = Counter((finding.rule, finding.line, finding.message) for finding in current)
@@ -276,7 +280,14 @@ def main(argv: list[str]) -> int:
         if len(paths) != len(set(paths)):
             raise ComparisonError("each selected path must be supplied once")
         provenance = scanner_provenance(repo, base, candidate)
-        comparisons = [compare_path(repo, base, candidate, path) for path in paths]
+        with tempfile.TemporaryDirectory(prefix="check-errors-cache-") as cache_dir:
+            cache_root = Path(cache_dir)
+            environment = os.environ.copy()
+            environment["XDG_CACHE_HOME"] = str(cache_root / "xdg")
+            environment["GOCACHE"] = str(cache_root / "go-build")
+            comparisons = [
+                compare_path(repo, base, candidate, path, environment) for path in paths
+            ]
     except (ComparisonError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

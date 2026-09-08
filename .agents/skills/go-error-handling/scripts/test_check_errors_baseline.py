@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,8 +18,6 @@ HERE = Path(__file__).resolve().parent
 HELPER = HERE / "check-errors-baseline.py"
 WRAPPER = HERE / "check-errors.sh"
 AST = HERE / "check-errors-ast.go"
-BASE = "540d3a495a2cd56e82797dfb2daf531095a9d4c6"
-
 spec = importlib.util.spec_from_file_location("check_errors_baseline", HELPER)
 assert spec and spec.loader
 module = importlib.util.module_from_spec(spec)
@@ -59,13 +58,17 @@ class BaselineComparatorTest(unittest.TestCase):
         self.git("commit", "-qm", message)
         return self.git("rev-parse", "HEAD")
 
-    def invoke(self, base: str, candidate: str, *paths: str) -> subprocess.CompletedProcess[str]:
+    def invoke(
+        self, base: str, candidate: str, *paths: str, environment: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         command = [
             "python3", "-B", str(HELPER), "--base", base, "--candidate", candidate,
         ]
         for path in paths:
             command.extend(("--path", path))
-        return subprocess.run(command, cwd=self.repo, text=True, capture_output=True, check=False)
+        return subprocess.run(
+            command, cwd=self.repo, text=True, capture_output=True, check=False, env=environment
+        )
 
     def seed(self, source: str) -> str:
         self.write("pkg/example.go", source)
@@ -111,6 +114,34 @@ class BaselineComparatorTest(unittest.TestCase):
         candidate = self.commit("scanner change")
         self.assertEqual(2, self.invoke(base, candidate, "pkg/example.go").returncode)
 
+    def test_ambient_scanner_cache_cannot_replace_real_scan(self) -> None:
+        base = self.seed("package pkg\nfunc f() error {\n var err error\n return err\n}\n")
+        poison_root = self.repo / "poison"
+        stamp = subprocess.run(
+            ["cksum", str(WRAPPER.with_name("check-errors-ast.go"))],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.split()
+        poisoned = poison_root / "golang-skills" / f"check-errors-ast-{stamp[0]}-{stamp[1]}"
+        poisoned.parent.mkdir(parents=True)
+        marker = self.repo / "poison-executed"
+        poisoned.write_text(
+            "#!/usr/bin/env bash\ntouch \"$POISON_MARKER\"\necho '{\"findings\":[],\"total\":0,\"truncated\":false}'\n",
+            encoding="utf-8",
+        )
+        poisoned.chmod(0o755)
+        environment = os.environ.copy()
+        environment["XDG_CACHE_HOME"] = str(poison_root)
+        environment["GOCACHE"] = str(poison_root / "go-build")
+        environment["POISON_MARKER"] = str(marker)
+        result = self.invoke(base, base, "pkg/example.go", environment=environment)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertFalse(marker.exists())
+        payload = json.loads(result.stdout)["paths"][0]
+        self.assertEqual(1, payload["base_scan"]["exit_status"])
+        self.assertEqual(1, payload["candidate_scan"]["exit_status"])
+
     def test_scan_rejects_malformed_truncated_and_bad_exit(self) -> None:
         root = self.repo / "fixture"
         selected = root / "pkg/example.go"
@@ -128,7 +159,7 @@ class BaselineComparatorTest(unittest.TestCase):
                 wrapper.write_text("#!/usr/bin/env bash\n" + body + "\n", encoding="utf-8")
                 wrapper.chmod(0o755)
                 with self.assertRaises(module.ComparisonError):
-                    module.scan(self.repo, root, selected)
+                    module.scan(self.repo, root, selected, os.environ.copy())
 
     def test_scan_rejects_wrong_file_and_line(self) -> None:
         root = self.repo / "fixture"
@@ -149,7 +180,7 @@ class BaselineComparatorTest(unittest.TestCase):
                 )
                 wrapper.chmod(0o755)
                 with self.assertRaises(module.ComparisonError):
-                    module.scan(self.repo, root, selected)
+                    module.scan(self.repo, root, selected, os.environ.copy())
 
 
 if __name__ == "__main__":
