@@ -342,3 +342,58 @@ func TestUpdateTemplateRejectsInvalidWorkflowStepWithoutPersisting(t *testing.T)
 		t.Fatalf("template changed after rejected update: %#v", stored)
 	}
 }
+
+func TestTemplateRunSpecWorkflowValidatesStepPlans(t *testing.T) {
+	service := newTestService()
+	ctx := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	input := func(name, stepCommand string) TemplateInput {
+		stepRunSpec := domain.RunSpec{Type: domain.RunTypeShell}
+		if stepCommand != "" {
+			stepRunSpec.Inputs = map[string]any{"command": stepCommand}
+		}
+		workflow := domain.Workflow{Steps: []domain.WorkflowStep{{ID: "nested-step", RunSpec: stepRunSpec}}}
+		return TemplateInput{
+			ProjectID: "proj_platform",
+			Name:      name,
+			Kind:      domain.RunTypeShell,
+			RunSpec: domain.RunSpec{
+				Type:     domain.RunTypeShell,
+				Inputs:   map[string]any{"command": "echo top-level"},
+				Workflow: &workflow,
+			},
+		}
+	}
+
+	t.Run("create rejects invalid nested workflow step", func(t *testing.T) {
+		if _, err := service.CreateTemplate(ctx, input("Invalid Nested Workflow", "")); err == nil {
+			t.Fatal("invalid nested workflow shell step was accepted")
+		}
+	})
+
+	t.Run("create accepts valid nested workflow", func(t *testing.T) {
+		created, err := service.CreateTemplate(ctx, input("Valid Nested Workflow", "echo nested"))
+		if err != nil {
+			t.Fatalf("CreateTemplate() error = %v", err)
+		}
+		if created.RunSpec.Workflow == nil || len(created.RunSpec.Workflow.Steps) != 1 {
+			t.Fatalf("created nested workflow = %#v", created.RunSpec.Workflow)
+		}
+	})
+
+	t.Run("update rejects invalid nested workflow step without persisting", func(t *testing.T) {
+		created, err := service.CreateTemplate(ctx, input("Original Nested Workflow", "echo original"))
+		if err != nil {
+			t.Fatalf("CreateTemplate() error = %v", err)
+		}
+		if _, err := service.UpdateTemplate(ctx, created.ID, input("Invalid Nested Update", "")); err == nil {
+			t.Fatal("invalid nested workflow shell step update was accepted")
+		}
+		stored, err := service.templates.GetTemplate(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("GetTemplate() error = %v", err)
+		}
+		if stored.Name != created.Name || stored.RunSpec.Workflow.Steps[0].RunSpec.Inputs["command"] != "echo original" {
+			t.Fatalf("template changed after rejected nested update: %#v", stored)
+		}
+	})
+}
