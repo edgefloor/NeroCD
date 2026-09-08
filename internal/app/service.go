@@ -291,9 +291,31 @@ func (s *Service) templateFromInput(id string, input TemplateInput) (domain.Task
 	if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", ProjectID: projectID, RunSpec: runSpec}); err != nil {
 		return domain.TaskTemplate{}, err
 	}
+	var validateWorkflow func(domain.Workflow) error
+	validateWorkflow = func(workflow domain.Workflow) error {
+		for _, step := range workflow.Steps {
+			if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", ProjectID: projectID, RunSpec: step.RunSpec}); err != nil {
+				return fmt.Errorf("workflow step %q: %w", step.ID, err)
+			}
+			if step.RunSpec.Workflow != nil {
+				if err := validateWorkflow(*step.RunSpec.Workflow); err != nil {
+					return fmt.Errorf("workflow step %q nested workflow: %w", step.ID, err)
+				}
+			}
+		}
+		return nil
+	}
+	if runSpec.Workflow != nil {
+		if err := validateWorkflow(*runSpec.Workflow); err != nil {
+			return domain.TaskTemplate{}, fmt.Errorf("run_spec.workflow: %w", err)
+		}
+	}
 	workflow, err := s.normalizeWorkflow(input.Workflow)
 	if err != nil {
 		return domain.TaskTemplate{}, err
+	}
+	if err := validateWorkflow(workflow); err != nil {
+		return domain.TaskTemplate{}, fmt.Errorf("workflow: %w", err)
 	}
 	return domain.TaskTemplate{ID: id, ProjectID: projectID, Name: name, Kind: kind, RunSpec: runSpec, Workflow: workflow, RunnerTags: normalizeTags(input.RunnerTags), RequiresAck: input.RequiresAck}, nil
 }

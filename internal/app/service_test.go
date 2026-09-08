@@ -265,3 +265,176 @@ func TestCreateTemplateRejectsUnsafeWorkflowRepositoryURL(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestCreateTemplateValidatesWorkflowStepPlans(t *testing.T) {
+	service := newTestService()
+	ctx := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	validInput := TemplateInput{
+		ProjectID: "proj_platform",
+		Name:      "Valid Workflow",
+		Kind:      domain.RunTypeShell,
+		RunSpec:   domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "echo top-level"}},
+		Workflow: domain.Workflow{Steps: []domain.WorkflowStep{{
+			ID:      "valid-step",
+			RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "echo step"}},
+		}}},
+	}
+
+	t.Run("rejects invalid shell step", func(t *testing.T) {
+		invalidInput := validInput
+		invalidInput.Name = "Invalid Workflow"
+		invalidInput.Workflow.Steps = append([]domain.WorkflowStep(nil), validInput.Workflow.Steps...)
+		invalidInput.Workflow.Steps[0].RunSpec = domain.RunSpec{Type: domain.RunTypeShell}
+
+		if _, err := service.CreateTemplate(ctx, invalidInput); err == nil {
+			t.Fatal("invalid workflow shell step was accepted")
+		}
+	})
+
+	t.Run("accepts valid workflow", func(t *testing.T) {
+		created, err := service.CreateTemplate(ctx, validInput)
+		if err != nil {
+			t.Fatalf("CreateTemplate() error = %v", err)
+		}
+		if len(created.Workflow.Steps) != 1 || created.Workflow.Steps[0].ID != "valid-step" {
+			t.Fatalf("created workflow = %#v", created.Workflow)
+		}
+	})
+}
+
+func TestUpdateTemplateRejectsInvalidWorkflowStepWithoutPersisting(t *testing.T) {
+	service := newTestService()
+	ctx := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	input := TemplateInput{
+		ProjectID: "proj_platform",
+		Name:      "Original Workflow",
+		Kind:      domain.RunTypeShell,
+		RunSpec:   domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "echo top-level"}},
+		Workflow: domain.Workflow{Steps: []domain.WorkflowStep{{
+			ID:      "valid-step",
+			RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "echo step"}},
+		}}},
+	}
+	created, err := service.CreateTemplate(ctx, input)
+	if err != nil {
+		t.Fatalf("CreateTemplate() error = %v", err)
+	}
+
+	invalidUpdate := TemplateInput{
+		ProjectID: input.ProjectID,
+		Name:      "Invalid Update",
+		Kind:      input.Kind,
+		RunSpec:   input.RunSpec,
+		Workflow: domain.Workflow{Steps: []domain.WorkflowStep{{
+			ID:      "invalid-step",
+			RunSpec: domain.RunSpec{Type: domain.RunTypeShell},
+		}}},
+	}
+	if _, err := service.UpdateTemplate(ctx, created.ID, invalidUpdate); err == nil {
+		t.Fatal("invalid workflow shell step update was accepted")
+	}
+
+	stored, err := service.templates.GetTemplate(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetTemplate() error = %v", err)
+	}
+	if stored.Name != created.Name || stored.Workflow.Steps[0].RunSpec.Inputs["command"] != "echo step" {
+		t.Fatalf("template changed after rejected update: %#v", stored)
+	}
+}
+
+func TestTemplateRunSpecWorkflowValidatesStepPlans(t *testing.T) {
+	service := newTestService()
+	ctx := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	input := func(name, stepCommand string) TemplateInput {
+		stepRunSpec := domain.RunSpec{Type: domain.RunTypeShell}
+		if stepCommand != "" {
+			stepRunSpec.Inputs = map[string]any{"command": stepCommand}
+		}
+		workflow := domain.Workflow{Steps: []domain.WorkflowStep{{ID: "nested-step", RunSpec: stepRunSpec}}}
+		return TemplateInput{
+			ProjectID: "proj_platform",
+			Name:      name,
+			Kind:      domain.RunTypeShell,
+			RunSpec: domain.RunSpec{
+				Type:     domain.RunTypeShell,
+				Inputs:   map[string]any{"command": "echo top-level"},
+				Workflow: &workflow,
+			},
+		}
+	}
+
+	t.Run("create rejects invalid nested workflow step", func(t *testing.T) {
+		if _, err := service.CreateTemplate(ctx, input("Invalid Nested Workflow", "")); err == nil {
+			t.Fatal("invalid nested workflow shell step was accepted")
+		}
+	})
+
+	t.Run("create accepts valid nested workflow", func(t *testing.T) {
+		created, err := service.CreateTemplate(ctx, input("Valid Nested Workflow", "echo nested"))
+		if err != nil {
+			t.Fatalf("CreateTemplate() error = %v", err)
+		}
+		if created.RunSpec.Workflow == nil || len(created.RunSpec.Workflow.Steps) != 1 {
+			t.Fatalf("created nested workflow = %#v", created.RunSpec.Workflow)
+		}
+	})
+
+	t.Run("update rejects invalid nested workflow step without persisting", func(t *testing.T) {
+		created, err := service.CreateTemplate(ctx, input("Original Nested Workflow", "echo original"))
+		if err != nil {
+			t.Fatalf("CreateTemplate() error = %v", err)
+		}
+		if _, err := service.UpdateTemplate(ctx, created.ID, input("Invalid Nested Update", "")); err == nil {
+			t.Fatal("invalid nested workflow shell step update was accepted")
+		}
+		stored, err := service.templates.GetTemplate(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("GetTemplate() error = %v", err)
+		}
+		if stored.Name != created.Name || stored.RunSpec.Workflow.Steps[0].RunSpec.Inputs["command"] != "echo original" {
+			t.Fatalf("template changed after rejected nested update: %#v", stored)
+		}
+	})
+}
+
+func TestTemplateRejectsInvalidWorkflowStepNestedInAnotherStep(t *testing.T) {
+	service := newTestService()
+	ctx := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	input := func(name, innerCommand string) TemplateInput {
+		innerRunSpec := domain.RunSpec{Type: domain.RunTypeShell}
+		if innerCommand != "" {
+			innerRunSpec.Inputs = map[string]any{"command": innerCommand}
+		}
+		innerWorkflow := domain.Workflow{Steps: []domain.WorkflowStep{{ID: "inner-step", RunSpec: innerRunSpec}}}
+		outerWorkflow := domain.Workflow{Steps: []domain.WorkflowStep{{
+			ID:      "outer-step",
+			RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "echo outer"}, Workflow: &innerWorkflow},
+		}}}
+		return TemplateInput{
+			ProjectID: "proj_platform",
+			Name:      name,
+			Kind:      domain.RunTypeShell,
+			RunSpec:   domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "echo top-level"}, Workflow: &outerWorkflow},
+		}
+	}
+
+	if _, err := service.CreateTemplate(ctx, input("Invalid Deep Workflow", "")); err == nil {
+		t.Fatal("invalid doubly nested workflow shell step was accepted")
+	}
+
+	created, err := service.CreateTemplate(ctx, input("Original Deep Workflow", "echo original"))
+	if err != nil {
+		t.Fatalf("CreateTemplate() error = %v", err)
+	}
+	if _, err := service.UpdateTemplate(ctx, created.ID, input("Invalid Deep Update", "")); err == nil {
+		t.Fatal("invalid doubly nested workflow shell step update was accepted")
+	}
+	stored, err := service.templates.GetTemplate(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetTemplate() error = %v", err)
+	}
+	if stored.Name != created.Name || stored.RunSpec.Workflow.Steps[0].RunSpec.Workflow.Steps[0].RunSpec.Inputs["command"] != "echo original" {
+		t.Fatalf("template changed after rejected deep update: %#v", stored)
+	}
+}
