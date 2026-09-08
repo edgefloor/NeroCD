@@ -464,6 +464,7 @@ class ProtocolTest(unittest.TestCase):
                 for lenses, error in (
                     ([], "code_hygiene and specification"),
                     (["code_hygiene"], "code_hygiene and specification"),
+                    (["specification"], "code_hygiene and specification"),
                     (["advisory"], "unsupported lenses"),
                 ):
                     with self.subTest(lenses=lenses):
@@ -487,6 +488,9 @@ class ProtocolTest(unittest.TestCase):
             "read-only-empty-reviews", "REVIEWER", "code_hygiene_reviewer"
         )
         validate_packet(read_only)
+        read_only["required_review_lenses"] = ["advisory"]
+        with self.assertRaisesRegex(ProtocolError, "unsupported lenses"):
+            validate_packet(read_only)
 
     def test_result_uses_actual_git_paths_and_requires_clean_candidate(self) -> None:
         candidate = self.commit_owned_change()

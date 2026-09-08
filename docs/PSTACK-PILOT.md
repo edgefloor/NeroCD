@@ -20,15 +20,14 @@ The package hashes use NeroCD's `sha256-path-content-v1` algorithm. The installe
 `technical-writing`, `unslop`, and `how` inventories, bytes, and executable modes match
 the pinned source. The packages contain no adapters or generated metadata.
 
-The pinned `interrogate` package may be staged unchanged outside the repository for a later
-pilot. It is not installed globally and has not been invoked. The advisory reviewer route
-configuration is present in the repository, but current-host callability remains unverified
-until the new routes actually launch. Per-task use supplies the upstream reviewer prompt,
-rubric, and code-quality lens to native Sol or Terra reviewer routes; no Cursor configuration,
-adapter, or unsupported default-route substitution is implied.
+The installed `interrogate` package contains five unchanged files from the pinned source.
+Per-task use supplies its upstream reviewer prompt, rubric, and code-quality lens to native
+Sol or Terra reviewer routes. Both fresh advisory sessions verified actual Sol/medium and
+Terra/medium routes. No Cursor configuration, adapter, or unsupported default-route
+substitution is implied.
 `technical-writing` explicitly requires `unslop`.
 
-The staged `interrogate` inventory contains five unchanged files from the pinned commit:
+The `interrogate` inventory is unchanged from the pinned commit:
 `93b00b89ef425a9c1bac0d0b317dfc49c930ac99`. Its provenance record is
 `/Users/bubble/.codex/run-evidence/nerocd-interrogate-93b00b89/provenance.json`.
 
