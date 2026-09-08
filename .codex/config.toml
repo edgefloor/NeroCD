@@ -48,6 +48,14 @@ description = "Read-only Terra reviewer for concrete cryptographic correctness c
 config_file = "agents/critical-security-reviewer.toml"
 description = "Read-only Terra reviewer invoked only for listed critical application areas."
 
+[agents.advisory_reviewer_sol]
+config_file = "agents/advisory-reviewer-sol.toml"
+description = "Read-only Sol reviewer that returns advisory findings under a Leader-supplied rubric."
+
+[agents.advisory_reviewer_terra]
+config_file = "agents/advisory-reviewer-terra.toml"
+description = "Read-only Terra reviewer that returns advisory findings under a Leader-supplied rubric."
+
 [agents.escalation_resolver]
 config_file = "agents/escalation-resolver.toml"
 description = "High-effort Sol resolver for material conflicts or blockers explicitly escalated by the Leader."

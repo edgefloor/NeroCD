@@ -19,6 +19,13 @@ at commit `93b00b89ef425a9c1bac0d0b317dfc49c930ac99`.
 The package hashes use NeroCD's `sha256-path-content-v1` algorithm. The installed
 `technical-writing`, `unslop`, and `how` inventories, bytes, and executable modes match
 the pinned source. The packages contain no adapters or generated metadata.
+
+The pinned `interrogate` package may be staged unchanged outside the repository for a later
+pilot. It is not installed globally and has not been invoked. The advisory reviewer route
+configuration is present in the repository, but current-host callability remains unverified
+until the new routes actually launch. Per-task use supplies the upstream reviewer prompt,
+rubric, and code-quality lens to native Sol or Terra reviewer routes; no Cursor configuration,
+adapter, or unsupported default-route substitution is implied.
 `technical-writing` explicitly requires `unslop`.
 
 The `how` package contains:
@@ -71,13 +78,13 @@ the host equivalent of the upstream read-only `Task` call with `generalPurpose`;
 does not claim native discovery of Cursor configuration. Complex exploration and critique
 remain unpiloted, although their unchanged reference files are installed.
 
-The Leader launched `Explain documentation checker strict behavior` after installation and
-received a useful `SIMPLE EXPLAIN` result covering wrapper help, version behavior, findings,
-and exit codes. The pilot used one child and a clean checkout. Its actual route was Sol/high
-despite a requested Terra/medium route, so it does not validate the intended route. Manual Git
-checks did not validate detached-HEAD preflight. The explanation also overstated the helper's
-error behavior by saying all build-environment errors exit 2; only a missing Go executable is
-normalized to exit 2. The task made no code or skill changes.
+The Leader ran the complex `how` pilot with two read-only explorers and a third synthesis task
+in a clean checkout. The Leader confirmed the actual Terra/medium route. This validates only
+that observed pilot route, not detached-HEAD preflight or native discovery of Cursor
+configuration. Its journal message and diagram claims are explanatory limitations, not proof
+of controller behavior or a route guarantee. The explanation also overstated the helper's error
+behavior by saying all build-environment errors exit 2; only a missing Go executable is
+normalized to exit 2. The pilot made no code or skill changes.
 
 ## Pilot cadence
 

@@ -54,6 +54,9 @@ small mechanical changes; `bounded_worker` (Terra/medium) for ordinary changes;
 `complex_worker` (Sol/medium) for multi-step work; and `critical_worker` (Sol/high) only for
 explicitly approved critical work. `integration_steward` is Terra/medium. Routine reviewers
 are Terra/medium; cryptographic correctness and critical security reviewers are Terra/high.
+`advisory_reviewer_sol` (Sol/medium) and `advisory_reviewer_terra` (Terra/medium) accept only
+read-only `REVIEWER` packets and return Leader-rubric advisory findings. They do not replace
+the required hygiene and specification reviews or make acceptance decisions.
 `escalation_resolver` is Sol/high and acts only on a named blocker and bounded ownership.
 
 Sol maps to `gpt-5.6-sol`, Terra to `gpt-5.6-terra`, and Luna to `gpt-5.6-luna`. Static

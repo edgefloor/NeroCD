@@ -22,6 +22,8 @@ from orchestration.protocol import (
     validate_packet,
     validate_result,
     validate_review,
+    validate_reviews,
+    validate_config,
 )
 
 
@@ -368,6 +370,46 @@ class ProtocolTest(unittest.TestCase):
                 state = self.root / f"{mode.lower()}-state" / "checkpoint.json"
                 advance_checkpoint(state, "accepted", packet_path, result_path, [], self.repo)
                 validate_checkpoint(state, self.repo)
+
+    def test_advisory_reviewer_routes_require_review_mode_and_exact_route(self) -> None:
+        for role, model in (
+            ("advisory_reviewer_sol", "gpt-5.6-sol"),
+            ("advisory_reviewer_terra", "gpt-5.6-terra"),
+        ):
+            with self.subTest(role=role):
+                packet = self.make_read_only_packet(role, "REVIEWER", role)
+                packet["route"]["model"] = model
+                validate_packet(packet)
+
+                worker_mode = copy.deepcopy(packet)
+                worker_mode["mode"] = "WORKER"
+                worker_mode["repository"]["branch"] = "pilot"
+                worker_mode["ownership"]["write_paths"] = ["owned/"]
+                worker_mode["required_review_lenses"] = ["code_hygiene"]
+                with self.assertRaisesRegex(ProtocolError, "incompatible with role"):
+                    validate_packet(worker_mode)
+
+                writes = copy.deepcopy(packet)
+                writes["ownership"]["write_paths"] = ["owned/"]
+                with self.assertRaisesRegex(ProtocolError, "read-only modes cannot own writes"):
+                    validate_packet(writes)
+
+                mismatched_route = copy.deepcopy(packet)
+                mismatched_route["route"]["model"] = "gpt-5.6-terra"
+                if model == "gpt-5.6-terra":
+                    mismatched_route["route"]["effort"] = "high"
+                with self.assertRaisesRegex(ProtocolError, "requires model=.* effort=medium"):
+                    validate_packet(mismatched_route)
+
+    def test_advisory_report_cannot_satisfy_mandatory_review_records(self) -> None:
+        candidate = self.commit_owned_change()
+        advisory_report = self.make_review(candidate, "code_hygiene")
+        advisory_report["lens"] = "advisory"
+        with self.assertRaisesRegex(ProtocolError, "was not required"):
+            validate_reviews([advisory_report], self.packet, candidate)
+
+    def test_repository_config_matches_all_protocol_roles(self) -> None:
+        validate_config(Path(__file__).resolve().parents[1])
 
     def test_branch_contract_rejects_null_writers_and_checkout_mismatches(self) -> None:
         writer = copy.deepcopy(self.packet)

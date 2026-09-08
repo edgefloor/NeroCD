@@ -59,6 +59,13 @@ Modes are `ORCHESTRATOR`, `WORKER`, `REVIEWER`, and `INTEGRATOR`. Role/mode pair
 explorer/orchestrator, implementation roles/worker, review roles/reviewer, and integration
 steward/integrator.
 
+The advisory reviewer routes, `advisory_reviewer_sol` and `advisory_reviewer_terra`, are
+read-only `REVIEWER` routes. For each task, the Leader supplies the complete upstream reviewer
+prompt, rubric, and code-quality lens and assesses the resulting advisory findings. An advisory
+report is an external report, not a protocol review record: it cannot satisfy a required
+`code_hygiene` or `specification` lens, create an optional lens, or authorize automatic changes.
+When a change is made, the standard required reviews remain mandatory.
+
 ### Runtime capability attestation
 
 `orchestration/examples/runtime-capabilities.json` records the runtime-observed model to

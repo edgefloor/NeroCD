@@ -40,6 +40,8 @@ ROLE_ROUTES = {
     "specification_reviewer": ("gpt-5.6-terra", "medium", "read-only"),
     "cryptographic_correctness_reviewer": ("gpt-5.6-terra", "high", "read-only"),
     "critical_security_reviewer": ("gpt-5.6-terra", "high", "read-only"),
+    "advisory_reviewer_sol": ("gpt-5.6-sol", "medium", "read-only"),
+    "advisory_reviewer_terra": ("gpt-5.6-terra", "medium", "read-only"),
     "escalation_resolver": ("gpt-5.6-sol", "high", "workspace-write"),
 }
 ROLE_MODES = {
@@ -53,6 +55,8 @@ ROLE_MODES = {
     "specification_reviewer": "REVIEWER",
     "cryptographic_correctness_reviewer": "REVIEWER",
     "critical_security_reviewer": "REVIEWER",
+    "advisory_reviewer_sol": "REVIEWER",
+    "advisory_reviewer_terra": "REVIEWER",
     "escalation_resolver": "WORKER",
 }
 
