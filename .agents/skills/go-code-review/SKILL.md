@@ -18,7 +18,7 @@ allowed-tools: Bash(bash:*)
 
 > Use `assets/review-template.md` when formatting the output of a code review to ensure consistent structure with Must Fix / Should Fix / Nits severity grouping.
 
-1. Run `gofmt -d .` and `go vet ./...` to catch mechanical issues first
+1. Run the applicable automated checks below to catch mechanical issues first
 2. Read the diff file-by-file; for each file, check the categories below in order
 3. Flag issues with specific line references and the rule name
 4. After reviewing all files, re-read flagged items to verify they're genuine issues
@@ -167,6 +167,8 @@ bash .agents/skills/go-code-review/scripts/pre-review.sh --json ./...  # structu
 Or manually: `gofmt -l <path> && go vet ./... && golangci-lint run ./...`
 
 Fix any issues before proceeding to the checklist above. For linter setup and configuration, see [go-linting](../go-linting/SKILL.md).
+
+When a repair changes the candidate after review, inspect the new delta and rerun the affected checks. Cite earlier evidence only for unaffected checks, with the original candidate SHA and the reason that the check remains unaffected. Do not describe earlier checks as rerun at the repaired SHA.
 
 ---
 

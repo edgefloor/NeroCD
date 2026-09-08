@@ -342,6 +342,16 @@ routine reviews, any applicable critical risk review, then serial integration an
 checks. Lifecycle language is limited to controls the active host actually offers: interrupt,
 stop, wait, and archive where available.
 
+Choose each required check's exact scope and success criterion before implementation. A full
+scan that succeeds reports the state it scanned. A baseline comparison that succeeds reports
+that it found no new findings. Do not reinterpret a failed required check after it runs.
+
+If a repair changes the candidate after a review, inspect the repair delta and rerun the
+affected checks. Reuse evidence only for checks that the repair cannot affect. Cite the
+original candidate SHA and the reason for that conclusion. Required reviews must inspect the
+final exact candidate SHA. A failed or not-run required check cannot be waived. Record an
+unavailable lint check as `not_run`.
+
 For an advisory review, dispatch a fresh role-specific agent with `fork_turns=none`. Do not
 reuse a probe context. Record the reviewer's actual model and effort before accepting its
 report, and run formal preflight before a real review.

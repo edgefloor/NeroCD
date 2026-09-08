@@ -12,6 +12,7 @@ allowed-tools: Bash(bash:*)
 
 - `scripts/check-errors.sh` - Run when checking string-based error matching, bare error propagation, and log-and-return patterns.
 - `scripts/check-errors-ast.go` - Implementation helper invoked by `check-errors.sh`; patch this when changing error-flow analysis behavior.
+- `scripts/check-errors-baseline.py` - Compare findings for selected tracked Go files at a base and candidate commit without changing the scanner.
 - `references/ERROR-FLOW.md` - Read when deciding where to handle, wrap, log, or return errors.
 - `references/ERROR-TYPES.md` - Read when choosing sentinel errors, typed errors, or opaque errors.
 - `references/WRAPPING.md` - Read when choosing `%w` versus `%v` or crossing package boundaries.
@@ -163,7 +164,17 @@ Error encountered?
 **Key rules**: Place `%w` at the end. Add context callers don't have. If
 annotation adds nothing, return `err` directly.
 
-> **Validation**: From the repository root, run `bash .agents/skills/go-error-handling/scripts/check-errors.sh ./...` to detect common anti-patterns. Then run `go vet ./...` to catch additional issues.
+> **Validation**: Choose the check scope before running it. From the repository root, run `bash .agents/skills/go-error-handling/scripts/check-errors.sh ./...` for a full scan. Run `go vet ./...` when the selected validation requires it.
+
+Run a full scan to report every finding at one revision. Run the baseline comparator when the check should reject only new findings. Choose the exact paths and comparison criterion before implementation:
+
+```bash
+python3 -B .agents/skills/go-error-handling/scripts/check-errors-baseline.py \
+  --base <full-base-sha> --candidate <full-candidate-sha> \
+  --path internal/example.go
+```
+
+Run it from the candidate repository top level. It accepts only selected tracked regular non-test Go files present at both commits. It verifies the scanner and wrapper blobs, then exits 0 when no finding is added, 1 when a finding is added, and 2 when it cannot make a usable comparison. Each path reports raw `base_scan.exit_status` and `candidate_scan.exit_status`; raw exit 1 means the full scan found existing findings, so comparison exit 0 does not mean a clean full scan.
 
 ---
 
