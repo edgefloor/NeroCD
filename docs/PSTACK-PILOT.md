@@ -75,16 +75,23 @@ assumptions, risks, and validation commands.
 
 The `how` skill remains unchanged. A direct `spawn_agent` call with `read_only_explorer` is
 the host equivalent of the upstream read-only `Task` call with `generalPurpose`; this mapping
-does not claim native discovery of Cursor configuration. Complex exploration and critique
-remain unpiloted, although their unchanged reference files are installed.
+does not claim native discovery of Cursor configuration. Critique remains unpiloted, although
+its unchanged reference files are installed.
 
-The Leader ran the complex `how` pilot with two read-only explorers and a third synthesis task
-in a clean checkout. The Leader confirmed the actual Terra/medium route. This validates only
-that observed pilot route, not detached-HEAD preflight or native discovery of Cursor
-configuration. Its journal message and diagram claims are explanatory limitations, not proof
-of controller behavior or a route guarantee. The explanation also overstated the helper's error
-behavior by saying all build-environment errors exit 2; only a missing Go executable is
-normalized to exit 2. The pilot made no code or skill changes.
+The earlier `SIMPLE EXPLAIN` pilot, `Explain documentation checker strict behavior`, used one
+child in a clean checkout. Its actual route was Sol/high despite a requested Terra/medium route,
+so it does not validate the intended route. No formal detached-HEAD preflight was run. Its
+explanation also overstated the helper's error behavior by saying all build-environment errors
+exit 2; only a missing Go executable is normalized to exit 2. The pilot made no code or skill
+changes.
+
+The later complex `how` pilot, `Explain runner crash recovery`, used two read-only explorers
+and a third synthesis task. The Leader confirmed the actual Terra/medium route, and all three
+formal detached `branch: null` preflights passed. It inspected source only and did not run
+runtime recovery tests. The output corrected two points: `JournalEvent.Message` may contain
+secrets or paths despite no dedicated fields, and a lost-response retry must occur before a
+valid acknowledgement removes the event. Its journal-message and diagram claims remain
+explanatory limitations, not proof of controller behavior or a route guarantee.
 
 ## Pilot cadence
 
