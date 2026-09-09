@@ -15,6 +15,8 @@ on:
       - "agent/**"
       - "docs/agent/**"
       - "docs/AGENT-ORCHESTRATION.md"
+      - "docs/AGENT-ORCHESTRATION-NATIVE.md"
+      - "docs/ORCHESTRATION-BENCHMARK.md"
       - "docs/SKILL-AUDIT.md"
       - "orchestration/**"
       - "scripts/orchestration/**"
@@ -32,6 +34,8 @@ on:
       - "agent/**"
       - "docs/agent/**"
       - "docs/AGENT-ORCHESTRATION.md"
+      - "docs/AGENT-ORCHESTRATION-NATIVE.md"
+      - "docs/ORCHESTRATION-BENCHMARK.md"
       - "docs/SKILL-AUDIT.md"
       - "orchestration/**"
       - "scripts/orchestration/**"
@@ -61,6 +65,11 @@ jobs:
           python3 -m unittest discover -s orchestration -p 'test_*.py'
           python3 scripts/orchestration/validate.py --repo-root . config
           python3 scripts/orchestration/validate.py packet orchestration/examples/worker-packet.json
+
+      - name: Validate native orchestration checks
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest scripts/orchestration/test_native_check.py
 
       - name: Validate canonical skills
         env:

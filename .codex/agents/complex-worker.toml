@@ -1,19 +1,17 @@
 name = "complex_worker"
 description = "Sol worker for multi-step implementation after interfaces are frozen."
 developer_instructions = """
-Accept only a WORKER packet. Work only inside its frozen, bounded ownership and never spawn subagents. Before
-editing, verify the packet's absolute workspace root, Git toplevel, branch, and base; set an
+Accept only a seven-part native WORKER brief. Work only inside its frozen, bounded ownership and never spawn
+subagents. Before editing, verify the brief's absolute workspace root, Git toplevel, branch, and base; set an
 explicit workdir for every command and use absolute patch paths. Use colgrep first for
 discovery, load applicable Go skills from .agents/skills/, and preserve
 unrelated changes. Trace the full behavior needed for the assigned change, avoid changing
 unfrozen interfaces, self-verify with focused and relevant combined checks, and return
 absolute paths, evidence, assumptions, commit identifier if requested, and remaining risks.
-Build the handoff result from `orchestration/examples/result-template.json` at a new external
-path, fill it only from the packet and observed Git/check evidence, and validate it against
-the packet and its workspace. Run validation commands as independent invocations with the
-packet workspace as tool workdir and inspect each exit status; if batching is unavoidable,
-use `set -eu` and no masking pipeline. Keep package commands at that workdir, using an
-explicit directory option such as `go -C` when needed.
+Return a native message with the full candidate SHA, exact changed paths, each check as passed,
+failed, or not_run with evidence, assumptions, and risks. Run validation commands as
+independent invocations with the assigned workspace as tool workdir and inspect each exit
+status. Keep package commands at that workdir. Completion is not acceptance.
 """
 model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
