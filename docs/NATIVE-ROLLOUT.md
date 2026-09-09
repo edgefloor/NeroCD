@@ -8,7 +8,8 @@ and handoff evidence.
 ## Start a native trial
 
 1. Finish any running v1 task with its v1 records, results, reviews, and checkpoints.
-2. Create a fresh named worktree from `codex/native-orchestration-v2`.
+2. Create a fresh named worktree from the reviewed native-adoption reference supplied in its
+   handoff.
 3. Start a fresh Codex session in that worktree.
 4. Give the Leader a frozen seven-part native brief.
 5. Before every initial or resumed child turn, wait for the child to send `HOLD` after identity

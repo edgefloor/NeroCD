@@ -34,14 +34,12 @@ must not control task state.
 - Keep at most three child threads open. The Leader is not a child. A child must not spawn
   another child.
 - Start with a read-only explorer when the affected code or interface is unclear.
-- Before substantive work on every initial or resumed child turn, the child performs only
-  identity and checkout verification, then holds. The Leader observes the actual current-turn
-  role, model, effort, and permissions through `nativeidentity`, and the exact current SQLite
-  rollout path's top-level `session_meta` and `turn_context`, including `archived_sessions`.
-  The Leader sends native `GO` only when those observations match the frozen route. Missing or
-  mismatched evidence blocks work. A later report cannot repair an earlier missing gate.
-  Static TOML describes the requested route. It does not prove the launched route. Full access
-  to the workspace does not provide OS isolation.
+- Before substantive work on every initial or resumed child turn, the child verifies identity
+  and checkout, sends `HOLD`, and remains active. The Leader verifies the current turn using the
+  retrieval procedure in `docs/AGENT-ORCHESTRATION-NATIVE.md` and sends native `GO` only when it
+  matches the frozen route. Missing or mismatched evidence blocks work. If the holding turn ends,
+  repeat the gate on the next turn. Static TOML and historical records do not prove the launched
+  route. Full access to the workspace does not provide OS isolation.
 - Use `fork_turns=none` for a fresh selected-role dispatch.
 - Run `scripts/orchestration/native_check.py start` against the exact worktree. The check
   requires the named branch at the base SHA with no tracked or untracked changes.

@@ -36,15 +36,20 @@ The brief carries dynamic ownership. A task name is a label, not an immutable di
 ## Gate every current turn before work
 
 Before substantive work on an initial or resumed child turn, the child performs only identity
-and checkout verification, then sends `HOLD`. The Leader observes the actual current-turn role,
-model, effort, and permissions through `nativeidentity`. The Leader also reads the exact current
-SQLite rollout path and checks the top-level `session_meta` and `turn_context`, including
-`archived_sessions`. Static TOML states the requested route. It does not prove the launched
-route.
+and checkout verification, sends `HOLD`, and remains active. The Leader then obtains the child
+ID from the spawn result. If that result is unavailable, the Leader finds the ID in the current
+SQLite `thread_spawn_edges` rows that match the exact parent, task path, and time window.
+
+The Leader uses `read_thread` to verify the child ID and its current turn. The Leader resolves
+that thread's current `threads.rollout_path`. At that path, the Leader reads top-level
+`session_meta` for the role and the matching `turn_context` for the model, effort, sandbox, and
+approval mode. An archived child can move to `archived_sessions`, so the Leader always resolves
+the current path before reading it. Do not substitute static TOML, an earlier turn, or historical
+SQLite data for this observation.
 
 The Leader sends native `GO` only after the observed route matches the frozen brief. Missing or
-mismatched evidence blocks work. Do not accept a later report as evidence for an earlier turn.
-Full filesystem access is not OS isolation.
+mismatched evidence blocks work. If the holding turn ends, the next turn needs a new observation
+before `GO`. Full filesystem access is not OS isolation.
 
 ## Check a writer at start
 
