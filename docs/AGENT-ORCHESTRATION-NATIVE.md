@@ -42,9 +42,16 @@ current SQLite `thread_spawn_edges` rows for the exact parent. The Leader joins 
 `threads`, then uses that row's task path and time fields to select the current child and its
 `rollout_path`.
 
-The following host-local query is a tested example. Set the four shell variables from the exact
-dispatch before you run it. `DISPATCH_START_MS` and `DISPATCH_END_MS` bound that dispatch. The
-query accepts one child only. A zero or multiple-row result blocks the gate.
+For fresh child discovery, export the values from the exact original dispatch. The dispatch
+window applies only to this discovery query. The query accepts one child only. A zero or
+multiple-row result blocks the gate.
+
+```sh
+export PARENT_ID='parent thread ID'
+export TASK_PATH='child task path'
+export DISPATCH_START_MS='original dispatch start in milliseconds'
+export DISPATCH_END_MS='original dispatch end in milliseconds'
+```
 
 ```sh
 python3 -B - <<'PY'
@@ -75,12 +82,55 @@ print(f"rollout_path={rollout_path}")
 PY
 ```
 
+For a reused or resumed child with a known ID, do not filter by its creation time. Export the
+same parent and task path, then export the known child ID.
+
+```sh
+export PARENT_ID='parent thread ID'
+export TASK_PATH='child task path'
+export CHILD_ID='known child thread ID'
+```
+
+```sh
+python3 -B - <<'PY'
+import os
+import sqlite3
+
+database = "/Users/bubble/.codex/state_5.sqlite"
+query = """
+SELECT child.id, child.rollout_path
+FROM thread_spawn_edges AS edge
+JOIN threads AS child ON child.id = edge.child_thread_id
+WHERE edge.parent_thread_id = ?
+  AND child.agent_path = ?
+  AND child.id = ?
+"""
+with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+    rows = connection.execute(
+        query,
+        (os.environ["PARENT_ID"], os.environ["TASK_PATH"], os.environ["CHILD_ID"]),
+    ).fetchall()
+if len(rows) != 1:
+    raise SystemExit(f"expected one known child, found {len(rows)}")
+child_id, rollout_path = rows[0]
+print(f"child_id={child_id}")
+print(f"rollout_path={rollout_path}")
+PY
+```
+
 Next, call the supported `mcp__codex_app__read_thread` tool with `child_id`. Confirm that it
-returns that child and the active current turn for the dispatch. If the child or turn differs,
+returns that child and its active current turn for this dispatch. If the child or turn differs,
 hold the task. Do not replace this call with a repository CLI or a historical transcript.
 
-Use the resolved `rollout_path` and the current turn ID to read only the route facts. This tested
-example prints no conversation content.
+Export the resolved path, the verified child ID, and the current turn ID from `read_thread`. Use
+the path and turn ID to read only route facts. This tested example prints no conversation
+content.
+
+```sh
+export ROLLOUT_PATH='current threads.rollout_path'
+export CHILD_ID='verified child thread ID'
+export TURN_ID='verified active current turn ID'
+```
 
 ```sh
 python3 -B - <<'PY'
@@ -116,13 +166,16 @@ for label, value in (
 PY
 ```
 
-Compare those values with the frozen route, then send native `GO` only when they match. On this
-host, `/Users/bubble/.codex/state_5.sqlite` and its `threads` and `thread_spawn_edges` tables are
+The loop retains the latest top-level `turn_context` for the verified turn ID. Compare those
+values with the frozen route, then send native `GO` only when they match. On this host,
+`/Users/bubble/.codex/state_5.sqlite` and its `threads` and `thread_spawn_edges` tables are
 observed internal support, not a stable public API. If the database is missing or its schema has
 changed, inspect it read-only and hold the task until the retrieval procedure is verified again.
-If `read_thread` reports an archived child, resolve that child's current record through the host's
-current `archived_sessions` state before you repeat the scoped lookup. Always use the current
-database path and current `threads.rollout_path`.
+
+The same current `threads` row supplies `rollout_path` for an archived child. That path can be
+under `/Users/bubble/.codex/archived_sessions`. Do not use an archived path or inactive archived
+turn as active authorization. If `read_thread` cannot verify an active current turn, hold the
+task. Do not use a separate archive table or API.
 
 Do not substitute static TOML, an earlier turn, or historical SQLite data for this observation.
 
