@@ -1,13 +1,13 @@
 # Use the native orchestration experiment
 
-This how-to applies only to `codex/native-orchestration-v2`. Main continues to use the v1
-record protocol in `docs/AGENT-ORCHESTRATION.md`. Native mode replaces v1 JSON construction
-records with short dispatch and handoff messages. It does not replace Git checks, independent
-reviews, or Leader acceptance.
+This how-to applies only to the reviewed native-adoption reference supplied in the Leader's
+handoff. Main continues to use the v1 record protocol in `docs/AGENT-ORCHESTRATION.md`. Native
+mode replaces v1 JSON construction records with short dispatch and handoff messages. It does not
+replace Git checks, independent reviews, or Leader acceptance.
 
 ## Start a fresh native session
 
-1. Create a fresh checkout from `codex/native-orchestration-v2`.
+1. Create a fresh checkout from the reviewed native-adoption reference in the Leader's handoff.
 2. Start a new Codex session in that checkout.
 3. Tell the Leader to follow `AGENTS.md` native mode.
 
@@ -37,8 +37,10 @@ The brief carries dynamic ownership. A task name is a label, not an immutable di
 
 Before substantive work on an initial or resumed child turn, the child performs only identity
 and checkout verification, sends `HOLD`, and remains active. The Leader then obtains the child
-ID from the spawn result. If that result is unavailable, the Leader finds the ID in the current
-SQLite `thread_spawn_edges` rows that match the exact parent, task path, and time window.
+ID from the spawn result. If that result is unavailable, the Leader finds child IDs in the
+current SQLite `thread_spawn_edges` rows for the exact parent. The Leader joins each child ID to
+`threads`, then uses that row's task path and time fields to select the current child and its
+`rollout_path`.
 
 The Leader uses `read_thread` to verify the child ID and its current turn. The Leader resolves
 that thread's current `threads.rollout_path`. At that path, the Leader reads top-level

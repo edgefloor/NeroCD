@@ -33,7 +33,9 @@ acceptance for that candidate.
 
 Use the benchmark plan in [Compare v1 and native orchestration](ORCHESTRATION-BENCHMARK.md) to
 compare the two protocols. The observer report records three pairs and a strict multi-audit, but
-it does not show causation. Failure-scenario results are `PENDING` until verified receipts exist.
+it does not show causation. The verified fixture campaign supports a reversible local trial. It
+does not prove production lifecycle behavior, automatic enforcement, speed, quality, or a causal
+effect. Keep the trial bounded and preserve the v1 fallback.
 
 ## Roll back a trial
 
