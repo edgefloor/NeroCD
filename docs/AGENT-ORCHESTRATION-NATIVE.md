@@ -42,12 +42,89 @@ current SQLite `thread_spawn_edges` rows for the exact parent. The Leader joins 
 `threads`, then uses that row's task path and time fields to select the current child and its
 `rollout_path`.
 
-The Leader uses `read_thread` to verify the child ID and its current turn. The Leader resolves
-that thread's current `threads.rollout_path`. At that path, the Leader reads top-level
-`session_meta` for the role and the matching `turn_context` for the model, effort, sandbox, and
-approval mode. An archived child can move to `archived_sessions`, so the Leader always resolves
-the current path before reading it. Do not substitute static TOML, an earlier turn, or historical
-SQLite data for this observation.
+The following host-local query is a tested example. Set the four shell variables from the exact
+dispatch before you run it. `DISPATCH_START_MS` and `DISPATCH_END_MS` bound that dispatch. The
+query accepts one child only. A zero or multiple-row result blocks the gate.
+
+```sh
+python3 -B - <<'PY'
+import os
+import sqlite3
+
+parent_id = os.environ["PARENT_ID"]
+task_path = os.environ["TASK_PATH"]
+start_ms = os.environ["DISPATCH_START_MS"]
+end_ms = os.environ["DISPATCH_END_MS"]
+database = "/Users/bubble/.codex/state_5.sqlite"
+query = """
+SELECT child.id, child.rollout_path
+FROM thread_spawn_edges AS edge
+JOIN threads AS child ON child.id = edge.child_thread_id
+WHERE edge.parent_thread_id = ?
+  AND child.agent_path = ?
+  AND child.created_at_ms BETWEEN ? AND ?
+ORDER BY child.created_at_ms, child.id
+"""
+with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+    rows = connection.execute(query, (parent_id, task_path, start_ms, end_ms)).fetchall()
+if len(rows) != 1:
+    raise SystemExit(f"expected one scoped child, found {len(rows)}")
+child_id, rollout_path = rows[0]
+print(f"child_id={child_id}")
+print(f"rollout_path={rollout_path}")
+PY
+```
+
+Next, call the supported `mcp__codex_app__read_thread` tool with `child_id`. Confirm that it
+returns that child and the active current turn for the dispatch. If the child or turn differs,
+hold the task. Do not replace this call with a repository CLI or a historical transcript.
+
+Use the resolved `rollout_path` and the current turn ID to read only the route facts. This tested
+example prints no conversation content.
+
+```sh
+python3 -B - <<'PY'
+import json
+import os
+
+rollout_path = os.environ["ROLLOUT_PATH"]
+child_id = os.environ["CHILD_ID"]
+turn_id = os.environ["TURN_ID"]
+session_meta = None
+turn_context = None
+with open(rollout_path) as rollout:
+    for line in rollout:
+        record = json.loads(line)
+        if record["type"] == "session_meta":
+            session_meta = record["payload"]
+        if record["type"] == "turn_context" and record["payload"].get("turn_id") == turn_id:
+            turn_context = record["payload"]
+if session_meta is None or turn_context is None:
+    raise SystemExit("current session metadata or turn context is unavailable")
+if session_meta.get("id") != child_id:
+    raise SystemExit("session metadata does not match the child ID")
+for label, value in (
+    ("role", session_meta.get("agent_role")),
+    ("model", turn_context.get("model")),
+    ("effort", turn_context.get("effort")),
+    ("sandbox", turn_context.get("sandbox_policy")),
+    ("approval", turn_context.get("approval_policy")),
+):
+    if value is None:
+        raise SystemExit(f"missing {label}")
+    print(f"{label}={value}")
+PY
+```
+
+Compare those values with the frozen route, then send native `GO` only when they match. On this
+host, `/Users/bubble/.codex/state_5.sqlite` and its `threads` and `thread_spawn_edges` tables are
+observed internal support, not a stable public API. If the database is missing or its schema has
+changed, inspect it read-only and hold the task until the retrieval procedure is verified again.
+If `read_thread` reports an archived child, resolve that child's current record through the host's
+current `archived_sessions` state before you repeat the scoped lookup. Always use the current
+database path and current `threads.rollout_path`.
+
+Do not substitute static TOML, an earlier turn, or historical SQLite data for this observation.
 
 The Leader sends native `GO` only after the observed route matches the frozen brief. Missing or
 mismatched evidence blocks work. If the holding turn ends, the next turn needs a new observation
