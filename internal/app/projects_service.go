@@ -78,7 +78,7 @@ func (s *Service) ProjectRole(ctx context.Context, projectID string) (domain.Pro
 	}
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
-		return domain.ProjectRole{}, errors.New("project_id is required")
+		return domain.ProjectRole{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if isSystemAdmin(principal) {
 		return projectRole(projectID, domain.RoleSystemAdmin), nil
@@ -132,7 +132,7 @@ func (s *Service) CreateProject(ctx context.Context, input ProjectInput) (domain
 	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		return domain.Project{}, errors.New("name is required")
+		return domain.Project{}, InvalidInput(errors.New("name is required"))
 	}
 	now := time.Now().UTC()
 	id, err := prefixedID("proj")
@@ -162,18 +162,18 @@ func (s *Service) UpsertProjectMember(ctx context.Context, input ProjectMemberIn
 	email := strings.TrimSpace(strings.ToLower(input.Email))
 	role := strings.TrimSpace(input.Role)
 	if projectID == "" {
-		return domain.ProjectMember{}, errors.New("project_id is required")
+		return domain.ProjectMember{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if err := s.requireProjectRole(ctx, principal, projectID, domain.RoleOwner); err != nil {
 		return domain.ProjectMember{}, err
 	}
 	if email == "" {
-		return domain.ProjectMember{}, errors.New("email is required")
+		return domain.ProjectMember{}, InvalidInput(errors.New("email is required"))
 	}
 	switch role {
 	case domain.RoleOwner, domain.RoleMaintainer, domain.RoleViewer:
 	default:
-		return domain.ProjectMember{}, errors.New("role must be owner, maintainer, or viewer")
+		return domain.ProjectMember{}, InvalidInput(errors.New("role must be owner, maintainer, or viewer"))
 	}
 	projects, err := s.projects.ListProjects(ctx)
 	if err != nil {
@@ -220,21 +220,21 @@ func (s *Service) CreateAccessKey(ctx context.Context, input AccessKeyInput) (do
 	kind := strings.TrimSpace(input.Kind)
 	fingerprint := strings.TrimSpace(input.Fingerprint)
 	if projectID == "" {
-		return domain.AccessKey{}, errors.New("project_id is required")
+		return domain.AccessKey{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if err := s.requireProjectRole(ctx, principal, projectID, domain.RoleMaintainer); err != nil {
 		return domain.AccessKey{}, err
 	}
 	if name == "" {
-		return domain.AccessKey{}, errors.New("name is required")
+		return domain.AccessKey{}, InvalidInput(errors.New("name is required"))
 	}
 	switch kind {
 	case domain.AccessKeySSH, domain.AccessKeyPassword, domain.AccessKeyToken:
 	default:
-		return domain.AccessKey{}, errors.New("kind must be ssh, password, or token")
+		return domain.AccessKey{}, InvalidInput(errors.New("kind must be ssh, password, or token"))
 	}
 	if fingerprint == "" {
-		return domain.AccessKey{}, errors.New("fingerprint is required")
+		return domain.AccessKey{}, InvalidInput(errors.New("fingerprint is required"))
 	}
 	id, err := prefixedID("key")
 	if err != nil {
@@ -259,21 +259,21 @@ func (s *Service) CreateInventory(ctx context.Context, input InventoryInput) (do
 	kind := strings.TrimSpace(input.Kind)
 	source := strings.TrimSpace(input.Source)
 	if projectID == "" {
-		return domain.Inventory{}, errors.New("project_id is required")
+		return domain.Inventory{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if err := s.requireProjectRole(ctx, principal, projectID, domain.RoleMaintainer); err != nil {
 		return domain.Inventory{}, err
 	}
 	if name == "" {
-		return domain.Inventory{}, errors.New("name is required")
+		return domain.Inventory{}, InvalidInput(errors.New("name is required"))
 	}
 	switch kind {
 	case domain.InventoryStatic, domain.InventoryDynamic:
 	default:
-		return domain.Inventory{}, errors.New("kind must be static or dynamic")
+		return domain.Inventory{}, InvalidInput(errors.New("kind must be static or dynamic"))
 	}
 	if source == "" {
-		return domain.Inventory{}, errors.New("source is required")
+		return domain.Inventory{}, InvalidInput(errors.New("source is required"))
 	}
 	id, err := prefixedID("inv")
 	if err != nil {
@@ -293,12 +293,15 @@ func (s *Service) UpdateProject(ctx context.Context, id string, input ProjectInp
 	if err != nil {
 		return domain.Project{}, err
 	}
+	if strings.TrimSpace(id) == "" {
+		return domain.Project{}, InvalidInput(errors.New("project_id is required"))
+	}
 	if err := s.requireProjectRole(ctx, principal, strings.TrimSpace(id), domain.RoleMaintainer); err != nil {
 		return domain.Project{}, err
 	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		return domain.Project{}, errors.New("name is required")
+		return domain.Project{}, InvalidInput(errors.New("name is required"))
 	}
 	project := domain.Project{ID: id, Name: name, Description: strings.TrimSpace(input.Description)}
 	audit, err := s.auditEvent(ctx, principal.ID, "project.update", project.ID, map[string]any{"name": project.Name})

@@ -181,7 +181,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput)
 	email := strings.TrimSpace(strings.ToLower(input.Email))
 	name := strings.TrimSpace(input.Name)
 	if email == "" || name == "" || strings.TrimSpace(input.Password) == "" {
-		return domain.User{}, errors.New("bootstrap email, name, and password are required")
+		return domain.User{}, InvalidInput(errors.New("bootstrap email, name, and password are required"))
 	}
 	hash, err := auth.HashPassword(input.Password)
 	if err != nil {
@@ -229,21 +229,21 @@ func (s *Service) CreateAPIToken(ctx context.Context, input APITokenInput) (Crea
 	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		return CreatedAPIToken{}, errors.New("name is required")
+		return CreatedAPIToken{}, InvalidInput(errors.New("name is required"))
 	}
 	kind := strings.TrimSpace(input.Kind)
 	if kind == "" {
 		kind = domain.TokenKindServiceAccount
 	}
 	if kind != domain.TokenKindServiceAccount && kind != domain.TokenKindBootstrap {
-		return CreatedAPIToken{}, errors.New("api token kind is invalid")
+		return CreatedAPIToken{}, InvalidInput(errors.New("api token kind is invalid"))
 	}
 	roles := normalizeAPITokenRoles(input.Roles)
 	if len(roles) == 0 {
-		return CreatedAPIToken{}, errors.New("roles are required")
+		return CreatedAPIToken{}, InvalidInput(errors.New("roles are required"))
 	}
 	if input.ExpiresAt != nil && !input.ExpiresAt.After(time.Now().UTC()) {
-		return CreatedAPIToken{}, errors.New("expires_at must be in the future")
+		return CreatedAPIToken{}, InvalidInput(errors.New("expires_at must be in the future"))
 	}
 	token, tokenHash, err := newAPITokenSecret()
 	if err != nil {
@@ -278,7 +278,7 @@ func (s *Service) RevokeAPIToken(ctx context.Context, input RevokeAPITokenInput)
 	}
 	tokenID := strings.TrimSpace(input.TokenID)
 	if tokenID == "" {
-		return domain.APIToken{}, errors.New("token_id is required")
+		return domain.APIToken{}, InvalidInput(errors.New("token_id is required"))
 	}
 	// The token name is loaded by the atomic repository operation; audit only
 	// needs the stable target ID to preserve all-or-nothing revocation.
@@ -415,7 +415,7 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID string) (domain.S
 	}
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return domain.Session{}, errors.New("session_id is required")
+		return domain.Session{}, InvalidInput(errors.New("session_id is required"))
 	}
 	if !isSystemAdmin(principal) {
 		s.writeDeniedAudit(ctx, principal, "session.revoke.denied", sessionID, nil)

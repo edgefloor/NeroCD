@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
@@ -103,11 +104,14 @@ func (s *Service) CreateService(ctx context.Context, in ServiceInput) (domain.Se
 		return domain.Service{}, e
 	}
 	in.ProjectID = strings.TrimSpace(in.ProjectID)
+	if in.ProjectID == "" {
+		return domain.Service{}, InvalidInput(errors.New("project_id is required"))
+	}
 	if e = s.requireProjectRole(ctx, p, in.ProjectID, domain.RoleMaintainer); e != nil {
 		return domain.Service{}, e
 	}
 	if strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.RepositoryID) == "" || strings.TrimSpace(in.ComposePath) == "" {
-		return domain.Service{}, errors.New("name, repository_id, and compose_path are required")
+		return domain.Service{}, InvalidInput(errors.New("name, repository_id, and compose_path are required"))
 	}
 	repos, e := s.sources.ListRepositories(ctx, in.ProjectID)
 	if e != nil {
@@ -204,21 +208,29 @@ func (s *Service) requireServiceMutation(ctx context.Context, id string) error {
 	return s.requireServiceRole(ctx, id, domain.RoleMaintainer)
 }
 
+func invalidEnvironmentSecretBinding(err error) error {
+	return InvalidInput(fmt.Errorf("invalid environment secret binding: %w", err))
+}
+
 // CreateEnvironment creates an authorized environment.
 func (s *Service) CreateEnvironment(ctx context.Context, in EnvironmentInput) (domain.Environment, error) {
 	r, e := s.deploymentRepo()
 	if e != nil {
 		return domain.Environment{}, e
 	}
+	in.ServiceID = strings.TrimSpace(in.ServiceID)
+	if in.ServiceID == "" {
+		return domain.Environment{}, InvalidInput(errors.New("service_id is required"))
+	}
 	if e = s.requireServiceMutation(ctx, in.ServiceID); e != nil {
 		return domain.Environment{}, e
 	}
 	if strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.ComposeProject) == "" || in.TimeoutSeconds <= 0 {
-		return domain.Environment{}, errors.New("name, compose_project, and positive timeout_seconds are required")
+		return domain.Environment{}, InvalidInput(errors.New("name, compose_project, and positive timeout_seconds are required"))
 	}
 	for _, binding := range in.SecretBindings {
 		if err := runner.ValidateSecretBinding(binding); err != nil {
-			return domain.Environment{}, errors.New("invalid environment secret binding")
+			return domain.Environment{}, invalidEnvironmentSecretBinding(err)
 		}
 	}
 	service, e := r.GetService(ctx, in.ServiceID)
@@ -236,7 +248,7 @@ func (s *Service) CreateEnvironment(ctx context.Context, in EnvironmentInput) (d
 		credentialReference := strings.TrimSpace(repository.Policy.CredentialReferenceID)
 		for _, binding := range in.SecretBindings {
 			if credentialReference != "" && strings.EqualFold(strings.TrimSpace(binding.Provider), domain.ProviderRunnerFile) && strings.TrimSpace(binding.Reference) == credentialReference && strings.HasPrefix(strings.TrimSpace(binding.Target), "file:") {
-				return domain.Environment{}, errors.New("repository credential binding must use an env target")
+				return domain.Environment{}, InvalidInput(errors.New("repository credential binding must use an env target"))
 			}
 		}
 		break
@@ -256,6 +268,10 @@ func (s *Service) CreateEnvironment(ctx context.Context, in EnvironmentInput) (d
 
 // ListRevisions lists authorized revisions.
 func (s *Service) ListRevisions(ctx context.Context, serviceID string) ([]domain.Revision, error) {
+	serviceID = strings.TrimSpace(serviceID)
+	if serviceID == "" {
+		return nil, InvalidInput(errors.New("service_id is required"))
+	}
 	if e := s.requireServiceView(ctx, serviceID); e != nil {
 		return nil, e
 	}
@@ -268,11 +284,15 @@ func (s *Service) ListRevisions(ctx context.Context, serviceID string) ([]domain
 
 // CreateRevision creates an authorized revision.
 func (s *Service) CreateRevision(ctx context.Context, in RevisionInput) (domain.Revision, error) {
+	in.ServiceID = strings.TrimSpace(in.ServiceID)
+	if in.ServiceID == "" {
+		return domain.Revision{}, InvalidInput(errors.New("service_id is required"))
+	}
 	if e := s.requireServiceMutation(ctx, in.ServiceID); e != nil {
 		return domain.Revision{}, e
 	}
 	if strings.TrimSpace(in.RequestedRef) == "" {
-		return domain.Revision{}, errors.New("requested_ref is required")
+		return domain.Revision{}, InvalidInput(errors.New("requested_ref is required"))
 	}
 	r, e := s.deploymentRepo()
 	if e != nil {
@@ -295,6 +315,10 @@ func (s *Service) CreateRevision(ctx context.Context, in RevisionInput) (domain.
 
 // ListDeployments lists authorized deployments.
 func (s *Service) ListDeployments(ctx context.Context, eid string) ([]domain.Deployment, error) {
+	eid = strings.TrimSpace(eid)
+	if eid == "" {
+		return nil, InvalidInput(errors.New("environment_id is required"))
+	}
 	r, e := s.deploymentRepo()
 	if e != nil {
 		return nil, e
@@ -342,6 +366,10 @@ func (s *Service) CreateDeployment(ctx context.Context, in DeploymentInput) (dom
 	if e != nil {
 		return domain.Deployment{}, e
 	}
+	in.EnvironmentID = strings.TrimSpace(in.EnvironmentID)
+	if in.EnvironmentID == "" {
+		return domain.Deployment{}, InvalidInput(errors.New("environment_id is required"))
+	}
 	es, e := r.ListEnvironments(ctx, "")
 	if e != nil {
 		return domain.Deployment{}, e
@@ -359,10 +387,10 @@ func (s *Service) CreateDeployment(ctx context.Context, in DeploymentInput) (dom
 		return domain.Deployment{}, e
 	}
 	if strings.TrimSpace(in.IdempotencyKey) == "" || strings.TrimSpace(in.DesiredRevisionID) == "" {
-		return domain.Deployment{}, errors.New("idempotency_key and desired_revision_id are required")
+		return domain.Deployment{}, InvalidInput(errors.New("idempotency_key and desired_revision_id are required"))
 	}
 	if in.TaskRunID != nil {
-		return domain.Deployment{}, errors.New("task_run_id is server assigned")
+		return domain.Deployment{}, InvalidInput(errors.New("task_run_id is server assigned"))
 	}
 	if in.RollbackOfID != nil {
 		return domain.Deployment{}, store.ErrConflict
@@ -488,6 +516,10 @@ func hasDeploymentRunnerEligibility(tags, selector, capabilities []string) bool 
 
 // ConfirmDeployment confirms an authorized deployment request.
 func (s *Service) ConfirmDeployment(ctx context.Context, id string) (domain.Deployment, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return domain.Deployment{}, InvalidInput(errors.New("id is required"))
+	}
 	repo, err := s.deploymentRepo()
 	if err != nil {
 		return domain.Deployment{}, err
@@ -498,7 +530,7 @@ func (s *Service) ConfirmDeployment(ctx context.Context, id string) (domain.Depl
 	}
 	var deployment domain.Deployment
 	for _, candidate := range deployments {
-		if candidate.ID == strings.TrimSpace(id) {
+		if candidate.ID == id {
 			deployment = candidate
 			break
 		}
@@ -540,7 +572,7 @@ func (s *Service) CancelDeployment(ctx context.Context, in DeploymentCancelInput
 	}
 	id, requestID := strings.TrimSpace(in.DeploymentID), strings.TrimSpace(in.RequestID)
 	if id == "" || requestID == "" {
-		return domain.Deployment{}, errors.New("deployment_id and request_id are required")
+		return domain.Deployment{}, InvalidInput(errors.New("deployment_id and request_id are required"))
 	}
 	deployment, err := repo.GetDeployment(ctx, id)
 	if err != nil {
@@ -588,7 +620,7 @@ func (s *Service) FailPreAssignmentDeployment(ctx context.Context, in PreAssignm
 	}
 	id, failureCode := strings.TrimSpace(in.ID), strings.TrimSpace(in.FailureCode)
 	if id == "" || failureCode == "" {
-		return domain.Deployment{}, errors.New("id and failure_code are required")
+		return domain.Deployment{}, InvalidInput(errors.New("id and failure_code are required"))
 	}
 	deployments, err := repo.ListDeployments(ctx, "")
 	if err != nil {
@@ -669,7 +701,7 @@ func (s *Service) FailDeploymentAndCreateRollback(ctx context.Context, in Deploy
 	}
 	req := domain.DeploymentFailureRollbackRequest{DeploymentID: strings.TrimSpace(in.DeploymentID), RunID: strings.TrimSpace(in.RunID), LeaseID: strings.TrimSpace(in.LeaseID), RunnerID: p.ID, Attempt: in.Attempt, Fence: strings.TrimSpace(in.Fence), RequestID: strings.TrimSpace(in.RequestID), ExpectedStatus: strings.TrimSpace(in.ExpectedStatus), CancellationRequestID: strings.TrimSpace(in.CancellationRequestID), FailureCode: strings.TrimSpace(in.FailureCode), Metadata: in.Metadata}
 	if req.DeploymentID == "" || req.RunID == "" || req.LeaseID == "" || req.Attempt <= 0 || req.Fence == "" || req.RequestID == "" || req.FailureCode == "" || (req.ExpectedStatus != domain.DeploymentApplying && req.ExpectedStatus != domain.DeploymentVerifying && req.ExpectedStatus != domain.DeploymentCancelRequested) || (req.ExpectedStatus == domain.DeploymentCancelRequested && req.CancellationRequestID == "") {
-		return domain.DeploymentFailureRollbackResult{}, errors.New("deployment_id, run_id, lease_id, attempt, fence, request_id, expected_status, and failure_code are required")
+		return domain.DeploymentFailureRollbackResult{}, InvalidInput(errors.New("deployment_id, run_id, lease_id, attempt, fence, request_id, expected_status, and failure_code are required"))
 	}
 	// The runner cannot select either recovery object. Stable server-derived IDs
 	// make a response-loss retry replay the same durable rollback receipt.
@@ -709,7 +741,7 @@ func (s *Service) TransitionDeploymentAttempt(ctx context.Context, in Deployment
 	}
 	req := domain.DeploymentTransitionRequest{DeploymentID: strings.TrimSpace(in.DeploymentID), RunID: strings.TrimSpace(in.RunID), LeaseID: strings.TrimSpace(in.LeaseID), RunnerID: p.ID, Attempt: in.Attempt, Fence: strings.TrimSpace(in.Fence), TransitionKey: strings.TrimSpace(in.TransitionKey), ExpectedStatus: strings.TrimSpace(in.ExpectedStatus), TargetStatus: strings.TrimSpace(in.TargetStatus), HealthPassed: in.HealthPassed, FailureCode: strings.TrimSpace(in.FailureCode), Metadata: in.Metadata}
 	if req.DeploymentID == "" || req.RunID == "" || req.LeaseID == "" || req.Attempt <= 0 || req.Fence == "" || req.TransitionKey == "" || req.ExpectedStatus == "" || req.TargetStatus == "" {
-		return domain.Deployment{}, errors.New("deployment_id, run_id, lease_id, attempt, fence, transition_key, expected_status, and target_status are required")
+		return domain.Deployment{}, InvalidInput(errors.New("deployment_id, run_id, lease_id, attempt, fence, transition_key, expected_status, and target_status are required"))
 	}
 	deployment, err := repo.GetDeployment(ctx, req.DeploymentID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -826,18 +858,18 @@ func (s *Service) ResolveDeploymentProvenance(ctx context.Context, in Provenance
 	}
 	commit, hash := strings.TrimSpace(in.GitCommit), strings.TrimSpace(in.ComposeHash)
 	if strings.TrimSpace(in.ResolutionID) == "" || strings.TrimSpace(in.ContentIdentity) != commit+":"+hash || !validCommit(commit) || !validDigest(hash) || len(in.ImageDigests) == 0 {
-		return domain.Revision{}, errors.New("git_commit and compose_hash must be immutable sha256 values and image_digests must be non-empty repository digests")
+		return domain.Revision{}, InvalidInput(errors.New("git_commit and compose_hash must be immutable sha256 values and image_digests must be non-empty repository digests"))
 	}
 	digests := append([]string(nil), in.ImageDigests...)
 	for i, d := range digests {
 		digests[i] = strings.TrimSpace(d)
 		if !validImageReference(digests[i]) {
-			return domain.Revision{}, errors.New("image_digests must be repository@sha256 digests")
+			return domain.Revision{}, InvalidInput(errors.New("image_digests must be repository@sha256 digests"))
 		}
 	}
 	for i := 1; i < len(digests); i++ {
 		if digests[i-1] >= digests[i] {
-			return domain.Revision{}, errors.New("image_digests must be strictly sorted")
+			return domain.Revision{}, InvalidInput(errors.New("image_digests must be strictly sorted"))
 		}
 	}
 	repo, err := s.deploymentRepo()

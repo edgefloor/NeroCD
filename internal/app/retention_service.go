@@ -88,7 +88,7 @@ func (s *Service) ExecuteRunLogRetention(ctx context.Context, input RunLogRetent
 	requestID, _ := ctx.Value(requestIDContextKey{}).(string)
 	requestID = strings.TrimSpace(requestID)
 	if requestID == "" {
-		return domain.RunLogRetentionExecution{}, errors.New("request ID is required")
+		return domain.RunLogRetentionExecution{}, InvalidInput(errors.New("request ID is required"))
 	}
 	if input.PolicyVersion <= 0 {
 		return domain.RunLogRetentionExecution{}, store.ErrConflict

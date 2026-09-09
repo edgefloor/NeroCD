@@ -276,10 +276,10 @@ func (s *Service) templateFromInput(id string, input TemplateInput) (domain.Task
 	name := strings.TrimSpace(input.Name)
 	kind := strings.TrimSpace(input.Kind)
 	if projectID == "" {
-		return domain.TaskTemplate{}, errors.New("project_id is required")
+		return domain.TaskTemplate{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if name == "" {
-		return domain.TaskTemplate{}, errors.New("name is required")
+		return domain.TaskTemplate{}, InvalidInput(errors.New("name is required"))
 	}
 	runSpec, err := s.normalizeRunSpec(input.RunSpec, kind)
 	if err != nil {
@@ -289,13 +289,13 @@ func (s *Service) templateFromInput(id string, input TemplateInput) (domain.Task
 		kind = runSpec.Type
 	}
 	if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", ProjectID: projectID, RunSpec: runSpec}); err != nil {
-		return domain.TaskTemplate{}, err
+		return domain.TaskTemplate{}, InvalidInput(err)
 	}
 	var validateWorkflow func(domain.Workflow) error
 	validateWorkflow = func(workflow domain.Workflow) error {
 		for _, step := range workflow.Steps {
 			if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", ProjectID: projectID, RunSpec: step.RunSpec}); err != nil {
-				return fmt.Errorf("workflow step %q: %w", step.ID, err)
+				return fmt.Errorf("invalid workflow step %q: %w", step.ID, InvalidInput(err))
 			}
 			if step.RunSpec.Workflow != nil {
 				if err := validateWorkflow(*step.RunSpec.Workflow); err != nil {
@@ -326,25 +326,25 @@ func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) 
 		runType = strings.TrimSpace(fallbackType)
 	}
 	if runType == "" {
-		return domain.RunSpec{}, errors.New("run_spec.type is required")
+		return domain.RunSpec{}, InvalidInput(errors.New("run_spec.type is required"))
 	}
 	if !s.registry.Supports(runType) {
-		return domain.RunSpec{}, errors.New("run_spec.type is not registered")
+		return domain.RunSpec{}, InvalidInput(errors.New("run_spec.type is not registered"))
 	}
 	if runSpec.Inputs == nil {
 		runSpec.Inputs = map[string]any{}
 	}
 	if runSpec.Repository != nil && strings.TrimSpace(runSpec.Repository.URL) != "" {
 		if err := source.ValidateRepositoryURL(runSpec.Repository.URL); err != nil {
-			return domain.RunSpec{}, fmt.Errorf("run_spec.repository.url: %w", err)
+			return domain.RunSpec{}, InvalidInput(fmt.Errorf("run_spec.repository.url: %w", err))
 		}
 	}
 	if runSpec.Process != nil && len(runSpec.Process.Command) == 0 {
-		return domain.RunSpec{}, errors.New("run_spec.process.command is required")
+		return domain.RunSpec{}, InvalidInput(errors.New("run_spec.process.command is required"))
 	}
 	for _, artifact := range runSpec.Artifacts {
 		if strings.TrimSpace(artifact.Name) == "" || strings.TrimSpace(artifact.Path) == "" {
-			return domain.RunSpec{}, errors.New("run_spec.artifacts require name and path")
+			return domain.RunSpec{}, InvalidInput(errors.New("run_spec.artifacts require name and path"))
 		}
 	}
 	secretNames := make(map[string]struct{}, len(runSpec.Secrets))
@@ -362,13 +362,13 @@ func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) 
 			secret.RedactEncodings[encodingIndex] = strings.ToLower(strings.TrimSpace(secret.RedactEncodings[encodingIndex]))
 		}
 		if err := runner.ValidateSecretBinding(*secret); err != nil {
-			return domain.RunSpec{}, fmt.Errorf("invalid run_spec.secrets: %w", err)
+			return domain.RunSpec{}, InvalidInput(fmt.Errorf("invalid run_spec.secrets: %w", err))
 		}
 		if _, exists := secretNames[secret.Name]; exists {
-			return domain.RunSpec{}, errors.New("invalid run_spec.secrets: binding names must be unique")
+			return domain.RunSpec{}, InvalidInput(errors.New("invalid run_spec.secrets: binding names must be unique"))
 		}
 		if _, exists := secretTargets[secret.Target]; exists {
-			return domain.RunSpec{}, errors.New("invalid run_spec.secrets: binding targets must be unique")
+			return domain.RunSpec{}, InvalidInput(errors.New("invalid run_spec.secrets: binding targets must be unique"))
 		}
 		secretNames[secret.Name] = struct{}{}
 		secretTargets[secret.Target] = struct{}{}
@@ -390,10 +390,10 @@ func (s *Service) normalizeWorkflow(workflow domain.Workflow) (domain.Workflow, 
 		step.ID = strings.TrimSpace(step.ID)
 		step.Name = strings.TrimSpace(step.Name)
 		if step.ID == "" {
-			return domain.Workflow{}, errors.New("workflow step id is required")
+			return domain.Workflow{}, InvalidInput(errors.New("workflow step id is required"))
 		}
 		if _, ok := seen[step.ID]; ok {
-			return domain.Workflow{}, errors.New("workflow step id must be unique")
+			return domain.Workflow{}, InvalidInput(errors.New("workflow step id must be unique"))
 		}
 		seen[step.ID] = struct{}{}
 		if step.Name == "" {
@@ -409,13 +409,13 @@ func (s *Service) normalizeWorkflow(workflow domain.Workflow) (domain.Workflow, 
 		for _, dep := range step.DependsOn {
 			dep = strings.TrimSpace(dep)
 			if dep == "" {
-				return domain.Workflow{}, errors.New("workflow dependency id is required")
+				return domain.Workflow{}, InvalidInput(errors.New("workflow dependency id is required"))
 			}
 			if dep == step.ID {
-				return domain.Workflow{}, errors.New("workflow step cannot depend on itself")
+				return domain.Workflow{}, InvalidInput(errors.New("workflow step cannot depend on itself"))
 			}
 			if _, duplicate := seenDeps[dep]; duplicate {
-				return domain.Workflow{}, errors.New("workflow dependency id must be unique per step")
+				return domain.Workflow{}, InvalidInput(errors.New("workflow dependency id must be unique per step"))
 			}
 			seenDeps[dep] = struct{}{}
 			deps = append(deps, dep)
@@ -426,7 +426,7 @@ func (s *Service) normalizeWorkflow(workflow domain.Workflow) (domain.Workflow, 
 	for _, step := range workflow.Steps {
 		for _, dep := range step.DependsOn {
 			if _, ok := seen[dep]; !ok {
-				return domain.Workflow{}, errors.New("workflow dependency must reference a step")
+				return domain.Workflow{}, InvalidInput(errors.New("workflow dependency must reference a step"))
 			}
 		}
 	}
@@ -455,7 +455,7 @@ func (s *Service) normalizeWorkflow(workflow domain.Workflow) (domain.Workflow, 
 	}
 	for _, step := range workflow.Steps {
 		if !visit(step.ID) {
-			return domain.Workflow{}, errors.New("workflow must be acyclic")
+			return domain.Workflow{}, InvalidInput(errors.New("workflow must be acyclic"))
 		}
 	}
 	return workflow, nil
@@ -577,7 +577,7 @@ func normalizeTags(values []string) []string {
 func (s *Service) requireProjectRole(ctx context.Context, principal auth.Principal, projectID string, minimumRole string) error {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
-		return errors.New("project_id is required")
+		return InvalidInput(errors.New("project_id is required"))
 	}
 	if isSystemAdmin(principal) {
 		return nil
@@ -696,7 +696,7 @@ func (s *Service) filterRunsForPrincipal(ctx context.Context, principal auth.Pri
 func (s *Service) runByID(ctx context.Context, runID string) (domain.TaskRun, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
-		return domain.TaskRun{}, errors.New("run_id is required")
+		return domain.TaskRun{}, InvalidInput(errors.New("run_id is required"))
 	}
 	runs, err := s.runs.ListRuns(ctx, "")
 	if err != nil {

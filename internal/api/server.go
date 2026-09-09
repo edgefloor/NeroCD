@@ -582,7 +582,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrConflict):
 		status = http.StatusConflict
 		code = "conflict"
-	case strings.Contains(err.Error(), "required"), strings.Contains(err.Error(), "invalid"):
+	case errors.Is(err, app.ErrInvalidInput):
 		status = http.StatusBadRequest
 		code = "bad_request"
 	}
