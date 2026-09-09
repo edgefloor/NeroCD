@@ -1,8 +1,18 @@
-# NeroCD native orchestration experiment
+# NeroCD native orchestration
 
-This branch tests an opt-in, message-based orchestration protocol. Main continues to use the
-versioned v1 records in `docs/AGENT-ORCHESTRATION.md`. Start a fresh session from this branch
-to use native mode. Do not migrate a running v1 task or combine both protocols in one task.
+Use the message-based native protocol for every fresh task. The legacy v1 record protocol remains
+in [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) for tasks that already loaded its
+instructions. Do not migrate a running v1 or native task, restart it wholesale, or combine both
+protocols in one task.
+
+To use v1 for an explicit fallback, start a fresh named checkout and a fresh session at commit
+`39d62767da97c2849d36409dc6024e4b819474a9`. That checkout loads the v1 `AGENTS.md` and role
+instructions from that commit. Use an unused branch and an unused path. For example:
+
+```sh
+git worktree add -b codex/v1-fallback-YYYYMMDD /absolute/unused/v1-fallback-YYYYMMDD \
+  39d62767da97c2849d36409dc6024e4b819474a9
+```
 
 The primary agent is a read-only Leader. The Leader owns the user brief, routing, interface
 freeze, delegation, review gates, integration approval, and final acceptance. The Leader may
@@ -79,6 +89,12 @@ On restart or resume, recheck Git state and the native message history. Rerun mi
 or hold acceptance. Never infer a pass. The integration steward combines only
 Leader-approved candidates in serial and runs combined checks. The Leader alone accepts the
 result.
+
+An interruption can leave task-owned subprocesses running. After the fresh runtime gate and
+before resuming execution or retrying a command, identify the outstanding process or session
+identities that belong to the task. Reconcile their results, or stop only verified task-owned
+processes. Missing required results remain missing and require a rerun. Native mode has no
+process supervisor, new tool, or file bus.
 
 ## Route roles
 

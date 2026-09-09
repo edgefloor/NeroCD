@@ -1,18 +1,32 @@
-# Use the native orchestration experiment
+# Use native orchestration
 
-This how-to applies only to the reviewed native-adoption reference supplied in the Leader's
-handoff. Main continues to use the v1 record protocol in `docs/AGENT-ORCHESTRATION.md`. Native
-mode replaces v1 JSON construction records with short dispatch and handoff messages. It does not
-replace Git checks, independent reviews, or Leader acceptance.
+Use this protocol for every fresh task. Native mode replaces v1 JSON construction records with
+short dispatch and handoff messages. It does not replace Git checks, independent reviews, or
+Leader acceptance.
 
 ## Start a fresh native session
 
-1. Create a fresh checkout from the reviewed native-adoption reference in the Leader's handoff.
+1. Create a fresh named checkout from the current main reference.
 2. Start a new Codex session in that checkout.
 3. Tell the Leader to follow `AGENTS.md` native mode.
 
-Do not switch a running v1 task to this branch. Existing v1 tasks keep their packets, results,
+Do not switch a running v1 task to native mode. Existing v1 tasks keep their packets, results,
 reviews, and checkpoints. Native instructions do not change pstack or install hooks.
+
+## Use the legacy v1 fallback
+
+Use v1 only when the fallback is explicit. Create a fresh named checkout and start a fresh
+session at commit `39d62767da97c2849d36409dc6024e4b819474a9`, which contains that commit's
+`AGENTS.md` and role instructions. Choose an unused branch and path. This command does not
+reset, clean, stash, or modify an existing checkout:
+
+```sh
+git worktree add -b codex/v1-fallback-YYYYMMDD /absolute/unused/v1-fallback-YYYYMMDD \
+  39d62767da97c2849d36409dc6024e4b819474a9
+```
+
+Do not use the fallback command for a running native task. Keep that task on native instructions
+until it reaches a handoff or blocked state.
 
 ## Dispatch work
 
@@ -183,6 +197,14 @@ The Leader sends native `GO` only after the observed route matches the frozen br
 mismatched evidence blocks work. If the holding turn ends, the next turn needs a new observation
 before `GO`. Full filesystem access is not OS isolation.
 
+## Recover after an interruption
+
+An interruption can leave task-owned subprocesses running. After the fresh runtime gate and
+before resuming execution or retrying a command, identify verified outstanding process or session
+identities for the task. Reconcile their results, or stop only verified task-owned processes.
+Missing required results remain missing and require a rerun. Native mode has no process
+supervisor, new tool, or file bus.
+
 ## Check a writer at start
 
 Run the explicit CLI from the assigned worktree:
@@ -263,5 +285,5 @@ A required check marked `failed` or `not_run` forbids acceptance. A successful r
 waive it. Required review lenses use only `code_hygiene`, `specification`,
 `critical_security`, and `cryptographic_correctness`. Advisory findings do not replace them.
 
-For rollout and rollback steps, see [Native orchestration rollout](NATIVE-ROLLOUT.md). Keep a
-running v1 task on v1. Start native mode only in a fresh session from the native branch.
+For rollout and fallback steps, see [Use native orchestration by default](NATIVE-ROLLOUT.md).
+Keep every running task on its loaded protocol.

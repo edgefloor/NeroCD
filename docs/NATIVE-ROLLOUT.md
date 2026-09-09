@@ -1,47 +1,35 @@
-# Roll out native orchestration
+# Use native orchestration by default
 
-Use this how-to to run the opt-in native experiment while v1 remains available. The native
-protocol is defined in [Use the native orchestration experiment](AGENT-ORCHESTRATION-NATIVE.md).
-That guide defines the current-turn gate, seven-part brief, stateless Git checks, review rules,
-and handoff evidence.
+Use native orchestration for each fresh task. The native guide defines the current-turn gate,
+seven-part brief, stateless Git checks, review rules, interruption recovery, and handoff evidence.
 
-## Start a native trial
+1. Create a fresh named worktree from the current main reference.
+2. Start a fresh Codex session in that worktree.
+3. Give the Leader a frozen seven-part native brief.
+4. Wait for every initial or resumed child to send `HOLD` after identity and checkout checks.
+5. Have the Leader verify the current-turn route and send native `GO`.
+6. Run `native_check.py start` before edits and `native_check.py candidate` after the commit.
+7. Run the required checks and independent reviews before Leader acceptance.
 
-1. Finish any running v1 task with its v1 records, results, reviews, and checkpoints.
-2. Create a fresh named worktree from the reviewed native-adoption reference supplied in its
-   handoff.
-3. Start a fresh Codex session in that worktree.
-4. Give the Leader a frozen seven-part native brief.
-5. Before every initial or resumed child turn, wait for the child to send `HOLD` after identity
-   and checkout verification.
-6. Have the Leader verify the current-turn runtime evidence and send native `GO` as the native
-   guide requires.
-7. Require `native_check.py start` before edits and `native_check.py candidate` after the
-   candidate commit.
-8. Require the checks and independent reviews named in the brief before Leader acceptance.
+Do not migrate an active v1 or native task. Each task keeps its loaded protocol until it reaches
+a handoff or blocked state. Workspace access does not provide OS isolation.
 
-Do not use native instructions to migrate a running v1 task. Do not treat workspace access as
-OS isolation.
+## Use the v1 fallback
 
-## Expand the trial
+Use the legacy v1 protocol only when you explicitly need it. Start a fresh named checkout and
+fresh session at full commit `39d62767da97c2849d36409dc6024e4b819474a9`. The checkout then loads
+the v1 `AGENTS.md` and role instructions from that commit. Choose an unused branch and path:
 
-Start with reversible local worktrees and bounded tasks. Keep the v1 branch, v1 documents,
-tests, and source workflow available throughout the trial. Add task types only after the Leader
-has receipts for the required checks, candidate reviews, and failure scenarios. A failed check,
-a `not_run` required check, missing current-turn evidence, or a stale review SHA stops
-acceptance for that candidate.
+```sh
+git worktree add -b codex/v1-fallback-YYYYMMDD /absolute/unused/v1-fallback-YYYYMMDD \
+  39d62767da97c2849d36409dc6024e4b819474a9
+```
 
-Use the benchmark plan in [Compare v1 and native orchestration](ORCHESTRATION-BENCHMARK.md) to
-compare the two protocols. The observer report records three pairs and a strict multi-audit, but
-it does not show causation. The verified fixture campaign supports a reversible local trial. It
-does not prove production lifecycle behavior, automatic enforcement, speed, quality, or a causal
-effect. Keep the trial bounded and preserve the v1 fallback.
+Do not reset, clean, stash, discard, or overwrite an existing worktree. The fallback changes
+the protocol for a new task only. It does not alter existing task evidence or v1 history.
 
-## Roll back a trial
+## Read historical benchmark records
 
-To stop a native trial, stop dispatching new native work and begin new work with the v1 protocol.
-Let active native work reach a documented handoff or blocked state. Preserve its messages,
-checks, candidate SHA, reviews, and evidence so a later session can reconstruct the decision.
-
-Do not reset, clean, discard, or overwrite a worktree to roll back. A rollback changes the
-protocol selected for future work. It does not erase the trial's evidence or modify v1 history.
+[Historical v1 and native benchmark records](ORCHESTRATION-BENCHMARK.md) describe earlier
+planning, statuses, and receipts. They do not choose the protocol for current tasks or prove
+live lifecycle behavior.

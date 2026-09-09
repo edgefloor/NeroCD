@@ -1,4 +1,10 @@
-# Agent orchestration protocol v1
+# Legacy agent orchestration protocol v1
+
+This legacy guide applies only to tasks that already loaded its instructions, or to an explicit
+fallback started in a fresh named checkout and fresh session at commit
+`39d62767da97c2849d36409dc6024e4b819474a9`. Fresh tasks use the native protocol in
+[Use native orchestration](AGENT-ORCHESTRATION-NATIVE.md). Do not switch a running native task
+to v1 or restart either protocol wholesale.
 
 NeroCD's first-release protocol is a preflight and durable handoff validator. A human or
 Leader still dispatches agents, invokes reviews, integrates serially, and decides whether to

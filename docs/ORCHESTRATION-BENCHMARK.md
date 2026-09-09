@@ -1,8 +1,9 @@
-# Compare v1 and native orchestration
+# Historical v1 and native benchmark records
 
-This plan compares coordination cost without changing product inputs. Do not run the timed
-trials while the current long product task is active. The experimental branch provides the
-foundation and the frozen plan only. It does not contain measured results or proof of live hook
+This document preserves historical benchmark planning, statuses, and receipts. It does not
+choose the protocol for current tasks. Fresh tasks use native orchestration. Do not run the
+timed trials while the current long product task is active. The experimental branch provided the
+foundation and frozen plan only. It did not contain measured results or proof of live hook
 delivery.
 
 ## Freeze the two arms
