@@ -31,9 +31,20 @@ Checks and reviews: required go test ./internal/app ./internal/api; code_hygiene
 Handoff: Full candidate SHA, changed paths, check status and evidence, assumptions, and risks.
 ```
 
-The brief carries dynamic ownership. A task name is a label, not an immutable digest. Observe
-the launched model and effort after dispatch. If the host does not expose actual metadata,
-record that gap in the message history.
+The brief carries dynamic ownership. A task name is a label, not an immutable digest.
+
+## Gate every current turn before work
+
+Before substantive work on an initial or resumed child turn, the child performs only identity
+and checkout verification, then sends `HOLD`. The Leader observes the actual current-turn role,
+model, effort, and permissions through `nativeidentity`. The Leader also reads the exact current
+SQLite rollout path and checks the top-level `session_meta` and `turn_context`, including
+`archived_sessions`. Static TOML states the requested route. It does not prove the launched
+route.
+
+The Leader sends native `GO` only after the observed route matches the frozen brief. Missing or
+mismatched evidence blocks work. Do not accept a later report as evidence for an earlier turn.
+Full filesystem access is not OS isolation.
 
 ## Check a writer at start
 
@@ -114,3 +125,6 @@ combined result.
 A required check marked `failed` or `not_run` forbids acceptance. A successful review cannot
 waive it. Required review lenses use only `code_hygiene`, `specification`,
 `critical_security`, and `cryptographic_correctness`. Advisory findings do not replace them.
+
+For rollout and rollback steps, see [Native orchestration rollout](NATIVE-ROLLOUT.md). Keep a
+running v1 task on v1. Start native mode only in a fresh session from the native branch.

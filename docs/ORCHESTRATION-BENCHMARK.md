@@ -77,5 +77,12 @@ capture, and outliers. If the pilot is sound, repeat enough pairs to estimate va
 reduction in coordination time is the provisional target. It is not a measured improvement or
 an acceptance waiver.
 
-Timing, live hook delivery, and end-to-end native acceptance remain `not_run` for the foundation
+The observer report at
+`/Users/bubble/Documents/Dev/NeroCD-benchmarks/observer-20260909/report.md` records final review
+hash `4a60a22c38c5100b662b6f5ec5bb6f0b7674e4613f76bb4b60b14b7c93ee3594`, three pairs, and a strict
+multi-audit. The report records observations. It does not establish that native orchestration
+caused any result.
+
+Failure-scenario results remain `PENDING` until the Leader provides verified receipts. Timing,
+live hook delivery, and end-to-end native acceptance remain `not_run` for the foundation
 candidate.

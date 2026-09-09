@@ -34,8 +34,14 @@ must not control task state.
 - Keep at most three child threads open. The Leader is not a child. A child must not spawn
   another child.
 - Start with a read-only explorer when the affected code or interface is unclear.
-- Before an edit, observe the actual model and effort. Report missing runtime metadata as a
-  gap. Static TOML describes the requested route but does not prove the launched route.
+- Before substantive work on every initial or resumed child turn, the child performs only
+  identity and checkout verification, then holds. The Leader observes the actual current-turn
+  role, model, effort, and permissions through `nativeidentity`, and the exact current SQLite
+  rollout path's top-level `session_meta` and `turn_context`, including `archived_sessions`.
+  The Leader sends native `GO` only when those observations match the frozen route. Missing or
+  mismatched evidence blocks work. A later report cannot repair an earlier missing gate.
+  Static TOML describes the requested route. It does not prove the launched route. Full access
+  to the workspace does not provide OS isolation.
 - Use `fork_turns=none` for a fresh selected-role dispatch.
 - Run `scripts/orchestration/native_check.py start` against the exact worktree. The check
   requires the named branch at the base SHA with no tracked or untracked changes.
