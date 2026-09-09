@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run stateless Git checks for the experimental native orchestration mode."""
+"""Run stateless Git checks for native orchestration."""
 
 from __future__ import annotations
 
@@ -201,7 +201,7 @@ def check_candidate(repo: Path, base: str, branch: str, candidate: str, allow: l
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run stateless Git checks for experimental native orchestration.",
+        description="Run stateless Git checks for native orchestration.",
     )
     parser.add_argument("--repo-root", required=True, help="canonical absolute Git toplevel")
     parser.add_argument("--base", required=True, help="full lowercase 40-character base SHA")
