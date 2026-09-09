@@ -3,6 +3,7 @@ package runner
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -339,7 +340,7 @@ func TestAttemptJournalFilteringRollbackPreservesInMemoryState(t *testing.T) {
 	}{
 		{name: "ack_events", mutate: func(j *AttemptJournal) error { return j.AckEvents([]string{"event_one"}) }},
 		{name: "ack_completion", mutate: func(j *AttemptJournal) error { return j.AckCompletion("completion_one") }},
-		{name: "discard_attempt", mutate: func(j *AttemptJournal) error { return j.DiscardAttempt("lease_journal", 1) }},
+		{name: "discard_attempt", mutate: func(j *AttemptJournal) error { return j.DiscardAttempt(testJournalAuthority()) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -386,4 +387,77 @@ func TestAttemptJournalFilteringRollbackPreservesInMemoryState(t *testing.T) {
 func testJournalAuthority() AttemptIdentity {
 	created := time.Date(2026, 8, 16, 8, 0, 0, 0, time.UTC)
 	return AttemptIdentity{RunID: "run_journal", LeaseID: "lease_journal", Attempt: 1, Fence: "opaque_fence", CreatedAt: created, ExpiresAt: created.Add(time.Minute)}
+}
+
+func TestAttemptJournalDiscardAttemptMatchesOnlyAuthorityTuple(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("secure journal is supported on Unix")
+	}
+	root := filepath.Join(t.TempDir(), "journal")
+	journal, err := OpenAttemptJournal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalClosed := false
+	t.Cleanup(func() {
+		if !journalClosed {
+			_ = journal.Close()
+		}
+	})
+	target := testJournalAuthority()
+	identities := []AttemptIdentity{
+		target,
+		{RunID: "run_other", LeaseID: target.LeaseID, Attempt: target.Attempt, Fence: target.Fence, CreatedAt: target.CreatedAt.Add(time.Hour), ExpiresAt: target.ExpiresAt.Add(time.Hour)},
+		{RunID: target.RunID, LeaseID: "lease_other", Attempt: target.Attempt, Fence: target.Fence, CreatedAt: target.CreatedAt.Add(2 * time.Hour), ExpiresAt: target.ExpiresAt.Add(2 * time.Hour)},
+		{RunID: target.RunID, LeaseID: target.LeaseID, Attempt: 2, Fence: target.Fence, CreatedAt: target.CreatedAt.Add(3 * time.Hour), ExpiresAt: target.ExpiresAt.Add(3 * time.Hour)},
+		{RunID: target.RunID, LeaseID: target.LeaseID, Attempt: target.Attempt, Fence: "opaque_fence_other", CreatedAt: target.CreatedAt.Add(4 * time.Hour), ExpiresAt: target.ExpiresAt.Add(4 * time.Hour)},
+	}
+	for index, authority := range identities {
+		if _, err := journal.AppendEvent(JournalEvent{ID: fmt.Sprintf("event_%d", index), Attempt: authority, Sequence: index + 1, Stream: "stdout", Message: "pending", CreatedAt: authority.CreatedAt}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := journal.AppendCompletion(JournalCompletion{ID: fmt.Sprintf("completion_%d", index), Attempt: authority, Status: "succeeded", CreatedAt: authority.CreatedAt}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := journal.AppendProvenance(JournalProvenance{ID: fmt.Sprintf("provenance_%d", index), Attempt: authority, DeploymentID: fmt.Sprintf("deployment_%d", index), GitCommit: strings.Repeat("a", 40), ComposeHash: "sha256:" + strings.Repeat("b", 64), ImageDigests: []string{"sha256:" + strings.Repeat("c", 64)}, ContentIdentity: strings.Repeat("a", 40) + ":sha256:" + strings.Repeat("b", 64), CreatedAt: authority.CreatedAt}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	metadataOnly := target
+	metadataOnly.CreatedAt = target.CreatedAt.Add(24 * time.Hour)
+	metadataOnly.ExpiresAt = target.ExpiresAt.Add(24 * time.Hour)
+	if err := journal.DiscardAttempt(metadataOnly); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	journalClosed = true
+	reopened, err := OpenAttemptJournal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopenedClosed := false
+	t.Cleanup(func() {
+		if !reopenedClosed {
+			_ = reopened.Close()
+		}
+	})
+	snapshot := reopened.Snapshot()
+	if len(snapshot.Events) != 4 || len(snapshot.Completions) != 4 || len(snapshot.Provenance) != 4 {
+		t.Fatalf("discarded snapshot = %#v", snapshot)
+	}
+	for index, authority := range identities[1:] {
+		id := index + 1
+		if snapshot.Events[index].ID != fmt.Sprintf("event_%d", id) || snapshot.Events[index].Attempt != authority {
+			t.Fatalf("event %d = %#v, want authority %#v", id, snapshot.Events[index], authority)
+		}
+		if snapshot.Completions[index].ID != fmt.Sprintf("completion_%d", id) || snapshot.Completions[index].Attempt != authority {
+			t.Fatalf("completion %d = %#v, want authority %#v", id, snapshot.Completions[index], authority)
+		}
+		if snapshot.Provenance[index].ID != fmt.Sprintf("provenance_%d", id) || snapshot.Provenance[index].Attempt != authority {
+			t.Fatalf("provenance %d = %#v, want authority %#v", id, snapshot.Provenance[index], authority)
+		}
+	}
 }
