@@ -75,10 +75,16 @@ reads Git's changed-path data and checks additions, modifications, deletions, an
 a rename. It rejects absolute paths, traversal, backslashes, noncanonical paths, and Git
 metadata aliases.
 
-The command invokes Git with a ten-second timeout and rejects Git output above one MiB after
-capture. It removes inherited `GIT_*` redirection, disables optional locks and fsmonitor, and
-disables external diff and text conversion during path inspection. It does not claim to
-enforce the worktree boundary outside this explicit check.
+The command requires the trusted Git executable at `/usr/bin/git`, which is present on macOS
+and Ubuntu GitHub Actions runners. It fails if that path is unavailable or is not executable.
+The command does not fall back to `PATH` or accept a configurable Git path.
+
+Each Git invocation has a ten-second timeout. The command rejects Git output above one MiB
+after capture. It removes inherited `GIT_*` redirection, disables optional locks and fsmonitor,
+ignores replacement objects, and disables external diff and text conversion during path
+inspection. Base, candidate, tree, and ancestry checks therefore use raw commit identities
+even when the repository has `refs/replace` entries. The command does not modify or delete
+those refs. It does not claim to enforce the worktree boundary outside this explicit check.
 
 ## Hand off and accept
 

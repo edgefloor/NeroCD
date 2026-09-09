@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 MAX_GIT_OUTPUT = 1024 * 1024
 GIT_TIMEOUT_SECONDS = 10
+GIT_EXECUTABLE = "/usr/bin/git"
 
 
 class CheckError(ValueError):
@@ -27,6 +28,7 @@ def _run_git(repo: Path, *args: str, text: bool = True) -> str | bytes:
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_TERMINAL_PROMPT": "0",
         }
@@ -34,7 +36,7 @@ def _run_git(repo: Path, *args: str, text: bool = True) -> str | bytes:
     try:
         process = subprocess.run(
             [
-                "git", "--no-pager", "--no-optional-locks",
+                GIT_EXECUTABLE, "--no-pager", "--no-optional-locks",
                 "-c", "core.fsmonitor=false", "-C", str(repo), *args,
             ],
             check=False,
@@ -46,8 +48,12 @@ def _run_git(repo: Path, *args: str, text: bool = True) -> str | bytes:
         )
     except subprocess.TimeoutExpired as exc:
         raise CheckError(f"git {' '.join(args)} timed out") from exc
+    except FileNotFoundError as exc:
+        raise CheckError(f"trusted Git executable is unavailable: {GIT_EXECUTABLE}") from exc
+    except PermissionError as exc:
+        raise CheckError(f"trusted Git executable is not executable: {GIT_EXECUTABLE}") from exc
     except OSError as exc:
-        raise CheckError(f"cannot run git {' '.join(args)}: {exc}") from exc
+        raise CheckError(f"cannot run trusted Git executable {GIT_EXECUTABLE}: {exc}") from exc
     if process.returncode:
         stderr = process.stderr if text else process.stderr.decode(errors="replace")
         detail = stderr.strip()

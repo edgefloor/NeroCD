@@ -14,7 +14,9 @@ SCRIPT = Path(__file__).with_name("native_check.py")
 class NativeCheckTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
+        self.external_temp = tempfile.TemporaryDirectory()
         self.repo = Path(self.temp.name).resolve()
+        self.external = Path(self.external_temp.name).resolve()
         self.git("init", "-b", "bench/native")
         self.git("config", "user.name", "Native Check Test")
         self.git("config", "user.email", "native-check@example.invalid")
@@ -26,6 +28,7 @@ class NativeCheckTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+        self.external_temp.cleanup()
 
     def git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -89,7 +92,7 @@ class NativeCheckTest(unittest.TestCase):
         self.assertEqual(process.stdout, "native start passed\n")
 
     def test_start_ignores_ambient_git_redirection_and_alternate_index(self) -> None:
-        other = self.repo.parent / "other-repo"
+        other = self.external / "other-repo"
         subprocess.run(
             ["git", "init", "-b", "other", str(other)],
             check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -99,7 +102,7 @@ class NativeCheckTest(unittest.TestCase):
         process = self.run_check("start", env=environment)
         self.assertEqual(process.returncode, 0, process.stderr)
 
-        alternate_index = self.repo.parent / "alternate-index"
+        alternate_index = self.external / "alternate-index"
         alternate_environment = os.environ.copy()
         alternate_environment["GIT_INDEX_FILE"] = str(alternate_index)
         self.git("read-tree", "HEAD", check=True)
@@ -146,6 +149,66 @@ class NativeCheckTest(unittest.TestCase):
             self.run_check("candidate", "--candidate", candidate, "--allow", "owned/"),
             "outside ownership",
         )
+
+    def test_candidate_does_not_execute_fake_git_from_path(self) -> None:
+        self.write("outside.txt", "forbidden change\n")
+        candidate = self.commit()
+        fake_bin = self.external / "fake-bin"
+        fake_bin.mkdir()
+        marker = self.external / "fake-git-ran"
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            """#!/bin/sh
+: > "$FAKE_GIT_MARKER"
+case "$*" in
+  *"rev-parse --show-toplevel"*) printf '%s\\n' "$FAKE_GIT_ROOT" ;;
+  *"cat-file -e"*) exit 0 ;;
+  *"check-ref-format --branch"*) printf '%s\\n' 'bench/native' ;;
+  *"symbolic-ref --quiet --short HEAD"*) printf '%s\\n' 'bench/native' ;;
+  *"rev-parse HEAD"*) printf '%s\\n' "$FAKE_GIT_CANDIDATE" ;;
+  *"merge-base --is-ancestor"*) exit 0 ;;
+  *"status --porcelain=v1"*) exit 0 ;;
+  *"diff --no-ext-diff"*) exit 0 ;;
+  *) exit 1 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        fake_git.chmod(0o755)
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PATH": str(fake_bin) + os.pathsep + environment.get("PATH", ""),
+                "FAKE_GIT_MARKER": str(marker),
+                "FAKE_GIT_ROOT": str(self.repo),
+                "FAKE_GIT_CANDIDATE": candidate,
+            }
+        )
+        process = self.run_check(
+            "candidate", "--candidate", candidate, "--allow", "owned/", env=environment,
+        )
+        self.assert_failed(process, "outside ownership")
+        self.assertFalse(marker.exists(), "fake git executable was invoked")
+
+    def test_candidate_ignores_replacement_objects_that_hide_diff(self) -> None:
+        self.write("outside.txt", "forbidden change\n")
+        candidate = self.commit()
+        candidate_tree = self.rev(f"{candidate}^{{tree}}")
+        replacement = self.git(
+            "commit-tree", candidate_tree, "-m", "replacement base with candidate tree",
+        ).stdout.strip()
+        self.git("replace", self.base, replacement)
+        self.assertEqual(
+            self.git("diff", "--name-only", self.base, candidate).stdout,
+            "",
+            "replacement-aware Git did not hide the fixture diff",
+        )
+
+        process = self.run_check(
+            "candidate", "--candidate", candidate, "--allow", "owned/",
+        )
+        self.assert_failed(process, "outside ownership")
+        self.assertIn("outside.txt", process.stderr)
 
     def test_candidate_rejects_nonancestor_base(self) -> None:
         self.git("checkout", "--orphan", "other")
