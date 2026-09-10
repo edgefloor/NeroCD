@@ -65,7 +65,7 @@ func (s *Service) ListServiceAccounts(ctx context.Context, projectID string, pag
 	}
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
-		return store.PageResult[domain.ServiceAccount]{}, errors.New("project_id is required")
+		return store.PageResult[domain.ServiceAccount]{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if err := s.requireServiceAccountManager(ctx, principal, projectID); err != nil {
 		s.writeDeniedAudit(ctx, principal, "service_account.list.denied", projectID, nil)
@@ -81,6 +81,9 @@ func (s *Service) CreateServiceAccount(ctx context.Context, input ServiceAccount
 		return CreatedServiceAccount{}, err
 	}
 	projectID := strings.TrimSpace(input.ProjectID)
+	if projectID == "" {
+		return CreatedServiceAccount{}, InvalidInput(errors.New("project_id is required"))
+	}
 	if err := s.requireServiceAccountManager(ctx, principal, projectID); err != nil {
 		s.writeDeniedAudit(ctx, principal, "service_account.create.denied", projectID, nil)
 		return CreatedServiceAccount{}, err
@@ -129,19 +132,19 @@ func (s *Service) UpdateServiceAccount(ctx context.Context, input ServiceAccount
 		return domain.ServiceAccount{}, err
 	}
 	if input.Name == nil && input.Role == nil {
-		return domain.ServiceAccount{}, errors.New("name or role is required")
+		return domain.ServiceAccount{}, InvalidInput(errors.New("name or role is required"))
 	}
 	name, role := "", ""
 	if input.Name != nil {
 		name = strings.TrimSpace(*input.Name)
 		if name == "" || len(name) > 128 {
-			return domain.ServiceAccount{}, errors.New("invalid name: must be between 1 and 128 characters")
+			return domain.ServiceAccount{}, InvalidInput(errors.New("invalid name: must be between 1 and 128 characters"))
 		}
 	}
 	if input.Role != nil {
 		role = strings.TrimSpace(*input.Role)
 		if !isProjectRole(role) {
-			return domain.ServiceAccount{}, errors.New("invalid role: must be owner, maintainer, or viewer")
+			return domain.ServiceAccount{}, InvalidInput(errors.New("invalid role: must be owner, maintainer, or viewer"))
 		}
 	}
 	audit, err := s.auditEvent(ctx, principal.ID, "service_account.update", accountID, map[string]any{"project_id": projectID, "name_changed": input.Name != nil, "role": role})
@@ -204,7 +207,7 @@ func (s *Service) authorizeServiceAccountMutation(ctx context.Context, accountID
 	}
 	accountID = strings.TrimSpace(accountID)
 	if accountID == "" {
-		return auth.Principal{}, "", "", errors.New("service_account_id is required")
+		return auth.Principal{}, "", "", InvalidInput(errors.New("service_account_id is required"))
 	}
 	projectID, _, err := s.serviceAccounts.ServiceAccountProjectRole(ctx, accountID)
 	if err != nil {
@@ -231,10 +234,10 @@ func normalizedServiceAccountMetadata(name, role string) (string, string, error)
 	name = strings.TrimSpace(name)
 	role = strings.TrimSpace(role)
 	if name == "" || len(name) > 128 {
-		return "", "", errors.New("invalid name: must be between 1 and 128 characters")
+		return "", "", InvalidInput(errors.New("invalid name: must be between 1 and 128 characters"))
 	}
 	if !isProjectRole(role) {
-		return "", "", errors.New("invalid role: must be owner, maintainer, or viewer")
+		return "", "", InvalidInput(errors.New("invalid role: must be owner, maintainer, or viewer"))
 	}
 	return name, role, nil
 }
@@ -254,10 +257,10 @@ func managedCredentialExpiry(now time.Time, requested *time.Time) (time.Time, er
 		expiresAt = requested.UTC()
 	}
 	if !expiresAt.After(now) {
-		return time.Time{}, errors.New("invalid expires_at: must be in the future")
+		return time.Time{}, InvalidInput(errors.New("invalid expires_at: must be in the future"))
 	}
 	if expiresAt.After(now.Add(maxManagedCredentialLifetime)) {
-		return time.Time{}, errors.New("invalid expires_at: must be no more than one year in the future")
+		return time.Time{}, InvalidInput(errors.New("invalid expires_at: must be no more than one year in the future"))
 	}
 	return expiresAt, nil
 }

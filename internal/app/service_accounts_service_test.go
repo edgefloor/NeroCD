@@ -118,6 +118,136 @@ func TestServiceAccountManagementRequiresHumanOwnerAndBoundedExpiry(t *testing.T
 	}
 }
 
+func TestServiceAccountValidationUsesTypedInvalidInputWithoutPersistence(t *testing.T) {
+	service, mem := newServiceAccountTestService(t)
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	service.SetClock(func() time.Time { return now })
+	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	created, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "validation bot", Role: domain.RoleViewer})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	emptyName := " "
+	invalidRole := domain.RoleSystemAdmin
+	expired := now
+	tooLate := now.Add(maxManagedCredentialLifetime + time.Second)
+	validName := "valid name"
+	for _, test := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "list missing project", call: func() error { _, err := service.ListServiceAccounts(admin, " ", store.Page{}); return err }},
+		{name: "create missing project", call: func() error {
+			_, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{Name: "bot", Role: domain.RoleViewer})
+			return err
+		}},
+		{name: "create invalid name", call: func() error {
+			_, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: " ", Role: domain.RoleViewer})
+			return err
+		}},
+		{name: "create invalid role", call: func() error {
+			_, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "bot", Role: invalidRole})
+			return err
+		}},
+		{name: "create expired credential", call: func() error {
+			_, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "bot", Role: domain.RoleViewer, ExpiresAt: &expired})
+			return err
+		}},
+		{name: "create unbounded credential", call: func() error {
+			_, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "bot", Role: domain.RoleViewer, ExpiresAt: &tooLate})
+			return err
+		}},
+		{name: "update missing account", call: func() error {
+			_, err := service.UpdateServiceAccount(admin, ServiceAccountUpdateInput{Name: &validName})
+			return err
+		}},
+		{name: "update missing fields", call: func() error {
+			_, err := service.UpdateServiceAccount(admin, ServiceAccountUpdateInput{ServiceAccountID: created.ServiceAccount.ID})
+			return err
+		}},
+		{name: "update invalid name", call: func() error {
+			_, err := service.UpdateServiceAccount(admin, ServiceAccountUpdateInput{ServiceAccountID: created.ServiceAccount.ID, Name: &emptyName})
+			return err
+		}},
+		{name: "update invalid role", call: func() error {
+			_, err := service.UpdateServiceAccount(admin, ServiceAccountUpdateInput{ServiceAccountID: created.ServiceAccount.ID, Role: &invalidRole})
+			return err
+		}},
+		{name: "rotate missing account", call: func() error {
+			_, err := service.RotateServiceAccountCredential(admin, ServiceAccountRotateInput{})
+			return err
+		}},
+		{name: "rotate expired credential", call: func() error {
+			_, err := service.RotateServiceAccountCredential(admin, ServiceAccountRotateInput{ServiceAccountID: created.ServiceAccount.ID, ExpiresAt: &expired})
+			return err
+		}},
+		{name: "revoke missing account", call: func() error { _, err := service.RevokeServiceAccount(admin, ServiceAccountRevokeInput{}); return err }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			accountsBefore, err := mem.ListServiceAccounts(t.Context(), "proj_platform", store.Page{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			auditsBefore, err := mem.ListAuditEvents(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = test.call()
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("error = %v, want errors.Is(ErrInvalidInput)", err)
+			}
+			accountsAfter, err := mem.ListServiceAccounts(t.Context(), "proj_platform", store.Page{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			auditsAfter, err := mem.ListAuditEvents(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(accountsAfter, accountsBefore) || !reflect.DeepEqual(auditsAfter, auditsBefore) {
+				t.Fatalf("validation changed persisted state: accounts=%#v audits=%#v", accountsAfter, auditsAfter)
+			}
+		})
+	}
+}
+
+func TestServiceAccountValidationPreservesAuthenticationPrecedence(t *testing.T) {
+	service, mem := newServiceAccountTestService(t)
+	for _, test := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "list", call: func() error { _, err := service.ListServiceAccounts(t.Context(), "", store.Page{}); return err }},
+		{name: "create", call: func() error {
+			_, err := service.CreateServiceAccount(t.Context(), ServiceAccountCreateInput{})
+			return err
+		}},
+		{name: "update", call: func() error {
+			_, err := service.UpdateServiceAccount(t.Context(), ServiceAccountUpdateInput{})
+			return err
+		}},
+		{name: "rotate", call: func() error {
+			_, err := service.RotateServiceAccountCredential(t.Context(), ServiceAccountRotateInput{})
+			return err
+		}},
+		{name: "revoke", call: func() error {
+			_, err := service.RevokeServiceAccount(t.Context(), ServiceAccountRevokeInput{})
+			return err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.call()
+			if !errors.Is(err, auth.ErrUnauthenticated) || errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("error = %v, want unauthenticated without invalid-input marker", err)
+			}
+		})
+	}
+	if audits, err := mem.ListAuditEvents(t.Context()); err != nil || len(audits) != 0 {
+		t.Fatalf("unauthenticated validation audits = %#v, %v", audits, err)
+	}
+}
+
 func TestServiceAccountCannotAdministerProjectsOrHumanMemberships(t *testing.T) {
 	service, mem := newServiceAccountTestService(t)
 	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))

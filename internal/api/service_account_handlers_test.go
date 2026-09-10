@@ -97,22 +97,63 @@ func TestServiceAccountHTTPLifecycleAndProjectIsolation(t *testing.T) {
 	}
 }
 
-func TestServiceAccountHTTPRejectsUnboundedExpiryAndUnknownFields(t *testing.T) {
+func TestServiceAccountHTTPValidationUsesGenericBadRequest(t *testing.T) {
 	server, _ := newTestServer()
 	adminToken := createTestSession(t, server)
+	createdResponse := serviceAccountRequest(t, server, http.MethodPost, "/api/v1/service-accounts", adminToken, `{"project_id":"proj_platform","name":"validation bot","role":"viewer"}`)
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created app.CreatedServiceAccount
+	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
-		name string
-		body string
+		name     string
+		method   string
+		path     string
+		body     string
+		wantBody string
 	}{
-		{name: "unbounded expiry", body: `{"project_id":"proj_platform","name":"late","role":"viewer","expires_at":"2030-01-01T00:00:00Z"}`},
-		{name: "unknown field", body: `{"project_id":"proj_platform","name":"bad","role":"viewer","roles":["system_admin"]}`},
+		{name: "list missing project", method: http.MethodGet, path: "/api/v1/service-accounts"},
+		{name: "create missing project", method: http.MethodPost, path: "/api/v1/service-accounts", body: `{"name":"bot","role":"viewer"}`},
+		{name: "create invalid name", method: http.MethodPost, path: "/api/v1/service-accounts", body: `{"project_id":"proj_platform","name":" ","role":"viewer"}`},
+		{name: "create invalid role", method: http.MethodPost, path: "/api/v1/service-accounts", body: `{"project_id":"proj_platform","name":"bot","role":"system_admin"}`},
+		{name: "create expired credential", method: http.MethodPost, path: "/api/v1/service-accounts", body: `{"project_id":"proj_platform","name":"expired","role":"viewer","expires_at":"2020-01-01T00:00:00Z"}`},
+		{name: "create unbounded expiry", method: http.MethodPost, path: "/api/v1/service-accounts", body: `{"project_id":"proj_platform","name":"late","role":"viewer","expires_at":"2030-01-01T00:00:00Z"}`},
+		{name: "create unknown field", method: http.MethodPost, path: "/api/v1/service-accounts", body: `{"project_id":"proj_platform","name":"bad","role":"viewer","roles":["system_admin"]}`, wantBody: "{\"code\":\"invalid_request\",\"error\":\"invalid JSON body\"}\n"},
+		{name: "update missing account", method: http.MethodPatch, path: "/api/v1/service-accounts", body: `{"name":"bot"}`},
+		{name: "update missing fields", method: http.MethodPatch, path: "/api/v1/service-accounts", body: `{"service_account_id":"` + created.ServiceAccount.ID + `"}`},
+		{name: "update invalid name", method: http.MethodPatch, path: "/api/v1/service-accounts", body: `{"service_account_id":"` + created.ServiceAccount.ID + `","name":" "}`},
+		{name: "update invalid role", method: http.MethodPatch, path: "/api/v1/service-accounts", body: `{"service_account_id":"` + created.ServiceAccount.ID + `","role":"system_admin"}`},
+		{name: "rotate missing account", method: http.MethodPost, path: "/api/v1/service-accounts/rotate", body: `{}`},
+		{name: "rotate expired credential", method: http.MethodPost, path: "/api/v1/service-accounts/rotate", body: `{"service_account_id":"` + created.ServiceAccount.ID + `","expires_at":"2020-01-01T00:00:00Z"}`},
+		{name: "revoke missing account", method: http.MethodPost, path: "/api/v1/service-accounts/revoke", body: `{}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			response := serviceAccountRequest(t, server, http.MethodPost, "/api/v1/service-accounts", adminToken, test.body)
+			response := serviceAccountRequest(t, server, test.method, test.path, adminToken, test.body)
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
+			want := test.wantBody
+			if want == "" {
+				want = "{\"code\":\"bad_request\",\"error\":\"invalid request\"}\n"
+			}
+			if got := response.Body.String(); got != want {
+				t.Fatalf("body=%q want=%q", got, want)
+			}
 		})
+	}
+}
+
+func TestServiceAccountHTTPValidationPreservesAuthenticationPrecedence(t *testing.T) {
+	server, _ := newTestServer()
+	response := serviceAccountRequest(t, server, http.MethodPost, "/api/v1/service-accounts", "", `{}`)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got, want := response.Body.String(), "{\"code\":\"unauthenticated\",\"error\":\"authentication is required\"}\n"; got != want {
+		t.Fatalf("body=%q want=%q", got, want)
 	}
 }
 

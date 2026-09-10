@@ -1,11 +1,16 @@
 package store_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
@@ -79,6 +84,22 @@ func TestPostgresServiceAccountRegistryCredentialsAndActorFKs(t *testing.T) {
 	var triggerKind string
 	if err := database.QueryRow(ctx, `SELECT kind FROM principals WHERE id='usr_principal_trigger'`).Scan(&triggerKind); err != nil || triggerKind != "human" {
 		t.Fatalf("user trigger kind=%q err=%v", triggerKind, err)
+	}
+	if _, err := database.Exec(ctx, `UPDATE service_accounts SET project_id='proj_security' WHERE id=$1`, account.ID); err == nil {
+		t.Fatal("service account immutable scope accepted a project change")
+	}
+	if _, err := database.Exec(ctx, `UPDATE principals SET kind='human' WHERE id=$1`, account.ID); err == nil {
+		t.Fatal("principal registry accepted a kind change")
+	}
+	if _, err := database.Exec(ctx, `DELETE FROM principals WHERE id=$1`, account.ID); err == nil {
+		t.Fatal("principal registry accepted deletion")
+	}
+	var projectID, ownerUserID string
+	if err := database.QueryRow(ctx, `SELECT project_id, owner_user_id FROM service_accounts WHERE id=$1`, account.ID).Scan(&projectID, &ownerUserID); err != nil {
+		t.Fatal(err)
+	}
+	if projectID != account.ProjectID || ownerUserID != account.OwnerUserID {
+		t.Fatalf("immutable scope changed project=%q owner=%q", projectID, ownerUserID)
 	}
 }
 
@@ -180,4 +201,95 @@ func TestPostgresServiceAccountMigrationPreservesLegacyTokens(t *testing.T) {
 	if fmt.Sprint(got.Roles) != fmt.Sprint(legacy.Roles) {
 		t.Fatalf("legacy roles=%v want=%v", got.Roles, legacy.Roles)
 	}
+}
+
+func TestPostgresServiceAccountMigrationUpgradesFrom0038(t *testing.T) {
+	ctx := t.Context()
+	database, schemaURL := openPostgresAtMigration(t, ctx, "service_account_upgrade", "0038_user_offboarding.sql")
+	seed, err := os.ReadFile("../../db/seeds/dev.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(ctx, string(seed)); err != nil {
+		t.Fatalf("apply pre-0039 development seed: %v", err)
+	}
+	if _, err := database.Exec(ctx, `INSERT INTO api_tokens(id,name,kind,token_hash,roles,status,created_by,created_at) VALUES ('pat_pre_0039','legacy before upgrade','service_account','pre-0039-legacy-hash',ARRAY['runner_admin'],'active','usr_bootstrap',clock_timestamp())`); err != nil {
+		t.Fatalf("insert pre-0039 legacy token: %v", err)
+	}
+	var compatibleBefore bool
+	if err := database.QueryRow(ctx, `SELECT nerocd_repository_policy_schema_compatible()`).Scan(&compatibleBefore); err != nil || !compatibleBefore {
+		t.Fatalf("pre-0039 repository policy compatibility=%v err=%v", compatibleBefore, err)
+	}
+	if err := applyEmbeddedMigrations(ctx, database, "0038_user_offboarding.sql", "0039_service_accounts.sql"); err != nil {
+		t.Fatalf("upgrade from 0038 through 0039: %v", err)
+	}
+
+	pg, err := store.OpenPostgres(ctx, schemaURL)
+	if err != nil {
+		t.Fatalf("open upgraded store: %v", err)
+	}
+	defer closePostgresStore(t, pg)
+	if compatible, err := pg.SchemaCompatible(ctx); err != nil || !compatible {
+		t.Fatalf("upgraded schema compatibility=%v err=%v", compatible, err)
+	}
+	var serviceAccountCompatible, policyCompatible bool
+	if err := database.QueryRow(ctx, `SELECT nerocd_service_account_schema_compatible(), nerocd_repository_policy_schema_compatible()`).Scan(&serviceAccountCompatible, &policyCompatible); err != nil {
+		t.Fatal(err)
+	}
+	if !serviceAccountCompatible || !policyCompatible {
+		t.Fatalf("upgraded compatibility service_accounts=%v repository_policy=%v", serviceAccountCompatible, policyCompatible)
+	}
+	var migratedHumans, users int
+	if err := database.QueryRow(ctx, `SELECT count(*) FILTER (WHERE kind='human'), (SELECT count(*) FROM users) FROM principals`).Scan(&migratedHumans, &users); err != nil {
+		t.Fatal(err)
+	}
+	if migratedHumans != users {
+		t.Fatalf("upgraded human principals=%d users=%d", migratedHumans, users)
+	}
+	var serviceAccountID *string
+	var roles []string
+	if err := database.QueryRow(ctx, `SELECT service_account_id, roles FROM api_tokens WHERE id='pat_pre_0039'`).Scan(&serviceAccountID, &roles); err != nil {
+		t.Fatal(err)
+	}
+	if serviceAccountID != nil || fmt.Sprint(roles) != fmt.Sprint([]string{domain.RoleRunnerAdmin}) {
+		t.Fatalf("upgraded legacy token service_account_id=%v roles=%v", serviceAccountID, roles)
+	}
+	legacy, err := pg.GetAPITokenByHash(ctx, "pre-0039-legacy-hash", time.Now().UTC())
+	if err != nil || legacy.ID != "pat_pre_0039" || legacy.ServiceAccountID != nil {
+		t.Fatalf("upgraded legacy token=%#v err=%v", legacy, err)
+	}
+}
+
+func openPostgresAtMigration(t *testing.T, ctx context.Context, label, through string) (*pgxpool.Pool, string) {
+	t.Helper()
+	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
+	}
+	schema := fmt.Sprintf("nerocd_%s_%d", label, time.Now().UTC().UnixNano())
+	adminDB, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminDB.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+		adminDB.Close()
+		t.Fatalf("create schema: %v", err)
+	}
+	schemaURL := databaseURLWithSearchPath(t, databaseURL, schema)
+	database, err := pgxpool.New(ctx, schemaURL)
+	if err != nil {
+		adminDB.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		database.Close()
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = adminDB.Exec(cleanupCtx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
+		adminDB.Close()
+	})
+	if err := applyEmbeddedMigrations(ctx, database, "", through); err != nil {
+		t.Fatal(err)
+	}
+	return database, schemaURL
 }
