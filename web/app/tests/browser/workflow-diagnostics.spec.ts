@@ -44,8 +44,8 @@ test("run detail keeps declared workflow diagnostics visible and contained", asy
     run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "workflow-diagnostics"] } },
     workflow: {
       steps: [
-        { id: "checkout", name: "Checkout source", run_spec: { type: "shell", inputs: {} }, requires_ack: false },
-        { id: "deploy", name: "Deploy release", run_spec: { type: "shell", inputs: {} }, depends_on: ["checkout"], requires_ack: false },
+        { id: "checkout", name: "Checkout source", run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "checkout"] } }, requires_ack: false },
+        { id: "deploy", name: "Deploy release", run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "deploy"] } }, depends_on: ["checkout"], requires_ack: false },
       ],
     },
     runner_tags: ["shell"],
