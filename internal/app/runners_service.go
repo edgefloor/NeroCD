@@ -161,23 +161,23 @@ func (s *Service) CreateRunnerEnrollment(ctx context.Context, input RunnerEnroll
 	}
 	runnerID := strings.TrimSpace(input.RunnerID)
 	if !runnerEnrollmentIDPattern.MatchString(runnerID) {
-		return CreatedRunnerEnrollment{}, errors.New("runner_id is invalid")
+		return CreatedRunnerEnrollment{}, InvalidInput(errors.New("runner_id is invalid"))
 	}
 	name := strings.TrimSpace(input.RunnerName)
 	if name == "" || len(name) > 128 {
-		return CreatedRunnerEnrollment{}, errors.New("runner_name is invalid")
+		return CreatedRunnerEnrollment{}, InvalidInput(errors.New("runner_name is invalid"))
 	}
 	tags := normalizeTags(input.Tags)
 	capabilities := normalizeTags(input.Capabilities)
 	if len(tags) > 32 || len(capabilities) == 0 || len(capabilities) > 32 {
-		return CreatedRunnerEnrollment{}, errors.New("runner tags or capabilities are invalid")
+		return CreatedRunnerEnrollment{}, InvalidInput(errors.New("runner tags or capabilities are invalid"))
 	}
 	if composeRunnerHasGenericShell(capabilities) {
-		return CreatedRunnerEnrollment{}, errors.New("compose-deploy runner pools must not advertise generic shell")
+		return CreatedRunnerEnrollment{}, InvalidInput(errors.New("compose-deploy runner pools must not advertise generic shell"))
 	}
 	for _, value := range append(append([]string(nil), tags...), capabilities...) {
 		if len(value) > 64 {
-			return CreatedRunnerEnrollment{}, errors.New("runner tags or capabilities are invalid")
+			return CreatedRunnerEnrollment{}, InvalidInput(errors.New("runner tags or capabilities are invalid"))
 		}
 	}
 	ttl := 10 * time.Minute
@@ -185,7 +185,7 @@ func (s *Service) CreateRunnerEnrollment(ctx context.Context, input RunnerEnroll
 		ttl = time.Duration(input.TTLSeconds) * time.Second
 	}
 	if ttl < time.Minute || ttl > time.Hour {
-		return CreatedRunnerEnrollment{}, errors.New("ttl_seconds is invalid")
+		return CreatedRunnerEnrollment{}, InvalidInput(errors.New("ttl_seconds is invalid"))
 	}
 	id, err := prefixedID("enroll")
 	if err != nil {
@@ -218,7 +218,7 @@ func (s *Service) RevokeRunnerEnrollment(ctx context.Context, input RunnerEnroll
 	}
 	id := strings.TrimSpace(input.EnrollmentID)
 	if id == "" {
-		return domain.RunnerEnrollment{}, errors.New("enrollment_id is required")
+		return domain.RunnerEnrollment{}, InvalidInput(errors.New("enrollment_id is required"))
 	}
 	audit, err := s.auditEvent(ctx, principal.ID, "runner.enrollment.revoke", id, map[string]any{"enrollment_id": id})
 	if err != nil {
@@ -236,7 +236,7 @@ func (s *Service) ConsumeRunnerEnrollment(ctx context.Context, token string, inp
 	requestID := strings.TrimSpace(input.RequestID)
 	credentialHash := strings.TrimSpace(input.CredentialHash)
 	if !enrollmentConsumeIDPattern.MatchString(requestID) || !sha256HexPattern.MatchString(credentialHash) {
-		return ConsumedRunnerEnrollment{}, errors.New("request_id or credential_hash is invalid")
+		return ConsumedRunnerEnrollment{}, InvalidInput(errors.New("request_id or credential_hash is invalid"))
 	}
 	auditID, err := prefixedID("aud")
 	if err != nil {
@@ -272,12 +272,12 @@ func (s *Service) RegisterRunner(ctx context.Context, input RunnerInput) (Regist
 	}
 	capabilities := normalizeTags(input.Capabilities)
 	if len(capabilities) == 0 {
-		return RegisteredRunner{}, errors.New("capabilities are required")
+		return RegisteredRunner{}, InvalidInput(errors.New("capabilities are required"))
 	}
 	if composeRunnerHasGenericShell(capabilities) {
 		// This is untrusted caller input; keep the error in the stable invalid
 		// request class rather than exposing it as a generic server failure.
-		return RegisteredRunner{}, errors.New("runner capabilities are invalid: compose-deploy runner pools must not advertise generic shell")
+		return RegisteredRunner{}, InvalidInput(errors.New("runner capabilities are invalid: compose-deploy runner pools must not advertise generic shell"))
 	}
 	token, tokenHash, err := newRunnerToken()
 	if err != nil {
@@ -317,7 +317,7 @@ func (s *Service) RotateRunnerToken(ctx context.Context, input RunnerTokenInput)
 	}
 	runnerID := strings.TrimSpace(input.RunnerID)
 	if runnerID == "" {
-		return RegisteredRunner{}, errors.New("runner_id is required")
+		return RegisteredRunner{}, InvalidInput(errors.New("runner_id is required"))
 	}
 	token, tokenHash, err := newRunnerToken()
 	if err != nil {
@@ -346,7 +346,7 @@ func (s *Service) RevokeRunnerToken(ctx context.Context, input RunnerTokenInput)
 	}
 	runnerID := strings.TrimSpace(input.RunnerID)
 	if runnerID == "" {
-		return domain.Runner{}, errors.New("runner_id is required")
+		return domain.Runner{}, InvalidInput(errors.New("runner_id is required"))
 	}
 	audit, err := s.auditEvent(ctx, principal.ID, "runner.token.revoke", runnerID, map[string]any{"runner_id": runnerID})
 	if err != nil {
@@ -388,7 +388,7 @@ func (s *Service) RecordRunnerOperationalTelemetry(ctx context.Context, input Ru
 		return err
 	}
 	if input.JournalDepth < 0 || input.JournalDepth > 8192 || input.RetryCount < 0 || input.RetryCount > 100000 || input.RenewFailures < 0 || input.RenewFailures > 100000 {
-		return errors.New("runner telemetry is invalid")
+		return InvalidInput(errors.New("runner telemetry is invalid"))
 	}
 	if s.operationalWriter == nil {
 		return errors.New("runner telemetry is unavailable")
@@ -432,7 +432,7 @@ func (s *Service) RenewLease(ctx context.Context, leaseID, fence string, attempt
 		return domain.RunLease{}, err
 	}
 	if leaseID == "" || fence == "" || attempt <= 0 {
-		return domain.RunLease{}, errors.New("lease_id, attempt, and fence are required")
+		return domain.RunLease{}, InvalidInput(errors.New("lease_id, attempt, and fence are required"))
 	}
 	return s.runners.RenewLease(ctx, principal.ID, leaseID, fence, attempt, time.Now().UTC(), s.leaseTTL)
 }
@@ -452,7 +452,7 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 	switch status {
 	case domain.RunSucceeded, domain.RunFailed, domain.RunCanceled:
 	default:
-		return domain.RunLease{}, errors.New("lease completion status is invalid")
+		return domain.RunLease{}, InvalidInput(errors.New("lease completion status is invalid"))
 	}
 	leaseID = strings.TrimSpace(leaseID)
 	key := ""
@@ -460,7 +460,7 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 		key = strings.TrimSpace(completionKey[0])
 	}
 	if key == "" {
-		return domain.RunLease{}, errors.New("completion_key is required")
+		return domain.RunLease{}, InvalidInput(errors.New("completion_key is required"))
 	}
 	lease, err := s.runners.GetLeaseForCompletion(ctx, leaseID, principal.ID, attempt, fence)
 	if err != nil {
@@ -517,7 +517,7 @@ func (s *Service) RunnerLease(ctx context.Context, leaseID string, attempt int, 
 	}
 	leaseID = strings.TrimSpace(leaseID)
 	if leaseID == "" || attempt <= 0 || fence == "" {
-		return domain.RunLease{}, errors.New("lease_id, attempt, and fence are required")
+		return domain.RunLease{}, InvalidInput(errors.New("lease_id, attempt, and fence are required"))
 	}
 	lease, err := s.runners.GetLeaseForRunner(ctx, leaseID, principal.ID)
 	if err != nil {
@@ -554,10 +554,10 @@ func (s *Service) AuthorizeSecretAccess(ctx context.Context, input SecretAccessI
 		Provider: strings.ToLower(strings.TrimSpace(input.Provider)), Version: strings.TrimSpace(input.Version), RequestedAt: time.Now().UTC(),
 	}
 	if request.AccessID == "" || request.RunID == "" || request.LeaseID == "" || request.Attempt <= 0 || request.Fence == "" || request.Binding == "" || request.Provider == "" {
-		return domain.SecretAccessGrant{}, errors.New("access_id, run_id, lease_id, attempt, fence, binding, and provider are required")
+		return domain.SecretAccessGrant{}, InvalidInput(errors.New("access_id, run_id, lease_id, attempt, fence, binding, and provider are required"))
 	}
 	if err := runner.ValidateSecretAccessMetadata(request.AccessID, request.Binding, request.Provider, request.Version); err != nil {
-		return domain.SecretAccessGrant{}, err
+		return domain.SecretAccessGrant{}, InvalidInput(err)
 	}
 	return s.runners.AuthorizeSecretAccess(ctx, request)
 }

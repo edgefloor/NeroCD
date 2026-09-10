@@ -118,7 +118,7 @@ func (s *Server) deploymentByID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	environmentID := r.URL.Query().Get("environment_id")
 	if environmentID == "" {
-		writeError(w, errors.New("environment_id is required"))
+		writeError(w, app.InvalidInput(errors.New("environment_id is required")))
 		return
 	}
 	v, e := s.app.ListDeployments(r.Context(), environmentID)

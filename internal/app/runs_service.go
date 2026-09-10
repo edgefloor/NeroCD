@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -194,10 +195,10 @@ func (s *Service) CreateArtifact(ctx context.Context, input ArtifactInput) (doma
 	name := strings.TrimSpace(input.Name)
 	path := strings.TrimSpace(input.Path)
 	if runID == "" || leaseID == "" || name == "" || path == "" {
-		return domain.ArtifactRecord{}, errors.New("run_id, lease_id, name, and path are required")
+		return domain.ArtifactRecord{}, InvalidInput(errors.New("run_id, lease_id, name, and path are required"))
 	}
 	if input.Attempt <= 0 || strings.TrimSpace(input.Fence) == "" {
-		return domain.ArtifactRecord{}, errors.New("attempt and fence are required")
+		return domain.ArtifactRecord{}, InvalidInput(errors.New("attempt and fence are required"))
 	}
 	kind := strings.TrimSpace(input.Kind)
 	if kind == "" {
@@ -228,13 +229,13 @@ func (s *Service) AppendRunEvents(ctx context.Context, input RunEventBatchInput)
 	runID := strings.TrimSpace(input.RunID)
 	leaseID := strings.TrimSpace(input.LeaseID)
 	if runID == "" || leaseID == "" {
-		return RunEventBatchAck{}, errors.New("run_id and lease_id are required")
+		return RunEventBatchAck{}, InvalidInput(errors.New("run_id and lease_id are required"))
 	}
 	if input.Attempt <= 0 || strings.TrimSpace(input.Fence) == "" {
-		return RunEventBatchAck{}, errors.New("attempt and fence are required")
+		return RunEventBatchAck{}, InvalidInput(errors.New("attempt and fence are required"))
 	}
 	if len(input.Events) == 0 || len(input.Events) > 64 {
-		return RunEventBatchAck{}, errors.New("events batch must contain between 1 and 64 events")
+		return RunEventBatchAck{}, InvalidInput(errors.New("events batch must contain between 1 and 64 events"))
 	}
 	totalBytes := 0
 	logs := make([]domain.RunLog, 0, len(input.Events))
@@ -244,18 +245,18 @@ func (s *Service) AppendRunEvents(ctx context.Context, input RunEventBatchInput)
 		eventKey := strings.TrimSpace(event.EventKey)
 		stream := strings.TrimSpace(event.Stream)
 		if eventKey == "" || event.Sequence <= 0 {
-			return RunEventBatchAck{}, errors.New("event_key and positive sequence are required")
+			return RunEventBatchAck{}, InvalidInput(errors.New("event_key and positive sequence are required"))
 		}
 		if _, duplicate := seen[eventKey]; duplicate {
-			return RunEventBatchAck{}, errors.New("event_key is duplicated within batch")
+			return RunEventBatchAck{}, InvalidInput(errors.New("event_key is duplicated within batch"))
 		}
 		seen[eventKey] = struct{}{}
 		if stream != domain.LogSystem && stream != domain.LogStdout && stream != domain.LogStderr {
-			return RunEventBatchAck{}, errors.New("stream must be system, stdout, or stderr")
+			return RunEventBatchAck{}, InvalidInput(errors.New("stream must be system, stdout, or stderr"))
 		}
 		totalBytes += len(eventKey) + len(stream) + len(event.Message)
 		if totalBytes > 256*1024 {
-			return RunEventBatchAck{}, errors.New("events batch exceeds 256 KiB")
+			return RunEventBatchAck{}, InvalidInput(errors.New("events batch exceeds 256 KiB"))
 		}
 		logID, err := prefixedID("log")
 		if err != nil {
@@ -274,7 +275,7 @@ func (s *Service) AppendRunEvents(ctx context.Context, input RunEventBatchInput)
 func (s *Service) RequestRun(ctx context.Context, templateID string) (domain.TaskRun, error) {
 	templateID = strings.TrimSpace(templateID)
 	if templateID == "" {
-		return domain.TaskRun{}, errors.New("template_id is required")
+		return domain.TaskRun{}, InvalidInput(errors.New("template_id is required"))
 	}
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -338,17 +339,17 @@ func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput)
 	}
 	projectID := strings.TrimSpace(input.ProjectID)
 	if projectID == "" {
-		return domain.TaskRun{}, errors.New("project_id is required")
+		return domain.TaskRun{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if err := s.requireProjectRole(ctx, principal, projectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
 	runSpec, err := s.normalizeRunSpec(input.RunSpec, "")
 	if err != nil {
-		return domain.TaskRun{}, err
+		return domain.TaskRun{}, fmt.Errorf("invalid run spec: %w", err)
 	}
 	if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", ProjectID: projectID, RunSpec: runSpec}); err != nil {
-		return domain.TaskRun{}, err
+		return domain.TaskRun{}, InvalidInput(err)
 	}
 	status := domain.RunQueued
 	if input.RequiresAck {
@@ -361,7 +362,7 @@ func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput)
 	}
 	workflow, err := s.normalizeWorkflow(input.Workflow)
 	if err != nil {
-		return domain.TaskRun{}, err
+		return domain.TaskRun{}, fmt.Errorf("invalid workflow: %w", err)
 	}
 	run := domain.TaskRun{ID: runID, ProjectID: projectID, RunSpec: runSpec, Workflow: workflow, WorkflowState: initialWorkflowState(workflow), RunnerTags: normalizeTags(input.RunnerTags), Status: status, RequestedBy: principal.ID, StartedAt: now}
 	logID, err := prefixedID("log")

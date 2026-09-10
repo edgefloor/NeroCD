@@ -347,6 +347,95 @@ func FuzzUnknownTopLevelFieldIsRejected(f *testing.F) {
 	})
 }
 
+func TestTemplateWorkflowPlanValidationUsesBadRequestWithoutPersisting(t *testing.T) {
+	server, mem := newTestServer()
+	token := createTestSession(t, server)
+	request := func(method, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, "/api/v1/templates", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	before, err := mem.ListTemplates(t.Context(), "proj_platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeAudits, err := mem.ListAuditEvents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "workflow", body: `{"project_id":"proj_platform","name":"Invalid workflow","kind":"shell","run_spec":{"type":"shell","inputs":{"command":"echo parent"}},"workflow":{"steps":[{"id":"step","name":"Invalid step","run_spec":{"type":"shell"}}]}}`},
+		{name: "run_spec workflow", body: `{"project_id":"proj_platform","name":"Invalid run spec workflow","kind":"shell","run_spec":{"type":"shell","inputs":{"command":"echo parent"},"workflow":{"steps":[{"id":"step","name":"Invalid step","run_spec":{"type":"shell"}}]}}}`},
+		{name: "nested workflow step", body: `{"project_id":"proj_platform","name":"Invalid nested workflow","kind":"shell","run_spec":{"type":"shell","inputs":{"command":"echo parent"}},"workflow":{"steps":[{"id":"outer","name":"Outer step","run_spec":{"type":"shell","inputs":{"command":"echo outer"},"workflow":{"steps":[{"id":"step","name":"Invalid step","run_spec":{"type":"shell"}}]}}}]}}`},
+	} {
+		t.Run("invalid create "+test.name, func(t *testing.T) {
+			invalidCreate := request(http.MethodPost, test.body)
+			if invalidCreate.Code != http.StatusBadRequest || !strings.Contains(invalidCreate.Body.String(), `"code":"bad_request"`) {
+				t.Fatalf("invalid template create status=%d body=%s", invalidCreate.Code, invalidCreate.Body.String())
+			}
+			templates, err := mem.ListTemplates(t.Context(), "proj_platform")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(templates) != len(before) {
+				t.Fatalf("invalid template create persisted templates: %#v", templates)
+			}
+			audits, err := mem.ListAuditEvents(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(audits) != len(beforeAudits) {
+				t.Fatalf("invalid template create persisted audit events: %d, want %d", len(audits), len(beforeAudits))
+			}
+		})
+	}
+
+	created := request(http.MethodPost, `{"project_id":"proj_platform","name":"Original workflow","kind":"shell","run_spec":{"type":"shell","inputs":{"command":"echo parent"}},"workflow":{"steps":[{"id":"valid-step","name":"Valid step","run_spec":{"type":"shell","inputs":{"command":"echo original"}}}]}}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("valid template create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var template domain.TaskTemplate
+	if err := json.NewDecoder(created.Body).Decode(&template); err != nil {
+		t.Fatal(err)
+	}
+	beforeUpdateAudits, err := mem.ListAuditEvents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invalidUpdate := request(http.MethodPatch, `{"id":"`+template.ID+`","name":"Changed workflow","kind":"shell","run_spec":{"type":"shell","inputs":{"command":"echo parent"}},"workflow":{"steps":[{"id":"step","name":"Invalid step","run_spec":{"type":"shell"}}]}}`)
+	if invalidUpdate.Code != http.StatusBadRequest || !strings.Contains(invalidUpdate.Body.String(), `"code":"bad_request"`) {
+		t.Fatalf("invalid template update status=%d body=%s", invalidUpdate.Code, invalidUpdate.Body.String())
+	}
+	stored, err := mem.GetTemplate(t.Context(), template.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "Original workflow" || stored.Workflow.Steps[0].RunSpec.Inputs["command"] != "echo original" {
+		t.Fatalf("invalid template update persisted changes: %#v", stored)
+	}
+	audits, err := mem.ListAuditEvents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audits) != len(beforeUpdateAudits) {
+		t.Fatalf("invalid template update persisted audit events: %d, want %d", len(audits), len(beforeUpdateAudits))
+	}
+
+	updated := request(http.MethodPatch, `{"id":"`+template.ID+`","name":"Updated workflow","kind":"shell","run_spec":{"type":"shell","inputs":{"command":"echo parent"}},"workflow":{"steps":[{"id":"valid-step","name":"Valid step","run_spec":{"type":"shell","inputs":{"command":"echo updated"}}}]}}`)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("valid template update status=%d body=%s", updated.Code, updated.Body.String())
+	}
+}
+
 func TestRepositoryPolicyConfigurationIsStrictIdempotentAndNonLeaking(t *testing.T) {
 	server, _ := newTestServer()
 	token := createTestSession(t, server)

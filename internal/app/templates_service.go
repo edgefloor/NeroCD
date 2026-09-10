@@ -52,16 +52,16 @@ func (s *Service) CreateRepository(ctx context.Context, input RepositoryInput) (
 	name := strings.TrimSpace(input.Name)
 	url := strings.TrimSpace(input.URL)
 	if projectID == "" {
-		return domain.Repository{}, errors.New("project_id is required")
+		return domain.Repository{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if name == "" {
-		return domain.Repository{}, errors.New("name is required")
+		return domain.Repository{}, InvalidInput(errors.New("name is required"))
 	}
 	if url == "" {
-		return domain.Repository{}, errors.New("url is required")
+		return domain.Repository{}, InvalidInput(errors.New("url is required"))
 	}
 	if err := source.ValidateRepositoryURL(url); err != nil {
-		return domain.Repository{}, err
+		return domain.Repository{}, InvalidInput(err)
 	}
 	// An omitted policy is explicitly normalized to legacy_unverified. It is
 	// visible in API responses and cannot be used by the provenance runner.
@@ -70,10 +70,10 @@ func (s *Service) CreateRepository(ctx context.Context, input RepositoryInput) (
 	}
 	if input.Policy.State == "configured" {
 		if err := validateRepositoryPolicy(input.Policy); err != nil {
-			return domain.Repository{}, err
+			return domain.Repository{}, InvalidInput(err)
 		}
 	} else if input.Policy.Version != 1 || input.Policy.State != "legacy_unverified" {
-		return domain.Repository{}, errors.New("repository policy state is invalid")
+		return domain.Repository{}, InvalidInput(errors.New("repository policy state is invalid"))
 	}
 	if err := s.requireProjectRole(ctx, principal, projectID, domain.RoleMaintainer); err != nil {
 		return domain.Repository{}, err
@@ -111,7 +111,7 @@ var opaqueCredentialReferenceID = regexp.MustCompile(`^cred_[A-Za-z0-9_-]{8,128}
 
 func canonicalRepositoryPolicy(policy domain.RepositoryPolicy) (domain.RepositoryPolicy, []byte, error) {
 	if policy.Version != 1 || policy.State != "configured" {
-		return domain.RepositoryPolicy{}, nil, errors.New("repository policy must be configured")
+		return domain.RepositoryPolicy{}, nil, InvalidInput(errors.New("repository policy must be configured"))
 	}
 	canonicalStrings := func(values []string, normalize func(string) string) ([]string, error) {
 		out := make([]string, 0, len(values))
@@ -119,7 +119,7 @@ func canonicalRepositoryPolicy(policy domain.RepositoryPolicy) (domain.Repositor
 		for _, value := range values {
 			value = normalize(value)
 			if value == "" || seen[value] {
-				return nil, errors.New("repository policy contains invalid or duplicate values")
+				return nil, InvalidInput(errors.New("repository policy contains invalid or duplicate values"))
 			}
 			seen[value] = true
 			out = append(out, value)
@@ -152,10 +152,10 @@ func canonicalRepositoryPolicy(policy domain.RepositoryPolicy) (domain.Repositor
 	policy.Mode = strings.ToLower(strings.TrimSpace(policy.Mode))
 	policy.CredentialReferenceID = strings.TrimSpace(policy.CredentialReferenceID)
 	if policy.CredentialReferenceID != "" && !opaqueCredentialReferenceID.MatchString(policy.CredentialReferenceID) {
-		return policy, nil, errors.New("repository credential reference must be an opaque ID")
+		return policy, nil, InvalidInput(errors.New("repository credential reference must be an opaque ID"))
 	}
 	if err = validateRepositoryPolicy(policy); err != nil {
-		return policy, nil, err
+		return policy, nil, InvalidInput(err)
 	}
 	encoded, err := json.Marshal(policy)
 	return policy, encoded, err
@@ -169,7 +169,7 @@ func (s *Service) ConfigureRepositoryPolicy(ctx context.Context, input Repositor
 	}
 	input.ID, input.ProjectID, input.ConfigurationID = strings.TrimSpace(input.ID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.ConfigurationID)
 	if input.ID == "" || input.ProjectID == "" || !opaqueConfigurationID.MatchString(input.ConfigurationID) {
-		return domain.Repository{}, errors.New("repository policy configuration_id is invalid")
+		return domain.Repository{}, InvalidInput(errors.New("repository policy configuration_id is invalid"))
 	}
 	policy, canonical, err := canonicalRepositoryPolicy(input.Policy)
 	if err != nil {
@@ -193,6 +193,9 @@ func (s *Service) CreateTemplate(ctx context.Context, input TemplateInput) (doma
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
 		return domain.TaskTemplate{}, err
+	}
+	if strings.TrimSpace(input.ProjectID) == "" {
+		return domain.TaskTemplate{}, InvalidInput(errors.New("project_id is required"))
 	}
 	if err := s.requireProjectRole(ctx, principal, strings.TrimSpace(input.ProjectID), domain.RoleMaintainer); err != nil {
 		return domain.TaskTemplate{}, err
@@ -219,6 +222,10 @@ func (s *Service) UpdateTemplate(ctx context.Context, id string, input TemplateI
 	if err != nil {
 		return domain.TaskTemplate{}, err
 	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return domain.TaskTemplate{}, InvalidInput(errors.New("id is required"))
+	}
 	existing, err := s.templates.GetTemplate(ctx, id)
 	if err != nil {
 		return domain.TaskTemplate{}, err
@@ -230,7 +237,7 @@ func (s *Service) UpdateTemplate(ctx context.Context, id string, input TemplateI
 		input.ProjectID = existing.ProjectID
 	}
 	if strings.TrimSpace(input.ProjectID) != existing.ProjectID {
-		return domain.TaskTemplate{}, errors.New("template project_id cannot be changed")
+		return domain.TaskTemplate{}, InvalidInput(errors.New("template project_id cannot be changed"))
 	}
 	template, err := s.templateFromInput(id, input)
 	if err != nil {
