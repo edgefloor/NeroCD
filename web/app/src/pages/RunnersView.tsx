@@ -43,7 +43,7 @@ export function RunnersView({ runners, q, canAdmin, onEnroll, onRevokeRunner }: 
   }
   return <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
     <Card><CardHeader><CardTitle>Runner inventory</CardTitle></CardHeader><CardContent className="grid gap-3">{!visible.length ? <EmptyState title="No runners match this view" icon={KeyRound} /> : visible.map((runner) => <Link key={runner.id} to="/runners/$runnerId" params={{ runnerId: runner.id }} search={(previous) => previous} className="rounded border p-3 hover:bg-muted"><div className="flex items-center justify-between gap-2"><span className="font-medium">{runner.name}</span><StatusBadge status={runner.status} /></div><p className="mt-1 font-mono text-xs text-muted-foreground">{runner.id}</p><p className="mt-2 text-sm text-muted-foreground">{runnerState(runner)}</p><p className="mt-2 text-xs text-muted-foreground">Heartbeat {formatDate(runner.last_heartbeat_at)} · {runner.tags.join(", ") || "no tags"}</p></Link>)}</CardContent></Card>
-    {canAdmin ? <EnrollmentForm busy={busy} error={error} onSubmit={enroll} /> : <Card><CardContent className="p-6" role="status">Runner operations are restricted to global administrators.</CardContent></Card>}
+    {canAdmin ? <EnrollmentForm busy={busy} error={error} onSubmit={enroll} /> : <Card><CardContent className="p-6" role="status">Runner operations require runner administrator permissions.</CardContent></Card>}
     <EnrollmentSecret enrollment={enrollment} token={secretRef.current} onOpenChange={clearEnrollment} onCopy={copySecret} onDownload={downloadSecret} />
   </section>;
 }
