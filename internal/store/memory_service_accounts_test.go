@@ -32,32 +32,32 @@ func TestMemoryServiceAccountRotationRollbackAndRace(t *testing.T) {
 
 	var wait sync.WaitGroup
 	wait.Add(2)
-	results := make(chan error, 2)
+	rotateResult := make(chan error, 1)
+	revokeResult := make(chan error, 1)
 	go func() {
 		defer wait.Done()
 		_, err := mem.RotateServiceAccountCredential(t.Context(), account.ID, domain.APIToken{ID: "pat_memory_race", TokenHash: "race-hash", ExpiresAt: &expires, CreatedAt: now}, now, domain.AuditEvent{ID: "audit_memory_rotate", ActorID: "usr_bootstrap", CreatedAt: now})
-		results <- err
+		rotateResult <- err
 	}()
 	go func() {
 		defer wait.Done()
 		_, err := mem.RevokeServiceAccount(t.Context(), account.ID, now, domain.AuditEvent{ID: "audit_memory_revoke", ActorID: "usr_bootstrap", CreatedAt: now})
-		results <- err
+		revokeResult <- err
 	}()
 	wait.Wait()
-	close(results)
-	successes := 0
-	for err := range results {
-		if err == nil {
-			successes++
-		} else if !errors.Is(err, ErrNotFound) {
-			t.Fatalf("race error = %v", err)
-		}
+	if err := <-revokeResult; err != nil {
+		t.Fatalf("revoke race error = %v", err)
 	}
-	if successes != 1 {
-		t.Fatalf("race successes = %d, want 1", successes)
+	if err := <-rotateResult; err != nil && !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rotate race error = %v", err)
 	}
 	if _, _, err := mem.ServiceAccountProjectRole(t.Context(), account.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("account remained active after race: %v", err)
+	}
+	for _, tokenHash := range []string{"original-hash", "race-hash"} {
+		if _, err := mem.GetManagedServiceAccountCredentialByHash(t.Context(), tokenHash, now); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("credential %q remained active after revoke: %v", tokenHash, err)
+		}
 	}
 }
 
