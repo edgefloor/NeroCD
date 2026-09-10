@@ -41,13 +41,22 @@ type ProjectRole struct {
 
 // User is a locally managed control-plane identity.
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	Name         string    `json:"name"`
-	Status       string    `json:"status"`
-	GlobalRole   string    `json:"global_role"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string     `json:"id"`
+	Email        string     `json:"email"`
+	Name         string     `json:"name"`
+	Status       string     `json:"status"`
+	GlobalRole   string     `json:"global_role"`
+	PasswordHash string     `json:"-"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	ArchivedAt   *time.Time `json:"archived_at,omitempty"`
+}
+
+// UserOffboardingResult reports the durable effects of an offboarding request.
+type UserOffboardingResult struct {
+	User             User `json:"user"`
+	RevokedSessions  int  `json:"revoked_sessions"`
+	RevokedAPITokens int  `json:"revoked_api_tokens"`
 }
 
 // Session is a revocable browser or local-session credential record.

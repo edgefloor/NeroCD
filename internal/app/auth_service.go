@@ -261,6 +261,9 @@ func (s *Service) CreateAPIToken(ctx context.Context, input APITokenInput) (Crea
 	}
 	apiToken, err = s.apiTokens.CreateAPIToken(ctx, apiToken, store.WithAudit(audit))
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return CreatedAPIToken{}, auth.ErrForbidden
+		}
 		return CreatedAPIToken{}, err
 	}
 	return CreatedAPIToken{APIToken: apiToken, Token: token}, nil
@@ -375,6 +378,10 @@ func (s *Service) CreateSessionWithMetadata(ctx context.Context, email string, p
 		return CreatedSession{}, err
 	}
 	if err := s.sessions.CreateSession(ctx, session, tokenHash, store.WithAudit(audit)); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.loginLimiter.Failed(email, metadata.SourceIP)
+			return CreatedSession{}, auth.ErrInvalidCredentials
+		}
 		return CreatedSession{}, err
 	}
 	s.loginLimiter.Succeeded(email)

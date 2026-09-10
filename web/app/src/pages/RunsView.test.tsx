@@ -38,6 +38,13 @@ test("runs list selects a run before mounting its terminal output", () => {
   expect(onSelectRun).toHaveBeenCalledWith("run_logs");
 });
 
+test("runs list exposes ordinary detail links for each run", () => {
+  renderRuns();
+  const details = screen.getAllByRole("link", { name: "Details" });
+  expect(details.length).toBeGreaterThanOrEqual(2);
+  expect(details.every((detail) => detail.getAttribute("href") === "/runs/run_logs")).toBe(true);
+});
+
 test("selected run exposes loading, output, errors, and close behavior", () => {
   const { rerender, onCloseLogs } = renderRuns("run_logs", [], true);
   expect(screen.getByRole("status").textContent).toContain("Loading run output");
