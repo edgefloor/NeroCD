@@ -81,20 +81,24 @@ func (s *PostgresStore) BootstrapComplete(ctx context.Context) (bool, error) {
 // CreateSession implements the corresponding repository operation.
 func (s *PostgresStore) CreateSession(ctx context.Context, session domain.Session, tokenHash string, opts ...MutationOption) error {
 	audit := resolveMutationOptions(opts)
-	if audit == nil {
-		return s.queries.CreateSession(ctx, sqlcgen.CreateSessionParams{ID: session.ID, UserID: session.UserID, TokenHash: tokenHash, ExpiresAt: session.ExpiresAt, CreatedAt: session.CreatedAt, SourceIp: session.SourceIP, UserAgent: session.UserAgent, LastSeenAt: session.LastSeenAt})
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
+	if _, err = q.LockActiveUser(ctx, session.UserID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock active session user: %w", err)
+	}
 	if err = q.CreateSession(ctx, sqlcgen.CreateSessionParams{ID: session.ID, UserID: session.UserID, TokenHash: tokenHash, ExpiresAt: session.ExpiresAt, CreatedAt: session.CreatedAt, SourceIp: session.SourceIP, UserAgent: session.UserAgent, LastSeenAt: session.LastSeenAt}); err != nil {
 		return fmt.Errorf("create session query: %w", err)
 	}
-	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
-		return fmt.Errorf("create audit event: %w", err)
+	if audit != nil {
+		if err = createAuditWithQueries(ctx, q, *audit); err != nil {
+			return fmt.Errorf("create audit event: %w", err)
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -199,25 +203,25 @@ func (s *PostgresStore) RevokeSessionByTokenHash(ctx context.Context, tokenHash 
 // CreateAPIToken implements the corresponding repository operation.
 func (s *PostgresStore) CreateAPIToken(ctx context.Context, token domain.APIToken, opts ...MutationOption) (domain.APIToken, error) {
 	audit := resolveMutationOptions(opts)
-	if audit == nil {
-		inserted, err := s.queries.CreateAPIToken(ctx, sqlcgen.CreateAPITokenParams{ID: token.ID, Name: token.Name, Kind: token.Kind, TokenHash: token.TokenHash, Roles: token.Roles, Status: token.Status, CreatedBy: token.CreatedBy, CreatedAt: token.CreatedAt, ExpiresAt: token.ExpiresAt})
-		if err != nil {
-			return domain.APIToken{}, fmt.Errorf("create api token query: %w", err)
-		}
-		return apiTokenFromSQLC(inserted), nil
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.APIToken{}, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
+	if _, err = q.LockActiveUser(ctx, token.CreatedBy); errors.Is(err, pgx.ErrNoRows) {
+		return domain.APIToken{}, ErrNotFound
+	} else if err != nil {
+		return domain.APIToken{}, fmt.Errorf("lock active api token issuer: %w", err)
+	}
 	row, err := q.CreateAPIToken(ctx, sqlcgen.CreateAPITokenParams{ID: token.ID, Name: token.Name, Kind: token.Kind, TokenHash: token.TokenHash, Roles: token.Roles, Status: token.Status, CreatedBy: token.CreatedBy, CreatedAt: token.CreatedAt, ExpiresAt: token.ExpiresAt})
 	if err != nil {
 		return domain.APIToken{}, fmt.Errorf("create api token query: %w", err)
 	}
-	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
-		return domain.APIToken{}, fmt.Errorf("create audit event: %w", err)
+	if audit != nil {
+		if err = createAuditWithQueries(ctx, q, *audit); err != nil {
+			return domain.APIToken{}, fmt.Errorf("create audit event: %w", err)
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return domain.APIToken{}, fmt.Errorf("commit transaction: %w", err)

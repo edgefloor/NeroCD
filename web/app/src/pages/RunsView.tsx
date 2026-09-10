@@ -1,5 +1,5 @@
 import { ReactNode, useState } from "react";
-import { Ban, FileText, Terminal } from "lucide-react";
+import { Ban, FileText, ListTree, Terminal } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,12 @@ export function RunsTable({
               <span className="truncate rounded-lg bg-muted/60 px-2 py-1 font-mono">{run.id}</span>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
+                <a data-run-detail-link={run.id} href={`/runs/${run.id}`}>
+                  <ListTree className="mr-1.5 h-4 w-4" />
+                  Details
+                </a>
+              </Button>
               {onOpenLogs ? (
                 <Button
                   data-run-log-trigger={run.id}
@@ -109,6 +115,12 @@ export function RunsTable({
                 <TableCell className="text-sm">{formatDuration(run)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-2">
+                    <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
+                      <a data-run-detail-link={run.id} href={`/runs/${run.id}`}>
+                        <ListTree className="mr-1.5 h-4 w-4" />
+                        Details
+                      </a>
+                    </Button>
                     {token && mutate && canCancel(run) ? (
                       <Button
                         variant="outline"

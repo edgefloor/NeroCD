@@ -18,6 +18,7 @@ AND nerocd_provenance_schema_compatible()
 AND nerocd_repository_policy_schema_compatible()
 AND nerocd_identity_schema_compatible()
 AND nerocd_oidc_schema_compatible()
+AND nerocd_user_offboarding_schema_compatible()
 AND nerocd_observability_schema_compatible()
 AND nerocd_retention_schema_compatible() AS compatible
 `

@@ -114,6 +114,17 @@ type RunnerRepository interface {
 type UserRepository interface {
 	GetUserByEmail(context.Context, string) (domain.User, error)
 	UpdatePasswordHash(context.Context, string, string, string) error
+	ListUsersPage(context.Context, Page) (PageResult[domain.User], error)
+	OffboardUser(context.Context, UserOffboardingRequest) (domain.UserOffboardingResult, error)
+}
+
+// UserOffboardingRequest carries both possible audit records so the repository
+// can commit exactly one alongside its authoritative last-administrator decision.
+type UserOffboardingRequest struct {
+	UserID      string
+	RevokedAt   time.Time
+	Audit       domain.AuditEvent
+	DeniedAudit domain.AuditEvent
 }
 
 // BootstrapRepository performs the one-time identity creation and its audit in

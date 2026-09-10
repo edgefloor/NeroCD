@@ -10,7 +10,7 @@ import (
 )
 
 func userFromSQLC(row sqlcgen.User) domain.User {
-	return domain.User{ID: row.ID, Email: row.Email, Name: row.Name, Status: row.Status, GlobalRole: row.GlobalRole, PasswordHash: row.PasswordHash, CreatedAt: row.CreatedAt}
+	return domain.User{ID: row.ID, Email: row.Email, Name: row.Name, Status: row.Status, GlobalRole: row.GlobalRole, PasswordHash: row.PasswordHash, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ArchivedAt: row.ArchivedAt}
 }
 
 func apiTokenFromSQLC(row sqlcgen.ApiToken) domain.APIToken {

@@ -147,6 +147,7 @@ browser_stage=migrate
 NEROCD_DATABASE_URL="$browser_database_url" "$browser_runtime_dir/nerocd" migrate
 browser_stage=oidc-provision
 NEROCD_MODE=development NEROCD_DATABASE_URL="$browser_database_url" "$browser_runtime_dir/nerocd" oidc-provision --issuer "$browser_oidc_issuer" --subject nerocd-browser-oidc-subject --email oidc-browser@example.invalid --name "OIDC Browser User"
+NEROCD_MODE=development NEROCD_DATABASE_URL="$browser_database_url" "$browser_runtime_dir/nerocd" oidc-provision --issuer "$browser_oidc_issuer" --subject nerocd-browser-offboarding-subject --email oidc-offboarding@example.invalid --name "OIDC Offboarding Browser User"
 browser_stage=server
 NEROCD_MODE=development NEROCD_DATABASE_URL="$browser_database_url" NEROCD_COOKIE_SECURE=false NEROCD_PUBLIC_ORIGIN="$browser_origin" NEROCD_OIDC_ISSUER_URL="$browser_oidc_issuer" NEROCD_OIDC_CLIENT_ID=nerocd-browser NEROCD_OIDC_CLIENT_SECRET_FILE="$browser_runtime_dir/oidc-client-secret" "$browser_runtime_dir/nerocd" server --addr "127.0.0.1:${browser_port}" &
 browser_server_pid=$!

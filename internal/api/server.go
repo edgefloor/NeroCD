@@ -579,7 +579,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
 		code = "not_found"
-	case errors.Is(err, store.ErrConflict):
+	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrLastAdministrator):
 		status = http.StatusConflict
 		code = "conflict"
 	case errors.Is(err, app.ErrInvalidInput):
