@@ -41,7 +41,7 @@ func (s *Service) OffboardUser(ctx context.Context, input OffboardUserInput) (do
 		return domain.UserOffboardingResult{}, auth.ErrForbidden
 	}
 	if userID == "" {
-		return domain.UserOffboardingResult{}, errors.New("user_id is required")
+		return domain.UserOffboardingResult{}, InvalidInput(errors.New("user_id is required"))
 	}
 	now := s.clock().UTC()
 	audit, err := s.auditEvent(ctx, principal.ID, "identity.user.offboard", userID, map[string]any{"credential_policy": "revoke_sessions_and_issuer_tokens"})

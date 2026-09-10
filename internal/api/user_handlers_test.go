@@ -106,6 +106,7 @@ func TestUserOffboardingHTTPGuardsLastAdministratorAndRejectsUnknownFields(t *te
 		want int
 	}{
 		{name: "last administrator", body: `{"user_id":"usr_bootstrap"}`, want: http.StatusConflict},
+		{name: "empty user id", body: `{"user_id":"  "}`, want: http.StatusBadRequest},
 		{name: "unknown field", body: `{"user_id":"usr_viewer","reactivate":true}`, want: http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,6 +117,9 @@ func TestUserOffboardingHTTPGuardsLastAdministratorAndRejectsUnknownFields(t *te
 			server.ServeHTTP(recorder, request)
 			if recorder.Code != test.want {
 				t.Fatalf("status=%d want=%d body=%s", recorder.Code, test.want, recorder.Body.String())
+			}
+			if test.name == "empty user id" && recorder.Body.String() != "{\"code\":\"bad_request\",\"error\":\"invalid request\"}\n" {
+				t.Fatalf("empty user id body=%s", recorder.Body.String())
 			}
 		})
 	}
