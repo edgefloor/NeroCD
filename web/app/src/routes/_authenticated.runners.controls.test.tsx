@@ -111,7 +111,7 @@ test("system_admin retains list and detail runner controls while a principal wit
   queryData([]);
   const viewerList = render(<RunnersComponent />);
   expect(screen.queryByRole("button", { name: "Create enrollment" })).toBeNull();
-  expect(screen.getByRole("status").textContent).toContain("restricted");
+  expect(screen.getByRole("status").textContent).toBe("Runner operations require runner administrator permissions.");
   viewerList.unmount();
 
   queryData([]);
