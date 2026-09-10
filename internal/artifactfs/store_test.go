@@ -35,7 +35,11 @@ func TestPutAndOpenBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer store.Close()
+			t.Cleanup(func() {
+				if err := store.Close(); err != nil {
+					t.Errorf("close store: %v", err)
+				}
+			})
 
 			key := digest(test.content)
 			blob, err := store.Put(t.Context(), bytes.NewReader(test.content), key, int64(len(test.content)))
@@ -57,7 +61,11 @@ func TestPutAndOpenBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer handle.Close()
+			t.Cleanup(func() {
+				if err := handle.Close(); err != nil {
+					t.Errorf("close object handle: %v", err)
+				}
+			})
 			got, err := io.ReadAll(handle)
 			if err != nil {
 				t.Fatal(err)
@@ -78,7 +86,11 @@ func TestPutRejectsInvalidContentWithoutPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 
 	tests := []struct {
 		name     string
@@ -122,7 +134,11 @@ func TestPutCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	if _, err := store.Put(t.Context(), nil, strings.Repeat("0", 64), 0); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("nil source error = %v", err)
 	}
@@ -202,7 +218,11 @@ func TestUnsafeRootAndKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	for _, key := range []string{"", strings.Repeat("a", 63), strings.Repeat("A", 64), "../" + strings.Repeat("a", 64), strings.Repeat("g", 64)} {
 		if _, _, err := store.Open(t.Context(), key); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("Open key %q error = %v", key, err)
@@ -276,7 +296,11 @@ func TestOpenRejectsUnsafeOrTamperedObjectsWithoutBlocking(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer store.Close()
+			t.Cleanup(func() {
+				if err := store.Close(); err != nil {
+					t.Errorf("close store: %v", err)
+				}
+			})
 			key := digest([]byte("safe"))
 			test.setup(t, root, key)
 			if _, _, err := store.Open(t.Context(), key); !errors.Is(err, ErrIntegrity) {
@@ -292,7 +316,11 @@ func TestOpenDetectsTamperAfterPutAndPutNeverOverwrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	content := []byte("original")
 	key := digest(content)
 	if _, err := store.Put(t.Context(), bytes.NewReader(content), key, int64(len(content))); err != nil {
@@ -324,7 +352,11 @@ func TestRootRenameRemainsDescriptorConfined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	if err := os.Rename(root, moved); err != nil {
 		t.Fatal(err)
 	}
