@@ -22,6 +22,26 @@ func newServiceAccountTestService(t *testing.T) (*Service, *store.MemoryStore) {
 	return service, mem
 }
 
+type serviceAccountAccessProbe struct {
+	store.ServiceAccountRepository
+	scopeCalls int
+}
+
+func (p *serviceAccountAccessProbe) ServiceAccountProjectRole(context.Context, string) (string, string, error) {
+	p.scopeCalls++
+	return "", "", errors.New("unexpected service-account scope lookup")
+}
+
+type projectMemberAccessProbe struct {
+	store.ProjectMemberRepository
+	lookupCalls int
+}
+
+func (p *projectMemberAccessProbe) ListProjectMembers(context.Context, string) ([]domain.ProjectMember, error) {
+	p.lookupCalls++
+	return nil, errors.New("unexpected project-member lookup")
+}
+
 func TestServiceAccountLifecycleUsesStableScopedIdentity(t *testing.T) {
 	service, _ := newServiceAccountTestService(t)
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
@@ -248,7 +268,149 @@ func TestServiceAccountValidationPreservesAuthenticationPrecedence(t *testing.T)
 	}
 }
 
-func TestServiceAccountCannotAdministerProjectsOrHumanMemberships(t *testing.T) {
+func TestCategoricallyIneligiblePrincipalsAreDeniedBeforeValidationOrLookup(t *testing.T) {
+	service, mem := newServiceAccountTestService(t)
+	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	created, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "authorization target", Role: domain.RoleViewer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountsBefore, err := mem.ListServiceAccounts(t.Context(), "proj_platform", store.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditsBefore, err := mem.ListAuditEvents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceAccounts := &serviceAccountAccessProbe{ServiceAccountRepository: mem}
+	members := &projectMemberAccessProbe{ProjectMemberRepository: mem}
+	service.serviceAccounts = serviceAccounts
+	service.members = members
+
+	projectIDs := []string{" ", "malformed project", "proj_platform", "proj_missing"}
+	accountIDs := []string{" ", "malformed account", created.ServiceAccount.ID, "svcacct_missing"}
+	principals := []auth.Principal{
+		{ID: created.ServiceAccount.ID, Name: "managed account", Provider: domain.PrincipalServiceAccount},
+		{ID: "pat_legacy", Name: "legacy API token", Provider: domain.PrincipalAPIToken, Roles: []string{domain.RoleRunnerAdmin}},
+	}
+	for _, principal := range principals {
+		principal := principal
+		t.Run(principal.Provider, func(t *testing.T) {
+			ctx := auth.WithPrincipal(t.Context(), principal)
+			for _, projectID := range projectIDs {
+				for _, call := range []func() error{
+					func() error { _, err := service.ListServiceAccounts(ctx, projectID, store.Page{}); return err },
+					func() error {
+						_, err := service.CreateServiceAccount(ctx, ServiceAccountCreateInput{ProjectID: projectID, Name: "forbidden", Role: domain.RoleViewer})
+						return err
+					},
+				} {
+					if err := call(); !errors.Is(err, auth.ErrForbidden) || errors.Is(err, ErrInvalidInput) {
+						t.Fatalf("project_id=%q error=%v, want forbidden without invalid-input marker", projectID, err)
+					}
+				}
+			}
+			for _, accountID := range accountIDs {
+				name := "forbidden update"
+				for _, call := range []func() error{
+					func() error {
+						_, err := service.UpdateServiceAccount(ctx, ServiceAccountUpdateInput{ServiceAccountID: accountID, Name: &name})
+						return err
+					},
+					func() error {
+						_, err := service.RotateServiceAccountCredential(ctx, ServiceAccountRotateInput{ServiceAccountID: accountID})
+						return err
+					},
+					func() error {
+						_, err := service.RevokeServiceAccount(ctx, ServiceAccountRevokeInput{ServiceAccountID: accountID})
+						return err
+					},
+				} {
+					if err := call(); !errors.Is(err, auth.ErrForbidden) || errors.Is(err, ErrInvalidInput) {
+						t.Fatalf("service_account_id=%q error=%v, want forbidden without invalid-input marker", accountID, err)
+					}
+				}
+			}
+		})
+	}
+
+	if serviceAccounts.scopeCalls != 0 || members.lookupCalls != 0 {
+		t.Fatalf("categorical denial reached authorization lookups: service_account_scopes=%d member_lookups=%d", serviceAccounts.scopeCalls, members.lookupCalls)
+	}
+	accountsAfter, err := mem.ListServiceAccounts(t.Context(), "proj_platform", store.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(accountsAfter, accountsBefore) {
+		t.Fatalf("categorical denial changed service accounts: before=%#v after=%#v", accountsBefore, accountsAfter)
+	}
+	auditsAfter, err := mem.ListAuditEvents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deniedCalls = 2 * (4*2 + 4*3)
+	if got := len(auditsAfter) - len(auditsBefore); got != deniedCalls {
+		t.Fatalf("denied audit count=%d, want=%d", got, deniedCalls)
+	}
+	actionCounts := map[string]int{}
+	for _, event := range auditsAfter[:deniedCalls] {
+		actionCounts[event.Action]++
+		if _, ok := event.Metadata["project_id"]; ok && event.Action == "service_account.manage.denied" {
+			t.Fatalf("early mutation denial leaked looked-up project metadata: %#v", event)
+		}
+	}
+	if actionCounts["service_account.list.denied"] != 8 || actionCounts["service_account.create.denied"] != 8 || actionCounts["service_account.manage.denied"] != 24 {
+		t.Fatalf("denied audit actions=%v", actionCounts)
+	}
+}
+
+func TestHumanViewerUsesScopedAuthorizationBeforeServiceAccountDenial(t *testing.T) {
+	service, mem := newServiceAccountTestService(t)
+	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	created, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "viewer target", Role: domain.RoleMaintainer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := auth.WithPrincipal(t.Context(), auth.Principal{ID: "usr_viewer", Email: "viewer@example.local", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleUser}})
+	accountsBefore, err := mem.ListServiceAccounts(t.Context(), "proj_platform", store.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "forbidden update"
+	for _, call := range []func() error{
+		func() error { _, err := service.ListServiceAccounts(viewer, "proj_platform", store.Page{}); return err },
+		func() error {
+			_, err := service.CreateServiceAccount(viewer, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "forbidden", Role: domain.RoleViewer})
+			return err
+		},
+		func() error {
+			_, err := service.UpdateServiceAccount(viewer, ServiceAccountUpdateInput{ServiceAccountID: created.ServiceAccount.ID, Name: &name})
+			return err
+		},
+		func() error {
+			_, err := service.RotateServiceAccountCredential(viewer, ServiceAccountRotateInput{ServiceAccountID: created.ServiceAccount.ID})
+			return err
+		},
+		func() error {
+			_, err := service.RevokeServiceAccount(viewer, ServiceAccountRevokeInput{ServiceAccountID: created.ServiceAccount.ID})
+			return err
+		},
+	} {
+		if err := call(); !errors.Is(err, auth.ErrForbidden) {
+			t.Fatalf("viewer error=%v, want forbidden", err)
+		}
+	}
+	accountsAfter, err := mem.ListServiceAccounts(t.Context(), "proj_platform", store.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(accountsAfter, accountsBefore) {
+		t.Fatalf("viewer denial changed service accounts: before=%#v after=%#v", accountsBefore, accountsAfter)
+	}
+}
+
+func TestServiceAccountCannotCreateProjectsOrManageHumanMemberships(t *testing.T) {
 	service, mem := newServiceAccountTestService(t)
 	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
 	platformAccount, err := service.CreateServiceAccount(admin, ServiceAccountCreateInput{ProjectID: "proj_platform", Name: "platform owner bot", Role: domain.RoleOwner})

@@ -1,6 +1,6 @@
 # Service accounts
 
-Managed service accounts give automation a stable project identity. Each account belongs to exactly one project and has one of that project's existing roles: `owner`, `maintainer`, or `viewer`. It has no global roles and cannot use Settings APIs that require a human administrator or project owner.
+Managed service accounts give automation a stable project identity. Each account belongs to exactly one project and has one of that project's existing roles: `owner`, `maintainer`, or `viewer`. That assigned role governs project-scoped operations, including project updates and archival at the required role. Managed service accounts have no global roles and cannot manage service accounts, create projects, manage human membership or offboarding, or use global administration operations; those boundaries require an eligible human principal.
 
 ## Lifecycle
 

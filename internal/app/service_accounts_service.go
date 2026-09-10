@@ -64,6 +64,10 @@ func (s *Service) ListServiceAccounts(ctx context.Context, projectID string, pag
 		return store.PageResult[domain.ServiceAccount]{}, err
 	}
 	projectID = strings.TrimSpace(projectID)
+	if principal.Provider != domain.PrincipalLocal {
+		s.writeDeniedAudit(ctx, principal, "service_account.list.denied", projectID, nil)
+		return store.PageResult[domain.ServiceAccount]{}, auth.ErrForbidden
+	}
 	if projectID == "" {
 		return store.PageResult[domain.ServiceAccount]{}, InvalidInput(errors.New("project_id is required"))
 	}
@@ -81,6 +85,10 @@ func (s *Service) CreateServiceAccount(ctx context.Context, input ServiceAccount
 		return CreatedServiceAccount{}, err
 	}
 	projectID := strings.TrimSpace(input.ProjectID)
+	if principal.Provider != domain.PrincipalLocal {
+		s.writeDeniedAudit(ctx, principal, "service_account.create.denied", projectID, nil)
+		return CreatedServiceAccount{}, auth.ErrForbidden
+	}
 	if projectID == "" {
 		return CreatedServiceAccount{}, InvalidInput(errors.New("project_id is required"))
 	}
@@ -206,6 +214,10 @@ func (s *Service) authorizeServiceAccountMutation(ctx context.Context, accountID
 		return auth.Principal{}, "", "", err
 	}
 	accountID = strings.TrimSpace(accountID)
+	if principal.Provider != domain.PrincipalLocal {
+		s.writeDeniedAudit(ctx, principal, "service_account.manage.denied", accountID, nil)
+		return auth.Principal{}, "", "", auth.ErrForbidden
+	}
 	if accountID == "" {
 		return auth.Principal{}, "", "", InvalidInput(errors.New("service_account_id is required"))
 	}

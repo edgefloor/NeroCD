@@ -157,6 +157,84 @@ func TestServiceAccountHTTPValidationPreservesAuthenticationPrecedence(t *testin
 	}
 }
 
+func TestServiceAccountHTTPDeniesIneligiblePrincipalsBeforeIDValidation(t *testing.T) {
+	server, _ := newTestServer()
+	adminToken := createTestSession(t, server)
+	viewerToken := createTestSessionFor(t, server, "viewer@example.local", "viewer")
+	createdResponse := serviceAccountRequest(t, server, http.MethodPost, "/api/v1/service-accounts", adminToken, `{"project_id":"proj_platform","name":"authorization target","role":"maintainer"}`)
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create managed account status=%d body=%s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created app.CreatedServiceAccount
+	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	legacyResponse := serviceAccountRequest(t, server, http.MethodPost, "/api/v1/api-tokens", adminToken, `{"name":"legacy service-account token","roles":["runner_admin"]}`)
+	if legacyResponse.Code != http.StatusCreated {
+		t.Fatalf("create legacy token status=%d body=%s", legacyResponse.Code, legacyResponse.Body.String())
+	}
+	var legacy app.CreatedAPIToken
+	if err := json.NewDecoder(legacyResponse.Body).Decode(&legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	accountsBefore := serviceAccountRequest(t, server, http.MethodGet, "/api/v1/service-accounts?project_id=proj_platform", adminToken, "")
+	if accountsBefore.Code != http.StatusOK {
+		t.Fatalf("list before status=%d body=%s", accountsBefore.Code, accountsBefore.Body.String())
+	}
+	wantForbidden := "{\"code\":\"forbidden\",\"error\":\"access is denied\"}\n"
+	projectIDs := []string{"", "malformed id", "proj_platform", "proj_missing"}
+	accountIDs := []string{"", "malformed id", created.ServiceAccount.ID, "svcacct_missing"}
+	for _, principal := range []struct {
+		name  string
+		token string
+	}{
+		{name: "managed service account", token: created.Token},
+		{name: "legacy API token", token: legacy.Token},
+	} {
+		principal := principal
+		t.Run(principal.name, func(t *testing.T) {
+			assertForbidden := func(method, path, body string) {
+				t.Helper()
+				response := serviceAccountRequest(t, server, method, path, principal.token, body)
+				if response.Code != http.StatusForbidden || response.Body.String() != wantForbidden {
+					t.Fatalf("%s %s status=%d body=%q, want generic forbidden", method, path, response.Code, response.Body.String())
+				}
+			}
+			for _, projectID := range projectIDs {
+				queryID := strings.ReplaceAll(projectID, " ", "%20")
+				assertForbidden(http.MethodGet, "/api/v1/service-accounts?project_id="+queryID, "")
+				assertForbidden(http.MethodPost, "/api/v1/service-accounts", `{"project_id":"`+projectID+`","name":"forbidden","role":"viewer"}`)
+			}
+			for _, accountID := range accountIDs {
+				assertForbidden(http.MethodPatch, "/api/v1/service-accounts", `{"service_account_id":"`+accountID+`","name":"forbidden update"}`)
+				assertForbidden(http.MethodPost, "/api/v1/service-accounts/rotate", `{"service_account_id":"`+accountID+`"}`)
+				assertForbidden(http.MethodPost, "/api/v1/service-accounts/revoke", `{"service_account_id":"`+accountID+`"}`)
+			}
+		})
+	}
+
+	t.Run("human viewer known unauthorized scope", func(t *testing.T) {
+		assertForbidden := func(method, path, body string) {
+			t.Helper()
+			response := serviceAccountRequest(t, server, method, path, viewerToken, body)
+			if response.Code != http.StatusForbidden || response.Body.String() != wantForbidden {
+				t.Fatalf("%s %s status=%d body=%q, want generic forbidden", method, path, response.Code, response.Body.String())
+			}
+		}
+		assertForbidden(http.MethodGet, "/api/v1/service-accounts?project_id=proj_platform", "")
+		assertForbidden(http.MethodPost, "/api/v1/service-accounts", `{"project_id":"proj_platform","name":"forbidden","role":"viewer"}`)
+		assertForbidden(http.MethodPatch, "/api/v1/service-accounts", `{"service_account_id":"`+created.ServiceAccount.ID+`","name":"forbidden update"}`)
+		assertForbidden(http.MethodPost, "/api/v1/service-accounts/rotate", `{"service_account_id":"`+created.ServiceAccount.ID+`"}`)
+		assertForbidden(http.MethodPost, "/api/v1/service-accounts/revoke", `{"service_account_id":"`+created.ServiceAccount.ID+`"}`)
+	})
+
+	accountsAfter := serviceAccountRequest(t, server, http.MethodGet, "/api/v1/service-accounts?project_id=proj_platform", adminToken, "")
+	if accountsAfter.Code != http.StatusOK || accountsAfter.Body.String() != accountsBefore.Body.String() {
+		t.Fatalf("denied HTTP requests changed accounts: before=%s after_status=%d after=%s", accountsBefore.Body.String(), accountsAfter.Code, accountsAfter.Body.String())
+	}
+}
+
 func TestServiceAccountHTTPCannotAdministerProjectsOrHumanMemberships(t *testing.T) {
 	server, _ := newTestServer()
 	adminToken := createTestSession(t, server)
