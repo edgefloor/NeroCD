@@ -32,5 +32,9 @@ UPDATE sessions SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL;
 UPDATE api_tokens SET status = 'revoked', revoked_at = $2
 WHERE created_by = $1 AND status = 'active' AND revoked_at IS NULL;
 
+-- name: RevokeServiceAccountsOwnedByUser :execrows
+UPDATE service_accounts SET status = 'revoked', revoked_at = $2, updated_at = $2
+WHERE owner_user_id = $1 AND status = 'active';
+
 -- name: LockActiveUser :one
 SELECT id FROM users WHERE id = $1 AND status = 'active' FOR SHARE;

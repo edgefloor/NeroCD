@@ -539,6 +539,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/service-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List managed service accounts for one project */
+        get: operations["listServiceAccounts"];
+        put?: never;
+        /** Create a managed service account and first credential */
+        post: operations["createServiceAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update a managed service account name or project role */
+        patch: operations["updateServiceAccount"];
+        trace?: never;
+    };
+    "/api/v1/service-accounts/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Atomically replace every active credential for a service account */
+        post: operations["rotateServiceAccountCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/service-accounts/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke a service account and all its credentials */
+        post: operations["revokeServiceAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users": {
         parameters: {
             query?: never;
@@ -1582,6 +1635,7 @@ export interface components {
             /** @enum {string} */
             status: "active" | "revoked";
             created_by: string;
+            service_account_id?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -1590,6 +1644,63 @@ export interface components {
             last_used_at?: string;
             /** Format: date-time */
             revoked_at?: string;
+        };
+        ServiceAccount: {
+            id: string;
+            project_id: string;
+            owner_user_id: string;
+            name: string;
+            /** @enum {string} */
+            role: "owner" | "maintainer" | "viewer";
+            /** @enum {string} */
+            status: "active" | "revoked";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            revoked_at?: string;
+        };
+        ServiceAccountCreateInput: {
+            project_id: string;
+            name: string;
+            /** @enum {string} */
+            role: "owner" | "maintainer" | "viewer";
+            /** Format: date-time */
+            expires_at?: string;
+        };
+        ServiceAccountUpdateInput: {
+            service_account_id: string;
+            name?: string;
+            /** @enum {string} */
+            role?: "owner" | "maintainer" | "viewer";
+        };
+        ServiceAccountRotateInput: {
+            service_account_id: string;
+            /** Format: date-time */
+            expires_at?: string;
+        };
+        ServiceAccountRevokeInput: {
+            service_account_id: string;
+        };
+        CreatedServiceAccount: {
+            service_account: components["schemas"]["ServiceAccount"];
+            credential: components["schemas"]["APIToken"];
+            /** @description Bearer credential returned once at creation time. */
+            token: string;
+        };
+        RotatedServiceAccountCredential: {
+            service_account_id: string;
+            credential: components["schemas"]["APIToken"];
+            /** @description Replacement bearer credential returned once. */
+            token: string;
+        };
+        ServiceAccountListResponse: {
+            items: components["schemas"]["ServiceAccount"][];
+            limit: number;
+            offset: number;
+            count: number;
+            total: number;
         };
         User: {
             id: string;
@@ -1621,6 +1732,7 @@ export interface components {
             user: components["schemas"]["User"];
             revoked_sessions: number;
             revoked_api_tokens: number;
+            revoked_service_accounts: number;
         };
         Project: {
             id: string;
@@ -3238,6 +3350,146 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIToken"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listServiceAccounts: {
+        parameters: {
+            query: {
+                project_id: string;
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded service-account metadata without credential plaintext. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceAccountListResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createServiceAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceAccountCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Account created; credential plaintext is returned once. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedServiceAccount"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    updateServiceAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceAccountUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Updated service-account metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceAccount"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    rotateServiceAccountCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceAccountRotateInput"];
+            };
+        };
+        responses: {
+            /** @description Credential rotated; replacement plaintext is returned once. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RotatedServiceAccountCredential"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    revokeServiceAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceAccountRevokeInput"];
+            };
+        };
+        responses: {
+            /** @description Revoked service-account metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceAccount"];
                 };
             };
             400: components["responses"]["Error"];

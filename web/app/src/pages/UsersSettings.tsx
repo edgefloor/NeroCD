@@ -22,7 +22,7 @@ export function UsersSettingsPanel(): ReactNode {
     mutationFn: (userID: string) => offboardUser(userID),
     onSuccess: async (result) => {
       await client.invalidateQueries({ queryKey: ["users"] });
-      toast.success(`User offboarded; revoked ${result.revoked_sessions} sessions and ${result.revoked_api_tokens} API tokens`);
+      toast.success(`User offboarded; revoked ${result.revoked_sessions} sessions, ${result.revoked_api_tokens} API tokens, and ${result.revoked_service_accounts} service accounts`);
     },
     onError: (error) => toast.error(error.message),
   });
@@ -101,7 +101,7 @@ export function UsersSettings({ users, page, loading, busy, onPrevious, onNext, 
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Offboard {selected?.email}?</DialogTitle>
-              <DialogDescription>This disables local and OIDC sign-in, revokes every session, and revokes every active API token issued by this user, including automation credentials. Identity mappings and history remain.</DialogDescription>
+              <DialogDescription>This disables local and OIDC sign-in, revokes every session and active API token issued by this user, and disables every service account they own. Identity mappings and history remain.</DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="outline" onClick={() => setSelected(undefined)}>Keep user active</Button>

@@ -614,6 +614,78 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /api/v1/service-accounts:
+    get:
+      summary: List managed service accounts for one project
+      operationId: listServiceAccounts
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Bounded service-account metadata without credential plaintext.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ServiceAccountListResponse"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    post:
+      summary: Create a managed service account and first credential
+      operationId: createServiceAccount
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/ServiceAccountCreateInput"}}}
+      responses:
+        "201":
+          description: Account created; credential plaintext is returned once.
+          content: {application/json: {schema: {$ref: "#/components/schemas/CreatedServiceAccount"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    patch:
+      summary: Update a managed service account name or project role
+      operationId: updateServiceAccount
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/ServiceAccountUpdateInput"}}}
+      responses:
+        "200":
+          description: Updated service-account metadata.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ServiceAccount"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/v1/service-accounts/rotate:
+    post:
+      summary: Atomically replace every active credential for a service account
+      operationId: rotateServiceAccountCredential
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/ServiceAccountRotateInput"}}}
+      responses:
+        "201":
+          description: Credential rotated; replacement plaintext is returned once.
+          content: {application/json: {schema: {$ref: "#/components/schemas/RotatedServiceAccountCredential"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/v1/service-accounts/revoke:
+    post:
+      summary: Revoke a service account and all its credentials
+      operationId: revokeServiceAccount
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/ServiceAccountRevokeInput"}}}
+      responses:
+        "200":
+          description: Revoked service-account metadata.
+          content: {application/json: {schema: {$ref: "#/components/schemas/ServiceAccount"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
   /api/v1/users:
     get:
       summary: List safe local user metadata (system administrator)
@@ -2213,6 +2285,8 @@ components:
           enum: [active, revoked]
         created_by:
           type: string
+        service_account_id:
+          type: string
         created_at:
           type: string
           format: date-time
@@ -2225,6 +2299,76 @@ components:
         revoked_at:
           type: string
           format: date-time
+    ServiceAccount:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, owner_user_id, name, role, status, created_at, updated_at]
+      properties:
+        id: {type: string}
+        project_id: {type: string}
+        owner_user_id: {type: string}
+        name: {type: string}
+        role: {type: string, enum: [owner, maintainer, viewer]}
+        status: {type: string, enum: [active, revoked]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    ServiceAccountCreateInput:
+      type: object
+      additionalProperties: false
+      required: [project_id, name, role]
+      properties:
+        project_id: {type: string}
+        name: {type: string, minLength: 1, maxLength: 128}
+        role: {type: string, enum: [owner, maintainer, viewer]}
+        expires_at: {type: string, format: date-time}
+    ServiceAccountUpdateInput:
+      type: object
+      additionalProperties: false
+      required: [service_account_id]
+      properties:
+        service_account_id: {type: string}
+        name: {type: string, minLength: 1, maxLength: 128}
+        role: {type: string, enum: [owner, maintainer, viewer]}
+    ServiceAccountRotateInput:
+      type: object
+      additionalProperties: false
+      required: [service_account_id]
+      properties:
+        service_account_id: {type: string}
+        expires_at: {type: string, format: date-time}
+    ServiceAccountRevokeInput:
+      type: object
+      additionalProperties: false
+      required: [service_account_id]
+      properties:
+        service_account_id: {type: string}
+    CreatedServiceAccount:
+      type: object
+      additionalProperties: false
+      required: [service_account, credential, token]
+      properties:
+        service_account: {$ref: "#/components/schemas/ServiceAccount"}
+        credential: {$ref: "#/components/schemas/APIToken"}
+        token: {type: string, description: Bearer credential returned once at creation time.}
+    RotatedServiceAccountCredential:
+      type: object
+      additionalProperties: false
+      required: [service_account_id, credential, token]
+      properties:
+        service_account_id: {type: string}
+        credential: {$ref: "#/components/schemas/APIToken"}
+        token: {type: string, description: Replacement bearer credential returned once.}
+    ServiceAccountListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, limit, offset, count, total]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/ServiceAccount"}}
+        limit: {type: integer, minimum: 0}
+        offset: {type: integer, minimum: 0}
+        count: {type: integer, minimum: 0}
+        total: {type: integer, minimum: 0}
     User:
       type: object
       required: [id, email, name, status, global_role, created_at, updated_at]
@@ -2280,7 +2424,7 @@ components:
           type: string
     UserOffboardingResult:
       type: object
-      required: [user, revoked_sessions, revoked_api_tokens]
+      required: [user, revoked_sessions, revoked_api_tokens, revoked_service_accounts]
       properties:
         user:
           $ref: "#/components/schemas/User"
@@ -2288,6 +2432,9 @@ components:
           type: integer
           minimum: 0
         revoked_api_tokens:
+          type: integer
+          minimum: 0
+        revoked_service_accounts:
           type: integer
           minimum: 0
     Project:

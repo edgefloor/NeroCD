@@ -45,7 +45,7 @@ func (q *Queries) ClaimBootstrapAdmin(ctx context.Context, arg ClaimBootstrapAdm
 const createAPIToken = `-- name: CreateAPIToken :one
 INSERT INTO api_tokens (id, name, kind, token_hash, roles, status, created_by, created_at, expires_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-RETURNING id, name, kind, token_hash, roles, status, created_by, created_at, expires_at, last_used_at, revoked_at
+RETURNING id, name, kind, token_hash, roles, status, created_by, created_at, expires_at, last_used_at, revoked_at, service_account_id
 `
 
 type CreateAPITokenParams struct {
@@ -85,6 +85,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 		&i.ExpiresAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.ServiceAccountID,
 	)
 	return i, err
 }
@@ -150,8 +151,9 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 const getAPITokenByHash = `-- name: GetAPITokenByHash :one
 UPDATE api_tokens SET last_used_at = $2
 WHERE token_hash = $1 AND status = 'active' AND revoked_at IS NULL
+  AND service_account_id IS NULL
   AND (expires_at IS NULL OR expires_at > $2)
-RETURNING id, name, kind, token_hash, roles, status, created_by, created_at, expires_at, last_used_at, revoked_at
+RETURNING id, name, kind, token_hash, roles, status, created_by, created_at, expires_at, last_used_at, revoked_at, service_account_id
 `
 
 type GetAPITokenByHashParams struct {
@@ -174,6 +176,7 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashPa
 		&i.ExpiresAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.ServiceAccountID,
 	)
 	return i, err
 }
@@ -291,7 +294,7 @@ func (q *Queries) ListSessions(ctx context.Context) ([]ListSessionsRow, error) {
 const revokeAPIToken = `-- name: RevokeAPIToken :one
 UPDATE api_tokens SET status = 'revoked', revoked_at = $2
 WHERE id = $1 AND revoked_at IS NULL
-RETURNING id, name, kind, token_hash, roles, status, created_by, created_at, expires_at, last_used_at, revoked_at
+RETURNING id, name, kind, token_hash, roles, status, created_by, created_at, expires_at, last_used_at, revoked_at, service_account_id
 `
 
 type RevokeAPITokenParams struct {
@@ -314,6 +317,7 @@ func (q *Queries) RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) 
 		&i.ExpiresAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.ServiceAccountID,
 	)
 	return i, err
 }

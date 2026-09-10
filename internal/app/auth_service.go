@@ -143,7 +143,20 @@ func (s *Service) AuthenticateBrowserSessionToken(ctx context.Context, token str
 }
 
 func (s *Service) authenticateAPIToken(ctx context.Context, token string) (auth.Principal, error) {
-	apiToken, err := s.apiTokens.GetAPITokenByHash(ctx, apiTokenHash(token), time.Now().UTC())
+	now := s.clock().UTC()
+	credential, err := s.serviceAccounts.GetManagedServiceAccountCredentialByHash(ctx, apiTokenHash(token), now)
+	if err == nil {
+		return auth.Principal{
+			ID:       credential.ServiceAccount.ID,
+			Name:     credential.ServiceAccount.Name,
+			Roles:    []string{},
+			Provider: domain.PrincipalServiceAccount,
+		}, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return auth.Principal{}, err
+	}
+	apiToken, err := s.apiTokens.GetAPITokenByHash(ctx, apiTokenHash(token), now)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return auth.Principal{}, auth.ErrUnauthenticated

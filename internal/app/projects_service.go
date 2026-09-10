@@ -83,6 +83,19 @@ func (s *Service) ProjectRole(ctx context.Context, projectID string) (domain.Pro
 	if isSystemAdmin(principal) {
 		return projectRole(projectID, domain.RoleSystemAdmin), nil
 	}
+	if principal.Provider == domain.PrincipalServiceAccount {
+		accountProjectID, role, roleErr := s.serviceAccounts.ServiceAccountProjectRole(ctx, principal.ID)
+		if roleErr != nil {
+			if errors.Is(roleErr, store.ErrNotFound) {
+				return domain.ProjectRole{}, auth.ErrForbidden
+			}
+			return domain.ProjectRole{}, roleErr
+		}
+		if accountProjectID != projectID {
+			return domain.ProjectRole{}, auth.ErrForbidden
+		}
+		return projectRole(projectID, role), nil
+	}
 	members, err := s.members.ListProjectMembers(ctx, projectID)
 	if err != nil {
 		return domain.ProjectRole{}, err
@@ -130,6 +143,9 @@ func (s *Service) CreateProject(ctx context.Context, input ProjectInput) (domain
 	if err != nil {
 		return domain.Project{}, err
 	}
+	if principal.Provider == domain.PrincipalServiceAccount {
+		return domain.Project{}, auth.ErrForbidden
+	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return domain.Project{}, InvalidInput(errors.New("name is required"))
@@ -157,6 +173,9 @@ func (s *Service) UpsertProjectMember(ctx context.Context, input ProjectMemberIn
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
 		return domain.ProjectMember{}, err
+	}
+	if principal.Provider == domain.PrincipalServiceAccount {
+		return domain.ProjectMember{}, auth.ErrForbidden
 	}
 	projectID := strings.TrimSpace(input.ProjectID)
 	email := strings.TrimSpace(strings.ToLower(input.Email))

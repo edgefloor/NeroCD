@@ -95,7 +95,7 @@ test("administrator offboards an OIDC user and the next provider login is denied
   await offboardButton.click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("disables local and OIDC sign-in");
-  await expect(dialog).toContainText("including automation credentials");
+  await expect(dialog).toContainText("disables every service account they own");
   await expect(dialog).toContainText("Identity mappings and history remain");
   const response = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === "/api/v1/users/offboard" && candidate.request().method() === "POST");
   await dialog.getByRole("button", { name: "Offboard user" }).click();

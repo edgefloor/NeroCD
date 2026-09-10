@@ -26,6 +26,7 @@ test("offboarding confirmation explains login, session, issuer-token, and histor
   expect(dialog.textContent).toMatch(/local and OIDC sign-in/i);
   expect(dialog.textContent).toMatch(/every session/i);
   expect(dialog.textContent).toMatch(/API token issued by this user/i);
+  expect(dialog.textContent).toMatch(/service account they own/i);
   expect(dialog.textContent).toMatch(/history remain/i);
   fireEvent.click(screen.getByRole("button", { name: "Offboard user" }));
   await waitFor(() => expect(offboard).toHaveBeenCalledWith(activeUser.id));
@@ -50,7 +51,7 @@ test("later pages remain selected when offboarding refreshes the active page", a
     : { items: [laterUser], count: 1, limit: usersPageSize, offset: usersPageSize, total: usersPageSize + 1 });
   usersAPI.offboardUser.mockImplementation(async () => {
     laterUser = { ...laterUser, status: "disabled" };
-    return { user: laterUser, revoked_sessions: 0, revoked_api_tokens: 0 };
+    return { user: laterUser, revoked_sessions: 0, revoked_api_tokens: 0, revoked_service_accounts: 0 };
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(<QueryClientProvider client={client}><UsersSettingsPanel /></QueryClientProvider>);

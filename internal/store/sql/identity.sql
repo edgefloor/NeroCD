@@ -64,6 +64,7 @@ RETURNING *;
 -- name: GetAPITokenByHash :one
 UPDATE api_tokens SET last_used_at = $2
 WHERE token_hash = $1 AND status = 'active' AND revoked_at IS NULL
+  AND service_account_id IS NULL
   AND (expires_at IS NULL OR expires_at > $2)
 RETURNING *;
 

@@ -88,6 +88,7 @@ type MemoryStore struct {
 	oidcIdentities        []domain.OIDCExternalIdentity
 	oidcLoginFlows        []domain.OIDCLoginFlow
 	apiTokens             []domain.APIToken
+	serviceAccounts       []domain.ServiceAccount
 	tokenHashBySessionID  map[string]string
 	projects              []domain.Project
 	templates             []domain.TaskTemplate

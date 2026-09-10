@@ -166,6 +166,24 @@ func (q *Queries) RevokeAPITokensCreatedByUser(ctx context.Context, arg RevokeAP
 	return result.RowsAffected(), nil
 }
 
+const revokeServiceAccountsOwnedByUser = `-- name: RevokeServiceAccountsOwnedByUser :execrows
+UPDATE service_accounts SET status = 'revoked', revoked_at = $2, updated_at = $2
+WHERE owner_user_id = $1 AND status = 'active'
+`
+
+type RevokeServiceAccountsOwnedByUserParams struct {
+	OwnerUserID string     `json:"owner_user_id"`
+	RevokedAt   *time.Time `json:"revoked_at"`
+}
+
+func (q *Queries) RevokeServiceAccountsOwnedByUser(ctx context.Context, arg RevokeServiceAccountsOwnedByUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeServiceAccountsOwnedByUser, arg.OwnerUserID, arg.RevokedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeSessionsForUser = `-- name: RevokeSessionsForUser :execrows
 UPDATE sessions SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL
 `

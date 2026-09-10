@@ -131,9 +131,17 @@ const (
 
 // PrincipalLocal and the related constants identify authenticated principal types.
 const (
-	PrincipalLocal    = "local"
-	PrincipalAPIToken = "api_token"
-	PrincipalRunner   = "runner"
+	PrincipalLocal          = "local"
+	PrincipalAPIToken       = "api_token"
+	PrincipalServiceAccount = "service_account"
+	PrincipalRunner         = "runner"
+)
+
+// ServiceAccountActive and ServiceAccountRevoked identify managed automation
+// principal lifecycle states.
+const (
+	ServiceAccountActive  = "active"
+	ServiceAccountRevoked = "revoked"
 )
 
 // UserActive and UserDisabled identify local user lifecycle states.

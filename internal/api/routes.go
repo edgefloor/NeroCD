@@ -23,6 +23,11 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodDelete, Path: "/api/v1/browser-sessions"},
 	{Method: http.MethodPost, Path: "/api/v1/api-tokens"},
 	{Method: http.MethodPost, Path: "/api/v1/api-tokens/revoke"},
+	{Method: http.MethodGet, Path: "/api/v1/service-accounts"},
+	{Method: http.MethodPost, Path: "/api/v1/service-accounts"},
+	{Method: http.MethodPatch, Path: "/api/v1/service-accounts"},
+	{Method: http.MethodPost, Path: "/api/v1/service-accounts/rotate"},
+	{Method: http.MethodPost, Path: "/api/v1/service-accounts/revoke"},
 	{Method: http.MethodGet, Path: "/api/v1/users"},
 	{Method: http.MethodPost, Path: "/api/v1/users/offboard"},
 	{Method: http.MethodGet, Path: "/api/v1/capabilities"},
@@ -131,6 +136,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.createAPIToken
 	case "/api/v1/api-tokens/revoke":
 		return s.revokeAPIToken
+	case "/api/v1/service-accounts":
+		return s.serviceAccountsHandler
+	case "/api/v1/service-accounts/rotate":
+		return s.rotateServiceAccountCredential
+	case "/api/v1/service-accounts/revoke":
+		return s.revokeServiceAccount
 	case "/api/v1/users":
 		return s.listUsers
 	case "/api/v1/users/offboard":
