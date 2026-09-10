@@ -10,7 +10,12 @@ const clientSecret = readFileSync(secretPath, "utf8").trim();
 if (!clientSecret) throw new Error("browser fixture client secret is empty");
 
 const clientID = "nerocd-browser";
-const subject = "nerocd-browser-oidc-subject";
+const defaultPersona = Object.freeze({ subject: "nerocd-browser-oidc-subject", email: "oidc-browser@example.invalid" });
+const offboardingPersona = Object.freeze({ subject: "nerocd-browser-offboarding-subject", email: "oidc-offboarding@example.invalid" });
+const personasByLoginHint = new Map([
+  [defaultPersona.email, defaultPersona],
+  [offboardingPersona.email, offboardingPersona],
+]);
 const redirectURI = `${parsedAppOrigin.origin}/api/v1/oidc/callback`;
 const keyID = "browser-fixture-key";
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -28,10 +33,10 @@ function base64urlJSON(value) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
 
-function idToken(nonce) {
+function idToken(record) {
   const now = Math.floor(Date.now() / 1000);
   const header = base64urlJSON({ alg: "RS256", kid: keyID, typ: "JWT" });
-  const payload = base64urlJSON({ iss: issuer, sub: subject, aud: clientID, exp: now + 300, iat: now, nonce });
+  const payload = base64urlJSON({ iss: issuer, sub: record.subject, aud: clientID, exp: now + 300, iat: now, nonce: record.nonce });
   const signingInput = `${header}.${payload}`;
   const signature = sign("RSA-SHA256", Buffer.from(signingInput), privateKey).toString("base64url");
   return `${signingInput}.${signature}`;
@@ -71,8 +76,12 @@ const server = createServer(async (request, response) => {
       const required = ["client_id", "redirect_uri", "state", "nonce", "code_challenge", "code_challenge_method", "response_type"];
       if (required.some((name) => requestURL.searchParams.getAll(name).length !== 1)) return json(response, 400, { error: "invalid_request" });
       if (requestURL.searchParams.get("client_id") !== clientID || requestURL.searchParams.get("redirect_uri") !== redirectURI || requestURL.searchParams.get("response_type") !== "code" || requestURL.searchParams.get("code_challenge_method") !== "S256") return json(response, 400, { error: "invalid_request" });
+      const loginHints = requestURL.searchParams.getAll("login_hint");
+      if (loginHints.length > 1) return json(response, 400, { error: "invalid_request" });
+      const persona = loginHints.length === 0 ? defaultPersona : personasByLoginHint.get(loginHints[0]);
+      if (!persona) return json(response, 400, { error: "invalid_request" });
       const code = randomBytes(24).toString("base64url");
-      codes.set(code, { challenge: requestURL.searchParams.get("code_challenge"), nonce: requestURL.searchParams.get("nonce") });
+      codes.set(code, { challenge: requestURL.searchParams.get("code_challenge"), nonce: requestURL.searchParams.get("nonce"), subject: persona.subject });
       const callback = new URL(redirectURI);
       callback.searchParams.set("code", code);
       callback.searchParams.set("state", requestURL.searchParams.get("state"));
@@ -98,7 +107,7 @@ const server = createServer(async (request, response) => {
       const challenge = createHash("sha256").update(verifier).digest("base64url");
       if (!record || presentedID !== clientID || presentedSecret !== clientSecret || form.get("grant_type") !== "authorization_code" || form.get("redirect_uri") !== redirectURI || challenge !== record.challenge) return json(response, 400, { error: "invalid_grant" });
       codes.delete(code);
-      return json(response, 200, { access_token: randomBytes(24).toString("base64url"), token_type: "Bearer", expires_in: 300, id_token: idToken(record.nonce) });
+      return json(response, 200, { access_token: randomBytes(24).toString("base64url"), token_type: "Bearer", expires_in: 300, id_token: idToken(record) });
     }
     return json(response, 404, { error: "not_found" });
   } catch {
@@ -110,7 +119,7 @@ server.listen(0, "localhost", () => {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fixture provider address unavailable");
   issuer = `http://localhost:${address.port}`;
-  writeFileSync(infoPath, JSON.stringify({ issuer, clientID, subject }), { mode: 0o600 });
+  writeFileSync(infoPath, JSON.stringify({ issuer, clientID, subject: defaultPersona.subject }), { mode: 0o600 });
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.close(() => process.exit(0)));
