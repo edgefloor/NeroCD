@@ -2,7 +2,9 @@ package runner
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +60,180 @@ func TestAttemptJournalPersistsAndRecoversAtomically(t *testing.T) {
 	if reopened.Depth() != 0 {
 		t.Fatalf("journal depth = %d, want 0", reopened.Depth())
 	}
+}
+
+func FuzzAttemptJournalRecovery(f *testing.F) {
+	if runtime.GOOS == "windows" {
+		f.Skip("secure journal is supported on Unix")
+	}
+	validContents, expected := fuzzAttemptJournalValidState(f)
+	invalidTimestamp := bytes.Replace(validContents, []byte(`"expires_at":"2026-08-16T08:01:00Z"`), []byte(`"expires_at":"2026-08-16T08:00:00Z"`), 1)
+	if bytes.Equal(invalidTimestamp, validContents) {
+		f.Fatal("valid journal state did not contain expected expiry timestamp")
+	}
+	duplicateID := bytes.Replace(validContents, []byte(`"id":"completion_recovery_one"`), []byte(`"id":"event_recovery_one"`), 1)
+	if bytes.Equal(duplicateID, validContents) {
+		f.Fatal("valid journal state did not contain expected completion id")
+	}
+	invalidSeeds := [][]byte{
+		[]byte(`{"version":`),
+		[]byte(`{"version":2}`),
+		invalidTimestamp,
+		duplicateID,
+	}
+	for _, seed := range append([][]byte{validContents}, invalidSeeds...) {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, contents []byte) {
+		if len(contents) > 64<<10 {
+			t.Skip("journal input exceeds fuzz size limit")
+		}
+		root := filepath.Join(t.TempDir(), "journal")
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		statePath := filepath.Join(root, journalStateFilename)
+		if err := os.WriteFile(statePath, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		knownInvalid := false
+		for _, seed := range invalidSeeds {
+			knownInvalid = knownInvalid || bytes.Equal(contents, seed)
+		}
+
+		journal, err := OpenAttemptJournal(root)
+		if err != nil {
+			if err := os.WriteFile(statePath, validContents, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			recovered, err := OpenAttemptJournal(root)
+			if err != nil {
+				t.Fatalf("open valid journal after recovery error: %v", err)
+			}
+			t.Cleanup(func() { _ = recovered.Close() })
+			if got := recovered.Snapshot(); !reflect.DeepEqual(got, expected) {
+				t.Fatalf("recovered valid journal snapshot = %#v, want %#v", got, expected)
+			}
+			if err := recovered.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := OpenAttemptJournal(root)
+			if err != nil {
+				t.Fatalf("open valid journal after close: %v", err)
+			}
+			t.Cleanup(func() { _ = reopened.Close() })
+			if err := reopened.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		t.Cleanup(func() { _ = journal.Close() })
+		if knownInvalid {
+			_ = journal.Close()
+			t.Fatal("OpenAttemptJournal accepted a known-invalid persisted state")
+		}
+
+		snapshot := journal.Snapshot()
+		if bytes.Equal(contents, validContents) && !reflect.DeepEqual(snapshot, expected) {
+			_ = journal.Close()
+			t.Fatalf("valid journal snapshot = %#v, want %#v", snapshot, expected)
+		}
+		if err := journal.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		recovered, err := OpenAttemptJournal(root)
+		if err != nil {
+			t.Fatalf("reopen recovered journal: %v", err)
+		}
+		t.Cleanup(func() { _ = recovered.Close() })
+		if got := recovered.Snapshot(); !reflect.DeepEqual(got, snapshot) {
+			_ = recovered.Close()
+			t.Fatalf("reopened snapshot = %#v, want %#v", got, snapshot)
+		}
+		remaining := snapshot
+		if len(snapshot.Events) > 0 {
+			if err := recovered.AckEvents([]string{snapshot.Events[0].ID}); err != nil {
+				t.Fatal(err)
+			}
+			remaining.Events = append([]JournalEvent(nil), snapshot.Events[1:]...)
+		}
+		if len(snapshot.Completions) > 0 {
+			if err := recovered.AckCompletion(snapshot.Completions[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			remaining.Completions = append([]JournalCompletion(nil), snapshot.Completions[1:]...)
+		}
+		if len(snapshot.Provenance) > 0 {
+			if err := recovered.AckProvenance(snapshot.Provenance[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			remaining.Provenance = append([]JournalProvenance(nil), snapshot.Provenance[1:]...)
+		}
+		if err := recovered.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		final, err := OpenAttemptJournal(root)
+		if err != nil {
+			t.Fatalf("open after recovered acknowledgements: %v", err)
+		}
+		t.Cleanup(func() { _ = final.Close() })
+		if got := final.Snapshot(); !reflect.DeepEqual(got, remaining) {
+			_ = final.Close()
+			t.Fatalf("snapshot after recovered acknowledgements = %#v, want %#v", got, remaining)
+		}
+		if err := final.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func fuzzAttemptJournalValidState(f *testing.F) ([]byte, JournalSnapshot) {
+	f.Helper()
+	root := filepath.Join(f.TempDir(), "journal")
+	journal, err := OpenAttemptJournal(root)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Cleanup(func() { _ = journal.Close() })
+	authority := testJournalAuthority()
+	for _, event := range []JournalEvent{
+		{ID: "event_recovery_one", Attempt: authority, Sequence: 1, Stream: "stdout", Message: "first", CreatedAt: authority.CreatedAt.Add(time.Second)},
+		{ID: "event_recovery_two", Attempt: authority, Sequence: 2, Stream: "stderr", Message: "second", CreatedAt: authority.CreatedAt.Add(2 * time.Second)},
+	} {
+		if _, err := journal.AppendEvent(event); err != nil {
+			f.Fatal(err)
+		}
+	}
+	for _, completion := range []JournalCompletion{
+		{ID: "completion_recovery_one", Attempt: authority, Status: "failed", CreatedAt: authority.CreatedAt.Add(3 * time.Second)},
+		{ID: "completion_recovery_two", Attempt: authority, Status: "succeeded", CreatedAt: authority.CreatedAt.Add(4 * time.Second)},
+	} {
+		if _, err := journal.AppendCompletion(completion); err != nil {
+			f.Fatal(err)
+		}
+	}
+	commit := strings.Repeat("a", 40)
+	composeHash := "sha256:" + strings.Repeat("b", 64)
+	for _, provenance := range []JournalProvenance{
+		{ID: "provenance_recovery_one", Attempt: authority, DeploymentID: "deployment_one", GitCommit: commit, ComposeHash: composeHash, ImageDigests: []string{"sha256:" + strings.Repeat("c", 64)}, ContentIdentity: commit + ":" + composeHash, CreatedAt: authority.CreatedAt.Add(5 * time.Second)},
+		{ID: "provenance_recovery_two", Attempt: authority, DeploymentID: "deployment_two", GitCommit: commit, ComposeHash: composeHash, ImageDigests: []string{"sha256:" + strings.Repeat("d", 64)}, ContentIdentity: commit + ":" + composeHash, CreatedAt: authority.CreatedAt.Add(6 * time.Second)},
+	} {
+		if _, err := journal.AppendProvenance(provenance); err != nil {
+			f.Fatal(err)
+		}
+	}
+	expected := journal.Snapshot()
+	if err := journal.Close(); err != nil {
+		f.Fatal(err)
+	}
+	contents, err := os.ReadFile(filepath.Join(root, journalStateFilename))
+	if err != nil {
+		f.Fatal(err)
+	}
+	return contents, expected
 }
 
 func TestAttemptJournalRejectsInsecurePaths(t *testing.T) {
@@ -339,7 +515,7 @@ func TestAttemptJournalFilteringRollbackPreservesInMemoryState(t *testing.T) {
 	}{
 		{name: "ack_events", mutate: func(j *AttemptJournal) error { return j.AckEvents([]string{"event_one"}) }},
 		{name: "ack_completion", mutate: func(j *AttemptJournal) error { return j.AckCompletion("completion_one") }},
-		{name: "discard_attempt", mutate: func(j *AttemptJournal) error { return j.DiscardAttempt("lease_journal", 1) }},
+		{name: "discard_attempt", mutate: func(j *AttemptJournal) error { return j.DiscardAttempt(testJournalAuthority()) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -386,4 +562,77 @@ func TestAttemptJournalFilteringRollbackPreservesInMemoryState(t *testing.T) {
 func testJournalAuthority() AttemptIdentity {
 	created := time.Date(2026, 8, 16, 8, 0, 0, 0, time.UTC)
 	return AttemptIdentity{RunID: "run_journal", LeaseID: "lease_journal", Attempt: 1, Fence: "opaque_fence", CreatedAt: created, ExpiresAt: created.Add(time.Minute)}
+}
+
+func TestAttemptJournalDiscardAttemptMatchesOnlyAuthorityTuple(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("secure journal is supported on Unix")
+	}
+	root := filepath.Join(t.TempDir(), "journal")
+	journal, err := OpenAttemptJournal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalClosed := false
+	t.Cleanup(func() {
+		if !journalClosed {
+			_ = journal.Close()
+		}
+	})
+	target := testJournalAuthority()
+	identities := []AttemptIdentity{
+		target,
+		{RunID: "run_other", LeaseID: target.LeaseID, Attempt: target.Attempt, Fence: target.Fence, CreatedAt: target.CreatedAt.Add(time.Hour), ExpiresAt: target.ExpiresAt.Add(time.Hour)},
+		{RunID: target.RunID, LeaseID: "lease_other", Attempt: target.Attempt, Fence: target.Fence, CreatedAt: target.CreatedAt.Add(2 * time.Hour), ExpiresAt: target.ExpiresAt.Add(2 * time.Hour)},
+		{RunID: target.RunID, LeaseID: target.LeaseID, Attempt: 2, Fence: target.Fence, CreatedAt: target.CreatedAt.Add(3 * time.Hour), ExpiresAt: target.ExpiresAt.Add(3 * time.Hour)},
+		{RunID: target.RunID, LeaseID: target.LeaseID, Attempt: target.Attempt, Fence: "opaque_fence_other", CreatedAt: target.CreatedAt.Add(4 * time.Hour), ExpiresAt: target.ExpiresAt.Add(4 * time.Hour)},
+	}
+	for index, authority := range identities {
+		if _, err := journal.AppendEvent(JournalEvent{ID: fmt.Sprintf("event_%d", index), Attempt: authority, Sequence: index + 1, Stream: "stdout", Message: "pending", CreatedAt: authority.CreatedAt}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := journal.AppendCompletion(JournalCompletion{ID: fmt.Sprintf("completion_%d", index), Attempt: authority, Status: "succeeded", CreatedAt: authority.CreatedAt}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := journal.AppendProvenance(JournalProvenance{ID: fmt.Sprintf("provenance_%d", index), Attempt: authority, DeploymentID: fmt.Sprintf("deployment_%d", index), GitCommit: strings.Repeat("a", 40), ComposeHash: "sha256:" + strings.Repeat("b", 64), ImageDigests: []string{"sha256:" + strings.Repeat("c", 64)}, ContentIdentity: strings.Repeat("a", 40) + ":sha256:" + strings.Repeat("b", 64), CreatedAt: authority.CreatedAt}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	metadataOnly := target
+	metadataOnly.CreatedAt = target.CreatedAt.Add(24 * time.Hour)
+	metadataOnly.ExpiresAt = target.ExpiresAt.Add(24 * time.Hour)
+	if err := journal.DiscardAttempt(metadataOnly); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	journalClosed = true
+	reopened, err := OpenAttemptJournal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopenedClosed := false
+	t.Cleanup(func() {
+		if !reopenedClosed {
+			_ = reopened.Close()
+		}
+	})
+	snapshot := reopened.Snapshot()
+	if len(snapshot.Events) != 4 || len(snapshot.Completions) != 4 || len(snapshot.Provenance) != 4 {
+		t.Fatalf("discarded snapshot = %#v", snapshot)
+	}
+	for index, authority := range identities[1:] {
+		id := index + 1
+		if snapshot.Events[index].ID != fmt.Sprintf("event_%d", id) || snapshot.Events[index].Attempt != authority {
+			t.Fatalf("event %d = %#v, want authority %#v", id, snapshot.Events[index], authority)
+		}
+		if snapshot.Completions[index].ID != fmt.Sprintf("completion_%d", id) || snapshot.Completions[index].Attempt != authority {
+			t.Fatalf("completion %d = %#v, want authority %#v", id, snapshot.Completions[index], authority)
+		}
+		if snapshot.Provenance[index].ID != fmt.Sprintf("provenance_%d", id) || snapshot.Provenance[index].Attempt != authority {
+			t.Fatalf("provenance %d = %#v, want authority %#v", id, snapshot.Provenance[index], authority)
+		}
+	}
 }

@@ -269,24 +269,24 @@ func (j *AttemptJournal) AckProvenance(id string) error {
 }
 
 // DiscardAttempt removes all pending mutations for one fenced attempt.
-func (j *AttemptJournal) DiscardAttempt(leaseID string, attempt int) error {
+func (j *AttemptJournal) DiscardAttempt(authority AttemptIdentity) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	events := make([]JournalEvent, 0, len(j.state.Events))
 	for _, event := range j.state.Events {
-		if event.Attempt.LeaseID != leaseID || event.Attempt.Attempt != attempt {
+		if !sameAttemptAuthority(event.Attempt, authority) {
 			events = append(events, event)
 		}
 	}
 	completions := make([]JournalCompletion, 0, len(j.state.Completions))
 	for _, completion := range j.state.Completions {
-		if completion.Attempt.LeaseID != leaseID || completion.Attempt.Attempt != attempt {
+		if !sameAttemptAuthority(completion.Attempt, authority) {
 			completions = append(completions, completion)
 		}
 	}
 	provenance := make([]JournalProvenance, 0, len(j.state.Provenance))
 	for _, pending := range j.state.Provenance {
-		if pending.Attempt.LeaseID != leaseID || pending.Attempt.Attempt != attempt {
+		if !sameAttemptAuthority(pending.Attempt, authority) {
 			provenance = append(provenance, pending)
 		}
 	}
@@ -300,6 +300,10 @@ func (j *AttemptJournal) DiscardAttempt(leaseID string, attempt int) error {
 		return err
 	}
 	return nil
+}
+
+func sameAttemptAuthority(left, right AttemptIdentity) bool {
+	return left.RunID == right.RunID && left.LeaseID == right.LeaseID && left.Attempt == right.Attempt && left.Fence == right.Fence
 }
 
 // Snapshot returns a copy of pending journal state.

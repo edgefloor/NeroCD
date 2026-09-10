@@ -350,7 +350,7 @@ func reconcileRunnerJournalWithCounters(server, token string, journal *runner.At
 		if fenced {
 			// A bounded read-only request made with the exact attempt capability is
 			// the only startup outcome that authorizes durable stale-entry removal.
-			if err := journal.DiscardAttempt(pending.authority.LeaseID, pending.authority.Attempt); err != nil {
+			if err := journal.DiscardAttempt(pending.authority); err != nil {
 				return err
 			}
 			fmt.Printf("journal_reconciliation=fenced attempt=%d\n", pending.authority.Attempt)
@@ -365,7 +365,7 @@ func reconcileRunnerJournalWithCounters(server, token string, journal *runner.At
 			// prevent heartbeat/claim traffic until a later startup can reconcile it.
 			return err
 		}
-		if err := journal.DiscardAttempt(pending.authority.LeaseID, pending.authority.Attempt); err != nil {
+		if err := journal.DiscardAttempt(pending.authority); err != nil {
 			return err
 		}
 	}
