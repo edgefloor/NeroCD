@@ -73,6 +73,8 @@ async function selectOffboardingOIDCPersona(page: Page): Promise<{ used: boolean
 }
 
 test("administrator offboards an OIDC user and the next provider login is denied", async ({ page }) => {
+  // Allow time for ten serial CLI provisions and the full offboarding/OIDC flow.
+  test.setTimeout(45_000);
   await page.goto("/settings");
   await signInAsAdministrator(page);
   await expect(page).toHaveURL(/\/settings/);
