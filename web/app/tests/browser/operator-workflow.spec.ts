@@ -257,6 +257,7 @@ test("dashboard reports unfinished work truthfully and shared cards keep bounded
 test("project paging reaches rows beyond one hundred on a narrow viewport", async ({ page }, testInfo) => {
   await page.goto("/projects");
   await signIn(page);
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   const projects = Array.from({ length: 151 }, (_, index) => ({
     id: `proj_page_${index + 1}`,
     name: `Paged project ${index + 1}`,
@@ -288,6 +289,7 @@ test("project paging reaches rows beyond one hundred on a narrow viewport", asyn
 test("settings pages member history while authorization lookup spans every bounded page", async ({ page }, testInfo) => {
   await page.goto("/settings");
   await signIn(page);
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Member paging ${Date.now()}`, description: "member paging fixture" });
   const members = Array.from({ length: 131 }, (_, index) => ({
     id: `member_page_${index + 1}`,
@@ -353,9 +355,9 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   expect((await firstLogRequest).status()).toBe(200);
   const dialog = page.getByRole("dialog", { name: `run ${runID}` });
   await expect(dialog).toContainText("Browser output 52");
-  await expect(dialog).not.toContainText("Browser output 1");
+  await expect(dialog.getByText("Browser output 1", { exact: true })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Load earlier output" }).click();
-  await expect(dialog).toContainText("Browser output 1");
+  await expect(dialog.getByText("Browser output 1", { exact: true })).toBeVisible();
   await expect(dialog).toContainText("Following active run output.");
   await expect(dialog).toContainText("Browser output 152", { timeout: 10_000 });
   expect(scopedLogRequests).toBeGreaterThanOrEqual(2);
