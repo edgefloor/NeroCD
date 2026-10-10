@@ -50,6 +50,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPatch, Path: "/api/v1/templates"},
 	{Method: http.MethodGet, Path: "/api/v1/runs"},
 	{Method: http.MethodPost, Path: "/api/v1/runs"},
+	{Method: http.MethodGet, Path: "/api/v1/runs/{id}"},
 	{Method: http.MethodPost, Path: "/api/v1/runs/approve"},
 	{Method: http.MethodPost, Path: "/api/v1/runs/reject"},
 	{Method: http.MethodPost, Path: "/api/v1/runs/cancel"},
@@ -168,6 +169,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.templatesHandler
 	case "/api/v1/runs":
 		return s.runsHandler
+	case "/api/v1/runs/{id}":
+		return s.runByID
 	case "/api/v1/runs/approve":
 		return s.approveRun
 	case "/api/v1/runs/reject":

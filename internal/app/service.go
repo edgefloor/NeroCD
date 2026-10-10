@@ -59,16 +59,16 @@ type Service struct {
 	oidcLimiter          *auth.LoginLimiter
 }
 
-// Dependencies names every collaborator of the application service. All
-// fields are required: NewService fails instead of probing the runner or run
-// repositories for optional capabilities, so wiring mistakes surface at
-// construction rather than as missing behavior at request time.
 // Dependencies supplies the repositories and services used by Service.
+// Every repository field is required. The OIDC identity provider remains an
+// optional runtime configuration applied through ConfigureOIDC.
 type Dependencies struct {
 	Auth              auth.Provider
 	Users             store.UserRepository
 	Sessions          store.SessionRepository
 	APITokens         store.APITokenRepository
+	ServiceAccounts   store.ServiceAccountRepository
+	OIDC              store.OIDCRepository
 	Projects          store.ProjectRepository
 	Members           store.ProjectMemberRepository
 	Templates         store.TemplateRepository
@@ -100,9 +100,11 @@ func NewService(deps Dependencies) (*Service, error) {
 	if deps.APITokens == nil {
 		missing = append(missing, "APITokens")
 	}
-	serviceAccounts, hasServiceAccounts := deps.APITokens.(store.ServiceAccountRepository)
-	if deps.APITokens != nil && !hasServiceAccounts {
+	if deps.ServiceAccounts == nil {
 		missing = append(missing, "ServiceAccounts")
+	}
+	if deps.OIDC == nil {
+		missing = append(missing, "OIDC")
 	}
 	if deps.Projects == nil {
 		missing = append(missing, "Projects")
@@ -146,13 +148,12 @@ func NewService(deps Dependencies) (*Service, error) {
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("app.NewService: missing required dependencies: %s", strings.Join(missing, ", "))
 	}
-	oidcStore, _ := deps.Users.(store.OIDCRepository)
 	return &Service{
 		auth:                 deps.Auth,
 		users:                deps.Users,
 		sessions:             deps.Sessions,
 		apiTokens:            deps.APITokens,
-		serviceAccounts:      serviceAccounts,
+		serviceAccounts:      deps.ServiceAccounts,
 		projects:             deps.Projects,
 		members:              deps.Members,
 		templates:            deps.Templates,
@@ -171,7 +172,7 @@ func NewService(deps Dependencies) (*Service, error) {
 		allowLegacyPasswords: true,
 		clock:                time.Now,
 		loginLimiter:         auth.NewLoginLimiter(time.Now, 5, time.Minute, 10_000),
-		oidcStore:            oidcStore,
+		oidcStore:            deps.OIDC,
 		oidcLimiter:          auth.NewLoginLimiter(time.Now, 20, time.Minute, 10_000),
 	}, nil
 }
@@ -724,16 +725,7 @@ func (s *Service) runByID(ctx context.Context, runID string) (domain.TaskRun, er
 	if runID == "" {
 		return domain.TaskRun{}, InvalidInput(errors.New("run_id is required"))
 	}
-	runs, err := s.runs.ListRuns(ctx, "")
-	if err != nil {
-		return domain.TaskRun{}, err
-	}
-	for _, run := range runs {
-		if run.ID == runID {
-			return run, nil
-		}
-	}
-	return domain.TaskRun{}, store.ErrNotFound
+	return s.runs.GetRun(ctx, runID)
 }
 
 func (s *Service) templateByID(ctx context.Context, templateID string) (domain.TaskTemplate, error) {

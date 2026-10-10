@@ -2,10 +2,23 @@ package store
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"nerocd/internal/domain"
 )
+
+// GetRun implements the corresponding repository operation.
+func (s *MemoryStore) GetRun(_ context.Context, id string) (domain.TaskRun, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, run := range s.runs {
+		if run.ID == id {
+			return run, nil
+		}
+	}
+	return domain.TaskRun{}, ErrNotFound
+}
 
 // ListRuns implements the corresponding repository operation.
 func (s *MemoryStore) ListRuns(_ context.Context, projectID string) ([]domain.TaskRun, error) {
@@ -26,6 +39,25 @@ func (s *MemoryStore) ListRunsPage(ctx context.Context, projectID string, page P
 	if err != nil {
 		return PageResult[domain.TaskRun]{}, err
 	}
+	return paginateSlice(runs, page), nil
+}
+
+// ListRunsPageForScope applies authorization before pagination.
+func (s *MemoryStore) ListRunsPageForScope(_ context.Context, scope RunAuthorizationScope, page Page) (PageResult[domain.TaskRun], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	runs := make([]domain.TaskRun, 0, len(s.runs))
+	for _, run := range s.runs {
+		if scope.permits(run.ProjectID) {
+			runs = append(runs, run)
+		}
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		if runs[i].StartedAt.Equal(runs[j].StartedAt) {
+			return runs[i].ID > runs[j].ID
+		}
+		return runs[i].StartedAt.After(runs[j].StartedAt)
+	})
 	return paginateSlice(runs, page), nil
 }
 
@@ -51,6 +83,31 @@ func (s *MemoryStore) ListRunLogsPage(ctx context.Context, runID string, page Pa
 	return paginateSlice(logs, page), nil
 }
 
+// ListRunLogsPageForScope applies run authorization before pagination.
+func (s *MemoryStore) ListRunLogsPageForScope(_ context.Context, scope RunAuthorizationScope, page Page) (PageResult[domain.RunLog], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	allowedRuns := make(map[string]struct{})
+	for _, run := range s.runs {
+		if scope.permits(run.ProjectID) {
+			allowedRuns[run.ID] = struct{}{}
+		}
+	}
+	logs := make([]domain.RunLog, 0, len(s.logs))
+	for _, log := range s.logs {
+		if _, ok := allowedRuns[log.RunID]; ok {
+			logs = append(logs, log)
+		}
+	}
+	sort.SliceStable(logs, func(i, j int) bool {
+		if logs[i].RunID == logs[j].RunID {
+			return logs[i].Sequence < logs[j].Sequence
+		}
+		return logs[i].RunID < logs[j].RunID
+	})
+	return paginateSlice(logs, page), nil
+}
+
 // ListArtifacts implements the corresponding repository operation.
 func (s *MemoryStore) ListArtifacts(_ context.Context, runID string) ([]domain.ArtifactRecord, error) {
 	s.mu.RLock()
@@ -70,6 +127,31 @@ func (s *MemoryStore) ListArtifactsPage(ctx context.Context, runID string, page 
 	if err != nil {
 		return PageResult[domain.ArtifactRecord]{}, err
 	}
+	return paginateSlice(artifacts, page), nil
+}
+
+// ListArtifactsPageForScope applies run authorization before pagination.
+func (s *MemoryStore) ListArtifactsPageForScope(_ context.Context, scope RunAuthorizationScope, page Page) (PageResult[domain.ArtifactRecord], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	allowedRuns := make(map[string]struct{})
+	for _, run := range s.runs {
+		if scope.permits(run.ProjectID) {
+			allowedRuns[run.ID] = struct{}{}
+		}
+	}
+	artifacts := make([]domain.ArtifactRecord, 0, len(s.artifacts))
+	for _, artifact := range s.artifacts {
+		if _, ok := allowedRuns[artifact.RunID]; ok {
+			artifacts = append(artifacts, artifact)
+		}
+	}
+	sort.SliceStable(artifacts, func(i, j int) bool {
+		if artifacts[i].CreatedAt.Equal(artifacts[j].CreatedAt) {
+			return artifacts[i].Name < artifacts[j].Name
+		}
+		return artifacts[i].CreatedAt.Before(artifacts[j].CreatedAt)
+	})
 	return paginateSlice(artifacts, page), nil
 }
 

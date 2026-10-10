@@ -21,6 +21,24 @@ func (q *Queries) CountArtifacts(ctx context.Context, runID string) (int64, erro
 	return count, err
 }
 
+const countArtifactsForScope = `-- name: CountArtifactsForScope :one
+SELECT count(*) FROM run_artifacts AS artifact
+JOIN task_runs AS run ON run.id=artifact.run_id
+WHERE $1::boolean OR run.project_id=ANY($2::text[])
+`
+
+type CountArtifactsForScopeParams struct {
+	AllProjects bool     `json:"all_projects"`
+	ProjectIds  []string `json:"project_ids"`
+}
+
+func (q *Queries) CountArtifactsForScope(ctx context.Context, arg CountArtifactsForScopeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countArtifactsForScope, arg.AllProjects, arg.ProjectIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createArtifact = `-- name: CreateArtifact :one
 INSERT INTO run_artifacts (id,run_id,lease_id,name,path,found,required,size,kind,created_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, run_id, lease_id, name, path, found, required, size, kind, created_at
@@ -81,6 +99,56 @@ type ListArtifactsPageParams struct {
 
 func (q *Queries) ListArtifactsPage(ctx context.Context, arg ListArtifactsPageParams) ([]RunArtifact, error) {
 	rows, err := q.db.Query(ctx, listArtifactsPage, arg.RunID, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunArtifact{}
+	for rows.Next() {
+		var i RunArtifact
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.LeaseID,
+			&i.Name,
+			&i.Path,
+			&i.Found,
+			&i.Required,
+			&i.Size,
+			&i.Kind,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listArtifactsPageForScope = `-- name: ListArtifactsPageForScope :many
+SELECT artifact.id, artifact.run_id, artifact.lease_id, artifact.name, artifact.path, artifact.found, artifact.required, artifact.size, artifact.kind, artifact.created_at FROM run_artifacts AS artifact
+JOIN task_runs AS run ON run.id=artifact.run_id
+WHERE $1::boolean OR run.project_id=ANY($2::text[])
+ORDER BY artifact.created_at, artifact.name LIMIT $4 OFFSET $3
+`
+
+type ListArtifactsPageForScopeParams struct {
+	AllProjects bool     `json:"all_projects"`
+	ProjectIds  []string `json:"project_ids"`
+	PageOffset  int32    `json:"page_offset"`
+	PageLimit   int32    `json:"page_limit"`
+}
+
+func (q *Queries) ListArtifactsPageForScope(ctx context.Context, arg ListArtifactsPageForScopeParams) ([]RunArtifact, error) {
+	rows, err := q.db.Query(ctx, listArtifactsPageForScope,
+		arg.AllProjects,
+		arg.ProjectIds,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

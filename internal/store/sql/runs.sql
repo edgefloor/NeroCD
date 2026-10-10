@@ -4,6 +4,15 @@ SELECT count(*) FROM task_runs WHERE (sqlc.arg(project_id)::text='' OR project_i
 -- name: GetRun :one
 SELECT * FROM task_runs WHERE id=$1;
 
+-- name: CountRunsForScope :one
+SELECT count(*) FROM task_runs
+WHERE sqlc.arg(all_projects)::boolean OR project_id=ANY(sqlc.arg(project_ids)::text[]);
+
+-- name: ListRunsPageForScope :many
+SELECT * FROM task_runs
+WHERE sqlc.arg(all_projects)::boolean OR project_id=ANY(sqlc.arg(project_ids)::text[])
+ORDER BY started_at DESC, id DESC LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
+
 -- name: ListRunsPage :many
 SELECT * FROM task_runs
 WHERE (sqlc.arg(project_id)::text='' OR project_id=sqlc.arg(project_id))

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
 )
@@ -28,17 +30,33 @@ func (s *Service) ListRunsPage(ctx context.Context, projectID string, page store
 		if err := s.requireProjectRole(ctx, principal, projectID, domain.RoleViewer); err != nil {
 			return store.PageResult[domain.TaskRun]{}, err
 		}
-		return s.runs.ListRunsPage(ctx, projectID, page)
+		return s.runs.ListRunsPageForScope(ctx, store.RunAuthorizationScope{ProjectIDs: []string{projectID}}, page)
 	}
-	runs, err := s.runs.ListRuns(ctx, "")
+	scope, err := s.runAuthorizationScope(ctx, principal)
 	if err != nil {
 		return store.PageResult[domain.TaskRun]{}, err
 	}
-	filtered, err := s.filterRunsForPrincipal(ctx, principal, runs)
+	return s.runs.ListRunsPageForScope(ctx, scope, page)
+}
+
+// RunByID returns one authorized run. Missing and inaccessible runs share the
+// same not-found result so the endpoint cannot enumerate another project.
+func (s *Service) RunByID(ctx context.Context, runID string) (domain.TaskRun, error) {
+	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {
-		return store.PageResult[domain.TaskRun]{}, err
+		return domain.TaskRun{}, err
 	}
-	return paginateForService(filtered, page), nil
+	run, err := s.runByID(ctx, runID)
+	if err != nil {
+		return domain.TaskRun{}, err
+	}
+	if err := s.requireProjectRole(ctx, principal, run.ProjectID, domain.RoleViewer); err != nil {
+		if errors.Is(err, auth.ErrForbidden) {
+			return domain.TaskRun{}, store.ErrNotFound
+		}
+		return domain.TaskRun{}, err
+	}
+	return run, nil
 }
 
 // ListRunLogs lists authorized run logs.
@@ -64,29 +82,11 @@ func (s *Service) ListRunLogsPage(ctx context.Context, runID string, page store.
 		}
 		return s.runs.ListRunLogsPage(ctx, runID, page)
 	}
-	logs, err := s.runs.ListRunLogs(ctx, "")
+	scope, err := s.runAuthorizationScope(ctx, principal)
 	if err != nil {
 		return store.PageResult[domain.RunLog]{}, err
 	}
-	allRuns, err := s.runs.ListRuns(ctx, "")
-	if err != nil {
-		return store.PageResult[domain.RunLog]{}, err
-	}
-	runs, err := s.filterRunsForPrincipal(ctx, principal, allRuns)
-	if err != nil {
-		return store.PageResult[domain.RunLog]{}, err
-	}
-	allowedRuns := map[string]struct{}{}
-	for _, run := range runs {
-		allowedRuns[run.ID] = struct{}{}
-	}
-	out := make([]domain.RunLog, 0, len(logs))
-	for _, log := range logs {
-		if _, ok := allowedRuns[log.RunID]; ok {
-			out = append(out, log)
-		}
-	}
-	return paginateForService(out, page), nil
+	return s.runs.ListRunLogsPageForScope(ctx, scope, page)
 }
 
 // ListArtifacts lists authorized artifacts.
@@ -112,28 +112,27 @@ func (s *Service) ListArtifactsPage(ctx context.Context, runID string, page stor
 		}
 		return s.runs.ListArtifactsPage(ctx, runID, page)
 	}
+	scope, err := s.runAuthorizationScope(ctx, principal)
+	if err != nil {
+		return store.PageResult[domain.ArtifactRecord]{}, err
+	}
+	return s.runs.ListArtifactsPageForScope(ctx, scope, page)
+}
+
+func (s *Service) runAuthorizationScope(ctx context.Context, principal auth.Principal) (store.RunAuthorizationScope, error) {
 	if isSystemAdmin(principal) {
-		return s.runs.ListArtifactsPage(ctx, "", page)
+		return store.RunAuthorizationScope{AllProjects: true}, nil
 	}
-	runs, err := s.ListRuns(ctx, "")
+	allowed, err := s.allowedProjects(ctx, principal.ID)
 	if err != nil {
-		return store.PageResult[domain.ArtifactRecord]{}, err
+		return store.RunAuthorizationScope{}, err
 	}
-	allowed := map[string]bool{}
-	for _, run := range runs {
-		allowed[run.ID] = true
+	projectIDs := make([]string, 0, len(allowed))
+	for projectID := range allowed {
+		projectIDs = append(projectIDs, projectID)
 	}
-	artifacts, err := s.runs.ListArtifacts(ctx, "")
-	if err != nil {
-		return store.PageResult[domain.ArtifactRecord]{}, err
-	}
-	out := make([]domain.ArtifactRecord, 0, len(artifacts))
-	for _, artifact := range artifacts {
-		if allowed[artifact.RunID] {
-			out = append(out, artifact)
-		}
-	}
-	return paginateForService(out, page), nil
+	sort.Strings(projectIDs)
+	return store.RunAuthorizationScope{ProjectIDs: projectIDs}, nil
 }
 
 // RunLogInput supplies an authorized run-log append request.

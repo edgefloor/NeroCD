@@ -37,7 +37,7 @@ func (incompatibleProjects) SchemaCompatible(context.Context) (bool, error) { re
 
 func newTestServer() (*Server, *store.MemoryStore) {
 	mem := newSeededTestStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		panic(err)
 	}
@@ -46,7 +46,7 @@ func newTestServer() (*Server, *store.MemoryStore) {
 
 func newTestServerWithConfig(cfg ServerConfig) (*Server, *store.MemoryStore) {
 	mem := newSeededTestStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		panic(err)
 	}
@@ -541,7 +541,7 @@ func TestReadinessIsPublicAndMetricsRequireAdmin(t *testing.T) {
 
 func TestBootstrapAndOperationsStatusAreBoundedAndRoleProtected(t *testing.T) {
 	empty := store.NewMemoryStore()
-	emptyService, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, Projects: empty, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
+	emptyService, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, ServiceAccounts: empty, OIDC: empty, Projects: empty, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +580,7 @@ func TestBootstrapAndOperationsStatusAreBoundedAndRoleProtected(t *testing.T) {
 		t.Fatalf("admin operations status=%d %s", ready.Code, ready.Body.String())
 	}
 
-	incompatible, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, Projects: incompatibleProjects{empty}, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
+	incompatible, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, ServiceAccounts: empty, OIDC: empty, Projects: incompatibleProjects{empty}, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
 
 	if err != nil {
 
@@ -732,7 +732,7 @@ func TestDrainKeepsLivenessButRejectsReadinessAndOrdinaryWork(t *testing.T) {
 
 func TestReadinessDoesNotConflateLivenessWithDatabaseCompatibility(t *testing.T) {
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: unavailableProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: unavailableProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,7 +753,7 @@ func TestReadinessDoesNotConflateLivenessWithDatabaseCompatibility(t *testing.T)
 
 func TestReadinessRejectsOldOrPartialSchema(t *testing.T) {
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: incompatibleProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: incompatibleProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1392,6 +1392,23 @@ func TestProjectAuthorizationScopesReadsAndMutations(t *testing.T) {
 	server.ServeHTTP(logsRec, logsReq)
 	if logsRec.Code != http.StatusForbidden {
 		t.Fatalf("GET /api/v1/run-logs for inaccessible run returned %d, want %d: %s", logsRec.Code, http.StatusForbidden, logsRec.Body.String())
+	}
+
+	visibleRunReq := httptest.NewRequest(http.MethodGet, "/api/v1/runs/run_002", nil)
+	visibleRunReq.Header.Set("Authorization", "Bearer "+token)
+	visibleRunRec := httptest.NewRecorder()
+	server.ServeHTTP(visibleRunRec, visibleRunReq)
+	if visibleRunRec.Code != http.StatusOK || !strings.Contains(visibleRunRec.Body.String(), `"id":"run_002"`) {
+		t.Fatalf("GET authorized run detail returned %d: %s", visibleRunRec.Code, visibleRunRec.Body.String())
+	}
+	for _, runID := range []string{"run_001", "run_missing"} {
+		runReq := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+runID, nil)
+		runReq.Header.Set("Authorization", "Bearer "+token)
+		runRec := httptest.NewRecorder()
+		server.ServeHTTP(runRec, runReq)
+		if runRec.Code != http.StatusNotFound {
+			t.Fatalf("GET unavailable run %s returned %d, want %d: %s", runID, runRec.Code, http.StatusNotFound, runRec.Body.String())
+		}
 	}
 }
 

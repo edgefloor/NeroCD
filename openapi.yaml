@@ -839,6 +839,8 @@ paths:
       operationId: listTemplates
       parameters:
         - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: Task template list. When `project_id` is supplied, only templates in that project are returned.
@@ -1161,6 +1163,27 @@ paths:
         "400":
           $ref: "#/components/responses/Error"
         "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/runs/{id}:
+    get:
+      summary: Get one authorized task run
+      operationId: getRun
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Authorized task run detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskRun"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
           $ref: "#/components/responses/Error"
   /api/v1/runs/approve:
     post:

@@ -80,6 +80,26 @@ type PageResult[T any] struct {
 	Total  int
 }
 
+// RunAuthorizationScope is the set of projects an authenticated principal may
+// inspect. AllProjects is reserved for callers that already established global
+// administrative access. An empty project set denies access to every run.
+type RunAuthorizationScope struct {
+	AllProjects bool
+	ProjectIDs  []string
+}
+
+func (s RunAuthorizationScope) permits(projectID string) bool {
+	if s.AllProjects {
+		return true
+	}
+	for _, allowed := range s.ProjectIDs {
+		if allowed == projectID {
+			return true
+		}
+	}
+	return false
+}
+
 // MemoryStore is an in-memory implementation of the store repository contracts.
 type MemoryStore struct {
 	mu                    sync.RWMutex

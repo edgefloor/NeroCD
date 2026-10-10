@@ -13,6 +13,18 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// GetRun implements the corresponding repository operation.
+func (s *PostgresStore) GetRun(ctx context.Context, id string) (domain.TaskRun, error) {
+	row, err := s.queries.GetRun(ctx, strings.TrimSpace(id))
+	if err == pgx.ErrNoRows {
+		return domain.TaskRun{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.TaskRun{}, fmt.Errorf("get run query: %w", err)
+	}
+	return taskRunFromSQLC(row)
+}
+
 // ListRuns implements the corresponding repository operation.
 func (s *PostgresStore) ListRuns(ctx context.Context, projectID string) ([]domain.TaskRun, error) {
 	result, err := s.ListRunsPage(ctx, projectID, Page{})
@@ -30,6 +42,29 @@ func (s *PostgresStore) ListRunsPage(ctx context.Context, projectID string, page
 	rows, err := s.queries.ListRunsPage(ctx, sqlcgen.ListRunsPageParams{ProjectID: projectID, PageLimit: int32(limit), PageOffset: int32(offset)})
 	if err != nil {
 		return PageResult[domain.TaskRun]{}, fmt.Errorf("list runs query: %w", err)
+	}
+	runs := make([]domain.TaskRun, 0, len(rows))
+	for _, row := range rows {
+		run, err := taskRunFromSQLC(row)
+		if err != nil {
+			return PageResult[domain.TaskRun]{}, err
+		}
+		runs = append(runs, run)
+	}
+	return PageResult[domain.TaskRun]{Items: runs, Limit: limit, Offset: offset, Total: total}, nil
+}
+
+// ListRunsPageForScope applies authorization before pagination.
+func (s *PostgresStore) ListRunsPageForScope(ctx context.Context, scope RunAuthorizationScope, page Page) (PageResult[domain.TaskRun], error) {
+	total64, err := s.queries.CountRunsForScope(ctx, sqlcgen.CountRunsForScopeParams{AllProjects: scope.AllProjects, ProjectIds: scope.ProjectIDs})
+	if err != nil {
+		return PageResult[domain.TaskRun]{}, fmt.Errorf("count authorized runs query: %w", err)
+	}
+	total := int(total64)
+	limit, offset := resolvePage(page, total)
+	rows, err := s.queries.ListRunsPageForScope(ctx, sqlcgen.ListRunsPageForScopeParams{AllProjects: scope.AllProjects, ProjectIds: scope.ProjectIDs, PageLimit: int32(limit), PageOffset: int32(offset)})
+	if err != nil {
+		return PageResult[domain.TaskRun]{}, fmt.Errorf("list authorized runs query: %w", err)
 	}
 	runs := make([]domain.TaskRun, 0, len(rows))
 	for _, row := range rows {
@@ -285,6 +320,25 @@ func (s *PostgresStore) ListRunLogsPage(ctx context.Context, runID string, page 
 	return PageResult[domain.RunLog]{Items: logs, Limit: limit, Offset: offset, Total: total}, nil
 }
 
+// ListRunLogsPageForScope applies run authorization before pagination.
+func (s *PostgresStore) ListRunLogsPageForScope(ctx context.Context, scope RunAuthorizationScope, page Page) (PageResult[domain.RunLog], error) {
+	total64, err := s.queries.CountRunLogsForScope(ctx, sqlcgen.CountRunLogsForScopeParams{AllProjects: scope.AllProjects, ProjectIds: scope.ProjectIDs})
+	if err != nil {
+		return PageResult[domain.RunLog]{}, fmt.Errorf("count authorized run logs query: %w", err)
+	}
+	total := int(total64)
+	limit, offset := resolvePage(page, total)
+	rows, err := s.queries.ListRunLogsPageForScope(ctx, sqlcgen.ListRunLogsPageForScopeParams{AllProjects: scope.AllProjects, ProjectIds: scope.ProjectIDs, PageLimit: int32(limit), PageOffset: int32(offset)})
+	if err != nil {
+		return PageResult[domain.RunLog]{}, fmt.Errorf("list authorized run logs query: %w", err)
+	}
+	logs := make([]domain.RunLog, 0, len(rows))
+	for _, row := range rows {
+		logs = append(logs, runLogFromSQLC(row))
+	}
+	return PageResult[domain.RunLog]{Items: logs, Limit: limit, Offset: offset, Total: total}, nil
+}
+
 // ListArtifacts implements the corresponding repository operation.
 func (s *PostgresStore) ListArtifacts(ctx context.Context, runID string) ([]domain.ArtifactRecord, error) {
 	result, err := s.ListArtifactsPage(ctx, runID, Page{})
@@ -302,6 +356,25 @@ func (s *PostgresStore) ListArtifactsPage(ctx context.Context, runID string, pag
 	rows, err := s.queries.ListArtifactsPage(ctx, sqlcgen.ListArtifactsPageParams{RunID: strings.TrimSpace(runID), PageLimit: int32(limit), PageOffset: int32(offset)})
 	if err != nil {
 		return PageResult[domain.ArtifactRecord]{}, fmt.Errorf("list artifacts query: %w", err)
+	}
+	artifacts := make([]domain.ArtifactRecord, 0, len(rows))
+	for _, row := range rows {
+		artifacts = append(artifacts, artifactFromSQLC(row))
+	}
+	return PageResult[domain.ArtifactRecord]{Items: artifacts, Limit: limit, Offset: offset, Total: total}, nil
+}
+
+// ListArtifactsPageForScope applies run authorization before pagination.
+func (s *PostgresStore) ListArtifactsPageForScope(ctx context.Context, scope RunAuthorizationScope, page Page) (PageResult[domain.ArtifactRecord], error) {
+	total64, err := s.queries.CountArtifactsForScope(ctx, sqlcgen.CountArtifactsForScopeParams{AllProjects: scope.AllProjects, ProjectIds: scope.ProjectIDs})
+	if err != nil {
+		return PageResult[domain.ArtifactRecord]{}, fmt.Errorf("count authorized artifacts query: %w", err)
+	}
+	total := int(total64)
+	limit, offset := resolvePage(page, total)
+	rows, err := s.queries.ListArtifactsPageForScope(ctx, sqlcgen.ListArtifactsPageForScopeParams{AllProjects: scope.AllProjects, ProjectIds: scope.ProjectIDs, PageLimit: int32(limit), PageOffset: int32(offset)})
+	if err != nil {
+		return PageResult[domain.ArtifactRecord]{}, fmt.Errorf("list authorized artifacts query: %w", err)
 	}
 	artifacts := make([]domain.ArtifactRecord, 0, len(rows))
 	for _, row := range rows {

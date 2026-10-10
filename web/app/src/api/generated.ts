@@ -842,6 +842,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one authorized task run */
+        get: operations["getRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/approve": {
         parameters: {
             query?: never;
@@ -3692,6 +3709,10 @@ export interface operations {
             query?: {
                 /** @description Optional project identifier filter. */
                 project_id?: components["parameters"]["ProjectID"];
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
             };
             header?: never;
             path?: never;
@@ -4128,6 +4149,30 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+        };
+    };
+    getRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized task run detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskRun"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     approveRun: {

@@ -21,6 +21,24 @@ func (q *Queries) CountRunLogs(ctx context.Context, runID string) (int64, error)
 	return count, err
 }
 
+const countRunLogsForScope = `-- name: CountRunLogsForScope :one
+SELECT count(*) FROM run_logs AS log
+JOIN task_runs AS run ON run.id=log.run_id
+WHERE $1::boolean OR run.project_id=ANY($2::text[])
+`
+
+type CountRunLogsForScopeParams struct {
+	AllProjects bool     `json:"all_projects"`
+	ProjectIds  []string `json:"project_ids"`
+}
+
+func (q *Queries) CountRunLogsForScope(ctx context.Context, arg CountRunLogsForScopeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunLogsForScope, arg.AllProjects, arg.ProjectIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getRunnerEventByKey = `-- name: GetRunnerEventByKey :one
 SELECT id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence FROM run_logs
 WHERE run_id=$1 AND event_key=$2
@@ -193,6 +211,56 @@ type ListRunLogsPageParams struct {
 
 func (q *Queries) ListRunLogsPage(ctx context.Context, arg ListRunLogsPageParams) ([]RunLog, error) {
 	rows, err := q.db.Query(ctx, listRunLogsPage, arg.RunID, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunLog{}
+	for rows.Next() {
+		var i RunLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Sequence,
+			&i.Stream,
+			&i.Message,
+			&i.CreatedAt,
+			&i.EventKey,
+			&i.LeaseID,
+			&i.Attempt,
+			&i.RequestedSequence,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunLogsPageForScope = `-- name: ListRunLogsPageForScope :many
+SELECT log.id, log.run_id, log.sequence, log.stream, log.message, log.created_at, log.event_key, log.lease_id, log.attempt, log.requested_sequence FROM run_logs AS log
+JOIN task_runs AS run ON run.id=log.run_id
+WHERE $1::boolean OR run.project_id=ANY($2::text[])
+ORDER BY log.run_id, log.sequence LIMIT $4 OFFSET $3
+`
+
+type ListRunLogsPageForScopeParams struct {
+	AllProjects bool     `json:"all_projects"`
+	ProjectIds  []string `json:"project_ids"`
+	PageOffset  int32    `json:"page_offset"`
+	PageLimit   int32    `json:"page_limit"`
+}
+
+func (q *Queries) ListRunLogsPageForScope(ctx context.Context, arg ListRunLogsPageForScopeParams) ([]RunLog, error) {
+	rows, err := q.db.Query(ctx, listRunLogsPageForScope,
+		arg.AllProjects,
+		arg.ProjectIds,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

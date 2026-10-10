@@ -26,6 +26,15 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, paginatedResult(runs))
 }
 
+func (s *Server) runByID(w http.ResponseWriter, r *http.Request) {
+	run, err := s.app.RunByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
 func (s *Server) requestRun(w http.ResponseWriter, r *http.Request) {
 	var req app.RunRequestInput
 	if !decodeBody(w, r, &req) {

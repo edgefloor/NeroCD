@@ -22,6 +22,23 @@ func (q *Queries) CountRuns(ctx context.Context, projectID string) (int64, error
 	return count, err
 }
 
+const countRunsForScope = `-- name: CountRunsForScope :one
+SELECT count(*) FROM task_runs
+WHERE $1::boolean OR project_id=ANY($2::text[])
+`
+
+type CountRunsForScopeParams struct {
+	AllProjects bool     `json:"all_projects"`
+	ProjectIds  []string `json:"project_ids"`
+}
+
+func (q *Queries) CountRunsForScope(ctx context.Context, arg CountRunsForScopeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunsForScope, arg.AllProjects, arg.ProjectIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRun = `-- name: CreateRun :one
 INSERT INTO task_runs (id,project_id,template_id,run_spec,workflow,workflow_state,runner_tags,status,requested_by,started_at,finished_at,created_at,claim_order_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$10,$10)
@@ -118,6 +135,60 @@ type ListRunsPageParams struct {
 
 func (q *Queries) ListRunsPage(ctx context.Context, arg ListRunsPageParams) ([]TaskRun, error) {
 	rows, err := q.db.Query(ctx, listRunsPage, arg.ProjectID, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskRun{}
+	for rows.Next() {
+		var i TaskRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TemplateID,
+			&i.RunSpec,
+			&i.Workflow,
+			&i.RunnerTags,
+			&i.Status,
+			&i.RunnerID,
+			&i.RequestedBy,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.WorkflowState,
+			&i.NextAttempt,
+			&i.ClaimOrderAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunsPageForScope = `-- name: ListRunsPageForScope :many
+SELECT id, project_id, template_id, run_spec, workflow, runner_tags, status, runner_id, requested_by, started_at, finished_at, created_at, workflow_state, next_attempt, claim_order_at FROM task_runs
+WHERE $1::boolean OR project_id=ANY($2::text[])
+ORDER BY started_at DESC, id DESC LIMIT $4 OFFSET $3
+`
+
+type ListRunsPageForScopeParams struct {
+	AllProjects bool     `json:"all_projects"`
+	ProjectIds  []string `json:"project_ids"`
+	PageOffset  int32    `json:"page_offset"`
+	PageLimit   int32    `json:"page_limit"`
+}
+
+func (q *Queries) ListRunsPageForScope(ctx context.Context, arg ListRunsPageForScopeParams) ([]TaskRun, error) {
+	rows, err := q.db.Query(ctx, listRunsPageForScope,
+		arg.AllProjects,
+		arg.ProjectIds,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

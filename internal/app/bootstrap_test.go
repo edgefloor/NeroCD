@@ -12,7 +12,7 @@ import (
 
 func TestBootstrapAdminIsOneTimeAndAuditedUnderConcurrency(t *testing.T) {
 	mem := store.NewMemoryStore()
-	service, err := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestLegacyPasswordIsUpgradedOnlyInDevelopmentPolicy(t *testing.T) {
 		mem := store.NewMemoryStore()
 		now := time.Now().UTC()
 		_ = mem.BootstrapAdmin(t.Context(), domain.User{ID: "legacy-user", Email: "legacy@example.invalid", Name: "Legacy", Status: domain.UserActive, GlobalRole: domain.RoleSystemAdmin, PasswordHash: "sha256:8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918", CreatedAt: now}, domain.AuditEvent{ID: "legacy-audit", ActorID: "legacy-user", Action: "test.bootstrap", TargetID: "legacy-user", CreatedAt: now})
-		service, err := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+		service, err := NewService(Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 		if err != nil {
 			t.Fatal(err)
 		}

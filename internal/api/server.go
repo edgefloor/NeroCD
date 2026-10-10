@@ -122,6 +122,9 @@ func metricRoute(path string) string {
 	if strings.HasPrefix(path, "/api/v1/repositories/") && strings.HasSuffix(path, "/policy") {
 		return "/api/v1/repositories/{id}/policy"
 	}
+	if strings.HasPrefix(path, "/api/v1/runs/") {
+		return "/api/v1/runs/{id}"
+	}
 	return "/other"
 }
 

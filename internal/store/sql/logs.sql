@@ -5,6 +5,17 @@ SELECT count(*) FROM run_logs WHERE (sqlc.arg(run_id)::text='' OR run_id=sqlc.ar
 SELECT * FROM run_logs WHERE (sqlc.arg(run_id)::text='' OR run_id=sqlc.arg(run_id))
 ORDER BY run_id, sequence LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 
+-- name: CountRunLogsForScope :one
+SELECT count(*) FROM run_logs AS log
+JOIN task_runs AS run ON run.id=log.run_id
+WHERE sqlc.arg(all_projects)::boolean OR run.project_id=ANY(sqlc.arg(project_ids)::text[]);
+
+-- name: ListRunLogsPageForScope :many
+SELECT log.* FROM run_logs AS log
+JOIN task_runs AS run ON run.id=log.run_id
+WHERE sqlc.arg(all_projects)::boolean OR run.project_id=ANY(sqlc.arg(project_ids)::text[])
+ORDER BY log.run_id, log.sequence LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
+
 -- name: InsertRunLog :one
 INSERT INTO run_logs (id,run_id,sequence,stream,message,created_at)
 VALUES ($1,$2,$3,$4,$5,$6) RETURNING *;

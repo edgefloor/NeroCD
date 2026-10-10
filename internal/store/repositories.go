@@ -57,12 +57,16 @@ type RepositoryPolicyConfiguration struct {
 
 // RunRepository persists task runs, logs, and artifacts.
 type RunRepository interface {
+	GetRun(context.Context, string) (domain.TaskRun, error)
 	ListRuns(context.Context, string) ([]domain.TaskRun, error)
 	ListRunsPage(context.Context, string, Page) (PageResult[domain.TaskRun], error)
+	ListRunsPageForScope(context.Context, RunAuthorizationScope, Page) (PageResult[domain.TaskRun], error)
 	ListRunLogs(context.Context, string) ([]domain.RunLog, error)
 	ListRunLogsPage(context.Context, string, Page) (PageResult[domain.RunLog], error)
+	ListRunLogsPageForScope(context.Context, RunAuthorizationScope, Page) (PageResult[domain.RunLog], error)
 	ListArtifacts(context.Context, string) ([]domain.ArtifactRecord, error)
 	ListArtifactsPage(context.Context, string, Page) (PageResult[domain.ArtifactRecord], error)
+	ListArtifactsPageForScope(context.Context, RunAuthorizationScope, Page) (PageResult[domain.ArtifactRecord], error)
 	CreateRun(context.Context, domain.TaskRun) (domain.TaskRun, error)
 	CreateRunRequest(context.Context, domain.TaskRun, domain.RunLog, *domain.Approval, domain.AuditEvent) (domain.TaskRun, error)
 	UpdateRunStatus(context.Context, string, string, *time.Time) (domain.TaskRun, error)
