@@ -254,6 +254,36 @@ test("dashboard reports unfinished work truthfully and shared cards keep bounded
   }
 });
 
+test("project paging reaches rows beyond one hundred on a narrow viewport", async ({ page }) => {
+  await page.goto("/projects");
+  await signIn(page);
+  const projects = Array.from({ length: 151 }, (_, index) => ({
+    id: `proj_page_${index + 1}`,
+    name: `Paged project ${index + 1}`,
+    description: "browser paging fixture",
+    created_at: "2026-01-01T00:00:00Z",
+  }));
+  await page.route("**/api/v1/projects?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("limit") !== "50") return route.continue();
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    const items = projects.slice(offset, offset + 50);
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ items, count: items.length, total: projects.length, limit: 50, offset }),
+    });
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await expect(page.getByText("Showing 1-50 of 151")).toBeVisible();
+  await page.getByRole("button", { name: "Next projects" }).click();
+  await expect(page.getByText("Showing 51-100 of 151")).toBeVisible();
+  await page.getByRole("button", { name: "Next projects" }).click();
+  await expect(page.getByText("Showing 101-150 of 151")).toBeVisible();
+  await expect(page.getByText("Paged project 101", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test("runs list fetches, follows, closes, and switches terminal logs", async ({ page }) => {
   await page.goto("/runs");
   await signIn(page);
@@ -261,21 +291,27 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   const { runID, secondRunID } = await createRunLogFixture(page);
   await page.reload();
   let scopedLogRequests = 0;
+  let tailRequests = 0;
+  const log = (sequence: number) => ({ id: `log_browser_${sequence}`, run_id: runID, sequence, stream: "stdout", message: `Browser output ${sequence}`, created_at: "2026-01-01T00:00:00Z" });
   await page.route("**/api/v1/run-logs?*", async (route) => {
     const url = new URL(route.request().url());
-    if (url.searchParams.get("run_id") !== runID || ++scopedLogRequests === 1) return route.continue();
+    if (url.searchParams.get("run_id") !== runID) return route.continue();
+    scopedLogRequests += 1;
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    let items: ReturnType<typeof log>[] = [];
+    let total = 151;
+    if (limit === 1 && offset === 0) items = [log(1)];
+    else if (limit === 100 && offset === 51) items = Array.from({ length: 100 }, (_, index) => log(index + 52));
+    else if (limit === 51 && offset === 0) items = Array.from({ length: 51 }, (_, index) => log(index + 1));
+    else if (limit === 100 && offset === 151) {
+      tailRequests += 1;
+      items = tailRequests > 1 ? [log(152)] : [];
+      total += items.length;
+    }
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        items: [
-          { id: "log_browser_initial", run_id: runID, sequence: 1, stream: "system", message: "Run requested" },
-          { id: "log_browser_refetch", run_id: runID, sequence: 2, stream: "stdout", message: "Fresh polled output" },
-        ],
-        count: 2,
-        total: 2,
-        limit: 100,
-        offset: 0,
-      }),
+      body: JSON.stringify({ items, count: items.length, total, limit, offset }),
     });
   });
   const firstLogRequest = page.waitForResponse((response) => {
@@ -285,9 +321,12 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   await page.locator(`[data-run-log-trigger="${runID}"]`).last().click();
   expect((await firstLogRequest).status()).toBe(200);
   const dialog = page.getByRole("dialog", { name: `run ${runID}` });
-  await expect(dialog).toContainText("Run requested");
+  await expect(dialog).toContainText("Browser output 52");
+  await expect(dialog).not.toContainText("Browser output 1");
+  await dialog.getByRole("button", { name: "Load earlier output" }).click();
+  await expect(dialog).toContainText("Browser output 1");
   await expect(dialog).toContainText("Following active run output.");
-  await expect(dialog).toContainText("Fresh polled output");
+  await expect(dialog).toContainText("Browser output 152", { timeout: 10_000 });
   expect(scopedLogRequests).toBeGreaterThanOrEqual(2);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);

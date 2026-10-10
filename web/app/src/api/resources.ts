@@ -58,6 +58,13 @@ export type RunnerDetail = Schema<"RunnerDetail">;
 export type RunnerEnrollment = Schema<"RunnerEnrollment">;
 export type RunnerEnrollmentInput = Schema<"RunnerEnrollmentInput">;
 export type CreatedRunnerEnrollment = Schema<"CreatedRunnerEnrollment">;
+export type ProjectListResponse = Schema<"ProjectListResponse">;
+export type TaskTemplateListResponse = Schema<"TaskTemplateListResponse">;
+export type TaskRunListResponse = Schema<"TaskRunListResponse">;
+export type RunLogListResponse = Schema<"RunLogListResponse">;
+export type ApprovalListResponse = Schema<"ApprovalListResponse">;
+export type AuditEventListResponse = Schema<"AuditEventListResponse">;
+export type RunnerListResponse = Schema<"RunnerListResponse">;
 export type ServiceList = Omit<Schema<"ServiceListResponse">, "items"> & { items: Service[] };
 export type EnvironmentList = Omit<Schema<"EnvironmentListResponse">, "items"> & { items: Environment[] };
 export type RevisionList = Omit<Schema<"RevisionListResponse">, "items"> & { items: Revision[] };
@@ -85,6 +92,7 @@ export function listTemplates(query?: GetQuery<"/api/v1/templates">, options?: P
 export function createTemplate(input: JSONRequest<"/api/v1/templates", "post">, options?: Pick<RequestOptions, "signal">): Promise<JSONResponse<"/api/v1/templates", "post", 201>> { return request("/api/v1/templates", { ...options, method: "POST", body: input }); }
 export function updateTemplate(input: JSONRequest<"/api/v1/templates", "patch">, options?: Pick<RequestOptions, "signal">): Promise<JSONResponse<"/api/v1/templates", "patch", 200>> { return request("/api/v1/templates", { ...options, method: "PATCH", body: input }); }
 export function listRuns(query?: GetQuery<"/api/v1/runs">, options?: Pick<RequestOptions, "signal">): Promise<Schema<"TaskRunListResponse">> { return request("/api/v1/runs", { ...options, query }); }
+export function getRun(id: string, options?: Pick<RequestOptions, "signal">): Promise<JSONResponse<"/api/v1/runs/{id}", "get", 200>> { return request(`/api/v1/runs/${encodeURIComponent(id)}`, options); }
 export function requestRun(input: JSONRequest<"/api/v1/runs", "post">, options?: Pick<RequestOptions, "signal">): Promise<JSONResponse<"/api/v1/runs", "post", 201>> { return request("/api/v1/runs", { ...options, method: "POST", body: input }); }
 export function approveRun(input: JSONRequest<"/api/v1/runs/approve", "post">, options?: Pick<RequestOptions, "signal">): Promise<JSONResponse<"/api/v1/runs/approve", "post", 200>> { return request("/api/v1/runs/approve", { ...options, method: "POST", body: input }); }
 export function rejectRun(input: JSONRequest<"/api/v1/runs/reject", "post">, options?: Pick<RequestOptions, "signal">): Promise<JSONResponse<"/api/v1/runs/reject", "post", 200>> { return request("/api/v1/runs/reject", { ...options, method: "POST", body: input }); }

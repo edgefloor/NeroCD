@@ -35,15 +35,22 @@ export type ApiSnapshot = {
   repositories: Repository[];
 };
 
-export function apiSnapshot(snapshot: Partial<ApiSnapshot>): ApiSnapshot {
+type PageOrItems<T> = T[] | { items: T[] };
+type SnapshotInput = { [K in keyof ApiSnapshot]: ApiSnapshot[K] extends Array<infer T> ? PageOrItems<T> : ApiSnapshot[K] };
+function items<T>(value: PageOrItems<T> | undefined): T[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : value.items;
+}
+
+export function apiSnapshot(snapshot: Partial<SnapshotInput>): ApiSnapshot {
   return {
     health: snapshot.health ?? { status: "ok" },
-    projects: snapshot.projects ?? [],
-    templates: snapshot.templates ?? [],
-    runs: snapshot.runs ?? [],
-    approvals: snapshot.approvals ?? [],
-    logs: snapshot.logs ?? [],
-    repositories: snapshot.repositories ?? [],
+    projects: items(snapshot.projects),
+    templates: items(snapshot.templates),
+    runs: items(snapshot.runs),
+    approvals: items(snapshot.approvals),
+    logs: items(snapshot.logs),
+    repositories: items(snapshot.repositories),
   };
 }
 

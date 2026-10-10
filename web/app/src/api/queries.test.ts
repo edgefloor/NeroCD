@@ -27,7 +27,7 @@ describe("resource query options", () => {
     expect(calls).toEqual(["/api/v1/projects", "/api/v1/repositories"]);
     calls.length = 0;
     await RunDetailRoute.options.loader!({ context: { queryClient: client() }, params: { runId: "run_1" } } as never);
-    expect(calls).toEqual(["/api/v1/runs", "/api/v1/projects", "/api/v1/templates", "/api/v1/run-logs?run_id=run_1&limit=100&offset=0"]);
+    expect(calls).toEqual(["/api/v1/runs/run_1"]);
   });
   test("home ownership fetches its six resources and no snapshot-only collections", async () => {
     const calls: string[] = [];
@@ -102,13 +102,13 @@ describe("resource query options", () => {
     expect(retryRemote(0, new ApiError(404, "missing", null))).toBe(false);
     expect(retryRemote(0, new ApiError(503, "busy", null))).toBe(true);
     expect(retryRemote(2, new TypeError("offline"))).toBe(false);
-    const terminal = [{ id: "run_1", status: "succeeded" }] as never;
-    const active = [{ id: "run_1", status: "running" }] as never;
+    const terminal = { items: [{ id: "run_1", status: "succeeded" }], count: 1, total: 1, limit: 100, offset: 0 } as never;
+    const active = { items: [{ id: "run_1", status: "running" }], count: 1, total: 1, limit: 100, offset: 0 } as never;
     expect(shouldPollRunList(terminal)).toBe(false);
     expect(shouldPollRunList(active)).toBe(true);
     expect(shouldPollSelectedLogs("run_1", terminal)).toBe(false);
     expect(shouldPollSelectedLogs("run_1", active)).toBe(true);
-    expect(shouldPollDeploymentList([{ id: "dep_1", status: "rolled_back" }] as never)).toBe(false);
-    expect(shouldPollDeploymentList([{ id: "dep_1", status: "verifying" }] as never)).toBe(true);
+    expect(shouldPollDeploymentList({ items: [{ id: "dep_1", status: "rolled_back" }] } as never)).toBe(false);
+    expect(shouldPollDeploymentList({ items: [{ id: "dep_1", status: "verifying" }] } as never)).toBe(true);
   });
 });

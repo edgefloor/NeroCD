@@ -1,12 +1,79 @@
-import { useQuery } from "@tanstack/react-query";
-import { deploymentQuery, deploymentsQuery, runLogsQuery, runsQuery, shouldPollDeploymentList, shouldPollRunList, shouldPollSelectedLogs, type DeploymentFilters } from "./queries";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { RunLog } from "./resources";
+import { deploymentQuery, deploymentsQuery, runLogsQuery, runsQuery, shouldPollDeploymentList, shouldPollRunList, type DeploymentFilters, type RunFilters } from "./queries";
 
-export function useRunsPollingQuery() {
-  return useQuery({ ...runsQuery(), refetchInterval: (query) => shouldPollRunList(query.state.data) ? 3_000 : false });
+export function useRunsPollingQuery(filters?: RunFilters) {
+  return useQuery({ ...runsQuery(filters), refetchInterval: (query) => shouldPollRunList(query.state.data) ? 3_000 : false });
 }
 
-export function useSelectedRunLogsPollingQuery(runID: string, runs: ReturnType<typeof useRunsPollingQuery>["data"]) {
-  return useQuery({ ...runLogsQuery({ run_id: runID, limit: 100, offset: 0 }), refetchInterval: () => shouldPollSelectedLogs(runID, runs) ? 3_000 : false });
+type LogWindow = { runID: string; logs: RunLog[]; firstOffset: number; nextOffset?: number };
+const logPageSize = 100;
+
+export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
+  const client = useQueryClient();
+  const [window, setWindow] = useState<LogWindow>({ runID, logs: [], firstOffset: 0 });
+  const [loadingPrevious, setLoadingPrevious] = useState(false);
+  const current: LogWindow = window.runID === runID ? window : { runID, logs: [], firstOffset: 0 };
+  const probe = useQuery({ ...runLogsQuery({ run_id: runID, limit: 1, offset: 0 }), enabled: Boolean(runID) });
+
+  useEffect(() => setWindow({ runID, logs: [], firstOffset: 0 }), [runID]);
+  useEffect(() => {
+    if (!runID || !probe.data || current.nextOffset !== undefined) return;
+    const tailOffset = Math.max(0, probe.data.total - logPageSize);
+    setWindow({ runID, logs: [], firstOffset: tailOffset, nextOffset: tailOffset });
+  }, [current.nextOffset, probe.data, runID]);
+
+  const page = useQuery({
+    ...runLogsQuery({ run_id: runID, limit: logPageSize, offset: current.nextOffset ?? 0 }),
+    enabled: Boolean(runID) && current.nextOffset !== undefined,
+    refetchInterval: follow ? 3_000 : false,
+  });
+  const wasFollowing = useRef(follow);
+  useEffect(() => {
+    if (wasFollowing.current && !follow && current.nextOffset !== undefined) void page.refetch();
+    wasFollowing.current = follow;
+  }, [current.nextOffset, follow, page.refetch]);
+  useEffect(() => {
+    if (!page.data || current.nextOffset === undefined || page.data.offset !== current.nextOffset) return;
+    setWindow((previous) => {
+      if (previous.runID !== runID) return previous;
+      const byID = new Map(previous.logs.map((log) => [log.id, log]));
+      for (const log of page.data.items) byID.set(log.id, log);
+      return {
+        ...previous,
+        logs: [...byID.values()].sort((left, right) => left.sequence - right.sequence),
+        nextOffset: page.data.offset + page.data.count,
+      };
+    });
+  }, [current.nextOffset, page.data, runID]);
+
+  const loadPrevious = useCallback(async () => {
+    if (!runID || current.firstOffset === 0 || loadingPrevious) return;
+    setLoadingPrevious(true);
+    try {
+      const offset = Math.max(0, current.firstOffset - logPageSize);
+      const previous = await client.fetchQuery(runLogsQuery({ run_id: runID, limit: current.firstOffset - offset, offset }));
+      setWindow((value) => {
+        if (value.runID !== runID) return value;
+        const byID = new Map(previous.items.map((log) => [log.id, log]));
+        for (const log of value.logs) byID.set(log.id, log);
+        return { ...value, firstOffset: offset, logs: [...byID.values()].sort((left, right) => left.sequence - right.sequence) };
+      });
+    } finally {
+      setLoadingPrevious(false);
+    }
+  }, [client, current.firstOffset, loadingPrevious, runID]);
+
+  return {
+    data: current.logs,
+    isPending: probe.isPending || (current.logs.length === 0 && page.isPending),
+    isError: probe.isError || page.isError,
+    error: (probe.error ?? page.error) ?? undefined,
+    hasPrevious: current.firstOffset > 0,
+    loadingPrevious,
+    loadPrevious,
+  };
 }
 
 // Deployments are the only route-local resource which needs lifecycle polling.
@@ -16,5 +83,5 @@ export function useDeploymentsPollingQuery(filters?: DeploymentFilters, enabled 
 }
 
 export function useDeploymentPollingQuery(id: string) {
-  return useQuery({ ...deploymentQuery(id), refetchInterval: (query) => shouldPollDeploymentList(query.state.data ? [query.state.data] : undefined) ? 3_000 : false });
+  return useQuery({ ...deploymentQuery(id), refetchInterval: (query) => shouldPollDeploymentList(query.state.data ? { items: [query.state.data], count: 1, total: 1, limit: 1, offset: 0 } : undefined) ? 3_000 : false });
 }

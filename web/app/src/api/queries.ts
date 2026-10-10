@@ -3,14 +3,15 @@ import type { paths } from "./generated";
 import { ApiError } from "./errors";
 import {
   getCurrentPrincipal, getHealth, getBootstrapStatus, getOIDCStatus, getOperationsStatus, getRunLogRetentionStatus, listApprovals, listAuditEvents,
-  listProjectMembers, listProjects, listRepositories, listRunLogs, listRuns, listTemplates, listServices, listEnvironments, listRevisions, listDeployments, getDeployment, listRunners, getRunner,
+  listProjectMembers, listProjects, listRepositories, listRunLogs, listRuns, getRun, listTemplates, listServices, listEnvironments, listRevisions, listDeployments, getDeployment, listRunners, getRunner,
 } from "./resources";
-import type { TaskRun } from "./resources";
+import type { TaskRunListResponse } from "./resources";
 
 type GetQuery<Path extends keyof paths> = paths[Path] extends { get?: infer Operation }
   ? Operation extends { parameters: { query?: infer Query } } ? Query : never
   : never;
 
+export type ProjectFilters = GetQuery<"/api/v1/projects">;
 export type ProjectMemberFilters = GetQuery<"/api/v1/project-members">;
 export type RepositoryFilters = GetQuery<"/api/v1/repositories">;
 export type TemplateFilters = GetQuery<"/api/v1/templates">;
@@ -36,11 +37,14 @@ export const queryKeys = {
   operationsStatus: ["operationsStatus"] as const,
   runLogRetentionStatus: ["runLogRetentionStatus"] as const,
   principal: ["principal"] as const,
-  projects: () => ["projects"] as const,
+  projects: (value?: ProjectFilters) => ["projects", filters(value)] as const,
+  allProjects: ["projects", "all"] as const,
   projectMembers: (value?: ProjectMemberFilters) => ["projectMembers", filters(value)] as const,
   repositories: (value?: RepositoryFilters) => ["repositories", filters(value)] as const,
   templates: (value?: TemplateFilters) => ["templates", filters(value)] as const,
+  allTemplates: ["templates", "all"] as const,
   runs: (value?: RunFilters) => ["runs", filters(value)] as const,
+  run: (id: string) => ["run", id] as const,
   approvals: (value?: ApprovalFilters) => ["approvals", filters(value)] as const,
   auditEvents: (value?: AuditEventFilters) => ["auditEvents", filters(value)] as const,
   runLogs: (value?: RunLogFilters) => ["runLogs", filters(value)] as const,
@@ -74,18 +78,40 @@ const visibleOperationsRefresh = (): number | false => typeof document === "unde
 export const operationsStatusQuery = () => queryOptions({ queryKey: queryKeys.operationsStatus, staleTime: 5_000, queryFn: ({ signal }) => getOperationsStatus({ signal }), refetchInterval: visibleOperationsRefresh, refetchOnWindowFocus: true });
 export const runLogRetentionStatusQuery = () => queryOptions({ queryKey: queryKeys.runLogRetentionStatus, staleTime: 5_000, queryFn: ({ signal }) => getRunLogRetentionStatus({ signal }), refetchOnWindowFocus: true });
 export const principalQuery = () => queryOptions({ queryKey: queryKeys.principal, staleTime: 10_000, queryFn: ({ signal }) => getCurrentPrincipal({ signal }) });
-export const projectsQuery = () => queryOptions({ queryKey: queryKeys.projects(), queryFn: ({ signal }) => listProjects(undefined, { signal }).then((value) => value.items) });
-export const projectMembersQuery = (value?: ProjectMemberFilters) => queryOptions({ queryKey: queryKeys.projectMembers(value), queryFn: ({ signal }) => listProjectMembers(value, { signal }).then((item) => item.items) });
-export const repositoriesQuery = (value?: RepositoryFilters) => queryOptions({ queryKey: queryKeys.repositories(value), queryFn: ({ signal }) => listRepositories(value, { signal }).then((item) => item.items) });
-export const templatesQuery = (value?: TemplateFilters) => queryOptions({ queryKey: queryKeys.templates(value), queryFn: ({ signal }) => listTemplates(value, { signal }).then((item) => item.items) });
-export const runsQuery = (value?: RunFilters) => queryOptions({ queryKey: queryKeys.runs(value), queryFn: ({ signal }) => listRuns(value, { signal }).then((item) => item.items) });
-export const approvalsQuery = (value?: ApprovalFilters) => queryOptions({ queryKey: queryKeys.approvals(value), queryFn: ({ signal }) => listApprovals(value, { signal }).then((item) => item.items) });
-export const auditEventsQuery = (value?: AuditEventFilters) => queryOptions({ queryKey: queryKeys.auditEvents(value), queryFn: ({ signal }) => listAuditEvents(value, { signal }).then((item) => item.items) });
-export const runLogsQuery = (value: RunLogFilters = {}) => queryOptions({ queryKey: queryKeys.runLogs(value), queryFn: ({ signal }) => listRunLogs(value, { signal }).then((item) => item.items) });
-export const servicesQuery = (value?: ServiceFilters) => queryOptions({ queryKey: queryKeys.services(value), queryFn: ({ signal }) => listServices(value, { signal }).then((item) => item.items) });
-export const environmentsQuery = (value?: EnvironmentFilters) => queryOptions({ queryKey: queryKeys.environments(value), queryFn: ({ signal }) => listEnvironments(value, { signal }).then((item) => item.items) });
-export const revisionsQuery = (value?: RevisionFilters) => queryOptions({ queryKey: queryKeys.revisions(value), queryFn: ({ signal }) => listRevisions(value, { signal }).then((item) => item.items) });
-export const deploymentsQuery = (value?: DeploymentFilters) => queryOptions({ queryKey: queryKeys.deployments(value), queryFn: ({ signal }) => listDeployments(value, { signal }).then((item) => item.items) });
+type BoundedPage<T> = { items: T[]; count: number; total: number; offset: number };
+async function collectBoundedPages<T>(load: (offset: number) => Promise<BoundedPage<T>>): Promise<T[]> {
+  const items: T[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await load(offset);
+    items.push(...page.items);
+    if (page.count === 0 || page.offset + page.count >= page.total) return items;
+    offset = page.offset + page.count;
+    if (offset > 100_000) throw new Error("list exceeds the supported pagination range");
+  }
+}
+export const allProjectsQuery = () => queryOptions({ queryKey: queryKeys.allProjects, queryFn: ({ signal }) => collectBoundedPages((offset) => listProjects({ limit: 100, offset }, { signal })) });
+export const allTemplatesQuery = () => queryOptions({ queryKey: queryKeys.allTemplates, queryFn: ({ signal }) => collectBoundedPages((offset) => listTemplates({ limit: 100, offset }, { signal })) });
+export const projectsQuery = (value?: ProjectFilters) => queryOptions({ queryKey: queryKeys.projects(value), queryFn: ({ signal }) => listProjects(value, { signal }) });
+export const projectMembersQuery = (value?: ProjectMemberFilters) => queryOptions({ queryKey: queryKeys.projectMembers(value), queryFn: ({ signal }) => listProjectMembers(value, { signal }) });
+export const repositoriesQuery = (value?: RepositoryFilters) => queryOptions({ queryKey: queryKeys.repositories(value), queryFn: ({ signal }) => listRepositories(value, { signal }) });
+export const templatesQuery = (value?: TemplateFilters) => queryOptions({ queryKey: queryKeys.templates(value), queryFn: ({ signal }) => listTemplates(value, { signal }) });
+export const runsQuery = (value?: RunFilters) => queryOptions({ queryKey: queryKeys.runs(value), queryFn: ({ signal }) => listRuns(value, { signal }) });
+export const approvalsQuery = (value?: ApprovalFilters) => queryOptions({ queryKey: queryKeys.approvals(value), queryFn: ({ signal }) => listApprovals(value, { signal }) });
+export const auditEventsQuery = (value?: AuditEventFilters) => queryOptions({ queryKey: queryKeys.auditEvents(value), queryFn: ({ signal }) => listAuditEvents(value, { signal }) });
+export const runLogsQuery = (value: RunLogFilters = {}) => queryOptions({ queryKey: queryKeys.runLogs(value), queryFn: ({ signal }) => listRunLogs(value, { signal }) });
+export const servicesQuery = (value?: ServiceFilters) => queryOptions({ queryKey: queryKeys.services(value), queryFn: ({ signal }) => listServices(value, { signal }) });
+export const environmentsQuery = (value?: EnvironmentFilters) => queryOptions({ queryKey: queryKeys.environments(value), queryFn: ({ signal }) => listEnvironments(value, { signal }) });
+export const revisionsQuery = (value?: RevisionFilters) => queryOptions({ queryKey: queryKeys.revisions(value), queryFn: ({ signal }) => listRevisions(value, { signal }) });
+export const deploymentsQuery = (value?: DeploymentFilters) => queryOptions({ queryKey: queryKeys.deployments(value), queryFn: ({ signal }) => listDeployments(value, { signal }) });
+export const runQuery = (id: string) => queryOptions({ queryKey: queryKeys.run(id), queryFn: async ({ signal }) => {
+  try {
+    return await getRun(id, { signal });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+} });
 // The server deliberately normalizes inaccessible and absent deployment IDs to
 // one 404. Preserve that non-enumerating state as normal route data so the
 // detail view can render its safe unavailable state rather than surface an
@@ -100,7 +126,7 @@ export const deploymentQuery = (id: string) => queryOptions({ queryKey: queryKey
     throw error;
   }
 } });
-export const runnersQuery = (value?: RunnerFilters) => queryOptions({ queryKey: queryKeys.runners(value), queryFn: ({ signal }) => listRunners(value, { signal }).then((item) => item.items) });
+export const runnersQuery = (value?: RunnerFilters) => queryOptions({ queryKey: queryKeys.runners(value), queryFn: ({ signal }) => listRunners(value, { signal }) });
 export const runnerQuery = (id: string) => queryOptions({ queryKey: queryKeys.runner(id), queryFn: ({ signal }) => getRunner(id, { signal }) });
 
 export function retryRemote(failureCount: number, error: unknown): boolean {
@@ -110,14 +136,14 @@ export function retryRemote(failureCount: number, error: unknown): boolean {
 
 const terminalRunStatuses = new Set(["succeeded", "failed", "canceled", "rejected"]);
 const terminalDeploymentStatuses = new Set(["succeeded", "failed", "canceled", "rolled_back", "rollback_failed", "manual_intervention"]);
-export function shouldPollRunList(runs: TaskRun[] | undefined): boolean {
-  return Boolean(runs?.some((run) => !terminalRunStatuses.has(run.status)));
+export function shouldPollRunList(runs: TaskRunListResponse | undefined): boolean {
+  return Boolean(runs?.items.some((run) => !terminalRunStatuses.has(run.status)));
 }
-export function shouldPollSelectedLogs(runID: string, runs: TaskRun[] | undefined): boolean {
-  return Boolean(runs?.some((run) => run.id === runID && !terminalRunStatuses.has(run.status)));
+export function shouldPollSelectedLogs(runID: string, runs: TaskRunListResponse | undefined): boolean {
+  return Boolean(runs?.items.some((run) => run.id === runID && !terminalRunStatuses.has(run.status)));
 }
-export function shouldPollDeploymentList(deployments: import("./resources").Deployment[] | undefined): boolean {
-  return Boolean(deployments?.some((deployment) => !terminalDeploymentStatuses.has(deployment.status)));
+export function shouldPollDeploymentList(deployments: import("./resources").DeploymentList | undefined): boolean {
+  return Boolean(deployments?.items.some((deployment) => !terminalDeploymentStatuses.has(deployment.status)));
 }
 
 export function configureQueryClient(client: QueryClient): QueryClient {

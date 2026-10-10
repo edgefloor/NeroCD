@@ -5,7 +5,7 @@ import { queryKeys } from "./queries";
 
 export function useProjectMutations() {
   const client = useQueryClient();
-  const refreshProjects = () => client.invalidateQueries({ queryKey: queryKeys.projects() });
+  const refreshProjects = () => client.invalidateQueries({ queryKey: ["projects"] });
   return {
     create: useMutation({ mutationFn: (input: Parameters<typeof createProject>[0]) => createProject(input), onSuccess: async () => { await refreshProjects(); toast.success("Project created"); }, onError: (error) => toast.error(error.message) }),
     update: useMutation({ mutationFn: (input: Parameters<typeof updateProject>[0]) => updateProject(input), onSuccess: async () => { await refreshProjects(); toast.success("Project updated"); }, onError: (error) => toast.error(error.message) }),
@@ -16,7 +16,7 @@ export function useProjectMutations() {
 
 export function useRunMutations() {
   const client = useQueryClient();
-  return { cancel: useMutation({ mutationFn: (run_id: string) => cancelRun({ run_id }), onSuccess: async (_result, runID) => { await Promise.all([client.invalidateQueries({ queryKey: queryKeys.runs() }), client.invalidateQueries({ queryKey: queryKeys.runLogs({ run_id: runID, limit: 100, offset: 0 }) })]); toast.success("Run canceled"); }, onError: (error) => toast.error(error.message) }) };
+  return { cancel: useMutation({ mutationFn: (run_id: string) => cancelRun({ run_id }), onSuccess: async (_result, runID) => { await Promise.all([client.invalidateQueries({ queryKey: ["runs"] }), client.invalidateQueries({ queryKey: queryKeys.run(runID) }), client.invalidateQueries({ predicate: (query) => query.queryKey[0] === "runLogs" && (query.queryKey[1] as { run_id?: string } | undefined)?.run_id === runID })]); toast.success("Run canceled"); }, onError: (error) => toast.error(error.message) }) };
 }
 
 /** Retention is deliberately manual.  The execution key is owned by the view

@@ -2,15 +2,18 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { RunsRoute } from "./_authenticated.runs.index";
 
+const noLogs: never[] = [];
+const loadPrevious = vi.fn();
+
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...await importOriginal<typeof import("@tanstack/react-query")>(),
-  useQuery: vi.fn(() => ({ data: [], isError: false, isPending: false })),
+  useQuery: vi.fn(() => ({ data: undefined, isError: false, isPending: false, isFetching: false })),
 }));
 
 vi.mock("@/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/api")>(),
-  useRunsPollingQuery: vi.fn(() => ({ data: [], isError: false, isPending: false })),
-  useSelectedRunLogsPollingQuery: vi.fn(() => ({ data: undefined, isError: false, isPending: false })),
+  useRunsPollingQuery: vi.fn(() => ({ data: { items: [], count: 0, total: 0, limit: 50, offset: 0 }, isError: false, isPending: false, isFetching: false })),
+  useSelectedRunLogsPollingQuery: vi.fn(() => ({ data: noLogs, isError: false, isPending: false, hasPrevious: false, loadingPrevious: false, loadPrevious })),
 }));
 
 vi.mock("@/api/compat", async (importOriginal) => ({

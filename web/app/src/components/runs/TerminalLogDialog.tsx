@@ -17,6 +17,9 @@ export function TerminalLogDialog({
   loading = false,
   error,
   following = false,
+  hasPrevious = false,
+  loadingPrevious = false,
+  onLoadPrevious,
   open,
   onOpenChange,
 }: {
@@ -25,6 +28,9 @@ export function TerminalLogDialog({
   loading?: boolean;
   error?: Error;
   following?: boolean;
+  hasPrevious?: boolean;
+  loadingPrevious?: boolean;
+  onLoadPrevious?: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }): ReactNode {
@@ -78,6 +84,13 @@ export function TerminalLogDialog({
               <span>$ nerocd runs inspect {run.id}</span>
               <span>project={run.project_id} template={run.template_id ?? "adhoc"}</span>
               {following ? <span aria-live="polite">Following active run output.</span> : null}
+            </div>
+          ) : null}
+          {hasPrevious ? (
+            <div className="mb-3">
+              <Button type="button" variant="outline" size="sm" disabled={loadingPrevious} onClick={onLoadPrevious}>
+                {loadingPrevious ? "Loading earlier output..." : "Load earlier output"}
+              </Button>
             </div>
           ) : null}
           {loading ? (

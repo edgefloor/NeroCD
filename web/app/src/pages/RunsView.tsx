@@ -171,6 +171,10 @@ export function RunsView({
   logsLoading,
   logsError,
   logsFollowing,
+  logsHavePrevious,
+  logsLoadingPrevious,
+  onLoadPreviousLogs,
+  selectedRun,
   onSelectRun,
   onCloseLogs,
 }: {
@@ -184,6 +188,10 @@ export function RunsView({
   logsLoading?: boolean;
   logsError?: Error;
   logsFollowing?: boolean;
+  logsHavePrevious?: boolean;
+  logsLoadingPrevious?: boolean;
+  onLoadPreviousLogs?: () => void;
+  selectedRun?: TaskRun;
   onSelectRun?: (runID: string) => void;
   onCloseLogs?: () => void;
 }): ReactNode {
@@ -193,7 +201,7 @@ export function RunsView({
   const controlledLogs = onSelectRun !== undefined;
   const terminalRunID = controlledLogs ? selectedRunID ?? "" : localTerminalRunID;
   const terminalOpen = controlledLogs ? Boolean(selectedRunID) : localTerminalOpen;
-  const terminalRun = snapshot.runs.find((run) => run.id === terminalRunID) ?? (terminalRunFallback?.id === terminalRunID ? terminalRunFallback : undefined);
+  const terminalRun = selectedRun?.id === terminalRunID ? selectedRun : snapshot.runs.find((run) => run.id === terminalRunID) ?? (terminalRunFallback?.id === terminalRunID ? terminalRunFallback : undefined);
   const terminalLogs = controlledLogs ? selectedLogs ?? [] : snapshot.logs.filter((log) => log.run_id === terminalRunID);
 
   function openTerminal(runID: string): void {
@@ -240,7 +248,7 @@ export function RunsView({
           />
         </CardContent>
       </Card>
-      <TerminalLogDialog run={terminalRun} logs={terminalLogs} loading={controlledLogs && logsLoading} error={controlledLogs ? logsError : undefined} following={controlledLogs && logsFollowing} open={terminalOpen} onOpenChange={changeTerminalOpen} />
+      <TerminalLogDialog run={terminalRun} logs={terminalLogs} loading={controlledLogs && logsLoading} error={controlledLogs ? logsError : undefined} following={controlledLogs && logsFollowing} hasPrevious={controlledLogs && logsHavePrevious} loadingPrevious={controlledLogs && logsLoadingPrevious} onLoadPrevious={onLoadPreviousLogs} open={terminalOpen} onOpenChange={changeTerminalOpen} />
     </section>
   );
 }
