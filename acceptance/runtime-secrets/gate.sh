@@ -335,8 +335,24 @@ record "rotation=atomic_file_replace fixture_classification=v2 next_attempt_vers
 
 compose logs --no-color server proxy runner >"$runtime_dir/runtime-logs.txt" 2>&1 || true
 sql "SELECT jsonb_build_object('runs',jsonb_agg(jsonb_build_object('id',id,'status',status)),'secret_access_audits',(SELECT count(*) FROM audit_events WHERE action='secret.access')) FROM task_runs WHERE id IN ('$primary_id','$stale_runtime_id','$missing_id','$symlink_id','$wide_id','$rotation_id');" >"$runtime_dir/db-summary.json"
-code=$(http_json GET "$base/api/v1/run-logs?run_id=$primary_id&limit=200" "$admin_token" '{}' "$runtime_dir/api-logs.json")
-[[ "$code" == 200 ]] || fail "run logs observational API returned HTTP $code"
+api_logs_offset=0
+printf '[]\n' >"$runtime_dir/api-logs.json"
+while :; do
+  api_logs_page="$runtime_dir/api-logs-page.json"
+  code=$(http_json GET "$base/api/v1/run-logs?run_id=$primary_id&limit=100&offset=$api_logs_offset" "$admin_token" '{}' "$api_logs_page")
+  [[ "$code" == 200 ]] || fail "run logs observational API returned HTTP $code"
+  api_logs_count=$(jq -er '.count | select(type == "number" and . >= 0 and floor == .)' "$api_logs_page") || fail "run logs page count was invalid"
+  api_logs_total=$(jq -er '.total | select(type == "number" and . >= 0 and floor == .)' "$api_logs_page") || fail "run logs page total was invalid"
+  jq -s '.[0] + .[1].items' "$runtime_dir/api-logs.json" "$api_logs_page" >"$runtime_dir/api-logs.next.json" || fail "run logs page could not be accumulated"
+  mv "$runtime_dir/api-logs.next.json" "$runtime_dir/api-logs.json"
+  api_logs_next=$((api_logs_offset + api_logs_count))
+  if [[ "$api_logs_next" -ge "$api_logs_total" ]]; then
+    break
+  fi
+  [[ "$api_logs_count" -gt 0 && "$api_logs_next" -gt "$api_logs_offset" ]] || fail "run logs pagination did not advance"
+  api_logs_offset=$api_logs_next
+done
+rm "$api_logs_page"
 for forbidden in "$secret_v1" "$encoded_v1_b64" "$encoded_v1_url" "$encoded_v1_hex" "$secret_v2" "$encoded_v2_b64" "$encoded_v2_url" "$encoded_v2_hex" "$admin_token" "$runner_token" "$primary_fence" runtime_secrets_only; do
   [[ -n "$forbidden" ]] || continue
   ! grep -F -- "$forbidden" "$evidence" "$runtime_dir/runtime-logs.txt" "$runtime_dir/db-summary.json" "$runtime_dir/api-logs.json" >/dev/null 2>&1 || fail "secret, credential, fence, or password leaked into retained surfaces"
