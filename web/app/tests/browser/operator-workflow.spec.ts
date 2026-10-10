@@ -313,8 +313,13 @@ test("settings pages member history while authorization lookup spans every bound
   await page.getByRole("button", { name: "Next project members" }).click();
   await expect(page.getByText("Showing 51-100 of 131")).toBeVisible();
   await expect(page.getByText(/member-51@example\.test/)).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath("settings-members-page-2-320.png"), fullPage: true });
+  const pager = page.getByRole("navigation", { name: "project members pages" });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await pager.scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }))).toEqual({ document: width, viewport: width });
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("settings-members-pager-320.png") });
+  }
 });
 
 test("runs list fetches, follows, closes, and switches terminal logs", async ({ page }, testInfo) => {

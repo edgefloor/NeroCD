@@ -38,9 +38,9 @@ export function PageNavigation({ page, label, loading = false, onPrevious, onNex
   return (
     <nav className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-3" aria-label={`${label} pages`}>
       <p className="text-sm text-muted-foreground" aria-live="polite">Showing {first}-{last} of {page?.total ?? 0}</p>
-      <div className="flex gap-2">
-        <Button type="button" variant="outline" size="sm" disabled={loading || !page || page.offset === 0} onClick={onPrevious}>Previous {label}</Button>
-        <Button type="button" variant="outline" size="sm" disabled={loading || !page || page.count === 0 || last >= page.total} onClick={onNext}>Next {label}</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" size="sm" aria-label={`Previous ${label}`} disabled={loading || !page || page.offset === 0} onClick={onPrevious}>Previous</Button>
+        <Button type="button" variant="outline" size="sm" aria-label={`Next ${label}`} disabled={loading || !page || page.count === 0 || last >= page.total} onClick={onNext}>Next</Button>
       </div>
     </nav>
   );
