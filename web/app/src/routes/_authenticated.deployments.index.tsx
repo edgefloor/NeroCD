@@ -1,14 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { environmentsQuery, principalQuery, projectsQuery, revisionsQuery, servicesQuery, useDeploymentMutations, useDeploymentsPollingQuery } from "@/api";
+import { allProjectsQuery, environmentsQuery, principalQuery, revisionsQuery, servicesQuery, useDeploymentMutations, useDeploymentsPollingQuery } from "@/api";
 import { DeploymentsView } from "@/pages/DeploymentsView";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { validateSearch } from "@/router/search";
 
 export const Route = createFileRoute("/_authenticated/deployments/")({
   validateSearch,
-  loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(projectsQuery()), context.queryClient.ensureQueryData(servicesQuery()), context.queryClient.ensureQueryData(environmentsQuery()), context.queryClient.ensureQueryData(principalQuery())]),
+  loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(allProjectsQuery()), context.queryClient.ensureQueryData(servicesQuery()), context.queryClient.ensureQueryData(environmentsQuery()), context.queryClient.ensureQueryData(principalQuery())]),
   component: DeploymentsRoute,
 });
 
@@ -17,7 +17,7 @@ function DeploymentsRoute() {
   const { q, service_id: serviceID, environment_id: environmentID } = Route.useSearch();
   const page = usePage(environmentID);
   const deployments = useDeploymentsPollingQuery(environmentID ? { environment_id: environmentID, limit: page.limit, offset: page.offset } : undefined, Boolean(environmentID));
-  const projects = useQuery(projectsQuery());
+  const projects = useQuery(allProjectsQuery());
   const services = useQuery(servicesQuery());
   const environments = useQuery(environmentsQuery());
   const revisions = useQuery({ ...revisionsQuery(serviceID ? { service_id: serviceID } : undefined), enabled: Boolean(serviceID) });
@@ -28,5 +28,5 @@ function DeploymentsRoute() {
   const roles = principal.data?.roles ?? [];
   const canOperate = roles.some((role) => ["system_admin", "owner", "maintainer"].includes(role));
   const busy = mutation.create.isPending || mutation.confirm.isPending || mutation.cancel.isPending;
-  return <><DeploymentsView deployments={deployments.data?.items ?? []} projects={projects.data?.items ?? []} services={services.data?.items ?? []} environments={environments.data?.items ?? []} revisions={revisions.data?.items ?? []} q={q} selectedServiceID={serviceID} selectedEnvironmentID={environmentID} loading={[projects, services, environments, principal].some((query) => query.isPending) || Boolean(serviceID && revisions.isPending) || Boolean(environmentID && deployments.isPending)} canOperate={canOperate} busy={busy} onServiceChange={(id) => void navigate({ to: "/deployments", search: (previous) => ({ ...previous, service_id: id || undefined, environment_id: undefined }) })} onEnvironmentChange={(id) => void navigate({ to: "/deployments", search: (previous) => ({ ...previous, environment_id: id || undefined }) })} onCreate={(input) => mutation.create.mutate(input, { onSuccess: (deployment) => { toast.success("Deployment requested"); void navigate({ to: "/deployments/$deploymentId", params: { deploymentId: deployment.id }, search: (previous) => ({ ...previous, environment_id: input.environment_id, service_id: serviceID }) }); }, onError: (cause) => toast.error(cause.message) })} onCancel={(input) => mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested"), onError: (cause) => toast.error(cause.message) })} /><PageNavigation page={deployments.data} label="deployments" loading={deployments.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><DeploymentsView deployments={deployments.data?.items ?? []} projects={projects.data ?? []} services={services.data?.items ?? []} environments={environments.data?.items ?? []} revisions={revisions.data?.items ?? []} q={q} selectedServiceID={serviceID} selectedEnvironmentID={environmentID} loading={[projects, services, environments, principal].some((query) => query.isPending) || Boolean(serviceID && revisions.isPending) || Boolean(environmentID && deployments.isPending)} canOperate={canOperate} busy={busy} onServiceChange={(id) => void navigate({ to: "/deployments", search: (previous) => ({ ...previous, service_id: id || undefined, environment_id: undefined }) })} onEnvironmentChange={(id) => void navigate({ to: "/deployments", search: (previous) => ({ ...previous, environment_id: id || undefined }) })} onCreate={(input) => mutation.create.mutate(input, { onSuccess: (deployment) => { toast.success("Deployment requested"); void navigate({ to: "/deployments/$deploymentId", params: { deploymentId: deployment.id }, search: (previous) => ({ ...previous, environment_id: input.environment_id, service_id: serviceID }) }); }, onError: (cause) => toast.error(cause.message) })} onCancel={(input) => mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested"), onError: (cause) => toast.error(cause.message) })} /><PageNavigation page={deployments.data} label="deployments" loading={deployments.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
 }

@@ -284,6 +284,35 @@ test("project paging reaches rows beyond one hundred on a narrow viewport", asyn
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
+test("settings pages member history while authorization lookup spans every bounded page", async ({ page }) => {
+  await page.goto("/settings");
+  await signIn(page);
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Member paging ${Date.now()}`, description: "member paging fixture" });
+  const members = Array.from({ length: 131 }, (_, index) => ({
+    id: `member_page_${index + 1}`,
+    project_id: project.id,
+    user_id: `usr_page_${index + 1}`,
+    email: `member-${index + 1}@example.test`,
+    role: "viewer",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  }));
+  await page.route("**/api/v1/project-members?*", async (route) => {
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    const items = members.slice(offset, offset + limit);
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ items, count: items.length, total: members.length, limit, offset }) });
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await expect(page.getByText("Showing 1-50 of 131")).toBeVisible();
+  await page.getByRole("button", { name: "Next project members" }).click();
+  await expect(page.getByText("Showing 51-100 of 131")).toBeVisible();
+  await expect(page.getByText(/member-51@example\.test/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test("runs list fetches, follows, closes, and switches terminal logs", async ({ page }) => {
   await page.goto("/runs");
   await signIn(page);

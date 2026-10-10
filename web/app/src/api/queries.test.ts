@@ -4,7 +4,7 @@ import { render, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "./errors";
-import { configureQueryClient, deploymentQuery, deploymentsQuery, environmentsQuery, healthQuery, projectsQuery, queryKeys, repositoriesQuery, retryRemote, revisionsQuery, runLogsQuery, runsQuery, servicesQuery, shouldPollDeploymentList, shouldPollRunList, shouldPollSelectedLogs, templatesQuery, approvalsQuery } from "./queries";
+import { allProjectMembersQuery, configureQueryClient, deploymentQuery, deploymentsQuery, environmentsQuery, healthQuery, projectsQuery, queryKeys, repositoriesQuery, retryRemote, revisionsQuery, runLogsQuery, runsQuery, servicesQuery, shouldPollDeploymentList, shouldPollRunList, shouldPollSelectedLogs, templatesQuery, approvalsQuery } from "./queries";
 import { Route as HomeRoute } from "../routes/_authenticated.index";
 import { Route as ProjectsRoute } from "../routes/_authenticated.projects";
 import { Route as RunDetailRoute } from "../routes/_authenticated.runs.$runId";
@@ -24,7 +24,7 @@ describe("resource query options", () => {
     expect(calls).toEqual(["/api/v1/health", "/api/v1/projects", "/api/v1/templates", "/api/v1/runs", "/api/v1/approvals", "/api/v1/run-logs?limit=5&offset=0"]);
     calls.length = 0;
     await ProjectsRoute.options.loader!({ context: { queryClient: client() } } as never);
-    expect(calls).toEqual(["/api/v1/projects", "/api/v1/repositories"]);
+    expect(calls).toEqual(["/api/v1/projects?limit=50&offset=0", "/api/v1/projects?limit=100&offset=0", "/api/v1/repositories"]);
     calls.length = 0;
     await RunDetailRoute.options.loader!({ context: { queryClient: client() }, params: { runId: "run_1" } } as never);
     expect(calls).toEqual(["/api/v1/runs/run_1"]);
@@ -50,7 +50,7 @@ describe("resource query options", () => {
     const calls: string[] = [];
     globalThis.fetch = vi.fn<typeof fetch>((path) => { calls.push(String(path)); return Promise.resolve(String(path).endsWith("/me") ? new Response(JSON.stringify({ id: "usr_1", email: "operator@example.test", name: "Operator", roles: ["system_admin"], provider: "local" }), { headers: { "Content-Type": "application/json" } }) : list()); });
     await DeploymentsRoute.options.loader!({ context: { queryClient: client() } } as never);
-    expect(calls).toEqual(["/api/v1/projects", "/api/v1/services", "/api/v1/environments", "/api/v1/me"]);
+    expect(calls).toEqual(["/api/v1/projects?limit=100&offset=0", "/api/v1/services", "/api/v1/environments", "/api/v1/me"]);
     expect(calls.join(" ")).not.toContain("/api/v1/runners/");
   });
 
@@ -63,6 +63,20 @@ describe("resource query options", () => {
     expect(queryClient.getQueryState(queryKeys.projects())?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(queryKeys.runLogs({ run_id: "run_1", limit: 100, offset: 0 }))?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(queryKeys.auditEvents())?.isInvalidated).toBe(false);
+  });
+
+  test("complete project-member lookup advances through bounded pages", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn<typeof fetch>((path) => {
+      const url = String(path);
+      calls.push(url);
+      const offset = Number(new URL(url, "http://local").searchParams.get("offset"));
+      const count = offset === 0 ? 100 : 31;
+      return Promise.resolve(new Response(JSON.stringify({ items: Array.from({ length: count }, (_, index) => ({ id: `member_${offset + index}` })), count, total: 131, limit: 100, offset }), { headers: { "Content-Type": "application/json" } }));
+    });
+    const result = await client().fetchQuery(allProjectMembersQuery());
+    expect(result).toHaveLength(131);
+    expect(calls).toEqual(["/api/v1/project-members?limit=100&offset=0", "/api/v1/project-members?limit=100&offset=100"]);
   });
 
   test("query signals reach fetch and mutations do not retry", async () => {

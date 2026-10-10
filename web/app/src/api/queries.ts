@@ -40,6 +40,7 @@ export const queryKeys = {
   projects: (value?: ProjectFilters) => ["projects", filters(value)] as const,
   allProjects: ["projects", "all"] as const,
   projectMembers: (value?: ProjectMemberFilters) => ["projectMembers", filters(value)] as const,
+  allProjectMembers: ["projectMembers", "all"] as const,
   repositories: (value?: RepositoryFilters) => ["repositories", filters(value)] as const,
   templates: (value?: TemplateFilters) => ["templates", filters(value)] as const,
   allTemplates: ["templates", "all"] as const,
@@ -92,6 +93,7 @@ async function collectBoundedPages<T>(load: (offset: number) => Promise<BoundedP
 }
 export const allProjectsQuery = () => queryOptions({ queryKey: queryKeys.allProjects, queryFn: ({ signal }) => collectBoundedPages((offset) => listProjects({ limit: 100, offset }, { signal })) });
 export const allTemplatesQuery = () => queryOptions({ queryKey: queryKeys.allTemplates, queryFn: ({ signal }) => collectBoundedPages((offset) => listTemplates({ limit: 100, offset }, { signal })) });
+export const allProjectMembersQuery = () => queryOptions({ queryKey: queryKeys.allProjectMembers, queryFn: ({ signal }) => collectBoundedPages((offset) => listProjectMembers({ limit: 100, offset }, { signal })) });
 export const projectsQuery = (value?: ProjectFilters) => queryOptions({ queryKey: queryKeys.projects(value), queryFn: ({ signal }) => listProjects(value, { signal }) });
 export const projectMembersQuery = (value?: ProjectMemberFilters) => queryOptions({ queryKey: queryKeys.projectMembers(value), queryFn: ({ signal }) => listProjectMembers(value, { signal }) });
 export const repositoriesQuery = (value?: RepositoryFilters) => queryOptions({ queryKey: queryKeys.repositories(value), queryFn: ({ signal }) => listRepositories(value, { signal }) });

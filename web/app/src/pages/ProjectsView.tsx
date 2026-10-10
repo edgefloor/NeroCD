@@ -65,13 +65,13 @@ function ProjectCard({
         </div>
         <div className="flex flex-wrap gap-1.5">
           <Badge variant="secondary" className="text-xs">
-            {projectTemplates.length} templates
+            {projectTemplates.length} templates in loaded page
           </Badge>
           <Badge variant="secondary" className="text-xs">
-            {projectRuns.length} runs
+            {projectRuns.length} runs in loaded page
           </Badge>
           <Badge variant="secondary" className="text-xs">
-            {projectRepos.length} sources
+            {projectRepos.length} sources in loaded page
           </Badge>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -118,12 +118,12 @@ function ProjectCard({
 }
 
 function ProjectForms({
-  snapshot,
+  projects,
   token,
   busy,
   mutate,
 }: {
-  snapshot: ApiSnapshot;
+  projects: Project[];
   token: string;
   busy: string;
   mutate: MutateFn;
@@ -172,8 +172,8 @@ function ProjectForms({
             className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
             required
           >
-            {snapshot.projects.length === 0 ? <option value="">No projects available</option> : null}
-            {snapshot.projects.map((project) => (
+            {projects.length === 0 ? <option value="">No projects available</option> : null}
+            {projects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
               </option>
@@ -209,12 +209,14 @@ function ProjectForms({
 
 export function ProjectsView({
   snapshot,
+  formProjects = snapshot.projects,
   token,
   busy,
   mutate,
   loading,
 }: {
   snapshot: ApiSnapshot;
+  formProjects?: Project[];
   token: string;
   busy: string;
   mutate: MutateFn;
@@ -247,7 +249,7 @@ export function ProjectsView({
               <DialogHeader>
                 <DialogTitle>Configure project</DialogTitle>
               </DialogHeader>
-              <ProjectForms snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
+              <ProjectForms projects={formProjects} token={token} busy={busy} mutate={mutate} />
             </DialogContent>
           </Dialog>
         </div>
@@ -277,7 +279,7 @@ export function ProjectsView({
           <CardTitle className="text-base font-semibold">Configure project</CardTitle>
         </CardHeader>
         <CardContent>
-          <ProjectForms snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
+          <ProjectForms projects={formProjects} token={token} busy={busy} mutate={mutate} />
         </CardContent>
       </Card>
     </section>
