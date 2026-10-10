@@ -254,7 +254,7 @@ test("dashboard reports unfinished work truthfully and shared cards keep bounded
   }
 });
 
-test("project paging reaches rows beyond one hundred on a narrow viewport", async ({ page }) => {
+test("project paging reaches rows beyond one hundred on a narrow viewport", async ({ page }, testInfo) => {
   await page.goto("/projects");
   await signIn(page);
   const projects = Array.from({ length: 151 }, (_, index) => ({
@@ -282,9 +282,10 @@ test("project paging reaches rows beyond one hundred on a narrow viewport", asyn
   await expect(page.getByText("Showing 101-150 of 151")).toBeVisible();
   await expect(page.getByText("Paged project 101", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("projects-page-3-320.png"), fullPage: true });
 });
 
-test("settings pages member history while authorization lookup spans every bounded page", async ({ page }) => {
+test("settings pages member history while authorization lookup spans every bounded page", async ({ page }, testInfo) => {
   await page.goto("/settings");
   await signIn(page);
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Member paging ${Date.now()}`, description: "member paging fixture" });
@@ -311,9 +312,10 @@ test("settings pages member history while authorization lookup spans every bound
   await expect(page.getByText("Showing 51-100 of 131")).toBeVisible();
   await expect(page.getByText(/member-51@example\.test/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("settings-members-page-2-320.png"), fullPage: true });
 });
 
-test("runs list fetches, follows, closes, and switches terminal logs", async ({ page }) => {
+test("runs list fetches, follows, closes, and switches terminal logs", async ({ page }, testInfo) => {
   await page.goto("/runs");
   await signIn(page);
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
@@ -374,6 +376,7 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
     await page.locator(`[data-run-log-trigger="${runID}"]`).first().click();
     await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-logs-history-320.png"), fullPage: true });
     await page.keyboard.press("Escape");
   }
 });
