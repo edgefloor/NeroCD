@@ -10,7 +10,7 @@ SQLC_TOOL_IMAGE := golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299
 PRODUCT_PACKAGES := ./cmd/... ./internal/...
 TEST_PACKAGES := $(shell go list ./... | grep -v '/agent/skills/')
 
-.PHONY: build test fmt-check vet race lint lint-new lint-install shell-check verify postgres-test generate check-generated web-install web-test web-build web-policy browser-smoke docker-build production-compose-policy-gate local-image-registry-gate identity-artifact-gate runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-web-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate production-profile-gate backup-restore-gate backup-scheduler-gate dogfood-gate system-operations-gate observability-gate release-evidence-accepted-gates release-evidence-gate release-evidence-synthetic-gate ci-release-policy-gate supply-chain release-artifacts contract check clean run smoke docker-up docker-down docker-logs
+.PHONY: build test fmt-check vet race lint lint-new lint-install shell-check verify postgres-test generate check-generated web-install web-test web-build web-policy browser-smoke docker-build production-compose-policy-gate local-image-registry-gate identity-artifact-gate runtime-fencing-gate runtime-spool-gate runtime-secrets-gate runtime-enrollment-gate runtime-web-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate production-profile-gate backup-restore-gate backup-scheduler-gate dogfood-gate system-operations-gate observability-gate release-evidence-accepted-gates release-evidence-gate release-evidence-synthetic-gate ci-release-policy-gate supply-chain release-artifacts contract check clean run smoke docker-up docker-down docker-logs
 
 build: web-build
 	mkdir -p "$(BIN_DIR)"
@@ -148,8 +148,8 @@ release-artifacts: build web-policy
 # skips an accepted gate. The evidence script invokes this exact target from a
 # clean source checkout (real or the clearly labelled disposable harness).
 release-evidence-accepted-gates:
-	$(MAKE) --jobs=1 ci-release-policy-gate test web-test build browser-smoke web-policy contract check-generated docker-build identity-artifact-gate production-profile-gate
-	$(MAKE) --jobs=1 runtime-fencing-gate runtime-spool-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate
+	$(MAKE) --jobs=1 ci-release-policy-gate test race web-test build browser-smoke web-policy contract check-generated docker-build identity-artifact-gate production-profile-gate
+	$(MAKE) --jobs=1 runtime-fencing-gate runtime-spool-gate runtime-secrets-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate
 
 release-evidence-gate:
 	bash scripts/release-evidence.sh --real
@@ -176,7 +176,7 @@ contract:
 
 check:
 	$(MAKE) clean
-	$(MAKE) ci-release-policy-gate verify web-test build browser-smoke web-policy contract check-generated production-compose-policy-gate local-image-registry-gate docker-build
+	$(MAKE) ci-release-policy-gate verify race web-test build browser-smoke web-policy contract check-generated production-compose-policy-gate local-image-registry-gate docker-build
 
 clean:
 	rm -rf -- "$(BIN_DIR)" "$(WEB_APP_DIR)/playwright-report" "$(WEB_APP_DIR)/test-results"

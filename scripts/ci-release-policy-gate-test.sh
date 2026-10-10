@@ -152,4 +152,12 @@ candidate missing-registry-digest
 perl -0pi -e 's/Capture exact registry digest and reject tag\/digest divergence/capture digest/' "$tmp/missing-registry-digest/.github/workflows/release.yml"
 expect_reject missing-registry-digest
 
+candidate missing-race-gate
+perl -0pi -e 's/ verify race web-test/ verify web-test/' "$tmp/missing-race-gate/Makefile"
+expect_reject missing-race-gate
+
+candidate missing-runtime-secrets-gate
+perl -0pi -e 's/\bruntime-secrets-gate\b//g' "$tmp/missing-runtime-secrets-gate/Makefile"
+expect_reject missing-runtime-secrets-gate
+
 printf 'ci-release-policy mutation PASS\n'

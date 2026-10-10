@@ -14,6 +14,7 @@ fail() { printf 'release runtime scheduling: %s\n' "$*" >&2; exit 1; }
 runtime_gates=(
   runtime-fencing-gate
   runtime-spool-gate
+  runtime-secrets-gate
   runtime-enrollment-gate
   runtime-provenance-gate
   runtime-compose-gate
@@ -88,13 +89,13 @@ observability_start=$(line_of "$success_trace" start observability-gate)
 
 failure_trace="$tmp/failure.trace"
 : >"$failure_trace"
-if (cd "$tmp" && TRACE="$failure_trace" ACTIVE="$tmp/active" FAIL_GATE=runtime-spool-gate make --no-print-directory -f Makefile run >/dev/null 2>&1); then
+if (cd "$tmp" && TRACE="$failure_trace" ACTIVE="$tmp/active" FAIL_GATE=runtime-secrets-gate make --no-print-directory -f Makefile run >/dev/null 2>&1); then
   fail 'failing runtime gate returned success'
 fi
 [[ $(awk '$1 == "start" && $2 == "runtime-fencing-gate" { count++ } END { print count + 0 }' "$failure_trace") -eq 1 ]] || fail 'failure run did not execute its prerequisite first gate exactly once'
-[[ $(awk '$1 == "fail" && $2 == "runtime-spool-gate" { count++ } END { print count + 0 }' "$failure_trace") -eq 1 ]] || fail 'failure run did not stop at the selected failing gate'
-for gate in "${runtime_gates[@]:2}"; do
-  ! rg -q "^start ${gate}$" "$failure_trace" || fail "$gate ran after runtime-spool-gate failed"
+[[ $(awk '$1 == "fail" && $2 == "runtime-secrets-gate" { count++ } END { print count + 0 }' "$failure_trace") -eq 1 ]] || fail 'failure run did not stop at the selected failing gate'
+for gate in "${runtime_gates[@]:3}"; do
+  ! rg -q "^start ${gate}$" "$failure_trace" || fail "$gate ran after runtime-secrets-gate failed"
 done
 ! rg -q '^overlap ' "$failure_trace" || fail 'failure run overlapped runtime gates'
 
