@@ -178,27 +178,6 @@ func postAPIInto(url string, body any, token string, result any) error {
 	return postAPIIntoContext(context.Background(), url, body, token, result)
 }
 
-func postAPINoResponse(url string, body any, token string) error {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := runnerHTTPClient.Do(req)
-	if err != nil {
-		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), Err: err}
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		return &runnerAPIError{Method: http.MethodPost, URL: runnerRequestLabel(url), StatusCode: resp.StatusCode, Status: resp.Status}
-	}
-	return nil
-}
 func postAPIIntoContext(ctx context.Context, url string, body any, token string, result any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {

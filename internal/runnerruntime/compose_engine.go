@@ -1,4 +1,4 @@
-package main
+package runnerruntime
 
 // The Compose engine is deliberately a deep module.  Its caller supplies an
 // immutable checked-out workspace and a resolved deployment plan; command

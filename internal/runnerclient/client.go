@@ -1,14 +1,21 @@
-package main
+package runnerclient
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
+	"strings"
+	"time"
 )
 
-type runnerAPIError struct {
+// APIError describes a sanitized runner protocol transport or HTTP failure.
+type APIError struct {
 	Method     string
 	URL        string
 	StatusCode int
@@ -17,7 +24,7 @@ type runnerAPIError struct {
 	Err        error
 }
 
-func (e *runnerAPIError) Error() string {
+func (e *APIError) Error() string {
 	if e.Err != nil {
 		// net/http transport errors can themselves embed the complete request URL.
 		// Keep the cause for errors.Is/As classification, but never render it where
@@ -29,50 +36,57 @@ func (e *runnerAPIError) Error() string {
 	return fmt.Sprintf("%s %s returned %s", e.Method, e.URL, e.Status)
 }
 
-func (e *runnerAPIError) Unwrap() error { return e.Err }
+func (e *APIError) Unwrap() error { return e.Err }
 
-type runnerFailureClass uint8
+// FailureClass identifies how the runtime should handle a protocol failure.
+type FailureClass uint8
 
 const (
-	runnerFailurePermanent runnerFailureClass = iota
-	runnerFailureTransient
-	runnerFailureAuthority
+	// FailurePermanent cannot succeed without changing the request or configuration.
+	FailurePermanent FailureClass = iota
+	// FailureTransient may succeed when retried under the same authority.
+	FailureTransient
+	// FailureAuthority means the current runner authority is absent or stale.
+	FailureAuthority
 )
 
-func classifyRunnerFailure(err error) runnerFailureClass {
+// ClassifyFailure maps a transport or protocol error to its retry behavior.
+func ClassifyFailure(err error) FailureClass {
 	if err == nil {
-		return runnerFailurePermanent
+		return FailurePermanent
 	}
-	var apiErr *runnerAPIError
+	var apiErr *APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode != 0 {
 		switch {
 		case apiErr.StatusCode == 408, apiErr.StatusCode == 429, apiErr.StatusCode >= 500:
-			return runnerFailureTransient
+			return FailureTransient
 		case apiErr.StatusCode == 401, apiErr.StatusCode == 403, apiErr.StatusCode == 404, apiErr.StatusCode == 409:
-			return runnerFailureAuthority
+			return FailureAuthority
 		default:
-			return runnerFailurePermanent
+			return FailurePermanent
 		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return runnerFailureTransient
+		return FailureTransient
 	}
 	var networkErr net.Error
 	if errors.As(err, &networkErr) {
-		return runnerFailureTransient
+		return FailureTransient
 	}
 	if apiErr != nil && apiErr.Err != nil {
-		return runnerFailureTransient
+		return FailureTransient
 	}
-	return runnerFailurePermanent
+	return FailurePermanent
 }
 
-func runnerHTTPStatus(err error, status int) bool {
-	var apiErr *runnerAPIError
+// HTTPStatus reports whether err is a runner API response with status.
+func HTTPStatus(err error, status int) bool {
+	var apiErr *APIError
 	return errors.As(err, &apiErr) && apiErr.StatusCode == status
 }
 
-func runnerRequestLabel(rawURL string) string {
+// RequestLabel removes credentials and query data from a request URL.
+func RequestLabel(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return "<runner-api>"
@@ -81,4 +95,60 @@ func runnerRequestLabel(rawURL string) string {
 	parsed.ForceQuery = false
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+// Client performs typed runner protocol operations.
+type Client struct {
+	Server string
+	Token  string
+	HTTP   *http.Client
+}
+
+// New constructs a runner protocol client for server and token.
+func New(server, token string) Client {
+	return Client{Server: strings.TrimRight(server, "/"), Token: token, HTTP: &http.Client{Timeout: 5 * time.Second}}
+}
+
+func (c Client) post(ctx context.Context, path string, body, result any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, path, bytes.NewReader(payload), result)
+}
+
+func (c Client) get(ctx context.Context, path string, result any) error {
+	return c.do(ctx, http.MethodGet, path, nil, result)
+}
+
+func (c Client) do(ctx context.Context, method, path string, body io.Reader, result any) error {
+	rawURL := c.Server + path
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
+	if err != nil {
+		return err
+	}
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return &APIError{Method: method, URL: RequestLabel(rawURL), Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return &APIError{Method: method, URL: RequestLabel(rawURL), StatusCode: resp.StatusCode, Status: resp.Status, Detail: strings.TrimSpace(string(detail))}
+	}
+	if result == nil {
+		return nil
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(result); err != nil {
+		return &APIError{Method: method, URL: RequestLabel(rawURL), Err: err}
+	}
+	return nil
 }

@@ -1,4 +1,4 @@
-package main
+package runnerruntime
 
 import (
 	"encoding/base64"

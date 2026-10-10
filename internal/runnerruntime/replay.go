@@ -1,4 +1,4 @@
-package main
+package runnerruntime
 
 import (
 	"context"
@@ -7,14 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"sort"
 	"sync"
 	"time"
 
-	"nerocd/internal/app"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
+	"nerocd/internal/runnerclient"
 )
 
 const (
@@ -177,10 +176,9 @@ func (r *attemptReporter) postEvents(ctx context.Context, events []runner.Journa
 	for _, event := range events {
 		requestEvents = append(requestEvents, runnerEventRequest{EventKey: event.ID, Sequence: event.Sequence, Stream: event.Stream, Message: event.Message})
 	}
-	var ack runnerEventBatchAck
-	err := postAPIIntoContext(ctx, r.server+"/api/v1/runners/events/batch", runnerEventBatchRequest{
+	ack, err := runnerclient.New(r.server, r.token).AppendEvents(ctx, runnerEventBatchRequest{
 		RunID: r.authority.RunID, LeaseID: r.authority.LeaseID, Attempt: r.authority.Attempt, Fence: r.authority.Fence, Events: requestEvents,
-	}, r.token, &ack)
+	})
 	if err != nil {
 		return err
 	}
@@ -373,11 +371,10 @@ func reconcileRunnerJournalWithCounters(server, token string, journal *runner.At
 }
 
 func probeProvenancePlan(server, token string, pending runner.JournalProvenance) error {
-	ctx, cancel := context.WithTimeout(context.Background(), runnerHTTPClient.Timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	query := url.Values{"deployment_id": {pending.DeploymentID}, "run_id": {pending.Attempt.RunID}, "lease_id": {pending.Attempt.LeaseID}, "attempt": {fmt.Sprint(pending.Attempt.Attempt)}, "fence": {pending.Attempt.Fence}}
-	var plan domain.DeploymentPlan
-	if err := getAPIIntoContext(ctx, server+"/api/v1/runners/deployments/plan?"+query.Encode(), token, &plan); err != nil {
+	plan, err := runnerclient.New(server, token).DeploymentPlan(ctx, runnerclient.DeploymentAuthority{DeploymentID: pending.DeploymentID, RunID: pending.Attempt.RunID, LeaseID: pending.Attempt.LeaseID, Attempt: pending.Attempt.Attempt, Fence: pending.Attempt.Fence})
+	if err != nil {
 		return fmt.Errorf("probe provenance plan: %w", err)
 	}
 	if plan.DeploymentID != pending.DeploymentID || plan.RunID != pending.Attempt.RunID || plan.LeaseID != pending.Attempt.LeaseID || plan.Attempt != pending.Attempt.Attempt || plan.Fence != pending.Attempt.Fence {
@@ -389,7 +386,9 @@ func probeProvenancePlan(server, token string, pending runner.JournalProvenance)
 func replayJournalProvenance(server, token string, supervisor *attemptSupervisor, pending runner.JournalProvenance) error {
 	var revision domain.Revision
 	err := retryAttemptRequest(supervisor, func(ctx context.Context) error {
-		return postAPIIntoContext(ctx, server+"/api/v1/runners/deployments/provenance", app.ProvenanceResolutionInput{DeploymentID: pending.DeploymentID, RunID: pending.Attempt.RunID, LeaseID: pending.Attempt.LeaseID, Attempt: pending.Attempt.Attempt, Fence: pending.Attempt.Fence, ResolutionID: pending.ID, GitCommit: pending.GitCommit, ComposeHash: pending.ComposeHash, ImageDigests: append([]string(nil), pending.ImageDigests...), ContentIdentity: pending.ContentIdentity}, token, &revision)
+		var requestErr error
+		revision, requestErr = runnerclient.New(server, token).ReportProvenance(ctx, runnerclient.ProvenanceRequest{DeploymentID: pending.DeploymentID, RunID: pending.Attempt.RunID, LeaseID: pending.Attempt.LeaseID, Attempt: pending.Attempt.Attempt, Fence: pending.Attempt.Fence, ResolutionID: pending.ID, GitCommit: pending.GitCommit, ComposeHash: pending.ComposeHash, ImageDigests: append([]string(nil), pending.ImageDigests...), ContentIdentity: pending.ContentIdentity})
+		return requestErr
 	})
 	if err != nil {
 		return err
@@ -406,14 +405,9 @@ func replayJournalProvenance(server, token string, supervisor *attemptSupervisor
 }
 
 func probeReplayAuthority(server, token string, authority runner.AttemptIdentity) (domain.RunLease, bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), runnerHTTPClient.Timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	query := url.Values{}
-	query.Set("lease_id", authority.LeaseID)
-	query.Set("attempt", fmt.Sprintf("%d", authority.Attempt))
-	query.Set("fence", authority.Fence)
-	var lease domain.RunLease
-	err := getAPIIntoContext(ctx, server+"/api/v1/runners/lease?"+query.Encode(), token, &lease)
+	lease, err := runnerclient.New(server, token).Lease(ctx, runnerclient.Authority{LeaseID: authority.LeaseID, Attempt: authority.Attempt, Fence: authority.Fence})
 	if runnerHTTPStatus(err, 404) {
 		var apiErr *runnerAPIError
 		var envelope struct {
@@ -437,11 +431,9 @@ func reconcileAttempt(server, token string, supervisor *attemptSupervisor, pendi
 	if len(pending.completions) == 0 {
 		var renewed domain.RunLease
 		err := retryAttemptRequest(supervisor, func(ctx context.Context) error {
-			return postAPIIntoContext(ctx, server+"/api/v1/runners/renew", struct {
-				LeaseID string `json:"lease_id"`
-				Attempt int    `json:"attempt"`
-				Fence   string `json:"fence"`
-			}{pending.authority.LeaseID, pending.authority.Attempt, pending.authority.Fence}, token, &renewed)
+			var requestErr error
+			renewed, requestErr = runnerclient.New(server, token).Renew(ctx, runnerclient.Authority{LeaseID: pending.authority.LeaseID, Attempt: pending.authority.Attempt, Fence: pending.authority.Fence})
+			return requestErr
 		})
 		if err != nil {
 			return err
@@ -460,11 +452,11 @@ func reconcileAttempt(server, token string, supervisor *attemptSupervisor, pendi
 		offset += len(batch)
 	}
 	for _, completion := range pending.completions {
-		var completed domain.RunLease
 		err := retryAttemptRequest(supervisor, func(ctx context.Context) error {
-			return postAPIIntoContext(ctx, server+"/api/v1/runners/complete", runnerCompleteRequest{
+			_, requestErr := runnerclient.New(server, token).Complete(ctx, runnerCompleteRequest{
 				LeaseID: completion.Attempt.LeaseID, Attempt: completion.Attempt.Attempt, Fence: completion.Attempt.Fence, CompletionKey: completion.ID, Status: completion.Status,
-			}, token, &completed)
+			})
+			return requestErr
 		})
 		if err != nil {
 			return err

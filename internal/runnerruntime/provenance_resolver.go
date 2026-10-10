@@ -1,4 +1,4 @@
-package main
+package runnerruntime
 
 // The compose provenance resolver deliberately has no apply operation.  It
 // checks out one immutable commit and asks Compose to render its configuration;
@@ -28,9 +28,9 @@ import (
 	"sync"
 	"time"
 
-	"nerocd/internal/app"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
+	"nerocd/internal/runnerclient"
 	"nerocd/internal/source"
 )
 
@@ -201,9 +201,8 @@ func deploymentCancellationReceipt(supervisor *attemptSupervisor, server, token 
 		return ""
 	}
 	defer cancel()
-	query := url.Values{"deployment_id": {plan.DeploymentID}, "run_id": {plan.RunID}, "lease_id": {plan.LeaseID}, "attempt": {fmt.Sprint(plan.Attempt)}, "fence": {plan.Fence}}
-	var observed domain.DeploymentPlan
-	if err := getAPIIntoContext(ctx, server+"/api/v1/runners/deployments/status?"+query.Encode(), token, &observed); err != nil {
+	observed, err := runnerclient.New(server, token).DeploymentStatus(ctx, runnerclient.DeploymentAuthority{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence})
+	if err != nil {
 		return ""
 	}
 	if observed.DeploymentID != plan.DeploymentID || observed.RunID != plan.RunID || observed.LeaseID != plan.LeaseID || observed.Attempt != plan.Attempt || observed.Fence != plan.Fence || observed.Status != domain.DeploymentCancelRequested || observed.CancellationRequestID == nil {
@@ -224,9 +223,8 @@ func startDeploymentStatusWatcher(parent context.Context, supervisor *attemptSup
 			if err != nil {
 				return
 			}
-			query := url.Values{"deployment_id": {plan.DeploymentID}, "run_id": {plan.RunID}, "lease_id": {plan.LeaseID}, "attempt": {fmt.Sprint(plan.Attempt)}, "fence": {plan.Fence}}
-			var observed domain.DeploymentPlan
-			err = getAPIIntoContext(ctx, server+"/api/v1/runners/deployments/status?"+query.Encode(), token, &observed)
+			observed, statusErr := runnerclient.New(server, token).DeploymentStatus(ctx, runnerclient.DeploymentAuthority{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence})
+			err = statusErr
 			stop()
 			if err == nil && observed.DeploymentID == plan.DeploymentID && observed.RunID == plan.RunID && observed.LeaseID == plan.LeaseID && observed.Attempt == plan.Attempt && observed.Fence == plan.Fence && observed.Status == domain.DeploymentCancelRequested && observed.CancellationRequestID != nil && strings.TrimSpace(*observed.CancellationRequestID) != "" {
 				provenanceDiagnostic("deployment_cancellation", "receipt_observed")
@@ -279,14 +277,13 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 	if strings.TrimSpace(deploymentID) == "" {
 		return errors.New("compose deployment is missing deployment_id")
 	}
-	query := url.Values{"deployment_id": {deploymentID}, "run_id": {claim.Run.ID}, "lease_id": {claim.Lease.ID}, "attempt": {fmt.Sprint(claim.Lease.Attempt)}, "fence": {claim.Lease.Fence}}
 	requestCtx, cancel, err := supervisor.RequestContext()
 	if err != nil {
 		return err
 	}
 	defer cancel()
-	var plan domain.DeploymentPlan
-	if err = getAPIIntoContext(requestCtx, server+"/api/v1/runners/deployments/plan?"+query.Encode(), token, &plan); err != nil {
+	plan, err := runnerclient.New(server, token).DeploymentPlan(requestCtx, runnerclient.DeploymentAuthority{DeploymentID: deploymentID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence})
+	if err != nil {
 		return err
 	}
 	// A fixed, server-owned stage marker gives operators a minimal durable
@@ -314,8 +311,8 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 			return e
 		}
 		defer stop()
-		var ignored domain.Deployment
-		return postAPIIntoContext(ctx, server+"/api/v1/runners/deployments/transition", app.DeploymentTransitionInput{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, TransitionKey: key, ExpectedStatus: expected, TargetStatus: target, FailureCode: code, HealthPassed: health}, token, &ignored)
+		_, transitionErr := runnerclient.New(server, token).TransitionDeployment(ctx, runnerclient.DeploymentTransitionRequest{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, TransitionKey: key, ExpectedStatus: expected, TargetStatus: target, FailureCode: code, HealthPassed: health})
+		return transitionErr
 	}
 	// A reclaimed lease observes the authoritative deployment status. Never
 	// regress it: only a first owner advances assigned into preparation.
@@ -343,8 +340,8 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 	defer cancelWatcher.Stop()
 	authorizeCredential := func(ctx context.Context, binding domain.SecretBinding) error {
 		accessID := attemptMutationKey("secret_access", claim.Lease.ID, claim.Lease.Attempt, strings.TrimSpace(binding.Name))
-		var grant domain.SecretAccessGrant
-		if err := postAPIIntoContext(ctx, server+"/api/v1/runners/secrets/access", app.SecretAccessInput{AccessID: accessID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, Binding: strings.TrimSpace(binding.Name), Provider: strings.ToLower(strings.TrimSpace(binding.Provider)), Version: strings.TrimSpace(binding.Version)}, token, &grant); err != nil {
+		grant, err := runnerclient.New(server, token).AuthorizeSecret(ctx, runnerclient.SecretAccessRequest{AccessID: accessID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, Binding: strings.TrimSpace(binding.Name), Provider: strings.ToLower(strings.TrimSpace(binding.Provider)), Version: strings.TrimSpace(binding.Version)})
+		if err != nil {
 			return err
 		}
 		if grant.AccessID != accessID || grant.RunID != plan.RunID || grant.LeaseID != plan.LeaseID || grant.Attempt != plan.Attempt || grant.Binding != strings.TrimSpace(binding.Name) || grant.Provider != strings.ToLower(strings.TrimSpace(binding.Provider)) || grant.Version != strings.TrimSpace(binding.Version) {
@@ -499,8 +496,8 @@ func composeCancellationRollback(supervisor *attemptSupervisor, server, token st
 		return err
 	}
 	defer cancel()
-	var ignored domain.DeploymentFailureRollbackResult
-	return postAPIIntoContext(ctx, server+"/api/v1/runners/deployments/fail-and-rollback", app.DeploymentFailureRollbackInput{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, RequestID: receipt, CancellationRequestID: receipt, ExpectedStatus: domain.DeploymentCancelRequested, FailureCode: "cancellation_requested"}, token, &ignored)
+	_, requestErr := runnerclient.New(server, token).FailDeploymentAndRollback(ctx, runnerclient.DeploymentFailureRollbackRequest{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, RequestID: receipt, CancellationRequestID: receipt, ExpectedStatus: domain.DeploymentCancelRequested, FailureCode: "cancellation_requested"})
+	return requestErr
 }
 
 func composePreApplyFailure(transition func(string, string, string, string, *bool) error, claim domain.ClaimedRun, isRollback bool, code string, cause error) error {
@@ -528,16 +525,14 @@ func composePostApplyFailure(supervisor *attemptSupervisor, server, token string
 	}
 	defer cancel()
 	if isRollback {
-		var ignored domain.Deployment
-		err = postAPIIntoContext(ctx, server+"/api/v1/runners/deployments/transition", app.DeploymentTransitionInput{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, TransitionKey: attemptMutationKey("rollback-failed", claim.Lease.ID, claim.Lease.Attempt, ""), ExpectedStatus: expected, TargetStatus: domain.DeploymentRollbackFailed, FailureCode: code}, token, &ignored)
+		_, err = runnerclient.New(server, token).TransitionDeployment(ctx, runnerclient.DeploymentTransitionRequest{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, TransitionKey: attemptMutationKey("rollback-failed", claim.Lease.ID, claim.Lease.Attempt, ""), ExpectedStatus: expected, TargetStatus: domain.DeploymentRollbackFailed, FailureCode: code})
 		if err != nil {
 			return err
 		}
 		return nil
 	}
 	requestID := attemptMutationKey("compose-failure", claim.Lease.ID, claim.Lease.Attempt, code)
-	var ignored domain.DeploymentFailureRollbackResult
-	err = postAPIIntoContext(ctx, server+"/api/v1/runners/deployments/fail-and-rollback", app.DeploymentFailureRollbackInput{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, RequestID: requestID, ExpectedStatus: expected, FailureCode: code}, token, &ignored)
+	_, err = runnerclient.New(server, token).FailDeploymentAndRollback(ctx, runnerclient.DeploymentFailureRollbackRequest{DeploymentID: plan.DeploymentID, RunID: plan.RunID, LeaseID: plan.LeaseID, Attempt: plan.Attempt, Fence: plan.Fence, RequestID: requestID, ExpectedStatus: expected, FailureCode: code})
 	if err != nil {
 		return err
 	}
