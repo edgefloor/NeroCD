@@ -2229,6 +2229,16 @@ test("log stream links to runs and contains long output on mobile and desktop", 
   const link = page.getByRole("link", { name: `View run ${runID}`, exact: true });
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", `/runs/${runID}?q=Long-output&offset=50`);
+  const filter = page.getByRole("searchbox", { name: "Filter this page", exact: true });
+  await filter.fill("no-such-log-entry");
+  await expect(page.getByText("No logs match this filter on the loaded page. Clear the filter or try another page.")).toBeVisible();
+  await expect(page.getByText("0 of 1 loaded log entries match this filter.")).toBeVisible();
+  await page.getByRole("button", { name: "Clear filter", exact: true }).click();
+  await expect(filter).toHaveValue("");
+  await expect(link).toBeVisible();
+  await expect(page).toHaveURL(/\/logs\?offset=50$/);
+  await filter.fill("Long-output");
+  await expect(page.getByText("1 of 1 loaded log entries match this filter.")).toBeVisible();
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.getByText(message, { exact: true })).toBeVisible();
@@ -2237,9 +2247,9 @@ test("log stream links to runs and contains long output on mobile and desktop", 
   }
   await link.focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(new RegExp(`/runs/${runID}\\?q=Long-output&offset=50$`));
+  await expect(page).toHaveURL((url) => url.pathname === `/runs/${runID}` && url.searchParams.get("q") === "Long-output" && url.searchParams.get("offset") === "50");
   await page.goBack();
-  await expect(page).toHaveURL(/\/logs\?q=Long-output&offset=50$/);
+  await expect(page).toHaveURL((url) => url.pathname === "/logs" && url.searchParams.get("q") === "Long-output" && url.searchParams.get("offset") === "50");
   await expect(link).toBeVisible();
 });
 
