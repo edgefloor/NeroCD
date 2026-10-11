@@ -1457,3 +1457,38 @@ test("project access editing follows ownership and refreshes after role changes"
     await context.close();
   }
 });
+
+test("run detail selection keeps URL diagnostics and browser history aligned", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID, secondRunID } = await createRunLogFixture(page);
+  const diagnostics = page.locator('[aria-labelledby="workflow-diagnostics-title"]');
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runs/${runID}?q=browser-logs`);
+    await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(diagnostics).toContainText(runID);
+    const trigger = page.locator(`[data-run-log-trigger="${secondRunID}"]`);
+    await (width < 768 ? trigger.first() : trigger.last()).click();
+    await expect(page).toHaveURL(new RegExp(`/runs/${secondRunID}\\?q=browser-logs$`));
+    await expect(page.getByRole("dialog", { name: `run ${secondRunID}` })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(diagnostics).toContainText(secondRunID);
+    await expect(diagnostics).not.toContainText(runID);
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/runs/${runID}\\?q=browser-logs$`));
+    await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(diagnostics).toContainText(runID);
+    await page.goForward();
+    await expect(page.getByRole("dialog", { name: `run ${secondRunID}` })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("dialog", { name: `run ${secondRunID}` })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(diagnostics).toContainText(secondRunID);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-detail-history-320.png"), fullPage: true });
+  }
+});

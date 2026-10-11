@@ -32,7 +32,7 @@ export function WorkflowDiagnostics({ run }: { run: TaskRun }): ReactNode {
       <CardHeader className="border-b">
         <CardTitle><h2 id="workflow-diagnostics-title">Workflow steps</h2></CardTitle>
         <CardDescription>
-          Status and timing reported for this run. Logs cover the whole run.
+          Status and timing for run <span className="break-all font-mono">{run.id}</span>. Logs cover the whole run.
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-4">

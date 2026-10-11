@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { allProjectMembersQuery, principalQuery, allProjectsQuery, allTemplatesQuery, runQuery, runsQuery, type RunLog, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "@/api";
@@ -21,6 +21,7 @@ type SelectedLogsState = { runID: string; logs: RunLog[]; loading: boolean; erro
 
 export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const page = usePage();
+  const navigate = useNavigate();
   const runs = useRunsPollingQuery({ limit: page.limit, offset: page.offset });
   const projects = useQuery(allProjectsQuery());
   const principal = useQuery(principalQuery());
@@ -63,7 +64,13 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
       logsLoadingPrevious={logsMatchSelection && selectedLogs.loadingPrevious}
       onLoadPreviousLogs={logsMatchSelection ? selectedLogs.loadPrevious : undefined}
       selectedRun={selectedRun.data ?? undefined}
-      onSelectRun={setSelectedRunID}
+      onSelectRun={(nextRunID) => {
+        if (runId && runId !== nextRunID) {
+          void navigate({ to: "/runs/$runId", params: { runId: nextRunID }, search: true, resetScroll: false });
+          return;
+        }
+        setSelectedRunID(nextRunID);
+      }}
       onCloseLogs={() => {
         setSelectedRunID("");
         setSelectedLogs({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
