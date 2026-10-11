@@ -227,7 +227,10 @@ test("pending enrollment locks the submitted draft and restores it after failure
   fireEvent.change(screen.getByLabelText("Runner ID"), { target: { value: "runner_pending" } });
   fireEvent.change(screen.getByLabelText("Runner name"), { target: { value: "Pending runner" } });
   const form = screen.getByRole("form", { name: "Create runner enrollment" });
-  fireEvent.submit(form);
+  act(() => {
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+  });
   expect(form.getAttribute("aria-busy")).toBe("true");
   for (const field of [...screen.getAllByRole("textbox"), screen.getByRole("combobox")]) {
     expect((field as HTMLInputElement).disabled).toBe(true);
@@ -240,6 +243,10 @@ test("pending enrollment locks the submitted draft and restores it after failure
   expect((screen.getByLabelText("Runner name") as HTMLInputElement).value).toBe("Pending runner");
   expect((screen.getByLabelText("Runner ID") as HTMLInputElement).disabled).toBe(false);
   expect(screen.getByRole("alert").textContent).toContain("Enrollment could not be created");
+  vi.mocked(createRunnerEnrollment).mockResolvedValueOnce({ enrollment: { runner_id: "runner_pending" }, token: "retry-token" } as never);
+  await act(async () => { fireEvent.submit(form); });
+  expect(createRunnerEnrollment).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("dialog", { name: "One-time runner enrollment secret" })).toBeTruthy();
 });
 
 

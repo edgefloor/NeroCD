@@ -28,14 +28,17 @@ export function RunnersView({ runners, q, canAdmin, controlsDisabled = false, on
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const enrolling = useRef(false);
   const secretRef = useRef<string | undefined>(undefined);
   useEffect(() => () => { secretRef.current = undefined; }, []);
   const visible = runners.filter((runner) => matchesQuery(q, runner.id, runner.name, runner.status, ...(runner.tags ?? []), ...(runner.capabilities ?? [])));
   async function enroll(input: { runner_id: string; runner_name: string; tags: string[]; capabilities: string[]; ttl_seconds: number }) {
+    if (enrolling.current || !canAdmin || controlsDisabled) return;
+    enrolling.current = true;
     setBusy(true); setError(""); setCopyStatus("idle");
     try { const created = await onEnroll(input); secretRef.current = created.token; setEnrollment(created); }
     catch { setError("Enrollment could not be created. Verify the identity and try again."); }
-    finally { setBusy(false); }
+    finally { enrolling.current = false; setBusy(false); }
   }
   function clearEnrollment(open: boolean) { if (!open) { secretRef.current = undefined; setEnrollment(undefined); setCopyStatus("idle"); } }
   async function copySecret() {
