@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { allProjectMembersQuery, allEnvironmentsQuery, principalQuery, allRevisionsQuery, useSelectedRunLogsPollingQuery, shouldPollRun, runQuery, allServicesQuery, useDeploymentMutations, useDeploymentPollingQuery, deploymentHistoryQuery } from "@/api";
+import { allProjectMembersQuery, allEnvironmentsQuery, principalQuery, allRevisionsQuery, useSelectedRunLogsPollingQuery, shouldPollRun, runQuery, allServicesQuery, useDeploymentActions, useDeploymentPollingQuery, deploymentHistoryQuery } from "@/api";
 import { DeploymentDetailView } from "@/pages/DeploymentDetailView";
 import { canMaintainProject } from "@/lib/permissions";
 import { validateSearch } from "@/router/search";
@@ -37,7 +36,6 @@ function DeploymentDetailRoute() {
   const history = useQuery(deploymentHistoryQuery(deployment.data?.environment_id ?? ""));
   const principal = useQuery(principalQuery());
   const members = useQuery(allProjectMembersQuery());
-  const mutation = useDeploymentMutations();
   const revision = revisions.data?.find((item) => item.id === deployment.data?.desired_revision_id);
   const previousRevision = revisions.data?.find((item) => item.id === deployment.data?.previous_healthy_revision_id);
   const related = (history.data ?? []).filter((item) => item.id !== deploymentId && (item.rollback_of_id === deploymentId || deployment.data?.rollback_of_id === item.id || (item.rollback_of_id && item.rollback_of_id === deployment.data?.rollback_of_id)));
@@ -45,6 +43,8 @@ function DeploymentDetailRoute() {
   const taskRun = runs.data ?? undefined;
   const logs = useSelectedRunLogsPollingQuery(taskRun?.id ?? "", shouldPollRun(taskRun));
   const failedQueries = [deployment, environments, services, revisions, history, principal, members, runs].filter((query) => query.isError);
+  const canOperate = canMaintainProject(principal.data, members.data ?? [], service?.project_id);
+  const actions = useDeploymentActions(failedQueries.length > 0 || !canOperate);
   if (deployment.isPending) return <section className="space-y-3"><BackToDeployments /><p role="status">Loading deployment...</p><SkeletonCard rows={4} /></section>;
   if (!deployment.isError && !deployment.data) return <DeploymentUnavailable />;
   const hasLoadedData = Boolean(deployment.data) && failedQueries.every((query) => query.data !== undefined);
@@ -56,11 +56,8 @@ function DeploymentDetailRoute() {
     </div>
   </section> : null;
   if (error && !hasLoadedData) return error;
-  const canOperate = canMaintainProject(principal.data, members.data ?? [], service?.project_id);
-  const confirm = mutation.confirm.variables?.id === deploymentId ? mutation.confirm : undefined;
-  const cancel = mutation.cancel.variables?.deployment_id === deploymentId ? mutation.cancel : undefined;
-  const pendingAction = confirm?.isPending ? "confirm" : cancel?.isPending ? "cancel" : undefined;
-  const actionError = confirm?.error ? `Unable to confirm deployment: ${confirm.error.message}`
-    : cancel?.error ? `Unable to request cancellation: ${cancel.error.message}` : undefined;
-  return <div className="grid min-w-0 gap-4">{error ?? <BackToDeployments />}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} pendingAction={pendingAction} actionError={actionError} busy={failedQueries.length > 0 || mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => { mutation.cancel.reset(); mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed") }); }} onCancel={(input) => { mutation.confirm.reset(); mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested") }); }} /></div>;
+  const pendingAction = actions.busy === `confirm:${deploymentId}` ? "confirm" : actions.busy === `cancel:${deploymentId}` ? "cancel" : undefined;
+  const actionError = actions.error?.key === `confirm:${deploymentId}` ? `Unable to confirm deployment: ${actions.error.message}`
+    : actions.error?.key === `cancel:${deploymentId}` ? `Unable to request cancellation: ${actions.error.message}` : undefined;
+  return <div className="grid min-w-0 gap-4">{error ?? <BackToDeployments />}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} pendingAction={pendingAction} actionError={actionError} busy={failedQueries.length > 0 || Boolean(actions.busy)} onConfirm={(id) => { void actions.confirm(id); }} onCancel={(input) => { void actions.cancel(input); }} /></div>;
 }

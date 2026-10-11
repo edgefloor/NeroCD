@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { templatesQuery, allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
-import { useApprovalDecision, useDeploymentMutations, useProjectMutations, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
+import { useApprovalDecision, useDeploymentActions, useDeploymentMutations, useProjectMutations, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
@@ -488,4 +488,32 @@ test("template actions stay locked through their follow-up refresh", async () =>
   expect(mounted.result.current.busy).toBe("template");
   await act(async () => { release(); await pending; });
   expect(mounted.result.current.busy).toBe("");
+});
+
+
+test.each(["confirm", "cancel"] as const)("deployment %s blocks duplicate and competing writes and allows retry", async (action) => {
+  let finish!: (response: Response) => void;
+  globalThis.fetch = vi.fn<typeof fetch>(() => new Promise((resolve) => { finish = resolve; }));
+  const { wrapper } = setup();
+  const mounted = renderHook(({ disabled }) => useDeploymentActions(disabled), { wrapper, initialProps: { disabled: false } });
+  const call = (choice: "confirm" | "cancel") => choice === "confirm"
+    ? mounted.result.current.confirm("dep_1")
+    : mounted.result.current.cancel({ deployment_id: "dep_1", request_id: "cancel_one" });
+  let pending!: Promise<unknown>;
+  await act(async () => {
+    pending = call(action);
+    void call("confirm");
+    void call("cancel");
+  });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  await act(async () => { finish(new Response(JSON.stringify({ error: "Temporary failure" }), { status: 503 })); await pending; });
+  expect(mounted.result.current.error).toMatchObject({ key: `${action}:dep_1` });
+  mounted.rerender({ disabled: true });
+  await act(async () => { await call("confirm"); });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  mounted.rerender({ disabled: false });
+  vi.mocked(globalThis.fetch).mockResolvedValueOnce(json({ id: "dep_1", status: "canceled" }));
+  await act(async () => { await call("cancel"); });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  expect(mounted.result.current.error).toBeUndefined();
 });

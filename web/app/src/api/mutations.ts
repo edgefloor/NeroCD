@@ -202,3 +202,23 @@ export function useDeploymentMutations() {
     cancel: useMutation({ mutationFn: (input: Parameters<typeof cancelDeployment>[0]) => cancelDeployment(input), onSuccess: retainConfirmedDeployment }),
   };
 }
+
+
+export function useDeploymentActions(disabled = false) {
+  const mutations = useDeploymentMutations();
+  const { busy, error, perform } = useActionLock(disabled);
+  return {
+    busy,
+    error,
+    confirm: (id: string) => perform(`confirm:${id}`, async () => {
+      const result = await mutations.confirm.mutateAsync({ id });
+      toast.success("Deployment confirmed");
+      return result;
+    }),
+    cancel: (input: Parameters<typeof cancelDeployment>[0]) => perform(`cancel:${input.deployment_id}`, async () => {
+      const result = await mutations.cancel.mutateAsync(input);
+      toast.success("Cancellation requested");
+      return result;
+    }),
+  };
+}
