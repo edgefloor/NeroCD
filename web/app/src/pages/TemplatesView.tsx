@@ -221,6 +221,7 @@ export function TemplatesView({
   mutate,
   loading,
   onRunRequested,
+  canOperateProject,
 }: {
   snapshot: ApiSnapshot;
   q?: string;
@@ -229,7 +230,11 @@ export function TemplatesView({
   mutate: MutateFn;
   loading?: boolean;
   onRunRequested: (runID: string) => void;
+  canOperateProject?: (projectID: string) => boolean;
 }): ReactNode {
+  const writableProjects = snapshot.projects.filter((project) => canOperateProject?.(project.id));
+  const canCreate = writableProjects.length > 0;
+  const creationSnapshot = { ...snapshot, projects: writableProjects };
   const filtering = Boolean(q?.trim());
   const visibleTemplates = snapshot.templates.filter((template) => matchesQuery(q,
     template.id, template.name, template.project_id, projectName(snapshot.projects, template.project_id), template.kind, ...(template.runner_tags ?? [])));
@@ -240,7 +245,7 @@ export function TemplatesView({
 
   if (loading) {
     return (
-      <section className="grid items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+      <section className={`grid items-start gap-4 ${canCreate ? "xl:grid-cols-[380px_minmax(0,1fr)]" : ""}`}>
         <SkeletonTable rows={4} />
         <SkeletonTable rows={5} />
       </section>
@@ -248,7 +253,8 @@ export function TemplatesView({
   }
 
   return (
-    <section className="grid items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+    <section className={`grid items-start gap-4 ${canCreate ? "xl:grid-cols-[380px_minmax(0,1fr)]" : ""}`}>
+      {canCreate ? <>
       <div className="xl:hidden">
         <Dialog>
           <DialogTrigger asChild>
@@ -259,7 +265,7 @@ export function TemplatesView({
               <DialogTitle>Create template</DialogTitle>
             </DialogHeader>
             <div className="min-h-0 overflow-y-auto">
-              <TemplateForm snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
+              <TemplateForm snapshot={creationSnapshot} token={token} busy={busy} mutate={mutate} />
             </div>
           </DialogContent>
         </Dialog>
@@ -269,9 +275,10 @@ export function TemplatesView({
           <CardTitle className="text-base font-semibold">Create template</CardTitle>
         </CardHeader>
         <CardContent>
-          <TemplateForm snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
+          <TemplateForm snapshot={creationSnapshot} token={token} busy={busy} mutate={mutate} />
         </CardContent>
       </Card>
+      </> : null}
       <Card>
         <CardHeader className="border-b py-3">
           <CardTitle className="text-base font-semibold">Template inventory</CardTitle>
@@ -320,7 +327,7 @@ export function TemplatesView({
                           )}
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
+                          {canOperateProject?.(template.project_id) ? <div className="flex items-center justify-end gap-2">
                             <Button
                               size="sm"
                               className="h-8 rounded-xl"
@@ -331,7 +338,7 @@ export function TemplatesView({
                               Play
                             </Button>
                             <TemplateEditDialog template={template} snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
-                          </div>
+                          </div> : <span className="text-xs text-muted-foreground">Read only</span>}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -369,7 +376,7 @@ export function TemplatesView({
                           <Badge variant="success" className="text-xs">Open</Badge>
                         )}
                       </div>
-                      <div className="flex gap-2">
+                      {canOperateProject?.(template.project_id) ? <div className="flex gap-2">
                         <Button
                           size="sm"
                           className="h-8 w-8 rounded-xl"
@@ -391,7 +398,7 @@ export function TemplatesView({
                           busy={busy}
                           mutate={mutate}
                         />
-                      </div>
+                      </div> : null}
                     </div>
                   </div>
                 ))}

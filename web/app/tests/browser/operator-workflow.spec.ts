@@ -72,7 +72,7 @@ async function createDetailFixture(page: Page): Promise<{ deploymentID: string; 
   return { deploymentID: deployment.id, projectID: project.id, serviceID: service.id, environmentID: environment.id, revisionID: revision.id };
 }
 
-async function createRunLogFixture(page: Page, requiresAck = false): Promise<{ runID: string; secondRunID: string; projectID: string }> {
+async function createRunLogFixture(page: Page, requiresAck = false): Promise<{ runID: string; secondRunID: string; projectID: string; templateID: string }> {
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Browser logs ${suffix}`, description: "run-log fixture" });
   const template = await postJSON<{ id: string }>(page, "/api/v1/templates", {
@@ -86,7 +86,7 @@ async function createRunLogFixture(page: Page, requiresAck = false): Promise<{ r
   });
   const first = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
   const second = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
-  return { runID: first.id, secondRunID: second.id, projectID: project.id };
+  return { runID: first.id, secondRunID: second.id, projectID: project.id, templateID: template.id };
 }
 
 test("browser observes CLI-only bootstrap guidance before a supported CLI bootstrap", async ({ page }) => {
@@ -1308,6 +1308,56 @@ test("approval decisions respect project roles and prevent conflicting requests"
       await expect(reject).toHaveCount(0);
     }
     const denied = await operator.request.post("/api/v1/runs/approve", { headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" }, data: { run_id: viewed.runID } });
+    expect(denied.status()).toBe(403);
+  } finally {
+    await context.close();
+  }
+});
+
+
+test("template actions and creation projects follow project membership", async ({ page, browser }, testInfo) => {
+  await page.goto("/templates");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const maintained = await createRunLogFixture(page);
+  const viewed = await createRunLogFixture(page);
+  await postJSON(page, "/api/v1/project-members", { project_id: maintained.projectID, email: "oidc-browser@example.invalid", role: "maintainer" });
+  await postJSON(page, "/api/v1/project-members", { project_id: viewed.projectID, email: "oidc-browser@example.invalid", role: "viewer" });
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.goto("/sign-in");
+    await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    for (const width of [320, 390, 430, 1440]) {
+      await operator.setViewportSize({ width, height: 1000 });
+      await operator.goto(`/templates?q=${viewed.templateID}`);
+      await expect(operator.getByText(/^1 of \d+ templates match on this page\.$/)).toBeVisible();
+      await expect(operator.getByRole("button", { name: "Play", exact: true })).toHaveCount(0);
+      await expect(operator.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+      if (width < 1280) await operator.getByRole("button", { name: "Create template", exact: true }).click();
+      const project = operator.getByRole("combobox", { name: "Project", exact: true });
+      await expect(project.locator(`option[value="${maintained.projectID}"]`)).toHaveCount(1);
+      await expect(project.locator(`option[value="${viewed.projectID}"]`)).toHaveCount(0);
+      if (width < 1280) await operator.keyboard.press("Escape");
+      await operator.goto(`/templates?q=${maintained.templateID}`);
+      await operator.getByRole("button", { name: "Edit", exact: true }).click();
+      const dialog = operator.getByRole("dialog", { name: "Edit template", exact: true });
+      await dialog.getByRole("textbox", { name: "Template Name", exact: true }).fill(`Maintained template ${width}`);
+      const edited = operator.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === "/api/v1/templates");
+      await dialog.getByRole("button", { name: "Save template", exact: true }).click();
+      expect((await edited).status()).toBe(200);
+      await expect(dialog).toHaveCount(0);
+      expect(await operator.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (width === 320) await operator.screenshot({ path: testInfo.outputPath("template-project-actions-320.png"), fullPage: true });
+      const requested = operator.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs" && response.request().method() === "POST");
+      await operator.getByRole("button", { name: "Play", exact: true }).click();
+      const response = await requested;
+      expect(response.status()).toBe(201);
+      const run = await response.json() as { id: string };
+      await expect(operator.getByRole("dialog", { name: `run ${run.id}` })).toBeVisible();
+    }
+    const denied = await operator.request.post("/api/v1/runs", { headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" }, data: { template_id: viewed.templateID } });
     expect(denied.status()).toBe(403);
   } finally {
     await context.close();

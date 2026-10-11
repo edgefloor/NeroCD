@@ -37,16 +37,16 @@ test("project filtering uses descriptions and preserves form choices and drafts"
 });
 
 test.each(["p_alpha", "Alpha project", "production", "shell"])("template filtering matches %s while keeping create form context", (q) => {
-  render(<TemplatesView onRunRequested={vi.fn()} {...props} q={q} />);
+  render(<TemplatesView canOperateProject={() => true} onRunRequested={vi.fn()} {...props} q={q} />);
   expect(screen.getAllByText("Alpha deploy").length).toBeGreaterThan(0);
   expect(screen.queryByText("Beta deploy")).toBeNull();
   expect(screen.getByRole("option", { name: "Beta project" })).toBeTruthy();
 });
 
 test("template filters distinguish no matches and preserve an unfinished create form", () => {
-  const view = render(<TemplatesView onRunRequested={vi.fn()} {...props} q="" />);
+  const view = render(<TemplatesView canOperateProject={() => true} onRunRequested={vi.fn()} {...props} q="" />);
   fireEvent.change(screen.getByPlaceholderText("Patch Linux fleet"), { target: { value: "Draft template" } });
-  view.rerender(<TemplatesView onRunRequested={vi.fn()} {...props} q="no-match" />);
+  view.rerender(<TemplatesView canOperateProject={() => true} onRunRequested={vi.fn()} {...props} q="no-match" />);
   expect(screen.getByText("No templates match this filter on the loaded page.")).toBeTruthy();
   expect((screen.getByPlaceholderText("Patch Linux fleet") as HTMLInputElement).value).toBe("Draft template");
 });

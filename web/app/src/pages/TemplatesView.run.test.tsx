@@ -12,7 +12,7 @@ const snapshot = apiSnapshot({
 test("successful template execution hands the created run ID to the run workflow", async () => {
   const onRunRequested = vi.fn();
   const mutate = vi.fn<MutateFn>().mockResolvedValue({ id: "run_created", status: "queued" });
-  render(<TemplatesView snapshot={snapshot} token="" busy="" mutate={mutate as MutateFn} onRunRequested={onRunRequested} />);
+  render(<TemplatesView canOperateProject={() => true} snapshot={snapshot} token="" busy="" mutate={mutate as MutateFn} onRunRequested={onRunRequested} />);
   await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: "Play" })[0]!); });
   expect(onRunRequested).toHaveBeenCalledWith("run_created");
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -20,7 +20,7 @@ test("successful template execution hands the created run ID to the run workflow
 
 test("failed template execution stays on the inventory", async () => {
   const onRunRequested = vi.fn();
-  render(<TemplatesView snapshot={snapshot} token="" busy="" mutate={vi.fn(async () => undefined)} onRunRequested={onRunRequested} />);
+  render(<TemplatesView canOperateProject={() => true} snapshot={snapshot} token="" busy="" mutate={vi.fn(async () => undefined)} onRunRequested={onRunRequested} />);
   await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: "Play" })[0]!); });
   expect(onRunRequested).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).toBeNull();
