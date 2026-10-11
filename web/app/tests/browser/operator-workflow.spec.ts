@@ -3254,3 +3254,47 @@ test("operations status and retention requests recover locally", async ({ page }
   await expect(page.getByRole("button", { name: "Save policy", exact: true })).toBeEnabled();
   expect(new URL(page.url()).pathname).toBe("/operations");
 });
+
+
+test("retention policy saves lock fields and preserve failed drafts", async ({ page }, testInfo) => {
+  await page.goto("/operations");
+  await signIn(page);
+  const policy = page.getByRole("form", { name: "Run-log retention policy" });
+  await expect(policy).toBeVisible();
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let saves = 0;
+  await page.route("**/api/v1/run-log-retention", async (route) => {
+    if (route.request().method() !== "PUT" || ++saves > 1) return route.continue();
+    await pending;
+    return route.fulfill({ status: 503, json: { error: "Temporary policy save failure" } });
+  });
+  const days = policy.getByRole("spinbutton", { name: "Keep days", exact: true });
+  const batch = policy.getByRole("spinbutton", { name: "Batch size", exact: true });
+  await days.fill("21");
+  await batch.fill("17");
+  await policy.getByRole("button", { name: "Save policy", exact: true }).click();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(policy).toHaveAttribute("aria-busy", "true");
+    await expect(days).toBeDisabled();
+    await expect(batch).toBeDisabled();
+    await expect(policy.getByRole("checkbox")).toBeDisabled();
+    await expect(policy.getByRole("button", { name: "Save policy", exact: true })).toBeDisabled();
+    expect(await policy.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) {
+      await policy.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("retention-save-pending-320.png") });
+    }
+  }
+  expect(saves).toBe(1);
+  release();
+  await expect(days).toBeEnabled();
+  await expect(days).toHaveValue("21");
+  await expect(batch).toHaveValue("17");
+  const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/run-log-retention" && response.request().method() === "PUT");
+  await policy.getByRole("button", { name: "Save policy", exact: true }).click();
+  expect((await saved).status()).toBe(200);
+  await expect(policy).toHaveAttribute("aria-busy", "false");
+  expect(saves).toBe(2);
+});

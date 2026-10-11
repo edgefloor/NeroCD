@@ -1,6 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, test, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
 import { OperationsView } from "./OperationsView";
+
+afterEach(cleanup);
 
 const status = { readiness: "ready", snapshot: { queue_depth: 0, queue_oldest_age_seconds: 0, active_leases: 0, expired_leases: 0, oldest_runner_heartbeat_seconds: 0, deployments: { applying: 0, verifying: 0, rolling_back: 0 }, deployment_health_passed: 0, deployment_health_failed: 0, rollback_succeeded: 0, rollback_failed: 0, runner_journal_depth: 0, runner_retry_count: 0, runner_renew_failures: 0, backup_outcome: "none", backup_age_seconds: 0, backup_reason: "none", backup_schedule_status: "backoff", backup_schedule_next_seconds: 60, backup_schedule_failures: 1, pool: { acquired: 0, total: 0, idle: 0 } } } as never;
 const retention = { policy: { enabled: true, keep_days: 30, batch_size: 25, version: 4, updated_at: "2026-08-21T00:00:00Z" }, preview: { cutoff: "2026-07-22T00:00:00Z", eligible_logs: 12, eligible_bytes: 345 } } as never;
@@ -20,4 +22,23 @@ test("operations status renders only bounded backup-scheduler state", () => {
   expect(screen.getAllByText(/backoff; next 1m/i).length).toBeGreaterThan(0);
   expect(screen.getAllByText(/backup schedule: backoff/i).length).toBeGreaterThan(0);
   expect(screen.queryByText(/backup-/i)).toBeNull();
+});
+
+
+test("pending retention saves lock fields and keep the draft available after failure", () => {
+  const update = vi.fn();
+  const props = { status, loading: false, unavailable: false, canAdmin: true, retention, onRetentionUpdate: update };
+  const view = render(<OperationsView {...props} />);
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Keep days" }), { target: { value: "21" } });
+  view.rerender(<OperationsView {...props} retentionBusy />);
+  expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+  for (const field of screen.getAllByRole("spinbutton")) expect((field as HTMLInputElement).disabled).toBe(true);
+  const form = screen.getByRole("form", { name: "Run-log retention policy" });
+  expect(form.getAttribute("aria-busy")).toBe("true");
+  fireEvent.submit(form);
+  expect(update).not.toHaveBeenCalled();
+  view.rerender(<OperationsView {...props} retentionBusy={false} />);
+  expect((screen.getByRole("spinbutton", { name: "Keep days" }) as HTMLInputElement).value).toBe("21");
+  fireEvent.submit(form);
+  expect(update).toHaveBeenCalledWith({ enabled: true, keep_days: 21, batch_size: 25 });
 });
