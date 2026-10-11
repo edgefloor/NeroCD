@@ -110,3 +110,28 @@ test("OIDC viewer principals receive runner 403 responses and no runner controls
     await context.close();
   }
 });
+
+test("runner details recover from a failed request and retain the list filter", async ({ page }) => {
+  await createRunnerAdmin(page);
+  const runner = await registerRunner(page);
+  let fail = true;
+  await page.route(`**/api/v1/runners/${runner.id}`, (route) => fail
+    ? route.fulfill({ status: 503, json: { error: "Temporary runner failure" } })
+    : route.continue());
+  await page.goto(`/runners/${runner.id}?q=browser`);
+  await expect(page.getByRole("alert")).toHaveText("Runner is unavailable.");
+  await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toHaveCount(0);
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText(runner.name, { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toBeVisible();
+  await page.goto("/runners/runner_missing?q=browser");
+  await expect(page.getByRole("alert")).toHaveText("Runner is unavailable.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("link", { name: "Back to runners", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+  await page.getByRole("link", { name: "Back to runners", exact: true }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/runners" && url.searchParams.get("q") === "browser");
+});

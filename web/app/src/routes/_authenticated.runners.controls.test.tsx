@@ -131,3 +131,24 @@ test("runner controls show the existing unavailable state when their queries fai
   render(<RunnerDetailComponent />);
   expect(screen.getByRole("alert").textContent).toContain("Runner is unavailable.");
 });
+
+test("runner details distinguish pending requests from unavailable records", () => {
+  vi.mocked(useQuery).mockReturnValue({ data: undefined, isError: false, isPending: true } as never);
+  const Component = RunnerDetailRoute.options.component!;
+  render(<Component />);
+  expect(screen.getByRole("status").textContent).toBe("Loading runner...");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("runner detail retry refetches failed queries", async () => {
+  const refetch = vi.fn();
+  vi.mocked(useQuery).mockImplementation((options) => {
+    const failed = (options as { queryKey?: readonly string[] }).queryKey?.[0] === "runner";
+    return { data: failed ? undefined : { roles: ["runner_admin"] }, isError: failed, isPending: false, isFetching: false, refetch } as never;
+  });
+  const Component = RunnerDetailRoute.options.component!;
+  render(<Component />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Retry", exact: true }));
+  expect(refetch).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Revoke credential", exact: true })).toBeNull();
+});
