@@ -13,8 +13,8 @@ const logPageSize = 100;
 export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
   const client = useQueryClient();
   const [window, setWindow] = useState<LogWindow>({ runID, logs: [], firstOffset: 0 });
-  const [loadingPrevious, setLoadingPrevious] = useState(false);
-  const [previousFailure, setPreviousFailure] = useState<{ runID: string; error: Error }>();
+  const previousRequests = useRef(new Set<string>());
+  const [previousStates, setPreviousStates] = useState<Record<string, { loading: boolean; error?: Error }>>({});
   const current: LogWindow = window.runID === runID ? window : { runID, logs: [], firstOffset: 0 };
   const probe = useQuery({ ...runLogsQuery({ run_id: runID, limit: 1, offset: 0 }), enabled: Boolean(runID) });
 
@@ -50,9 +50,9 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
   }, [current.nextOffset, page.data, runID]);
 
   const loadPrevious = useCallback(async () => {
-    if (!runID || current.firstOffset === 0 || loadingPrevious) return;
-    setLoadingPrevious(true);
-    setPreviousFailure(undefined);
+    if (!runID || current.firstOffset === 0 || previousRequests.current.has(runID)) return;
+    previousRequests.current.add(runID);
+    setPreviousStates((states) => ({ ...states, [runID]: { loading: true } }));
     try {
       const offset = Math.max(0, current.firstOffset - logPageSize);
       const previous = await client.fetchQuery(runLogsQuery({ run_id: runID, limit: current.firstOffset - offset, offset }));
@@ -63,11 +63,13 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
         return { ...value, firstOffset: offset, logs: [...byID.values()].sort((left, right) => left.sequence - right.sequence) };
       });
     } catch (cause) {
-      setPreviousFailure({ runID, error: cause instanceof Error ? cause : new Error("Unable to load earlier output") });
+      const error = cause instanceof Error ? cause : new Error("Unable to load earlier output");
+      setPreviousStates((states) => ({ ...states, [runID]: { loading: true, error } }));
     } finally {
-      setLoadingPrevious(false);
+      previousRequests.current.delete(runID);
+      setPreviousStates((states) => ({ ...states, [runID]: { ...states[runID], loading: false } }));
     }
-  }, [client, current.firstOffset, loadingPrevious, runID]);
+  }, [client, current.firstOffset, runID]);
 
   const retry = useCallback(async () => {
     if (!runID) return;
@@ -82,9 +84,9 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
     isPending: !probe.isError && !page.isError && (probe.isPending || (current.logs.length === 0 && page.isPending)),
     isError: probe.isError || page.isError,
     error: (probe.error ?? page.error) ?? undefined,
-    previousError: previousFailure?.runID === runID ? previousFailure.error : undefined,
+    previousError: previousStates[runID]?.error,
     hasPrevious: current.firstOffset > 0,
-    loadingPrevious,
+    loadingPrevious: previousStates[runID]?.loading ?? false,
     loadPrevious,
   };
 }

@@ -577,3 +577,47 @@ test("active log polling pauses on failure and resumes after explicit retry", as
   expect(mounted.result.current.data).toEqual([log]);
   mounted.unmount();
 });
+
+
+test.each(["failure", "success"])("earlier output stays scoped when the previous run returns %s", async (outcome) => {
+  const finish = new Map<string, (response: Response) => void>();
+  const requests = new Map<string, number>();
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    const url = new URL(String(path), "http://local");
+    const runID = url.searchParams.get("run_id")!;
+    const offset = Number(url.searchParams.get("offset"));
+    const limit = Number(url.searchParams.get("limit"));
+    if (limit === 50) {
+      requests.set(runID, (requests.get(runID) ?? 0) + 1);
+      return new Promise<Response>((resolve) => { finish.set(runID, resolve); });
+    }
+    const items = Array.from({ length: Math.min(limit, 150 - offset) }, (_, index) => ({ id: `${runID}_${offset + index}`, run_id: runID, sequence: offset + index, stream: "stdout", message: "output" }));
+    return Promise.resolve(json({ items, count: items.length, total: 150, limit, offset }));
+  });
+  const { wrapper } = setup();
+  const mounted = renderHook(({ runID }) => useSelectedRunLogsPollingQuery(runID, false), { wrapper, initialProps: { runID: "run_first" } });
+  await waitFor(() => expect(mounted.result.current.data).toHaveLength(100));
+  let first!: Promise<void>;
+  act(() => { first = mounted.result.current.loadPrevious(); });
+  expect(mounted.result.current.loadingPrevious).toBe(true);
+  mounted.rerender({ runID: "run_second" });
+  await waitFor(() => expect(mounted.result.current.data[0]?.run_id).toBe("run_second"));
+  expect(mounted.result.current.loadingPrevious).toBe(false);
+  let second!: Promise<void>;
+  act(() => { second = mounted.result.current.loadPrevious(); void mounted.result.current.loadPrevious(); });
+  expect(mounted.result.current.loadingPrevious).toBe(true);
+  expect(requests.get("run_second")).toBe(1);
+  await act(async () => { finish.get("run_second")!(new Response(JSON.stringify({ error: "Second history failed" }), { status: 503 })); await second; });
+  expect(mounted.result.current.previousError?.message).toBe("Second history failed");
+  await act(async () => {
+    const items = Array.from({ length: 50 }, (_, sequence) => ({ id: `run_first_${sequence}`, run_id: "run_first", sequence, stream: "stdout", message: "earlier output" }));
+    finish.get("run_first")!(outcome === "failure"
+      ? new Response(JSON.stringify({ error: "First history failed" }), { status: 503 })
+      : json({ items, count: 50, total: 150, limit: 50, offset: 0 }));
+    await first;
+  });
+  expect(mounted.result.current.previousError?.message).toBe("Second history failed");
+  expect(mounted.result.current.data.every((log) => log.run_id === "run_second")).toBe(true);
+  expect(mounted.result.current.loadingPrevious).toBe(false);
+  mounted.unmount();
+});
