@@ -4189,3 +4189,27 @@ test("audit deployment targets open details and preserve filtered history", asyn
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
 });
+
+test("audit runner targets open details and preserve filtered history", async ({ page }) => {
+  await page.goto("/audit");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const runnerID = `audit_runner_${Date.now()}`;
+  await postJSON(page, "/api/v1/runners/register", { id: runnerID, name: "Audit target runner", tags: [], capabilities: ["compose-deploy"] });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/audit?q=${runnerID}`);
+    const target = page.getByRole("link", { name: runnerID, exact: true });
+    await expect(target).toBeVisible();
+    await expect(target).toHaveAttribute("href", `/runners/${runnerID}?q=${runnerID}`);
+    const origin = await page.evaluate(() => performance.timeOrigin);
+    await target.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin);
+    await page.goBack();
+    await expect(page).toHaveURL((url) => url.pathname === "/audit" && url.searchParams.get("q") === runnerID);
+    await expect(target).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
