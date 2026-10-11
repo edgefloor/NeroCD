@@ -58,7 +58,7 @@ func inventoryFromSQLC(row sqlcgen.Inventory) domain.Inventory {
 }
 
 func taskTemplateFromSQLC(row sqlcgen.TaskTemplate) (domain.TaskTemplate, error) {
-	result := domain.TaskTemplate{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, Kind: row.Kind, RunnerTags: append([]string(nil), row.RunnerTags...), RequiresAck: row.RequiresAck}
+	result := domain.TaskTemplate{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, Kind: row.Kind, RunnerTags: append([]string{}, row.RunnerTags...), RequiresAck: row.RequiresAck}
 	if err := decodeRunSpec(row.RunSpec, &result.RunSpec); err != nil {
 		return domain.TaskTemplate{}, fmt.Errorf("decode template row: %w", err)
 	}
@@ -78,7 +78,7 @@ func templateJSON(template domain.TaskTemplate) (json.RawMessage, json.RawMessag
 }
 
 func taskRunFromSQLC(row sqlcgen.TaskRun) (domain.TaskRun, error) {
-	result := domain.TaskRun{ID: row.ID, ProjectID: row.ProjectID, TemplateID: row.TemplateID, RunnerTags: append([]string(nil), row.RunnerTags...), Status: row.Status, RunnerID: row.RunnerID, RequestedBy: row.RequestedBy, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt}
+	result := domain.TaskRun{ID: row.ID, ProjectID: row.ProjectID, TemplateID: row.TemplateID, RunnerTags: append([]string{}, row.RunnerTags...), Status: row.Status, RunnerID: row.RunnerID, RequestedBy: row.RequestedBy, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt}
 	if err := decodeRunSpec(row.RunSpec, &result.RunSpec); err != nil {
 		return domain.TaskRun{}, fmt.Errorf("decode run row: %w", err)
 	}

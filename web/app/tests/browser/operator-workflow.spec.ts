@@ -920,7 +920,7 @@ test("running a template opens its detail route and follows scoped output", asyn
   const suffix = `${Date.now()}`;
   const templateName = `Follow template ${suffix}`;
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Follow project ${suffix}`, description: "Template run fixture" });
-  await postJSON(page, "/api/v1/templates", { project_id: project.id, name: templateName, kind: "shell", run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "follow"] } }, workflow: { steps: [] }, runner_tags: ["shell"], requires_ack: false });
+  await postJSON(page, "/api/v1/templates", { project_id: project.id, name: templateName, kind: "shell", run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "follow"] } }, workflow: { steps: [] }, runner_tags: [], requires_ack: false });
   let failRequest = true;
   await page.route("**/api/v1/runs", async (route) => {
     if (route.request().method() === "POST" && failRequest) {
