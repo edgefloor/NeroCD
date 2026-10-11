@@ -148,7 +148,22 @@ test("runner detail retry refetches failed queries", async () => {
   });
   const Component = RunnerDetailRoute.options.component!;
   render(<Component />);
-  await userEvent.setup().click(screen.getByRole("button", { name: "Retry", exact: true }));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
   expect(refetch).toHaveBeenCalledOnce();
-  expect(screen.queryByRole("button", { name: "Revoke credential", exact: true })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Revoke credential" })).toBeNull();
+});
+
+test("failed credential revocation stays open for retry without an unhandled rejection", async () => {
+  vi.mocked(revokeRunnerToken).mockRejectedValueOnce(new Error("service unavailable")).mockResolvedValueOnce(runner as never);
+  queryData(["runner_admin"]);
+  const Component = RunnerDetailRoute.options.component!;
+  const user = userEvent.setup();
+  render(<Component />);
+  await user.click(screen.getByRole("button", { name: "Revoke credential" }));
+  const dialog = screen.getByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: "Revoke credential" }));
+  await waitFor(() => expect(within(dialog).getByRole("alert").textContent).toBe("Unable to revoke credential. Try again."));
+  await user.click(within(dialog).getByRole("button", { name: "Revoke credential" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(revokeRunnerToken).toHaveBeenCalledTimes(2);
 });
