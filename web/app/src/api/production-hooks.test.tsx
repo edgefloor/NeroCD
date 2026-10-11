@@ -160,3 +160,29 @@ test("a failed log probe stops loading and can be retried for a completed run", 
   expect(mounted.result.current.isError).toBe(false);
   mounted.unmount();
 });
+
+test("failed earlier-log requests preserve current output and can be retried", async () => {
+  let failHistory = true;
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    const url = new URL(String(path), "http://local");
+    const offset = Number(url.searchParams.get("offset"));
+    const limit = Number(url.searchParams.get("limit"));
+    if (limit === 50 && failHistory) return Promise.resolve(new Response(JSON.stringify({ error: "History unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+    const items = Array.from({ length: Math.min(limit, 150 - offset) }, (_, index) => ({ id: `log_${offset + index}`, run_id: "run_history", sequence: offset + index, stream: "stdout", message: `line ${offset + index}` }));
+    return Promise.resolve(json({ items, count: items.length, total: 150, limit, offset }));
+  });
+  const { wrapper } = setup();
+  const mounted = renderHook(() => useSelectedRunLogsPollingQuery("run_history", false), { wrapper });
+  await waitFor(() => expect(mounted.result.current.data).toHaveLength(100));
+  await act(async () => { await mounted.result.current.loadPrevious(); });
+  expect(mounted.result.current.previousError?.message).toBe("History unavailable");
+  expect(mounted.result.current.data).toHaveLength(100);
+  expect(mounted.result.current.hasPrevious).toBe(true);
+  expect(mounted.result.current.loadingPrevious).toBe(false);
+  failHistory = false;
+  await act(async () => { await mounted.result.current.loadPrevious(); });
+  expect(mounted.result.current.data).toHaveLength(150);
+  expect(mounted.result.current.previousError).toBeUndefined();
+  expect(mounted.result.current.hasPrevious).toBe(false);
+  mounted.unmount();
+});

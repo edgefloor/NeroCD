@@ -340,6 +340,9 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const { runID, secondRunID } = await createRunLogFixture(page);
   await page.reload();
+  let failHistory = true;
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   let scopedLogRequests = 0;
   let tailRequests = 0;
   const log = (sequence: number) => ({ id: `log_browser_${sequence}`, run_id: runID, sequence, stream: "stdout", message: `Browser output ${sequence}`, created_at: "2026-01-01T00:00:00Z" });
@@ -353,7 +356,10 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
     let total = 151;
     if (limit === 1 && offset === 0) items = [log(1)];
     else if (limit === 100 && offset === 51) items = Array.from({ length: 100 }, (_, index) => log(index + 52));
-    else if (limit === 51 && offset === 0) items = Array.from({ length: 51 }, (_, index) => log(index + 1));
+    else if (limit === 51 && offset === 0) {
+      if (failHistory) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "History unavailable" }) });
+      items = Array.from({ length: 51 }, (_, index) => log(index + 1));
+    }
     else if (limit === 100 && offset === 151) {
       tailRequests += 1;
       items = tailRequests > 1 ? [log(152)] : [];
@@ -374,6 +380,13 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   await expect(dialog).toContainText("Browser output 52");
   await expect(dialog.getByText("Browser output 1", { exact: true })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Load earlier output" }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("Unable to load earlier output. Try again.");
+  await expect(dialog).toContainText("Browser output 52");
+  await dialog.screenshot({ path: testInfo.outputPath("earlier-log-error.png") });
+  failHistory = false;
+  await dialog.getByRole("button", { name: "Retry earlier output" }).click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  expect(pageErrors).toHaveLength(0);
   await expect(dialog.getByText("Browser output 1", { exact: true })).toBeVisible();
   await expect(dialog).toContainText("Following active run output.");
   await expect(dialog).toContainText("Browser output 152", { timeout: 10_000 });

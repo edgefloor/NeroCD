@@ -14,6 +14,7 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
   const client = useQueryClient();
   const [window, setWindow] = useState<LogWindow>({ runID, logs: [], firstOffset: 0 });
   const [loadingPrevious, setLoadingPrevious] = useState(false);
+  const [previousFailure, setPreviousFailure] = useState<{ runID: string; error: Error }>();
   const current: LogWindow = window.runID === runID ? window : { runID, logs: [], firstOffset: 0 };
   const probe = useQuery({ ...runLogsQuery({ run_id: runID, limit: 1, offset: 0 }), enabled: Boolean(runID) });
 
@@ -51,6 +52,7 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
   const loadPrevious = useCallback(async () => {
     if (!runID || current.firstOffset === 0 || loadingPrevious) return;
     setLoadingPrevious(true);
+    setPreviousFailure(undefined);
     try {
       const offset = Math.max(0, current.firstOffset - logPageSize);
       const previous = await client.fetchQuery(runLogsQuery({ run_id: runID, limit: current.firstOffset - offset, offset }));
@@ -60,6 +62,8 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
         for (const log of value.logs) byID.set(log.id, log);
         return { ...value, firstOffset: offset, logs: [...byID.values()].sort((left, right) => left.sequence - right.sequence) };
       });
+    } catch (cause) {
+      setPreviousFailure({ runID, error: cause instanceof Error ? cause : new Error("Unable to load earlier output") });
     } finally {
       setLoadingPrevious(false);
     }
@@ -78,6 +82,7 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
     isPending: !probe.isError && !page.isError && (probe.isPending || (current.logs.length === 0 && page.isPending)),
     isError: probe.isError || page.isError,
     error: (probe.error ?? page.error) ?? undefined,
+    previousError: previousFailure?.runID === runID ? previousFailure.error : undefined,
     hasPrevious: current.firstOffset > 0,
     loadingPrevious,
     loadPrevious,

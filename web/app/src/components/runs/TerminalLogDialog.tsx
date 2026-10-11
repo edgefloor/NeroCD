@@ -21,6 +21,7 @@ export function TerminalLogDialog({
   following = false,
   hasPrevious = false,
   loadingPrevious = false,
+  previousError,
   onLoadPrevious,
   open,
   onOpenChange,
@@ -34,6 +35,7 @@ export function TerminalLogDialog({
   following?: boolean;
   hasPrevious?: boolean;
   loadingPrevious?: boolean;
+  previousError?: Error;
   onLoadPrevious?: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -96,9 +98,10 @@ export function TerminalLogDialog({
             </div>
           ) : null}
           {hasPrevious ? (
-            <div className="mb-3">
+            <div className="mb-3 grid gap-2">
+              {previousError ? <p role="alert" className="text-destructive">Unable to load earlier output. Try again.</p> : null}
               <Button type="button" variant="outline" size="sm" disabled={loadingPrevious} onClick={onLoadPrevious}>
-                {loadingPrevious ? "Loading earlier output..." : "Load earlier output"}
+                {loadingPrevious ? "Loading earlier output..." : previousError ? "Retry earlier output" : "Load earlier output"}
               </Button>
             </div>
           ) : null}

@@ -17,7 +17,7 @@ export const Route = createFileRoute("/_authenticated/runs/")({
 function RunsIndexRoute() { return <RunsRoute q={Route.useSearch().q} />; }
 
 type RunsRouteProps = { runId?: string; q?: string };
-type SelectedLogsState = { runID: string; logs: RunLog[]; loading: boolean; error?: Error; retry?: () => Promise<void>; retrying?: boolean; hasPrevious: boolean; loadingPrevious: boolean; loadPrevious?: () => void };
+type SelectedLogsState = { runID: string; logs: RunLog[]; loading: boolean; error?: Error; retry?: () => Promise<void>; retrying?: boolean; hasPrevious: boolean; loadingPrevious: boolean; previousError?: Error; loadPrevious?: () => void };
 
 export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const page = usePage();
@@ -64,6 +64,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
       logsFollowing={shouldPollRun(selectedRun.data)}
       logsHavePrevious={logsMatchSelection && selectedLogs.hasPrevious}
       logsLoadingPrevious={logsMatchSelection && selectedLogs.loadingPrevious}
+      logsPreviousError={logsMatchSelection ? selectedLogs.previousError : undefined}
       onLoadPreviousLogs={logsMatchSelection ? selectedLogs.loadPrevious : undefined}
       selectedRun={selectedRun.data ?? undefined}
       onSelectRun={(nextRunID) => {
@@ -94,7 +95,7 @@ function SelectedRunLogs({
 }) {
   const logs = useSelectedRunLogsPollingQuery(runID, follow);
   useEffect(() => {
-    onChange({ runID, logs: logs.data, loading: logs.isPending, error: logs.isError ? logs.error : undefined, retry: logs.retry, retrying: logs.isFetching, hasPrevious: logs.hasPrevious, loadingPrevious: logs.loadingPrevious, loadPrevious: logs.loadPrevious });
-  }, [logs.data, logs.retry, logs.isFetching, logs.error, logs.hasPrevious, logs.isError, logs.isPending, logs.loadPrevious, logs.loadingPrevious, onChange, runID]);
+    onChange({ runID, logs: logs.data, loading: logs.isPending, error: logs.isError ? logs.error : undefined, retry: logs.retry, retrying: logs.isFetching, hasPrevious: logs.hasPrevious, loadingPrevious: logs.loadingPrevious, previousError: logs.previousError, loadPrevious: logs.loadPrevious });
+  }, [logs.data, logs.previousError, logs.retry, logs.isFetching, logs.error, logs.hasPrevious, logs.isError, logs.isPending, logs.loadPrevious, logs.loadingPrevious, onChange, runID]);
   return null;
 }
