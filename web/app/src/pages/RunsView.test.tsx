@@ -139,3 +139,14 @@ test("log filtering retains history access and resets when switching runs", () =
   expect((screen.getByRole("searchbox", { name: "Filter loaded output" }) as HTMLInputElement).value).toBe("");
   expect(screen.getByText("Build ready")).toBeTruthy();
 });
+
+
+test("live output status reflects a failed stream and recovery", () => {
+  const props = { run: { id: "run_live", status: "running" } as never, logs: [], open: true, following: true, onOpenChange: vi.fn() };
+  const view = render(<TerminalLogDialog {...props} error={new Error("Output unavailable")} onRetry={vi.fn()} />);
+  expect(screen.getByText("Live output paused. Retry logs to resume.")).toBeTruthy();
+  expect(screen.queryByText("Following active run output.")).toBeNull();
+  view.rerender(<TerminalLogDialog {...props} />);
+  expect(screen.getByText("Following active run output.")).toBeTruthy();
+  expect(screen.queryByText("Live output paused. Retry logs to resume.")).toBeNull();
+});

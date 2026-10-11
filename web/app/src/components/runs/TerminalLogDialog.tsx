@@ -128,7 +128,7 @@ export function TerminalLogDialog({
             <div className="mb-3 grid min-w-0 gap-1 break-all border-b border-border pb-3 text-xs text-muted-foreground">
               <span>$ nerocd runs inspect {run.id}</span>
               <span>project={run.project_id} template={run.template_id ?? "adhoc"}</span>
-              {following ? <span aria-live="polite">Following active run output.</span> : null}
+              {following ? <span className="break-normal" aria-live="polite">{error ? "Live output paused. Retry logs to resume." : "Following active run output."}</span> : null}
             </div>
           ) : null}
           {orderedLogs.length ? <div className="mb-3 grid gap-1">

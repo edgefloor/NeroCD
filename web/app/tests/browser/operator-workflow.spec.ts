@@ -4086,3 +4086,31 @@ test("long approval metadata keeps decision controls reachable", async ({ page }
     }
   }
 });
+
+
+test("active run output reports paused polling and resumes after retry", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  let fail = true;
+  await page.route("**/api/v1/run-logs?*", (route) => fail
+    ? route.fulfill({ status: 503, json: { error: "Temporary output failure" } })
+    : route.continue());
+  for (const width of [320, 390, 430, 1440]) {
+    fail = true;
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runs/${runID}`);
+    const dialog = page.getByRole("dialog", { name: `run ${runID}` });
+    await expect(dialog.getByText("Live output paused. Retry logs to resume.", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Following active run output.", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Retry logs", exact: true })).toBeEnabled();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("live-output-paused-320.png"), animations: "disabled" });
+    fail = false;
+    await dialog.getByRole("button", { name: "Retry logs", exact: true }).click();
+    await expect(dialog.getByText("Following active run output.", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Live output paused. Retry logs to resume.", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Retry logs", exact: true })).toHaveCount(0);
+  }
+});
