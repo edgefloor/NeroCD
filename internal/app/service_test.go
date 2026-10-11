@@ -208,6 +208,23 @@ func TestDeploymentMutationsRequireMaintainer(t *testing.T) {
 	if err != nil || deployment.TaskRunID == nil {
 		t.Fatalf("server-owned deployment run: %#v %v", deployment, err)
 	}
+	audits, err := service.ListAuditEvents(admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range audits {
+		if event.Action != "deployment.create" || event.TargetID != deployment.ID {
+			continue
+		}
+		found = true
+		if event.CreatedAt.IsZero() || !event.CreatedAt.Equal(deployment.CreatedAt) {
+			t.Fatalf("deployment audit time = %v, want deployment creation time %v", event.CreatedAt, deployment.CreatedAt)
+		}
+	}
+	if !found {
+		t.Fatal("deployment creation audit event is missing")
+	}
 }
 
 func TestCreateEnvironmentRejectsInvalidSecretBindingBeforePersistence(t *testing.T) {
