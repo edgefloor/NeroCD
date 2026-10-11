@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createEnvironment, createProject, createRepository, createRevision, createService, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse } from "./resources";
+import { archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createEnvironment, createProject, createRepository, createRevision, createService, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse, type Deployment, type DeploymentList } from "./resources";
 import { queryKeys } from "./queries";
 
 export function useProjectMutations() {
@@ -51,12 +51,21 @@ export function useRunLogRetentionMutations() {
 export function useDeploymentMutations() {
   const client = useQueryClient();
   const refresh = () => client.invalidateQueries({ queryKey: ["deployments"] });
+  async function retainConfirmedDeployment(deployment: Deployment) {
+    client.setQueryData(queryKeys.deployment(deployment.id), deployment);
+    client.setQueriesData<DeploymentList | Deployment[]>({ queryKey: ["deployments"] }, (cached) => {
+      if (!cached) return cached;
+      const replace = (item: Deployment) => item.id === deployment.id ? deployment : item;
+      return Array.isArray(cached) ? cached.map(replace) : { ...cached, items: cached.items.map(replace) };
+    });
+    await Promise.all([refresh(), client.invalidateQueries({ queryKey: queryKeys.deployment(deployment.id) })]);
+  }
   return {
     createService: useMutation({ mutationFn: (input: Parameters<typeof createService>[0]) => createService(input), onSuccess: async () => { await client.invalidateQueries({ queryKey: ["services"] }); } }),
     createEnvironment: useMutation({ mutationFn: (input: Parameters<typeof createEnvironment>[0]) => createEnvironment(input), onSuccess: async () => { await client.invalidateQueries({ queryKey: ["environments"] }); } }),
     createRevision: useMutation({ mutationFn: (input: Parameters<typeof createRevision>[0]) => createRevision(input), onSuccess: async () => { await client.invalidateQueries({ queryKey: ["revisions"] }); } }),
     create: useMutation({ mutationFn: (input: Parameters<typeof createDeployment>[0]) => createDeployment(input), onSuccess: refresh }),
-    confirm: useMutation({ mutationFn: (input: Parameters<typeof confirmDeployment>[0]) => confirmDeployment(input), onSuccess: refresh }),
-    cancel: useMutation({ mutationFn: (input: Parameters<typeof cancelDeployment>[0]) => cancelDeployment(input), onSuccess: refresh }),
+    confirm: useMutation({ mutationFn: (input: Parameters<typeof confirmDeployment>[0]) => confirmDeployment(input), onSuccess: retainConfirmedDeployment }),
+    cancel: useMutation({ mutationFn: (input: Parameters<typeof cancelDeployment>[0]) => cancelDeployment(input), onSuccess: retainConfirmedDeployment }),
   };
 }

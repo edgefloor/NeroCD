@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { allProjectsQuery, auditEventsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
-import { useProjectMutations, useRunMutations } from "./mutations";
+import { allProjectsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
+import { useDeploymentMutations, useProjectMutations, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
@@ -261,5 +261,35 @@ test("confirmed cancellation remains in run list and detail when their refreshes
   expect(client.getQueryData(queryKeys.runs())).toMatchObject({ items: [result], count: 1, total: 1 });
   expect(client.getQueryState(queryKeys.run("run_1"))?.status).toBe("error");
   expect(client.getQueryState(queryKeys.runs())?.status).toBe("error");
+  mounted.unmount();
+});
+
+
+test.each(["confirm", "cancel"] as const)("deployment %s retains its acknowledged state across failed refreshes", async (action) => {
+  let changed = false;
+  const original = { id: "dep_1", environment_id: "env_one", status: action === "confirm" ? "waiting_confirmation" : "applying" };
+  const acknowledged = { ...original, status: action === "confirm" ? "assigned" : "cancel_requested" };
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    if (String(path) === `/api/v1/deployments/${action}`) {
+      changed = true;
+      return Promise.resolve(json(acknowledged));
+    }
+    if (changed) return Promise.resolve(new Response(JSON.stringify({ error: "Refresh unavailable" }), { status: 503 }));
+    return Promise.resolve(json(String(path) === "/api/v1/deployments/dep_1" ? original : { items: [original], count: 1, total: 1, limit: 50, offset: 0 }));
+  });
+  const { client, wrapper } = setup();
+  client.setQueryData(queryKeys.deploymentHistory("env_one"), [original]);
+  function Observer() { useQuery(deploymentsQuery()); useQuery(deploymentQuery("dep_1")); return useDeploymentMutations(); }
+  const mounted = renderHook(() => Observer(), { wrapper });
+  await waitFor(() => expect(client.getQueryState(queryKeys.deployment("dep_1"))?.status).toBe("success"));
+  await act(async () => {
+    if (action === "confirm") await mounted.result.current.confirm.mutateAsync({ id: "dep_1" });
+    else await mounted.result.current.cancel.mutateAsync({ deployment_id: "dep_1", request_id: "cancel_one" });
+  });
+  expect(client.getQueryData(queryKeys.deployment("dep_1"))).toEqual(acknowledged);
+  expect(client.getQueryData(queryKeys.deployments())).toMatchObject({ items: [acknowledged], count: 1, total: 1 });
+  expect(client.getQueryData(queryKeys.deploymentHistory("env_one"))).toEqual([acknowledged]);
+  expect(client.getQueryState(queryKeys.deployment("dep_1"))?.status).toBe("error");
+  expect(client.getQueryState(queryKeys.deployments())?.status).toBe("error");
   mounted.unmount();
 });

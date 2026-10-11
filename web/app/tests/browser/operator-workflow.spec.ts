@@ -51,7 +51,7 @@ async function postJSON<T>(page: Page, path: string, data: unknown, headers: Rec
   return await response.json() as T;
 }
 
-async function createDetailFixture(page: Page): Promise<{ deploymentID: string; projectID: string; serviceID: string; environmentID: string; revisionID: string }> {
+async function createDetailFixture(page: Page, confirmationRequired = false): Promise<{ deploymentID: string; projectID: string; serviceID: string; environmentID: string; revisionID: string }> {
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   const runner = await postJSON<{ token: string }>(page, "/api/v1/runner-enrollments", {
     runner_id: `runner_web${suffix}`,
@@ -66,7 +66,7 @@ async function createDetailFixture(page: Page): Promise<{ deploymentID: string; 
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Browser detail ${suffix}`, description: "public detail fixture" });
   const repository = await postJSON<{ id: string }>(page, "/api/v1/repositories", { project_id: project.id, name: `repository-${suffix}`, url: "https://example.invalid/browser-detail.git" });
   const service = await postJSON<{ id: string }>(page, "/api/v1/services", { project_id: project.id, name: `service-${suffix}`, repository_id: repository.id, compose_path: "compose.yaml", profiles: [] });
-  const environment = await postJSON<{ id: string }>(page, "/api/v1/environments", { service_id: service.id, name: `environment-${suffix}`, compose_project: `browser-detail-${suffix}`, timeout_seconds: 60, rollback_safe: true });
+  const environment = await postJSON<{ id: string }>(page, "/api/v1/environments", { service_id: service.id, name: `environment-${suffix}`, compose_project: `browser-detail-${suffix}`, timeout_seconds: 60, rollback_safe: true, confirmation_required: confirmationRequired });
   const revision = await postJSON<{ id: string }>(page, "/api/v1/revisions", { service_id: service.id, requested_ref: "main" });
   const deployment = await postJSON<{ id: string }>(page, "/api/v1/deployments", { environment_id: environment.id, desired_revision_id: revision.id, idempotency_key: `browser-detail-${suffix}` });
   return { deploymentID: deployment.id, projectID: project.id, serviceID: service.id, environmentID: environment.id, revisionID: revision.id };
@@ -3460,11 +3460,27 @@ test("deployment cancellation keeps pending and failure feedback beside its acti
       await page.screenshot({ path: testInfo.outputPath("deployment-cancel-error-320.png"), animations: "disabled" });
     }
   }
+  let failRefresh = true;
+  await page.route(`**/api/v1/deployments/${fixture.deploymentID}`, (route) => failRefresh
+    ? route.fulfill({ status: 503, json: { error: "Refresh after cancellation unavailable" } })
+    : route.continue());
   const retry = page.waitForResponse((response) => response.url().endsWith("/api/v1/deployments/cancel") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  expect((await retry).ok()).toBe(true);
+  const response = await retry;
+  expect(response.ok()).toBe(true);
+  const acknowledged = await response.json() as { status: string };
   await expect(error).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Requesting cancellation…", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Unable to refresh deployment. Showing previously loaded data.")).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.locator('[data-slot="card"]').filter({ has: page.getByText(`Deployment ${fixture.deploymentID}`, { exact: true }) }).getByText(acknowledged.status.replaceAll("_", " "), { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-canceled-refresh-error-320.png"), animations: "disabled" });
+  }
+  failRefresh = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("Unable to refresh deployment. Showing previously loaded data.")).toHaveCount(0);
   expect(payloads).toHaveLength(2);
   expect(payloads[1]).toEqual(payloads[0]);
 });
@@ -3587,4 +3603,41 @@ test("healthy deployment details return to their filtered list page without relo
     await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser");
     expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin);
   }
+});
+
+
+test("deployment confirmation retains its receipt through a failed detail refresh", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page, true);
+  await page.goto(`/deployments/${fixture.deploymentID}`);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByText("waiting confirmation", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Confirm", exact: true })).toBeEnabled();
+  }
+  let failRefresh = true;
+  await page.route(`**/api/v1/deployments/${fixture.deploymentID}`, (route) => failRefresh
+    ? route.fulfill({ status: 503, json: { error: "Refresh after confirmation unavailable" } })
+    : route.continue());
+  const confirmation = page.waitForResponse((response) => response.url().endsWith("/api/v1/deployments/confirm") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  const response = await confirmation;
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toMatchObject({ id: fixture.deploymentID, status: "assigned" });
+  await expect(page.getByText("Unable to refresh deployment. Showing previously loaded data.")).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByText("waiting confirmation", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Confirm", exact: true })).toHaveCount(0);
+    await expect(page.locator('[data-slot="card"]').filter({ has: page.getByText(`Deployment ${fixture.deploymentID}`, { exact: true }) }).getByText("assigned", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-confirmed-refresh-error-320.png"), animations: "disabled" });
+  }
+  failRefresh = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
+  await expect(page.getByText("Unable to refresh deployment. Showing previously loaded data.")).toHaveCount(0);
 });
