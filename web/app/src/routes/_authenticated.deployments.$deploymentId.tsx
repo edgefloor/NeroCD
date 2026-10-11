@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { allProjectMembersQuery, allEnvironmentsQuery, principalQuery, allRevisionsQuery, runLogsQuery, runQuery, allServicesQuery, useDeploymentMutations, useDeploymentPollingQuery, deploymentHistoryQuery } from "@/api";
+import { allProjectMembersQuery, allEnvironmentsQuery, principalQuery, allRevisionsQuery, useSelectedRunLogsPollingQuery, shouldPollRun, runQuery, allServicesQuery, useDeploymentMutations, useDeploymentPollingQuery, deploymentHistoryQuery } from "@/api";
 import { DeploymentDetailView } from "@/pages/DeploymentsView";
 import { canMaintainProject } from "@/lib/permissions";
 import { validateSearch } from "@/router/search";
@@ -35,11 +35,11 @@ function DeploymentDetailRoute() {
   const revision = revisions.data?.find((item) => item.id === deployment.data?.desired_revision_id);
   const previousRevision = revisions.data?.find((item) => item.id === deployment.data?.previous_healthy_revision_id);
   const related = (history.data ?? []).filter((item) => item.id !== deploymentId && (item.rollback_of_id === deploymentId || deployment.data?.rollback_of_id === item.id || (item.rollback_of_id && item.rollback_of_id === deployment.data?.rollback_of_id)));
-  const runs = useQuery({ ...runQuery(deployment.data?.task_run_id ?? ""), enabled: Boolean(deployment.data?.task_run_id) });
+  const runs = useQuery({ ...runQuery(deployment.data?.task_run_id ?? ""), enabled: Boolean(deployment.data?.task_run_id), refetchInterval: (query) => shouldPollRun(query.state.data) ? 3_000 : false });
   const taskRun = runs.data ?? undefined;
-  const logs = useQuery({ ...runLogsQuery(deployment.data?.task_run_id ? { run_id: deployment.data.task_run_id, limit: 100, offset: 0 } : { limit: 100, offset: 0 }), enabled: Boolean(deployment.data?.task_run_id) });
+  const logs = useSelectedRunLogsPollingQuery(taskRun?.id ?? "", shouldPollRun(taskRun));
   const error = [deployment, environments, services, revisions, history, principal, members, runs, logs].find((query) => query.isError)?.error;
   if (error) return <p role="alert">Unable to load deployment: {error.message}</p>;
   const canOperate = canMaintainProject(principal.data, members.data ?? [], service?.project_id);
-  return <DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} service={service} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data?.items ?? []} canOperate={canOperate} busy={mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed"), onError: (cause) => toast.error(cause.message) })} onCancel={(input) => mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested"), onError: (cause) => toast.error(cause.message) })} />;
+  return <DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} service={service} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} canOperate={canOperate} busy={mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed"), onError: (cause) => toast.error(cause.message) })} onCancel={(input) => mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested"), onError: (cause) => toast.error(cause.message) })} />;
 }

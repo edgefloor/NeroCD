@@ -1622,3 +1622,41 @@ test("deployment rollback links include history beyond the first page", async ({
   }
   expect(offsets).toContain(100);
 });
+
+test("deployment log previews show the latest output and follow the linked run", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { deploymentID } = await createDetailFixture(page);
+  const deploymentResponse = await page.request.get(`/api/v1/deployments/${deploymentID}`);
+  const { task_run_id: runID } = await deploymentResponse.json();
+  let appended = false;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/run-logs?*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("run_id") !== runID) return route.continue();
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const limit = Number(url.searchParams.get("limit") ?? 100);
+    offsets.push(offset);
+    const all = Array.from({ length: appended ? 152 : 151 }, (_, index) => ({ id: `log_preview_${index}`, run_id: runID, sequence: index + 1, stream: "stdout", message: `Deployment output ${index + 1}`, created_at: "2026-01-01T00:00:00Z" }));
+    const items = all.slice(offset, offset + limit);
+    return route.fulfill({ json: { items, count: items.length, total: all.length, limit, offset } });
+  });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.goto(`/deployments/${deploymentID}`);
+  const preview = page.getByRole("list", { name: "Deployment run logs", exact: true });
+  await expect(preview).toContainText("Deployment output 151");
+  await expect(preview.getByRole("listitem")).toHaveCount(20);
+  await expect(preview.getByText("Deployment output 100", { exact: true })).toHaveCount(0);
+  appended = true;
+  await expect(preview).toContainText("Deployment output 152");
+  await expect(preview.getByRole("listitem")).toHaveCount(20);
+  expect(offsets).toContain(51);
+  expect(offsets).toContain(151);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const bounds = await preview.boundingBox();
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-live-logs-320.png"), fullPage: true });
+  }
+});
