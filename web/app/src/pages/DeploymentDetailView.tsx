@@ -112,7 +112,7 @@ export function DeploymentDetailView({
           ) : null}
           {logs.length ? (
             <ul className="max-h-32 space-y-1 overflow-auto rounded border p-2 font-mono text-xs" aria-label="Deployment run logs">
-              {logs.slice(-20).map((log) => <li key={log.id}>{log.message}</li>)}
+              {logs.slice(-20).map((log) => <li key={log.id} className="whitespace-pre-wrap [overflow-wrap:anywhere]">{log.message}</li>)}
             </ul>
           ) : taskRun && !logsError ? <p className="text-xs text-muted-foreground">{logsLoading ? "Loading run output..." : "No run logs have been recorded."}</p> : null}
           {related.length ? related.map((item) => (
