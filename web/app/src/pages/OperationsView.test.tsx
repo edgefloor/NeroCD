@@ -66,3 +66,17 @@ test("retention execution preserves confirmation and request identity through a 
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(execute.mock.calls[1]).toEqual(execute.mock.calls[0]);
 });
+
+
+test("retention save failures stay beside the draft and clear while retrying", () => {
+  const props = { status, loading: false, unavailable: false, canAdmin: true, retention };
+  const view = render(<OperationsView {...props} />);
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Keep days" }), { target: { value: "21" } });
+  view.rerender(<OperationsView {...props} retentionSaveError="Temporary policy save failure" />);
+  expect(screen.getByRole("alert").textContent).toContain("Unable to save retention policy: Temporary policy save failure");
+  expect((screen.getByRole("spinbutton", { name: "Keep days" }) as HTMLInputElement).value).toBe("21");
+  view.rerender(<OperationsView {...props} retentionSaveError="Temporary policy save failure" retentionBusy />);
+  expect(screen.queryByRole("alert")).toBeNull();
+  view.rerender(<OperationsView {...props} />);
+  expect(screen.queryByRole("alert")).toBeNull();
+});

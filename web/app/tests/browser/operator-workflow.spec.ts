@@ -3319,9 +3319,20 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   await expect(days).toBeEnabled();
   await expect(days).toHaveValue("21");
   await expect(batch).toHaveValue("17");
+  await expect(policy.getByRole("alert")).toContainText("Temporary policy save failure");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(policy.getByRole("alert")).toBeVisible();
+    expect(await policy.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) {
+      await policy.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("retention-save-error-320.png") });
+    }
+  }
   const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/run-log-retention" && response.request().method() === "PUT");
   await policy.getByRole("button", { name: "Save policy", exact: true }).click();
   expect((await saved).status()).toBe(200);
   await expect(policy).toHaveAttribute("aria-busy", "false");
   expect(saves).toBe(2);
+  await expect(policy.getByRole("alert")).toHaveCount(0);
 });
