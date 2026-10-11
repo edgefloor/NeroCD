@@ -10,7 +10,7 @@ const props = {
   services: [{ id: "service_a", project_id: "project_a", name: "Service A" }, { id: "service_b", project_id: "project_b", name: "Service B" }] as never,
   environments: [{ id: "env_a", service_id: "service_a", name: "Environment A" }, { id: "env_b", service_id: "service_b", name: "Environment B" }] as never,
   revisions: [{ id: "revision_a", service_id: "service_a", requested_ref: "main", git_commit: "abc" }] as never,
-  canOperate: true, onCreate: vi.fn(), onCancel: vi.fn(), onServiceChange: vi.fn(), onEnvironmentChange: vi.fn(),
+  canOperate: true, onCreate: vi.fn(), onServiceChange: vi.fn(), onEnvironmentChange: vi.fn(),
 };
 const value = (name: string) => (screen.getByRole("combobox", { name }) as HTMLSelectElement).value;
 

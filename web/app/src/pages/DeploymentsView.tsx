@@ -3,7 +3,6 @@ import { Link } from "@tanstack/react-router";
 import { Ban, CheckCircle2, ChevronRight, CircleAlert, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
@@ -38,12 +37,32 @@ function DeploymentRow({ deployment, environment, revision }: { deployment: Depl
   return <Card><CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><Link className="font-medium underline-offset-4 hover:underline" to="/deployments/$deploymentId" params={{ deploymentId: deployment.id }} search={(previous) => ({ ...previous, environment_id: deployment.environment_id })}>{environment?.name ?? deployment.environment_id}</Link><p className="text-sm text-muted-foreground">{deploymentStateMessage(deployment)}</p><p className="mt-1 truncate font-mono text-xs text-muted-foreground">{revision?.git_commit?.trim() || "Commit unavailable"} · {deployment.id}</p></div><div className="flex items-center gap-2"><StatusBadge status={deployment.status} /><ChevronRight className="h-4 w-4 text-muted-foreground" /></div></CardContent></Card>;
 }
 
-export function DeploymentsView({ deployments, projects, services, environments, revisions, q, selectedServiceID, selectedEnvironmentID, loading, canOperate, onCreate, onCancel, onServiceChange, onEnvironmentChange, busy, submitting }: { deployments: Deployment[]; projects: Project[]; services: Service[]; environments: Environment[]; revisions: Revision[]; q?: string; selectedServiceID?: string; selectedEnvironmentID?: string; loading?: boolean; canOperate: boolean; busy?: boolean; submitting?: boolean; onCreate: (input: { environment_id: string; desired_revision_id: string; idempotency_key: string }) => void; onCancel: (input: { deployment_id: string; request_id: string }) => void; onServiceChange: (id: string) => void; onEnvironmentChange: (id: string) => void }): ReactNode {
+type DeploymentsViewProps = {
+  deployments: Deployment[];
+  projects: Project[];
+  services: Service[];
+  environments: Environment[];
+  revisions: Revision[];
+  q?: string;
+  selectedServiceID?: string;
+  selectedEnvironmentID?: string;
+  loading?: boolean;
+  canOperate: boolean;
+  busy?: boolean;
+  submitting?: boolean;
+  onCreate: (input: { environment_id: string; desired_revision_id: string; idempotency_key: string }) => void;
+  onServiceChange: (id: string) => void;
+  onEnvironmentChange: (id: string) => void;
+};
+
+export function DeploymentsView({
+  deployments, projects, services, environments, revisions, q,
+  selectedServiceID, selectedEnvironmentID, loading, canOperate,
+  onCreate, onServiceChange, onEnvironmentChange, busy, submitting,
+}: DeploymentsViewProps): ReactNode {
   const [draftProjectID, setProjectID] = useState("");
   const [revisionID, setRevisionID] = useState("");
-  const [cancelID, setCancelID] = useState<string>();
   const createKey = useRef(newDeploymentIntentKey());
-  const cancelKey = useRef(newDeploymentIntentKey());
   const service = services.find((item) => item.id === selectedServiceID);
   const serviceID = service?.id ?? "";
   const projectID = service?.project_id ?? draftProjectID;
@@ -55,12 +74,92 @@ export function DeploymentsView({ deployments, projects, services, environments,
   useEffect(() => { setRevisionID(""); }, [serviceID]);
   useEffect(() => { if (!scopedRevisions.some((item) => item.id === revisionID)) setRevisionID(""); }, [scopedRevisions, revisionID]);
   useEffect(() => { createKey.current = newDeploymentIntentKey(); }, [serviceID, environmentID, revisionID]);
-  if (loading) return <SkeletonTable rows={5} />;
-  return <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]"><div className="grid gap-3" aria-live="polite">{!environmentID ? <EmptyState title="Select an environment to view deployment history" icon={Rocket} /> : !visible.length ? <EmptyState title="No deployments match this view" icon={Rocket} /> : visible.map((deployment) => <DeploymentRow key={deployment.id} deployment={deployment} environment={environments.find((item) => item.id === deployment.environment_id)} revision={revisions.find((item) => item.id === deployment.desired_revision_id)} />)}</div><Card><CardHeader><CardTitle>{canOperate ? "Request deployment" : "Deployment history"}</CardTitle></CardHeader><CardContent><div className="grid gap-3"><label className="grid gap-1 text-sm font-medium">Project<Select disabled={submitting} aria-label="Project" value={projectID} onChange={(event) => { createKey.current = newDeploymentIntentKey(); setProjectID(event.target.value); setRevisionID(""); onServiceChange(""); }} required><option value="">Select project</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></label><label className="grid gap-1 text-sm font-medium">Service<Select aria-label="Service" value={serviceID} onChange={(event) => { createKey.current = newDeploymentIntentKey(); setRevisionID(""); onServiceChange(event.target.value); }} disabled={submitting || !projectID} required><option value="">Select service</option>{scopedServices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></label><label className="grid gap-1 text-sm font-medium">Environment<Select aria-label="Environment" value={environmentID} onChange={(event) => { createKey.current = newDeploymentIntentKey(); onEnvironmentChange(event.target.value); }} disabled={submitting || !serviceID} required><option value="">Select environment</option>{scopedEnvironments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></label>{canOperate ? <form className="grid gap-3" aria-label="Request deployment" aria-busy={Boolean(submitting)} onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!busy && !submitting && environmentID && revisionID) onCreate({ environment_id: environmentID, desired_revision_id: revisionID, idempotency_key: createKey.current }); }}><label className="grid gap-1 text-sm font-medium">Immutable revision<Select aria-label="Immutable revision" value={revisionID} onChange={(event) => { createKey.current = newDeploymentIntentKey(); setRevisionID(event.target.value); }} disabled={submitting || !serviceID} required><option value="">Select revision</option>{scopedRevisions.map((item) => <option key={item.id} value={item.id}>{revisionLabel(item, true)}</option>)}</Select></label><Button type="submit" disabled={!environmentID || !revisionID || !service || busy || submitting}><Rocket className="mr-1 h-4 w-4" />{submitting ? "Requesting deployment..." : "Request deployment"}</Button><p className="text-xs text-muted-foreground">This request carries one stable idempotency key. The browser never talks to runner APIs.</p></form> : <p className="text-sm text-muted-foreground" role="status">You can inspect deployment history, but an operator role is required to request, confirm, or cancel deployments.</p>}</div></CardContent></Card><CancelDialog deployment={cancelID ? deployments.find((item) => item.id === cancelID) : undefined} open={Boolean(cancelID)} busy={busy} onOpenChange={(open) => !open && setCancelID(undefined)} onConfirm={() => { if (cancelID) { onCancel({ deployment_id: cancelID, request_id: cancelKey.current }); setCancelID(undefined); } }} /></section>;
-}
 
-function CancelDialog({ deployment, open, busy, onOpenChange, onConfirm }: { deployment?: Deployment; open: boolean; busy?: boolean; onOpenChange: (open: boolean) => void; onConfirm: () => void }): ReactNode {
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Cancel deployment?</DialogTitle><DialogDescription>This sends one durable cancellation request. A post-apply cancellation may create a safe rollback child.</DialogDescription></DialogHeader><p className="font-mono text-xs text-muted-foreground">{deployment?.id}</p><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Keep deployment</Button><Button variant="destructive" disabled={busy} onClick={onConfirm}><Ban className="mr-1 h-4 w-4" />Cancel deployment</Button></DialogFooter></DialogContent></Dialog>;
+  function submitDeployment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || submitting || !environmentID || !revisionID) return;
+    onCreate({ environment_id: environmentID, desired_revision_id: revisionID, idempotency_key: createKey.current });
+  }
+
+  if (loading) return <SkeletonTable rows={5} />;
+  return (
+    <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-3" aria-live="polite">
+        {!environmentID ? <EmptyState title="Select an environment to view deployment history" icon={Rocket} />
+          : !visible.length ? <EmptyState title="No deployments match this view" icon={Rocket} />
+          : visible.map((deployment) => (
+            <DeploymentRow key={deployment.id} deployment={deployment}
+              environment={environments.find((item) => item.id === deployment.environment_id)}
+              revision={revisions.find((item) => item.id === deployment.desired_revision_id)} />
+          ))}
+      </div>
+      <Card>
+        <CardHeader><CardTitle>{canOperate ? "Request deployment" : "Deployment history"}</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid gap-3">
+            <label className="grid gap-1 text-sm font-medium">
+              Project
+              <Select disabled={submitting} aria-label="Project" value={projectID} required
+                onChange={(event) => {
+                  createKey.current = newDeploymentIntentKey();
+                  setProjectID(event.target.value);
+                  setRevisionID("");
+                  onServiceChange("");
+                }}>
+                <option value="">Select project</option>
+                {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </Select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium">
+              Service
+              <Select aria-label="Service" value={serviceID} disabled={submitting || !projectID} required
+                onChange={(event) => {
+                  createKey.current = newDeploymentIntentKey();
+                  setRevisionID("");
+                  onServiceChange(event.target.value);
+                }}>
+                <option value="">Select service</option>
+                {scopedServices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </Select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium">
+              Environment
+              <Select aria-label="Environment" value={environmentID} disabled={submitting || !serviceID} required
+                onChange={(event) => {
+                  createKey.current = newDeploymentIntentKey();
+                  onEnvironmentChange(event.target.value);
+                }}>
+                <option value="">Select environment</option>
+                {scopedEnvironments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </Select>
+            </label>
+            {canOperate ? (
+              <form className="grid gap-3" aria-label="Request deployment" aria-busy={Boolean(submitting)} onSubmit={submitDeployment}>
+                <label className="grid gap-1 text-sm font-medium">
+                  Immutable revision
+                  <Select aria-label="Immutable revision" value={revisionID} disabled={submitting || !serviceID} required
+                    onChange={(event) => {
+                      createKey.current = newDeploymentIntentKey();
+                      setRevisionID(event.target.value);
+                    }}>
+                    <option value="">Select revision</option>
+                    {scopedRevisions.map((item) => <option key={item.id} value={item.id}>{revisionLabel(item, true)}</option>)}
+                  </Select>
+                </label>
+                <Button type="submit" disabled={!environmentID || !revisionID || !service || busy || submitting}>
+                  <Rocket className="mr-1 h-4 w-4" />
+                  {submitting ? "Requesting deployment..." : "Request deployment"}
+                </Button>
+                <p className="text-xs text-muted-foreground">This request carries one stable idempotency key. The browser never talks to runner APIs.</p>
+              </form>
+            ) : (
+              <p className="text-sm text-muted-foreground" role="status">You can inspect deployment history, but an operator role is required to request, confirm, or cancel deployments.</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  );
 }
 
 export function DeploymentDetailView({ deployment, environment, service, revision, previousRevision, related, taskRun, logs, logsError, logsLoading, logsRetrying, onRetryLogs, canOperate, busy, onConfirm, onCancel }: { deployment?: Deployment; environment?: Environment; service?: Service; revision?: Revision; previousRevision?: Revision; related: Deployment[]; taskRun?: TaskRun; logs: RunLog[]; logsError?: Error; logsLoading?: boolean; logsRetrying?: boolean; onRetryLogs?: () => void; canOperate: boolean; busy?: boolean; onConfirm: (id: string) => void; onCancel: (input: { deployment_id: string; request_id: string }) => void }): ReactNode {
