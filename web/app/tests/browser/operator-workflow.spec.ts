@@ -1117,21 +1117,34 @@ test("project access preserves failed drafts and resets after a successful retry
   const email = card.getByRole("textbox", { name: "Email", exact: true });
   const originalEmail = await email.inputValue();
   let failRequest = true;
+  let releaseReply = () => {};
+  let responseGate = Promise.resolve();
   await page.route("**/api/v1/project-members", async (route) => {
     if (route.request().method() === "POST" && failRequest) {
       failRequest = false;
+      await responseGate;
       return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary access update failure" }) });
     }
     return route.continue();
   });
-  for (const width of [390, 1440]) {
+  for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     failRequest = true;
+    responseGate = new Promise<void>((resolve) => { releaseReply = resolve; });
     await card.getByRole("combobox", { name: "Project", exact: true }).selectOption(project.id);
     await email.fill("draft@example.test");
     await card.getByRole("combobox", { name: "Role", exact: true }).selectOption("maintainer");
     const failed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/project-members" && response.request().method() === "POST");
     await card.getByRole("button", { name: "Update access" }).click();
+    try {
+      await expect(card.getByRole("button", { name: "Updating access...", exact: true })).toBeDisabled();
+      await expect(email).toBeDisabled();
+      await expect(card.getByRole("combobox", { name: "Project", exact: true })).toBeDisabled();
+      await expect(card.getByRole("combobox", { name: "Role", exact: true })).toBeDisabled();
+      if (width === 320) await card.screenshot({ path: testInfo.outputPath("project-access-pending-320.png") });
+    } finally {
+      releaseReply();
+    }
     expect((await failed).status()).toBe(503);
     await expect(card.getByRole("button", { name: "Update access" })).toBeEnabled();
     await expect(email).toHaveValue("draft@example.test");

@@ -64,3 +64,29 @@ test("non-owners retain member visibility without membership editing", () => {
   expect(screen.queryByRole("button", { name: "Update access" })).toBeNull();
   expect(screen.getByText("operator@example.test · Viewed project")).toBeTruthy();
 });
+
+
+test("pending access updates protect the submitted draft and prevent resubmission", () => {
+  const save = vi.fn();
+  const props = {
+    principal: { id: "operator", name: "Operator", email: "operator@example.test", provider: "local", roles: [] },
+    projects: [{ id: "owned", name: "Owned", description: "", created_at: "" }],
+    members: [{ id: "member", project_id: "owned", user_id: "operator", role: "owner", email: "operator@example.test" } as never],
+    onUpsertMember: save,
+  };
+  const view = render(<SettingsView {...props} />);
+  const email = screen.getByRole<HTMLInputElement>("textbox", { name: "Email" });
+  fireEvent.change(email, { target: { value: "draft@example.test" } });
+  view.rerender(<SettingsView {...props} updatingMember />);
+  expect(email.disabled).toBe(true);
+  for (const select of screen.getAllByRole<HTMLSelectElement>("combobox")) expect(select.disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Updating access..." }).disabled).toBe(true);
+  fireEvent.submit(email.closest("form")!);
+  expect(save).not.toHaveBeenCalled();
+  view.rerender(<SettingsView {...props} />);
+  expect(email.disabled).toBe(false);
+  expect(email.value).toBe("draft@example.test");
+  fireEvent.click(screen.getByRole("button", { name: "Update access" }));
+  expect(save).toHaveBeenCalledOnce();
+  expect(save.mock.calls[0]![0].email).toBe("draft@example.test");
+});
