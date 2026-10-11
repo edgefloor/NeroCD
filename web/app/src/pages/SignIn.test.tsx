@@ -64,3 +64,15 @@ test("SSO discovery failure offers retry while preserving local recovery", () =>
   view.rerender(<SignIn error="" oidcStatusError oidcStatusRetrying onRetryOIDC={retry} onSubmit={vi.fn()} />);
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry SSO check" }).disabled).toBe(true);
 });
+
+
+test("SSO discovery recovery retains entered local credentials", () => {
+  const onSubmit = vi.fn();
+  const view = render(<SignIn error="" oidcStatusError onSubmit={onSubmit} />);
+  fireEvent.change(screen.getByLabelText("Email"), { target: { value: "operator@example.test" } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "test-password" } });
+  view.rerender(<SignIn error="" oidcStatusRetrying onSubmit={onSubmit} />);
+  view.rerender(<SignIn error="" oidcEnabled onSubmit={onSubmit} />);
+  expect(screen.getByLabelText<HTMLInputElement>("Email").value).toBe("operator@example.test");
+  expect(screen.getByLabelText<HTMLInputElement>("Password").value).toBe("test-password");
+});

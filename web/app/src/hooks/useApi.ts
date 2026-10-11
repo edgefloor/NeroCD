@@ -14,24 +14,23 @@ export function useAuth() {
   const [unauthorized, setUnauthorized] = useState(false);
   const unauthorizedRef = useRef(false);
   const principal = useQuery({ ...principalQuery(), retry: false, enabled: !sessionRevoked && !unauthorized && !unauthorizedRef.current });
-  const authenticated = sessionRevoked || unauthorized ? false : principal.isPending ? null : principal.isError && principal.error instanceof ApiError && principal.error.status === 401 ? false : principal.isError ? null : true;
+  const authenticated = sessionRevoked || unauthorized ? false : principal.isPending || principal.isError ? null : true;
   const clearedUnauthorized = useRef(false);
   useLayoutEffect(() => {
     if (principal.isError && principal.error instanceof ApiError && principal.error.status === 401) {
       if (!clearedUnauthorized.current) {
         clearedUnauthorized.current = true;
         unauthorizedRef.current = true;
-        setUnauthorized(true);
+        queueMicrotask(() => {
+          client.clear();
+          setUnauthorized(true);
+        });
       }
     } else {
       clearedUnauthorized.current = false;
     }
   }, [client, principal.error, principal.isError]);
-  useLayoutEffect(() => {
-    if (!unauthorized) return;
-    queueMicrotask(() => client.clear());
-  }, [client, unauthorized]);
-  useEffect(() => { if (principal.isError && authenticated !== false) setAuthError(principal.error instanceof Error ? principal.error.message : String(principal.error)); }, [authenticated, principal.error, principal.isError]);
+  useEffect(() => { if (principal.isError && authenticated !== false && !(principal.error instanceof ApiError && principal.error.status === 401)) setAuthError(principal.error instanceof Error ? principal.error.message : String(principal.error)); }, [authenticated, principal.error, principal.isError]);
   useEffect(() => { if (sessionRevoked) client.clear(); }, [client, sessionRevoked]);
 
   const signIn = useCallback(async (email: string, password: string) => {

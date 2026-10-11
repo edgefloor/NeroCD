@@ -77,7 +77,10 @@ test("post-login principal refetch is singular and a later 401 revokes authentic
   await act(async () => { await queryClient.refetchQueries({ queryKey: ["principal"] }); });
   await waitFor(() => expect(result.current.authenticated).toBe(false));
   expect(fetchMock.mock.calls.filter(([path]) => path === "/api/v1/me")).toHaveLength(3);
-  await waitFor(() => expect(queryClient.getQueryCache().getAll()).toHaveLength(0));
+  expect(queryClient.getQueryData(["projects"])).toBeUndefined();
+  expect(queryClient.getQueryData(["runs"])).toBeUndefined();
+  // The mounted, disabled principal observer may recreate an empty query.
+  expect(queryClient.getQueryCache().getAll().every((query) => query.state.data === undefined)).toBe(true);
 });
 
 test("sign-out clears every in-memory authenticated query before redirect state changes", async () => {
@@ -103,4 +106,21 @@ test("failed browser sign-in rejects for router control while retaining the rend
   await expect(result.current.signIn("bad@example.local", "wrong")).rejects.toThrow("invalid credentials");
   expect(result.current.authenticated).toBe(false);
   await waitFor(() => expect(result.current.authError).toBe("invalid credentials"));
+});
+
+
+test("unauthorized startup clears cached queries before exposing sign-in", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(["projects"], [{ id: "previous-session-project" }]);
+  const localWrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }));
+  const signedOutCacheStates: unknown[] = [];
+  const { result } = renderHook(() => {
+    const auth = useAuth();
+    if (auth.authenticated === false) signedOutCacheStates.push(client.getQueryData(["projects"]));
+    return auth;
+  }, { wrapper: localWrapper });
+  await waitFor(() => expect(result.current.authenticated).toBe(false));
+  expect(signedOutCacheStates.length).toBeGreaterThan(0);
+  expect(signedOutCacheStates.every((value) => value === undefined)).toBe(true);
 });
