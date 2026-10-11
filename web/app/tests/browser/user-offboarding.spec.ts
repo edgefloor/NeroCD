@@ -82,15 +82,15 @@ test("administrator offboards an OIDC user and the next provider login is denied
   await page.reload({ waitUntil: "networkidle" });
 
   const userEmail = offboardingEmail;
-  const userPages = page.getByRole("navigation", { name: "User pages" });
+  const userPages = page.getByRole("navigation", { name: "users pages" });
   await expect(page.getByText(userEmail, { exact: true })).toHaveCount(0);
   const firstPageSummary = await userPages.locator("p").innerText();
-  expect(firstPageSummary).toMatch(/^Showing 1–10 of \d+$/);
+  expect(firstPageSummary).toMatch(/^Showing 1-10 of \d+$/);
   await expect(userPages.getByRole("button", { name: "Next users" })).toBeEnabled();
   await userPages.getByRole("button", { name: "Next users" }).click();
   await expect(page.getByText(userEmail, { exact: true })).toBeVisible();
   const laterPageSummary = await userPages.locator("p").innerText();
-  expect(laterPageSummary).toMatch(/^Showing 11–\d+ of \d+$/);
+  expect(laterPageSummary).toMatch(/^Showing 11-\d+ of \d+$/);
   expect(laterPageSummary).not.toBe(firstPageSummary);
   const offboardButton = page.getByRole("button", { name: `Offboard ${userEmail}` });
   await expect(offboardButton).toBeEnabled();
@@ -110,7 +110,7 @@ test("administrator offboards an OIDC user and the next provider login is denied
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await expect(page.getByRole("navigation", { name: "User pages" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "users pages" })).toBeVisible();
   }
 
   const evidenceRoot = process.env.NEROCD_BROWSER_EVIDENCE_DIR;

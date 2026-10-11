@@ -140,6 +140,6 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await expect(page.getByRole("navigation", { name: "Service account pages" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "accounts pages" })).toBeVisible();
   }
 });

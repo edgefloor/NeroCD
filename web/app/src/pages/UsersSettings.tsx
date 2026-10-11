@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldOff, Users } from "lucide-react";
 import { toast } from "sonner";
 import { listUsers, offboardUser, type User, type UserListResponse } from "@/api/users";
+import { PageNavigation } from "@/components/common/PageNavigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,10 +63,6 @@ export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious,
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const metadata = page ?? { count: users.length, limit: users.length, offset: 0, total: users.length };
-  const first = metadata.count === 0 ? 0 : metadata.offset + 1;
-  const last = metadata.count === 0 ? 0 : metadata.offset + metadata.count;
-  const hasPrevious = metadata.offset > 0;
-  const hasNext = metadata.count > 0 && last < metadata.total;
   return (
     <Card className="min-w-0 lg:col-span-2">
       <CardHeader>
@@ -94,18 +91,8 @@ export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious,
             </div>
           </div>
         ))}
-        <nav className="flex flex-wrap items-center justify-between gap-2 border-t pt-3" aria-label="User pages">
-          <p className="text-sm text-muted-foreground">Showing {first}–{last} of {metadata.total}</p>
-          <div className="flex flex-wrap items-center gap-2">
-            {hasPrevious && onFirst ? <Button variant="outline" size="sm" aria-label="First users page" disabled={loading || busy} onClick={onFirst}>First</Button> : null}
-            <Button variant="outline" size="sm" disabled={loading || busy || !hasPrevious} onClick={onPrevious}>
-              Previous users
-            </Button>
-            <Button variant="outline" size="sm" disabled={loading || busy || !hasNext} onClick={onNext}>
-              Next users
-            </Button>
-          </div>
-        </nav>
+        <PageNavigation page={metadata} label="users" loading={loading || busy || submitting}
+          onFirst={() => onFirst?.()} onPrevious={() => onPrevious?.()} onNext={() => onNext?.()} />
         <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open && !submittingRef.current) { setSelected(undefined); setOffboardError(""); } }}>
           <DialogContent showCloseButton={!submitting} className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <DialogHeader className="min-w-0 pr-6">

@@ -40,7 +40,7 @@ test("creates and clears one-time credential on close and project navigation", a
   serviceAccountsAPI.list.mockResolvedValue({ items: [], count: 0, limit: 10, offset: 0, total: 0 });
   serviceAccountsAPI.create.mockResolvedValue({ service_account: account, credential: { id: "pat_one", name: account.name, kind: "service_account", roles: [], status: "active", created_by: account.owner_user_id, service_account_id: account.id, created_at: account.created_at, expires_at: "2026-12-04T10:00:00Z" }, token: "nca_one_time_secret" });
   renderPanel();
-  await screen.findByText("No service accounts in this project.");
+  await screen.findByText("No service accounts on this page.");
   fireEvent.change(screen.getByLabelText("Service account name"), { target: { value: "Build bot" } });
   fireEvent.click(screen.getByRole("button", { name: "Create account" }));
   expect(await screen.findByDisplayValue("nca_one_time_secret")).toBeTruthy();
@@ -100,4 +100,19 @@ test("refresh failure preserves service account edits until retry", async () => 
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(name.value).toBe("Unsaved rename");
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save" }).disabled).toBe(false);
+});
+
+
+test("service account pagination recovers empty later pages through shared navigation", async () => {
+  serviceAccountsAPI.list.mockImplementation(async (_projectID: string, _limit: number, offset: number) => offset === 0
+    ? { items: [account], count: 1, limit: 10, offset: 0, total: 11 }
+    : { items: [], count: 0, limit: 10, offset, total: 1 });
+  renderPanel();
+  await screen.findByLabelText("Name for Build bot");
+  fireEvent.click(screen.getByRole("button", { name: "Next accounts" }));
+  await screen.findByText("Showing 0-0 of 1");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Next accounts" }).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "First accounts page" }));
+  await screen.findByLabelText("Name for Build bot");
+  expect(serviceAccountsAPI.list.mock.calls.at(-1)?.slice(0, 3)).toEqual(["proj_one", 10, 0]);
 });

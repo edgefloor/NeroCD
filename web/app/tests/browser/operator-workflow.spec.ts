@@ -2561,17 +2561,17 @@ test("user pagination recovers from a shrunken result set on mobile", async ({ p
     return route.fulfill({ json: { items, count: items.length, total: offset === 0 ? 11 : 1, limit: 10, offset } });
   });
   await page.reload();
-  const navigation = page.getByRole("navigation", { name: "User pages", exact: true });
+  const navigation = page.getByRole("navigation", { name: "users pages", exact: true });
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     await navigation.getByRole("button", { name: "Next users", exact: true }).click();
-    await expect(navigation.getByText("Showing 0–0 of 1", { exact: true })).toBeVisible();
+    await expect(navigation.getByText("Showing 0-0 of 1", { exact: true })).toBeVisible();
     await expect(navigation.getByRole("button", { name: "Next users", exact: true })).toBeDisabled();
     await expect.poll(() => navigation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("user-pagination-recovery-320.png"), fullPage: true });
     await navigation.getByRole("button", { name: "First users page", exact: true }).click();
     await expect(page.getByText("pagination@example.test", { exact: true })).toBeVisible();
-    await expect(navigation.getByText("Showing 1–1 of 11", { exact: true })).toBeVisible();
+    await expect(navigation.getByText("Showing 1-1 of 11", { exact: true })).toBeVisible();
   }
 });
 

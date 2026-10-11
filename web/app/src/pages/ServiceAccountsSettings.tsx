@@ -13,6 +13,7 @@ import {
   type ServiceAccountCreateInput,
   type ServiceAccountUpdateInput,
 } from "@/api/service-accounts";
+import { PageNavigation } from "@/components/common/PageNavigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -73,8 +74,6 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
   const busy = create.isPending || update.isPending || rotate.isPending || revoke.isPending;
   const controlsDisabled = busy || page.isError;
   const result = page.data;
-  const first = result?.count ? result.offset + 1 : 0;
-  const last = result ? result.offset + result.count : 0;
 
   function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -105,7 +104,7 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
           <p role="alert">{result ? "Unable to refresh service accounts. Showing previously loaded accounts." : "Unable to load service accounts."}</p>
           <Button variant="outline" disabled={page.isFetching} onClick={() => void page.refetch()}>Retry service accounts</Button>
         </section> : null}
-        {page.isPending ? <p role="status">Loading service accounts…</p> : result?.items.length === 0 ? <p className="text-sm text-muted-foreground">No service accounts in this project.</p> : result?.items.map((account) => (
+        {page.isPending ? <p role="status">Loading service accounts…</p> : result?.items.length === 0 ? <p className="text-sm text-muted-foreground">No service accounts on this page.</p> : result?.items.map((account) => (
           <form key={account.id} className="grid min-w-0 gap-2 rounded border p-3 md:grid-cols-[minmax(0,1fr)_10rem_auto_auto]" onSubmit={(event) => {
             event.preventDefault();
             if (controlsDisabled) return;
@@ -118,7 +117,9 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
             <Button type="button" variant="destructive" size="sm" disabled={controlsDisabled || account.status !== "active"} onClick={() => setRevoking(account)}><ShieldOff className="h-4 w-4" />Revoke</Button>
           </form>
         ))}
-        <nav className="flex flex-wrap items-center justify-between gap-2 border-t pt-3" aria-label="Service account pages"><p className="text-sm text-muted-foreground">Showing {first}–{last} of {result?.total ?? 0}</p><div className="flex gap-2"><Button variant="outline" size="sm" disabled={busy || offset === 0} onClick={() => setOffset((value) => Math.max(0, value - serviceAccountsPageSize))}>Previous accounts</Button><Button variant="outline" size="sm" disabled={busy || !result || last >= result.total} onClick={() => setOffset((value) => value + serviceAccountsPageSize)}>Next accounts</Button></div></nav>
+        <PageNavigation page={result ?? { count: 0, total: 0, limit: serviceAccountsPageSize, offset }} label="accounts" loading={busy || page.isFetching}
+          onFirst={() => setOffset(0)} onPrevious={() => setOffset((value) => Math.max(0, value - serviceAccountsPageSize))}
+          onNext={() => setOffset((value) => value + serviceAccountsPageSize)} />
         {secret ? <ServiceAccountCredential secret={secret} onClose={() => setSecret(undefined)} /> : null}
         <Dialog open={Boolean(revoking)} onOpenChange={(open) => !open && setRevoking(undefined)}><DialogContent><DialogHeader><DialogTitle>Revoke {revoking?.name}?</DialogTitle><DialogDescription>This immediately disables the stable account and every credential issued for it.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setRevoking(undefined)}>Keep account active</Button><Button variant="destructive" disabled={controlsDisabled} onClick={() => revoking && revoke.mutate(revoking.id)}>Revoke account</Button></DialogFooter></DialogContent></Dialog>
       </CardContent>
