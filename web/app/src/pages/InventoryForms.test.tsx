@@ -18,7 +18,7 @@ for (const [kind, View, buttonName] of [
   test(`${kind} creation preserves a failed draft and resets after a successful retry`, async () => {
     const mutate = vi.fn<MutateFn>().mockResolvedValueOnce(undefined).mockResolvedValueOnce({ id: "created" });
     render(<View snapshot={snapshot} token="" busy="" mutate={mutate as MutateFn} />);
-    const form = screen.getByRole("button", { name: buttonName }).closest("form")!;
+    const form = screen.getAllByRole("button", { name: buttonName }).map((button) => button.closest("form")).find(Boolean)!;
     const name = form.elements.namedItem("name") as HTMLInputElement;
     fireEvent.change(name, { target: { value: "My draft" } });
     await act(async () => { fireEvent.submit(form); });

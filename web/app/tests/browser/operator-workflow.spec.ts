@@ -875,3 +875,40 @@ test("inventory labels focus their own fields and mobile template editing is nam
     await page.keyboard.press("Escape");
   }
 });
+
+test("mobile template inventory is reachable before opening the creation form", async ({ page }, testInfo) => {
+  await page.goto("/templates");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const suffix = `${Date.now()}`;
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Mobile creation ${suffix}`, description: "Mobile creation fixture" });
+  await page.reload();
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("textbox", { name: "Template Name", exact: true })).toBeHidden();
+    await expect(page.getByText("Template inventory", { exact: true })).toBeInViewport();
+    await page.getByRole("button", { name: "Create template", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Create template", exact: true });
+    await expect(dialog).toBeVisible();
+    const name = dialog.getByRole("textbox", { name: "Template Name", exact: true });
+    await expect(name).toBeVisible();
+    await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(project.id);
+    if (width === 320) {
+      await name.fill(`Mobile template ${suffix}`);
+      await dialog.getByRole("combobox", { name: "Kind", exact: true }).selectOption("shell");
+      await dialog.getByRole("textbox", { name: "Command", exact: true }).fill("echo mobile");
+      const created = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/templates" && response.request().method() === "POST");
+      await dialog.getByRole("button", { name: "Create template", exact: true }).click();
+      expect((await created).status()).toBe(201);
+      await expect(name).toHaveValue("");
+      await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeInViewport();
+    }
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Create template", exact: true })).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("templates-inventory-320.png") });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(page.getByRole("textbox", { name: "Template Name", exact: true })).toBeVisible();
+});

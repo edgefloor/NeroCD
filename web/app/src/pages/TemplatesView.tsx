@@ -258,7 +258,22 @@ export function TemplatesView({
 
   return (
     <section className="grid items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-      <Card>
+      <div className="xl:hidden">
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button className="h-9 w-full rounded-xl">Create template</Button>
+          </DialogTrigger>
+          <DialogContent aria-modal="true" className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden">
+            <DialogHeader className="shrink-0 pr-6">
+              <DialogTitle>Create template</DialogTitle>
+            </DialogHeader>
+            <div className="min-h-0 overflow-y-auto">
+              <TemplateForm snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+      <Card className="hidden xl:flex">
         <CardHeader>
           <CardTitle className="text-base font-semibold">Create template</CardTitle>
         </CardHeader>
