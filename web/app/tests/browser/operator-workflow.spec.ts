@@ -726,3 +726,43 @@ test("runs filter narrows the loaded page and retains usable log actions", async
   await page.getByRole("button", { name: "Clear filter", exact: true }).click();
   await expect(page.locator(`[data-run-detail-link="${secondRunID}"]`)).toHaveCount(2);
 });
+
+test("inventory and approval filters apply URL queries and recover after clearing", async ({ page }, testInfo) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const suffix = `${Date.now()}`;
+  const projectName = `Filter project ${suffix}`;
+  const templateName = `Filter template ${suffix}`;
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: projectName, description: "Inventory filtering fixture" });
+  const template = await postJSON<{ id: string }>(page, "/api/v1/templates", {
+    project_id: project.id, name: templateName, kind: "shell",
+    run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "filter-fixture"] } },
+    workflow: { steps: [] }, runner_tags: ["shell"], requires_ack: true,
+  });
+  await postJSON(page, "/api/v1/runs", { template_id: template.id });
+  const cases = [
+    ["projects", "No projects match this filter on the loaded page."],
+    ["templates", "No templates match this filter on the loaded page."],
+    ["approvals", "No pending approvals match this filter on the loaded page."],
+  ] as const;
+  for (const [path, emptyMessage] of cases) {
+    await page.goto(`/${path}?q=${encodeURIComponent(projectName)}`);
+    const filter = page.getByRole("searchbox", { name: "Filter this page", exact: true });
+    await expect(filter).toHaveValue(projectName);
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect(page.getByText(emptyMessage, { exact: true })).toHaveCount(0);
+      if (path === "projects") await expect(page.getByRole("heading", { name: projectName, exact: true })).toBeVisible();
+      if (path === "templates") await expect(page.getByText(templateName, { exact: true })).toHaveCount(2);
+      if (path === "approvals") await expect(page.getByText(templateName, { exact: true })).toBeVisible();
+      await filter.fill("no-such-inventory-result");
+      await expect(page.getByText(emptyMessage, { exact: true })).toBeVisible();
+      if (width === 320) await page.screenshot({ path: testInfo.outputPath(`${path}-filter-empty-320.png`), fullPage: true });
+      await page.getByRole("button", { name: "Clear filter", exact: true }).click();
+      await expect(filter).toHaveValue("");
+      await expect(page.getByText(emptyMessage, { exact: true })).toHaveCount(0);
+      await filter.fill(projectName);
+    }
+  }
+});

@@ -10,7 +10,7 @@ import { createTemplate, requestRun, updateTemplate } from "@/api/compat";
 import type { MutateFn } from "@/hooks/useApi";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
-import { projectName } from "@/lib/format";
+import { matchesQuery, projectName } from "@/lib/format";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { TerminalLogDialog } from "@/components/runs/TerminalLogDialog";
 
@@ -213,17 +213,22 @@ function TemplateEditDialog({
 
 export function TemplatesView({
   snapshot,
+  q,
   token,
   busy,
   mutate,
   loading,
 }: {
   snapshot: ApiSnapshot;
+  q?: string;
   token: string;
   busy: string;
   mutate: MutateFn;
   loading?: boolean;
 }): ReactNode {
+  const filtering = Boolean(q?.trim());
+  const visibleTemplates = snapshot.templates.filter((template) => matchesQuery(q,
+    template.id, template.name, template.project_id, projectName(snapshot.projects, template.project_id), template.kind, ...(template.runner_tags ?? [])));
   const [terminalRunID, setTerminalRunID] = useState("");
   const [terminalRunFallback, setTerminalRunFallback] = useState<TaskRun | undefined>();
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -261,9 +266,10 @@ export function TemplatesView({
       <Card>
         <CardHeader className="border-b py-3">
           <CardTitle className="text-base font-semibold">Template inventory</CardTitle>
+          {filtering && <p className="text-sm text-muted-foreground" role="status">{visibleTemplates.length} of {snapshot.templates.length} templates match on this page.</p>}
         </CardHeader>
         <CardContent className="p-0">
-          {snapshot.templates.length === 0 ? (
+          {filtering && visibleTemplates.length === 0 ? <p className="px-4 py-5 text-sm text-muted-foreground">No templates match this filter on the loaded page.</p> : snapshot.templates.length === 0 ? (
             <EmptyState title="No templates" icon={Layers3} />
           ) : (
             <>
@@ -281,7 +287,7 @@ export function TemplatesView({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {snapshot.templates.map((template) => (
+                    {visibleTemplates.map((template) => (
                       <TableRow key={template.id} className="hover:bg-muted/40 transition-colors">
                         <TableCell className="font-medium text-sm">{template.name}</TableCell>
                         <TableCell className="text-sm">{projectName(snapshot.projects, template.project_id)}</TableCell>
@@ -326,7 +332,7 @@ export function TemplatesView({
 
               {/* Mobile Card List */}
               <div className="xl:hidden divide-y divide-border/60">
-                {snapshot.templates.map((template) => (
+                {visibleTemplates.map((template) => (
                   <div key={template.id} className="p-4 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <div className="font-medium text-sm">{template.name}</div>

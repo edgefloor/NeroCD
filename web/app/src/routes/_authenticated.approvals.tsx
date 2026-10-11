@@ -13,6 +13,7 @@ export const Route = createFileRoute("/_authenticated/approvals")({
 });
 
 function ApprovalsRoute() {
+  const { q } = Route.useSearch();
   const page = usePage();
   const approvals = useQuery(approvalsQuery({ limit: page.limit, offset: page.offset }));
   const runQueries = useQueries({ queries: (approvals.data?.items ?? []).map((approval) => runQuery(approval.run_id)) });
@@ -23,5 +24,5 @@ function ApprovalsRoute() {
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
   const runs = runQueries.flatMap((query) => query.data ? [query.data] : []);
-  return <><ApprovalsView snapshot={apiSnapshot({ approvals: approvals.data, runs, projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={approvals.data} label="approvals" loading={approvals.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><ApprovalsView q={q} snapshot={apiSnapshot({ approvals: approvals.data, runs, projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={approvals.data} label="approvals" loading={approvals.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
 }

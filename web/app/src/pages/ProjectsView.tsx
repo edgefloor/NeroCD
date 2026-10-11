@@ -10,7 +10,7 @@ import { archiveProject, createProject, createRepository, updateProject } from "
 import type { MutateFn } from "@/hooks/useApi";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
-import { formatDate } from "@/lib/format";
+import { formatDate, matchesQuery } from "@/lib/format";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 function ProjectCard({
@@ -209,6 +209,7 @@ function ProjectForms({
 
 export function ProjectsView({
   snapshot,
+  q,
   formProjects = snapshot.projects,
   token,
   busy,
@@ -216,12 +217,15 @@ export function ProjectsView({
   loading,
 }: {
   snapshot: ApiSnapshot;
+  q?: string;
   formProjects?: Project[];
   token: string;
   busy: string;
   mutate: MutateFn;
   loading?: boolean;
 }): ReactNode {
+  const filtering = Boolean(q?.trim());
+  const visibleProjects = snapshot.projects.filter((project) => matchesQuery(q, project.id, project.name, project.description));
   if (loading) {
     return (
       <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -253,14 +257,15 @@ export function ProjectsView({
             </DialogContent>
           </Dialog>
         </div>
-        {snapshot.projects.length === 0 ? (
+        {filtering && <p className="text-sm text-muted-foreground" role="status">{visibleProjects.length} of {snapshot.projects.length} projects match on this page.</p>}
+        {filtering && visibleProjects.length === 0 ? <p className="py-5 text-sm text-muted-foreground">No projects match this filter on the loaded page.</p> : snapshot.projects.length === 0 ? (
           <EmptyState 
             title="No projects" 
             description="Create a project to get started." 
             icon={FolderKanban}
           />
         ) : (
-          snapshot.projects.map((project) => (
+          visibleProjects.map((project) => (
             <ProjectCard
               key={project.id}
               project={project}

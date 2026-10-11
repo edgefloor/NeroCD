@@ -13,6 +13,7 @@ export const Route = createFileRoute("/_authenticated/projects")({
 });
 
 function ProjectsRoute() {
+  const { q } = Route.useSearch();
   const page = usePage();
   const projects = useQuery(projectsQuery({ limit: page.limit, offset: page.offset }));
   const allProjects = useQuery(allProjectsQuery());
@@ -23,5 +24,5 @@ function ProjectsRoute() {
   const queries = [projects, allProjects, repositories, templates, runs];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
-  return <><ProjectsView snapshot={apiSnapshot({ projects: projects.data, repositories: repositories.data, templates: templates.data, runs: runs.data })} formProjects={allProjects.data ?? []} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={projects.data} label="projects" loading={projects.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><ProjectsView q={q} snapshot={apiSnapshot({ projects: projects.data, repositories: repositories.data, templates: templates.data, runs: runs.data })} formProjects={allProjects.data ?? []} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={projects.data} label="projects" loading={projects.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
 }

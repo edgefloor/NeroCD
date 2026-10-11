@@ -8,7 +8,7 @@ import type { MutateFn } from "@/hooks/useApi";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
-import { formatDate, projectName, templateName } from "@/lib/format";
+import { formatDate, matchesQuery, projectName, templateName } from "@/lib/format";
 
 export function ApprovalList({
   approvals,
@@ -83,12 +83,14 @@ export function ApprovalList({
 
 export function ApprovalsView({
   snapshot,
+  q,
   token,
   busy,
   mutate,
   loading,
 }: {
   snapshot: ApiSnapshot;
+  q?: string;
   token: string;
   busy: string;
   mutate: MutateFn;
@@ -103,6 +105,14 @@ export function ApprovalsView({
     );
   }
 
+  const filtering = Boolean(q?.trim());
+  const visibleApprovals = snapshot.approvals.filter((approval) => {
+    const run = snapshot.runs.find((item) => item.id === approval.run_id);
+    return matchesQuery(q, approval.id, approval.run_id, approval.status, approval.requested_by, approval.approved_by,
+      run ? projectName(snapshot.projects, run.project_id) : undefined,
+      run ? templateName(snapshot.templates, run.template_id, run) : undefined);
+  });
+  const visiblePending = visibleApprovals.filter((approval) => approval.status === "pending");
   const pendingCount = snapshot.approvals.filter((approval) => approval.status === "pending").length;
 
   return (
@@ -122,13 +132,14 @@ export function ApprovalsView({
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <ApprovalList
-            approvals={snapshot.approvals.filter((approval) => approval.status === "pending")}
+          {filtering && <p className="px-4 pt-3 text-sm text-muted-foreground" role="status">{visiblePending.length} of {pendingCount} pending approvals match on this page.</p>}
+          {filtering && visiblePending.length === 0 ? <p className="px-4 py-5 text-sm text-muted-foreground">No pending approvals match this filter on the loaded page.</p> : <ApprovalList
+            approvals={visiblePending}
             snapshot={snapshot}
             token={token}
             busy={busy}
             mutate={mutate}
-          />
+          />}
         </CardContent>
       </Card>
       <Card>
@@ -136,7 +147,8 @@ export function ApprovalsView({
           <CardTitle className="text-base font-semibold">History</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-2 p-3">
-          {snapshot.approvals.map((approval) => (
+          {filtering && visibleApprovals.length === 0 && <p className="text-sm text-muted-foreground">No approval history matches this filter on the loaded page.</p>}
+          {visibleApprovals.map((approval) => (
             <div key={approval.id} className="rounded-xl border border-border/60 bg-card p-3 shadow-sm">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-medium text-sm">{approval.run_id}</span>

@@ -13,6 +13,7 @@ export const Route = createFileRoute("/_authenticated/templates")({
 });
 
 function TemplatesRoute() {
+  const { q } = Route.useSearch();
   const page = usePage();
   const projects = useQuery(allProjectsQuery());
   const templates = useQuery(templatesQuery({ limit: page.limit, offset: page.offset }));
@@ -22,5 +23,5 @@ function TemplatesRoute() {
   const queries = [projects, templates, runs, logs];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
-  return <><TemplatesView snapshot={apiSnapshot({ projects: projects.data, templates: templates.data, runs: runs.data, logs: logs.data })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={templates.data} label="templates" loading={templates.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><TemplatesView q={q} snapshot={apiSnapshot({ projects: projects.data, templates: templates.data, runs: runs.data, logs: logs.data })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={templates.data} label="templates" loading={templates.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
 }

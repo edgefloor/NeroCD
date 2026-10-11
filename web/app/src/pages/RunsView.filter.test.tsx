@@ -38,3 +38,9 @@ test("filtering out a selected run preserves its log dialog and output", () => {
   expect(screen.getByText("Live release output")).toBeTruthy();
   expect(screen.getByText("No runs match this filter on the loaded page.")).toBeTruthy();
 });
+
+test("run filtering accepts omitted tags returned as null by the API", () => {
+  const nullableTags = apiSnapshot({ ...snapshot, runs: [{ ...run, runner_tags: null as unknown as string[] }] });
+  render(<RunsView snapshot={nullableTags} q="release" token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  expect(screen.getByText("1 of 1 runs match on this page.")).toBeTruthy();
+});

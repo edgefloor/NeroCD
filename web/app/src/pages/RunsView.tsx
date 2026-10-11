@@ -199,7 +199,7 @@ export function RunsView({
 }): ReactNode {
   const filtering = Boolean(q?.trim());
   const visibleRuns = filtering ? snapshot.runs.filter((run) => matchesQuery(q,
-    run.id, run.status, run.requested_by, run.run_spec.type, ...run.runner_tags,
+    run.id, run.status, run.requested_by, run.run_spec.type, ...(run.runner_tags ?? []),
     projectName(snapshot.projects, run.project_id), templateName(snapshot.templates, run.template_id, run))) : snapshot.runs;
   const [localTerminalRunID, setLocalTerminalRunID] = useState("");
   const [terminalRunFallback, setTerminalRunFallback] = useState<TaskRun | undefined>();
