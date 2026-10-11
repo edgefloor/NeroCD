@@ -186,3 +186,29 @@ test("failed earlier-log requests preserve current output and can be retried", a
   expect(mounted.result.current.hasPrevious).toBe(false);
   mounted.unmount();
 });
+
+test("run list polling pauses on failure and resumes after explicit recovery", async () => {
+  vi.useFakeTimers();
+  let fail = false;
+  let calls = 0;
+  globalThis.fetch = vi.fn<typeof fetch>(() => {
+    calls++;
+    return Promise.resolve(fail ? new Response(JSON.stringify({ error: "Temporary failure" }), { status: 503 }) : json({ items: [{ id: "run_1", status: "running" }], count: 1, total: 1, limit: 50, offset: 0 }));
+  });
+  const { wrapper } = setup();
+  const mounted = renderHook(() => ({ ...useRunsPollingQuery() }), { wrapper });
+  await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });
+  fail = true;
+  await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });
+  expect(mounted.result.current.isError).toBe(true);
+  const failedCalls = calls;
+  await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+  expect(calls).toBe(failedCalls);
+  fail = false;
+  await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });
+  expect(mounted.result.current.isError).toBe(false);
+  const recoveredCalls = calls;
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+  expect(calls).toBeGreaterThan(recoveredCalls);
+  mounted.unmount();
+});

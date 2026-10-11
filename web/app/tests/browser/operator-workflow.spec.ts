@@ -3017,3 +3017,56 @@ test("approval run links preserve filter context and browser history without rel
     await expect(page.getByRole("link", { name: "Run details", exact: true })).toBeVisible();
   }
 });
+
+test("run list recovery retains open output and its filter on the selected page", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  const response = await page.request.get(`/api/v1/runs/${runID}`);
+  const run = await response.json();
+  let fail = true;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/runs?*", (route) => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? 0);
+    offsets.push(offset);
+    if (fail) return route.fulfill({ status: 503, json: { error: "Temporary run list failure" } });
+    return route.fulfill({ json: { items: [run], count: 1, total: 51, limit: 50, offset } });
+  });
+  await page.route("**/api/v1/run-logs?*", (route) => {
+    const url = new URL(route.request().url());
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const items = offset === 0 ? [{ id: "retained_output", run_id: runID, sequence: 1, stream: "stdout", message: "kept output across refresh" }] : [];
+    return route.fulfill({ json: { items, count: items.length, total: 1, limit: Number(url.searchParams.get("limit")), offset } });
+  });
+  await page.goto(`/runs?offset=50&q=${runID}`);
+  await expect(page.getByRole("alert")).toHaveText("Unable to load runs.");
+  expect(offsets.every((offset) => offset === 50)).toBe(true);
+  offsets.length = 0;
+  fail = false;
+  await page.getByRole("button", { name: "Retry runs", exact: true }).click();
+  await page.locator(`[data-run-log-trigger="${runID}"]`).filter({ visible: true }).click();
+  const dialog = page.getByRole("dialog", { name: `run ${runID}`, exact: true });
+  await expect(dialog.getByText("kept output across refresh", { exact: true })).toBeVisible();
+  const filter = dialog.getByRole("searchbox", { name: "Filter loaded output", exact: true });
+  await filter.fill("kept");
+  fail = true;
+  await expect(dialog.getByRole("button", { name: "Retry runs", exact: true })).toBeVisible();
+  await expect(filter).toHaveValue("kept");
+  await expect(dialog.getByText("kept output across refresh", { exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(dialog.getByRole("button", { name: "Retry runs", exact: true })).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-list-recovery-320.png") });
+  }
+  fail = false;
+  await dialog.getByRole("button", { name: "Retry runs", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Retry runs", exact: true })).toHaveCount(0);
+  await expect(filter).toHaveValue("kept");
+  await expect(dialog.getByText("kept output across refresh", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
+  expect(new URL(page.url()).searchParams.get("q")).toBe(runID);
+});

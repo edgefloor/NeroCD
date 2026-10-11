@@ -88,7 +88,7 @@ export function RunsTable({
                   variant="outline"
                   size="sm"
                   className="h-8 rounded-xl"
-                  disabled={busy === `cancel:${run.id}`}
+                  disabled={Boolean(busy)}
                   onClick={() => void mutate(`cancel:${run.id}`, () => cancelRun(token, run.id), "Run canceled")}
                 >
                   <Ban className="mr-1.5 h-4 w-4" />
@@ -133,7 +133,7 @@ export function RunsTable({
                         variant="outline"
                         size="sm"
                         className="h-8 rounded-xl"
-                        disabled={busy === `cancel:${run.id}`}
+                        disabled={Boolean(busy)}
                         onClick={() => void mutate(`cancel:${run.id}`, () => cancelRun(token, run.id), "Run canceled")}
                       >
                         <Ban className="mr-1.5 h-4 w-4" />
@@ -180,6 +180,7 @@ export function RunsView({
   selectedLogs,
   logsLoading,
   logsError,
+  recovery,
   onRetryLogs,
   logsRetrying,
   logsFollowing,
@@ -203,6 +204,7 @@ export function RunsView({
   selectedLogs?: RunLog[];
   logsLoading?: boolean;
   logsError?: Error;
+  recovery?: ReactNode;
   onRetryLogs?: () => void;
   logsRetrying?: boolean;
   logsFollowing?: boolean;
@@ -276,7 +278,7 @@ export function RunsView({
           />}
         </CardContent>
       </Card>
-      <TerminalLogDialog run={terminalRun} logs={terminalLogs} loading={controlledLogs && logsLoading} error={controlledLogs ? logsError : undefined} onRetry={onRetryLogs} retrying={logsRetrying} following={controlledLogs && logsFollowing} hasPrevious={controlledLogs && logsHavePrevious} loadingPrevious={controlledLogs && logsLoadingPrevious} previousError={logsPreviousError} onLoadPrevious={onLoadPreviousLogs} open={terminalOpen} onOpenChange={changeTerminalOpen} />
+      <TerminalLogDialog recovery={recovery} run={terminalRun} logs={terminalLogs} loading={controlledLogs && logsLoading} error={controlledLogs ? logsError : undefined} onRetry={onRetryLogs} retrying={logsRetrying} following={controlledLogs && logsFollowing} hasPrevious={controlledLogs && logsHavePrevious} loadingPrevious={controlledLogs && logsLoadingPrevious} previousError={logsPreviousError} onLoadPrevious={onLoadPreviousLogs} open={terminalOpen} onOpenChange={changeTerminalOpen} />
     </section>
   );
 }

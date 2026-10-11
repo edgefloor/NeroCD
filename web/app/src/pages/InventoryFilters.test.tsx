@@ -1,9 +1,12 @@
+import type { ReactNode } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { apiSnapshot } from "@/api/compat";
 import { ProjectsView } from "./ProjectsView";
 import { TemplatesView } from "./TemplatesView";
 import { ApprovalsView } from "./ApprovalsView";
+
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, params }: { children: ReactNode; params: { runId: string } }) => <a href={`/runs/${params.runId}`}>{children}</a> }));
 
 afterEach(cleanup);
 const snapshot = apiSnapshot({

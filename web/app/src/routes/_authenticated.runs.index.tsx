@@ -6,11 +6,13 @@ import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { RunsView } from "@/pages/RunsView";
 import { canMaintainProject } from "@/lib/permissions";
+import { Button } from "@/components/ui/button";
 import { validateSearch } from "@/router/search";
 
 export const Route = createFileRoute("/_authenticated/runs/")({
   validateSearch,
-  loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(runsQuery({ limit: 50, offset: 0 })), context.queryClient.ensureQueryData(allProjectsQuery()), context.queryClient.ensureQueryData(allTemplatesQuery())]),
+  loaderDeps: ({ search }) => ({ offset: search.offset ?? 0 }),
+  loader: ({ context, deps }) => Promise.all([context.queryClient.prefetchQuery(runsQuery({ limit: 50, offset: deps.offset })), context.queryClient.prefetchQuery(allProjectsQuery()), context.queryClient.prefetchQuery(allTemplatesQuery())]),
   component: RunsIndexRoute,
 });
 
@@ -23,10 +25,10 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const page = usePage();
   const navigate = useNavigate();
   const runs = useRunsPollingQuery({ limit: page.limit, offset: page.offset });
-  const projects = useQuery(allProjectsQuery());
-  const principal = useQuery(principalQuery());
-  const members = useQuery(allProjectMembersQuery());
-  const templates = useQuery(allTemplatesQuery());
+  const projects = useQuery({ ...allProjectsQuery(), retryOnMount: false });
+  const principal = useQuery({ ...principalQuery(), retryOnMount: false });
+  const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
+  const templates = useQuery({ ...allTemplatesQuery(), retryOnMount: false });
   const { busy, mutate } = useSnapshotMutation();
   const [selectedRunID, setSelectedRunID] = useState(runId ?? "");
   const [selectedLogs, setSelectedLogs] = useState<SelectedLogsState>({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
@@ -41,18 +43,23 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
     setSelectedLogs({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
   }, [runId]);
   const queries = [runs, projects, templates, principal, members, ...(selectedRunID ? [selectedRun] : [])];
-  const error = queries.find((query) => query.isError)?.error;
-  if (error) return <p role="alert">{error.message}</p>;
+  const failed = queries.filter((query) => query.isError);
+  const recovery = failed.length > 0 ? <section className="space-y-3">
+    <p role="alert">{runs.data ? "Unable to refresh run information. Loaded output remains available; retry before changing runs." : "Unable to load runs."}</p>
+    <Button disabled={failed.some((query) => query.isFetching)} onClick={() => { for (const query of failed) void query.refetch(); }}>Retry runs</Button>
+  </section> : null;
   const logsMatchSelection = selectedLogs.runID === selectedRunID;
   return (
     <>
       {selectedRunID ? <SelectedRunLogs runID={selectedRunID} follow={shouldPollRun(selectedRun.data)} onChange={setSelectedLogs} /> : null}
-    <RunsView
+    {recovery}
+    {runs.data || selectedRun.data || !runs.isError ? <RunsView
       q={q}
       offset={page.offset}
       snapshot={apiSnapshot({ runs: runs.data, projects: projects.data, templates: templates.data })}
       token=""
-      busy={busy}
+      busy={failed.length > 0 ? "refresh-unavailable" : busy}
+      recovery={recovery}
       mutate={mutate}
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
       loading={queries.some((query) => query.isPending)}
@@ -79,8 +86,8 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
         setSelectedRunID("");
         setSelectedLogs({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
       }}
-    />
-      <PageNavigation page={runs.data} label="runs" loading={runs.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
+    /> : null}
+      <PageNavigation page={runs.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="runs" loading={runs.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
     </>
   );
 }

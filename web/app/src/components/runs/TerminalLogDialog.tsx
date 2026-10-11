@@ -21,6 +21,7 @@ export function TerminalLogDialog({
   error,
   onRetry,
   retrying,
+  recovery,
   following = false,
   hasPrevious = false,
   loadingPrevious = false,
@@ -35,6 +36,7 @@ export function TerminalLogDialog({
   error?: Error;
   onRetry?: () => void;
   retrying?: boolean;
+  recovery?: ReactNode;
   following?: boolean;
   hasPrevious?: boolean;
   loadingPrevious?: boolean;
@@ -121,6 +123,7 @@ export function TerminalLogDialog({
           </div> : null}
         </DialogHeader>
         <div className="min-w-0 max-h-[70dvh] min-h-0 overflow-auto bg-background p-4 font-mono text-[13px] leading-6 text-foreground">
+          {recovery ? <div className="mb-3 font-sans text-sm">{recovery}</div> : null}
           {run ? (
             <div className="mb-3 grid min-w-0 gap-1 break-all border-b border-border pb-3 text-xs text-muted-foreground">
               <span>$ nerocd runs inspect {run.id}</span>

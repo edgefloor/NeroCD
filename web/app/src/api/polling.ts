@@ -4,7 +4,7 @@ import type { RunLog } from "./resources";
 import { deploymentQuery, deploymentsQuery, runLogsQuery, runsQuery, shouldPollDeploymentList, shouldPollRunList, type DeploymentFilters, type RunFilters } from "./queries";
 
 export function useRunsPollingQuery(filters?: RunFilters) {
-  return useQuery({ ...runsQuery(filters), refetchInterval: (query) => shouldPollRunList(query.state.data) ? 3_000 : false });
+  return useQuery({ ...runsQuery(filters), retryOnMount: false, refetchInterval: (query) => query.state.status !== "error" && shouldPollRunList(query.state.data) ? 3_000 : false });
 }
 
 type LogWindow = { runID: string; logs: RunLog[]; firstOffset: number; nextOffset?: number };
