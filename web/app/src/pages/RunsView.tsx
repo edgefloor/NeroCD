@@ -23,6 +23,7 @@ export function RunsTable({
   token = "",
   busy,
   mutate,
+  canOperateProject,
   onOpenLogs,
 }: {
   runs: TaskRun[];
@@ -31,6 +32,7 @@ export function RunsTable({
   token?: string;
   busy?: string;
   mutate?: MutateFn;
+  canOperateProject?: (projectID: string) => boolean;
   onOpenLogs?: (runID: string) => void;
 }): ReactNode {
   if (runs.length === 0) {
@@ -76,7 +78,7 @@ export function RunsTable({
                   Logs
                 </Button>
               ) : null}
-              {mutate && canCancel(run) ? (
+              {mutate && canOperateProject?.(run.project_id) && canCancel(run) ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -121,7 +123,7 @@ export function RunsTable({
                         Details
                       </a>
                     </Button>
-                    {mutate && canCancel(run) ? (
+                    {mutate && canOperateProject?.(run.project_id) && canCancel(run) ? (
                       <Button
                         variant="outline"
                         size="sm"
@@ -166,6 +168,7 @@ export function RunsView({
   token,
   busy,
   mutate,
+  canOperateProject,
   loading,
   selectedRunID,
   selectedLogs,
@@ -184,6 +187,7 @@ export function RunsView({
   token: string;
   busy: string;
   mutate: MutateFn;
+  canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
   selectedRunID?: string;
   selectedLogs?: RunLog[];
@@ -253,6 +257,7 @@ export function RunsView({
             token={token}
             busy={busy}
             mutate={mutate}
+            canOperateProject={canOperateProject}
             onOpenLogs={openTerminal}
           />}
         </CardContent>

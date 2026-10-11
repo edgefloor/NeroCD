@@ -13,7 +13,7 @@ const run: TaskRun = { id: "run_cancel", project_id: "project", status: "queued"
 
 test("session-authenticated runs can be canceled without a legacy token", async () => {
   const mutate: MutateFn = async (_key, action) => action();
-  render(<RunsView snapshot={apiSnapshot({ runs: [run] })} token="" busy="" mutate={mutate} />);
+  render(<RunsView canOperateProject={() => true} snapshot={apiSnapshot({ runs: [run] })} token="" busy="" mutate={mutate} />);
   const buttons = screen.getAllByRole("button", { name: "Cancel" });
   expect(buttons).toHaveLength(2);
   await act(async () => { fireEvent.click(buttons[0]!); });
@@ -21,18 +21,32 @@ test("session-authenticated runs can be canceled without a legacy token", async 
 });
 
 test("pending cancellation disables desktop and mobile actions", () => {
-  render(<RunsView snapshot={apiSnapshot({ runs: [run] })} token="" busy={`cancel:${run.id}`} mutate={vi.fn()} />);
+  render(<RunsView canOperateProject={() => true} snapshot={apiSnapshot({ runs: [run] })} token="" busy={`cancel:${run.id}`} mutate={vi.fn()} />);
   for (const button of screen.getAllByRole("button", { name: "Cancel" })) {
     expect((button as HTMLButtonElement).disabled).toBe(true);
   }
 });
 
 test.each(["succeeded", "failed", "canceled"])("%s runs have no cancellation action", (status) => {
-  render(<RunsView snapshot={apiSnapshot({ runs: [{ ...run, status }] })} token="" busy="" mutate={vi.fn()} />);
-  expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  render(<RunsView canOperateProject={() => true} snapshot={apiSnapshot({ runs: [{ ...run, status }] })} token="" busy="" mutate={vi.fn()} />);
+  expect(screen.queryAllByRole("button", { name: "Cancel" })).toHaveLength(0);
 });
 
 test("read-only run tables do not offer cancellation", () => {
   render(<RunsTable runs={[run]} projects={[]} templates={[]} />);
-  expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  expect(screen.queryAllByRole("button", { name: "Cancel" })).toHaveLength(0);
+});
+
+test("runs without confirmed project write access retain logs but omit Cancel", () => {
+  render(<RunsView snapshot={apiSnapshot({ runs: [run] })} token="" busy="" mutate={vi.fn()} />);
+  expect(screen.getAllByRole("button", { name: "Logs" })).toHaveLength(2);
+  expect(screen.queryAllByRole("button", { name: "Cancel" })).toHaveLength(0);
+});
+
+
+test("cancel actions are evaluated separately for each run's project", () => {
+  const other = { ...run, id: "run_other", project_id: "other" };
+  render(<RunsView snapshot={apiSnapshot({ runs: [run, other] })} token="" busy="" mutate={vi.fn()} canOperateProject={(projectID) => projectID === "project"} />);
+  expect(screen.getAllByRole("button", { name: "Logs" })).toHaveLength(4);
+  expect(screen.getAllByRole("button", { name: "Cancel" })).toHaveLength(2);
 });

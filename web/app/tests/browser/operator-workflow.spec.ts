@@ -72,7 +72,7 @@ async function createDetailFixture(page: Page): Promise<{ deploymentID: string; 
   return { deploymentID: deployment.id, projectID: project.id, serviceID: service.id, environmentID: environment.id, revisionID: revision.id };
 }
 
-async function createRunLogFixture(page: Page): Promise<{ runID: string; secondRunID: string }> {
+async function createRunLogFixture(page: Page): Promise<{ runID: string; secondRunID: string; projectID: string }> {
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Browser logs ${suffix}`, description: "run-log fixture" });
   const template = await postJSON<{ id: string }>(page, "/api/v1/templates", {
@@ -86,7 +86,7 @@ async function createRunLogFixture(page: Page): Promise<{ runID: string; secondR
   });
   const first = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
   const second = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
-  return { runID: first.id, secondRunID: second.id };
+  return { runID: first.id, secondRunID: second.id, projectID: project.id };
 }
 
 test("browser observes CLI-only bootstrap guidance before a supported CLI bootstrap", async ({ page }) => {
@@ -1208,6 +1208,47 @@ test("project maintainers get deployment actions only in their maintained projec
     const denied = await operator.request.post("/api/v1/deployments/cancel", {
       headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" },
       data: { deployment_id: viewed.deploymentID, request_id: `denied-${Date.now()}` },
+    });
+    expect(denied.status()).toBe(403);
+  } finally {
+    await context.close();
+  }
+});
+
+
+test("run cancellation respects project membership while viewers retain logs", async ({ page, browser }) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const maintained = await createRunLogFixture(page);
+  const viewed = await createRunLogFixture(page);
+  await postJSON(page, "/api/v1/project-members", { project_id: maintained.projectID, email: "oidc-browser@example.invalid", role: "maintainer" });
+  await postJSON(page, "/api/v1/project-members", { project_id: viewed.projectID, email: "oidc-browser@example.invalid", role: "viewer" });
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.goto("/sign-in");
+    await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    for (const [width, runID] of [[390, maintained.runID], [1440, maintained.secondRunID]] as const) {
+      await operator.setViewportSize({ width, height: 1000 });
+      await operator.goto(`/runs?q=${viewed.runID}`);
+      await expect(operator.getByRole("button", { name: "Logs", exact: true })).toBeVisible();
+      await expect(operator.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+      await operator.getByRole("button", { name: "Logs", exact: true }).click();
+      await expect(operator.getByRole("dialog", { name: `run ${viewed.runID}` })).toContainText("Run requested");
+      await operator.keyboard.press("Escape");
+      await operator.goto(`/runs?q=${runID}`);
+      const canceled = operator.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/cancel");
+      await operator.getByRole("button", { name: "Cancel", exact: true }).click();
+      const response = await canceled;
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toMatchObject({ id: runID, status: "canceled" });
+      await expect(operator.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    }
+    const denied = await operator.request.post("/api/v1/runs/cancel", {
+      headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" },
+      data: { run_id: viewed.runID },
     });
     expect(denied.status()).toBe(403);
   } finally {

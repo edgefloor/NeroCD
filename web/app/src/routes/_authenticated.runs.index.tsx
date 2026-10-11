@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { allProjectsQuery, allTemplatesQuery, runQuery, runsQuery, type RunLog, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "@/api";
+import { allProjectMembersQuery, principalQuery, allProjectsQuery, allTemplatesQuery, runQuery, runsQuery, type RunLog, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "@/api";
 import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { RunsView } from "@/pages/RunsView";
+import { canMaintainProject } from "@/lib/permissions";
 import { validateSearch } from "@/router/search";
 
 export const Route = createFileRoute("/_authenticated/runs/")({
@@ -22,6 +23,8 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const page = usePage();
   const runs = useRunsPollingQuery({ limit: page.limit, offset: page.offset });
   const projects = useQuery(allProjectsQuery());
+  const principal = useQuery(principalQuery());
+  const members = useQuery(allProjectMembersQuery());
   const templates = useQuery(allTemplatesQuery());
   const { busy, mutate } = useSnapshotMutation();
   const [selectedRunID, setSelectedRunID] = useState(runId ?? "");
@@ -36,7 +39,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
     setSelectedRunID(runId);
     setSelectedLogs({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
   }, [runId]);
-  const queries = [runs, projects, templates, ...(selectedRunID ? [selectedRun] : [])];
+  const queries = [runs, projects, templates, principal, members, ...(selectedRunID ? [selectedRun] : [])];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
   const logsMatchSelection = selectedLogs.runID === selectedRunID;
@@ -49,6 +52,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
       token=""
       busy={busy}
       mutate={mutate}
+      canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
       loading={queries.some((query) => query.isPending)}
       selectedRunID={selectedRunID}
       selectedLogs={logsMatchSelection ? selectedLogs.logs : []}
