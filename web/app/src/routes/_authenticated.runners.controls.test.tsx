@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { RunnerDetailView } from "@/pages/RunnersView";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType, ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -203,4 +203,29 @@ test("an open revocation dialog closes when the runner is revoked externally", a
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.getByText("Credential is revoked.")).toBeTruthy();
   expect(onRevoke).not.toHaveBeenCalled();
+});
+
+
+test("pending enrollment locks the submitted draft and restores it after failure", async () => {
+  let reject!: (error: Error) => void;
+  vi.mocked(createRunnerEnrollment).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+  queryData(["runner_admin"]);
+  const Component = RunnersRoute.options.component!;
+  render(<Component />);
+  fireEvent.change(screen.getByLabelText("Runner ID"), { target: { value: "runner_pending" } });
+  fireEvent.change(screen.getByLabelText("Runner name"), { target: { value: "Pending runner" } });
+  const form = screen.getByRole("form", { name: "Create runner enrollment" });
+  fireEvent.submit(form);
+  expect(form.getAttribute("aria-busy")).toBe("true");
+  for (const field of [...screen.getAllByRole("textbox"), screen.getByRole("combobox")]) {
+    expect((field as HTMLInputElement).disabled).toBe(true);
+  }
+  fireEvent.submit(form);
+  expect(createRunnerEnrollment).toHaveBeenCalledOnce();
+  await act(async () => reject(new Error("Temporary failure")));
+  expect(form.getAttribute("aria-busy")).toBe("false");
+  expect((screen.getByLabelText("Runner ID") as HTMLInputElement).value).toBe("runner_pending");
+  expect((screen.getByLabelText("Runner name") as HTMLInputElement).value).toBe("Pending runner");
+  expect((screen.getByLabelText("Runner ID") as HTMLInputElement).disabled).toBe(false);
+  expect(screen.getByRole("alert").textContent).toContain("Enrollment could not be created");
 });

@@ -62,8 +62,32 @@ export function RunnersView({ runners, q, canAdmin, controlsDisabled = false, on
 }
 
 function EnrollmentForm({ busy, disabled, error, onSubmit }: { busy: boolean; disabled: boolean; error: string; onSubmit: (input: { runner_id: string; runner_name: string; tags: string[]; capabilities: string[]; ttl_seconds: number }) => void }) {
-  const [id, setID] = useState(""); const [name, setName] = useState(""); const [tags, setTags] = useState("compose-runtime"); const [capabilities, setCapabilities] = useState("compose-deploy"); const [ttl, setTTL] = useState("600");
-  return <Card><CardHeader><CardTitle>Create one-time enrollment</CardTitle></CardHeader><CardContent><form className="grid gap-3" aria-label="Create runner enrollment" onSubmit={(event: FormEvent) => { event.preventDefault(); onSubmit({ runner_id: id, runner_name: name, tags: splitValues(tags), capabilities: splitValues(capabilities), ttl_seconds: Number(ttl) }); }}><label className="grid gap-1 text-sm">Runner ID<Input aria-label="Runner ID" value={id} onChange={(event) => setID(event.target.value)} placeholder="runner_edge_01" required /></label><label className="grid gap-1 text-sm">Runner name<Input aria-label="Runner name" value={name} onChange={(event) => setName(event.target.value)} required /></label><label className="grid gap-1 text-sm">Tags<Input aria-label="Runner tags" value={tags} onChange={(event) => setTags(event.target.value)} /></label><label className="grid gap-1 text-sm">Capabilities<Input aria-label="Runner capabilities" value={capabilities} onChange={(event) => setCapabilities(event.target.value)} required /></label><label className="grid gap-1 text-sm">Enrollment lifetime<Select aria-label="Enrollment lifetime" value={ttl} onChange={(event) => setTTL(event.target.value)}><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></Select></label>{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}<Button type="submit" disabled={busy || disabled}>{busy ? "Creating…" : "Create enrollment"}</Button><p className="text-xs text-muted-foreground">The secret is shown once, never placed in links, search, storage, notifications, or logs.</p></form></CardContent></Card>;
+  const [id, setID] = useState("");
+  const [name, setName] = useState("");
+  const [tags, setTags] = useState("compose-runtime");
+  const [capabilities, setCapabilities] = useState("compose-deploy");
+  const [ttl, setTTL] = useState("600");
+  const locked = busy || disabled;
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (locked) return;
+    onSubmit({ runner_id: id, runner_name: name, tags: splitValues(tags), capabilities: splitValues(capabilities), ttl_seconds: Number(ttl) });
+  }
+  return <Card>
+    <CardHeader><CardTitle>Create one-time enrollment</CardTitle></CardHeader>
+    <CardContent>
+      <form className="grid gap-3" aria-label="Create runner enrollment" aria-busy={busy} onSubmit={submit}>
+        <label className="grid gap-1 text-sm">Runner ID<Input disabled={locked} aria-label="Runner ID" value={id} onChange={(event) => setID(event.target.value)} placeholder="runner_edge_01" required /></label>
+        <label className="grid gap-1 text-sm">Runner name<Input disabled={locked} aria-label="Runner name" value={name} onChange={(event) => setName(event.target.value)} required /></label>
+        <label className="grid gap-1 text-sm">Tags<Input disabled={locked} aria-label="Runner tags" value={tags} onChange={(event) => setTags(event.target.value)} /></label>
+        <label className="grid gap-1 text-sm">Capabilities<Input disabled={locked} aria-label="Runner capabilities" value={capabilities} onChange={(event) => setCapabilities(event.target.value)} required /></label>
+        <label className="grid gap-1 text-sm">Enrollment lifetime<Select disabled={locked} aria-label="Enrollment lifetime" value={ttl} onChange={(event) => setTTL(event.target.value)}><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></Select></label>
+        {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+        <Button type="submit" disabled={locked}>{busy ? "Creating…" : "Create enrollment"}</Button>
+        <p className="text-xs text-muted-foreground">The secret is shown once, never placed in links, search, storage, notifications, or logs.</p>
+      </form>
+    </CardContent>
+  </Card>;
 }
 
 function EnrollmentSecret({ enrollment, token, copyStatus, onOpenChange, onCopy, onDownload }: { copyStatus: CopyStatus; enrollment?: CreatedRunnerEnrollment; token?: string; onOpenChange: (open: boolean) => void; onCopy: () => void; onDownload: () => void }) {

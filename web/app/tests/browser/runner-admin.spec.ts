@@ -297,3 +297,50 @@ test("long runner identities and tags stay contained on mobile", async ({ page }
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("long-runner-320.png"), fullPage: true });
   }
 });
+
+
+test("pending enrollment preserves its draft and recovers after failure", async ({ page }, testInfo) => {
+  await createRunnerAdmin(page);
+  await page.goto("/runners");
+  const form = page.getByRole("form", { name: "Create runner enrollment" });
+  const id = `runner_pending_${Date.now()}`;
+  await form.getByLabel("Runner ID", { exact: true }).fill(id);
+  await form.getByLabel("Runner name", { exact: true }).fill("Pending browser runner");
+  await form.getByLabel("Enrollment lifetime", { exact: true }).selectOption("1800");
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const payloads: unknown[] = [];
+  await page.route("**/api/v1/runner-enrollments", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    payloads.push(route.request().postDataJSON());
+    if (payloads.length > 1) return route.continue();
+    await pending;
+    return route.fulfill({ status: 503, json: { error: "Temporary enrollment failure" } });
+  });
+  await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(form).toHaveAttribute("aria-busy", "true");
+    for (const label of ["Runner ID", "Runner name", "Runner tags", "Runner capabilities", "Enrollment lifetime"]) {
+      await expect(form.getByLabel(label, { exact: true })).toBeDisabled();
+    }
+    await expect(form.getByRole("button", { name: "Creating…", exact: true })).toBeDisabled();
+    expect(await form.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) {
+      await form.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("enrollment-pending-320.png"), animations: "disabled" });
+    }
+  }
+  expect(payloads).toHaveLength(1);
+  release();
+  await expect(form.getByRole("alert")).toContainText("Enrollment could not be created");
+  await expect(form).toHaveAttribute("aria-busy", "false");
+  await expect(form.getByLabel("Runner ID", { exact: true })).toHaveValue(id);
+  await expect(form.getByLabel("Runner name", { exact: true })).toHaveValue("Pending browser runner");
+  await expect(form.getByLabel("Enrollment lifetime", { exact: true })).toHaveValue("1800");
+  await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "One-time runner enrollment secret" })).toBeVisible();
+  expect(payloads).toHaveLength(2);
+  expect(payloads[1]).toEqual(payloads[0]);
+  await page.keyboard.press("Escape");
+});
