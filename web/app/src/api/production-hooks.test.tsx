@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { templatesQuery, allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
+import { templatesQuery, allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentHistoryQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
 import { useApprovalDecision, useDeploymentActions, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
@@ -216,16 +216,19 @@ test("run list polling pauses on failure and resumes after explicit recovery", a
   mounted.unmount();
 });
 
-test("deployment detail polling pauses on failure and resumes after explicit recovery", async () => {
+test.each(["detail", "history"] as const)("deployment %s polling pauses on failure and resumes after explicit recovery", async (scope) => {
   vi.useFakeTimers();
   let fail = false;
   let calls = 0;
   globalThis.fetch = vi.fn<typeof fetch>(() => {
     calls++;
-    return Promise.resolve(fail ? new Response(JSON.stringify({ error: "Temporary failure" }), { status: 503 }) : json({ id: "dep_1", status: "queued" }));
+    return Promise.resolve(fail ? new Response(JSON.stringify({ error: "Temporary failure" }), { status: 503 }) : json(scope === "detail" ? { id: "dep_1", status: "queued" } : { items: [{ id: "dep_1", status: "queued" }], count: 1, total: 1, limit: 100, offset: 0 }));
   });
   const { wrapper } = setup();
-  const mounted = renderHook(() => ({ ...useDeploymentPollingQuery("dep_1") }), { wrapper });
+  const mounted = renderHook(() => {
+    const query = scope === "detail" ? useDeploymentPollingQuery("dep_1") : useQuery(deploymentHistoryQuery("env_one"));
+    return { isError: query.isError, refetch: async () => { await query.refetch(); } };
+  }, { wrapper });
   await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });
   fail = true;
   await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });

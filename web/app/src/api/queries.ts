@@ -117,7 +117,7 @@ export const deploymentHistoryQuery = (environmentID: string) => queryOptions({
   queryKey: queryKeys.deploymentHistory(environmentID),
   queryFn: ({ signal }) => collectBoundedPages((offset) => listDeployments({ environment_id: environmentID, limit: 100, offset }, { signal })),
   enabled: Boolean(environmentID),
-  refetchInterval: (query) => query.state.data?.some((deployment) => !terminalDeploymentStatuses.has(deployment.status)) ? 3_000 : false,
+  refetchInterval: (query) => query.state.status !== "error" && query.state.data?.some((deployment) => !terminalDeploymentStatuses.has(deployment.status)) ? 3_000 : false,
 });
 export const runQuery = (id: string) => queryOptions({ queryKey: queryKeys.run(id), queryFn: async ({ signal }) => {
   try {
