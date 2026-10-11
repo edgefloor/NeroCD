@@ -12,7 +12,7 @@ import { matchesQuery } from "@/lib/format";
 import { deploymentStateMessage, newDeploymentIntentKey, revisionLabel } from "@/lib/deploymentPresentation";
 
 function DeploymentRow({ deployment, environment, revision }: { deployment: Deployment; environment?: Environment; revision?: Revision }): ReactNode {
-  return <Card><CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><Link className="font-medium underline-offset-4 hover:underline" to="/deployments/$deploymentId" params={{ deploymentId: deployment.id }} search={(previous) => ({ ...previous, environment_id: deployment.environment_id })}>{environment?.name ?? deployment.environment_id}</Link><p className="text-sm text-muted-foreground">{deploymentStateMessage(deployment)}</p><p className="mt-1 truncate font-mono text-xs text-muted-foreground">{revision?.git_commit?.trim() || "Commit unavailable"} · {deployment.id}</p></div><div className="flex items-center gap-2"><StatusBadge status={deployment.status} /><ChevronRight className="h-4 w-4 text-muted-foreground" /></div></CardContent></Card>;
+  return <Card className="min-w-0"><CardContent className="flex min-w-0 flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0 flex-1"><Link className="break-words [overflow-wrap:anywhere] font-medium underline-offset-4 hover:underline" to="/deployments/$deploymentId" params={{ deploymentId: deployment.id }} search={(previous) => ({ ...previous, environment_id: deployment.environment_id })}>{environment?.name ?? deployment.environment_id}</Link><p className="text-sm text-muted-foreground">{deploymentStateMessage(deployment)}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{revision?.git_commit?.trim() || "Commit unavailable"} · {deployment.id}</p></div><div className="flex shrink-0 items-center gap-2"><StatusBadge status={deployment.status} /><ChevronRight className="h-4 w-4 text-muted-foreground" /></div></CardContent></Card>;
 }
 
 type DeploymentsViewProps = {
@@ -65,8 +65,8 @@ export function DeploymentsView({
 
   if (loading) return <SkeletonTable rows={5} />;
   return (
-    <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="grid gap-3" aria-live="polite">
+    <section className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid min-w-0 grid-cols-1 gap-3" aria-live="polite">
         {!environmentID ? <EmptyState title="Select an environment to view deployment history" icon={Rocket} />
           : !visible.length ? <EmptyState title="No deployments match this view" icon={Rocket} />
           : visible.map((deployment) => (
@@ -75,13 +75,13 @@ export function DeploymentsView({
               revision={revisions.find((item) => item.id === deployment.desired_revision_id)} />
           ))}
       </div>
-      <Card>
+      <Card className="min-w-0">
         <CardHeader><CardTitle>{canOperate ? "Request deployment" : "Deployment history"}</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid gap-3">
-            <label className="grid gap-1 text-sm font-medium">
+        <CardContent className="min-w-0">
+          <div className="grid min-w-0 grid-cols-1 gap-3">
+            <label className="grid min-w-0 gap-1 text-sm font-medium">
               Project
-              <Select disabled={submitting} aria-label="Project" value={projectID} required
+              <Select className="min-w-0 max-w-full" disabled={submitting} aria-label="Project" value={projectID} required
                 onChange={(event) => {
                   createKey.current = newDeploymentIntentKey();
                   setProjectID(event.target.value);
@@ -92,9 +92,9 @@ export function DeploymentsView({
                 {projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </Select>
             </label>
-            <label className="grid gap-1 text-sm font-medium">
+            <label className="grid min-w-0 gap-1 text-sm font-medium">
               Service
-              <Select aria-label="Service" value={serviceID} disabled={submitting || !projectID} required
+              <Select className="min-w-0 max-w-full" aria-label="Service" value={serviceID} disabled={submitting || !projectID} required
                 onChange={(event) => {
                   createKey.current = newDeploymentIntentKey();
                   setRevisionID("");
@@ -104,9 +104,9 @@ export function DeploymentsView({
                 {scopedServices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </Select>
             </label>
-            <label className="grid gap-1 text-sm font-medium">
+            <label className="grid min-w-0 gap-1 text-sm font-medium">
               Environment
-              <Select aria-label="Environment" value={environmentID} disabled={submitting || !serviceID} required
+              <Select className="min-w-0 max-w-full" aria-label="Environment" value={environmentID} disabled={submitting || !serviceID} required
                 onChange={(event) => {
                   createKey.current = newDeploymentIntentKey();
                   onEnvironmentChange(event.target.value);
@@ -116,10 +116,10 @@ export function DeploymentsView({
               </Select>
             </label>
             {canOperate ? (
-              <form className="grid gap-3" aria-label="Request deployment" aria-busy={Boolean(submitting)} onSubmit={submitDeployment}>
-                <label className="grid gap-1 text-sm font-medium">
+              <form className="grid min-w-0 grid-cols-1 gap-3" aria-label="Request deployment" aria-busy={Boolean(submitting)} onSubmit={submitDeployment}>
+                <label className="grid min-w-0 gap-1 text-sm font-medium">
                   Immutable revision
-                  <Select aria-label="Immutable revision" value={revisionID} disabled={submitting || !serviceID} required
+                  <Select className="min-w-0 max-w-full" aria-label="Immutable revision" value={revisionID} disabled={submitting || !serviceID} required
                     onChange={(event) => {
                       createKey.current = newDeploymentIntentKey();
                       setRevisionID(event.target.value);

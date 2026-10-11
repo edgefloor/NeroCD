@@ -51,7 +51,7 @@ async function postJSON<T>(page: Page, path: string, data: unknown, headers: Rec
   return await response.json() as T;
 }
 
-async function createDetailFixture(page: Page, confirmationRequired = false): Promise<{ deploymentID: string; projectID: string; serviceID: string; environmentID: string; revisionID: string }> {
+async function createDetailFixture(page: Page, confirmationRequired = false, environmentName?: string): Promise<{ deploymentID: string; projectID: string; serviceID: string; environmentID: string; revisionID: string }> {
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   const runner = await postJSON<{ token: string }>(page, "/api/v1/runner-enrollments", {
     runner_id: `runner_web${suffix}`,
@@ -66,7 +66,7 @@ async function createDetailFixture(page: Page, confirmationRequired = false): Pr
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Browser detail ${suffix}`, description: "public detail fixture" });
   const repository = await postJSON<{ id: string }>(page, "/api/v1/repositories", { project_id: project.id, name: `repository-${suffix}`, url: "https://example.invalid/browser-detail.git" });
   const service = await postJSON<{ id: string }>(page, "/api/v1/services", { project_id: project.id, name: `service-${suffix}`, repository_id: repository.id, compose_path: "compose.yaml", profiles: [] });
-  const environment = await postJSON<{ id: string }>(page, "/api/v1/environments", { service_id: service.id, name: `environment-${suffix}`, compose_project: `browser-detail-${suffix}`, timeout_seconds: 60, rollback_safe: true, confirmation_required: confirmationRequired });
+  const environment = await postJSON<{ id: string }>(page, "/api/v1/environments", { service_id: service.id, name: environmentName ?? `environment-${suffix}`, compose_project: `browser-detail-${suffix}`, timeout_seconds: 60, rollback_safe: true, confirmation_required: confirmationRequired });
   const revision = await postJSON<{ id: string }>(page, "/api/v1/revisions", { service_id: service.id, requested_ref: "main" });
   const deployment = await postJSON<{ id: string }>(page, "/api/v1/deployments", { environment_id: environment.id, desired_revision_id: revision.id, idempotency_key: `browser-detail-${suffix}` });
   return { deploymentID: deployment.id, projectID: project.id, serviceID: service.id, environmentID: environment.id, revisionID: revision.id };
@@ -3966,4 +3966,34 @@ test("offboarding confirmation follows externally disabled users", async ({ page
     await expect(offboard).toHaveCount(0);
   }
   expect(writes).toBe(0);
+});
+
+
+test("long deployment environment names preserve history links and selectors", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const name = `Environment ${"e".repeat(180)}`;
+  const fixture = await createDetailFixture(page, false, name);
+  const url = `/deployments?service_id=${fixture.serviceID}&environment_id=${fixture.environmentID}`;
+  for (const width of [320, 390, 430, 800, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(url);
+    const link = page.getByRole("link", { name, exact: true });
+    await expect(link).toBeVisible();
+    const contained = await link.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const text = range.getBoundingClientRect();
+      const card = element.closest('[data-slot="card"]')!.getBoundingClientRect();
+      return text.left >= card.left && text.right <= card.right;
+    });
+    expect(contained).toBe(true);
+    await expect(page.getByLabel("Environment", { exact: true })).toHaveValue(fixture.environmentID);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`deployment-history-long-name-${width}.png`), animations: "disabled" });
+    await link.click();
+    await expect(page).toHaveURL(new RegExp(`/deployments/${fixture.deploymentID}`));
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+  }
 });
