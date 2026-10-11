@@ -44,3 +44,20 @@ test.each(["confirm", "cancel"] as const)("deployment %s feedback remains beside
   view.rerender(<DeploymentDetailView {...props} />);
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+
+test.each([
+  ["queued", true], ["waiting_confirmation", true], ["assigned", true],
+  ["preparing", true], ["applying", true], ["verifying", true],
+  ["cancel_requested", false], ["rolling_back", false], ["rolled_back", false],
+  ["rollback_failed", false], ["manual_intervention", false], ["succeeded", false],
+  ["failed", false], ["canceled", false],
+] as const)("deployment state %s exposes cancellation only when supported", (status, allowed) => {
+  render(<DeploymentDetailView deployment={{ id: "deployment_1", status } as never} related={[]} logs={[]} canOperate onConfirm={vi.fn()} onCancel={vi.fn()} />);
+  expect(Boolean(screen.queryByRole("button", { name: "Cancel" }))).toBe(allowed);
+});
+
+test("rollback deployments do not offer cancellation even while queued", () => {
+  render(<DeploymentDetailView deployment={{ id: "rollback_1", status: "queued", rollback_of_id: "deployment_1" } as never} related={[]} logs={[]} canOperate onConfirm={vi.fn()} onCancel={vi.fn()} />);
+  expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+});

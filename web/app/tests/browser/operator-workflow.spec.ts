@@ -3439,3 +3439,31 @@ test("deployment cancellation keeps pending and failure feedback beside its acti
   expect(payloads).toHaveLength(2);
   expect(payloads[1]).toEqual(payloads[0]);
 });
+
+
+test("deployment cancellation controls follow recovery and rollback states", async ({ page }) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const response = await page.request.get(`/api/v1/deployments/${fixture.deploymentID}`);
+  expect(response.ok()).toBe(true);
+  const record = await response.json();
+  let status = "queued";
+  let rollback = false;
+  await page.route(`**/api/v1/deployments/${fixture.deploymentID}`, (route) => route.fulfill({ json: { ...record, status, rollback_of_id: rollback ? "source_deployment" : undefined } }));
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const state of ["cancel_requested", "rolling_back", "queued"]) {
+      status = state;
+      rollback = state === "queued";
+      await page.goto(`/deployments/${fixture.deploymentID}`);
+      await expect(page.getByText(`Deployment ${fixture.deploymentID}`, { exact: true })).toBeVisible();
+      await expect(page.getByText(state === "cancel_requested" ? "Cancellation receipt accepted; the runner will reconcile safely." : state === "rolling_back" ? "Restoring the previous healthy revision." : "Queued for an eligible runner.", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    }
+    rollback = false;
+    await page.goto(`/deployments/${fixture.deploymentID}`);
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
+  }
+});
