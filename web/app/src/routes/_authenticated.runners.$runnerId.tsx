@@ -18,16 +18,17 @@ export const Route = createFileRoute("/_authenticated/runners/$runnerId")({
 
 function RunnerDetailRoute() {
   const { runnerId } = Route.useParams();
-  const runner = useQuery({ ...runnerQuery(runnerId), retryOnMount: false });
+  const runner = useQuery({ ...runnerQuery(runnerId), retryOnMount: false, refetchInterval: (query) => query.state.status === "error" ? false : 10_000 });
   const principal = useQuery({ ...principalQuery(), retryOnMount: false });
   const failedQueries = [runner, principal].filter((query) => query.isError);
-  if (failedQueries.length || (!runner.isPending && !runner.data)) return <section className="space-y-3">
+  const error = failedQueries.length || (!runner.isPending && !runner.data) ? <section className="space-y-3">
     <p role="alert">Runner is unavailable.</p>
     <div className="flex flex-wrap gap-2">
       {failedQueries.length ? <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button> : null}
       <Button asChild variant="outline"><Link to="/runners" search={true}>Back to runners</Link></Button>
     </div>
-  </section>;
+  </section> : null;
+  if (error && (!runner.data || !principal.data)) return error;
   if (runner.isPending || principal.isPending) return <section className="space-y-3"><p role="status">Loading runner...</p><SkeletonCard rows={4} /></section>;
-  return <RunnerDetailView runner={runner.data} canAdmin={(principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin")} onRevoke={async () => { await revokeRunnerToken({ runner_id: runnerId }); await runner.refetch(); }} />;
+  return <>{error}<RunnerDetailView controlsDisabled={failedQueries.length > 0} runner={runner.data} canAdmin={(principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin")} onRevoke={async () => { await revokeRunnerToken({ runner_id: runnerId }); await runner.refetch(); }} /></>;
 }

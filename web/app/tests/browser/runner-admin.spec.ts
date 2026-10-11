@@ -212,3 +212,38 @@ test("runners registered without tags remain filterable and open normally", asyn
   }
   expect(pageErrors).toEqual([]);
 });
+
+test("runner detail observes external credential revocation without reloading", async ({ page }) => {
+  await createRunnerAdmin(page);
+  const runner = await registerRunner(page);
+  await page.goto(`/runners/${runner.id}`);
+  await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toBeVisible();
+  await postJSON(page, "/api/v1/runners/revoke-token", { runner_id: runner.id });
+  await expect(page.getByText("Credential is revoked.", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toHaveCount(0);
+});
+
+test("runner refresh failure preserves an open enrollment dialog", async ({ page }) => {
+  await createRunnerAdmin(page);
+  let fail = false;
+  await page.route("**/api/v1/runners?*", (route) => fail
+    ? route.fulfill({ status: 503, json: { error: "Temporary refresh failure" } })
+    : route.continue());
+  await page.goto("/runners");
+  await page.getByLabel("Runner ID").fill(`runner_refresh_${Date.now()}`);
+  await page.getByLabel("Runner name").fill("Refresh enrollment");
+  await page.getByRole("button", { name: "Create enrollment", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "One-time runner enrollment secret" });
+  await expect(dialog).toBeVisible();
+  fail = true;
+  await expect(page.locator("section > p[role=alert]")).toHaveText("Runner inventory is unavailable.", { timeout: 15_000 });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Enrollment secret")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Create enrollment", exact: true })).toBeDisabled();
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Create enrollment", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByLabel("Runner name")).toHaveValue("Refresh enrollment");
+});
