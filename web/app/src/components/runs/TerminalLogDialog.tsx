@@ -5,7 +5,7 @@ import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
-import { matchesQuery } from "@/lib/format";
+import { matchesLogQuery } from "@/lib/format";
 import { formatLoadedRunLogs } from "./logExport";
 
 let pendingOpener: HTMLElement | null = null;
@@ -51,7 +51,7 @@ export function TerminalLogDialog({
   const [filter, setFilter] = useState("");
   useEffect(() => setFilter(""), [run?.id, open]);
   const filtering = Boolean(filter.trim());
-  const visibleLogs = useMemo(() => orderedLogs.filter((log) => matchesQuery(filter, log.message, log.stream, `#${log.sequence}`)), [orderedLogs, filter]);
+  const visibleLogs = useMemo(() => orderedLogs.filter((log) => matchesLogQuery(filter, log)), [orderedLogs, filter]);
 
   function downloadLoadedOutput() {
     const runID = run?.id ?? "run";

@@ -9,7 +9,7 @@ import { RunsTable } from "./RunsView";
 import { ApprovalList } from "./ApprovalsView";
 import { LogViewer } from "./LogsView";
 import { summarizeOverview } from "@/view-model";
-import { matchesQuery, matchesRunQuery } from "@/lib/format";
+import { matchesLogQuery, matchesQuery, matchesRunQuery } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 function CompactEmpty({ children }: { children: ReactNode }): ReactNode {
@@ -50,7 +50,7 @@ export function HomeView({
     const run = snapshot.runs.find((item) => item.id === approval.run_id);
     return matchesQuery(query, approval.id, approval.run_id, approval.status) || Boolean(run && matchesRun(run));
   });
-  const visibleLogs = activity.logs.filter((log) => matchesQuery(query, log.run_id, log.stream, log.message)).slice(0, 5);
+  const visibleLogs = activity.logs.filter((log) => matchesLogQuery(query, log)).slice(0, 5);
   const resultCount = visibleRuns.length + visiblePending.length + visibleLogs.length;
 
   if (loading) {

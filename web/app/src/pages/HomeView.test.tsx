@@ -53,3 +53,10 @@ test.each(["SHELL", "production"])("dashboard filtering matches execution metada
   expect(screen.getByText("2 matching records")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
 });
+
+
+test("dashboard filtering matches displayed log sequence numbers", () => {
+  show("#1");
+  expect(screen.getByText("Artifact uploaded")).toBeTruthy();
+  expect(screen.getByText("1 matching records")).toBeTruthy();
+});

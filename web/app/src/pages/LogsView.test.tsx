@@ -24,3 +24,10 @@ test("pending logs do not announce an empty filtered result", () => {
   expect(screen.queryByText(/No logs match/)).toBeNull();
   expect(screen.queryByText(/loaded log entries/)).toBeNull();
 });
+
+
+test("log filtering matches the displayed sequence number", () => {
+  render(<LogsView logs={logs} q="#1" />);
+  expect(screen.getByText("Artifact uploaded")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toBe("1 of 1 loaded log entries match this filter.");
+});

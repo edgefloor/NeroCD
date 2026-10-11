@@ -2445,10 +2445,14 @@ test("log stream links to runs and contains long output on mobile and desktop", 
   await expect(page.getByText("1 of 1 loaded log entries match this filter.")).toBeVisible();
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 844 });
+    await filter.fill("#1");
+    await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("#1");
     await expect(page.getByText(message, { exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`log-stream-${width}.png`), fullPage: true });
   }
+  await filter.fill("Long-output");
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("Long-output");
   await link.focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL((url) => url.pathname === `/runs/${runID}` && url.searchParams.get("q") === "Long-output" && url.searchParams.get("offset") === "50");

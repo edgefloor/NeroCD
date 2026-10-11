@@ -6,7 +6,7 @@ import type { RunLog, TaskRun } from "@/api";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
 import { cn } from "@/lib/utils";
-import { matchesQuery } from "@/lib/format";
+import { matchesLogQuery } from "@/lib/format";
 export function LogViewer({ logs, runs = [] }: { logs: RunLog[]; runs?: TaskRun[] }): ReactNode {
   if (!logs.length) return <EmptyState title="No logs yet" icon={Terminal} />;
   return <div className="grid min-w-0 grid-cols-1 p-2 font-mono text-sm">
@@ -28,7 +28,7 @@ export function LogViewer({ logs, runs = [] }: { logs: RunLog[]; runs?: TaskRun[
 
 export function LogsView({ logs, runs = [], q, loading }: { logs: RunLog[]; runs?: TaskRun[]; q?: string; loading?: boolean }): ReactNode {
   const filtering = Boolean(q?.trim());
-  const visibleLogs = logs.filter((log) => matchesQuery(q, log.run_id, log.stream, log.message));
+  const visibleLogs = logs.filter((log) => matchesLogQuery(q, log));
   return <Card className="min-w-0">
     <CardHeader><CardTitle>Run log stream</CardTitle></CardHeader>
     <CardContent className="min-w-0 p-0">{loading ? <SkeletonTable rows={8} /> : <>
