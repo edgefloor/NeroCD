@@ -6,7 +6,6 @@ import {
   principalQuery,
   ApiError,
 } from "@/api";
-export type { MutateFn } from "@/api/compat";
 
 export function useAuth() {
   const client = useQueryClient();

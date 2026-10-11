@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
-import { useApprovalDecision, useDeploymentMutations, useProjectMutations, useProjectActions, useRunMutations } from "./mutations";
+import { templatesQuery, allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
+import { useApprovalDecision, useDeploymentMutations, useProjectMutations, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
@@ -424,4 +424,66 @@ test("confirmed project archives remove stale cards and choices when refresh fai
   expect(client.getQueryData(queryKeys.allProjects)).toEqual([other]);
   expect(client.getQueryData(queryKeys.projects())).toEqual({ items: [other], count: 1, total: 1, limit: 100, offset: 0 });
   expect(client.getQueryState(queryKeys.projects())?.status).toBe("error");
+});
+
+
+const templateFixture = { id: "template_one", project_id: "proj_one", name: "Original", kind: "shell", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: false };
+
+test("confirmed template moves survive refresh failure without remaining in the former project", async () => {
+  let saved = false;
+  const updated = { ...templateFixture, name: "Saved", project_id: "proj_two" };
+  globalThis.fetch = vi.fn<typeof fetch>((_path, init) => {
+    if (init?.method === "PATCH") { saved = true; return Promise.resolve(json(updated)); }
+    if (saved) return Promise.resolve(new Response("Unavailable", { status: 503 }));
+    return Promise.resolve(json({ items: [templateFixture], count: 1, total: 1, limit: 100, offset: 0 }));
+  });
+  const { client, wrapper } = setup();
+  const oldKey = queryKeys.templates({ project_id: "proj_one" });
+  const mounted = renderHook(() => { useQuery(templatesQuery()); useQuery(templatesQuery({ project_id: "proj_one" })); return useTemplateActions(); }, { wrapper });
+  await waitFor(() => expect(client.getQueryData(oldKey)).toMatchObject({ items: [templateFixture] }));
+  await act(async () => { await mounted.result.current.actions.update(updated); });
+  expect(client.getQueryData(queryKeys.templates())).toMatchObject({ items: [updated], count: 1, total: 1 });
+  expect(client.getQueryData(oldKey)).toEqual({ items: [], count: 0, total: 0, limit: 100, offset: 0 });
+  expect(client.getQueryState(oldKey)?.status).toBe("error");
+});
+
+test("template run requests recover from failure and refresh only run-related data", async () => {
+  const run = { id: "run_new", status: "waiting_approval" };
+  globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response("Unavailable", { status: 503 })).mockResolvedValueOnce(json(run));
+  const { client, wrapper } = setup();
+  const changed = [queryKeys.runs(), queryKeys.approvals(), queryKeys.runLogs()];
+  const unchanged = [queryKeys.projects(), queryKeys.templates(), queryKeys.runLogs({ run_id: "run_other" })];
+  for (const key of [...changed, ...unchanged]) client.setQueryData(key, { items: [] });
+  const mounted = renderHook(() => useTemplateActions(), { wrapper });
+  await act(async () => { expect(await mounted.result.current.actions.run({ template_id: templateFixture.id })).toBeUndefined(); });
+  expect(mounted.result.current.busy).toBe("");
+  for (const key of changed) expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+  await act(async () => { expect(await mounted.result.current.actions.run({ template_id: templateFixture.id })).toEqual(run); });
+  expect(client.getQueryData(queryKeys.run(run.id))).toEqual(run);
+  for (const key of changed) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+  for (const key of unchanged) expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+});
+
+test("template actions stay locked through their follow-up refresh", async () => {
+  let saved = false;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let writes = 0;
+  globalThis.fetch = vi.fn<typeof fetch>(async (_path, init) => {
+    if (init?.method === "POST") { writes++; saved = true; return json(templateFixture); }
+    if (saved) await gate;
+    return json({ items: [templateFixture], count: 1, total: 1, limit: 100, offset: 0 });
+  });
+  const { client, wrapper } = setup();
+  const mounted = renderHook(() => { useQuery(templatesQuery()); return useTemplateActions(); }, { wrapper });
+  await waitFor(() => expect(client.getQueryData(queryKeys.templates())).toBeDefined());
+  let pending: Promise<unknown>;
+  await act(async () => { pending = mounted.result.current.actions.create(templateFixture); });
+  await waitFor(() => expect(saved).toBe(true));
+  await act(async () => { expect(await mounted.result.current.actions.run({ template_id: templateFixture.id })).toBeUndefined(); });
+  expect(writes).toBe(1);
+  expect(mounted.result.current.busy).toBe("template");
+  await act(async () => { release(); await pending; });
+  expect(mounted.result.current.busy).toBe("");
 });

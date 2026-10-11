@@ -8,7 +8,7 @@ const snapshot = apiSnapshot({
   projects: ["maintained", "viewed"].map((id) => ({ id, name: `${id} project`, description: "", created_at: "2026-01-01T00:00:00Z" })),
   templates: ["maintained", "viewed"].map((id) => ({ id: `template_${id}`, project_id: id, name: `${id} template`, kind: "shell", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: false })),
 });
-const props = { snapshot, token: "", busy: "", mutate: vi.fn(async () => undefined), onRunRequested: vi.fn() };
+const props = { snapshot, busy: "", actions: { create: vi.fn(async () => undefined), update: vi.fn(async () => undefined), run: vi.fn(async () => undefined) }, onRunRequested: vi.fn() };
 
 test("viewers retain template inventory without write controls", () => {
   render(<TemplatesView {...props} />);

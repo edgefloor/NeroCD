@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { approveRun, rejectRun, archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createEnvironment, createProject, createRepository, createRevision, createService, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse, type Deployment, type DeploymentList, type ApprovalListResponse, type Project, type ProjectListResponse } from "./resources";
+import { createTemplate, updateTemplate, requestRun, approveRun, rejectRun, archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createEnvironment, createProject, createRepository, createRevision, createService, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse, type Deployment, type DeploymentList, type ApprovalListResponse, type Project, type ProjectListResponse, type TaskTemplateListResponse } from "./resources";
 import { queryKeys } from "./queries";
 
 export function useProjectMutations() {
@@ -43,6 +43,16 @@ export type ProjectActions = {
 
 export function useProjectActions(disabled = false): { busy: string; actions: ProjectActions } {
   const mutations = useProjectMutations();
+  const { busy, perform } = useActionLock(disabled);
+  return { busy, actions: {
+    create: (input) => perform("project", () => mutations.create.mutateAsync(input)),
+    update: (input) => perform(`project:update:${input.id}`, () => mutations.update.mutateAsync(input)),
+    archive: (input) => perform(`project:archive:${input.id}`, () => mutations.archive.mutateAsync(input)),
+    repository: (input) => perform("repository", () => mutations.repository.mutateAsync(input)),
+  } };
+}
+
+function useActionLock(disabled: boolean) {
   const pending = useRef(false);
   const [busy, setBusy] = useState("");
   async function perform<T>(key: string, action: () => Promise<T>): Promise<T | undefined> {
@@ -59,11 +69,47 @@ export function useProjectActions(disabled = false): { busy: string; actions: Pr
       setBusy("");
     }
   }
+  return { busy, perform };
+}
+
+export type TemplateActions = {
+  create: (input: Parameters<typeof createTemplate>[0]) => Promise<unknown>;
+  update: (input: Parameters<typeof updateTemplate>[0]) => Promise<unknown>;
+  run: (input: Parameters<typeof requestRun>[0]) => Promise<{ id: string } | undefined>;
+};
+
+export function useTemplateActions(disabled = false): { busy: string; actions: TemplateActions } {
+  const client = useQueryClient();
+  const { busy, perform } = useActionLock(disabled);
+  const onError = (error: Error) => toast.error(error.message);
+  const create = useMutation({ mutationFn: (input: Parameters<typeof createTemplate>[0]) => createTemplate(input), onError, onSuccess: async () => {
+    await client.invalidateQueries({ queryKey: ["templates"] });
+    toast.success("Template created");
+  } });
+  const update = useMutation({ mutationFn: (input: Parameters<typeof updateTemplate>[0]) => updateTemplate(input), onError, onSuccess: async (template) => {
+    for (const [key, cached] of client.getQueriesData<TaskTemplateListResponse>({ queryKey: ["templates"] })) {
+      if (!cached) continue;
+      const projectID = (key[1] as { project_id?: string } | undefined)?.project_id;
+      const items = cached.items.flatMap((item) => item.id !== template.id ? [item] : projectID && projectID !== template.project_id ? [] : [template]);
+      const removed = cached.items.length - items.length;
+      client.setQueryData(key, { ...cached, items, count: items.length, total: Math.max(0, cached.total - removed) });
+    }
+    await client.invalidateQueries({ queryKey: ["templates"] });
+    toast.success("Template updated");
+  } });
+  const run = useMutation({ mutationFn: (input: Parameters<typeof requestRun>[0]) => requestRun(input), onError, onSuccess: async (result) => {
+    client.setQueryData(queryKeys.run(result.id), result);
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ["runs"] }),
+      client.invalidateQueries({ queryKey: ["approvals"] }),
+      client.invalidateQueries({ predicate: (query) => query.queryKey[0] === "runLogs" && (!(query.queryKey[1] as { run_id?: string } | undefined)?.run_id || (query.queryKey[1] as { run_id?: string } | undefined)?.run_id === result.id) }),
+    ]);
+    toast.success("Run requested");
+  } });
   return { busy, actions: {
-    create: (input) => perform("project", () => mutations.create.mutateAsync(input)),
-    update: (input) => perform(`project:update:${input.id}`, () => mutations.update.mutateAsync(input)),
-    archive: (input) => perform(`project:archive:${input.id}`, () => mutations.archive.mutateAsync(input)),
-    repository: (input) => perform("repository", () => mutations.repository.mutateAsync(input)),
+    create: (input) => perform("template", () => create.mutateAsync(input)),
+    update: (input) => perform(`template:update:${input.id}`, () => update.mutateAsync(input)),
+    run: (input) => perform(`template:run:${input.template_id}`, () => run.mutateAsync(input)),
   } };
 }
 

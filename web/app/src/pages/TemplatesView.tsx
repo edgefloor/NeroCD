@@ -6,8 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ApiSnapshot, TaskTemplate } from "@/api";
-import { createTemplate, requestRun, updateTemplate } from "@/api/compat";
-import type { MutateFn } from "@/hooks/useApi";
+import type { TemplateActions } from "@/api/mutations";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
 import { matchesQuery, projectName } from "@/lib/format";
@@ -15,15 +14,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 
 function TemplateForm({
   snapshot,
-  token,
   busy,
-  mutate,
+  actions,
   recovery,
 }: {
   snapshot: ApiSnapshot;
-  token: string;
   busy: string;
-  mutate: MutateFn;
+  actions: TemplateActions;
   recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
@@ -34,15 +31,14 @@ function TemplateForm({
     const form = new FormData(formElement);
     const kind = String(form.get("kind") ?? "shell");
     const command = String(form.get("command") ?? "").trim().split(/\s+/).filter(Boolean);
-    const created = await mutate("template", () =>
-      createTemplate(token, {
-        project_id: String(form.get("project_id") ?? ""),
-        name: String(form.get("name") ?? ""),
-        kind,
-        run_spec: { type: kind, inputs: {}, process: command.length ? { command } : undefined },
-        runner_tags: String(form.get("runner_tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
-        requires_ack: form.has("requires_ack"),
-      }), "Template created");
+    const created = await actions.create({
+      project_id: String(form.get("project_id") ?? ""),
+      name: String(form.get("name") ?? ""),
+      kind,
+      run_spec: { type: kind, inputs: {}, process: command.length ? { command } : undefined },
+      runner_tags: String(form.get("runner_tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
+      requires_ack: form.has("requires_ack"),
+    });
     if (created !== undefined) formElement.reset();
   }
 
@@ -104,17 +100,15 @@ function TemplateEditDialog({
   trigger,
   template,
   snapshot,
-  token,
   busy,
-  mutate,
+  actions,
   recovery,
 }: {
   trigger?: ReactNode;
   template: TaskTemplate;
   snapshot: ApiSnapshot;
-  token: string;
   busy: string;
-  mutate: MutateFn;
+  actions: TemplateActions;
   recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
@@ -126,27 +120,23 @@ function TemplateEditDialog({
     const form = new FormData(event.currentTarget);
     const kind = String(form.get("kind") ?? template.kind);
     const command = String(form.get("command") ?? "").trim().split(/\s+/).filter(Boolean);
-    const updated = await mutate(
-      `template:update:${template.id}`,
-      () =>
-        updateTemplate(token, template.id, {
-          project_id: String(form.get("project_id") ?? template.project_id),
-          name: String(form.get("name") ?? template.name),
-          kind,
-          run_spec: {
-            ...template.run_spec,
-            type: kind,
-            process: command.length ? { ...template.run_spec.process, command } : template.run_spec.process,
-          },
-          workflow: template.workflow,
-          runner_tags: String(form.get("runner_tags") ?? "")
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean),
-          requires_ack: form.has("requires_ack"),
-        }),
-      "Template updated",
-    );
+    const updated = await actions.update({
+      id: template.id,
+      project_id: String(form.get("project_id") ?? template.project_id),
+      name: String(form.get("name") ?? template.name),
+      kind,
+      run_spec: {
+        ...template.run_spec,
+        type: kind,
+        process: command.length ? { ...template.run_spec.process, command } : template.run_spec.process,
+      },
+      workflow: template.workflow,
+      runner_tags: String(form.get("runner_tags") ?? "")
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      requires_ack: form.has("requires_ack"),
+    });
     if (updated !== undefined) setOpen(false);
   }
   const command = template.run_spec.process?.command?.join(" ") ?? "";
@@ -224,9 +214,8 @@ function TemplateEditDialog({
 export function TemplatesView({
   snapshot,
   q,
-  token,
   busy,
-  mutate,
+  actions,
   recovery,
   loading,
   onRunRequested,
@@ -234,9 +223,8 @@ export function TemplatesView({
 }: {
   snapshot: ApiSnapshot;
   q?: string;
-  token: string;
   busy: string;
-  mutate: MutateFn;
+  actions: TemplateActions;
   recovery?: ReactNode;
   loading?: boolean;
   onRunRequested: (runID: string) => void;
@@ -252,7 +240,7 @@ export function TemplatesView({
     template.id, template.name, template.project_id, projectName(snapshot.projects, template.project_id), template.kind, ...(template.runner_tags ?? [])));
   async function playTemplate(template: TaskTemplate): Promise<void> {
     if (recovery || busy) return;
-    const run = await mutate(`template:run:${template.id}`, () => requestRun(token, { template_id: template.id }), "Run requested");
+    const run = await actions.run({ template_id: template.id });
     if (run) onRunRequested(run.id);
   }
 
@@ -279,7 +267,7 @@ export function TemplatesView({
             </DialogHeader>
             <div className="min-h-0 space-y-4 overflow-y-auto">
               {recovery}
-              <TemplateForm snapshot={creationSnapshot} token={token} busy={busy} mutate={mutate} recovery={recovery} />
+              <TemplateForm snapshot={creationSnapshot} busy={busy} actions={actions} recovery={recovery} />
             </div>
           </DialogContent>
         </Dialog>
@@ -289,7 +277,7 @@ export function TemplatesView({
           <CardTitle className="text-base font-semibold">Create template</CardTitle>
         </CardHeader>
         <CardContent>
-          <TemplateForm snapshot={creationSnapshot} token={token} busy={busy} mutate={mutate} recovery={recovery} />
+          <TemplateForm snapshot={creationSnapshot} busy={busy} actions={actions} recovery={recovery} />
         </CardContent>
       </Card>
       </> : null}
@@ -351,7 +339,7 @@ export function TemplatesView({
                               <Play className="mr-1.5 h-4 w-4" />
                               Play
                             </Button>
-                            <TemplateEditDialog template={template} snapshot={snapshot} token={token} busy={busy} mutate={mutate} recovery={recovery} />
+                            <TemplateEditDialog template={template} snapshot={snapshot} busy={busy} actions={actions} recovery={recovery} />
                           </div> : <span className="text-xs text-muted-foreground">Read only</span>}
                         </TableCell>
                       </TableRow>
@@ -408,9 +396,9 @@ export function TemplatesView({
                           }
                           template={template}
                           snapshot={snapshot}
-                          token={token}
+
                           busy={busy}
-                          mutate={mutate}
+                          actions={actions}
                           recovery={recovery}
                         />
                       </div> : null}

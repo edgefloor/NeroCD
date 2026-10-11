@@ -1,13 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { apiSnapshot, type MutateFn } from "@/api/compat";
+import { apiSnapshot } from "@/api/compat";
 import { ProjectsView } from "./ProjectsView";
 import { TemplatesView } from "./TemplatesView";
 
 afterEach(cleanup);
-function projectActions(mutate: (key: string, action: () => Promise<undefined>, success: string) => Promise<unknown>) {
-  const action = () => mutate("project", async () => undefined, "");
-  return { create: action, update: action, archive: action, repository: action };
+function inventoryActions(action: () => Promise<{ id: string } | undefined>) {
+  return { create: action, update: action, archive: action, repository: action, run: action };
 }
 const snapshot = apiSnapshot({
   projects: [{ id: "project_one", name: "Platform", description: "", created_at: "2026-01-01T00:00:00Z" }],
@@ -20,8 +19,8 @@ for (const [kind, View, buttonName] of [
   ["template", TemplatesView, "Create template"],
 ] as const) {
   test(`${kind} creation preserves a failed draft and resets after a successful retry`, async () => {
-    const mutate = vi.fn<MutateFn>().mockResolvedValueOnce(undefined).mockResolvedValueOnce({ id: "created" });
-    render(<View canOperateProject={() => true} onRunRequested={vi.fn()} snapshot={snapshot} token="" busy="" mutate={mutate as MutateFn} actions={projectActions(mutate)} />);
+    const mutate = vi.fn<() => Promise<{ id: string } | undefined>>().mockResolvedValueOnce(undefined).mockResolvedValueOnce({ id: "created" });
+    render(<View canOperateProject={() => true} onRunRequested={vi.fn()} snapshot={snapshot} busy="" actions={inventoryActions(mutate)} />);
     const form = screen.getAllByRole("button", { name: buttonName }).map((button) => button.closest("form")).find(Boolean)!;
     const name = form.elements.namedItem("name") as HTMLInputElement;
     fireEvent.change(name, { target: { value: "My draft" } });
@@ -36,8 +35,8 @@ for (const [kind, View, buttonName] of [
 
 for (const [kind, View] of [["project", ProjectsView], ["template", TemplatesView]] as const) {
   test(`${kind} editing keeps the dialog and draft on failure, then closes on success`, async () => {
-    const mutate = vi.fn<MutateFn>().mockResolvedValueOnce(undefined).mockResolvedValueOnce({ id: "saved" });
-    render(<View canOperateProject={() => true} onRunRequested={vi.fn()} snapshot={snapshot} token="" busy="" mutate={mutate as MutateFn} actions={projectActions(mutate)} />);
+    const mutate = vi.fn<() => Promise<{ id: string } | undefined>>().mockResolvedValueOnce(undefined).mockResolvedValueOnce({ id: "saved" });
+    render(<View canOperateProject={() => true} onRunRequested={vi.fn()} snapshot={snapshot} busy="" actions={inventoryActions(mutate)} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
     const dialog = screen.getByRole("dialog", { name: `Edit ${kind}` });
     const form = dialog.querySelector("form")!;
@@ -53,7 +52,7 @@ for (const [kind, View] of [["project", ProjectsView], ["template", TemplatesVie
 
 test("templates created without tags remain visible and editable", () => {
   const nullableTags = apiSnapshot({ ...snapshot, templates: [{ ...snapshot.templates[0]!, runner_tags: null as unknown as string[] }] });
-  render(<TemplatesView canOperateProject={() => true} onRunRequested={vi.fn()} snapshot={nullableTags} token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  render(<TemplatesView canOperateProject={() => true} onRunRequested={vi.fn()} snapshot={nullableTags} busy="" actions={inventoryActions(vi.fn(async () => undefined))} />);
   expect(screen.getAllByText("Release").length).toBeGreaterThan(0);
   fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
   const dialog = screen.getByRole("dialog", { name: "Edit template" });
@@ -62,7 +61,7 @@ test("templates created without tags remain visible and editable", () => {
 
 
 test("project form labels identify fields and mobile dialog fields stay independent", () => {
-  render(<ProjectsView canOperateProject={() => true} snapshot={snapshot} busy="" actions={projectActions(vi.fn(async () => undefined))} />);
+  render(<ProjectsView canOperateProject={() => true} snapshot={snapshot} busy="" actions={inventoryActions(vi.fn(async () => undefined))} />);
   const desktopName = screen.getByRole("textbox", { name: "Project Name" }) as HTMLInputElement;
   for (const name of ["Description", "Repository Name", "Repository URL", "Provider", "Default Ref"]) {
     expect(screen.getByRole("textbox", { name })).toBeTruthy();
@@ -78,7 +77,7 @@ test("project form labels identify fields and mobile dialog fields stay independ
 });
 
 test("template fields and mobile edit control have accessible names", () => {
-  render(<TemplatesView canOperateProject={() => true} onRunRequested={vi.fn()} snapshot={snapshot} token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  render(<TemplatesView canOperateProject={() => true} onRunRequested={vi.fn()} snapshot={snapshot} busy="" actions={inventoryActions(vi.fn(async () => undefined))} />);
   for (const name of ["Template Name", "Runner Tags", "Command"]) expect(screen.getByRole("textbox", { name })).toBeTruthy();
   for (const name of ["Project", "Kind"]) expect(screen.getByRole("combobox", { name })).toBeTruthy();
   const editButtons = screen.getAllByRole("button", { name: "Edit" });

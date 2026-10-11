@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { allProjectMembersQuery, principalQuery, allProjectsQuery, templatesQuery } from "@/api";
-import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
+import { apiSnapshot } from "@/api/compat";
+import { useTemplateActions } from "@/api/mutations";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { TemplatesView } from "@/pages/TemplatesView";
 import { canMaintainProject } from "@/lib/permissions";
@@ -21,11 +22,11 @@ function TemplatesRoute() {
   const page = usePage();
   const projects = useQuery({ ...allProjectsQuery(), retryOnMount: false });
   const templates = useQuery({ ...templatesQuery({ limit: page.limit, offset: page.offset }), retryOnMount: false });
-  const { busy, mutate } = useSnapshotMutation();
   const principal = useQuery({ ...principalQuery(), retryOnMount: false });
   const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
   const queries = [projects, templates, principal, members];
   const failed = queries.filter((query) => query.isError);
+  const { busy, actions } = useTemplateActions(failed.length > 0);
   const recovery = failed.length > 0 ? <section className="space-y-3">
     <p role="alert">{templates.data ? "Unable to refresh templates. Your work is preserved; retry before saving or running a template." : "Unable to load templates."}</p>
     <Button type="button" disabled={failed.some((query) => query.isFetching)} onClick={() => { for (const query of failed) void query.refetch(); }}>Retry templates</Button>
@@ -35,7 +36,7 @@ function TemplatesRoute() {
     {templates.data || !templates.isError ? <TemplatesView
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
       onRunRequested={(runId) => void navigate({ to: "/runs/$runId", params: { runId }, search: {} })}
-      q={q} snapshot={apiSnapshot({ projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate}
+      q={q} snapshot={apiSnapshot({ projects: projects.data, templates: templates.data })} busy={busy} actions={actions}
       recovery={recovery} loading={queries.some((query) => query.isPending)}
     /> : null}
     <PageNavigation page={templates.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="templates" loading={templates.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
