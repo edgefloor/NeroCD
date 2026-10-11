@@ -3355,3 +3355,34 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   await expect(policy.getByText("Save or reset your changes before previewing a deletion.", { exact: true })).toHaveCount(0);
   expect(saves).toBe(2);
 });
+
+
+test("navigation preserves native clicks and keyboard routing without reloading", async ({ page }) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/");
+    await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    if (width < 1024) await page.getByRole("button", { name: "Open mobile navigation", exact: true }).click();
+    const navigation = page.getByRole("navigation", { name: width < 1024 ? "Mobile navigation" : "Desktop navigation", exact: true });
+    const link = navigation.getByRole("link", { name: "Projects", exact: true });
+    const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+    await expect(link).toHaveAttribute("href", "/projects");
+    await page.evaluate(() => {
+      document.addEventListener("auxclick", (event) => {
+        document.documentElement.dataset.navigationAuxPrevented = String(event.defaultPrevented);
+      }, { once: true });
+    });
+    await link.click({ button: "middle" });
+    await expect(page.locator("html")).toHaveAttribute("data-navigation-aux-prevented", "false");
+    expect(new URL(page.url()).pathname).toBe("/");
+    await expect(navigation).toBeVisible();
+    await link.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL((url) => url.pathname === "/projects");
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
+    if (width < 1024) await expect(page.getByRole("dialog", { name: "Mobile navigation", exact: true })).toHaveCount(0);
+  }
+});
