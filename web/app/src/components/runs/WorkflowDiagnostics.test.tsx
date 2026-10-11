@@ -50,3 +50,18 @@ test("does not infer active duration from a terminal state without a finish time
   expect(screen.getAllByText("Not reported").length).toBeGreaterThan(0);
   expect(screen.queryByText("In progress")).toBeNull();
 });
+
+
+test.each([
+  ["invalid", "2026-09-05T12:01:30Z", "succeeded"],
+  ["2026-09-05T12:00:00Z", "invalid", "succeeded"],
+  ["2026-09-05T12:01:30Z", "2026-09-05T12:00:00Z", "succeeded"],
+  ["invalid", undefined, "running"],
+] as const)("invalid workflow timing %s / %s leaves diagnostics usable", (started_at, finished_at, status) => {
+  render(<WorkflowDiagnostics run={{ ...run, workflow_state: { steps: [{ id: "checkout", name: "Checkout source", status, started_at, finished_at }] } }} />);
+  expect(screen.getByRole("list", { name: "Workflow step timeline" })).toBeTruthy();
+  expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
+  expect(screen.queryByText("0s")).toBeNull();
+  expect(screen.queryByText("In progress")).toBeNull();
+  expect(screen.queryByText(/NaN/)).toBeNull();
+});

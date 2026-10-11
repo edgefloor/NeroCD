@@ -1,22 +1,21 @@
 import type { ReactNode } from "react";
 import type { TaskRun, WorkflowStepState } from "@/api";
+import { formatDate } from "@/lib/format";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 function timestamp(value: string | undefined): string {
-  if (!value) return "Not reported";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
+  return value ? formatDate(value) : "Not reported";
 }
 
 function duration(state: WorkflowStepState): string {
   if (!state.started_at) return "Not reported";
+  const start = new Date(state.started_at).getTime();
+  if (!Number.isFinite(start)) return "Unavailable";
   if (!state.finished_at) return state.status === "running" ? "In progress" : "Not reported";
-  const elapsed = Math.max(0, new Date(state.finished_at).getTime() - new Date(state.started_at).getTime());
+  const end = new Date(state.finished_at).getTime();
+  if (!Number.isFinite(end) || end < start) return "Unavailable";
+  const elapsed = end - start;
   const seconds = Math.round(elapsed / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);

@@ -4262,3 +4262,32 @@ test("deployment creation retains its receipt when the first detail refresh fail
   await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
   await expect(page.getByText(`Deployment ${receipt.id}`, { exact: true })).toBeVisible();
 });
+
+
+test("invalid workflow timing preserves diagnostics and run navigation", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  await page.route(`**/api/v1/runs/${runID}`, async (route) => {
+    const response = await route.fetch();
+    const run = await response.json();
+    await route.fulfill({ response, json: {
+      ...run, status: "succeeded",
+      workflow: { steps: [{ id: "build", name: "Build application", run_spec: { type: "shell", inputs: {} }, requires_ack: false }] },
+      workflow_state: { steps: [{ id: "build", name: "Build application", status: "succeeded", started_at: "invalid", finished_at: "2026-01-01T00:00:05Z" }] },
+    } });
+  });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runs/${runID}`);
+    await expect(page.getByRole("dialog", { name: `run ${runID}`, exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    const diagnostics = page.locator('[aria-labelledby="workflow-diagnostics-title"]');
+    await expect(diagnostics.getByText("Succeeded", { exact: true })).toBeVisible();
+    await expect(diagnostics.getByText("Unavailable", { exact: true })).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Account", exact: true })).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await diagnostics.screenshot({ path: testInfo.outputPath("workflow-invalid-timing-320.png") });
+  }
+});
