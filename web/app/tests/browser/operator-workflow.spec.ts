@@ -766,3 +766,79 @@ test("inventory and approval filters apply URL queries and recover after clearin
     }
   }
 });
+
+test("project and template forms retain failed drafts and reset only after successful saves", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const failed = new Set<string>();
+  for (const path of ["projects", "templates", "repositories"]) {
+    await page.route(`**/api/v1/${path}`, async (route) => {
+      const method = route.request().method();
+      const key = `${path}:${method}`;
+      if (["POST", "PATCH"].includes(method) && !failed.has(key)) {
+        failed.add(key);
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary save failure" }) });
+      }
+      return route.continue();
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const suffix = `${Date.now()}`;
+  let projectID = "";
+  for (const resource of ["project", "template"] as const) {
+    if (resource === "template") await page.goto("/templates");
+    const create = page.getByRole("button", { name: `Create ${resource}`, exact: true });
+    const form = create.locator("xpath=ancestor::form");
+    const name = form.locator('input[name="name"]');
+    const draft = `Retry ${resource} ${suffix}`;
+    await name.fill(draft);
+    if (resource === "template") {
+      await form.locator('select[name="project_id"]').selectOption(projectID);
+      await form.locator('select[name="kind"]').selectOption("shell");
+      await form.locator('input[name="command"]').fill("echo form-fixture");
+    }
+    const failure = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/${resource}s` && response.request().method() === "POST");
+    await create.click();
+    expect((await failure).status()).toBe(503);
+    await expect(create).toBeEnabled();
+    await expect(name).toHaveValue(draft);
+    const success = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/${resource}s` && response.request().method() === "POST");
+    await create.click();
+    const response = await success;
+    expect(response.status()).toBe(201);
+    if (resource === "project") projectID = (await response.json()).id;
+    await expect(name).toHaveValue("");
+    await page.getByRole("searchbox", { name: "Filter this page", exact: true }).fill(draft);
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: `Edit ${resource}` });
+    const editedName = dialog.locator('input[name="name"]');
+    await editedName.fill(`${draft} saved`);
+    const save = dialog.getByRole("button", { name: `Save ${resource}`, exact: true });
+    const editFailure = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === `/api/v1/${resource}s` && candidate.request().method() === "PATCH");
+    await save.click();
+    expect((await editFailure).status()).toBe(503);
+    await expect(save).toBeEnabled();
+    await expect(editedName).toHaveValue(`${draft} saved`);
+    const editSuccess = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === `/api/v1/${resource}s` && candidate.request().method() === "PATCH");
+    await save.click();
+    expect((await editSuccess).status()).toBe(200);
+    await expect(dialog).toHaveCount(0);
+  }
+  await page.goto("/projects");
+  const register = page.getByRole("button", { name: "Register source", exact: true });
+  const sourceForm = register.locator("xpath=ancestor::form");
+  await sourceForm.locator('select[name="project_id"]').selectOption(projectID);
+  await sourceForm.locator('input[name="name"]').fill(`Retry source ${suffix}`);
+  await sourceForm.locator('input[name="url"]').fill("https://example.invalid/repository.git");
+  for (const status of [503, 201]) {
+    const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/repositories" && response.request().method() === "POST");
+    await register.click();
+    expect((await saved).status()).toBe(status);
+    await expect(register).toBeEnabled();
+    await expect(sourceForm.locator('input[name="name"]')).toHaveValue(status === 503 ? `Retry source ${suffix}` : "");
+  }
+  expect(pageErrors).toEqual([]);
+});

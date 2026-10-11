@@ -27,10 +27,11 @@ function TemplateForm({
 }): ReactNode {
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const kind = String(form.get("kind") ?? "shell");
     const command = String(form.get("command") ?? "").trim().split(/\s+/).filter(Boolean);
-    await mutate("template", () =>
+    const created = await mutate("template", () =>
       createTemplate(token, {
         project_id: String(form.get("project_id") ?? ""),
         name: String(form.get("name") ?? ""),
@@ -39,7 +40,7 @@ function TemplateForm({
         runner_tags: String(form.get("runner_tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
         requires_ack: form.has("requires_ack"),
       }), "Template created");
-    event.currentTarget.reset();
+    if (created !== undefined) formElement.reset();
   }
 
   return (
@@ -117,7 +118,7 @@ function TemplateEditDialog({
     const form = new FormData(event.currentTarget);
     const kind = String(form.get("kind") ?? template.kind);
     const command = String(form.get("command") ?? "").trim().split(/\s+/).filter(Boolean);
-    await mutate(
+    const updated = await mutate(
       `template:update:${template.id}`,
       () =>
         updateTemplate(token, template.id, {
@@ -138,7 +139,7 @@ function TemplateEditDialog({
         }),
       "Template updated",
     );
-    setOpen(false);
+    if (updated !== undefined) setOpen(false);
   }
   const command = template.run_spec.process?.command?.join(" ") ?? "";
 
@@ -192,7 +193,7 @@ function TemplateEditDialog({
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Runner Tags</label>
-            <Input name="runner_tags" defaultValue={template.runner_tags.join(", ")} className="h-9 rounded-xl" />
+            <Input name="runner_tags" defaultValue={(template.runner_tags ?? []).join(", ")} className="h-9 rounded-xl" />
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Command</label>
@@ -297,7 +298,7 @@ export function TemplatesView({
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {template.runner_tags.map((tag) => (
+                          {(template.runner_tags ?? []).map((tag) => (
                             <Badge key={tag} variant="secondary" className="mr-1 text-xs">
                               {tag}
                             </Badge>
@@ -343,9 +344,9 @@ export function TemplatesView({
                     <div className="text-xs text-muted-foreground">
                       {projectName(snapshot.projects, template.project_id)}
                     </div>
-                    {template.runner_tags.length > 0 && (
+                    {(template.runner_tags ?? []).length > 0 && (
                       <div className="flex flex-wrap gap-1">
-                        {template.runner_tags.map((tag) => (
+                        {(template.runner_tags ?? []).map((tag) => (
                           <Badge key={tag} variant="secondary" className="text-xs">
                             {tag}
                           </Badge>

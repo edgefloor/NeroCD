@@ -38,7 +38,7 @@ function ProjectCard({
   async function updateSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await mutate(
+    const updated = await mutate(
       `project:update:${project.id}`,
       () =>
         updateProject(token, project.id, {
@@ -47,7 +47,7 @@ function ProjectCard({
         }),
       "Project updated",
     );
-    setEditOpen(false);
+    if (updated !== undefined) setEditOpen(false);
   }
 
   return (
@@ -130,14 +130,16 @@ function ProjectForms({
 }): ReactNode {
   async function createProjectSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await mutate("project", () => createProject(token, { name: String(form.get("name") ?? ""), description: String(form.get("description") ?? "") }), "Project created");
-    event.currentTarget.reset();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const created = await mutate("project", () => createProject(token, { name: String(form.get("name") ?? ""), description: String(form.get("description") ?? "") }), "Project created");
+    if (created !== undefined) formElement.reset();
   }
   async function createRepoSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await mutate("repository", () =>
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const created = await mutate("repository", () =>
       createRepository(token, {
         project_id: String(form.get("project_id") ?? ""),
         name: String(form.get("name") ?? ""),
@@ -145,7 +147,7 @@ function ProjectForms({
         provider: String(form.get("provider") ?? "git"),
         default_ref: String(form.get("default_ref") ?? "main"),
       }), "Repository registered");
-    event.currentTarget.reset();
+    if (created !== undefined) formElement.reset();
   }
 
   return (
