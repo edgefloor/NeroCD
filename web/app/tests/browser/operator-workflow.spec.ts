@@ -2737,7 +2737,7 @@ test("user pagination recovers from a shrunken result set on mobile", async ({ p
   }
 });
 
-test("user list request failures retry the selected page", async ({ page }, testInfo) => {
+test("user list request failures retry the selected page or return to the first page", async ({ page }, testInfo) => {
   await page.goto("/settings");
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
@@ -2755,8 +2755,15 @@ test("user list request failures retry the selected page", async ({ page }, test
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.getByRole("button", { name: "Retry users", exact: true })).toBeVisible();
+    const first = page.getByRole("button", { name: "First users page", exact: true });
+    await expect(first).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("users-retry-320.png"), fullPage: true });
+    await first.click();
+    await expect(page.getByText("page-0@example.test", { exact: true })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.getByRole("button", { name: "Next users", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveText("Unable to load users.");
   }
   offsets.length = 0;
   failLater = false;

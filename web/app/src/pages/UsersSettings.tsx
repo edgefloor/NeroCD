@@ -38,7 +38,10 @@ export function UsersSettingsPanel({ readOnly = false }: { readOnly?: boolean })
   return <div className="min-w-0 space-y-3 lg:col-span-2">
     {users.isError ? <section className="space-y-3">
       <p role="alert">{result ? "Unable to refresh users. Showing previously loaded users." : "Unable to load users."}</p>
-      <Button disabled={users.isFetching} onClick={() => void users.refetch()}>Retry users</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={users.isFetching} onClick={() => void users.refetch()}>Retry users</Button>
+        {!result && offset > 0 ? <Button variant="outline" onClick={() => setOffset(0)}>First users page</Button> : null}
+      </div>
     </section> : null}
     {result || !users.isError ? <UsersSettings
       users={result?.items ?? []}

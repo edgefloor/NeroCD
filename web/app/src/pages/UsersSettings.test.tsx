@@ -146,3 +146,21 @@ test("confirmed offboarding survives a failed user refresh and invalidates servi
   expect(screen.queryByRole("button", { name: `Offboard ${activeUser.email}` })).toBeNull();
   expect(client.getQueryState(accountsKey)?.isInvalidated).toBe(true);
 });
+
+
+test("failed later user pages can return directly to the first page", async () => {
+  usersAPI.listUsers.mockImplementation(async ({ offset }: { offset: number }) => {
+    if (offset > 0) throw new Error("Later page unavailable");
+    return { items: [activeUser], count: 1, limit: usersPageSize, offset: 0, total: 11 };
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><UsersSettingsPanel /></QueryClientProvider>);
+  await screen.findByText(activeUser.email);
+  expect(screen.queryByRole("button", { name: "First users page" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Next users" }));
+  await screen.findByText("Unable to load users.");
+  fireEvent.click(screen.getByRole("button", { name: "First users page" }));
+  await screen.findByText(activeUser.email);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(usersAPI.listUsers.mock.calls.at(-1)?.[0]).toEqual({ limit: usersPageSize, offset: 0 });
+});
