@@ -341,6 +341,7 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   const { runID, secondRunID } = await createRunLogFixture(page);
   await page.reload();
   let failHistory = true;
+  let failTail = false;
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   let scopedLogRequests = 0;
@@ -359,6 +360,9 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
     else if (limit === 51 && offset === 0) {
       if (failHistory) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "History unavailable" }) });
       items = Array.from({ length: 51 }, (_, index) => log(index + 1));
+    }
+    else if (offset >= 151 && failTail) {
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Live output unavailable" }) });
     }
     else if (limit === 100 && offset === 151) {
       tailRequests += 1;
@@ -391,6 +395,20 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   await expect(dialog).toContainText("Following active run output.");
   await expect(dialog).toContainText("Browser output 152", { timeout: 10_000 });
   expect(scopedLogRequests).toBeGreaterThanOrEqual(2);
+  failTail = true;
+  await expect(dialog.getByRole("alert")).toContainText("Unable to load run output", { timeout: 10_000 });
+  await expect(dialog.getByText("Browser output 152", { exact: true })).toHaveCount(1);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await dialog.getByRole("button", { name: "Retry logs", exact: true }).scrollIntoViewIfNeeded();
+    await expect(dialog.getByRole("button", { name: "Retry logs", exact: true })).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("live-log-error-320.png"), fullPage: false });
+  }
+  failTail = false;
+  await dialog.getByRole("button", { name: "Retry logs", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(dialog.getByText("Browser output 152", { exact: true })).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(page.locator(`[data-run-log-trigger="${runID}"]`).last()).toBeFocused();

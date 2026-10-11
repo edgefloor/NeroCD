@@ -86,3 +86,9 @@ test("selected run keeps the dialog clear when fetching output fails", () => {
   renderRuns("run_logs", [], false, new Error("network unavailable"));
   expect(screen.getByRole("alert").textContent).toContain("Unable to load run output: network unavailable");
 });
+
+test("a failed log refresh keeps previously loaded output readable", () => {
+  renderRuns("run_logs", [{ id: "log_1", run_id: "run_logs", sequence: 1, stream: "stdout", message: "Completed build step" }], false, new Error("network unavailable"));
+  expect(screen.getByRole("alert").textContent).toContain("network unavailable");
+  expect(screen.getByText("Completed build step")).toBeTruthy();
+});

@@ -105,14 +105,18 @@ export function TerminalLogDialog({
               </Button>
             </div>
           ) : null}
-          {loading ? (
+          {error ? (
+            <div className="mb-3 grid gap-3">
+              <p className="min-w-0 break-words text-destructive" role="alert">Unable to load run output: {error.message}</p>
+              {onRetry ? <Button variant="outline" disabled={retrying} onClick={onRetry}>Retry logs</Button> : null}
+            </div>
+          ) : null}
+          {loading && orderedLogs.length === 0 ? (
             <div className="flex items-center gap-2 text-muted-foreground" role="status">
               <LoaderCircle className="h-4 w-4 animate-spin" />
               Loading run output...
             </div>
-          ) : error ? (
-            <div className="grid gap-3"><p className="min-w-0 break-words text-destructive" role="alert">Unable to load run output: {error.message}</p>{onRetry ? <Button variant="outline" disabled={retrying} onClick={onRetry}>Retry logs</Button> : null}</div>
-          ) : orderedLogs.length === 0 ? (
+          ) : orderedLogs.length === 0 ? error ? null : (
             <div className="text-muted-foreground">
               <span className="text-success">system</span> waiting for runner output...
             </div>
