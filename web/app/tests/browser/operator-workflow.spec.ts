@@ -912,12 +912,14 @@ test("project and template forms retain failed drafts and reset only after succe
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   const failed = new Set<string>();
+  let failProjectRefresh = false;
   let releaseReply = () => {};
   let responseGate = Promise.resolve();
   for (const path of ["projects", "templates", "repositories"]) {
-    await page.route(`**/api/v1/${path}`, async (route) => {
+    await page.route(new RegExp(`/api/v1/${path}([?].*)?$`), async (route) => {
       const method = route.request().method();
       const key = `${path}:${method}`;
+      if (path === "projects" && method === "GET" && failProjectRefresh) return route.fulfill({ status: 503, body: "Unavailable" });
       if (["POST", "PATCH"].includes(method) && !failed.has(key)) {
         failed.add(key);
         await responseGate;
@@ -984,9 +986,21 @@ test("project and template forms retain failed drafts and reset only after succe
     await expect(save).toBeEnabled();
     await expect(editedName).toHaveValue(`${draft} saved`);
     const editSuccess = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === `/api/v1/${resource}s` && candidate.request().method() === "PATCH");
+    failProjectRefresh = resource === "project";
     await save.click();
     expect((await editSuccess).status()).toBe(200);
     await expect(dialog).toHaveCount(0);
+    if (resource === "project") {
+      for (const width of [320, 390, 430, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await expect(page.getByRole("heading", { name: `${draft} saved`, exact: true })).toBeVisible();
+        await expect(page.getByText("Unable to refresh project information. Your work is preserved; retry before making changes.")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Archive", exact: true })).toBeDisabled();
+      }
+      failProjectRefresh = false;
+      await page.getByRole("button", { name: "Retry projects", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Archive", exact: true })).toBeEnabled();
+    }
   }
   await page.goto("/projects");
   const register = page.getByRole("button", { name: "Register source", exact: true });

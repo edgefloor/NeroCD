@@ -5,7 +5,8 @@ import { ProjectsView } from "./ProjectsView";
 
 afterEach(cleanup);
 const snapshot = apiSnapshot({ projects: ["maintained", "viewed"].map((id) => ({ id, name: `${id} project`, description: "", created_at: "2026-01-01T00:00:00Z" })) });
-const props = { snapshot, token: "", busy: "", mutate: vi.fn(async () => undefined) };
+const actions = { create: vi.fn(async () => undefined), update: vi.fn(async () => undefined), archive: vi.fn(async () => undefined), repository: vi.fn(async () => undefined) };
+const props = { actions, snapshot, token: "", busy: "", mutate: vi.fn(async () => undefined) };
 
 test("viewers can create their own project but cannot change existing projects", () => {
   render(<ProjectsView {...props} />);

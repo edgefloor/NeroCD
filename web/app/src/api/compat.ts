@@ -11,12 +11,8 @@ import type {
   TaskTemplate,
 } from "./resources";
 import {
-  archiveProject as archiveProjectRequest,
-  createProject as createProjectRequest,
-  createRepository as createRepositoryRequest,
   createTemplate as createTemplateRequest,
   requestRun as requestRunRequest,
-  updateProject as updateProjectRequest,
   updateTemplate as updateTemplateRequest,
 } from "./resources";
 
@@ -53,10 +49,6 @@ export function apiSnapshot(snapshot: Partial<SnapshotInput>): ApiSnapshot {
 
 // The browser session cookie authenticates these requests. The retained token
 // argument keeps the existing view contract stable while no token is sent.
-export const createProject = (_token: string, input: Parameters<typeof createProjectRequest>[0]) => createProjectRequest(input);
-export const updateProject = (_token: string, id: string, input: Omit<Parameters<typeof updateProjectRequest>[0], "id">) => updateProjectRequest({ id, ...input });
-export const archiveProject = (_token: string, id: string) => archiveProjectRequest({ id });
-export const createRepository = (_token: string, input: Parameters<typeof createRepositoryRequest>[0]) => createRepositoryRequest(input);
 export const createTemplate = (_token: string, input: Parameters<typeof createTemplateRequest>[0]) => createTemplateRequest(input);
 export const updateTemplate = (_token: string, id: string, input: Omit<Parameters<typeof updateTemplateRequest>[0], "id">) => updateTemplateRequest({ id, ...input });
 export const requestRun = (_token: string, input: Parameters<typeof requestRunRequest>[0]) => requestRunRequest(input);

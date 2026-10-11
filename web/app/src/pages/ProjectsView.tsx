@@ -6,8 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ApiSnapshot, Project } from "@/api";
-import { archiveProject, createProject, createRepository, updateProject } from "@/api/compat";
-import type { MutateFn } from "@/hooks/useApi";
+import type { ProjectActions } from "@/api/mutations";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
 import { formatDate, matchesQuery } from "@/lib/format";
@@ -18,9 +17,8 @@ function ProjectCard({
   templates,
   runs,
   repositories,
-  token,
   busy,
-  mutate,
+  actions,
   recovery,
   canOperate,
 }: {
@@ -28,9 +26,8 @@ function ProjectCard({
   templates: ApiSnapshot["templates"];
   runs: ApiSnapshot["runs"];
   repositories: ApiSnapshot["repositories"];
-  token: string;
   busy: string;
-  mutate: MutateFn;
+  actions: ProjectActions;
   recovery?: ReactNode;
   canOperate: boolean;
 }): ReactNode {
@@ -45,15 +42,11 @@ function ProjectCard({
     event.preventDefault();
     if (recovery || busy) return;
     const form = new FormData(event.currentTarget);
-    const updated = await mutate(
-      `project:update:${project.id}`,
-      () =>
-        updateProject(token, project.id, {
-          name: String(form.get("name") ?? ""),
-          description: String(form.get("description") ?? ""),
-        }),
-      "Project updated",
-    );
+    const updated = await actions.update({
+      id: project.id,
+      name: String(form.get("name") ?? ""),
+      description: String(form.get("description") ?? ""),
+    });
     if (updated !== undefined) setEditOpen(false);
   }
 
@@ -114,7 +107,7 @@ function ProjectCard({
             size="sm"
             className="h-8 rounded-xl"
             disabled={Boolean(recovery) || Boolean(busy)}
-            onClick={() => void mutate(`project:archive:${project.id}`, () => archiveProject(token, project.id), "Project archived")}
+            onClick={() => void actions.archive({ id: project.id })}
           >
             <Archive className="mr-1.5 h-4 w-4" />
             Archive
@@ -127,15 +120,13 @@ function ProjectCard({
 
 function ProjectForms({
   projects,
-  token,
   busy,
-  mutate,
+  actions,
   recovery,
 }: {
   projects: Project[];
-  token: string;
   busy: string;
-  mutate: MutateFn;
+  actions: ProjectActions;
   recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
@@ -144,7 +135,7 @@ function ProjectForms({
     if (recovery || busy) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const created = await mutate("project", () => createProject(token, { name: String(form.get("name") ?? ""), description: String(form.get("description") ?? "") }), "Project created");
+    const created = await actions.create({ name: String(form.get("name") ?? ""), description: String(form.get("description") ?? "") });
     if (created !== undefined) formElement.reset();
   }
   async function createRepoSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -152,14 +143,13 @@ function ProjectForms({
     if (recovery || busy) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const created = await mutate("repository", () =>
-      createRepository(token, {
-        project_id: String(form.get("project_id") ?? ""),
-        name: String(form.get("name") ?? ""),
-        url: String(form.get("url") ?? ""),
-        provider: String(form.get("provider") ?? "git"),
-        default_ref: String(form.get("default_ref") ?? "main"),
-      }), "Repository registered");
+    const created = await actions.repository({
+      project_id: String(form.get("project_id") ?? ""),
+      name: String(form.get("name") ?? ""),
+      url: String(form.get("url") ?? ""),
+      provider: String(form.get("provider") ?? "git"),
+      default_ref: String(form.get("default_ref") ?? "main"),
+    });
     if (created !== undefined) formElement.reset();
   }
 
@@ -226,9 +216,8 @@ export function ProjectsView({
   snapshot,
   q,
   formProjects = snapshot.projects,
-  token,
   busy,
-  mutate,
+  actions,
   recovery,
   canOperateProject,
   loading,
@@ -236,9 +225,8 @@ export function ProjectsView({
   snapshot: ApiSnapshot;
   q?: string;
   formProjects?: Project[];
-  token: string;
   busy: string;
-  mutate: MutateFn;
+  actions: ProjectActions;
   recovery?: ReactNode;
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
@@ -276,7 +264,7 @@ export function ProjectsView({
                 <DialogTitle>Configure project</DialogTitle>
               </DialogHeader>
               {recovery}
-              <ProjectForms projects={writableProjects} token={token} busy={busy} mutate={mutate} recovery={recovery} />
+              <ProjectForms projects={writableProjects} busy={busy} actions={actions} recovery={recovery} />
             </DialogContent>
           </Dialog>
         </div>
@@ -296,9 +284,8 @@ export function ProjectsView({
               templates={snapshot.templates}
               runs={snapshot.runs}
               repositories={snapshot.repositories}
-              token={token}
               busy={busy}
-              mutate={mutate}
+              actions={actions}
               recovery={recovery}
             />
           ))
@@ -309,7 +296,7 @@ export function ProjectsView({
           <CardTitle className="text-base font-semibold">Configure project</CardTitle>
         </CardHeader>
         <CardContent>
-          <ProjectForms projects={writableProjects} token={token} busy={busy} mutate={mutate} recovery={recovery} />
+          <ProjectForms projects={writableProjects} busy={busy} actions={actions} recovery={recovery} />
         </CardContent>
       </Card>
     </section>

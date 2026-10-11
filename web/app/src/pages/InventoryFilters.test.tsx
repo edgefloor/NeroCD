@@ -24,7 +24,8 @@ const snapshot = apiSnapshot({
     { id: "approval_beta", run_id: "run_beta", status: "approved", requested_by: "bob", approved_by: "carol", created_at: "2026-01-01T00:00:00Z" },
   ],
 });
-const props = { snapshot, token: "", busy: "", mutate: vi.fn(async () => undefined) };
+const actions = { create: vi.fn(async () => undefined), update: vi.fn(async () => undefined), archive: vi.fn(async () => undefined), repository: vi.fn(async () => undefined) };
+const props = { actions, snapshot, token: "", busy: "", mutate: vi.fn(async () => undefined) };
 
 test("project filtering uses descriptions and preserves form choices and drafts", () => {
   const view = render(<ProjectsView canOperateProject={() => true} {...props} q="production" />);

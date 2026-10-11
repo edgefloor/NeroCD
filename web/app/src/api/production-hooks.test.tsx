@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
-import { useApprovalDecision, useDeploymentMutations, useProjectMutations, useRunMutations } from "./mutations";
+import { useApprovalDecision, useDeploymentMutations, useProjectMutations, useProjectActions, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
@@ -346,4 +346,63 @@ test("approval decisions serialize competing clicks and unlock after completion"
   await waitFor(() => expect(mounted.result.current.busy).toBe(false));
   expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   mounted.unmount();
+});
+
+
+test("confirmed project edits survive a failed refresh in lists and lookup choices", async () => {
+  let saved = false;
+  const original = { id: "proj_one", name: "Original", description: "", created_at: "2026-01-01T00:00:00Z" };
+  const updated = { ...original, name: "Saved name" };
+  globalThis.fetch = vi.fn<typeof fetch>((_path, init) => {
+    if (init?.method === "PATCH") { saved = true; return Promise.resolve(json(updated)); }
+    if (saved) return Promise.resolve(new Response("Unavailable", { status: 503 }));
+    return Promise.resolve(json({ items: [original], count: 1, total: 1, limit: 100, offset: 0 }));
+  });
+  const { client, wrapper } = setup();
+  const mounted = renderHook(() => { useQuery(projectsQuery()); useQuery(allProjectsQuery()); return useProjectActions(); }, { wrapper });
+  await waitFor(() => expect(client.getQueryData(queryKeys.allProjects)).toEqual([original]));
+  await act(async () => { await mounted.result.current.actions.update({ id: original.id, name: updated.name, description: "" }); });
+  expect(client.getQueryData(queryKeys.allProjects)).toEqual([updated]);
+  expect(client.getQueryData(queryKeys.projects())).toMatchObject({ items: [updated], count: 1, total: 1 });
+  expect(client.getQueryState(queryKeys.projects())?.status).toBe("error");
+  expect(mounted.result.current.busy).toBe("");
+});
+
+test("project actions reject overlapping writes and recover after completion", async () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const requests = vi.fn<typeof fetch>(async () => { await gate; return json({ id: "proj_one", name: "New", description: "" }); });
+  globalThis.fetch = requests;
+  const { wrapper } = setup();
+  const mounted = renderHook(({ disabled }) => useProjectActions(disabled), { wrapper, initialProps: { disabled: false } });
+  let first: Promise<unknown>;
+  await act(async () => {
+    first = mounted.result.current.actions.create({ name: "New", description: "" });
+    expect(await mounted.result.current.actions.archive({ id: "proj_one" })).toBeUndefined();
+  });
+  await waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+  expect(mounted.result.current.busy).toBe("project");
+  await act(async () => { release(); await first; });
+  expect(mounted.result.current.busy).toBe("");
+  mounted.rerender({ disabled: true });
+  await act(async () => { expect(await mounted.result.current.actions.archive({ id: "proj_one" })).toBeUndefined(); });
+  expect(requests).toHaveBeenCalledTimes(1);
+  mounted.rerender({ disabled: false });
+  await act(async () => { await mounted.result.current.actions.archive({ id: "proj_one" }); });
+  expect(requests).toHaveBeenCalledTimes(2);
+});
+
+
+test("project creation refreshes membership and source creation refreshes every repository page", async () => {
+  globalThis.fetch = vi.fn<typeof fetch>(async () => json({ id: "created" }));
+  const { client, wrapper } = setup();
+  client.setQueryData(queryKeys.allProjectMembers, []);
+  const repositories = queryKeys.repositories({ project_id: "proj_one", limit: 10, offset: 10 });
+  client.setQueryData(repositories, { items: [], total: 0, count: 0, limit: 10, offset: 10 });
+  const mounted = renderHook(() => useProjectActions(), { wrapper });
+  await act(async () => { await mounted.result.current.actions.create({ name: "New", description: "" }); });
+  expect(client.getQueryState(queryKeys.allProjectMembers)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(repositories)?.isInvalidated).toBe(false);
+  await act(async () => { await mounted.result.current.actions.repository({ project_id: "proj_one", name: "Source", url: "https://example.com/repo.git", provider: "git", default_ref: "main" }); });
+  expect(client.getQueryState(repositories)?.isInvalidated).toBe(true);
 });
