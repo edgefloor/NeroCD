@@ -36,6 +36,7 @@ function TemplateForm({
     let command: string[];
     try {
       command = parseCommandArguments(String(form.get("command") ?? ""));
+      if (command.length === 0) throw new Error("Enter the command this template should run.");
       setCommandError("");
     } catch (error) {
       setCommandError((error as Error).message);
@@ -46,7 +47,7 @@ function TemplateForm({
       project_id: String(form.get("project_id") ?? ""),
       name: String(form.get("name") ?? ""),
       kind,
-      run_spec: { type: kind, inputs: {}, process: command.length ? { command } : undefined },
+      run_spec: { type: kind, inputs: {}, process: { command } },
       runner_tags: String(form.get("runner_tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
       requires_ack: form.has("requires_ack"),
     });
@@ -78,6 +79,7 @@ function TemplateForm({
         <label htmlFor={`${formId}-kind`} className="text-xs font-medium text-muted-foreground">Kind</label>
         <select disabled={Boolean(busy)} id={`${formId}-kind`}
           name="kind"
+          defaultValue="shell"
           className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
         >
           {["ansible", "opentofu", "shell", "terraform", "python", "powershell"].map((kind) => (

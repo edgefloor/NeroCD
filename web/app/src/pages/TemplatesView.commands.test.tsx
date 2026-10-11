@@ -63,3 +63,24 @@ test("clearing a required command reports the problem without saving the previou
   expect(input.value).toBe("");
   expect(document.activeElement).toBe(input);
 });
+
+test.each(["shell", "ansible", "opentofu", "terraform", "python", "powershell"])("new %s templates require a command and preserve incomplete drafts", async (kind) => {
+  const create = vi.fn(async () => ({ id: "created" }));
+  render(<TemplatesView snapshot={snapshot} busy="" actions={{ create, update: vi.fn(), run: vi.fn() }} onRunRequested={vi.fn()} canOperateProject={() => true} />);
+  const select = screen.getByRole<HTMLSelectElement>("combobox", { name: "Kind" });
+  expect(select.value).toBe("shell");
+  fireEvent.change(select, { target: { value: kind } });
+  const name = screen.getByRole<HTMLInputElement>("textbox", { name: "Template Name" });
+  const input = screen.getByRole("textbox", { name: "Command" });
+  fireEvent.change(name, { target: { value: "New task" } });
+  fireEvent.change(input, { target: { value: "   " } });
+  await act(async () => { fireEvent.submit(input.closest("form")!); });
+  expect(create).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert").textContent).toBe("Enter the command this template should run.");
+  expect(document.activeElement).toBe(input);
+  expect(name.value).toBe("New task");
+  fireEvent.change(input, { target: { value: "echo ready" } });
+  await act(async () => { fireEvent.submit(input.closest("form")!); });
+  expect(create).toHaveBeenCalledWith(expect.objectContaining({ kind, run_spec: expect.objectContaining({ type: kind, process: { command: ["echo", "ready"] } }) }));
+  expect(select.value).toBe("shell");
+});

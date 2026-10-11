@@ -24,6 +24,7 @@ for (const [kind, View, buttonName] of [
     const form = screen.getAllByRole("button", { name: buttonName }).map((button) => button.closest("form")).find(Boolean)!;
     const name = form.elements.namedItem("name") as HTMLInputElement;
     fireEvent.change(name, { target: { value: "My draft" } });
+    if (kind === "template") fireEvent.change(form.elements.namedItem("command") as HTMLTextAreaElement, { target: { value: "echo ready" } });
     await act(async () => { fireEvent.submit(form); });
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(name.value).toBe("My draft");

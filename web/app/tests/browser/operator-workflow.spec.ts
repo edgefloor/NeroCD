@@ -1066,6 +1066,8 @@ test("mobile template inventory is reachable before opening the creation form", 
   const suffix = `${Date.now()}`;
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Mobile creation ${suffix}`, description: "Mobile creation fixture" });
   await page.reload();
+  let creates = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/templates") creates++; });
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.getByRole("textbox", { name: "Template Name", exact: true })).toBeHidden();
@@ -1076,13 +1078,22 @@ test("mobile template inventory is reachable before opening the creation form", 
     const name = dialog.getByRole("textbox", { name: "Template Name", exact: true });
     await expect(name).toBeVisible();
     await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(project.id);
+    await expect(dialog.getByRole("combobox", { name: "Kind", exact: true })).toHaveValue("shell");
+    await name.fill(`Mobile template ${suffix}`);
+    const before = creates;
+    await dialog.getByRole("button", { name: "Create template", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toHaveText("Enter the command this template should run.");
+    await expect(dialog.getByRole("textbox", { name: "Command", exact: true })).toBeFocused();
+    await expect(name).toHaveValue(`Mobile template ${suffix}`);
+    expect(creates).toBe(before);
     if (width === 320) {
-      await name.fill(`Mobile template ${suffix}`);
-      await dialog.getByRole("combobox", { name: "Kind", exact: true }).selectOption("shell");
       await dialog.getByRole("textbox", { name: "Command", exact: true }).fill("echo mobile");
       const created = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/templates" && response.request().method() === "POST");
       await dialog.getByRole("button", { name: "Create template", exact: true }).click();
-      expect((await created).status()).toBe(201);
+      const response = await created;
+      expect(response.status()).toBe(201);
+      expect(await response.json()).toMatchObject({ kind: "shell", run_spec: { type: "shell", process: { command: ["echo", "mobile"] } } });
+      await expect(dialog.getByRole("combobox", { name: "Kind", exact: true })).toHaveValue("shell");
       await expect(name).toHaveValue("");
       await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeInViewport();
     }
@@ -1093,7 +1104,15 @@ test("mobile template inventory is reachable before opening the creation form", 
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("templates-inventory-320.png") });
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await expect(page.getByRole("textbox", { name: "Template Name", exact: true })).toBeVisible();
+  const desktopName = page.getByRole("textbox", { name: "Template Name", exact: true });
+  await expect(desktopName).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Kind", exact: true })).toHaveValue("shell");
+  await desktopName.fill("Desktop draft");
+  const before = creates;
+  await page.getByRole("button", { name: "Create template", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Enter the command this template should run.");
+  await expect(page.getByRole("textbox", { name: "Command", exact: true })).toBeFocused();
+  expect(creates).toBe(before);
 });
 
 test("running a template opens its detail route and follows scoped output", async ({ page }) => {
