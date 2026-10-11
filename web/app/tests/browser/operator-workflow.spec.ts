@@ -1092,3 +1092,42 @@ test("deployment selection restores deep links and clears dependent choices on p
     await expect(environment).toHaveValue(fixture.environmentID);
   }
 });
+
+test("project viewers can browse deployment history without deployment write controls", async ({ page, browser }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  await postJSON(page, "/api/v1/project-members", { project_id: fixture.projectID, email: "oidc-browser@example.invalid", role: "viewer" });
+  const context = await browser.newContext();
+  try {
+    const viewer = await context.newPage();
+    await viewer.goto("/sign-in");
+    await viewer.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(viewer.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    for (const width of [320, 390, 430, 1440]) {
+      await viewer.setViewportSize({ width, height: 1000 });
+      await viewer.goto("/deployments");
+      await viewer.getByRole("combobox", { name: "Project", exact: true }).selectOption(fixture.projectID);
+      await viewer.getByRole("combobox", { name: "Service", exact: true }).selectOption(fixture.serviceID);
+      await viewer.getByRole("combobox", { name: "Environment", exact: true }).selectOption(fixture.environmentID);
+      const detail = viewer.locator(`a[href*="/deployments/${fixture.deploymentID}"]`);
+      await expect(detail).toBeVisible();
+      await expect(viewer.getByRole("button", { name: "Request deployment", exact: true })).toHaveCount(0);
+      await expect(viewer.getByRole("combobox", { name: "Immutable revision", exact: true })).toHaveCount(0);
+      expect(await viewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (width === 320) await viewer.screenshot({ path: testInfo.outputPath("viewer-deployments-320.png"), fullPage: true });
+      await detail.click();
+      await expect(viewer.getByText(`Deployment ${fixture.deploymentID}`, { exact: true })).toBeVisible();
+      await expect(viewer.getByRole("button", { name: "Confirm", exact: true })).toHaveCount(0);
+      await expect(viewer.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    }
+    const denied = await viewer.request.post("/api/v1/deployments", {
+      headers: { Origin: new URL(viewer.url()).origin, "X-NeroCD-CSRF": "1" },
+      data: { environment_id: fixture.environmentID, desired_revision_id: fixture.revisionID, idempotency_key: `viewer-denied-${Date.now()}` },
+    });
+    expect(denied.status()).toBe(403);
+  } finally {
+    await context.close();
+  }
+});

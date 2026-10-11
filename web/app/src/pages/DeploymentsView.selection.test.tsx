@@ -57,3 +57,16 @@ test("retrying an unchanged deployment preserves its intent key while changing t
   fireEvent.submit(form);
   expect(onCreate.mock.calls[2]![0].idempotency_key).not.toBe(onCreate.mock.calls[0]![0].idempotency_key);
 });
+
+test("viewers can select deployment history without receiving write controls", () => {
+  const onEnvironmentChange = vi.fn();
+  render(<DeploymentsView {...props} canOperate={false} selectedServiceID="service_a" selectedEnvironmentID="env_a" onEnvironmentChange={onEnvironmentChange} />);
+  expect(value("Project")).toBe("project_a");
+  expect(value("Service")).toBe("service_a");
+  expect(value("Environment")).toBe("env_a");
+  fireEvent.change(screen.getByRole("combobox", { name: "Environment" }), { target: { value: "" } });
+  expect(onEnvironmentChange).toHaveBeenCalledWith("");
+  expect(screen.queryByRole("combobox", { name: "Immutable revision" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Request deployment" })).toBeNull();
+  expect(screen.queryByRole("form")).toBeNull();
+});
