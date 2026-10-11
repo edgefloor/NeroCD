@@ -38,11 +38,11 @@ export function RunsTable({
   }
   return (
     <>
-      <div className="grid gap-2 p-3 md:hidden">
+      <div className="grid min-w-0 grid-cols-1 gap-2 p-3 md:hidden">
         {runs.map((run) => (
-          <div key={run.id} className="grid gap-2 rounded-xl border border-border/60 bg-card p-3 shadow-sm">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
+          <div key={run.id} className="grid min-w-0 grid-cols-1 gap-2 rounded-xl border border-border/60 bg-card p-3 shadow-sm">
+            <div className="flex min-w-0 items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{templateName(templates, run.template_id, run)}</p>
                 <p className="truncate text-xs text-muted-foreground">
                   {projectName(projects, run.project_id)} · {formatDate(run.started_at)}
@@ -50,8 +50,8 @@ export function RunsTable({
               </div>
               <StatusBadge status={run.status} />
             </div>
-            <div className="flex gap-2 text-xs text-muted-foreground">
-              <span className="rounded-lg bg-muted/60 px-2 py-1 font-mono">{formatDuration(run)}</span>
+            <div className="flex min-w-0 gap-2 text-xs text-muted-foreground">
+              <span className="shrink-0 rounded-lg bg-muted/60 px-2 py-1 font-mono">{formatDuration(run)}</span>
               <span className="truncate rounded-lg bg-muted/60 px-2 py-1 font-mono">{run.id}</span>
             </div>
             <div className="flex flex-wrap gap-2">

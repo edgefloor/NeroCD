@@ -700,6 +700,22 @@ test("runs filter narrows the loaded page and retains usable log actions", async
     await expect(page.locator(`[data-run-detail-link="${secondRunID}"]`)).toHaveCount(0);
     await expect(page.getByText(/1 of \d+ runs match on this page\./)).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (width < 768) {
+      const card = page.locator(`[data-run-detail-link="${runID}"]`).first().locator("xpath=../..");
+      const geometry = await card.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const content = element.closest('[data-slot="card-content"]')!.getBoundingClientRect();
+        const controls = [...element.querySelectorAll('a, button, [data-slot="badge"]')].map((control) => {
+          const rect = control.getBoundingClientRect();
+          return { left: rect.left, right: rect.right };
+        });
+        return { left: bounds.left, right: bounds.right, contentLeft: content.left, contentRight: content.right, controls };
+      });
+      expect(geometry.left).toBeGreaterThanOrEqual(geometry.contentLeft);
+      expect(geometry.right).toBeLessThanOrEqual(geometry.contentRight);
+      expect(geometry.controls.every((control) => control.left >= geometry.left && control.right <= geometry.right)).toBe(true);
+      await expect(card.locator('[data-slot="badge"]')).toBeInViewport();
+    }
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("runs-filter-320.png") });
   }
   await page.locator(`[data-run-log-trigger="${runID}"]`).last().click();
