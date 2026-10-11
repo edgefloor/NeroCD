@@ -1,7 +1,10 @@
+import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { apiSnapshot } from "@/api/compat";
 import { ApprovalList } from "./ApprovalsView";
+
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, params }: { children: ReactNode; params: { runId: string } }) => <a href={`/runs/${params.runId}`}>{children}</a> }));
 
 afterEach(cleanup);
 const approval = { id: "approval_one", run_id: "run_one", status: "pending", requested_by: "operator", created_at: "2026-01-01T00:00:00Z" } as const;

@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 import { CheckCircle2, GitBranch, XCircle, ShieldCheck, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,7 +54,7 @@ export function ApprovalList({
                 </div>
               </div>
             ) : null}
-            {run ? <a className="text-sm underline underline-offset-4" href={`/runs/${run.id}`}>Run details</a> : null}
+            {run ? <Link className="text-sm underline underline-offset-4" to="/runs/$runId" params={{ runId: run.id }} search={(previous) => previous}>Run details</Link> : null}
             {run && approval.status === "pending" && canOperateProject?.(run.project_id) ? (
               <div className="flex gap-2">
                 <Button

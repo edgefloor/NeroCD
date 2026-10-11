@@ -2985,3 +2985,35 @@ test("mobile creation dialogs retain pending project, source, and template draft
     await expect(dialog).toHaveCount(0);
   }
 });
+
+test("approval run links preserve filter context and browser history without reloading", async ({ page }) => {
+  await page.goto("/approvals");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createRunLogFixture(page, true);
+  const response = await page.request.get("/api/v1/approvals?limit=100");
+  expect(response.status()).toBe(200);
+  const result = await response.json() as { items: Array<{ run_id: string }> };
+  const approval = result.items.find((item) => item.run_id === fixture.runID);
+  expect(approval).toBeTruthy();
+  await page.route("**/api/v1/approvals?*", (route) => route.fulfill({ json: { items: [approval], count: 1, total: 51, limit: 50, offset: 50 } }));
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`/approvals?offset=50&q=${fixture.runID}`);
+    const link = page.getByRole("link", { name: "Run details", exact: true });
+    await expect(link).toBeVisible();
+    const href = new URL((await link.getAttribute("href"))!, page.url());
+    expect(href.pathname).toBe(`/runs/${fixture.runID}`);
+    expect(href.searchParams.get("q")).toBe(fixture.runID);
+    expect(href.searchParams.get("offset")).toBe("50");
+    const documentStarted = await page.evaluate(() => performance.timeOrigin);
+    await link.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog", { name: `run ${fixture.runID}`, exact: true })).toBeVisible();
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentStarted);
+    await page.goBack();
+    await expect(page).toHaveURL((url) => url.pathname === "/approvals" && url.searchParams.get("offset") === "50" && url.searchParams.get("q") === fixture.runID);
+    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue(fixture.runID);
+    await expect(page.getByRole("link", { name: "Run details", exact: true })).toBeVisible();
+  }
+});
