@@ -3120,3 +3120,49 @@ test("direct run details retain output through a status refresh failure", async 
   await expect(dialog.getByText("retained detail output", { exact: true })).toBeVisible();
   expect(new URL(page.url()).pathname).toBe(`/runs/${runID}`);
 });
+
+
+test("deployment list recovery preserves revision selection and page context", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const response = await page.request.get(`/api/v1/deployments/${fixture.deploymentID}`);
+  const deployment = await response.json();
+  let fail = true;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/deployments?*", (route) => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? 0);
+    offsets.push(offset);
+    return fail ? route.fulfill({ status: 503, json: { error: "Temporary deployment list failure" } }) : route.fulfill({ json: { items: [deployment], count: 1, total: 51, offset, limit: 50 } });
+  });
+  await page.goto(`/deployments?service_id=${fixture.serviceID}&environment_id=${fixture.environmentID}&offset=50`);
+  const retry = page.getByRole("button", { name: "Retry deployments", exact: true });
+  await expect(retry).toBeVisible();
+  expect(offsets.every((offset) => offset === 50)).toBe(true);
+  fail = false;
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  const revision = page.getByRole("combobox", { name: "Immutable revision", exact: true });
+  await revision.selectOption(fixture.revisionID);
+  const submit = page.getByRole("button", { name: "Request deployment", exact: true });
+  await expect(submit).toBeEnabled();
+  fail = true;
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+  await expect(retry).toBeVisible();
+  await expect(submit).toBeDisabled();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(revision).toHaveValue(fixture.revisionID);
+    await expect(page.getByRole("combobox", { name: "Environment", exact: true })).toHaveValue(fixture.environmentID);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-list-recovery-320.png"), fullPage: true });
+  }
+  fail = false;
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  await expect(submit).toBeEnabled();
+  await expect(revision).toHaveValue(fixture.revisionID);
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
+});

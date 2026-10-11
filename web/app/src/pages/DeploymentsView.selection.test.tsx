@@ -83,3 +83,18 @@ test("deployment details identify missing provenance instead of rendering blanks
   expect(screen.getAllByText("Not recorded")).toHaveLength(2);
   expect(screen.getByText("None")).toBeTruthy();
 });
+
+
+test("deployment recovery preserves the revision and blocks submission until ready", () => {
+  const onCreate = vi.fn();
+  const selected = { ...props, selectedServiceID: "service_a", selectedEnvironmentID: "env_a", onCreate };
+  const view = render(<DeploymentsView {...selected} />);
+  fireEvent.change(screen.getByRole("combobox", { name: "Immutable revision" }), { target: { value: "revision_a" } });
+  view.rerender(<DeploymentsView {...selected} busy />);
+  expect(value("Immutable revision")).toBe("revision_a");
+  fireEvent.submit(screen.getByRole("form", { name: "Request deployment" }));
+  expect(onCreate).not.toHaveBeenCalled();
+  view.rerender(<DeploymentsView {...selected} busy={false} />);
+  fireEvent.submit(screen.getByRole("form", { name: "Request deployment" }));
+  expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ environment_id: "env_a", desired_revision_id: "revision_a" }));
+});
