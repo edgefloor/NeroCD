@@ -150,7 +150,7 @@ export function ApprovalsView({
           {visibleApprovals.map((approval) => (
             <div key={approval.id} className="rounded-xl border border-border/60 bg-card p-3 shadow-sm">
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-medium text-sm">{approval.run_id}</span>
+                <Link className="min-w-0 break-all font-mono text-sm underline underline-offset-4" to="/runs/$runId" params={{ runId: approval.run_id }} search={(previous) => previous}>{approval.run_id}</Link>
                 <StatusBadge className="shrink-0" status={approval.status} />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">{formatDate(approval.created_at)}</p>

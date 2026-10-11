@@ -64,7 +64,7 @@ test.each(["Alpha project", "Alpha deploy", "alice", "approval_alpha", "SHELL", 
 
 test("approval filter includes history and distinguishes unmatched pending approvals", () => {
   render(<ApprovalsView canOperateProject={() => true} {...props} busy={false} onDecide={vi.fn()} q="carol" />);
-  expect(screen.getByText("run_beta")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "run_beta" }).getAttribute("href")).toBe("/runs/run_beta");
   expect(screen.getByText("No pending approvals match this filter on the loaded page.")).toBeTruthy();
   expect(screen.getByText("1 waiting")).toBeTruthy();
 });

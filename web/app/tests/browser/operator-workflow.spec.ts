@@ -823,6 +823,17 @@ test("dashboard filtering removes unrelated rows and its Clear action restores t
   await expect(page).toHaveURL(/\/$/);
   expect(await page.evaluate(() => history.length)).toBe(historyLength);
   await expect(page.getByText("No runs match this search.")).toHaveCount(0);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const query = "unmatched_" + "x".repeat(190);
+    await filter.fill(query);
+    await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe(query);
+    const clear = page.getByRole("button", { name: "Clear", exact: true });
+    await expect(clear).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await clear.click();
+    await expect(filter).toHaveValue("");
+  }
 });
 
 test("runs filter narrows the loaded page and retains usable log actions", async ({ page }, testInfo) => {
@@ -3167,25 +3178,28 @@ test("approval run links preserve filter context and browser history without rel
   const result = await response.json() as { items: Array<{ run_id: string }> };
   const approval = result.items.find((item) => item.run_id === fixture.runID);
   expect(approval).toBeTruthy();
-  await page.route("**/api/v1/approvals?*", (route) => route.fulfill({ json: { items: [approval], count: 1, total: 51, limit: 50, offset: 50 } }));
-  for (const width of [320, 390, 430, 1440]) {
-    await page.setViewportSize({ width, height: 844 });
-    await page.goto(`/approvals?offset=50&q=${fixture.runID}`);
-    const link = page.getByRole("link", { name: "Run details", exact: true });
-    await expect(link).toBeVisible();
-    const href = new URL((await link.getAttribute("href"))!, page.url());
-    expect(href.pathname).toBe(`/runs/${fixture.runID}`);
-    expect(href.searchParams.get("q")).toBe(fixture.runID);
-    expect(href.searchParams.get("offset")).toBe("50");
-    const documentStarted = await page.evaluate(() => performance.timeOrigin);
-    await link.focus();
-    await page.keyboard.press("Enter");
-    await expect(page.getByRole("dialog", { name: `run ${fixture.runID}`, exact: true })).toBeVisible();
-    expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentStarted);
-    await page.goBack();
-    await expect(page).toHaveURL((url) => url.pathname === "/approvals" && url.searchParams.get("offset") === "50" && url.searchParams.get("q") === fixture.runID);
-    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue(fixture.runID);
-    await expect(page.getByRole("link", { name: "Run details", exact: true })).toBeVisible();
+  let status = "pending";
+  await page.route("**/api/v1/approvals?*", (route) => route.fulfill({ json: { items: [{ ...approval, status }], count: 1, total: 51, limit: 50, offset: 50 } }));
+  for (status of ["pending", "approved", "rejected"]) {
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/approvals?offset=50&q=${fixture.runID}`);
+      const link = page.getByRole("link", { name: status === "pending" ? "Run details" : fixture.runID, exact: true });
+      await expect(link).toBeVisible();
+      const href = new URL((await link.getAttribute("href"))!, page.url());
+      expect(href.pathname).toBe(`/runs/${fixture.runID}`);
+      expect(href.searchParams.get("q")).toBe(fixture.runID);
+      expect(href.searchParams.get("offset")).toBe("50");
+      const documentStarted = await page.evaluate(() => performance.timeOrigin);
+      await link.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("dialog", { name: `run ${fixture.runID}`, exact: true })).toBeVisible();
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentStarted);
+      await page.goBack();
+      await expect(page).toHaveURL((url) => url.pathname === "/approvals" && url.searchParams.get("offset") === "50" && url.searchParams.get("q") === fixture.runID);
+      await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue(fixture.runID);
+      await expect(page.getByRole("link", { name: status === "pending" ? "Run details" : fixture.runID, exact: true })).toBeVisible();
+    }
   }
 });
 
