@@ -1,9 +1,17 @@
+import type { ComponentProps, ReactNode } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { apiSnapshot } from "@/api/compat";
 import { RunsView } from "./RunsView";
 import { TerminalLogDialog } from "@/components/runs/TerminalLogDialog";
+
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, params, search = {}, ...props }: { children: ReactNode; params: { runId: string }; search?: { q?: string; offset?: number } } & ComponentProps<"a">) => {
+  const query = new URLSearchParams();
+  if (search.q) query.set("q", search.q);
+  if (search.offset) query.set("offset", String(search.offset));
+  return <a {...props} href={`/runs/${params.runId}${query.size ? `?${query}` : ""}`}>{children}</a>;
+} }));
 
 afterEach(cleanup);
 

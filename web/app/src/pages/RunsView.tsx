@@ -1,4 +1,5 @@
 import { ReactNode, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Ban, FileText, ListTree, Terminal } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -37,10 +38,6 @@ export function RunsTable({
   onOpenLogs?: (runID: string) => void;
   detailSearch?: { q?: string; offset?: number };
 }): ReactNode {
-  const search = new URLSearchParams();
-  if (detailSearch?.q) search.set("q", detailSearch.q);
-  if (detailSearch?.offset) search.set("offset", String(detailSearch.offset));
-  const suffix = search.size ? `?${search}` : "";
   if (runs.length === 0) {
     return <EmptyState title="No runs yet" icon={FileText} />;
   }
@@ -63,10 +60,10 @@ export function RunsTable({
             </div>
             <div className="flex flex-wrap gap-2">
               <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
-                <a data-run-detail-link={run.id} href={`/runs/${encodeURIComponent(run.id)}${suffix}`}>
+                <Link data-run-detail-link={run.id} to="/runs/$runId" params={{ runId: run.id }} search={detailSearch ?? {}}>
                   <ListTree className="mr-1.5 h-4 w-4" />
                   Details
-                </a>
+                </Link>
               </Button>
               {onOpenLogs ? (
                 <Button
@@ -123,10 +120,10 @@ export function RunsTable({
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-2">
                     <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
-                      <a data-run-detail-link={run.id} href={`/runs/${encodeURIComponent(run.id)}${suffix}`}>
+                      <Link data-run-detail-link={run.id} to="/runs/$runId" params={{ runId: run.id }} search={detailSearch ?? {}}>
                         <ListTree className="mr-1.5 h-4 w-4" />
                         Details
-                      </a>
+                      </Link>
                     </Button>
                     {mutate && canOperateProject?.(run.project_id) && canCancel(run) ? (
                       <Button

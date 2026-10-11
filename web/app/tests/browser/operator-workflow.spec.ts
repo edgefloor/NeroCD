@@ -1871,14 +1871,18 @@ test("run Details links retain filtered page context", async ({ page }) => {
     const target = new URL((await link.getAttribute("href"))!, page.url());
     expect(target.searchParams.get("q")).toBe("browser-logs");
     expect(target.searchParams.get("offset")).toBe("50");
-    await link.click();
+    const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+    await link.focus();
+    await page.keyboard.press("Enter");
     await expect(page).toHaveURL((url) => url.pathname === `/runs/${runID}` && url.searchParams.get("q") === "browser-logs" && url.searchParams.get("offset") === "50");
     await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
     await page.keyboard.press("Escape");
     await expect(page.getByText("Showing 51-51 of 51", { exact: true })).toBeVisible();
     await page.goBack();
     await expect(page).toHaveURL((url) => url.pathname === "/runs" && url.searchParams.get("q") === "browser-logs" && url.searchParams.get("offset") === "50");
     await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser-logs");
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
   }
 });
 

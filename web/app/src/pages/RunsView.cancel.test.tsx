@@ -1,3 +1,4 @@
+import type { ComponentProps, ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { apiSnapshot, cancelRun, type MutateFn } from "@/api/compat";
@@ -8,6 +9,13 @@ vi.mock("@/api/compat", async (original) => ({
   ...await original<typeof import("@/api/compat")>(),
   cancelRun: vi.fn(async () => ({ id: "run_cancel", status: "canceled" })),
 }));
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, params, search = {}, ...props }: { children: ReactNode; params: { runId: string }; search?: { q?: string; offset?: number } } & ComponentProps<"a">) => {
+  const query = new URLSearchParams();
+  if (search.q) query.set("q", search.q);
+  if (search.offset) query.set("offset", String(search.offset));
+  return <a {...props} href={`/runs/${params.runId}${query.size ? `?${query}` : ""}`}>{children}</a>;
+} }));
+
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const run: TaskRun = { id: "run_cancel", project_id: "project", status: "queued", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, workflow_state: { steps: [] }, requested_by: "operator", runner_tags: [], started_at: "2026-01-01T00:00:00Z" };
 
