@@ -20,7 +20,7 @@ export function RunsTable({
   runs,
   projects,
   templates,
-  token,
+  token = "",
   busy,
   mutate,
   onOpenLogs,
@@ -76,7 +76,7 @@ export function RunsTable({
                   Logs
                 </Button>
               ) : null}
-              {token && mutate && canCancel(run) ? (
+              {mutate && canCancel(run) ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -121,7 +121,7 @@ export function RunsTable({
                         Details
                       </a>
                     </Button>
-                    {token && mutate && canCancel(run) ? (
+                    {mutate && canCancel(run) ? (
                       <Button
                         variant="outline"
                         size="sm"

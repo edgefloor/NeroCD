@@ -967,3 +967,39 @@ test("running a template opens its detail route and follows scoped output", asyn
     await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue(templateName);
   }
 });
+
+test("session-authenticated operators can cancel queued runs on desktop and mobile", async ({ page }) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const first = await createRunLogFixture(page);
+  const second = await createRunLogFixture(page);
+  let failFirst = true;
+  await page.route("**/api/v1/runs/cancel", async (route) => {
+    if (failFirst) {
+      failFirst = false;
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary cancellation failure" }) });
+    }
+    return route.continue();
+  });
+  for (const [width, runID] of [[320, first.runID], [390, first.secondRunID], [430, second.runID], [1440, second.secondRunID]] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/runs?q=${runID}`);
+    const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+    await expect(cancel).toBeInViewport();
+    if (width === 320) {
+      const failed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/cancel");
+      await cancel.click();
+      expect((await failed).status()).toBe(503);
+      await expect(cancel).toBeEnabled();
+    }
+    const canceled = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/cancel");
+    await cancel.click();
+    const response = await canceled;
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({ id: runID, status: "canceled" });
+    await expect(cancel).toHaveCount(0);
+    await expect(page.getByText("canceled", { exact: true }).nth(width < 768 ? 0 : 1)).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+});
