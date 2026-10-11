@@ -195,3 +195,26 @@ test("account creation keeps failed drafts and scopes the error to its project",
   expect(within(form).queryByRole("alert")).toBeNull();
   expect(name.value).toBe("Draft automation");
 });
+
+
+test("credential rotation reports pending and retryable failures on its account row", async () => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [account], count: 1, total: 1, offset: 0, limit: 10 });
+  let reject!: (error: Error) => void;
+  serviceAccountsAPI.rotate.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; })).mockResolvedValueOnce({ credential: {}, token: "nca_retry_fixture" });
+  renderPanel();
+  const row = await screen.findByRole("form", { name: "Edit service account Build bot" });
+  fireEvent.click(within(row).getByRole("button", { name: "Rotate" }));
+  await waitFor(() => expect(row.getAttribute("aria-busy")).toBe("true"));
+  const rotating = within(row).getByRole<HTMLButtonElement>("button", { name: "Rotating…" });
+  expect(rotating.disabled).toBe(true);
+  fireEvent.click(rotating);
+  expect(serviceAccountsAPI.rotate).toHaveBeenCalledOnce();
+  await act(async () => reject(new Error("Temporary rotation failure")));
+  await waitFor(() => expect(row.getAttribute("aria-busy")).toBe("false"));
+  expect(within(row).getByRole("alert").textContent).toBe("Unable to rotate credential: Temporary rotation failure");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(within(row).getByRole("button", { name: "Rotate" }));
+  expect(await screen.findByDisplayValue("nca_retry_fixture")).toBeTruthy();
+  expect(within(row).queryByRole("alert")).toBeNull();
+  expect(serviceAccountsAPI.rotate).toHaveBeenCalledTimes(2);
+});

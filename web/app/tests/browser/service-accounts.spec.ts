@@ -141,9 +141,39 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   expect(projectPage.items.map((project) => project.id)).toEqual([projectOne.id]);
 
   const accountRow = page.getByLabel(`Name for Browser bot ${suffix}`).locator("xpath=ancestor::form");
+  let releaseRotation!: () => void;
+  const pendingRotation = new Promise<void>((resolve) => { releaseRotation = resolve; });
+  let rotations = 0;
+  await page.route("**/api/v1/service-accounts/rotate", async (route) => {
+    if (++rotations > 1) return route.continue();
+    await pendingRotation;
+    return route.fulfill({ status: 503, json: { error: "Temporary rotation failure" } });
+  });
+  await accountRow.getByRole("button", { name: "Rotate", exact: true }).click();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(accountRow).toHaveAttribute("aria-busy", "true");
+    await expect(accountRow.getByRole("button", { name: "Rotating…", exact: true })).toBeDisabled();
+    await expect(accountRow.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    await expect(accountRow.getByRole("button", { name: "Revoke", exact: true })).toBeDisabled();
+  }
+  expect(rotations).toBe(1);
+  releaseRotation();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(accountRow.getByRole("alert")).toHaveText("Unable to rotate credential: Temporary rotation failure");
+    await expect(accountRow.getByRole("button", { name: "Rotate", exact: true })).toBeEnabled();
+    expect(await accountRow.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) {
+      await accountRow.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("account-rotation-error-320.png"), animations: "disabled" });
+    }
+  }
   const rotateResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/service-accounts/rotate");
   await accountRow.getByRole("button", { name: "Rotate" }).click();
   expect((await rotateResponse).status()).toBe(201);
+  expect(rotations).toBe(2);
+  await expect(accountRow.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("dialog").getByText("Credential copied.", { exact: true })).toHaveCount(0);
   const rotatedToken = await secretInput.inputValue();
   expect(rotatedToken).toMatch(/^nca_/);
