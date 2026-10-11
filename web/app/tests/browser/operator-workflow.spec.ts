@@ -2073,3 +2073,24 @@ test("saved theme applies to sign-in, unknown routes, and account toggles", asyn
   await page.goto("/missing-theme-page");
   await expect(page.locator("html")).toHaveClass(/dark/);
 });
+
+test("keyboard users can skip shell navigation to page content", async ({ page }, testInfo) => {
+  await page.goto("/runners");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/runners?q=keyboard");
+    await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+    await page.keyboard.press("Tab");
+    const skip = page.getByRole("link", { name: "Skip to page content", exact: true });
+    await expect(skip).toBeFocused();
+    await expect(skip).toBeInViewport();
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("skip-navigation-320.png"), fullPage: false });
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("main", { name: "Runners", exact: true })).toBeFocused();
+    await expect(page).toHaveURL((url) => url.pathname === "/runners" && url.searchParams.get("q") === "keyboard" && !url.hash);
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toBeFocused();
+  }
+});

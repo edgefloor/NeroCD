@@ -29,6 +29,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const filterRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const breakpoint = window.matchMedia("(min-width: 1024px)");
@@ -64,7 +65,12 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   );
 
   return (
-    <main className="mobile-app-shell bg-background text-foreground">
+    <div className="mobile-app-shell bg-background text-foreground">
+      <a href="#page-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground" onClick={(event) => {
+        event.preventDefault();
+        contentRef.current?.focus();
+        contentRef.current?.scrollIntoView({ block: "start" });
+      }}>Skip to page content</a>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
         <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4">
           <img src="/logo.png" alt="" className="h-7 w-7 object-contain" /><strong className="text-base font-semibold tracking-tight">NeroCD</strong>
@@ -105,7 +111,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
             </Dialog>
           </div>
         </header>
-        <div className="mobile-shell-content mx-auto max-w-[1400px] px-4 py-6 lg:px-6">
+        <main id="page-content" ref={contentRef} tabIndex={-1} aria-label={current.label} className="mobile-shell-content mx-auto max-w-[1400px] scroll-mt-14 px-4 py-6 outline-none lg:px-6">
           {current.filterable && filterable && <div className="mb-5 flex min-w-0 items-end gap-2 sm:items-center">
             <label className="flex min-w-0 flex-1 flex-col items-start gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-3" htmlFor="page-filter"><span className="shrink-0">Filter this page</span>
               <input id="page-filter" ref={filterRef} type="search" className="h-9 min-w-0 w-full max-w-sm rounded-lg border border-border bg-card px-3 text-foreground" placeholder={`Filter ${current.label.toLowerCase()}`} value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -113,8 +119,8 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
             {query && <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setQuery("")}>Clear filter</Button>}
           </div>}
           {children}
-        </div>
+        </main>
       </section>
-    </main>
+    </div>
   );
 }
