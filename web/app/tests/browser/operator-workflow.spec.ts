@@ -1530,3 +1530,57 @@ test("workflow details keep updating after logs close and stop at completion", a
   await page.waitForTimeout(3500);
   expect(requests).toBe(completedRequests);
 });
+
+test("unavailable run links show a return path without requesting logs", async ({ page, browser }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.goto("/sign-in");
+    await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    const logRequests: string[] = [];
+    operator.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/v1/run-logs") logRequests.push(request.url());
+    });
+    for (const width of [320, 390, 430, 1440]) {
+      await operator.setViewportSize({ width, height: 1000 });
+      for (const id of ["run_missing_browser_fixture", runID]) {
+        await operator.goto(`/runs/${id}?q=browser&offset=50`);
+        await expect(operator.getByRole("heading", { name: "Run unavailable", exact: true })).toBeVisible();
+        await expect(operator.getByText("This run does not exist or you do not have access to it.", { exact: true })).toBeVisible();
+        await expect(operator.getByRole("dialog")).toHaveCount(0);
+        expect(await operator.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        if (width === 320 && id === runID) await operator.screenshot({ path: testInfo.outputPath("run-unavailable-320.png"), fullPage: true });
+        await operator.getByRole("link", { name: "Back to runs", exact: true }).click();
+        await expect(operator).toHaveURL((url) => url.pathname === "/runs" && url.searchParams.get("q") === "browser" && url.searchParams.get("offset") === "50");
+      }
+    }
+    expect(logRequests).toHaveLength(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("run detail request failures can be retried without losing the route", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  let fail = true;
+  await page.route(`**/api/v1/runs/${runID}`, (route) => fail
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary run lookup failure" }) })
+    : route.continue());
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.goto(`/runs/${runID}?q=browser`);
+  await expect(page.getByRole("alert")).toHaveText("Unable to load run. Try again.");
+  await page.screenshot({ path: testInfo.outputPath("run-retry-320.png"), fullPage: true });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/runs/${runID}\\?q=browser$`));
+});
