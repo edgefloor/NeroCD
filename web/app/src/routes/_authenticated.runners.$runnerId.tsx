@@ -54,6 +54,7 @@ function RunnerDetailRoute() {
   return <div className="grid min-w-0 gap-4">
     {error ?? <BackToRunners />}
     <RunnerDetailView
+      key={runnerId}
       controlsDisabled={failedQueries.length > 0}
       runner={runner.data}
       canAdmin={(principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin")}

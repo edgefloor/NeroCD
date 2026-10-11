@@ -331,3 +331,22 @@ test("successful enrollment reveals its secret without waiting for inventory ref
   expect(Boolean(screen.queryByRole("dialog", { name: "One-time runner enrollment secret" }))).toBe(true);
   expect(refetch).not.toHaveBeenCalled();
 });
+
+
+test("changing cached runner details clears the previous revocation confirmation", () => {
+  vi.mocked(useQuery).mockImplementation((options) => {
+    const key = (options as { queryKey?: readonly string[] }).queryKey;
+    return { data: key?.[0] === "runner" ? { ...runner, id: key[1], name: `Runner ${key[1]}` } : { roles: ["runner_admin"] }, isError: false, isPending: false, refetch: vi.fn() } as never;
+  });
+  const Component = RunnerDetailRoute.options.component!;
+  const view = render(<Component />);
+  fireEvent.click(screen.getByRole("button", { name: "Revoke credential" }));
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  router.params = { runnerId: "runner_2" };
+  view.rerender(<Component />);
+  expect(screen.getByText("Runner runner_2")).toBeTruthy();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(revokeRunnerToken).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Revoke credential" }));
+  expect(screen.getByRole("dialog")).toBeTruthy();
+});
