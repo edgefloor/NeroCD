@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { templatesQuery, allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
-import { useApprovalDecision, useDeploymentActions, useDeploymentMutations, useProjectMutations, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
+import { useApprovalDecision, useDeploymentActions, useProjectMutations, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
@@ -279,12 +279,12 @@ test.each(["confirm", "cancel"] as const)("deployment %s retains its acknowledge
   });
   const { client, wrapper } = setup();
   client.setQueryData(queryKeys.deploymentHistory("env_one"), [original]);
-  function Observer() { useQuery(deploymentsQuery()); useQuery(deploymentQuery("dep_1")); return useDeploymentMutations(); }
+  function Observer() { useQuery(deploymentsQuery()); useQuery(deploymentQuery("dep_1")); return useDeploymentActions(); }
   const mounted = renderHook(() => Observer(), { wrapper });
   await waitFor(() => expect(client.getQueryState(queryKeys.deployment("dep_1"))?.status).toBe("success"));
   await act(async () => {
-    if (action === "confirm") await mounted.result.current.confirm.mutateAsync({ id: "dep_1" });
-    else await mounted.result.current.cancel.mutateAsync({ deployment_id: "dep_1", request_id: "cancel_one" });
+    if (action === "confirm") await mounted.result.current.confirm("dep_1");
+    else await mounted.result.current.cancel({ deployment_id: "dep_1", request_id: "cancel_one" });
   });
   expect(client.getQueryData(queryKeys.deployment("dep_1"))).toEqual(acknowledged);
   expect(client.getQueryData(queryKeys.deployments())).toMatchObject({ items: [acknowledged], count: 1, total: 1 });
