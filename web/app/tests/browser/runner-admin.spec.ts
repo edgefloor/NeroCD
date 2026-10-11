@@ -386,3 +386,30 @@ test("failed runner pages return to the first page without losing their filter",
   await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser");
   await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
 });
+
+
+test("invalid runner timestamps leave inventory and detail controls usable", async ({ page }, testInfo) => {
+  await createRunnerAdmin(page);
+  const runner = await registerRunner(page);
+  const response = await page.request.get(`/api/v1/runners/${runner.id}`);
+  const record = { ...await response.json(), last_heartbeat_at: "not-a-date", registered_at: "not-a-date" };
+  await page.route(/\/api\/v1\/runners(?:\?.*)?$/, (route) => route.fulfill({ json: { items: [record], count: 1, total: 1, offset: 0, limit: 50 } }));
+  await page.route(`**/api/v1/runners/${runner.id}`, (route) => route.fulfill({ json: record }));
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/runners");
+    const link = page.getByRole("link", { name: new RegExp(runner.name) });
+    await expect(link).toContainText("Heartbeat unavailable; runner connectivity cannot be determined.");
+    await expect(link).toContainText("Heartbeat Unavailable");
+    await link.click();
+    await expect(page.getByText("Heartbeat unavailable; runner connectivity cannot be determined.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Active and recently observed.", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toBeEnabled();
+    await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("runner-invalid-heartbeat-320.png"), animations: "disabled" });
+  }
+  expect(errors).toEqual([]);
+});

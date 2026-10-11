@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { TaskRun } from "@/api";
-import { formatDuration } from "./format";
+import { formatDate, formatDuration } from "./format";
 
 afterEach(() => vi.useRealTimers());
 const run = (started_at: string, finished_at?: string) => ({ started_at, finished_at }) as TaskRun;
@@ -22,4 +22,13 @@ test("unfinished runs use elapsed time and invalid intervals are explicit", () =
   expect(formatDuration(run("invalid"))).toBe("Unavailable");
   expect(formatDuration(run("2026-10-11T12:00:00Z", "invalid"))).toBe("Unavailable");
   expect(formatDuration(run("2026-10-11T13:00:00Z"))).toBe("Unavailable");
+});
+
+
+test("date labels distinguish missing and invalid timestamps without throwing", () => {
+  expect(formatDate(undefined)).toBe("Pending");
+  expect(formatDate("")).toBe("Pending");
+  expect(formatDate("not-a-date")).toBe("Unavailable");
+  expect(formatDate("2026-99-99T00:00:00Z")).toBe("Unavailable");
+  expect(formatDate("2026-10-11T12:00:00Z")).toMatch(/Oct/);
 });

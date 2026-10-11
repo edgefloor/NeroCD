@@ -267,3 +267,11 @@ test("failed later runner pages offer a return to the first page", () => {
   view.rerender(<Component />);
   expect(screen.queryByRole("button", { name: "First runners page" })).toBeNull();
 });
+
+
+test.each(["", "not-a-date"])("runner details do not report invalid heartbeat %j as recent", (heartbeat) => {
+  render(<RunnerDetailView runner={{ ...runner, last_heartbeat_at: heartbeat } as never} canAdmin onRevoke={vi.fn()} />);
+  expect(screen.getByText("Heartbeat unavailable; runner connectivity cannot be determined.")).toBeTruthy();
+  expect(screen.queryByText("Active and recently observed.")).toBeNull();
+  expect(screen.getByRole("button", { name: "Revoke credential" })).toBeTruthy();
+});

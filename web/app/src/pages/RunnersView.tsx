@@ -17,7 +17,8 @@ function splitValues(value: string): string[] { return value.split(",").map((ite
 function runnerState(runner: Runner): string {
   if (runner.status === "revoked") return "Credential revoked; the next authenticated runner operation is denied.";
   const age = Date.now() - new Date(runner.last_heartbeat_at).getTime();
-  if (Number.isFinite(age) && age > 2 * 60_000) return "Heartbeat is stale; wait for recovery or inspect runner connectivity.";
+  if (!Number.isFinite(age)) return "Heartbeat unavailable; runner connectivity cannot be determined.";
+  if (age > 2 * 60_000) return "Heartbeat is stale; wait for recovery or inspect runner connectivity.";
   return "Active and recently observed.";
 }
 

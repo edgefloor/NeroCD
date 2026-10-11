@@ -15,7 +15,9 @@ export function formatDate(value: string | undefined): string {
   if (!value) {
     return "Pending";
   }
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "Unavailable";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 export function formatDuration(run: TaskRun): string {
