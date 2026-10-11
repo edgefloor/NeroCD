@@ -361,3 +361,28 @@ test("pending enrollment preserves its draft and recovers after failure", async 
   expect(payloads[1]).toEqual(payloads[0]);
   await page.keyboard.press("Escape");
 });
+
+
+test("failed runner pages return to the first page without losing their filter", async ({ page }, testInfo) => {
+  await createRunnerAdmin(page);
+  const runner = await registerRunner(page);
+  await page.route(/\/api\/v1\/runners(?:\?.*)?$/, (route) => {
+    const url = new URL(route.request().url());
+    return url.searchParams.get("offset") === "50"
+      ? route.fulfill({ status: 503, json: { error: "Later page unavailable" } })
+      : route.continue();
+  });
+  await page.goto("/runners?q=browser&offset=50");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("alert")).toHaveText("Runner inventory is unavailable.");
+    await expect(page.getByRole("button", { name: "First runners page", exact: true })).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("runner-page-recovery-320.png"), animations: "disabled" });
+  }
+  await page.getByRole("button", { name: "First runners page", exact: true }).press("Enter");
+  await expect(page).toHaveURL((url) => url.pathname === "/runners" && !url.searchParams.has("offset") && url.searchParams.get("q") === "browser");
+  await expect(page.getByRole("link", { name: new RegExp(runner.name) })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser");
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+});

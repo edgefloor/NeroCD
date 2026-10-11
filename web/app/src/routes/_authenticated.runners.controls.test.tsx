@@ -7,7 +7,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 const router = vi.hoisted(() => ({
   params: { runnerId: "runner_1" },
-  search: { q: "" },
+  search: { q: "" } as { q: string; offset?: number },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -253,4 +253,17 @@ test("pending runner revocation stays visible and rejects duplicate submissions"
   fireEvent.click(within(dialog).getByRole("button", { name: "Revoke credential" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(onRevoke).toHaveBeenCalledTimes(2);
+});
+
+
+test("failed later runner pages offer a return to the first page", () => {
+  queryFailure();
+  router.search = { q: "edge", offset: 50 };
+  const Component = RunnersRoute.options.component!;
+  const view = render(<Component />);
+  expect(screen.getByRole("button", { name: "First runners page" })).toBeTruthy();
+  expect(screen.queryByText("No runners match this view")).toBeNull();
+  router.search = { q: "edge" };
+  view.rerender(<Component />);
+  expect(screen.queryByRole("button", { name: "First runners page" })).toBeNull();
 });

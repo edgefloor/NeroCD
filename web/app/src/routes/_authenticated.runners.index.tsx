@@ -22,7 +22,10 @@ function RunnersRoute() {
   const failedQueries = [runners, principal].filter((query) => query.isError);
   const error = failedQueries.length ? <section className="space-y-3">
     <p role="alert">Runner inventory is unavailable.</p>
-    <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button>
+    <div className="flex flex-wrap gap-2">
+      <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button>
+      {!runners.data && page.offset > 0 ? <Button variant="outline" onClick={page.first}>First runners page</Button> : null}
+    </div>
   </section> : null;
   if (error && (!runners.data || !principal.data)) return error;
   if (runners.isPending || principal.isPending) return <section className="space-y-3"><p role="status">Loading runners...</p><SkeletonTable rows={5} /></section>;
