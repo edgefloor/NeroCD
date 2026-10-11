@@ -1796,3 +1796,22 @@ test("run Details links retain filtered page context", async ({ page }) => {
     await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser-logs");
   }
 });
+
+
+test("empty run output reflects whether the run can still produce logs", async ({ page }) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  await page.route("**/api/v1/run-logs?*", (route) => {
+    const url = new URL(route.request().url());
+    return route.fulfill({ json: { items: [], count: 0, total: 0, offset: Number(url.searchParams.get("offset")), limit: Number(url.searchParams.get("limit")) } });
+  });
+  await page.goto(`/runs/${runID}`);
+  const dialog = page.getByRole("dialog", { name: `run ${runID}` });
+  await expect(dialog.getByText("waiting for runner output...", { exact: true })).toBeVisible();
+  await postJSON(page, "/api/v1/runs/cancel", { run_id: runID });
+  await expect(dialog.getByText("No run output was recorded.", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("waiting for runner output...", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByText("Following active run output.", { exact: true })).toHaveCount(0);
+});

@@ -1,8 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useEffect, useState } from "react";
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { apiSnapshot } from "@/api/compat";
 import { RunsView } from "./RunsView";
+import { TerminalLogDialog } from "@/components/runs/TerminalLogDialog";
+
+afterEach(cleanup);
 
 const run = {
   id: "run_logs",
@@ -91,4 +94,15 @@ test("a failed log refresh keeps previously loaded output readable", () => {
   renderRuns("run_logs", [{ id: "log_1", run_id: "run_logs", sequence: 1, stream: "stdout", message: "Completed build step" }], false, new Error("network unavailable"));
   expect(screen.getByRole("alert").textContent).toContain("network unavailable");
   expect(screen.getByText("Completed build step")).toBeTruthy();
+});
+
+test.each(["succeeded", "failed", "canceled"])("%s runs with no logs do not promise future output", (status) => {
+  render(<TerminalLogDialog run={{ id: "run_empty", status } as never} logs={[]} open onOpenChange={vi.fn()} />);
+  expect(screen.getByText("No run output was recorded.")).toBeTruthy();
+  expect(screen.queryByText(/waiting for runner output/)).toBeNull();
+});
+
+test("active runs with no logs explain that output is pending", () => {
+  render(<TerminalLogDialog run={{ id: "run_empty", status: "queued" } as never} logs={[]} open onOpenChange={vi.fn()} />);
+  expect(screen.getByText(/waiting for runner output/)).toBeTruthy();
 });

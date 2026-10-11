@@ -1,6 +1,6 @@
 import { ReactNode, useMemo, useRef } from "react";
 import { LoaderCircle, X } from "lucide-react";
-import type { RunLog, TaskRun } from "@/api";
+import { shouldPollRun, type RunLog, type TaskRun } from "@/api";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -118,7 +118,7 @@ export function TerminalLogDialog({
             </div>
           ) : orderedLogs.length === 0 ? error ? null : (
             <div className="text-muted-foreground">
-              <span className="text-success">system</span> waiting for runner output...
+              {shouldPollRun(run) ? "waiting for runner output..." : "No run output was recorded."}
             </div>
           ) : (
             <div className="grid gap-1">
