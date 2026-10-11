@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { DeploymentsView } from "./DeploymentsView";
+import { DeploymentDetailView, DeploymentsView } from "./DeploymentsView";
 
 vi.mock("@tanstack/react-router", () => ({ Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
 afterEach(cleanup);
@@ -69,4 +69,17 @@ test("viewers can select deployment history without receiving write controls", (
   expect(screen.queryByRole("combobox", { name: "Immutable revision" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Request deployment" })).toBeNull();
   expect(screen.queryByRole("form")).toBeNull();
+});
+
+
+test("deployment revision choices identify missing commits", () => {
+  render(<DeploymentsView {...props} revisions={[{ id: "revision_a", service_id: "service_a", requested_ref: "main", git_commit: "" }] as never} selectedServiceID="service_a" selectedEnvironmentID="env_a" />);
+  expect(screen.getByRole("option", { name: "main (commit unavailable)" })).toBeTruthy();
+});
+
+test("deployment details identify missing provenance instead of rendering blanks", () => {
+  render(<DeploymentDetailView deployment={{ id: "dep_empty", status: "queued", desired_revision_id: "revision_a", previous_healthy_revision_id: "", created_at: "2026-01-01T00:00:00Z" } as never} revision={{ id: "revision_a", requested_ref: "main", git_commit: "", compose_hash: "", content_identity: "" } as never} related={[]} logs={[]} canOperate={false} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+  expect(screen.getByText("main (commit unavailable)")).toBeTruthy();
+  expect(screen.getAllByText("Not recorded")).toHaveLength(2);
+  expect(screen.getByText("None")).toBeTruthy();
 });

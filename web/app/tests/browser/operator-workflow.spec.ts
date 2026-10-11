@@ -1815,3 +1815,22 @@ test("empty run output reflects whether the run can still produce logs", async (
   await expect(dialog.getByText("waiting for runner output...", { exact: true })).toHaveCount(0);
   await expect(dialog.getByText("Following active run output.", { exact: true })).toHaveCount(0);
 });
+
+test("deployment provenance remains explicit before a revision is resolved", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/deployments?service_id=${fixture.serviceID}&environment_id=${fixture.environmentID}`);
+    await expect(page.getByRole("option", { name: "main (commit unavailable)", exact: true })).toHaveCount(1);
+    await expect(page.getByText(`Commit unavailable · ${fixture.deploymentID}`, { exact: true })).toBeVisible();
+    await page.goto(`/deployments/${fixture.deploymentID}`);
+    await expect(page.getByText("main (commit unavailable)", { exact: true })).toBeVisible();
+    await expect(page.getByText("Not recorded", { exact: true })).toHaveCount(2);
+    await expect(page.getByText("None", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-unresolved-320.png"), fullPage: true });
+  }
+});
