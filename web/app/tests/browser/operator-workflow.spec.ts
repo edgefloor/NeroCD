@@ -4224,3 +4224,41 @@ test("audit runner targets open details and preserve filtered history", async ({
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
 });
+
+
+test("deployment creation retains its receipt when the first detail refresh fails", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const environment = await postJSON<{ id: string }>(page, "/api/v1/environments", {
+    service_id: fixture.serviceID, name: `creation-recovery-${Date.now()}`,
+    compose_project: `creation-recovery-${Date.now()}`, timeout_seconds: 60,
+    rollback_safe: true, confirmation_required: false,
+  });
+  let failRefresh = true;
+  await page.route(/\/api\/v1\/deployments\/[^/?]+$/, (route) => route.request().method() === "GET" && failRefresh
+    ? route.fulfill({ status: 503, json: { error: "First detail refresh unavailable" } })
+    : route.continue());
+  await page.goto(`/deployments?service_id=${fixture.serviceID}&environment_id=${environment.id}`);
+  await page.getByRole("combobox", { name: "Immutable revision", exact: true }).selectOption(fixture.revisionID);
+  const created = page.waitForResponse((response) => response.url().endsWith("/api/v1/deployments") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Request deployment", exact: true }).click();
+  const response = await created;
+  expect(response.ok()).toBe(true);
+  const receipt = await response.json() as { id: string };
+  await expect(page).toHaveURL((url) => url.pathname === `/deployments/${receipt.id}`);
+  await expect(page.getByText("Unable to refresh deployment. Showing previously loaded data.")).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByText(`Deployment ${receipt.id}`, { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-created-refresh-error-320.png"), fullPage: true });
+  }
+  failRefresh = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("Unable to refresh deployment. Showing previously loaded data.")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
+  await expect(page.getByText(`Deployment ${receipt.id}`, { exact: true })).toBeVisible();
+});

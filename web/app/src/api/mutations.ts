@@ -195,7 +195,7 @@ function useDeploymentMutations() {
     await Promise.all([refresh(), client.invalidateQueries({ queryKey: queryKeys.deployment(deployment.id) })]);
   }
   return {
-    create: useMutation({ mutationFn: (input: Parameters<typeof createDeployment>[0]) => createDeployment(input), onSuccess: refresh }),
+    create: useMutation({ mutationFn: (input: Parameters<typeof createDeployment>[0]) => createDeployment(input), onSuccess: retainConfirmedDeployment }),
     confirm: useMutation({ mutationFn: (input: Parameters<typeof confirmDeployment>[0]) => confirmDeployment(input), onSuccess: retainConfirmedDeployment }),
     cancel: useMutation({ mutationFn: (input: Parameters<typeof cancelDeployment>[0]) => cancelDeployment(input), onSuccess: retainConfirmedDeployment }),
   };

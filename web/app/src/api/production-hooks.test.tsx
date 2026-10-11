@@ -621,3 +621,29 @@ test.each(["failure", "success"])("earlier output stays scoped when the previous
   expect(mounted.result.current.loadingPrevious).toBe(false);
   mounted.unmount();
 });
+
+
+test("deployment creation retains its receipt when the first detail fetch fails", async () => {
+  const acknowledged = { id: "dep_created", environment_id: "env_one", status: "queued" };
+  let changed = false;
+  globalThis.fetch = vi.fn<typeof fetch>((_path, init) => {
+    if (init?.method === "POST") {
+      changed = true;
+      return Promise.resolve(json(acknowledged));
+    }
+    return Promise.resolve(changed
+      ? new Response(JSON.stringify({ error: "Refresh unavailable" }), { status: 503 })
+      : json({ items: [], count: 0, total: 0, limit: 50, offset: 0 }));
+  });
+  const { client, wrapper } = setup();
+  const mounted = renderHook(() => { useQuery(deploymentsQuery()); return useDeploymentActions(); }, { wrapper });
+  await waitFor(() => expect(client.getQueryState(queryKeys.deployments())?.status).toBe("success"));
+  await act(async () => {
+    expect(await mounted.result.current.create({ environment_id: "env_one", desired_revision_id: "rev_one", idempotency_key: "create_one" })).toEqual(acknowledged);
+  });
+  expect(client.getQueryData(queryKeys.deployment(acknowledged.id))).toEqual(acknowledged);
+  await expect(client.fetchQuery({ ...deploymentQuery(acknowledged.id), staleTime: 0 })).rejects.toThrow("Refresh unavailable");
+  expect(client.getQueryData(queryKeys.deployment(acknowledged.id))).toEqual(acknowledged);
+  expect(client.getQueryState(queryKeys.deployment(acknowledged.id))?.status).toBe("error");
+  mounted.unmount();
+});
