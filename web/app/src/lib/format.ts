@@ -20,7 +20,7 @@ export function formatDate(value: string | undefined): string {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
-export function formatDuration(run: TaskRun): string {
+export function formatDuration(run: Pick<TaskRun, "started_at" | "finished_at">): string {
   const start = new Date(run.started_at).getTime();
   const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "Unavailable";

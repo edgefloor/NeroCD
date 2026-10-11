@@ -31,7 +31,7 @@ test("shows declared order with only contract-backed status and timing", () => {
   expect(screen.getByText("Checkout source")).toBeTruthy();
   expect(screen.getByText("Deploy")).toBeTruthy();
   expect(screen.getByText("Succeeded")).toBeTruthy();
-  expect(screen.getByText("1m")).toBeTruthy();
+  expect(screen.getByText("1m 30s")).toBeTruthy();
   expect(screen.getByText("Status not reported")).toBeTruthy();
   expect(screen.getAllByText("Not reported")).toHaveLength(3);
   expect(screen.getByText("Depends on: checkout")).toBeTruthy();
@@ -64,4 +64,14 @@ test.each([
   expect(screen.queryByText("0s")).toBeNull();
   expect(screen.queryByText("In progress")).toBeNull();
   expect(screen.queryByText(/NaN/)).toBeNull();
+});
+
+
+test.each([
+  ["2026-09-05T12:00:59.900Z", "59s"],
+  ["2026-09-05T12:01:01Z", "1m 1s"],
+  ["2026-09-05T13:01:00Z", "1h 1m"],
+])("workflow duration for %s preserves the shared elapsed-time precision", (finished_at, expected) => {
+  render(<WorkflowDiagnostics run={{ ...run, workflow_state: { steps: [{ ...run.workflow_state.steps[0]!, finished_at }] } }} />);
+  expect(screen.getByText(expected)).toBeTruthy();
 });

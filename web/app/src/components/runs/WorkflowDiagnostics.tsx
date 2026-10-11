@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { TaskRun, WorkflowStepState } from "@/api";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatDuration } from "@/lib/format";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -13,13 +13,7 @@ function duration(state: WorkflowStepState): string {
   const start = new Date(state.started_at).getTime();
   if (!Number.isFinite(start)) return "Unavailable";
   if (!state.finished_at) return state.status === "running" ? "In progress" : "Not reported";
-  const end = new Date(state.finished_at).getTime();
-  if (!Number.isFinite(end) || end < start) return "Unavailable";
-  const elapsed = end - start;
-  const seconds = Math.round(elapsed / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return formatDuration({ started_at: state.started_at, finished_at: state.finished_at });
 }
 
 export function WorkflowDiagnostics({ run }: { run: TaskRun }): ReactNode {

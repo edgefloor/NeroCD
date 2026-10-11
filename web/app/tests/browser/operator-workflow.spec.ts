@@ -1795,7 +1795,7 @@ test("workflow details keep updating after logs close and stop at completion", a
     await route.fulfill({ response, json: {
       ...run, status: finished ? "succeeded" : "running",
       workflow: { steps: [{ id: "build", name: "Build application", run_spec: { type: "shell", inputs: {} }, requires_ack: false }] },
-      workflow_state: { steps: [{ id: "build", name: "Build application", status: finished ? "succeeded" : "running", started_at: "2026-01-01T00:00:00Z", ...(finished ? { finished_at: "2026-01-01T00:00:05Z" } : {}) }] },
+      workflow_state: { steps: [{ id: "build", name: "Build application", status: finished ? "succeeded" : "running", started_at: "2026-01-01T00:00:00Z", ...(finished ? { finished_at: "2026-01-01T00:01:30Z" } : {}) }] },
     } });
   });
   const diagnostics = page.locator('[aria-labelledby="workflow-diagnostics-title"]');
@@ -1808,7 +1808,7 @@ test("workflow details keep updating after logs close and stop at completion", a
     await expect(diagnostics.getByText("Running", { exact: true })).toBeVisible();
     finished = true;
     await expect(diagnostics.getByText("Succeeded", { exact: true })).toBeVisible();
-    await expect(diagnostics.getByText("5s", { exact: true })).toBeVisible();
+    await expect(diagnostics.getByText("1m 30s", { exact: true })).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width === 320) await diagnostics.screenshot({ path: testInfo.outputPath("workflow-completed-320.png") });
