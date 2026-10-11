@@ -82,3 +82,18 @@ test("empty user pages have a truthful range and direct first-page recovery", ()
   view.rerender(<UsersSettings {...props} busy />);
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "First users page" }).disabled).toBe(true);
 });
+
+test("failed user refresh preserves loaded identities and disables destructive controls until retry", async () => {
+  const result = { items: [activeUser], count: 1, limit: usersPageSize, offset: 0, total: 1 };
+  usersAPI.listUsers.mockRejectedValue(new Error("Temporary failure"));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(["users", { limit: usersPageSize, offset: 0 }], result);
+  render(<QueryClientProvider client={client}><UsersSettingsPanel /></QueryClientProvider>);
+  await screen.findByText("Unable to refresh users. Showing previously loaded users.");
+  expect(screen.getByText(activeUser.email)).toBeTruthy();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: `Offboard ${activeUser.email}` }).disabled).toBe(true);
+  usersAPI.listUsers.mockResolvedValue(result);
+  fireEvent.click(screen.getByRole("button", { name: "Retry users" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: `Offboard ${activeUser.email}` }).disabled).toBe(false);
+});

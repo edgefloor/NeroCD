@@ -2574,3 +2574,32 @@ test("user pagination recovers from a shrunken result set on mobile", async ({ p
     await expect(navigation.getByText("Showing 1–1 of 11", { exact: true })).toBeVisible();
   }
 });
+
+test("user list request failures retry the selected page", async ({ page }, testInfo) => {
+  await page.goto("/settings");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  let failLater = true;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/users?*", (route) => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? 0);
+    offsets.push(offset);
+    if (offset === 10 && failLater) return route.fulfill({ status: 503, json: { error: "Temporary user list failure" } });
+    return route.fulfill({ json: { items: [{ id: `user_page_${offset}`, name: "User pagination", email: `page-${offset}@example.test`, status: "disabled", global_role: "user", created_at: "2026-10-11T12:00:00Z", updated_at: "2026-10-11T12:00:00Z" }], count: 1, total: 11, limit: 10, offset } });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Next users", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Unable to load users.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Retry users", exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("users-retry-320.png"), fullPage: true });
+  }
+  offsets.length = 0;
+  failLater = false;
+  await page.getByRole("button", { name: "Retry users", exact: true }).click();
+  await expect(page.getByText("page-10@example.test", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  expect(offsets).toEqual([10]);
+});
