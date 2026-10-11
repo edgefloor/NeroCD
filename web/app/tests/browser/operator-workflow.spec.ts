@@ -2704,3 +2704,56 @@ test("settings recover the selected member page and preserve drafts after permis
   await expect(page.getByRole("button", { name: "Create account", exact: true })).toBeEnabled();
   expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
 });
+
+test("approvals retry the selected page and retain decisions context through run refresh failure", async ({ page }, testInfo) => {
+  await page.goto("/approvals");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createRunLogFixture(page, true);
+  const response = await page.request.get("/api/v1/approvals?limit=100");
+  expect(response.status()).toBe(200);
+  const result = await response.json() as { items: Array<{ run_id: string }> };
+  const approval = result.items.find((item) => item.run_id === fixture.runID);
+  expect(approval).toBeTruthy();
+  let failPage = true;
+  let failRun = false;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/approvals?*", async (route) => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? 0);
+    offsets.push(offset);
+    if (failPage) return route.fulfill({ status: 503, json: { error: "Temporary approval list failure" } });
+    return route.fulfill({ json: { items: [approval], count: 1, limit: 50, offset, total: 51 } });
+  });
+  await page.route(`**/api/v1/runs/${fixture.runID}`, async (route) => {
+    if (failRun) return route.fulfill({ status: 503, json: { error: "Temporary run lookup failure" } });
+    return route.continue();
+  });
+  await page.goto(`/approvals?offset=50&q=${fixture.runID}`);
+  await expect(page.getByRole("alert")).toHaveText("Unable to load approvals.");
+  expect(offsets.every((offset) => offset === 50)).toBe(true);
+  offsets.length = 0;
+  failPage = false;
+  await page.getByRole("button", { name: "Retry approvals", exact: true }).click();
+  const approve = page.getByRole("button", { name: "Approve", exact: true });
+  await expect(approve).toBeEnabled();
+  expect(offsets).toEqual([50]);
+  failRun = true;
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Unable to refresh approval information. Decisions are unavailable until retry succeeds.");
+  await expect(approve).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Reject", exact: true })).toBeDisabled();
+  await expect(page.getByRole("link", { name: "Run details", exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Retry approvals", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("approvals-recovery-320.png"), fullPage: true });
+  }
+  failRun = false;
+  await page.getByRole("button", { name: "Retry approvals", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(approve).toBeEnabled();
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
+  expect(new URL(page.url()).searchParams.get("q")).toBe(fixture.runID);
+});
