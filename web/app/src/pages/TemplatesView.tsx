@@ -15,6 +15,8 @@ import { SkeletonTable } from "@/components/common/SkeletonCard";
 import { matchesQuery, projectName } from "@/lib/format";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
+const templateKinds = ["ansible", "opentofu", "shell", "terraform", "python", "powershell"];
+
 function TemplateForm({
   snapshot,
   busy,
@@ -85,7 +87,7 @@ function TemplateForm({
           defaultValue="shell"
           className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
         >
-          {["ansible", "opentofu", "shell", "terraform", "python", "powershell"].map((kind) => (
+          {templateKinds.map((kind) => (
             <option key={kind} value={kind}>
               {kind}
             </option>
@@ -160,7 +162,7 @@ function TemplateEditDialog({
       kind,
       run_spec: {
         ...template.run_spec,
-        type: kind,
+        type: kind === template.kind ? template.run_spec.type : kind,
         process: command.length ? { ...template.run_spec.process, command } : undefined,
       },
       workflow: template.workflow,
@@ -206,7 +208,7 @@ function TemplateEditDialog({
               defaultValue={template.kind}
               className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
             >
-              {["ansible", "opentofu", "shell", "terraform", "python", "powershell"].map((kind) => (
+              {(templateKinds.includes(template.kind) ? templateKinds : [template.kind, ...templateKinds]).map((kind) => (
                 <option key={kind} value={kind}>
                   {kind}
                 </option>

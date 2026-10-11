@@ -3827,3 +3827,29 @@ test("template command editing preserves argument boundaries and rejects incompl
     await expect(dialog).toHaveCount(0);
   }
 });
+
+
+test("renaming templates preserves unlisted kinds and their execution types", async ({ page }) => {
+  await page.goto("/templates");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Kind preservation ${Date.now()}` });
+  for (const kind of ["release-task", "python"]) {
+    const runSpec = { type: "shell", inputs: {}, process: { command: ["echo", "unchanged"] } };
+    const template = await postJSON<{ id: string }>(page, "/api/v1/templates", { project_id: project.id, name: `000 Preserve ${kind} ${Date.now()}`, kind, run_spec: runSpec, workflow: { steps: [] }, runner_tags: [], requires_ack: false });
+    await page.goto(`/templates?q=${template.id}`);
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Edit template", exact: true });
+      await expect(dialog.getByRole("combobox", { name: "Kind", exact: true })).toHaveValue(kind);
+      await dialog.getByRole("textbox", { name: "Template Name", exact: true }).fill(`000 Renamed ${kind} ${width}`);
+      const response = page.waitForResponse((result) => result.request().method() === "PATCH" && new URL(result.url()).pathname === "/api/v1/templates");
+      await dialog.getByRole("button", { name: "Save template", exact: true }).click();
+      const saved = await response;
+      expect(saved.status()).toBe(200);
+      expect(await saved.json()).toMatchObject({ kind, run_spec: runSpec });
+      await expect(dialog).toHaveCount(0);
+    }
+  }
+});

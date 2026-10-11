@@ -84,3 +84,29 @@ test.each(["shell", "ansible", "opentofu", "terraform", "python", "powershell"])
   expect(create).toHaveBeenCalledWith(expect.objectContaining({ kind, run_spec: expect.objectContaining({ type: kind, process: { command: ["echo", "ready"] } }) }));
   expect(select.value).toBe("shell");
 });
+
+test.each([
+  ["release-task", "shell"],
+  ["python", "shell"],
+  ["compose-deploy", "compose-deploy"],
+])("renaming kind %s preserves execution type %s", async (kind, type) => {
+  const template = { ...snapshot.templates[0]!, kind, run_spec: { ...snapshot.templates[0]!.run_spec, type } };
+  const update = vi.fn(async () => ({ id: template.id }));
+  render(<TemplatesView snapshot={{ ...snapshot, templates: [template] }} busy="" actions={{ create: vi.fn(), update, run: vi.fn() }} onRunRequested={vi.fn()} canOperateProject={() => true} />);
+  fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+  const dialog = within(screen.getByRole("dialog", { name: "Edit template" }));
+  expect(dialog.getByRole<HTMLSelectElement>("combobox", { name: "Kind" }).value).toBe(kind);
+  fireEvent.change(dialog.getByRole("textbox", { name: "Template Name" }), { target: { value: "Renamed" } });
+  await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Save template" })); });
+  expect(update).toHaveBeenCalledWith(expect.objectContaining({ kind, run_spec: template.run_spec }));
+});
+
+test("changing the selected kind also changes the execution type", async () => {
+  const update = vi.fn(async () => ({ id: "template_one" }));
+  render(<TemplatesView snapshot={snapshot} busy="" actions={{ create: vi.fn(), update, run: vi.fn() }} onRunRequested={vi.fn()} canOperateProject={() => true} />);
+  fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+  const dialog = within(screen.getByRole("dialog", { name: "Edit template" }));
+  fireEvent.change(dialog.getByRole("combobox", { name: "Kind" }), { target: { value: "python" } });
+  await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Save template" })); });
+  expect(update).toHaveBeenCalledWith(expect.objectContaining({ kind: "python", run_spec: expect.objectContaining({ type: "python" }) }));
+});
