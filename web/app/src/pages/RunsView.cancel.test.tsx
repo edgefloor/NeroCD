@@ -68,3 +68,9 @@ test("cancellation failures stay beside only the affected run in both layouts", 
   view.rerender(<RunsView snapshot={apiSnapshot({ runs: [run, other] })} busy={true} onCancel={vi.fn()} canOperateProject={() => true} />);
   expect(screen.queryAllByRole("alert")).toHaveLength(0);
 });
+
+
+test.each(["succeeded", "failed", "canceled"])("%s runs without a finish timestamp do not report an active duration", (status) => {
+  render(<RunsTable runs={[{ ...run, status }]} projects={[]} templates={[]} />);
+  expect(screen.getAllByText("Not reported")).toHaveLength(2);
+});

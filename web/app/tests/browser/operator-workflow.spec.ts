@@ -2730,6 +2730,14 @@ test("short run durations retain seconds on desktop and mobile", async ({ page }
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-duration-320.png"), fullPage: true });
   }
+  delete run.finished_at;
+  await page.reload();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByText("Not reported", { exact: true }).filter({ visible: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+
 });
 
 test("mobile run cards reveal complete template and project names", async ({ page }, testInfo) => {

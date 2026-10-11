@@ -4,6 +4,7 @@ import { Ban, FileText, ListTree, Terminal } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { shouldPollRun } from "@/api";
 import type { ActionError, ApiSnapshot, RunLog, TaskRun, Project, TaskTemplate } from "@/api";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { ActionErrorMessage } from "@/components/common/ActionErrorMessage";
@@ -14,6 +15,10 @@ import { rememberTerminalLogOpener, TerminalLogDialog } from "@/components/runs/
 
 function canCancel(run: TaskRun): boolean {
   return !["succeeded", "failed", "canceled"].includes(run.status);
+}
+
+function runDuration(run: TaskRun): string {
+  return !run.finished_at && !shouldPollRun(run) ? "Not reported" : formatDuration(run);
 }
 
 export function RunsTable({
@@ -54,7 +59,7 @@ export function RunsTable({
               <StatusBadge status={run.status} className="shrink-0" />
             </div>
             <div className="flex min-w-0 flex-wrap gap-2 text-xs text-muted-foreground">
-              <span className="shrink-0 rounded-lg bg-muted/60 px-2 py-1 font-mono">{formatDuration(run)}</span>
+              <span className="shrink-0 rounded-lg bg-muted/60 px-2 py-1 font-mono">{runDuration(run)}</span>
               <span className="min-w-0 max-w-full break-all rounded-lg bg-muted/60 px-2 py-1 font-mono">{run.id}</span>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -116,7 +121,7 @@ export function RunsTable({
                   </div>
                 </TableCell>
                 <TableCell className="whitespace-normal break-words align-top text-sm [overflow-wrap:anywhere]">{projectName(projects, run.project_id)}</TableCell>
-                <TableCell className="whitespace-normal break-words align-top text-sm">{formatDuration(run)}</TableCell>
+                <TableCell className="whitespace-normal break-words align-top text-sm">{runDuration(run)}</TableCell>
                 <TableCell className="whitespace-normal align-top text-right">
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
