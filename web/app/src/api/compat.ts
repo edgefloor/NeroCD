@@ -11,13 +11,10 @@ import type {
   TaskTemplate,
 } from "./resources";
 import {
-  approveRun as approveRunRequest,
   archiveProject as archiveProjectRequest,
-  cancelRun as cancelRunRequest,
   createProject as createProjectRequest,
   createRepository as createRepositoryRequest,
   createTemplate as createTemplateRequest,
-  rejectRun as rejectRunRequest,
   requestRun as requestRunRequest,
   updateProject as updateProjectRequest,
   updateTemplate as updateTemplateRequest,
@@ -63,9 +60,6 @@ export const createRepository = (_token: string, input: Parameters<typeof create
 export const createTemplate = (_token: string, input: Parameters<typeof createTemplateRequest>[0]) => createTemplateRequest(input);
 export const updateTemplate = (_token: string, id: string, input: Omit<Parameters<typeof updateTemplateRequest>[0], "id">) => updateTemplateRequest({ id, ...input });
 export const requestRun = (_token: string, input: Parameters<typeof requestRunRequest>[0]) => requestRunRequest(input);
-export const approveRun = (_token: string, runID: string) => approveRunRequest({ run_id: runID });
-export const rejectRun = (_token: string, runID: string) => rejectRunRequest({ run_id: runID });
-export const cancelRun = (_token: string, runID: string) => cancelRunRequest({ run_id: runID });
 
 export type MutateFn = <T>(key: string, action: () => Promise<T>, success: string) => Promise<T | undefined>;
 
