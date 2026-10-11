@@ -207,11 +207,17 @@ function ServiceAccountEditor({ account, busy, disabled, saving, rotating, saveE
     if (!busy) setDraft({});
   }}>
     <div className="min-w-0">
-      <Input name="name" disabled={busy} aria-label={`Name for ${account.name}`} value={name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} maxLength={128} required />
+      <Input name="name" disabled={busy} aria-label={`Name for ${account.name}`} value={name} onChange={(event) => {
+        const value = event.target.value;
+        setDraft((current) => ({ ...current, name: value === account.name ? undefined : value }));
+      }} maxLength={128} required />
       <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{account.id}</p>
     </div>
     <div className="grid gap-1">
-      <Select name="role" disabled={busy} aria-label={`Role for ${account.name}`} value={role} onChange={(event) => setDraft((current) => ({ ...current, role: event.target.value as ServiceAccount["role"] }))}>
+      <Select name="role" disabled={busy} aria-label={`Role for ${account.name}`} value={role} onChange={(event) => {
+        const value = event.target.value as ServiceAccount["role"];
+        setDraft((current) => ({ ...current, role: value === account.role ? undefined : value }));
+      }}>
         <option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option>
       </Select>
       <Badge variant={account.status === "active" ? "success" : "secondary"}>{account.status}</Badge>

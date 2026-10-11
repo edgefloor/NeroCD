@@ -264,6 +264,26 @@ test("account refresh updates untouched fields and reset restores the latest val
 });
 
 
+test("reverted account edits follow subsequent server updates", async () => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [account], count: 1, total: 1, offset: 0, limit: 10 });
+  const { client } = renderPanel();
+  const row = await screen.findByRole("form", { name: "Edit service account Build bot" });
+  const name = within(row).getByRole<HTMLInputElement>("textbox");
+  const role = within(row).getByRole<HTMLSelectElement>("combobox");
+  fireEvent.change(name, { target: { value: "Temporary edit" } });
+  fireEvent.change(role, { target: { value: "owner" } });
+  fireEvent.change(name, { target: { value: account.name } });
+  fireEvent.change(role, { target: { value: account.role } });
+  expect(within(row).getByRole<HTMLButtonElement>("button", { name: "Reset" }).disabled).toBe(true);
+  const latest = { ...account, name: "Remote rename", role: "viewer" };
+  await act(async () => client.setQueryData(["service-accounts", "proj_one", 0], { items: [latest], count: 1, total: 1, offset: 0, limit: 10 }));
+  await screen.findByRole("form", { name: "Edit service account Remote rename" });
+  expect(name.value).toBe("Remote rename");
+  expect(role.value).toBe("viewer");
+  expect(within(row).getByRole<HTMLButtonElement>("button", { name: "Reset" }).disabled).toBe(true);
+  expect(serviceAccountsAPI.update).not.toHaveBeenCalled();
+});
+
 test("a confirmed save remains visible when its follow-up refresh fails", async () => {
   serviceAccountsAPI.list.mockResolvedValueOnce({ items: [account], count: 1, total: 1, offset: 0, limit: 10 }).mockRejectedValue(new Error("Refresh unavailable"));
   const saved = { ...account, name: "Saved account", role: "viewer" };
