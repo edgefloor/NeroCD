@@ -3500,3 +3500,38 @@ test("deployment recovery state remains authoritative when a failure reason is p
     }
   }
 });
+
+
+test("long deployment failure reasons and image digests wrap inside their cards", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const deploymentResponse = await page.request.get(`/api/v1/deployments/${fixture.deploymentID}`);
+  const deployment = await deploymentResponse.json();
+  const revisionsResponse = await page.request.get(`/api/v1/revisions?service_id=${fixture.serviceID}`);
+  const revisions = await revisionsResponse.json();
+  const revision = revisions.items.find((item: { id: string }) => item.id === fixture.revisionID);
+  expect(revision).toBeTruthy();
+  const failure = `registry_unavailable_${"remote_registry_".repeat(12)}`;
+  const digest = `registry.example.invalid/${"nested-service/".repeat(10)}application@sha256:${"a".repeat(64)}`;
+  await page.route(`**/api/v1/deployments/${fixture.deploymentID}`, (route) => route.fulfill({ json: { ...deployment, status: "failed", failure_code: failure } }));
+  await page.route(/\/api\/v1\/revisions(?:\?.*)?$/, (route) => route.fulfill({ json: { items: [{ ...revision, image_digests: [digest] }], count: 1, total: 1, offset: 0, limit: 100 } }));
+  await page.goto(`/deployments/${fixture.deploymentID}`);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const text of [failure, digest]) {
+      const diagnostic = page.getByText(text, { exact: true });
+      await expect(diagnostic).toBeVisible();
+      expect(await diagnostic.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await diagnostic.evaluate((element) => {
+        const card = element.closest('[data-slot="card"]')!;
+        const content = element.getBoundingClientRect();
+        const bounds = card.getBoundingClientRect();
+        return content.left >= bounds.left && content.right <= bounds.right;
+      })).toBe(true);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-long-diagnostics-320.png"), fullPage: true, animations: "disabled" });
+  }
+});
