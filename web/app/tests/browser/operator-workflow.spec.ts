@@ -4114,3 +4114,27 @@ test("active run output reports paused polling and resumes after retry", async (
     await expect(dialog.getByRole("button", { name: "Retry logs", exact: true })).toHaveCount(0);
   }
 });
+
+
+test("failed log and audit pages return to the first page with their filters", async ({ page }) => {
+  await page.goto("/logs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  for (const [path, endpoint, label] of [["logs", "run-logs", "logs"], ["audit", "audit-events", "audit events"]] as const) {
+    await page.route(`**/api/v1/${endpoint}?*`, (route) => new URL(route.request().url()).searchParams.get("offset") === "50"
+      ? route.fulfill({ status: 503, json: { error: "Later page unavailable" } })
+      : route.continue());
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.goto(`/${path}?q=release&offset=50`);
+      const first = page.getByRole("button", { name: `First ${label} page`, exact: true });
+      await expect(first).toBeInViewport();
+      await first.click();
+      await expect.poll(() => new URL(page.url()).searchParams.get("offset")).toBeNull();
+      expect(new URL(page.url()).searchParams.get("q")).toBe("release");
+      await expect(page.getByRole("navigation", { name: `${label} pages` })).toBeVisible();
+      await expect(page.getByRole("button", { name: `Retry ${label}`, exact: true })).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+  }
+});

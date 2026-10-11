@@ -20,7 +20,10 @@ function AuditRoute() {
   return <div className="grid min-w-0 gap-4">
     {audit.isError ? <section className="space-y-3">
       <p role="alert">{audit.data ? "Unable to refresh audit events. Showing previously loaded events." : "Unable to load audit events."}</p>
-      <Button disabled={audit.isFetching} onClick={() => void audit.refetch()}>Retry audit events</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={audit.isFetching} onClick={() => void audit.refetch()}>Retry audit events</Button>
+        {!audit.data && page.offset > 0 ? <Button variant="outline" onClick={page.first}>First audit events page</Button> : null}
+      </div>
     </section> : null}
     {audit.data || !audit.isError ? <>
       <AuditView events={audit.data?.items ?? []} q={q} loading={audit.isPending} />

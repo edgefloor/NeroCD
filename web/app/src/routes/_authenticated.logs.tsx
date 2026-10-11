@@ -24,7 +24,10 @@ function LogsRoute() {
   return <div className="grid min-w-0 gap-4">
     {logs.isError ? <section className="space-y-3">
       <p role="alert">{logs.data ? "Unable to refresh logs. Showing previously loaded output." : "Unable to load logs."}</p>
-      <Button disabled={logs.isFetching} onClick={() => void logs.refetch()}>Retry logs</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={logs.isFetching} onClick={() => void logs.refetch()}>Retry logs</Button>
+        {!logs.data && page.offset > 0 ? <Button variant="outline" onClick={page.first}>First logs page</Button> : null}
+      </div>
     </section> : null}
     {failedRuns.length ? <section className="space-y-3">
       <p role="alert">Some run statuses are unavailable. Log output is still available.</p>
