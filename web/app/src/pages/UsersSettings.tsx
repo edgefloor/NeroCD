@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 
 export const usersPageSize = 10;
 
-export function UsersSettingsPanel(): ReactNode {
+export function UsersSettingsPanel({ readOnly = false }: { readOnly?: boolean }): ReactNode {
   const client = useQueryClient();
   const [offset, setOffset] = useState(0);
   const page = { limit: usersPageSize, offset };
@@ -37,7 +37,7 @@ export function UsersSettingsPanel(): ReactNode {
       users={result?.items ?? []}
       page={result}
       loading={users.isPending}
-      busy={offboard.isPending || users.isError}
+      busy={readOnly || offboard.isPending || users.isError}
       onFirst={() => setOffset(0)}
       onPrevious={() => setOffset((current) => Math.max(0, current - usersPageSize))}
       onNext={() => setOffset((current) => current + usersPageSize)}

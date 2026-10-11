@@ -25,7 +25,7 @@ export const serviceAccountsPageSize = 10;
 
 type OneTimeSecret = { accountName: string; token: string; expiresAt?: string };
 
-export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[] }): ReactNode {
+export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { projects: Project[]; readOnly?: boolean }): ReactNode {
   const client = useQueryClient();
   const [projectID, setProjectID] = useState(projects[0]?.id ?? "");
   const [offset, setOffset] = useState(0);
@@ -75,7 +75,7 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
     onSettled: () => { revokingRef.current = false; },
   });
   const busy = create.isPending || update.isPending || rotate.isPending || revoke.isPending;
-  const controlsDisabled = busy || page.isError;
+  const controlsDisabled = readOnly || busy || page.isError;
   const result = page.data;
 
   function submitCreate(event: FormEvent<HTMLFormElement>) {

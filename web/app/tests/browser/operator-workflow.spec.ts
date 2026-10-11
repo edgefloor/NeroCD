@@ -2636,3 +2636,56 @@ test("failed offboarding stays in its dialog and succeeds on retry", async ({ pa
   expect(attempts).toBe(2);
   expect(errors).toEqual([]);
 });
+
+test("settings recover the selected member page and preserve drafts after permission refresh failure", async ({ page }, testInfo) => {
+  await page.goto("/settings");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Settings recovery ${Date.now()}`, description: "settings recovery fixture" });
+  let failPage = true;
+  let failPermissions = false;
+  const requestedPages: number[] = [];
+  await page.route("**/api/v1/project-members?*", async (route) => {
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit"));
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    if (limit === 100) {
+      if (failPermissions) return route.fulfill({ status: 503, json: { error: "Temporary access lookup failure" } });
+      return route.continue();
+    }
+    requestedPages.push(offset);
+    if (failPage) return route.fulfill({ status: 503, json: { error: "Temporary member page failure" } });
+    const member = { id: "member_recovery", project_id: project.id, user_id: "usr_recovery", email: "recovered-member@example.test", role: "viewer", created_at: "2026-10-11T12:00:00Z", updated_at: "2026-10-11T12:00:00Z" };
+    return route.fulfill({ json: { items: [member], count: 1, total: 51, limit: 50, offset } });
+  });
+  await page.goto("/settings?offset=50");
+  await expect(page.getByRole("button", { name: "Retry settings", exact: true })).toBeVisible();
+  expect(requestedPages.every((offset) => offset === 50)).toBe(true);
+  requestedPages.length = 0;
+  failPage = false;
+  await page.getByRole("button", { name: "Retry settings", exact: true }).click();
+  await expect(page.getByText(/recovered-member@example.test/)).toBeVisible();
+  expect(requestedPages).toEqual([50]);
+  const draft = page.getByRole("textbox", { name: "Email", exact: true });
+  await draft.fill("unsaved-access@example.test");
+  failPermissions = true;
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+  await expect(page.getByText("Changes are unavailable until access information can be refreshed.")).toBeVisible();
+  await expect(draft).toHaveValue("unsaved-access@example.test");
+  await expect(page.getByRole("button", { name: "Update access", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Create account", exact: true })).toBeDisabled();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Retry settings", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("settings-recovery-320.png"), fullPage: true });
+  }
+  failPermissions = false;
+  await page.getByRole("button", { name: "Retry settings", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(draft).toHaveValue("unsaved-access@example.test");
+  await expect(page.getByRole("button", { name: "Update access", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Create account", exact: true })).toBeEnabled();
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
+});
