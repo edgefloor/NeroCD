@@ -167,3 +167,11 @@ test("failed credential revocation stays open for retry without an unhandled rej
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(revokeRunnerToken).toHaveBeenCalledTimes(2);
 });
+
+test("runner inventory does not report an empty list while loading", () => {
+  vi.mocked(useQuery).mockReturnValue({ data: undefined, isError: false, isPending: true } as never);
+  const Component = RunnersRoute.options.component!;
+  render(<Component />);
+  expect(screen.getByRole("status").textContent).toBe("Loading runners...");
+  expect(screen.queryByText("No runners match this view")).toBeNull();
+});

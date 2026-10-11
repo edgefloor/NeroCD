@@ -4,12 +4,19 @@ import { createRunnerEnrollment, principalQuery, revokeRunnerToken, runnersQuery
 import { RunnersView } from "@/pages/RunnersView";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { validateSearch } from "@/router/search";
+import { Button } from "@/components/ui/button";
+import { SkeletonTable } from "@/components/common/SkeletonCard";
 
-export const Route = createFileRoute("/_authenticated/runners/")({ validateSearch, loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(runnersQuery()), context.queryClient.ensureQueryData(principalQuery())]), component: RunnersRoute });
+export const Route = createFileRoute("/_authenticated/runners/")({ validateSearch, loader: ({ context }) => Promise.all([context.queryClient.prefetchQuery(runnersQuery()), context.queryClient.prefetchQuery(principalQuery())]), component: RunnersRoute });
 
 function RunnersRoute() {
-  const navigate = useNavigate(); const { q } = Route.useSearch(); const page = usePage(); const runners = useQuery(runnersQuery({ limit: page.limit, offset: page.offset })); const principal = useQuery(principalQuery());
-  if (runners.isError || principal.isError) return <p role="alert">Runner inventory is unavailable.</p>;
+  const navigate = useNavigate(); const { q } = Route.useSearch(); const page = usePage(); const runners = useQuery({ ...runnersQuery({ limit: page.limit, offset: page.offset }), retryOnMount: false }); const principal = useQuery({ ...principalQuery(), retryOnMount: false });
+  const failedQueries = [runners, principal].filter((query) => query.isError);
+  if (failedQueries.length) return <section className="space-y-3">
+    <p role="alert">Runner inventory is unavailable.</p>
+    <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button>
+  </section>;
+  if (runners.isPending || principal.isPending) return <section className="space-y-3"><p role="status">Loading runners...</p><SkeletonTable rows={5} /></section>;
   const canAdmin = (principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin");
   return <><RunnersView runners={runners.data?.items ?? []} q={q} canAdmin={canAdmin} onEnroll={async (input) => { const created = await createRunnerEnrollment(input); await runners.refetch(); return created; }} onRevokeRunner={async (id) => { await revokeRunnerToken({ runner_id: id }); await runners.refetch(); void navigate({ to: "/runners/$runnerId", params: { runnerId: id }, search: (previous) => previous, replace: true }); }} /><PageNavigation page={runners.data} label="runners" loading={runners.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
 }

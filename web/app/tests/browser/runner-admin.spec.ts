@@ -103,7 +103,7 @@ test("OIDC viewer principals receive runner 403 responses and no runner controls
     const runners = await page.request.get("/api/v1/runners");
     expect(runners.status()).toBe(403);
     await page.goto("/runners", { waitUntil: "domcontentloaded" });
-    await expect(page.getByText("Something went wrong!", { exact: true })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveText("Runner inventory is unavailable.");
     await expect(page.getByRole("button", { name: "Create enrollment" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Revoke credential" })).toHaveCount(0);
   } finally {
@@ -161,4 +161,32 @@ test("runner credential revocation reports failure and succeeds on retry", async
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText("Credential is revoked.", { exact: true })).toBeVisible();
   expect(pageErrors).toEqual([]);
+});
+
+
+test("runner inventory retries the selected page without losing its filter", async ({ page }) => {
+  await createRunnerAdmin(page);
+  const runner = await registerRunner(page);
+  const response = await page.request.get(`/api/v1/runners/${runner.id}`);
+  const record = await response.json();
+  let fail = true;
+  await page.route("**/api/v1/runners?*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("offset") !== "50") return route.continue();
+    return fail ? route.fulfill({ status: 503, json: { error: "Temporary inventory failure" } })
+      : route.fulfill({ json: { items: [record], count: 1, total: 51, limit: 50, offset: 50 } });
+  });
+  await page.goto("/runners?q=browser&offset=50");
+  await expect(page.getByRole("alert")).toHaveText("Runner inventory is unavailable.");
+  await expect(page.getByText("No runners match this view", { exact: true })).toHaveCount(0);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+  }
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("link", { name: new RegExp(runner.name) })).toBeVisible();
+  await expect(page.getByText("Showing 51-51 of 51", { exact: true })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser");
+  await expect(page).toHaveURL((url) => url.pathname === "/runners" && url.searchParams.get("offset") === "50");
 });
