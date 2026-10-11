@@ -7,7 +7,7 @@ import type { ApiSnapshot, Approval, ApprovalDecision } from "@/api";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
-import { formatDate, matchesQuery, projectName, templateName } from "@/lib/format";
+import { formatDate, matchesQuery, matchesRunQuery, projectName, templateName } from "@/lib/format";
 
 export function ApprovalList({
   approvals,
@@ -108,9 +108,8 @@ export function ApprovalsView({
   const filtering = Boolean(q?.trim());
   const visibleApprovals = snapshot.approvals.filter((approval) => {
     const run = snapshot.runs.find((item) => item.id === approval.run_id);
-    return matchesQuery(q, approval.id, approval.run_id, approval.status, approval.requested_by, approval.approved_by,
-      run ? projectName(snapshot.projects, run.project_id) : undefined,
-      run ? templateName(snapshot.templates, run.template_id, run) : undefined);
+    return matchesQuery(q, approval.id, approval.run_id, approval.status, approval.requested_by, approval.approved_by)
+      || Boolean(run && matchesRunQuery(q, run, snapshot.projects, snapshot.templates));
   });
   const visiblePending = visibleApprovals.filter((approval) => approval.status === "pending");
   const pendingCount = snapshot.approvals.filter((approval) => approval.status === "pending").length;

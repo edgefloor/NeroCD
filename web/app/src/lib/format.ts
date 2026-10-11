@@ -39,3 +39,9 @@ export function matchesQuery(query: string | undefined, ...values: Array<string 
 export function countFilteredItems(snapshot: ApiSnapshot): number {
   return snapshot.projects.length + snapshot.templates.length + snapshot.runs.length + snapshot.approvals.length + snapshot.logs.length + snapshot.repositories.length;
 }
+
+
+export function matchesRunQuery(query: string | undefined, run: TaskRun, projects: Project[], templates: TaskTemplate[]): boolean {
+  return matchesQuery(query, run.id, run.status, run.requested_by, run.run_spec.type, ...(run.runner_tags ?? []),
+    projectName(projects, run.project_id), templateName(templates, run.template_id, run));
+}

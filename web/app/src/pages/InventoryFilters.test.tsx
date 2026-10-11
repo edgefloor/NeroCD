@@ -18,7 +18,7 @@ const snapshot = apiSnapshot({
     { id: "t_alpha", project_id: "p_alpha", name: "Alpha deploy", kind: "shell", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: ["production"], requires_ack: true },
     { id: "t_beta", project_id: "p_beta", name: "Beta deploy", kind: "python", run_spec: { type: "python", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: false },
   ],
-  runs: [{ id: "run_alpha", project_id: "p_alpha", template_id: "t_alpha", status: "waiting_approval", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, workflow_state: { steps: [] }, runner_tags: [], requested_by: "alice", started_at: "2026-01-01T00:00:00Z" }],
+  runs: [{ id: "run_alpha", project_id: "p_alpha", template_id: "t_alpha", status: "waiting_approval", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, workflow_state: { steps: [] }, runner_tags: ["production"], requested_by: "alice", started_at: "2026-01-01T00:00:00Z" }],
   approvals: [
     { id: "approval_alpha", run_id: "run_alpha", status: "pending", requested_by: "alice", created_at: "2026-01-01T00:00:00Z" },
     { id: "approval_beta", run_id: "run_beta", status: "approved", requested_by: "bob", approved_by: "carol", created_at: "2026-01-01T00:00:00Z" },
@@ -55,7 +55,7 @@ test("template filters distinguish no matches and preserve an unfinished create 
   expect((screen.getByPlaceholderText("Patch Linux fleet") as HTMLInputElement).value).toBe("Draft template");
 });
 
-test.each(["Alpha project", "Alpha deploy", "alice", "approval_alpha"])("approval filtering matches %s and retains actionable run context", (q) => {
+test.each(["Alpha project", "Alpha deploy", "alice", "approval_alpha", "SHELL", "production"])("approval filtering matches %s and retains actionable run context", (q) => {
   render(<ApprovalsView canOperateProject={() => true} {...props} busy={false} onDecide={vi.fn()} q={q} />);
   expect(screen.getByText("Alpha deploy")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();

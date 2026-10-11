@@ -871,13 +871,14 @@ test("inventory and approval filters apply URL queries and recover after clearin
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const suffix = `${Date.now()}`;
+  const runnerTag = `pool_${suffix}`;
   const projectName = `Filter project ${suffix}`;
   const templateName = `Filter template ${suffix}`;
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: projectName, description: "Inventory filtering fixture" });
   const template = await postJSON<{ id: string }>(page, "/api/v1/templates", {
     project_id: project.id, name: templateName, kind: "shell",
     run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "filter-fixture"] } },
-    workflow: { steps: [] }, runner_tags: ["shell"], requires_ack: true,
+    workflow: { steps: [] }, runner_tags: ["shell", runnerTag], requires_ack: true,
   });
   await postJSON(page, "/api/v1/runs", { template_id: template.id });
   const cases = [
@@ -895,6 +896,13 @@ test("inventory and approval filters apply URL queries and recover after clearin
       if (path === "projects") await expect(page.getByRole("heading", { name: projectName, exact: true })).toBeVisible();
       if (path === "templates") await expect(page.getByText(templateName, { exact: true })).toHaveCount(2);
       if (path === "approvals") await expect(page.getByText(templateName, { exact: true })).toBeVisible();
+      if (path === "approvals") {
+        for (const query of ["SHELL", runnerTag]) {
+          await filter.fill(query);
+          await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe(query);
+          await expect(page.getByText(templateName, { exact: true })).toBeVisible();
+        }
+      }
       await filter.fill("no-such-inventory-result");
       await expect(page.getByText(emptyMessage, { exact: true })).toBeVisible();
       if (width === 320) await page.screenshot({ path: testInfo.outputPath(`${path}-filter-empty-320.png`), fullPage: true });
@@ -905,6 +913,12 @@ test("inventory and approval filters apply URL queries and recover after clearin
       await expect(page.getByText(emptyMessage, { exact: true })).toHaveCount(0);
       await filter.fill(projectName);
     }
+  }
+  await page.goto(`/?q=${runnerTag}`);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+    await expect(page.getByText("No runs match this search.", { exact: true })).toHaveCount(0);
   }
 });
 

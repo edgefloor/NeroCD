@@ -8,7 +8,7 @@ import type { ApiSnapshot, RunLog, TaskRun, Project, TaskTemplate } from "@/api"
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
-import { formatDate, formatDuration, matchesQuery, projectName, templateName } from "@/lib/format";
+import { formatDate, formatDuration, matchesRunQuery, projectName, templateName } from "@/lib/format";
 import { rememberTerminalLogOpener, TerminalLogDialog } from "@/components/runs/TerminalLogDialog";
 
 function canCancel(run: TaskRun): boolean {
@@ -208,9 +208,7 @@ export function RunsView({
   onCloseLogs?: () => void;
 }): ReactNode {
   const filtering = Boolean(q?.trim());
-  const visibleRuns = filtering ? snapshot.runs.filter((run) => matchesQuery(q,
-    run.id, run.status, run.requested_by, run.run_spec.type, ...(run.runner_tags ?? []),
-    projectName(snapshot.projects, run.project_id), templateName(snapshot.templates, run.template_id, run))) : snapshot.runs;
+  const visibleRuns = filtering ? snapshot.runs.filter((run) => matchesRunQuery(q, run, snapshot.projects, snapshot.templates)) : snapshot.runs;
   const [localTerminalRunID, setLocalTerminalRunID] = useState("");
   const [terminalRunFallback, setTerminalRunFallback] = useState<TaskRun | undefined>();
   const [localTerminalOpen, setLocalTerminalOpen] = useState(false);

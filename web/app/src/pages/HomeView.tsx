@@ -9,7 +9,7 @@ import { RunsTable } from "./RunsView";
 import { ApprovalList } from "./ApprovalsView";
 import { LogViewer } from "./LogsView";
 import { summarizeOverview } from "@/view-model";
-import { matchesQuery, projectName, templateName } from "@/lib/format";
+import { matchesQuery, matchesRunQuery } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 function CompactEmpty({ children }: { children: ReactNode }): ReactNode {
@@ -41,8 +41,7 @@ export function HomeView({
   const pending = snapshot.approvals.filter((approval) => approval.status === "pending");
   const failed = snapshot.runs.filter((run) => ["failed", "error"].includes(run.status));
   const activity = workSnapshot ?? snapshot;
-  const matchesRun = (run: TaskRun) => matchesQuery(query, run.id, run.status, run.requested_by,
-    projectName(snapshot.projects, run.project_id), templateName(snapshot.templates, run.template_id, run));
+  const matchesRun = (run: TaskRun) => matchesRunQuery(query, run, snapshot.projects, snapshot.templates);
   const visibleRuns = activity.runs.filter(matchesRun).slice(0, 7);
   const visiblePending = activity.approvals.filter((approval) => {
     if (approval.status !== "pending") return false;
