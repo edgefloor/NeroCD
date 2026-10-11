@@ -35,5 +35,5 @@ function SettingsRoute() {
   const queries = [principal, projects, allMembers, members];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
-  return <><SettingsView principal={principal.data ?? { id: "", name: "", email: "", provider: "", roles: [] }} projects={projects.data ?? []} members={members.data?.items ?? []} authorizationMembers={allMembers.data ?? []} loading={queries.some((query) => query.isPending)} updatingMember={upsert.isPending} onUpsertMember={(input, onSuccess) => upsert.mutate(input, { onSuccess })} /><PageNavigation page={members.data} label="project members" loading={members.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><SettingsView principal={principal.data ?? { id: "", name: "", email: "", provider: "", roles: [] }} projects={projects.data ?? []} members={members.data?.items ?? []} authorizationMembers={allMembers.data ?? []} loading={queries.some((query) => query.isPending)} updatingMember={upsert.isPending} onUpsertMember={(input, onSuccess) => upsert.mutate(input, { onSuccess })} /><PageNavigation page={members.data} label="project members" loading={members.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} /></>;
 }

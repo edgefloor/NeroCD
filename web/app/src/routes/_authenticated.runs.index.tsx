@@ -80,7 +80,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
         setSelectedLogs({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
       }}
     />
-      <PageNavigation page={runs.data} label="runs" loading={runs.isFetching} onPrevious={page.previous} onNext={page.next} />
+      <PageNavigation page={runs.data} label="runs" loading={runs.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
     </>
   );
 }

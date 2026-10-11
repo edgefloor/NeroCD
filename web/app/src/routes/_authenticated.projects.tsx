@@ -27,5 +27,5 @@ function ProjectsRoute() {
   const queries = [projects, allProjects, repositories, templates, runs, principal, members];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
-  return <><ProjectsView canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} q={q} snapshot={apiSnapshot({ projects: projects.data, repositories: repositories.data, templates: templates.data, runs: runs.data })} formProjects={allProjects.data ?? []} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={projects.data} label="projects" loading={projects.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><ProjectsView canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} q={q} snapshot={apiSnapshot({ projects: projects.data, repositories: repositories.data, templates: templates.data, runs: runs.data })} formProjects={allProjects.data ?? []} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={projects.data} label="projects" loading={projects.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} /></>;
 }

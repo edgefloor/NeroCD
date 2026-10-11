@@ -32,7 +32,7 @@ function LogsRoute() {
     </section> : null}
     {logs.data || !logs.isError ? <>
       <LogsView logs={logs.data?.items ?? []} runs={runs.flatMap((query) => query.data && !query.isError ? [query.data] : [])} q={q} loading={logs.isPending} />
-      <PageNavigation page={logs.data} label="logs" loading={logs.isFetching} onPrevious={page.previous} onNext={page.next} />
+      <PageNavigation page={logs.data} label="logs" loading={logs.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
     </> : null}
   </div>;
 }

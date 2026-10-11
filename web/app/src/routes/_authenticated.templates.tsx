@@ -25,5 +25,5 @@ function TemplatesRoute() {
   const queries = [projects, templates, principal, members];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
-  return <><TemplatesView canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} onRunRequested={(runId) => void navigate({ to: "/runs/$runId", params: { runId }, search: {} })} q={q} snapshot={apiSnapshot({ projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={templates.data} label="templates" loading={templates.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><TemplatesView canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} onRunRequested={(runId) => void navigate({ to: "/runs/$runId", params: { runId }, search: {} })} q={q} snapshot={apiSnapshot({ projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={templates.data} label="templates" loading={templates.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} /></>;
 }

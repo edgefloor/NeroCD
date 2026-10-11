@@ -2297,3 +2297,31 @@ test("logs recover locally and remain readable when run statuses fail", async ({
   await expect(page.getByText(/#1 · queued/)).toBeVisible();
   await expect(page).toHaveURL(/\/logs\?q=Retained&offset=50$/);
 });
+
+
+test("empty distant log pages return to the first page without losing filters", async ({ page }, testInfo) => {
+  await page.goto("/logs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  await page.route("**/api/v1/run-logs?*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.has("run_id")) return route.continue();
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const items = offset === 0 ? [{ id: "log_first_page", run_id: runID, sequence: 1, stream: "stdout", message: "Recovery output", created_at: "2026-01-01T00:00:00Z" }] : [];
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({ items, count: items.length, total: 1, limit: 50, offset }) });
+  });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/logs?offset=10000&q=Recovery");
+    const first = page.getByRole("button", { name: "First logs page", exact: true });
+    await expect(first).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Next logs", exact: true })).toBeDisabled();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("pagination-recovery-320.png"), fullPage: true });
+    await first.click();
+    await expect(page).toHaveURL((url) => url.pathname === "/logs" && !url.searchParams.has("offset") && url.searchParams.get("q") === "Recovery");
+    await expect(page.getByText("Recovery output", { exact: true })).toBeVisible();
+    await expect(first).toHaveCount(0);
+  }
+});

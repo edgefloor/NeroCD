@@ -27,5 +27,5 @@ function ApprovalsRoute() {
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
   const runs = runQueries.flatMap((query) => query.data ? [query.data] : []);
-  return <><ApprovalsView q={q} snapshot={apiSnapshot({ approvals: approvals.data, runs, projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} loading={queries.some((query) => query.isPending)} /><PageNavigation page={approvals.data} label="approvals" loading={approvals.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><ApprovalsView q={q} snapshot={apiSnapshot({ approvals: approvals.data, runs, projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} loading={queries.some((query) => query.isPending)} /><PageNavigation page={approvals.data} label="approvals" loading={approvals.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} /></>;
 }
