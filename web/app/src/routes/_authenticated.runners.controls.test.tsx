@@ -287,3 +287,23 @@ test.each(["", "not-a-date"])("runner details do not report invalid heartbeat %j
   expect(screen.queryByText("Active and recently observed.")).toBeNull();
   expect(screen.getByRole("button", { name: "Revoke credential" })).toBeTruthy();
 });
+
+test("enrollment validates tag arrays and preserves their boundaries", async () => {
+  vi.mocked(createRunnerEnrollment).mockResolvedValue({ enrollment: { runner_id: "runner_tags" }, token: "one-time-token" } as never);
+  queryData(["runner_admin"]);
+  const Component = RunnersRoute.options.component!;
+  render(<Component />);
+  fireEvent.change(screen.getByLabelText("Runner ID"), { target: { value: "runner_tags" } });
+  fireEvent.change(screen.getByLabelText("Runner name"), { target: { value: "Tagged runner" } });
+  const input = screen.getByLabelText("Runner tags");
+  fireEvent.change(input, { target: { value: '["linux", null]' } });
+  const form = screen.getByRole("form", { name: "Create runner enrollment" });
+  await act(async () => { fireEvent.submit(form); });
+  expect(createRunnerEnrollment).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert").textContent).toBe("Enter comma-separated tags or a JSON array of strings.");
+  expect(document.activeElement).toBe(input);
+  const tags = ["linux", "zone=west,east", "line\nbreak"];
+  fireEvent.change(input, { target: { value: JSON.stringify(tags) } });
+  await act(async () => { fireEvent.submit(form); });
+  expect(createRunnerEnrollment).toHaveBeenCalledWith(expect.objectContaining({ runner_id: "runner_tags", tags }));
+});

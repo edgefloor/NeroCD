@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Copy, Download, KeyRound, ShieldOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Select } from "@/components/ui/select";
 import { EmptyState } from "@/components/common/EmptyState";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import type { CreatedRunnerEnrollment, Runner, RunnerDetail } from "@/api";
+import { parseRunnerTags } from "@/lib/runnerTags";
 import { formatDate, matchesQuery } from "@/lib/format";
 
 type CopyStatus = "idle" | "copying" | "copied" | "failed";
@@ -66,13 +67,25 @@ function EnrollmentForm({ busy, disabled, error, onSubmit }: { busy: boolean; di
   const [id, setID] = useState("");
   const [name, setName] = useState("");
   const [tags, setTags] = useState("compose-runtime");
+  const [tagsError, setTagsError] = useState("");
+  const tagsID = useId();
+  const tagsRef = useRef<HTMLInputElement>(null);
   const [capabilities, setCapabilities] = useState("compose-deploy");
   const [ttl, setTTL] = useState("600");
   const locked = busy || disabled;
   function submit(event: FormEvent) {
     event.preventDefault();
     if (locked) return;
-    onSubmit({ runner_id: id, runner_name: name, tags: splitValues(tags), capabilities: splitValues(capabilities), ttl_seconds: Number(ttl) });
+    let parsedTags: string[];
+    try {
+      parsedTags = parseRunnerTags(tags);
+      setTagsError("");
+    } catch (cause) {
+      setTagsError((cause as Error).message);
+      tagsRef.current?.focus();
+      return;
+    }
+    onSubmit({ runner_id: id, runner_name: name, tags: parsedTags, capabilities: splitValues(capabilities), ttl_seconds: Number(ttl) });
   }
   return <Card>
     <CardHeader><CardTitle>Create one-time enrollment</CardTitle></CardHeader>
@@ -80,7 +93,11 @@ function EnrollmentForm({ busy, disabled, error, onSubmit }: { busy: boolean; di
       <form className="grid gap-3" aria-label="Create runner enrollment" aria-busy={busy} onSubmit={submit}>
         <label className="grid gap-1 text-sm">Runner ID<Input disabled={locked} aria-label="Runner ID" value={id} onChange={(event) => setID(event.target.value)} placeholder="runner_edge_01" required /></label>
         <label className="grid gap-1 text-sm">Runner name<Input disabled={locked} aria-label="Runner name" value={name} onChange={(event) => setName(event.target.value)} required /></label>
-        <label className="grid gap-1 text-sm">Tags<Input disabled={locked} aria-label="Runner tags" value={tags} onChange={(event) => setTags(event.target.value)} /></label>
+        <div className="grid gap-1">
+          <label className="grid gap-1 text-sm">Tags<Input ref={tagsRef} disabled={locked} aria-label="Runner tags" value={tags} aria-invalid={Boolean(tagsError)} aria-describedby={`${tagsID}-help${tagsError ? ` ${tagsID}-error` : ""}`} onChange={(event) => { setTags(event.target.value); setTagsError(""); }} /></label>
+          <p id={`${tagsID}-help`} className="text-xs text-muted-foreground">Separate tags with commas, or use a JSON array for tags containing commas.</p>
+          {tagsError ? <p id={`${tagsID}-error`} role="alert" className="text-sm text-destructive">{tagsError}</p> : null}
+        </div>
         <label className="grid gap-1 text-sm">Capabilities<Input disabled={locked} aria-label="Runner capabilities" value={capabilities} onChange={(event) => setCapabilities(event.target.value)} required /></label>
         <label className="grid gap-1 text-sm">Enrollment lifetime<Select disabled={locked} aria-label="Enrollment lifetime" value={ttl} onChange={(event) => setTTL(event.target.value)}><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></Select></label>
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

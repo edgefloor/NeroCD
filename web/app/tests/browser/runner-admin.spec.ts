@@ -348,6 +348,18 @@ test("pending enrollment preserves its draft and recovers after failure", async 
     await pending;
     return route.fulfill({ status: 503, json: { error: "Temporary enrollment failure" } });
   });
+  const tags = ["compose-runtime", "region=east,west"];
+  const tagInput = form.getByLabel("Runner tags", { exact: true });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await tagInput.fill('["compose-runtime", null]');
+    await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
+    await expect(form.getByRole("alert")).toHaveText("Enter comma-separated tags or a JSON array of strings.");
+    await expect(tagInput).toBeFocused();
+    await expect(form.getByLabel("Runner ID", { exact: true })).toHaveValue(id);
+    expect(payloads).toHaveLength(0);
+  }
+  await tagInput.fill(JSON.stringify(tags));
   await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -363,13 +375,19 @@ test("pending enrollment preserves its draft and recovers after failure", async 
     }
   }
   expect(payloads).toHaveLength(1);
+  expect(payloads[0]).toMatchObject({ tags });
   release();
   await expect(form.getByRole("alert")).toContainText("Enrollment could not be created");
   await expect(form).toHaveAttribute("aria-busy", "false");
   await expect(form.getByLabel("Runner ID", { exact: true })).toHaveValue(id);
   await expect(form.getByLabel("Runner name", { exact: true })).toHaveValue("Pending browser runner");
   await expect(form.getByLabel("Enrollment lifetime", { exact: true })).toHaveValue("1800");
+  const created = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/runner-enrollments");
   await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
+  const response = await created;
+  expect(response.status()).toBe(201);
+  const result = await response.json();
+  expect(result.enrollment.tags).toEqual(tags);
   await expect(page.getByRole("dialog", { name: "One-time runner enrollment secret" })).toBeVisible();
   expect(payloads).toHaveLength(2);
   expect(payloads[1]).toEqual(payloads[0]);
