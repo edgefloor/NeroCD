@@ -246,6 +246,7 @@ test("service account saves retain pending and failed row drafts", async ({ page
   const project = await projectResponse.json();
   const accountResponse = await postJSON(page, "/api/v1/service-accounts", undefined, { project_id: project.id, name: `Edit bot ${suffix}`, role: "viewer" });
   expect(accountResponse.ok()).toBe(true);
+  const { service_account: account } = await accountResponse.json() as { service_account: { id: string } };
   await page.reload({ waitUntil: "networkidle" });
   await page.getByLabel("Service account project").selectOption(project.id);
   const row = page.getByRole("form", { name: `Edit service account Edit bot ${suffix}`, exact: true });
@@ -270,6 +271,7 @@ test("service account saves retain pending and failed row drafts", async ({ page
     await expect(name).toBeDisabled();
     await expect(role).toBeDisabled();
     await expect(row.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
+    await expect(row.getByRole("button", { name: "Reset", exact: true })).toBeDisabled();
     await expect(row.getByRole("button", { name: "Rotate", exact: true })).toBeDisabled();
     await expect(row.getByRole("button", { name: "Revoke", exact: true })).toBeDisabled();
   }
@@ -294,4 +296,32 @@ test("service account saves retain pending and failed row drafts", async ({ page
   await expect(saved.getByRole("combobox")).toHaveValue("maintainer");
   expect(payloads).toHaveLength(2);
   expect(payloads[1]).toEqual(payloads[0]);
+
+  await saved.getByRole("textbox").fill("Keep this draft");
+  const externalUpdate = await page.request.patch("/api/v1/service-accounts", {
+    data: { service_account_id: account.id, name: `Refreshed bot ${suffix}`, role: "viewer" },
+    headers: { Origin: new URL(page.url()).origin, "X-NeroCD-CSRF": "1" },
+  });
+  expect(externalUpdate.ok()).toBe(true);
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+  const refreshed = page.getByRole("form", { name: `Edit service account Refreshed bot ${suffix}`, exact: true });
+  await expect(refreshed.getByRole("textbox")).toHaveValue("Keep this draft");
+  await expect(refreshed.getByRole("combobox")).toHaveValue("viewer");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await refreshed.getByRole("textbox").fill("Discard this draft");
+    await refreshed.getByRole("combobox").selectOption("owner");
+    await refreshed.getByRole("button", { name: "Reset", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(refreshed.getByRole("textbox")).toHaveValue(`Refreshed bot ${suffix}`);
+    await expect(refreshed.getByRole("combobox")).toHaveValue("viewer");
+    await expect(refreshed.getByRole("button", { name: "Reset", exact: true })).toBeDisabled();
+    expect(await refreshed.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) {
+      await refreshed.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("account-reset-320.png"), animations: "disabled" });
+    }
+  }
+  expect(payloads).toHaveLength(2);
 });

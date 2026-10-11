@@ -242,3 +242,23 @@ test.each(["2000-01-01T12:00", "9999-01-01T12:00"])("invalid credential expiry %
   await waitFor(() => expect(serviceAccountsAPI.create).toHaveBeenCalledOnce());
   expect(serviceAccountsAPI.create).toHaveBeenCalledWith(expect.objectContaining({ name: "Scheduled automation", expires_at: new Date(future).toISOString() }));
 });
+
+
+test("account refresh updates untouched fields and reset restores the latest values", async () => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [account], count: 1, total: 1, offset: 0, limit: 10 });
+  const { client } = renderPanel();
+  const row = await screen.findByRole("form", { name: "Edit service account Build bot" });
+  const name = within(row).getByRole<HTMLInputElement>("textbox");
+  const role = within(row).getByRole<HTMLSelectElement>("combobox");
+  fireEvent.change(name, { target: { value: "My draft" } });
+  const latest = { ...account, name: "Remote rename", role: "viewer" };
+  await act(async () => client.setQueryData(["service-accounts", "proj_one", 0], { items: [latest], count: 1, total: 1, offset: 0, limit: 10 }));
+  await screen.findByRole("form", { name: "Edit service account Remote rename" });
+  expect(name.value).toBe("My draft");
+  expect(role.value).toBe("viewer");
+  fireEvent.change(role, { target: { value: "owner" } });
+  fireEvent.click(within(row).getByRole("button", { name: "Reset" }));
+  expect(name.value).toBe("Remote rename");
+  expect(role.value).toBe("viewer");
+  expect(serviceAccountsAPI.update).not.toHaveBeenCalled();
+});

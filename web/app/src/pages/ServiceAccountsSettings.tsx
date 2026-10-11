@@ -121,19 +121,19 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
           <Button variant="outline" disabled={page.isFetching} onClick={() => void page.refetch()}>Retry service accounts</Button>
         </section> : null}
         {page.isPending ? <p role="status">Loading service accounts…</p> : result?.items.length === 0 ? <p className="text-sm text-muted-foreground">No service accounts on this page.</p> : result?.items.map((account) => (
-          <form key={account.id} aria-label={`Edit service account ${account.name}`} aria-busy={(update.isPending && update.variables?.service_account_id === account.id) || (rotate.isPending && rotate.variables?.account.id === account.id)} className="grid min-w-0 gap-2 rounded border p-3 md:grid-cols-[minmax(0,1fr)_10rem_auto_auto]" onSubmit={(event) => {
-            event.preventDefault();
-            if (controlsDisabled) return;
-            const form = new FormData(event.currentTarget);
-            update.mutate({ service_account_id: account.id, name: String(form.get("name")), role: String(form.get("role")) as "owner" | "maintainer" | "viewer" });
-          }}>
-            <div className="min-w-0"><Input name="name" disabled={busy} aria-label={`Name for ${account.name}`} defaultValue={account.name} maxLength={128} required /><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{account.id}</p></div>
-            <div className="grid gap-1"><Select name="role" disabled={busy} aria-label={`Role for ${account.name}`} defaultValue={account.role}><option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option></Select><Badge variant={account.status === "active" ? "success" : "secondary"}>{account.status}</Badge></div>
-            <div className="flex flex-wrap items-start gap-2"><Button type="submit" variant="outline" size="sm" disabled={controlsDisabled || account.status !== "active"}>{update.isPending && update.variables?.service_account_id === account.id ? "Saving…" : "Save"}</Button><Button type="button" variant="outline" size="sm" disabled={controlsDisabled || account.status !== "active"} onClick={() => rotate.mutate({ account })}><RotateCw className="h-4 w-4" />{rotate.isPending && rotate.variables?.account.id === account.id ? "Rotating…" : "Rotate"}</Button></div>
-            <Button type="button" variant="destructive" size="sm" disabled={controlsDisabled || account.status !== "active"} onClick={() => { setRevokeError(""); setRevoking(account); }}><ShieldOff className="h-4 w-4" />Revoke</Button>
-            {update.error && !update.isPending && update.variables?.service_account_id === account.id ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] md:col-span-4">Unable to save account: {update.error.message}</p> : null}
-            {rotate.error && !rotate.isPending && rotate.variables?.account.id === account.id ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] md:col-span-4">Unable to rotate credential: {rotate.error.message}</p> : null}
-          </form>
+          <ServiceAccountEditor
+            key={account.id}
+            account={account}
+            busy={busy}
+            disabled={controlsDisabled}
+            saving={update.isPending && update.variables?.service_account_id === account.id}
+            rotating={rotate.isPending && rotate.variables?.account.id === account.id}
+            saveError={!update.isPending && update.variables?.service_account_id === account.id ? update.error?.message : undefined}
+            rotateError={!rotate.isPending && rotate.variables?.account.id === account.id ? rotate.error?.message : undefined}
+            onSave={(input) => update.mutateAsync(input)}
+            onRotate={() => rotate.mutate({ account })}
+            onRevoke={() => { setRevokeError(""); setRevoking(account); }}
+          />
         ))}
         <PageNavigation page={result ?? { count: 0, total: 0, limit: serviceAccountsPageSize, offset }} label="accounts" loading={busy || page.isFetching}
           onFirst={() => setOffset(0)} onPrevious={() => setOffset((value) => Math.max(0, value - serviceAccountsPageSize))}
@@ -160,6 +160,62 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
       </CardContent>
     </Card>
   );
+}
+
+
+type ServiceAccountEditorProps = {
+  account: ServiceAccount;
+  busy: boolean;
+  disabled: boolean;
+  saving: boolean;
+  rotating: boolean;
+  saveError?: string;
+  rotateError?: string;
+  onSave: (input: ServiceAccountUpdateInput) => Promise<ServiceAccount>;
+  onRotate: () => void;
+  onRevoke: () => void;
+};
+
+function ServiceAccountEditor({ account, busy, disabled, saving, rotating, saveError, rotateError, onSave, onRotate, onRevoke }: ServiceAccountEditorProps): ReactNode {
+  const [draft, setDraft] = useState<Partial<Pick<ServiceAccount, "name" | "role">>>({});
+  const name = draft.name ?? account.name;
+  const role = draft.role ?? account.role;
+  const changed = name !== account.name || role !== account.role;
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (disabled || account.status !== "active") return;
+    try {
+      await onSave({ service_account_id: account.id, name, role });
+      setDraft({});
+    } catch {
+      // The parent mutation supplies the error; retain the draft for retry.
+    }
+  }
+
+  return <form aria-label={`Edit service account ${account.name}`} aria-busy={saving || rotating} className="grid min-w-0 gap-2 rounded border p-3 md:grid-cols-[minmax(0,1fr)_10rem_auto_auto]" onSubmit={(event) => void submit(event)} onReset={(event) => {
+    event.preventDefault();
+    if (!busy) setDraft({});
+  }}>
+    <div className="min-w-0">
+      <Input name="name" disabled={busy} aria-label={`Name for ${account.name}`} value={name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} maxLength={128} required />
+      <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{account.id}</p>
+    </div>
+    <div className="grid gap-1">
+      <Select name="role" disabled={busy} aria-label={`Role for ${account.name}`} value={role} onChange={(event) => setDraft((current) => ({ ...current, role: event.target.value as ServiceAccount["role"] }))}>
+        <option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option>
+      </Select>
+      <Badge variant={account.status === "active" ? "success" : "secondary"}>{account.status}</Badge>
+    </div>
+    <div className="flex flex-wrap items-start gap-2">
+      <Button type="submit" variant="outline" size="sm" disabled={disabled || account.status !== "active"}>{saving ? "Saving…" : "Save"}</Button>
+      <Button type="reset" variant="outline" size="sm" disabled={busy || !changed}>Reset</Button>
+      <Button type="button" variant="outline" size="sm" disabled={disabled || account.status !== "active"} onClick={onRotate}><RotateCw className="h-4 w-4" />{rotating ? "Rotating…" : "Rotate"}</Button>
+    </div>
+    <Button type="button" variant="destructive" size="sm" disabled={disabled || account.status !== "active"} onClick={onRevoke}><ShieldOff className="h-4 w-4" />Revoke</Button>
+    {saveError ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] md:col-span-4">Unable to save account: {saveError}</p> : null}
+    {rotateError ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] md:col-span-4">Unable to rotate credential: {rotateError}</p> : null}
+  </form>;
 }
 
 
