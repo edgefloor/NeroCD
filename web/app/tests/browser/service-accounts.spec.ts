@@ -373,3 +373,47 @@ test("service account saves retain pending and failed row drafts", async ({ page
   }
   expect(payloads).toHaveLength(2);
 });
+
+
+test("service account revocation follows external status changes", async ({ page }) => {
+  await page.goto("/settings");
+  await signIn(page);
+  const response = await postJSON(page, "/api/v1/projects", undefined, { name: `External account ${Date.now()}`, description: "confirmation refresh fixture" });
+  expect(response.status()).toBe(201);
+  const project = await response.json();
+  const account = { id: "svcacct_external", project_id: project.id, owner_user_id: "usr_owner", name: "External bot", role: "maintainer", status: "active", created_at: "2026-10-11T12:00:00Z", updated_at: "2026-10-11T12:00:00Z" };
+  let gate: Promise<void> | undefined;
+  let release!: () => void;
+  let writes = 0;
+  await page.route("**/api/v1/service-accounts?*", async (route) => {
+    if (gate) await gate;
+    return route.fulfill({ json: { items: [account], count: 1, total: 1, limit: 10, offset: 0 } });
+  });
+  await page.route("**/api/v1/service-accounts/revoke", (route) => {
+    writes++;
+    return route.fulfill({ status: 500, json: { error: "Unexpected revocation" } });
+  });
+  for (const width of [320, 390, 430, 1440]) {
+    account.status = "active";
+    gate = undefined;
+    await page.setViewportSize({ width, height: 844 });
+    await page.reload();
+    await page.getByLabel("Service account project", { exact: true }).selectOption(project.id);
+    const revoke = page.getByRole("button", { name: "Revoke", exact: true });
+    await expect(revoke).toBeVisible();
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    const refreshing = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/v1/service-accounts");
+    await page.getByRole("button", { name: "Account", exact: true }).click();
+    await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+    await refreshing;
+    try {
+      await revoke.click();
+      await expect(page.getByRole("dialog", { name: "Revoke External bot?", exact: true })).toBeVisible();
+      account.status = width === 320 ? "revoked" : "disabled";
+    } finally { release(); }
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(revoke).toBeDisabled();
+    await expect(page.getByText(account.status, { exact: true })).toBeVisible();
+  }
+  expect(writes).toBe(0);
+});

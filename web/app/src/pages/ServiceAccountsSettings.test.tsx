@@ -311,3 +311,15 @@ test("a confirmed revocation remains visible when its follow-up refresh fails", 
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByText("revoked")).toBeTruthy();
 });
+
+
+test.each(["disabled", "revoked", "removed"])("revocation confirmation closes when the account is %s externally", async (status) => {
+  const result = { items: [account], count: 1, total: 1, limit: 10, offset: 0 };
+  serviceAccountsAPI.list.mockResolvedValue(result);
+  const { client } = renderPanel();
+  fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+  expect(screen.queryByRole("dialog")).not.toBeNull();
+  act(() => { client.setQueryData(["service-accounts", account.project_id, 0], { ...result, items: status === "removed" ? [] : [{ ...account, status }] }); });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(serviceAccountsAPI.revoke).not.toHaveBeenCalled();
+});
