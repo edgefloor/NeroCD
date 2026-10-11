@@ -406,3 +406,22 @@ test("project creation refreshes membership and source creation refreshes every 
   await act(async () => { await mounted.result.current.actions.repository({ project_id: "proj_one", name: "Source", url: "https://example.com/repo.git", provider: "git", default_ref: "main" }); });
   expect(client.getQueryState(repositories)?.isInvalidated).toBe(true);
 });
+
+
+test("confirmed project archives remove stale cards and choices when refresh fails", async () => {
+  let archived = false;
+  const project = { id: "proj_one", name: "Archived project", description: "", created_at: "2026-01-01T00:00:00Z" };
+  const other = { ...project, id: "proj_two", name: "Keep project" };
+  globalThis.fetch = vi.fn<typeof fetch>((_path, init) => {
+    if (init?.method === "POST") { archived = true; return Promise.resolve(json({ ...project, archived_at: "2026-10-11T10:00:00Z" })); }
+    if (archived) return Promise.resolve(new Response("Unavailable", { status: 503 }));
+    return Promise.resolve(json({ items: [project, other], count: 2, total: 2, limit: 100, offset: 0 }));
+  });
+  const { client, wrapper } = setup();
+  const mounted = renderHook(() => { useQuery(projectsQuery()); useQuery(allProjectsQuery()); return useProjectActions(); }, { wrapper });
+  await waitFor(() => expect(client.getQueryData(queryKeys.allProjects)).toEqual([project, other]));
+  await act(async () => { await mounted.result.current.actions.archive({ id: project.id }); });
+  expect(client.getQueryData(queryKeys.allProjects)).toEqual([other]);
+  expect(client.getQueryData(queryKeys.projects())).toEqual({ items: [other], count: 1, total: 1, limit: 100, offset: 0 });
+  expect(client.getQueryState(queryKeys.projects())?.status).toBe("error");
+});

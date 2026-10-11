@@ -3686,3 +3686,41 @@ test("deployment confirmation retains its receipt through a failed detail refres
   await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
   await expect(page.getByText("Unable to refresh deployment. Showing previously loaded data.")).toHaveCount(0);
 });
+
+
+test("project archives remove cards and source choices even when refresh fails", async ({ page }) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `000 Archive recovery ${Date.now()}` });
+  await page.goto(`/projects?q=${project.id}`);
+  await expect(page.getByRole("button", { name: "Archive", exact: true })).toBeVisible();
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/v1/projects/archive", async (route) => { await gate; await route.continue(); });
+  await page.route(/\/api\/v1\/projects([?].*)?$/, async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ status: 503, body: "Unavailable" });
+    return route.continue();
+  });
+  const response = page.waitForResponse((result) => new URL(result.url()).pathname === "/api/v1/projects/archive");
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  try {
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(page.getByRole("button", { name: "Archiving…", exact: true })).toBeDisabled();
+    }
+  } finally { release(); }
+  expect((await response).status()).toBe(200);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("button", { name: /^(Archive|Archiving…|Edit)$/ })).toHaveCount(0);
+    await expect(page.getByText("Unable to refresh project information. Your work is preserved; retry before making changes.")).toBeVisible();
+    if (width < 1280) await page.getByRole("button", { name: "Configure project", exact: true }).click();
+    await expect(page.locator(`select[name="project_id"] option[value="${project.id}"]`)).toHaveCount(0);
+    if (width < 1280) await page.keyboard.press("Escape");
+  }
+  await page.unroute(/\/api\/v1\/projects([?].*)?$/);
+  await page.getByRole("button", { name: "Retry projects", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Retry projects", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Archive", exact: true })).toHaveCount(0);
+});

@@ -110,7 +110,7 @@ function ProjectCard({
             onClick={() => void actions.archive({ id: project.id })}
           >
             <Archive className="mr-1.5 h-4 w-4" />
-            Archive
+            {busy === `project:archive:${project.id}` ? "Archiving…" : "Archive"}
           </Button>
         </div> : null}
       </CardContent>

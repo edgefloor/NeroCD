@@ -18,7 +18,18 @@ export function useProjectMutations() {
   return {
     create: useMutation({ mutationFn: (input: Parameters<typeof createProject>[0]) => createProject(input), onSuccess: async () => { await Promise.all([refreshProjects(), client.invalidateQueries({ queryKey: ["projectMembers"] })]); toast.success("Project created"); }, onError: (error) => toast.error(error.message) }),
     update: useMutation({ mutationFn: (input: Parameters<typeof updateProject>[0]) => updateProject(input), onSuccess: async (project) => { await retainConfirmedProject(project); toast.success("Project updated"); }, onError: (error) => toast.error(error.message) }),
-    archive: useMutation({ mutationFn: (input: Parameters<typeof archiveProject>[0]) => archiveProject(input), onSuccess: async () => { await refreshProjects(); toast.success("Project archived"); }, onError: (error) => toast.error(error.message) }),
+    archive: useMutation({ mutationFn: (input: Parameters<typeof archiveProject>[0]) => archiveProject(input), onSuccess: async (project) => {
+      client.setQueriesData<ProjectListResponse | Project[]>({ queryKey: ["projects"] }, (cached) => {
+        if (!cached) return cached;
+        const keep = (item: Project) => item.id !== project.id;
+        if (Array.isArray(cached)) return cached.filter(keep);
+        const items = cached.items.filter(keep);
+        const removed = cached.items.length - items.length;
+        return removed ? { ...cached, items, count: items.length, total: Math.max(0, cached.total - removed) } : cached;
+      });
+      await refreshProjects();
+      toast.success("Project archived");
+    }, onError: (error) => toast.error(error.message) }),
     repository: useMutation({ mutationFn: (input: Parameters<typeof createRepository>[0]) => createRepository(input), onSuccess: async () => { await client.invalidateQueries({ queryKey: ["repositories"] }); toast.success("Repository registered"); }, onError: (error) => toast.error(error.message) }),
   };
 }
