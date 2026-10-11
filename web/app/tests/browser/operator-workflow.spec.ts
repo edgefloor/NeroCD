@@ -3395,3 +3395,47 @@ test("navigation preserves native clicks and keyboard routing without reloading"
     if (width < 1024) await expect(page.getByRole("dialog", { name: "Mobile navigation", exact: true })).toHaveCount(0);
   }
 });
+
+
+test("deployment cancellation keeps pending and failure feedback beside its actions", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const payloads: unknown[] = [];
+  await page.route("**/api/v1/deployments/cancel", async (route) => {
+    payloads.push(route.request().postDataJSON());
+    if (payloads.length > 1) return route.continue();
+    await pending;
+    return route.fulfill({ status: 503, json: { error: "Temporary cancellation failure" } });
+  });
+  await page.goto(`/deployments/${fixture.deploymentID}`);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("button", { name: "Requesting cancellation…", exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+  expect(payloads).toHaveLength(1);
+  release();
+  const error = page.getByRole("alert").filter({ hasText: "Unable to request cancellation: Temporary cancellation failure" });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(error).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) {
+      await error.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("deployment-cancel-error-320.png"), animations: "disabled" });
+    }
+  }
+  const retry = page.waitForResponse((response) => response.url().endsWith("/api/v1/deployments/cancel") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect((await retry).ok()).toBe(true);
+  await expect(error).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Requesting cancellation…", exact: true })).toHaveCount(0);
+  expect(payloads).toHaveLength(2);
+  expect(payloads[1]).toEqual(payloads[0]);
+});
