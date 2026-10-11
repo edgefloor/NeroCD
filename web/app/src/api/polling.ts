@@ -65,7 +65,15 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
     }
   }, [client, current.firstOffset, loadingPrevious, runID]);
 
+  const retry = useCallback(async () => {
+    if (!runID) return;
+    await probe.refetch();
+    if (current.nextOffset !== undefined) await page.refetch();
+  }, [runID, probe.refetch, page.refetch, current.nextOffset]);
+
   return {
+    retry,
+    isFetching: probe.isFetching || page.isFetching,
     data: current.logs,
     isPending: probe.isPending || (current.logs.length === 0 && page.isPending),
     isError: probe.isError || page.isError,

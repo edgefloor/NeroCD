@@ -1660,3 +1660,29 @@ test("deployment log previews show the latest output and follow the linked run",
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-live-logs-320.png"), fullPage: true });
   }
 });
+
+test("deployment log failures preserve status and controls and can be retried", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { deploymentID } = await createDetailFixture(page);
+  let fail = true;
+  await page.route("**/api/v1/run-logs?*", (route) => fail
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary logs failure" }) })
+    : route.continue());
+  for (const width of [320, 1440]) {
+    fail = true;
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/deployments/${deploymentID}`);
+    await expect(page.getByRole("button", { name: "Retry logs", exact: true })).toBeVisible();
+    await expect(page.getByText(`Deployment ${deploymentID}`, { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveText("Unable to load run output.");
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-log-error-320.png"), fullPage: true });
+    fail = false;
+    await page.getByRole("button", { name: "Retry logs", exact: true }).click();
+    await expect(page.getByText("No run logs have been recorded.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry logs", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+  }
+});
