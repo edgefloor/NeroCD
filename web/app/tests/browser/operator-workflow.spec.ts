@@ -860,8 +860,10 @@ test("inventory and approval filters apply URL queries and recover after clearin
       await filter.fill("no-such-inventory-result");
       await expect(page.getByText(emptyMessage, { exact: true })).toBeVisible();
       if (width === 320) await page.screenshot({ path: testInfo.outputPath(`${path}-filter-empty-320.png`), fullPage: true });
-      await page.getByRole("button", { name: "Clear filter", exact: true }).click();
+      await page.getByRole("button", { name: "Clear filter", exact: true }).focus();
+      await page.keyboard.press("Enter");
       await expect(filter).toHaveValue("");
+      await expect(filter).toBeFocused();
       await expect(page.getByText(emptyMessage, { exact: true })).toHaveCount(0);
       await filter.fill(projectName);
     }

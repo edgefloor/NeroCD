@@ -119,7 +119,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
             <label className="flex min-w-0 flex-1 flex-col items-start gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-3" htmlFor="page-filter"><span className="shrink-0">Filter this page</span>
               <input id="page-filter" ref={filterRef} type="search" className="h-9 min-w-0 w-full max-w-sm rounded-lg border border-border bg-card px-3 text-foreground" placeholder={`Filter ${current.label.toLowerCase()}`} value={query} onChange={(event) => setQuery(event.target.value)} />
             </label>
-            {query && <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setQuery("")}>Clear filter</Button>}
+            {query && <Button variant="ghost" size="sm" className="shrink-0" onClick={() => { setQuery(""); filterRef.current?.focus(); }}>Clear filter</Button>}
           </div>}
           {children}
         </main>
