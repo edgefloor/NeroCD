@@ -27,31 +27,31 @@ export function WorkflowDiagnostics({ run }: { run: TaskRun }): ReactNode {
   const declaredSteps = run.workflow?.steps ?? [];
 
   return (
-    <Card aria-labelledby="workflow-diagnostics-title">
+    <Card className="min-w-0" aria-labelledby="workflow-diagnostics-title">
       <CardHeader className="border-b">
         <CardTitle><h2 id="workflow-diagnostics-title">Workflow steps</h2></CardTitle>
         <CardDescription>
           Status and timing for run <span className="break-all font-mono">{run.id}</span>. Logs cover the whole run.
         </CardDescription>
       </CardHeader>
-      <CardContent className="pt-4">
+      <CardContent className="min-w-0 pt-4">
         {declaredSteps.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No workflow steps were declared for this run. {(run.workflow_state?.steps.length ?? 0) > 0 ? "Reported step state is available, but no declared order is available." : ""}
           </p>
         ) : (
-          <ol className="grid gap-3" aria-label="Workflow step timeline">
+          <ol className="grid min-w-0 grid-cols-1 gap-3" aria-label="Workflow step timeline">
             {declaredSteps.map((step, index) => {
               const state = statesByID.get(step.id);
               return (
-                <li key={step.id} className="grid gap-3 rounded-lg border border-border/60 bg-muted/20 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                <li key={step.id} className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border border-border/60 bg-muted/20 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted font-mono text-xs text-muted-foreground">{index + 1}</span>
-                      <p className="min-w-0 break-words text-sm font-medium">{step.name}</p>
+                      <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">{step.name}</p>
                     </div>
                     <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{step.id}</p>
-                    {step.depends_on?.length ? <p className="mt-2 text-xs text-muted-foreground">Depends on: {step.depends_on.join(", ")}</p> : null}
+                    {step.depends_on?.length ? <p className="mt-2 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">Depends on: {step.depends_on.join(", ")}</p> : null}
                   </div>
                   {state ? <StatusBadge status={state.status} className="sm:justify-self-end" /> : <span className="w-fit rounded-md border border-border/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">Status not reported</span>}
                   <dl className="grid gap-2 border-t border-border/60 pt-3 text-xs text-muted-foreground sm:col-span-2 sm:grid-cols-3">

@@ -4291,3 +4291,44 @@ test("invalid workflow timing preserves diagnostics and run navigation", async (
     if (width === 320) await diagnostics.screenshot({ path: testInfo.outputPath("workflow-invalid-timing-320.png") });
   }
 });
+
+
+test("long workflow step names and dependencies remain readable inside diagnostics", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  const name = `Build_${"application".repeat(20)}`;
+  const dependency = `checkout_${"source".repeat(18)}`;
+  await page.route(`**/api/v1/runs/${runID}`, async (route) => {
+    const response = await route.fetch();
+    const run = await response.json();
+    await route.fulfill({ response, json: {
+      ...run, status: "succeeded",
+      workflow: { steps: [
+        { id: dependency, name: "Checkout source", run_spec: { type: "shell", inputs: {} }, requires_ack: false },
+        { id: "build", name, depends_on: [dependency], run_spec: { type: "shell", inputs: {} }, requires_ack: false },
+      ] },
+      workflow_state: { steps: [] },
+    } });
+  });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runs/${runID}`);
+    await expect(page.getByRole("dialog", { name: `run ${runID}`, exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    const diagnostics = page.locator('[aria-labelledby="workflow-diagnostics-title"]');
+    for (const text of [name, `Depends on: ${dependency}`]) {
+      const field = diagnostics.getByText(text, { exact: true });
+      await expect(field).toBeVisible();
+      expect(await field.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const card = element.closest('[data-slot="card"]')!.getBoundingClientRect();
+        return Array.from(range.getClientRects()).every((rect) => rect.left >= card.left && rect.right <= card.right);
+      })).toBe(true);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await diagnostics.screenshot({ path: testInfo.outputPath("workflow-long-metadata-320.png") });
+  }
+});
