@@ -2808,3 +2808,61 @@ test("templates recover the selected page and keep an open edit through refresh 
   expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
   expect(new URL(page.url()).searchParams.get("q")).toBe(fixture.templateID);
 });
+
+test("projects recover their selected page and preserve edits through source refresh failure", async ({ page }, testInfo) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createRunLogFixture(page);
+  const response = await page.request.get("/api/v1/projects?limit=100");
+  expect(response.status()).toBe(200);
+  const result = await response.json() as { items: Array<{ id: string }> };
+  const project = result.items.find((item) => item.id === fixture.projectID);
+  expect(project).toBeTruthy();
+  let failProjects = true;
+  let failSources = false;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/projects?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("limit") === "100") return route.continue();
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    offsets.push(offset);
+    if (failProjects) return route.fulfill({ status: 503, json: { error: "Temporary project list failure" } });
+    return route.fulfill({ json: { items: [project], count: 1, limit: 50, offset, total: 51 } });
+  });
+  await page.route("**/api/v1/repositories", async (route) => {
+    if (failSources) return route.fulfill({ status: 503, json: { error: "Temporary sources failure" } });
+    return route.continue();
+  });
+  await page.goto(`/projects?offset=50&q=${fixture.projectID}`);
+  await expect(page.getByRole("alert")).toHaveText("Unable to load projects.");
+  expect(offsets.every((offset) => offset === 50)).toBe(true);
+  offsets.length = 0;
+  failProjects = false;
+  await page.getByRole("button", { name: "Retry projects", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(offsets).toEqual([50]);
+  failSources = true;
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit project" });
+  const name = dialog.getByRole("textbox", { name: "Project Name", exact: true });
+  await name.fill("Unsaved project after refresh");
+  await expect(dialog.getByRole("button", { name: "Retry projects", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Save project", exact: true })).toBeDisabled();
+  await expect(name).toHaveValue("Unsaved project after refresh");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(dialog.getByRole("button", { name: "Retry projects", exact: true })).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("project-edit-recovery-320.png") });
+  }
+  failSources = false;
+  await dialog.getByRole("button", { name: "Retry projects", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Save project", exact: true })).toBeEnabled();
+  await expect(name).toHaveValue("Unsaved project after refresh");
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
+  expect(new URL(page.url()).searchParams.get("q")).toBe(fixture.projectID);
+});

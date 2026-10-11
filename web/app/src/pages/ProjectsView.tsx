@@ -21,6 +21,7 @@ function ProjectCard({
   token,
   busy,
   mutate,
+  recovery,
   canOperate,
 }: {
   project: Project;
@@ -30,6 +31,7 @@ function ProjectCard({
   token: string;
   busy: string;
   mutate: MutateFn;
+  recovery?: ReactNode;
   canOperate: boolean;
 }): ReactNode {
   const formId = useId();
@@ -40,6 +42,7 @@ function ProjectCard({
 
   async function updateSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (recovery) return;
     const form = new FormData(event.currentTarget);
     const updated = await mutate(
       `project:update:${project.id}`,
@@ -85,10 +88,11 @@ function ProjectCard({
                 Edit
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Edit project</DialogTitle>
               </DialogHeader>
+              {recovery}
               <form className="space-y-3" onSubmit={(event) => void updateSubmit(event)}>
                 <div className="space-y-1.5">
                   <label htmlFor={`${formId}-project-name`} className="text-xs font-medium text-muted-foreground">Project Name</label>
@@ -98,7 +102,7 @@ function ProjectCard({
                   <label htmlFor={`${formId}-description`} className="text-xs font-medium text-muted-foreground">Description</label>
                   <Textarea id={`${formId}-description`} name="description" defaultValue={project.description} className="min-h-[80px] rounded-xl" />
                 </div>
-                <Button type="submit" disabled={busy === `project:update:${project.id}`} className="h-9 w-full rounded-xl">
+                <Button type="submit" disabled={Boolean(recovery) || busy === `project:update:${project.id}`} className="h-9 w-full rounded-xl">
                   Save project
                 </Button>
               </form>
@@ -108,7 +112,7 @@ function ProjectCard({
             variant="outline"
             size="sm"
             className="h-8 rounded-xl"
-            disabled={busy === `project:archive:${project.id}`}
+            disabled={Boolean(recovery) || busy === `project:archive:${project.id}`}
             onClick={() => void mutate(`project:archive:${project.id}`, () => archiveProject(token, project.id), "Project archived")}
           >
             <Archive className="mr-1.5 h-4 w-4" />
@@ -125,15 +129,18 @@ function ProjectForms({
   token,
   busy,
   mutate,
+  recovery,
 }: {
   projects: Project[];
   token: string;
   busy: string;
   mutate: MutateFn;
+  recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
   async function createProjectSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (recovery) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const created = await mutate("project", () => createProject(token, { name: String(form.get("name") ?? ""), description: String(form.get("description") ?? "") }), "Project created");
@@ -141,6 +148,7 @@ function ProjectForms({
   }
   async function createRepoSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (recovery) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const created = await mutate("repository", () =>
@@ -165,7 +173,7 @@ function ProjectForms({
           <label htmlFor={`${formId}-description`} className="text-xs font-medium text-muted-foreground">Description</label>
           <Textarea id={`${formId}-description`} name="description" placeholder="Description" className="min-h-[80px] rounded-xl" />
         </div>
-        <Button type="submit" disabled={busy === "project"} className="h-9 rounded-xl">
+        <Button type="submit" disabled={Boolean(recovery) || busy === "project"} className="h-9 rounded-xl">
           <Plus className="h-4 w-4 mr-2" />
           Create project
         </Button>
@@ -204,7 +212,7 @@ function ProjectForms({
             <Input id={`${formId}-default-ref`} name="default_ref" defaultValue="main" className="h-9 rounded-xl" />
           </div>
         </div>
-        <Button type="submit" disabled={busy === "repository"} className="h-9 rounded-xl">
+        <Button type="submit" disabled={Boolean(recovery) || busy === "repository"} className="h-9 rounded-xl">
           <GitBranch className="h-4 w-4 mr-2" />
           Register source
         </Button>
@@ -220,6 +228,7 @@ export function ProjectsView({
   token,
   busy,
   mutate,
+  recovery,
   canOperateProject,
   loading,
 }: {
@@ -229,6 +238,7 @@ export function ProjectsView({
   token: string;
   busy: string;
   mutate: MutateFn;
+  recovery?: ReactNode;
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
 }): ReactNode {
@@ -262,7 +272,8 @@ export function ProjectsView({
               <DialogHeader>
                 <DialogTitle>Configure project</DialogTitle>
               </DialogHeader>
-              <ProjectForms projects={writableProjects} token={token} busy={busy} mutate={mutate} />
+              {recovery}
+              <ProjectForms projects={writableProjects} token={token} busy={busy} mutate={mutate} recovery={recovery} />
             </DialogContent>
           </Dialog>
         </div>
@@ -285,6 +296,7 @@ export function ProjectsView({
               token={token}
               busy={busy}
               mutate={mutate}
+              recovery={recovery}
             />
           ))
         )}
@@ -294,7 +306,7 @@ export function ProjectsView({
           <CardTitle className="text-base font-semibold">Configure project</CardTitle>
         </CardHeader>
         <CardContent>
-          <ProjectForms projects={writableProjects} token={token} busy={busy} mutate={mutate} />
+          <ProjectForms projects={writableProjects} token={token} busy={busy} mutate={mutate} recovery={recovery} />
         </CardContent>
       </Card>
     </section>
