@@ -31,6 +31,7 @@ function DashboardUnavailable({ reset }: { reset?: () => void }) {
 
 function HomeRoute() {
   const { q } = Route.useSearch();
+  const navigate = Route.useNavigate();
   const health = useQuery(healthQuery());
   const projects = useQuery(projectsQuery());
   const templates = useQuery(templatesQuery());
@@ -42,5 +43,5 @@ function HomeRoute() {
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <DashboardUnavailable />;
   const snapshot = apiSnapshot({ health: health.data, projects: projects.data, templates: templates.data, runs: runs.data, approvals: approvals.data, logs: logs.data });
-  return <HomeView snapshot={snapshot} workSnapshot={snapshot} query={q} onClearQuery={() => undefined} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} totals={{ projects: projects.data?.total ?? 0, templates: templates.data?.total ?? 0, logs: logs.data?.total ?? 0 }} />;
+  return <HomeView snapshot={snapshot} workSnapshot={snapshot} query={q} onClearQuery={() => void navigate({ search: (previous) => ({ ...previous, q: undefined }), replace: true })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} totals={{ projects: projects.data?.total ?? 0, templates: templates.data?.total ?? 0, logs: logs.data?.total ?? 0 }} />;
 }

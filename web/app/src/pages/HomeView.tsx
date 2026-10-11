@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { Activity, AlertCircle, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { ApiSnapshot } from "@/api";
+import type { ApiSnapshot, TaskRun } from "@/api";
 import type { MutateFn } from "@/hooks/useApi";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,7 +10,7 @@ import { RunsTable } from "./RunsView";
 import { ApprovalList } from "./ApprovalsView";
 import { LogViewer } from "./LogsView";
 import { summarizeOverview } from "@/view-model";
-import { countFilteredItems } from "@/lib/format";
+import { matchesQuery, projectName, templateName } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 function CompactEmpty({ children }: { children: ReactNode }): ReactNode {
@@ -41,7 +41,17 @@ export function HomeView({
   const summary = summarizeOverview(snapshot);
   const pending = snapshot.approvals.filter((approval) => approval.status === "pending");
   const failed = snapshot.runs.filter((run) => ["failed", "error"].includes(run.status));
-  const visiblePending = workSnapshot?.approvals.filter((approval) => approval.status === "pending") ?? pending;
+  const activity = workSnapshot ?? snapshot;
+  const matchesRun = (run: TaskRun) => matchesQuery(query, run.id, run.status, run.requested_by,
+    projectName(snapshot.projects, run.project_id), templateName(snapshot.templates, run.template_id, run));
+  const visibleRuns = activity.runs.filter(matchesRun).slice(0, 7);
+  const visiblePending = activity.approvals.filter((approval) => {
+    if (approval.status !== "pending") return false;
+    const run = snapshot.runs.find((item) => item.id === approval.run_id);
+    return matchesQuery(query, approval.id, approval.run_id, approval.status) || Boolean(run && matchesRun(run));
+  });
+  const visibleLogs = activity.logs.filter((log) => matchesQuery(query, log.run_id, log.stream, log.message)).slice(0, 5);
+  const resultCount = visibleRuns.length + visiblePending.length + visibleLogs.length;
 
   if (loading) {
     return (
@@ -68,7 +78,7 @@ export function HomeView({
   return (
     <div className="grid gap-6">
       {query && onClearQuery ? (
-        <SearchScope query={query} resultCount={countFilteredItems(workSnapshot ?? snapshot)} onClear={onClearQuery} />
+        <SearchScope query={query} resultCount={resultCount} onClear={onClearQuery} />
       ) : null}
       
       <section aria-labelledby="current-activity-heading" className="grid gap-4 border-b border-border/60 pb-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
@@ -103,8 +113,8 @@ export function HomeView({
             <CardTitle className="text-base font-semibold">Recent Activity</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {workSnapshot && workSnapshot.runs.length > 0 ? (
-              <RunsTable runs={workSnapshot.runs.slice(0, 7)} projects={workSnapshot.projects} templates={workSnapshot.templates} />
+            {visibleRuns.length > 0 ? (
+              <RunsTable runs={visibleRuns} projects={snapshot.projects} templates={snapshot.templates} />
             ) : (
               <CompactEmpty>{query ? "No runs match this search." : "Run activity will appear here after a run is requested."}</CompactEmpty>
             )}
@@ -125,7 +135,7 @@ export function HomeView({
           </CardHeader>
           <CardContent className="p-0">
             {visiblePending.length > 0 ? (
-              <ApprovalList approvals={visiblePending} snapshot={workSnapshot ?? snapshot} token={token} busy={busy} mutate={mutate} />
+              <ApprovalList approvals={visiblePending} snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
             ) : (
               <CompactEmpty>{query ? "No pending approvals match this search." : "No approvals are waiting."}</CompactEmpty>
             )}
@@ -139,8 +149,8 @@ export function HomeView({
              <CardTitle className="text-base font-semibold">Latest Logs</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {workSnapshot && workSnapshot.logs.length > 0 ? (
-              <LogViewer logs={workSnapshot.logs.slice(0, 5)} />
+            {visibleLogs.length > 0 ? (
+              <LogViewer logs={visibleLogs} />
             ) : (
               <CompactEmpty>{query ? "No logs match this search." : "Run output will appear here when logs are available."}</CompactEmpty>
             )}

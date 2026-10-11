@@ -665,3 +665,23 @@ test("deployment operations navigation, deep links, search, and mobile menu stay
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Mobile navigation" })).toHaveCount(0);
 });
+
+
+test("dashboard filtering removes unrelated rows and its Clear action restores the URL and input", async ({ page }) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const filter = page.getByRole("searchbox", { name: "Filter this page", exact: true });
+  const historyLength = await page.evaluate(() => history.length);
+  await filter.fill("no-such-dashboard-activity");
+  await expect(page.getByText("No runs match this search.")).toBeVisible();
+  await expect(page.getByText("No pending approvals match this search.")).toBeVisible();
+  await expect(page.getByText("No logs match this search.")).toBeVisible();
+  await expect(page.getByText("0 matching records")).toBeVisible();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(filter).toHaveValue("");
+  await expect(page).toHaveURL(/\/$/);
+  expect(await page.evaluate(() => history.length)).toBe(historyLength);
+  await expect(page.getByText("No runs match this search.")).toHaveCount(0);
+});
