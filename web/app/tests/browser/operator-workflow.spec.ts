@@ -1169,3 +1169,48 @@ test("deployment selectors and detail labels include records beyond the first hu
   }
   for (const resource of ["services", "environments", "revisions"]) expect(requested).toContain(`${resource}:100`);
 });
+
+test("project maintainers get deployment actions only in their maintained project", async ({ page, browser }) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const maintained = await createDetailFixture(page);
+  const viewed = await createDetailFixture(page);
+  await postJSON(page, "/api/v1/project-members", { project_id: maintained.projectID, email: "oidc-browser@example.invalid", role: "maintainer" });
+  await postJSON(page, "/api/v1/project-members", { project_id: viewed.projectID, email: "oidc-browser@example.invalid", role: "viewer" });
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.goto("/sign-in");
+    await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    for (const width of [390, 1440]) {
+      const environment = await postJSON<{ id: string }>(page, "/api/v1/environments", { service_id: maintained.serviceID, name: `Maintainer ${width}`, compose_project: `maintainer-${width}-${Date.now()}`, timeout_seconds: 60, rollback_safe: true });
+      await operator.setViewportSize({ width, height: 1000 });
+      await operator.goto(`/deployments?service_id=${maintained.serviceID}&environment_id=${environment.id}`);
+      await operator.getByRole("combobox", { name: "Immutable revision", exact: true }).selectOption(maintained.revisionID);
+      const created = operator.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/deployments" && response.request().method() === "POST");
+      await operator.getByRole("button", { name: "Request deployment", exact: true }).click();
+      const response = await created;
+      expect(response.status()).toBe(201);
+      const deployment = await response.json() as { id: string };
+      await expect(operator.getByText(`Deployment ${deployment.id}`, { exact: true })).toBeVisible();
+      const canceled = operator.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/deployments/cancel");
+      await operator.getByRole("button", { name: "Cancel", exact: true }).click();
+      expect((await canceled).status()).toBe(200);
+      await operator.goto(`/deployments?service_id=${viewed.serviceID}&environment_id=${viewed.environmentID}`);
+      await expect(operator.getByRole("combobox", { name: "Environment", exact: true })).toHaveValue(viewed.environmentID);
+      await expect(operator.getByRole("button", { name: "Request deployment", exact: true })).toHaveCount(0);
+      await operator.goto(`/deployments/${viewed.deploymentID}`);
+      await expect(operator.getByText(`Deployment ${viewed.deploymentID}`, { exact: true })).toBeVisible();
+      await expect(operator.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    }
+    const denied = await operator.request.post("/api/v1/deployments/cancel", {
+      headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" },
+      data: { deployment_id: viewed.deploymentID, request_id: `denied-${Date.now()}` },
+    });
+    expect(denied.status()).toBe(403);
+  } finally {
+    await context.close();
+  }
+});
