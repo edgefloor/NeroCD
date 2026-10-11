@@ -2094,3 +2094,21 @@ test("keyboard users can skip shell navigation to page content", async ({ page }
     await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toBeFocused();
   }
 });
+
+test("browser titles follow navigation and history", async ({ page }) => {
+  await page.goto("/sign-in/");
+  await expect(page).toHaveTitle("Sign in · NeroCD");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  await expect(page).toHaveTitle("Home · NeroCD");
+  await page.getByRole("link", { name: "Runners", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  await expect(page).toHaveTitle("Runners · NeroCD");
+  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await expect(page).toHaveTitle("Runs · NeroCD");
+  await page.goBack();
+  await expect(page).toHaveTitle("Runners · NeroCD");
+  await page.goto("/unknown-title-page");
+  await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
+  await expect(page).toHaveTitle("Page not found · NeroCD");
+});
