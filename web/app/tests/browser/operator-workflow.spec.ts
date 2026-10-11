@@ -2446,3 +2446,32 @@ test("sign-in session checking provides loading feedback and reload recovery", a
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page).toHaveURL((url) => url.pathname === "/sign-in" && url.searchParams.get("redirect") === "/runners");
 });
+
+test("setup status failures do not claim that administrator bootstrap is required", async ({ page }, testInfo) => {
+  await page.goto("/sign-in");
+  await ensureBootstrapped(page);
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => { release = resolve; });
+  let fail = true;
+  await page.route("**/api/v1/bootstrap-status", async (route) => {
+    if (!fail) return route.continue();
+    await ready;
+    return route.fulfill({ status: 503, json: { error: "Setup status unavailable" } });
+  });
+  await page.goto("/sign-in?redirect=%2Frunners");
+  await expect(page.getByRole("status")).toHaveText("Checking server setup...");
+  await expect(page.getByText("Administrator bootstrap required", { exact: true })).toHaveCount(0);
+  release();
+  await expect(page.getByRole("alert")).toHaveText("Unable to check server setup. Try again.");
+  await expect(page.getByLabel("Email")).toHaveCount(0);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Retry setup check", exact: true })).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("setup-status-recovery-320.png"), fullPage: true });
+  }
+  fail = false;
+  await page.getByRole("button", { name: "Retry setup check", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(page).toHaveURL((url) => url.pathname === "/sign-in" && url.searchParams.get("redirect") === "/runners");
+});

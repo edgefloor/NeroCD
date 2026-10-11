@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { SessionCheck } from "@/components/common/SessionCheck";
+import { Button } from "@/components/ui/button";
 import { SignIn } from "@/pages/SignIn";
 import { bootstrapStatusQuery, oidcStatusQuery } from "@/api";
 import { useAuthState } from "@/router/context";
@@ -47,8 +48,14 @@ function SignInRoute() {
   }, [auth.authenticated, destination, navigate]);
   if (auth.authenticated === null) return <SessionCheck failed={Boolean(auth.authError)} />;
   if (auth.authenticated === true) return <main className="min-h-screen bg-background" aria-label="Redirecting after sign in" />;
-  // Until the tiny public status is known, retain the CLI-only guidance. A
-  // transient status failure must never imply that browser bootstrap exists.
+  if (!bootstrap.data) return <main className="min-h-screen bg-background p-6" aria-label="Checking setup">
+    {bootstrap.isError ? <div className="grid gap-3">
+      <h1 className="text-lg font-semibold">Sign-in unavailable</h1>
+      <p role="alert" className="text-sm text-muted-foreground">Unable to check server setup. Try again.</p>
+      <div><Button disabled={bootstrap.isFetching} onClick={() => void bootstrap.refetch()}>Retry setup check</Button></div>
+    </div> : <p role="status" className="text-sm text-muted-foreground">Checking server setup...</p>}
+  </main>;
+  // Only a confirmed setup state selects the CLI guidance or sign-in form.
   const bootstrapRequired = bootstrap.data?.status !== "complete";
   const oidcHref = `/api/v1/oidc/login?redirect=${encodeURIComponent(validatedInternalRedirect(redirect))}`;
   return <SignIn error={auth.authError} bootstrapRequired={bootstrapRequired} oidcEnabled={!bootstrapRequired && oidc.data?.enabled === true} oidcError={oidcError === "failed"} oidcHref={oidcHref} onSubmit={async (email, password) => { try { await auth.signIn(email, password); } catch { /* useAuth retains the rendered authError and route stays put */ } }} />;

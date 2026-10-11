@@ -72,8 +72,8 @@ export const bootstrapStatusQuery = () => queryOptions({
   staleTime: 0,
   queryFn: ({ signal }) => getBootstrapStatus({ signal }),
   // Bootstrap may complete in a supported CLI process while this public page
-  // remains open. Poll only until it completes, then leave it cached.
-  refetchInterval: (query) => query.state.data?.status === "complete" ? false : 1_000,
+  // remains open. Pause on failure for explicit retry; stop after completion.
+  refetchInterval: (query) => query.state.status === "error" || query.state.data?.status === "complete" ? false : 1_000,
 });
 export const oidcStatusQuery = () => queryOptions({ queryKey: queryKeys.oidcStatus, staleTime: 0, queryFn: ({ signal }) => getOIDCStatus({ signal }), retry: false });
 // A mounted Operations page is the only owner of this query.  Avoid polling a
