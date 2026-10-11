@@ -89,14 +89,14 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
             <Button variant="ghost" size="icon" aria-label="Search navigation" onClick={onOpenSearch}><Search className="h-4 w-4" /></Button>
             <Dialog open={notificationsOpen} onOpenChange={setNotificationsOpen}>
               <DialogTrigger asChild><Button variant="ghost" size="icon" aria-label="Notifications"><Bell className="h-4 w-4" /></Button></DialogTrigger>
-              <DialogContent aria-modal="true"><DialogHeader><DialogTitle>Notifications</DialogTitle><DialogDescription>Activity in the loaded runs and approvals.</DialogDescription></DialogHeader>
-                <NotificationPanel snapshot={snapshot} onNavigate={(next) => { setView(next); setNotificationsOpen(false); }} />
+              <DialogContent aria-modal="true" className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden"><DialogHeader className="shrink-0 pr-6"><DialogTitle>Notifications</DialogTitle><DialogDescription>Activity in the loaded runs and approvals.</DialogDescription></DialogHeader>
+                <div className="min-h-0 overflow-y-auto"><NotificationPanel snapshot={snapshot} onNavigate={(next) => { setView(next); setNotificationsOpen(false); }} /></div>
               </DialogContent>
             </Dialog>
             <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
               <DialogTrigger asChild><Button variant="ghost" size="icon" aria-label="Account"><UserRound className="h-4 w-4" /></Button></DialogTrigger>
-              <DialogContent aria-modal="true"><DialogHeader><DialogTitle>Account</DialogTitle><DialogDescription className="break-all">{notice || "Current session"}</DialogDescription></DialogHeader>
-                <div className="grid gap-2">
+              <DialogContent aria-modal="true" className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden"><DialogHeader className="shrink-0 pr-6"><DialogTitle>Account</DialogTitle><DialogDescription className="break-all">{notice || "Current session"}</DialogDescription></DialogHeader>
+                <div className="grid min-h-0 gap-2 overflow-y-auto">
                   <Button variant="outline" onClick={() => { onRefresh(); setAccountOpen(false); }}>Refresh data</Button>
                   <Button variant="outline" onClick={toggleTheme}>Switch to {theme === "dark" ? "light" : "dark"} mode</Button>
                   <Button variant="outline" onClick={() => { setAccountOpen(false); onSignOut(); }}>Sign out</Button>
@@ -106,11 +106,11 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
           </div>
         </header>
         <div className="mobile-shell-content mx-auto max-w-[1400px] px-4 py-6 lg:px-6">
-          {current.filterable && filterable && <div className="mb-5 flex min-w-0 items-center gap-2">
-            <label className="flex min-w-0 flex-1 items-center gap-3 text-sm text-muted-foreground" htmlFor="page-filter"><span className="shrink-0">Filter this page</span>
+          {current.filterable && filterable && <div className="mb-5 flex min-w-0 items-end gap-2 sm:items-center">
+            <label className="flex min-w-0 flex-1 flex-col items-start gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-3" htmlFor="page-filter"><span className="shrink-0">Filter this page</span>
               <input id="page-filter" ref={filterRef} type="search" className="h-9 min-w-0 w-full max-w-sm rounded-lg border border-border bg-card px-3 text-foreground" placeholder={`Filter ${current.label.toLowerCase()}`} value={query} onChange={(event) => setQuery(event.target.value)} />
             </label>
-            {query && <Button variant="ghost" size="sm" onClick={() => setQuery("")}>Clear filter</Button>}
+            {query && <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setQuery("")}>Clear filter</Button>}
           </div>}
           {children}
         </div>

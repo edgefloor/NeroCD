@@ -467,6 +467,15 @@ test("header and notification controls fit narrow and intermediate viewports", a
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
     }
+    const filter = page.getByRole("searchbox", { name: "Filter this page", exact: true });
+    await filter.fill("deployment-filter");
+    await expect(filter).toHaveValue("deployment-filter");
+    const filterBounds = await filter.boundingBox();
+    expect(filterBounds!.width).toBeGreaterThanOrEqual(160);
+    expect(filterBounds!.x + filterBounds!.width).toBeLessThanOrEqual(width);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("filter-active-320.png") });
+    await page.getByRole("button", { name: "Clear filter", exact: true }).click();
+    await expect(filter).toHaveValue("");
     await page.getByRole("button", { name: "Notifications", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Notifications", exact: true });
     await expect(dialog).toBeVisible();
@@ -475,6 +484,23 @@ test("header and notification controls fit narrow and intermediate viewports", a
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
     await page.keyboard.press("Escape");
     if (width === 768 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`navigation-${width}.png`) });
+  }
+  await page.setViewportSize({ width: 430, height: 240 });
+  for (const name of ["Account", "Notifications"]) {
+    await page.getByRole("button", { name, exact: true }).click();
+    const dialog = page.getByRole("dialog", { name, exact: true });
+    const bounds = await dialog.boundingBox();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(240);
+    if (name === "Account") {
+      const signOut = dialog.getByRole("button", { name: "Sign out", exact: true });
+      await signOut.scrollIntoViewIfNeeded();
+      await expect(signOut).toBeInViewport();
+      await expect(dialog.getByRole("heading", { name: "Account", exact: true })).toBeInViewport();
+      await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeInViewport();
+      await page.screenshot({ path: testInfo.outputPath("account-short-430.png") });
+    }
+    await page.keyboard.press("Escape");
   }
   await page.setViewportSize({ width: 1440, height: 360 });
   const settings = page.getByRole("navigation", { name: "Desktop navigation" }).getByRole("link", { name: "Settings", exact: true });
