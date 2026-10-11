@@ -47,7 +47,8 @@ export function UsersSettingsPanel({ readOnly = false }: { readOnly?: boolean })
       users={result?.items ?? []}
       page={result}
       loading={users.isPending}
-      busy={readOnly || offboard.isPending || users.isError}
+      busy={offboard.isPending}
+      readOnly={readOnly || users.isError}
       onFirst={() => setOffset(0)}
       onPrevious={() => setOffset((current) => Math.max(0, current - usersPageSize))}
       onNext={() => setOffset((current) => current + usersPageSize)}
@@ -61,13 +62,14 @@ type UsersSettingsProps = {
   page?: Pick<UserListResponse, "count" | "limit" | "offset" | "total">;
   loading?: boolean;
   busy?: boolean;
+  readOnly?: boolean;
   onFirst?: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
   onOffboard: (userID: string) => Promise<unknown> | unknown;
 };
 
-export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious, onNext, onOffboard }: UsersSettingsProps): ReactNode {
+export function UsersSettings({ users, page, loading, busy, readOnly = false, onFirst, onPrevious, onNext, onOffboard }: UsersSettingsProps): ReactNode {
   const [selected, setSelected] = useState<User>();
   const [offboardError, setOffboardError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -94,7 +96,7 @@ export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious,
               <Badge variant={user.status === "active" ? "success" : "secondary"}>{user.status}</Badge>
               <Badge variant="outline">{user.global_role}</Badge>
               {user.status === "active" ? (
-                <Button aria-label={`Offboard ${user.email}`} variant="destructive" size="sm" disabled={busy || submitting} onClick={() => { setOffboardError(""); setSelected(user); }}>
+                <Button aria-label={`Offboard ${user.email}`} variant="destructive" size="sm" disabled={busy || readOnly || submitting} onClick={() => { setOffboardError(""); setSelected(user); }}>
                   <ShieldOff className="h-4 w-4" />Offboard
                 </Button>
               ) : null}
@@ -114,9 +116,9 @@ export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious,
               <Button variant="outline" disabled={submitting} onClick={() => { setSelected(undefined); setOffboardError(""); }}>Keep user active</Button>
               <Button
                 variant="destructive"
-                disabled={busy || submitting}
+                disabled={busy || readOnly || submitting}
                 onClick={async () => {
-                  if (!selected || busy || submittingRef.current) return;
+                  if (!selected || busy || readOnly || submittingRef.current) return;
                   submittingRef.current = true;
                   setSubmitting(true);
                   setOffboardError("");

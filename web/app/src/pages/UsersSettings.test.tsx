@@ -164,3 +164,20 @@ test("failed later user pages can return directly to the first page", async () =
   expect(screen.queryByRole("alert")).toBeNull();
   expect(usersAPI.listUsers.mock.calls.at(-1)?.[0]).toEqual({ limit: usersPageSize, offset: 0 });
 });
+
+
+test.each(["read-only", "refresh failure"])("user pagination remains available during %s", async (mode) => {
+  const result = { items: [activeUser], count: 1, limit: usersPageSize, offset: 0, total: 11 };
+  usersAPI.listUsers.mockImplementation(async ({ offset }: { offset: number }) => {
+    if (mode === "refresh failure" && offset === 0) throw new Error("Refresh unavailable");
+    return { ...result, offset, items: [{ ...activeUser, email: offset ? "later@example.invalid" : activeUser.email }] };
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(["users", { limit: usersPageSize, offset: 0 }], result);
+  render(<QueryClientProvider client={client}><UsersSettingsPanel readOnly={mode === "read-only"} /></QueryClientProvider>);
+  if (mode === "refresh failure") await screen.findByText("Unable to refresh users. Showing previously loaded users.");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: `Offboard ${activeUser.email}` }).disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Next users" }).disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Next users" }));
+  await screen.findByText("later@example.invalid");
+});

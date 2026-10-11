@@ -2771,6 +2771,18 @@ test("user list request failures retry the selected page or return to the first 
   await expect(page.getByText("page-10@example.test", { exact: true })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(offsets).toEqual([10]);
+  failLater = true;
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Unable to refresh users. Showing previously loaded users.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "First users page", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Previous users", exact: true })).toBeEnabled();
+  }
+  await page.getByRole("button", { name: "First users page", exact: true }).click();
+  await expect(page.getByText("page-0@example.test", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("failed offboarding stays in its dialog and succeeds on retry", async ({ page }, testInfo) => {
