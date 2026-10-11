@@ -173,8 +173,22 @@ test("runner credential revocation reports failure and succeeds on retry", async
     expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("runner-revoke-error-320.png"), fullPage: false });
   }
+  let failRefresh = true;
+  await page.route(`**/api/v1/runners/${runner.id}`, (route) => failRefresh
+    ? route.fulfill({ status: 503, json: { error: "Refresh after revocation unavailable" } })
+    : route.continue());
   await dialog.getByRole("button", { name: "Revoke credential", exact: true }).click();
   await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveText("Runner is unavailable.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByText("Credential is revoked.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toHaveCount(0);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("runner-revoked-refresh-error-320.png"), animations: "disabled" });
+  }
+  failRefresh = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByText("Credential is revoked.", { exact: true })).toBeVisible();
   expect(attempts).toBe(2);
   expect(pageErrors).toEqual([]);

@@ -1,9 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RunnerDetailView } from "@/pages/RunnersView";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType, ReactNode } from "react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const router = vi.hoisted(() => ({
   params: { runnerId: "runner_1" },
@@ -24,6 +24,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...await importOriginal<typeof import("@tanstack/react-query")>(),
   useQuery: vi.fn(),
+  useQueryClient: vi.fn(),
 }));
 
 vi.mock("@/api", async (importOriginal) => ({
@@ -58,6 +59,10 @@ function queryFailure() {
   vi.mocked(useQuery).mockReturnValue({ data: undefined, isError: true, isPending: false, refetch: vi.fn() } as never);
 }
 
+beforeEach(() => {
+  vi.mocked(useQueryClient).mockReturnValue(new QueryClient());
+});
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -70,7 +75,7 @@ test("runner_admin can enroll and revoke runners", async () => {
     enrollment: { runner_id: runner.id },
     token: "one-time-token",
   } as never);
-  vi.mocked(revokeRunnerToken).mockResolvedValue(runner as never);
+  vi.mocked(revokeRunnerToken).mockResolvedValue({ ...runner, status: "revoked" } as never);
   const user = userEvent.setup();
 
   queryData(["runner_admin"]);
@@ -89,12 +94,18 @@ test("runner_admin can enroll and revoke runners", async () => {
   list.unmount();
 
   queryData(["runner_admin"]);
+  const client = useQueryClient();
+  const telemetry = { observed_at: runner.last_heartbeat_at, journal_depth: 3, retry_count: 1, renew_failures: 0 };
+  client.setQueryData(["runner", runner.id], { ...runner, telemetry });
+  client.setQueryData(["runners", {}], { items: [runner], count: 1, total: 1, offset: 0, limit: 50 });
   const RunnerDetailComponent = RunnerDetailRoute.options.component!;
   render(<RunnerDetailComponent />);
   await user.click(screen.getByRole("button", { name: "Revoke credential" }));
   const dialog = screen.getByRole("dialog");
   await user.click(within(dialog).getByRole("button", { name: "Revoke credential" }));
   await waitFor(() => expect(revokeRunnerToken).toHaveBeenCalledWith({ runner_id: runner.id }));
+  await waitFor(() => expect(client.getQueryData(["runner", runner.id])).toEqual({ ...runner, status: "revoked", telemetry }));
+  expect(client.getQueryData(["runners", {}])).toEqual({ items: [{ ...runner, status: "revoked" }], count: 1, total: 1, offset: 0, limit: 50 });
 });
 
 test("system_admin retains list and detail runner controls while a principal without admin roles cannot operate runners", () => {

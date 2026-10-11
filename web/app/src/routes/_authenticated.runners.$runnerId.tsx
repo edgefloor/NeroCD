@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { principalQuery, revokeRunnerToken, runnerQuery } from "@/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { principalQuery, queryKeys, revokeRunnerToken, runnerQuery, type RunnerDetail, type RunnerListResponse } from "@/api";
 import { RunnerDetailView } from "@/pages/RunnersView";
 import { Button } from "@/components/ui/button";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
@@ -22,6 +22,7 @@ function BackToRunners() {
 
 function RunnerDetailRoute() {
   const { runnerId } = Route.useParams();
+  const client = useQueryClient();
   const runner = useQuery({
     ...runnerQuery(runnerId),
     retryOnMount: false,
@@ -40,5 +41,23 @@ function RunnerDetailRoute() {
   </section> : null;
   if (error && (!runner.data || !principal.data)) return error;
   if (runner.isPending || principal.isPending) return <section className="space-y-3"><BackToRunners /><p role="status">Loading runner...</p><SkeletonCard rows={4} /></section>;
-  return <div className="grid min-w-0 gap-4">{error ?? <BackToRunners />}<RunnerDetailView controlsDisabled={failedQueries.length > 0} runner={runner.data} canAdmin={(principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin")} onRevoke={async () => { await revokeRunnerToken({ runner_id: runnerId }); await runner.refetch(); }} /></div>;
+  async function revokeCredential() {
+    const revoked = await revokeRunnerToken({ runner_id: runnerId });
+    client.setQueryData<RunnerDetail>(queryKeys.runner(runnerId), (cached) => ({ ...cached, ...revoked }));
+    client.setQueriesData<RunnerListResponse>({ queryKey: ["runners"] }, (cached) => cached ? {
+      ...cached,
+      items: cached.items.map((item) => item.id === revoked.id ? revoked : item),
+    } : cached);
+    await Promise.all([runner.refetch(), client.invalidateQueries({ queryKey: ["runners"] })]);
+  }
+
+  return <div className="grid min-w-0 gap-4">
+    {error ?? <BackToRunners />}
+    <RunnerDetailView
+      controlsDisabled={failedQueries.length > 0}
+      runner={runner.data}
+      canAdmin={(principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin")}
+      onRevoke={revokeCredential}
+    />
+  </div>;
 }
