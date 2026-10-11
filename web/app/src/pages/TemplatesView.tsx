@@ -5,14 +5,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { ApiSnapshot, TaskRun, TaskTemplate } from "@/api";
+import type { ApiSnapshot, TaskTemplate } from "@/api";
 import { createTemplate, requestRun, updateTemplate } from "@/api/compat";
 import type { MutateFn } from "@/hooks/useApi";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
 import { matchesQuery, projectName } from "@/lib/format";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { TerminalLogDialog } from "@/components/runs/TerminalLogDialog";
 
 function TemplateForm({
   snapshot,
@@ -221,6 +220,7 @@ export function TemplatesView({
   busy,
   mutate,
   loading,
+  onRunRequested,
 }: {
   snapshot: ApiSnapshot;
   q?: string;
@@ -228,23 +228,14 @@ export function TemplatesView({
   busy: string;
   mutate: MutateFn;
   loading?: boolean;
+  onRunRequested: (runID: string) => void;
 }): ReactNode {
   const filtering = Boolean(q?.trim());
   const visibleTemplates = snapshot.templates.filter((template) => matchesQuery(q,
     template.id, template.name, template.project_id, projectName(snapshot.projects, template.project_id), template.kind, ...(template.runner_tags ?? [])));
-  const [terminalRunID, setTerminalRunID] = useState("");
-  const [terminalRunFallback, setTerminalRunFallback] = useState<TaskRun | undefined>();
-  const [terminalOpen, setTerminalOpen] = useState(false);
-  const terminalRun = snapshot.runs.find((run) => run.id === terminalRunID) ?? (terminalRunFallback?.id === terminalRunID ? terminalRunFallback : undefined);
-  const terminalLogs = snapshot.logs.filter((log) => log.run_id === terminalRunID);
-
   async function playTemplate(template: TaskTemplate): Promise<void> {
     const run = await mutate(`template:run:${template.id}`, () => requestRun(token, { template_id: template.id }), "Run requested");
-    if (run) {
-      setTerminalRunID(run.id);
-      setTerminalRunFallback(run);
-      setTerminalOpen(true);
-    }
+    if (run) onRunRequested(run.id);
   }
 
   if (loading) {
@@ -409,7 +400,6 @@ export function TemplatesView({
           )}
         </CardContent>
       </Card>
-      <TerminalLogDialog run={terminalRun} logs={terminalLogs} open={terminalOpen} onOpenChange={setTerminalOpen} />
     </section>
   );
 }

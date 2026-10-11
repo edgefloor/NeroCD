@@ -912,3 +912,58 @@ test("mobile template inventory is reachable before opening the creation form", 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.getByRole("textbox", { name: "Template Name", exact: true })).toBeVisible();
 });
+
+test("running a template opens its detail route and follows scoped output", async ({ page }) => {
+  await page.goto("/templates");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const suffix = `${Date.now()}`;
+  const templateName = `Follow template ${suffix}`;
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Follow project ${suffix}`, description: "Template run fixture" });
+  await postJSON(page, "/api/v1/templates", { project_id: project.id, name: templateName, kind: "shell", run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "follow"] } }, workflow: { steps: [] }, runner_tags: ["shell"], requires_ack: false });
+  let failRequest = true;
+  await page.route("**/api/v1/runs", async (route) => {
+    if (route.request().method() === "POST" && failRequest) {
+      failRequest = false;
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary run request failure" }) });
+    }
+    return route.continue();
+  });
+  const logRunIDs: string[] = [];
+  await page.route("**/api/v1/run-logs?*", async (route) => {
+    const url = new URL(route.request().url());
+    const runID = url.searchParams.get("run_id");
+    if (!runID) return route.continue();
+    logRunIDs.push(runID);
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    const sequence = offset === 0 ? 1 : 2;
+    const items = offset <= 1 ? [{ id: `${runID}_log_${sequence}`, run_id: runID, sequence, stream: "stdout", message: `Template output ${sequence}`, created_at: "2026-01-01T00:00:00Z" }] : [];
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ items, count: items.length, total: offset === 0 ? 1 : 2, limit, offset }) });
+  });
+  const inventoryURL = `/templates?q=${encodeURIComponent(templateName)}`;
+  await page.goto(inventoryURL);
+  const failedRequest = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs" && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  expect((await failedRequest).status()).toBe(503);
+  await expect(page.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
+  expect(new URL(page.url()).pathname).toBe("/templates");
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    const requested = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs" && response.request().method() === "POST");
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    const response = await requested;
+    expect(response.status()).toBe(201);
+    const run = await response.json() as { id: string };
+    await expect(page).toHaveURL(new RegExp(`/runs/${run.id}$`));
+    const dialog = page.getByRole("dialog", { name: `run ${run.id}` });
+    await expect(dialog).toContainText("Template output 1");
+    await expect(dialog).toContainText("Following active run output.");
+    await expect(dialog).toContainText("Template output 2", { timeout: 10_000 });
+    expect(logRunIDs).toContain(run.id);
+    await page.keyboard.press("Escape");
+    await page.goBack();
+    expect(new URL(page.url()).pathname).toBe("/templates");
+    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue(templateName);
+  }
+});
