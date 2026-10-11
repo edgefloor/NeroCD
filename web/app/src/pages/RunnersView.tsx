@@ -11,6 +11,8 @@ import { StatusBadge } from "@/components/common/StatusBadge";
 import type { CreatedRunnerEnrollment, Runner, RunnerDetail } from "@/api";
 import { formatDate, matchesQuery } from "@/lib/format";
 
+type CopyStatus = "idle" | "copying" | "copied" | "failed";
+
 function splitValues(value: string): string[] { return value.split(",").map((item) => item.trim()).filter(Boolean); }
 function runnerState(runner: Runner): string {
   if (runner.status === "revoked") return "Credential revoked; the next authenticated runner operation is denied.";
@@ -21,19 +23,30 @@ function runnerState(runner: Runner): string {
 
 export function RunnersView({ runners, q, canAdmin, onEnroll, onRevokeRunner }: { runners: Runner[]; q?: string; canAdmin: boolean; onEnroll: (input: { runner_id: string; runner_name: string; tags: string[]; capabilities: string[]; ttl_seconds: number }) => Promise<CreatedRunnerEnrollment>; onRevokeRunner: (id: string) => Promise<void> }): ReactNode {
   const [enrollment, setEnrollment] = useState<CreatedRunnerEnrollment>();
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const secretRef = useRef<string | undefined>(undefined);
   useEffect(() => () => { secretRef.current = undefined; }, []);
   const visible = runners.filter((runner) => matchesQuery(q, runner.id, runner.name, runner.status, ...runner.tags, ...runner.capabilities));
   async function enroll(input: { runner_id: string; runner_name: string; tags: string[]; capabilities: string[]; ttl_seconds: number }) {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setCopyStatus("idle");
     try { const created = await onEnroll(input); secretRef.current = created.token; setEnrollment(created); }
     catch { setError("Enrollment could not be created. Verify the identity and try again."); }
     finally { setBusy(false); }
   }
-  function clearEnrollment(open: boolean) { if (!open) { secretRef.current = undefined; setEnrollment(undefined); } }
-  async function copySecret() { if (secretRef.current) await navigator.clipboard.writeText(secretRef.current); }
+  function clearEnrollment(open: boolean) { if (!open) { secretRef.current = undefined; setEnrollment(undefined); setCopyStatus("idle"); } }
+  async function copySecret() {
+    const secret = secretRef.current;
+    if (!secret || copyStatus === "copying") return;
+    setCopyStatus("copying");
+    try {
+      await navigator.clipboard.writeText(secret);
+      if (secretRef.current === secret) setCopyStatus("copied");
+    } catch {
+      if (secretRef.current === secret) setCopyStatus("failed");
+    }
+  }
   function downloadSecret() {
     if (!secretRef.current) return;
     const blob = new Blob([secretRef.current + "\n"], { type: "text/plain" });
@@ -44,7 +57,7 @@ export function RunnersView({ runners, q, canAdmin, onEnroll, onRevokeRunner }: 
   return <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
     <Card><CardHeader><CardTitle>Runner inventory</CardTitle></CardHeader><CardContent className="grid gap-3">{!visible.length ? <EmptyState title="No runners match this view" icon={KeyRound} /> : visible.map((runner) => <Link key={runner.id} to="/runners/$runnerId" params={{ runnerId: runner.id }} search={(previous) => previous} className="rounded border p-3 hover:bg-muted"><div className="flex items-center justify-between gap-2"><span className="font-medium">{runner.name}</span><StatusBadge status={runner.status} /></div><p className="mt-1 font-mono text-xs text-muted-foreground">{runner.id}</p><p className="mt-2 text-sm text-muted-foreground">{runnerState(runner)}</p><p className="mt-2 text-xs text-muted-foreground">Heartbeat {formatDate(runner.last_heartbeat_at)} · {runner.tags.join(", ") || "no tags"}</p></Link>)}</CardContent></Card>
     {canAdmin ? <EnrollmentForm busy={busy} error={error} onSubmit={enroll} /> : <Card><CardContent className="p-6" role="status">Runner operations require runner administrator permissions.</CardContent></Card>}
-    <EnrollmentSecret enrollment={enrollment} token={secretRef.current} onOpenChange={clearEnrollment} onCopy={copySecret} onDownload={downloadSecret} />
+    <EnrollmentSecret copyStatus={copyStatus} enrollment={enrollment} token={secretRef.current} onOpenChange={clearEnrollment} onCopy={copySecret} onDownload={downloadSecret} />
   </section>;
 }
 
@@ -53,8 +66,8 @@ function EnrollmentForm({ busy, error, onSubmit }: { busy: boolean; error: strin
   return <Card><CardHeader><CardTitle>Create one-time enrollment</CardTitle></CardHeader><CardContent><form className="grid gap-3" aria-label="Create runner enrollment" onSubmit={(event: FormEvent) => { event.preventDefault(); onSubmit({ runner_id: id, runner_name: name, tags: splitValues(tags), capabilities: splitValues(capabilities), ttl_seconds: Number(ttl) }); }}><label className="grid gap-1 text-sm">Runner ID<Input aria-label="Runner ID" value={id} onChange={(event) => setID(event.target.value)} placeholder="runner_edge_01" required /></label><label className="grid gap-1 text-sm">Runner name<Input aria-label="Runner name" value={name} onChange={(event) => setName(event.target.value)} required /></label><label className="grid gap-1 text-sm">Tags<Input aria-label="Runner tags" value={tags} onChange={(event) => setTags(event.target.value)} /></label><label className="grid gap-1 text-sm">Capabilities<Input aria-label="Runner capabilities" value={capabilities} onChange={(event) => setCapabilities(event.target.value)} required /></label><label className="grid gap-1 text-sm">Enrollment lifetime<Select aria-label="Enrollment lifetime" value={ttl} onChange={(event) => setTTL(event.target.value)}><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></Select></label>{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}<Button type="submit" disabled={busy}>{busy ? "Creating…" : "Create enrollment"}</Button><p className="text-xs text-muted-foreground">The secret is shown once, never placed in links, search, storage, notifications, or logs.</p></form></CardContent></Card>;
 }
 
-function EnrollmentSecret({ enrollment, token, onOpenChange, onCopy, onDownload }: { enrollment?: CreatedRunnerEnrollment; token?: string; onOpenChange: (open: boolean) => void; onCopy: () => void; onDownload: () => void }) {
-  return <Dialog open={Boolean(enrollment && token)} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>One-time runner enrollment secret</DialogTitle><DialogDescription>Save it now: it will disappear when this dialog closes and cannot be retrieved again.</DialogDescription></DialogHeader><code className="break-all rounded border p-3 text-xs" aria-label="Enrollment secret">{token}</code><p className="text-xs text-muted-foreground">Runner: {enrollment?.enrollment.runner_id}. Use the downloaded file with the runner enrollment command.</p><DialogFooter><Button variant="outline" onClick={onCopy}><Copy className="mr-1 h-4 w-4" />Copy</Button><Button onClick={onDownload}><Download className="mr-1 h-4 w-4" />Download once</Button></DialogFooter></DialogContent></Dialog>;
+function EnrollmentSecret({ enrollment, token, copyStatus, onOpenChange, onCopy, onDownload }: { copyStatus: CopyStatus; enrollment?: CreatedRunnerEnrollment; token?: string; onOpenChange: (open: boolean) => void; onCopy: () => void; onDownload: () => void }) {
+  return <Dialog open={Boolean(enrollment && token)} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>One-time runner enrollment secret</DialogTitle><DialogDescription>Save it now: it will disappear when this dialog closes and cannot be retrieved again.</DialogDescription></DialogHeader><code className="break-all rounded border p-3 text-xs" aria-label="Enrollment secret">{token}</code><p className="text-xs text-muted-foreground">Runner: {enrollment?.enrollment.runner_id}. Use the downloaded file with the runner enrollment command.</p>{copyStatus === "failed" ? <p role="alert" className="text-sm text-destructive">Unable to copy. Download the secret instead, or try again.</p> : copyStatus === "copied" ? <p role="status" className="text-sm text-muted-foreground">Copied to clipboard.</p> : null}<DialogFooter><Button variant="outline" disabled={copyStatus === "copying"} onClick={onCopy}><Copy className="mr-1 h-4 w-4" />{copyStatus === "copying" ? "Copying..." : "Copy"}</Button><Button onClick={onDownload}><Download className="mr-1 h-4 w-4" />Download once</Button></DialogFooter></DialogContent></Dialog>;
 }
 
 export function RunnerDetailView({ runner, canAdmin, onRevoke }: { runner?: RunnerDetail; canAdmin: boolean; onRevoke: () => Promise<void> }): ReactNode {

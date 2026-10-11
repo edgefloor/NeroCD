@@ -616,8 +616,10 @@ test("navigation search supports unmatched filters and resets between openings",
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
 });
 
-test("runner enrollment stays local to the reveal dialog and browser avoids runner-only APIs", async ({ page }) => {
+test("runner enrollment stays local to the reveal dialog and browser avoids runner-only APIs", async ({ page }, testInfo) => {
   const forbiddenRunnerCalls: string[] = [];
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.route("**/api/v1/runners/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (/^\/api\/v1\/runners\/[^/]+$/.test(path) || path === "/api/v1/runners/revoke-token") return route.continue();
@@ -636,6 +638,21 @@ test("runner enrollment stays local to the reveal dialog and browser avoids runn
   await expect(dialog).toBeVisible();
   const secret = await dialog.getByLabel("Enrollment secret").innerText();
   expect(secret).toMatch(/^nce_[0-9a-f]{64}$/);
+  await page.evaluate(() => { Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new Error("Clipboard denied"); } } }); });
+  await dialog.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("Unable to copy. Download the secret instead, or try again.");
+  await expect(dialog.getByLabel("Enrollment secret")).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(dialog.getByRole("button", { name: "Copy", exact: true })).toBeEnabled();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("clipboard-error-320.png"), fullPage: false, mask: [dialog.getByLabel("Enrollment secret")] });
+  }
+  await page.evaluate(() => { Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => undefined } }); });
+  await dialog.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect(dialog.getByRole("status")).toHaveText("Copied to clipboard.");
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  expect(pageErrors).toEqual([]);
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download once" }).click();
   const saved = await download;
