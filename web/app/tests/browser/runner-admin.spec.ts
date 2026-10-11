@@ -170,14 +170,18 @@ test("runner inventory retries the selected page without losing its filter", asy
   const response = await page.request.get(`/api/v1/runners/${runner.id}`);
   const record = await response.json();
   let fail = true;
-  await page.route("**/api/v1/runners?*", (route) => {
+  const offsets: number[] = [];
+  await page.route(/\/api\/v1\/runners(?:\?.*)?$/, (route) => {
     const url = new URL(route.request().url());
+    offsets.push(Number(url.searchParams.get("offset") ?? 0));
     if (url.searchParams.get("offset") !== "50") return route.continue();
     return fail ? route.fulfill({ status: 503, json: { error: "Temporary inventory failure" } })
       : route.fulfill({ json: { items: [record], count: 1, total: 51, limit: 50, offset: 50 } });
   });
   await page.goto("/runners?q=browser&offset=50");
   await expect(page.getByRole("alert")).toHaveText("Runner inventory is unavailable.");
+  expect(offsets.length).toBeGreaterThan(0);
+  expect(offsets.every((offset) => offset === 50)).toBe(true);
   await expect(page.getByText("No runners match this view", { exact: true })).toHaveCount(0);
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });

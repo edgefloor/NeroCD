@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "./errors";
 import { deploymentHistoryQuery, allRevisionsQuery, allProjectMembersQuery, configureQueryClient, deploymentQuery, deploymentsQuery, environmentsQuery, healthQuery, projectsQuery, queryKeys, repositoriesQuery, retryRemote, revisionsQuery, runLogsQuery, runsQuery, servicesQuery, shouldPollDeploymentList, shouldPollRunList, shouldPollSelectedLogs, templatesQuery, approvalsQuery } from "./queries";
+import { Route as RunnersRoute } from "../routes/_authenticated.runners.index";
 import { Route as HomeRoute } from "../routes/_authenticated.index";
 import { Route as ProjectsRoute } from "../routes/_authenticated.projects";
 import { Route as RunDetailRoute } from "../routes/_authenticated.runs.$runId";
@@ -180,4 +181,12 @@ test("deployment history loads every environment page and shares mutation invali
   expect(calls).toEqual(["/api/v1/deployments?environment_id=env_history&limit=100&offset=0", "/api/v1/deployments?environment_id=env_history&limit=100&offset=100"]);
   await queryClient.invalidateQueries({ queryKey: ["deployments"] });
   expect(queryClient.getQueryState(options.queryKey)?.isInvalidated).toBe(true);
+});
+
+
+test("runner loader prefetches only the selected inventory page", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = vi.fn<typeof fetch>((path) => { calls.push(String(path)); return Promise.resolve(list()); });
+  await RunnersRoute.options.loader!({ context: { queryClient: client() }, deps: { offset: 50 } } as never);
+  expect(calls).toEqual(["/api/v1/runners?limit=50&offset=50", "/api/v1/me"]);
 });

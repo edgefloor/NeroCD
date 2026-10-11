@@ -7,7 +7,15 @@ import { validateSearch } from "@/router/search";
 import { Button } from "@/components/ui/button";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
 
-export const Route = createFileRoute("/_authenticated/runners/")({ validateSearch, loader: ({ context }) => Promise.all([context.queryClient.prefetchQuery(runnersQuery()), context.queryClient.prefetchQuery(principalQuery())]), component: RunnersRoute });
+export const Route = createFileRoute("/_authenticated/runners/")({
+  validateSearch,
+  loaderDeps: ({ search }) => ({ offset: search.offset ?? 0 }),
+  loader: ({ context, deps }) => Promise.all([
+    context.queryClient.prefetchQuery(runnersQuery({ limit: 50, offset: deps.offset })),
+    context.queryClient.prefetchQuery(principalQuery()),
+  ]),
+  component: RunnersRoute,
+});
 
 function RunnersRoute() {
   const navigate = useNavigate(); const { q } = Route.useSearch(); const page = usePage(); const runners = useQuery({ ...runnersQuery({ limit: page.limit, offset: page.offset }), retryOnMount: false, refetchInterval: (query) => query.state.status === "error" ? false : 10_000 }); const principal = useQuery({ ...principalQuery(), retryOnMount: false });
