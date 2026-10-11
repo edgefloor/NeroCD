@@ -47,10 +47,10 @@ function TemplateForm({
   }
 
   return (
-    <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+    <form aria-busy={Boolean(busy)} className="space-y-4" onSubmit={(event) => void submit(event)}>
       <div className="space-y-1.5">
         <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
-        <select id={`${formId}-project`}
+        <select disabled={Boolean(busy)} id={`${formId}-project`}
           name="project_id"
           className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
           required
@@ -65,11 +65,11 @@ function TemplateForm({
       </div>
       <div className="space-y-1.5">
         <label htmlFor={`${formId}-template-name`} className="text-xs font-medium text-muted-foreground">Template Name</label>
-        <Input id={`${formId}-template-name`} name="name" placeholder="Patch Linux fleet" required className="h-9 rounded-xl" />
+        <Input disabled={Boolean(busy)} id={`${formId}-template-name`} name="name" placeholder="Patch Linux fleet" required className="h-9 rounded-xl" />
       </div>
       <div className="space-y-1.5">
         <label htmlFor={`${formId}-kind`} className="text-xs font-medium text-muted-foreground">Kind</label>
-        <select id={`${formId}-kind`}
+        <select disabled={Boolean(busy)} id={`${formId}-kind`}
           name="kind"
           className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
         >
@@ -82,14 +82,14 @@ function TemplateForm({
       </div>
       <div className="space-y-1.5">
         <label htmlFor={`${formId}-runner-tags`} className="text-xs font-medium text-muted-foreground">Runner Tags</label>
-        <Input id={`${formId}-runner-tags`} name="runner_tags" placeholder="linux, prod" className="h-9 rounded-xl" />
+        <Input disabled={Boolean(busy)} id={`${formId}-runner-tags`} name="runner_tags" placeholder="linux, prod" className="h-9 rounded-xl" />
       </div>
       <div className="space-y-1.5">
         <label htmlFor={`${formId}-command`} className="text-xs font-medium text-muted-foreground">Command</label>
-        <Input id={`${formId}-command`} name="command" placeholder="ansible-playbook site.yml" className="h-9 rounded-xl" />
+        <Input disabled={Boolean(busy)} id={`${formId}-command`} name="command" placeholder="ansible-playbook site.yml" className="h-9 rounded-xl" />
       </div>
       <label className="flex items-center gap-2 text-sm py-2">
-        <input name="requires_ack" type="checkbox" className="rounded border-border" />
+        <input disabled={Boolean(busy)} name="requires_ack" type="checkbox" className="rounded border-border" />
         <span>Requires approval before execution</span>
       </label>
       <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">
@@ -165,10 +165,10 @@ function TemplateEditDialog({
           <DialogTitle>Edit template</DialogTitle>
         </DialogHeader>
         {recovery}
-        <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+        <form aria-busy={Boolean(busy)} className="space-y-4" onSubmit={(event) => void submit(event)}>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
-            <select id={`${formId}-project`}
+            <select disabled={Boolean(busy)} id={`${formId}-project`}
               name="project_id"
               defaultValue={template.project_id}
               className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
@@ -183,11 +183,11 @@ function TemplateEditDialog({
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-template-name`} className="text-xs font-medium text-muted-foreground">Template Name</label>
-            <Input id={`${formId}-template-name`} name="name" defaultValue={template.name} required className="h-9 rounded-xl" />
+            <Input disabled={Boolean(busy)} id={`${formId}-template-name`} name="name" defaultValue={template.name} required className="h-9 rounded-xl" />
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-kind`} className="text-xs font-medium text-muted-foreground">Kind</label>
-            <select id={`${formId}-kind`}
+            <select disabled={Boolean(busy)} id={`${formId}-kind`}
               name="kind"
               defaultValue={template.kind}
               className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
@@ -201,14 +201,14 @@ function TemplateEditDialog({
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-runner-tags`} className="text-xs font-medium text-muted-foreground">Runner Tags</label>
-            <Input id={`${formId}-runner-tags`} name="runner_tags" defaultValue={(template.runner_tags ?? []).join(", ")} className="h-9 rounded-xl" />
+            <Input disabled={Boolean(busy)} id={`${formId}-runner-tags`} name="runner_tags" defaultValue={(template.runner_tags ?? []).join(", ")} className="h-9 rounded-xl" />
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-command`} className="text-xs font-medium text-muted-foreground">Command</label>
-            <Input id={`${formId}-command`} name="command" defaultValue={command} className="h-9 rounded-xl" />
+            <Input disabled={Boolean(busy)} id={`${formId}-command`} name="command" defaultValue={command} className="h-9 rounded-xl" />
           </div>
           <label className="flex items-center gap-2 text-sm py-2">
-            <input name="requires_ack" type="checkbox" defaultChecked={template.requires_ack} className="rounded border-border" />
+            <input disabled={Boolean(busy)} name="requires_ack" type="checkbox" defaultChecked={template.requires_ack} className="rounded border-border" />
             <span>Requires approval before execution</span>
           </label>
           <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">

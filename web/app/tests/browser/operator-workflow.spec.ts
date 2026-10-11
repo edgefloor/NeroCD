@@ -876,12 +876,15 @@ test("project and template forms retain failed drafts and reset only after succe
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   const failed = new Set<string>();
+  let releaseReply = () => {};
+  let responseGate = Promise.resolve();
   for (const path of ["projects", "templates", "repositories"]) {
     await page.route(`**/api/v1/${path}`, async (route) => {
       const method = route.request().method();
       const key = `${path}:${method}`;
       if (["POST", "PATCH"].includes(method) && !failed.has(key)) {
         failed.add(key);
+        await responseGate;
         return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary save failure" }) });
       }
       return route.continue();
@@ -906,7 +909,11 @@ test("project and template forms retain failed drafts and reset only after succe
       await form.locator('input[name="command"]').fill("echo form-fixture");
     }
     const failure = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/${resource}s` && response.request().method() === "POST");
+    responseGate = new Promise<void>((resolve) => { releaseReply = resolve; });
     await create.click();
+    try {
+      for (const field of await form.locator("input, select, textarea").all()) await expect(field).toBeDisabled();
+    } finally { releaseReply(); }
     expect((await failure).status()).toBe(503);
     await expect(create).toBeEnabled();
     await expect(name).toHaveValue(draft);
@@ -923,7 +930,11 @@ test("project and template forms retain failed drafts and reset only after succe
     await editedName.fill(`${draft} saved`);
     const save = dialog.getByRole("button", { name: `Save ${resource}`, exact: true });
     const editFailure = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === `/api/v1/${resource}s` && candidate.request().method() === "PATCH");
+    responseGate = new Promise<void>((resolve) => { releaseReply = resolve; });
     await save.click();
+    try {
+      for (const field of await dialog.locator("input, select, textarea").all()) await expect(field).toBeDisabled();
+    } finally { releaseReply(); }
     expect((await editFailure).status()).toBe(503);
     await expect(save).toBeEnabled();
     await expect(editedName).toHaveValue(`${draft} saved`);
@@ -940,7 +951,13 @@ test("project and template forms retain failed drafts and reset only after succe
   await sourceForm.locator('input[name="url"]').fill("https://example.invalid/repository.git");
   for (const status of [503, 201]) {
     const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/repositories" && response.request().method() === "POST");
+    if (status === 503) responseGate = new Promise<void>((resolve) => { releaseReply = resolve; });
     await register.click();
+    if (status === 503) {
+      try {
+        for (const field of await sourceForm.locator("input, select, textarea").all()) await expect(field).toBeDisabled();
+      } finally { releaseReply(); }
+    }
     expect((await saved).status()).toBe(status);
     await expect(register).toBeEnabled();
     await expect(sourceForm.locator('input[name="name"]')).toHaveValue(status === 503 ? `Retry source ${suffix}` : "");

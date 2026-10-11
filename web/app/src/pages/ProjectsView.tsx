@@ -93,14 +93,14 @@ function ProjectCard({
                 <DialogTitle>Edit project</DialogTitle>
               </DialogHeader>
               {recovery}
-              <form className="space-y-3" onSubmit={(event) => void updateSubmit(event)}>
+              <form aria-busy={Boolean(busy)} className="space-y-3" onSubmit={(event) => void updateSubmit(event)}>
                 <div className="space-y-1.5">
                   <label htmlFor={`${formId}-project-name`} className="text-xs font-medium text-muted-foreground">Project Name</label>
-                  <Input id={`${formId}-project-name`} name="name" defaultValue={project.name} required className="h-9 rounded-xl" />
+                  <Input disabled={Boolean(busy)} id={`${formId}-project-name`} name="name" defaultValue={project.name} required className="h-9 rounded-xl" />
                 </div>
                 <div className="space-y-1.5">
                   <label htmlFor={`${formId}-description`} className="text-xs font-medium text-muted-foreground">Description</label>
-                  <Textarea id={`${formId}-description`} name="description" defaultValue={project.description} className="min-h-[80px] rounded-xl" />
+                  <Textarea disabled={Boolean(busy)} id={`${formId}-description`} name="description" defaultValue={project.description} className="min-h-[80px] rounded-xl" />
                 </div>
                 <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">
                   Save project
@@ -164,24 +164,24 @@ function ProjectForms({
 
   return (
     <div className="space-y-6">
-      <form className="space-y-3" onSubmit={(event) => void createProjectSubmit(event)}>
+      <form aria-busy={Boolean(busy)} className="space-y-3" onSubmit={(event) => void createProjectSubmit(event)}>
         <div className="space-y-1.5">
           <label htmlFor={`${formId}-project-name`} className="text-xs font-medium text-muted-foreground">Project Name</label>
-          <Input id={`${formId}-project-name`} name="name" placeholder="My Project" required className="h-9 rounded-xl" />
+          <Input disabled={Boolean(busy)} id={`${formId}-project-name`} name="name" placeholder="My Project" required className="h-9 rounded-xl" />
         </div>
         <div className="space-y-1.5">
           <label htmlFor={`${formId}-description`} className="text-xs font-medium text-muted-foreground">Description</label>
-          <Textarea id={`${formId}-description`} name="description" placeholder="Description" className="min-h-[80px] rounded-xl" />
+          <Textarea disabled={Boolean(busy)} id={`${formId}-description`} name="description" placeholder="Description" className="min-h-[80px] rounded-xl" />
         </div>
         <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 rounded-xl">
           <Plus className="h-4 w-4 mr-2" />
           Create project
         </Button>
       </form>
-      {projects.length > 0 ? <form className="space-y-3 border-t pt-6" onSubmit={(event) => void createRepoSubmit(event)}>
+      {projects.length > 0 ? <form aria-busy={Boolean(busy)} className="space-y-3 border-t pt-6" onSubmit={(event) => void createRepoSubmit(event)}>
         <div className="space-y-1.5">
           <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
-          <select id={`${formId}-project`}
+          <select disabled={Boolean(busy)} id={`${formId}-project`}
             name="project_id"
             className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
             required
@@ -196,20 +196,20 @@ function ProjectForms({
         </div>
         <div className="space-y-1.5">
           <label htmlFor={`${formId}-repository-name`} className="text-xs font-medium text-muted-foreground">Repository Name</label>
-          <Input id={`${formId}-repository-name`} name="name" placeholder="Repository name" required className="h-9 rounded-xl" />
+          <Input disabled={Boolean(busy)} id={`${formId}-repository-name`} name="name" placeholder="Repository name" required className="h-9 rounded-xl" />
         </div>
         <div className="space-y-1.5">
           <label htmlFor={`${formId}-repository-url`} className="text-xs font-medium text-muted-foreground">Repository URL</label>
-          <Input id={`${formId}-repository-url`} name="url" placeholder="https://github.com/acme/infra.git" required className="h-9 rounded-xl" />
+          <Input disabled={Boolean(busy)} id={`${formId}-repository-url`} name="url" placeholder="https://github.com/acme/infra.git" required className="h-9 rounded-xl" />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-provider`} className="text-xs font-medium text-muted-foreground">Provider</label>
-            <Input id={`${formId}-provider`} name="provider" defaultValue="git" className="h-9 rounded-xl" />
+            <Input disabled={Boolean(busy)} id={`${formId}-provider`} name="provider" defaultValue="git" className="h-9 rounded-xl" />
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-default-ref`} className="text-xs font-medium text-muted-foreground">Default Ref</label>
-            <Input id={`${formId}-default-ref`} name="default_ref" defaultValue="main" className="h-9 rounded-xl" />
+            <Input disabled={Boolean(busy)} id={`${formId}-default-ref`} name="default_ref" defaultValue="main" className="h-9 rounded-xl" />
           </div>
         </div>
         <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 rounded-xl">
