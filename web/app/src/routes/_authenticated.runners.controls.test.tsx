@@ -314,3 +314,20 @@ test("enrollment validates tag arrays and preserves their boundaries", async () 
   await act(async () => { fireEvent.submit(form); });
   expect(createRunnerEnrollment).toHaveBeenCalledWith(expect.objectContaining({ runner_id: "runner_tags", tags }));
 });
+
+
+test("successful enrollment reveals its secret without waiting for inventory refresh", async () => {
+  const refetch = vi.fn(() => new Promise(() => {}));
+  vi.mocked(useQuery).mockImplementation((options) => {
+    const key = (options as { queryKey?: readonly string[] }).queryKey?.[0];
+    return { data: key === "runners" ? { items: [runner] } : { roles: ["runner_admin"] }, isError: false, isPending: false, refetch } as never;
+  });
+  vi.mocked(createRunnerEnrollment).mockResolvedValueOnce({ enrollment: { runner_id: "runner_ready" }, token: "one-time-token" } as never);
+  const Component = RunnersRoute.options.component!;
+  render(<Component />);
+  fireEvent.change(screen.getByLabelText("Runner ID"), { target: { value: "runner_ready" } });
+  fireEvent.change(screen.getByLabelText("Runner name"), { target: { value: "Ready runner" } });
+  await act(async () => { fireEvent.submit(screen.getByRole("form", { name: "Create runner enrollment" })); });
+  expect(Boolean(screen.queryByRole("dialog", { name: "One-time runner enrollment secret" }))).toBe(true);
+  expect(refetch).not.toHaveBeenCalled();
+});

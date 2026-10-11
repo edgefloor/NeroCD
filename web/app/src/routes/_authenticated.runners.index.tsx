@@ -44,11 +44,7 @@ function RunnersRoute() {
       runners={runners.data?.items ?? []}
       q={q}
       canAdmin={canAdmin}
-      onEnroll={async (input) => {
-        const created = await createRunnerEnrollment(input);
-        await runners.refetch();
-        return created;
-      }}
+      onEnroll={createRunnerEnrollment}
     />
     <PageNavigation page={runners.data} label="runners" loading={runners.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
   </>;
