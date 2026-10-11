@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Bell, Search, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import type { ApiSnapshot } from "@/api";
 import { navigationForRoles, navigationForView, navigationGroups, type ViewKey } from "@/router/metadata";
 import { NavButton } from "./NavButton";
@@ -84,8 +84,11 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
           <div className="flex min-w-0 items-center gap-2">
             <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <DialogTrigger asChild><Button variant="ghost" size="sm" className="lg:hidden" aria-label="Open mobile navigation">Menu</Button></DialogTrigger>
-              <DialogContent aria-modal="true" className="mobile-navigation-drawer inset-y-0 left-0 flex h-dvh w-72 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:max-w-72">
+              <DialogContent showCloseButton={false} aria-modal="true" className="mobile-navigation-drawer inset-y-0 left-0 flex h-dvh w-72 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:max-w-72">
                 <DialogHeader className="sr-only"><DialogTitle>Mobile navigation</DialogTitle><DialogDescription className="sr-only">Choose a page.</DialogDescription></DialogHeader>
+                <div className="flex h-12 shrink-0 items-center justify-end px-3">
+                  <DialogClose asChild><Button variant="ghost" size="sm" className="h-10">Close</Button></DialogClose>
+                </div>
                 {navigation("Mobile navigation")}
               </DialogContent>
             </Dialog>

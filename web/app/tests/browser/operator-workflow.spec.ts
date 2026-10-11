@@ -2175,3 +2175,37 @@ test("session verification failures provide reload recovery without losing the r
   await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("restore");
   await expect(page).toHaveURL((url) => url.pathname === "/runners" && url.searchParams.get("q") === "restore" && url.searchParams.get("offset") === "50");
 });
+
+test("short mobile menus keep lower navigation and Close usable", async ({ page }, testInfo) => {
+  await page.goto("/operations");
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+  for (const width of [320, 640]) {
+    await page.setViewportSize({ width, height: 320 });
+    await page.goto("/operations");
+    await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 400));
+    const previousScroll = await page.evaluate(() => window.scrollY);
+    const menu = page.getByRole("button", { name: "Open mobile navigation", exact: true });
+    await menu.click();
+    const drawer = page.getByRole("dialog", { name: "Mobile navigation", exact: true });
+    const settings = drawer.getByRole("link", { name: "Settings", exact: true });
+    await settings.scrollIntoViewIfNeeded();
+    await expect(settings).toBeInViewport();
+    const close = drawer.getByRole("button", { name: "Close", exact: true });
+    await expect(close).toBeInViewport();
+    expect(await drawer.getByRole("navigation").evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    const closeBounds = await close.boundingBox();
+    const navigationBounds = await drawer.getByRole("navigation").boundingBox();
+    expect(navigationBounds!.y).toBeGreaterThanOrEqual(closeBounds!.y + closeBounds!.height);
+    await page.screenshot({ path: testInfo.outputPath(`short-menu-${width}.png`), fullPage: false });
+    await close.click();
+    await expect(drawer).toHaveCount(0);
+    await expect(menu).toBeFocused();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(previousScroll);
+    await menu.click();
+    await drawer.getByRole("link", { name: "Settings", exact: true }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/settings");
+    await expect(drawer).toHaveCount(0);
+  }
+});
