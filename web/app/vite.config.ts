@@ -8,7 +8,12 @@ const apiTarget = process.env.NEROCD_API_PROXY_TARGET ?? "http://127.0.0.1:8080"
 
 export default defineConfig({
   plugins: [
-    tanstackRouter({ target: "react", autoCodeSplitting: false }),
+    tanstackRouter({
+      target: "react",
+      autoCodeSplitting: false,
+      // Colocated tests belong to Vitest, not the generated application routes.
+      routeFileIgnorePattern: "\\.test\\.[jt]sx?$",
+    }),
     react(),
     tailwindcss(),
     {
