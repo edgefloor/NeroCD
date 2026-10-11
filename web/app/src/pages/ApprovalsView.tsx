@@ -54,7 +54,8 @@ export function ApprovalList({
               </div>
             ) : null}
             {run ? <Link className="text-sm underline underline-offset-4" to="/runs/$runId" params={{ runId: run.id }} search={(previous) => previous}>Run details</Link> : null}
-            {run && approval.status === "pending" && canOperateProject?.(run.project_id) ? (
+            {run && approval.status === "pending" && run.status !== "waiting_approval" ? <p className="text-sm text-muted-foreground">This run is no longer waiting for approval.</p> : null}
+            {run && approval.status === "pending" && run.status === "waiting_approval" && canOperateProject?.(run.project_id) ? (
               <div className="flex gap-2">
                 <Button
                   className="flex-1 sm:flex-none h-8 rounded-xl"

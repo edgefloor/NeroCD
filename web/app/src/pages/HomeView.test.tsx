@@ -10,7 +10,7 @@ afterEach(cleanup);
 const snapshot = apiSnapshot({
   projects: [{ id: "project_one", name: "Platform", description: "", created_at: "2026-01-01T00:00:00Z" }],
   templates: [{ id: "template_one", project_id: "project_one", name: "Release", kind: "shell", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: true }],
-  runs: [{ id: "run_one", project_id: "project_one", template_id: "template_one", status: "running", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, workflow_state: { steps: [] }, runner_tags: ["production"], requested_by: "operator", started_at: "2026-01-01T00:00:00Z" }],
+  runs: [{ id: "run_one", project_id: "project_one", template_id: "template_one", status: "waiting_approval", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, workflow_state: { steps: [] }, runner_tags: ["production"], requested_by: "operator", started_at: "2026-01-01T00:00:00Z" }],
   approvals: [{ id: "approval_one", run_id: "run_one", status: "pending", requested_by: "operator", created_at: "2026-01-01T00:00:00Z" }],
   logs: [{ id: "log_one", run_id: "run_one", sequence: 1, stream: "stdout", message: "Artifact uploaded", created_at: "2026-01-01T00:00:00Z" }],
 });

@@ -8,7 +8,7 @@ vi.mock("@tanstack/react-router", () => ({ Link: ({ children, params }: { childr
 
 afterEach(cleanup);
 const approval = { id: "approval_one", run_id: "run_one", status: "pending", requested_by: "operator", created_at: "2026-01-01T00:00:00Z" } as const;
-const run = { id: "run_one", project_id: "project_one", run_spec: { type: "shell", inputs: {} }, runner_tags: [] } as never;
+const run = { id: "run_one", project_id: "project_one", status: "waiting_approval", run_spec: { type: "shell", inputs: {} }, runner_tags: [] } as never;
 const snapshot = apiSnapshot({ runs: [run] });
 const props = { approvals: [approval], snapshot, canOperateProject: () => true, busy: false, onDecide: vi.fn() };
 

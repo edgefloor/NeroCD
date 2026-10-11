@@ -78,3 +78,14 @@ test("approval errors remain scoped to their run and clear on retry", () => {
   view.rerender(<ApprovalsView snapshot={snapshot} busy={true} onDecide={vi.fn()} />);
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+
+test.each(["queued", "running", "succeeded", "failed", "canceled"])("pending approval for a %s run keeps details without offering decisions", (status) => {
+  const onDecide = vi.fn();
+  render(<ApprovalsView snapshot={{ ...snapshot, runs: snapshot.runs.map((run) => ({ ...run, status })) }} busy={false} onDecide={onDecide} canOperateProject={() => true} />);
+  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+  expect(screen.getByText("This run is no longer waiting for approval.")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Run details" }).getAttribute("href")).toBe("/runs/run_alpha");
+  expect(onDecide).not.toHaveBeenCalled();
+});

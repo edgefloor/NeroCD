@@ -4370,3 +4370,21 @@ test("long workflow step names and dependencies remain readable inside diagnosti
     if (width === 320) await diagnostics.screenshot({ path: testInfo.outputPath("workflow-long-metadata-320.png") });
   }
 });
+
+
+test("canceled runs keep approval evidence without offering another decision", async ({ page }) => {
+  await page.goto("/approvals");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page, true);
+  await postJSON(page, "/api/v1/runs/cancel", { run_id: runID });
+  await page.goto(`/approvals?q=${runID}`);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByText("This run is no longer waiting for approval.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reject", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Run details", exact: true })).toHaveAttribute("href", new RegExp(`/runs/${runID}`));
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
