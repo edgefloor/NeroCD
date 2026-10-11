@@ -54,3 +54,17 @@ test("cancel actions are evaluated separately for each run's project", () => {
   expect(screen.getAllByRole("button", { name: "Logs" })).toHaveLength(4);
   expect(screen.getAllByRole("button", { name: "Cancel" })).toHaveLength(2);
 });
+
+
+test("cancellation failures stay beside only the affected run in both layouts", () => {
+  const other = { ...run, id: "run_other" };
+  const view = render(<RunsView snapshot={apiSnapshot({ runs: [run, other] })} busy={false} onCancel={vi.fn()} canOperateProject={() => true} cancelError={{ key: run.id, message: "Cancellation unavailable" }} />);
+  expect(screen.getAllByRole("alert")).toHaveLength(2);
+  for (const alert of screen.getAllByRole("alert")) {
+    expect(alert.textContent).toBe("Unable to cancel run: Cancellation unavailable");
+    expect(alert.closest("tr, .grid")?.textContent).toContain(run.id);
+    expect(alert.closest("tr, .grid")?.textContent).not.toContain(other.id);
+  }
+  view.rerender(<RunsView snapshot={apiSnapshot({ runs: [run, other] })} busy={true} onCancel={vi.fn()} canOperateProject={() => true} />);
+  expect(screen.queryAllByRole("alert")).toHaveLength(0);
+});

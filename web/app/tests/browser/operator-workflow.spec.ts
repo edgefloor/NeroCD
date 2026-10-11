@@ -1232,11 +1232,16 @@ test("session-authenticated operators can cancel queued runs on desktop and mobi
     await page.goto(`/runs?q=${runID}`);
     const cancel = page.getByRole("button", { name: "Cancel", exact: true });
     await expect(cancel).toBeInViewport();
-    if (width === 320) {
+    failFirst = true;
+    {
       const failed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/cancel");
       await cancel.click();
       expect((await failed).status()).toBe(503);
       await expect(cancel).toBeEnabled();
+      const error = page.getByRole("alert").filter({ hasText: "Unable to cancel run: Temporary cancellation failure" });
+      await expect(error).toBeInViewport();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-cancellation-error-320.png"), animations: "disabled" });
     }
     failRefresh = true;
     const canceled = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/cancel");
@@ -1244,6 +1249,7 @@ test("session-authenticated operators can cancel queued runs on desktop and mobi
     const response = await canceled;
     expect(response.status()).toBe(200);
     expect(await response.json()).toMatchObject({ id: runID, status: "canceled" });
+    await expect(page.getByRole("alert").filter({ hasText: "Unable to cancel run:" })).toHaveCount(0);
     await expect(cancel).toHaveCount(0);
     await expect(page.getByText("canceled", { exact: true }).nth(width < 768 ? 0 : 1)).toBeVisible();
     await expect(page.getByText("Unable to refresh run information. Loaded output remains available; retry before changing runs.")).toBeVisible();

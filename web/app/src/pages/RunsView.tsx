@@ -4,8 +4,9 @@ import { Ban, FileText, ListTree, Terminal } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import type { ApiSnapshot, RunLog, TaskRun, Project, TaskTemplate } from "@/api";
+import type { ActionError, ApiSnapshot, RunLog, TaskRun, Project, TaskTemplate } from "@/api";
 import { StatusBadge } from "@/components/common/StatusBadge";
+import { ActionErrorMessage } from "@/components/common/ActionErrorMessage";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
 import { formatDate, formatDuration, matchesRunQuery, projectName, templateName } from "@/lib/format";
@@ -21,6 +22,7 @@ export function RunsTable({
   templates,
   busy,
   onCancel,
+  cancelError,
   canOperateProject,
   onOpenLogs,
   detailSearch,
@@ -30,6 +32,7 @@ export function RunsTable({
   templates: TaskTemplate[];
   busy?: boolean;
   onCancel?: (runID: string) => void;
+  cancelError?: ActionError;
   canOperateProject?: (projectID: string) => boolean;
   onOpenLogs?: (runID: string) => void;
   detailSearch?: { q?: string; offset?: number };
@@ -89,6 +92,7 @@ export function RunsTable({
                 </Button>
               ) : null}
             </div>
+            <ActionErrorMessage error={cancelError} actionKey={run.id} label="Unable to cancel run" />
           </div>
         ))}
       </div>
@@ -113,7 +117,7 @@ export function RunsTable({
                 </TableCell>
                 <TableCell className="whitespace-normal break-words align-top text-sm [overflow-wrap:anywhere]">{projectName(projects, run.project_id)}</TableCell>
                 <TableCell className="whitespace-normal break-words align-top text-sm">{formatDuration(run)}</TableCell>
-                <TableCell className="align-top text-right">
+                <TableCell className="whitespace-normal align-top text-right">
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
                       <Link data-run-detail-link={run.id} to="/runs/$runId" params={{ runId: run.id }} search={{ q: detailSearch?.q || undefined, offset: detailSearch?.offset || undefined }}>
@@ -150,6 +154,7 @@ export function RunsTable({
                     ) : null}
                     <StatusBadge status={run.status} />
                   </div>
+                  <ActionErrorMessage error={cancelError} actionKey={run.id} label="Unable to cancel run" />
                 </TableCell>
               </TableRow>
             ))}
@@ -166,6 +171,7 @@ export function RunsView({
   offset,
   busy,
   onCancel,
+  cancelError,
   canOperateProject,
   loading,
   selectedRunID,
@@ -189,6 +195,7 @@ export function RunsView({
   offset?: number;
   busy: boolean;
   onCancel?: (runID: string) => void;
+  cancelError?: ActionError;
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
   selectedRunID?: string;
@@ -261,6 +268,7 @@ export function RunsView({
             templates={snapshot.templates}
             busy={busy}
             onCancel={onCancel}
+            cancelError={cancelError}
             canOperateProject={canOperateProject}
             onOpenLogs={openTerminal}
           />}

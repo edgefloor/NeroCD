@@ -61,6 +61,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
       snapshot={apiSnapshot({ runs: runs.data, projects: projects.data, templates: templates.data })}
       busy={failed.length > 0 || cancel.isPending}
       recovery={recovery}
+      cancelError={cancel.isError && cancel.variables ? { key: cancel.variables, message: cancel.error.message } : undefined}
       onCancel={(runID) => {
         if (failed.length > 0 || cancelPending.current) return;
         cancelPending.current = true;
