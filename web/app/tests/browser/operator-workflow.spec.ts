@@ -842,3 +842,36 @@ test("project and template forms retain failed drafts and reset only after succe
   }
   expect(pageErrors).toEqual([]);
 });
+
+test("inventory labels focus their own fields and mobile template editing is named", async ({ page }) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const suffix = `${Date.now()}`;
+  const projectName = `Labeled project ${suffix}`;
+  const templateName = `Labeled template ${suffix}`;
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: projectName, description: "Accessible form fixture" });
+  await postJSON(page, "/api/v1/templates", { project_id: project.id, name: templateName, kind: "shell", run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "labels"] } }, workflow: { steps: [] }, runner_tags: [], requires_ack: false });
+  await page.reload();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Configure project", exact: true }).click();
+  const configure = page.getByRole("dialog", { name: "Configure project" });
+  await configure.getByText("Project Name", { exact: true }).click();
+  await expect(configure.getByRole("textbox", { name: "Project Name", exact: true })).toBeFocused();
+  await configure.getByRole("textbox", { name: "Project Name", exact: true }).fill("Mobile draft");
+  await expect(configure.getByRole("combobox", { name: "Project", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(page.getByRole("textbox", { name: "Project Name", exact: true })).toHaveValue("");
+  await page.goto(`/templates?q=${encodeURIComponent(templateName)}`);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit template" });
+    await expect(dialog.getByRole("textbox", { name: "Template Name", exact: true })).toHaveValue(templateName);
+    await dialog.getByText("Command", { exact: true }).click();
+    await expect(dialog.getByRole("textbox", { name: "Command", exact: true })).toBeFocused();
+    await expect(dialog.getByRole("combobox", { name: "Kind", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+  }
+});

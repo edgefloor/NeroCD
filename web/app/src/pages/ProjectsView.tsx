@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useState } from "react";
+import { FormEvent, ReactNode, useId, useState } from "react";
 import { Archive, FolderKanban, GitBranch, Pencil, Plus } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ function ProjectCard({
   busy: string;
   mutate: MutateFn;
 }): ReactNode {
+  const formId = useId();
   const projectTemplates = templates.filter((template) => template.project_id === project.id);
   const projectRuns = runs.filter((run) => run.project_id === project.id);
   const projectRepos = repositories.filter((repo) => repo.project_id === project.id);
@@ -88,12 +89,12 @@ function ProjectCard({
               </DialogHeader>
               <form className="space-y-3" onSubmit={(event) => void updateSubmit(event)}>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">Project Name</label>
-                  <Input name="name" defaultValue={project.name} required className="h-9 rounded-xl" />
+                  <label htmlFor={`${formId}-project-name`} className="text-xs font-medium text-muted-foreground">Project Name</label>
+                  <Input id={`${formId}-project-name`} name="name" defaultValue={project.name} required className="h-9 rounded-xl" />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">Description</label>
-                  <Textarea name="description" defaultValue={project.description} className="min-h-[80px] rounded-xl" />
+                  <label htmlFor={`${formId}-description`} className="text-xs font-medium text-muted-foreground">Description</label>
+                  <Textarea id={`${formId}-description`} name="description" defaultValue={project.description} className="min-h-[80px] rounded-xl" />
                 </div>
                 <Button type="submit" disabled={busy === `project:update:${project.id}`} className="h-9 w-full rounded-xl">
                   Save project
@@ -128,6 +129,7 @@ function ProjectForms({
   busy: string;
   mutate: MutateFn;
 }): ReactNode {
+  const formId = useId();
   async function createProjectSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -154,12 +156,12 @@ function ProjectForms({
     <div className="space-y-6">
       <form className="space-y-3" onSubmit={(event) => void createProjectSubmit(event)}>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">Project Name</label>
-          <Input name="name" placeholder="My Project" required className="h-9 rounded-xl" />
+          <label htmlFor={`${formId}-project-name`} className="text-xs font-medium text-muted-foreground">Project Name</label>
+          <Input id={`${formId}-project-name`} name="name" placeholder="My Project" required className="h-9 rounded-xl" />
         </div>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">Description</label>
-          <Textarea name="description" placeholder="Description" className="min-h-[80px] rounded-xl" />
+          <label htmlFor={`${formId}-description`} className="text-xs font-medium text-muted-foreground">Description</label>
+          <Textarea id={`${formId}-description`} name="description" placeholder="Description" className="min-h-[80px] rounded-xl" />
         </div>
         <Button type="submit" disabled={busy === "project"} className="h-9 rounded-xl">
           <Plus className="h-4 w-4 mr-2" />
@@ -168,8 +170,8 @@ function ProjectForms({
       </form>
       <form className="space-y-3 border-t pt-6" onSubmit={(event) => void createRepoSubmit(event)}>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">Project</label>
-          <select
+          <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
+          <select id={`${formId}-project`}
             name="project_id"
             className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
             required
@@ -183,21 +185,21 @@ function ProjectForms({
           </select>
         </div>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">Repository Name</label>
-          <Input name="name" placeholder="Repository name" required className="h-9 rounded-xl" />
+          <label htmlFor={`${formId}-repository-name`} className="text-xs font-medium text-muted-foreground">Repository Name</label>
+          <Input id={`${formId}-repository-name`} name="name" placeholder="Repository name" required className="h-9 rounded-xl" />
         </div>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">Repository URL</label>
-          <Input name="url" placeholder="https://github.com/acme/infra.git" required className="h-9 rounded-xl" />
+          <label htmlFor={`${formId}-repository-url`} className="text-xs font-medium text-muted-foreground">Repository URL</label>
+          <Input id={`${formId}-repository-url`} name="url" placeholder="https://github.com/acme/infra.git" required className="h-9 rounded-xl" />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Provider</label>
-            <Input name="provider" defaultValue="git" className="h-9 rounded-xl" />
+            <label htmlFor={`${formId}-provider`} className="text-xs font-medium text-muted-foreground">Provider</label>
+            <Input id={`${formId}-provider`} name="provider" defaultValue="git" className="h-9 rounded-xl" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Default Ref</label>
-            <Input name="default_ref" defaultValue="main" className="h-9 rounded-xl" />
+            <label htmlFor={`${formId}-default-ref`} className="text-xs font-medium text-muted-foreground">Default Ref</label>
+            <Input id={`${formId}-default-ref`} name="default_ref" defaultValue="main" className="h-9 rounded-xl" />
           </div>
         </div>
         <Button type="submit" disabled={busy === "repository"} className="h-9 rounded-xl">

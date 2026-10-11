@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useState } from "react";
+import { FormEvent, ReactNode, useId, useState } from "react";
 import { Layers3, Pencil, Play, Plus } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -25,6 +25,7 @@ function TemplateForm({
   busy: string;
   mutate: MutateFn;
 }): ReactNode {
+  const formId = useId();
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -46,8 +47,8 @@ function TemplateForm({
   return (
     <form className="space-y-4" onSubmit={(event) => void submit(event)}>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Project</label>
-        <select
+        <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
+        <select id={`${formId}-project`}
           name="project_id"
           className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
           required
@@ -61,12 +62,12 @@ function TemplateForm({
         </select>
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Template Name</label>
-        <Input name="name" placeholder="Patch Linux fleet" required className="h-9 rounded-xl" />
+        <label htmlFor={`${formId}-template-name`} className="text-xs font-medium text-muted-foreground">Template Name</label>
+        <Input id={`${formId}-template-name`} name="name" placeholder="Patch Linux fleet" required className="h-9 rounded-xl" />
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Kind</label>
-        <select
+        <label htmlFor={`${formId}-kind`} className="text-xs font-medium text-muted-foreground">Kind</label>
+        <select id={`${formId}-kind`}
           name="kind"
           className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
         >
@@ -78,12 +79,12 @@ function TemplateForm({
         </select>
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Runner Tags</label>
-        <Input name="runner_tags" placeholder="linux, prod" className="h-9 rounded-xl" />
+        <label htmlFor={`${formId}-runner-tags`} className="text-xs font-medium text-muted-foreground">Runner Tags</label>
+        <Input id={`${formId}-runner-tags`} name="runner_tags" placeholder="linux, prod" className="h-9 rounded-xl" />
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Command</label>
-        <Input name="command" placeholder="ansible-playbook site.yml" className="h-9 rounded-xl" />
+        <label htmlFor={`${formId}-command`} className="text-xs font-medium text-muted-foreground">Command</label>
+        <Input id={`${formId}-command`} name="command" placeholder="ansible-playbook site.yml" className="h-9 rounded-xl" />
       </div>
       <label className="flex items-center gap-2 text-sm py-2">
         <input name="requires_ack" type="checkbox" className="rounded border-border" />
@@ -112,6 +113,7 @@ function TemplateEditDialog({
   busy: string;
   mutate: MutateFn;
 }): ReactNode {
+  const formId = useId();
   const [open, setOpen] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -159,8 +161,8 @@ function TemplateEditDialog({
         </DialogHeader>
         <form className="space-y-4" onSubmit={(event) => void submit(event)}>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Project</label>
-            <select
+            <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
+            <select id={`${formId}-project`}
               name="project_id"
               defaultValue={template.project_id}
               className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
@@ -174,12 +176,12 @@ function TemplateEditDialog({
             </select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Template Name</label>
-            <Input name="name" defaultValue={template.name} required className="h-9 rounded-xl" />
+            <label htmlFor={`${formId}-template-name`} className="text-xs font-medium text-muted-foreground">Template Name</label>
+            <Input id={`${formId}-template-name`} name="name" defaultValue={template.name} required className="h-9 rounded-xl" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Kind</label>
-            <select
+            <label htmlFor={`${formId}-kind`} className="text-xs font-medium text-muted-foreground">Kind</label>
+            <select id={`${formId}-kind`}
               name="kind"
               defaultValue={template.kind}
               className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
@@ -192,12 +194,12 @@ function TemplateEditDialog({
             </select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Runner Tags</label>
-            <Input name="runner_tags" defaultValue={(template.runner_tags ?? []).join(", ")} className="h-9 rounded-xl" />
+            <label htmlFor={`${formId}-runner-tags`} className="text-xs font-medium text-muted-foreground">Runner Tags</label>
+            <Input id={`${formId}-runner-tags`} name="runner_tags" defaultValue={(template.runner_tags ?? []).join(", ")} className="h-9 rounded-xl" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Command</label>
-            <Input name="command" defaultValue={command} className="h-9 rounded-xl" />
+            <label htmlFor={`${formId}-command`} className="text-xs font-medium text-muted-foreground">Command</label>
+            <Input id={`${formId}-command`} name="command" defaultValue={command} className="h-9 rounded-xl" />
           </div>
           <label className="flex items-center gap-2 text-sm py-2">
             <input name="requires_ack" type="checkbox" defaultChecked={template.requires_ack} className="rounded border-border" />
@@ -373,7 +375,7 @@ export function TemplatesView({
                         </Button>
                         <TemplateEditDialog
                           trigger={
-                            <Button variant="outline" size="sm" className="h-8 w-8 p-0 rounded-xl">
+                            <Button variant="outline" size="sm" className="h-8 w-8 p-0 rounded-xl" aria-label="Edit">
                               <Pencil className="h-4 w-4" />
                             </Button>
                           }
