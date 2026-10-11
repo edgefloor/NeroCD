@@ -2357,3 +2357,32 @@ test("audit evidence is readable and expandable across viewport sizes", async ({
   await page.getByRole("button", { name: "Clear filter", exact: true }).click();
   await expect(page.getByText(actor, { exact: true })).toBeVisible();
 });
+
+test("audit request failures recover in place on the requested page", async ({ page }, testInfo) => {
+  await page.goto("/audit");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  let fail = true;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/audit-events**", (route) => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? 0);
+    offsets.push(offset);
+    return fail ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary audit failure" }) })
+      : route.fulfill({ contentType: "application/json", body: JSON.stringify({ items: [{ id: "audit_retry", actor_id: "operator_retry", action: "run.requested", target_id: "run_retry", metadata: {}, created_at: "2026-10-11T12:34:56Z" }], count: 1, total: 51, limit: 50, offset }) });
+  });
+  await page.goto("/audit?offset=50&q=operator_retry");
+  await expect(page.getByRole("alert")).toHaveText("Unable to load audit events.");
+  expect(offsets.length).toBeGreaterThan(0);
+  expect(offsets.every((offset) => offset === 50)).toBe(true);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Retry audit events", exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("audit-retry-320.png"), fullPage: true });
+  }
+  fail = false;
+  await page.getByRole("button", { name: "Retry audit events", exact: true }).click();
+  await expect(page.getByText("operator_retry", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page).toHaveURL((url) => url.pathname === "/audit" && url.searchParams.get("offset") === "50" && url.searchParams.get("q") === "operator_retry");
+});
