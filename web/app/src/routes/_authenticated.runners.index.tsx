@@ -1,6 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { createRunnerEnrollment, principalQuery, revokeRunnerToken, runnersQuery } from "@/api";
+import { createRunnerEnrollment, principalQuery, runnersQuery } from "@/api";
 import { RunnersView } from "@/pages/RunnersView";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { validateSearch } from "@/router/search";
@@ -18,7 +18,14 @@ export const Route = createFileRoute("/_authenticated/runners/")({
 });
 
 function RunnersRoute() {
-  const navigate = useNavigate(); const { q } = Route.useSearch(); const page = usePage(); const runners = useQuery({ ...runnersQuery({ limit: page.limit, offset: page.offset }), retryOnMount: false, refetchInterval: (query) => query.state.status === "error" ? false : 10_000 }); const principal = useQuery({ ...principalQuery(), retryOnMount: false });
+  const { q } = Route.useSearch();
+  const page = usePage();
+  const runners = useQuery({
+    ...runnersQuery({ limit: page.limit, offset: page.offset }),
+    retryOnMount: false,
+    refetchInterval: (query) => query.state.status === "error" ? false : 10_000,
+  });
+  const principal = useQuery({ ...principalQuery(), retryOnMount: false });
   const failedQueries = [runners, principal].filter((query) => query.isError);
   const error = failedQueries.length ? <section className="space-y-3">
     <p role="alert">Runner inventory is unavailable.</p>
@@ -30,5 +37,19 @@ function RunnersRoute() {
   if (error && (!runners.data || !principal.data)) return error;
   if (runners.isPending || principal.isPending) return <section className="space-y-3"><p role="status">Loading runners...</p><SkeletonTable rows={5} /></section>;
   const canAdmin = (principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin");
-  return <>{error}<RunnersView controlsDisabled={failedQueries.length > 0} runners={runners.data?.items ?? []} q={q} canAdmin={canAdmin} onEnroll={async (input) => { const created = await createRunnerEnrollment(input); await runners.refetch(); return created; }} onRevokeRunner={async (id) => { await revokeRunnerToken({ runner_id: id }); await runners.refetch(); void navigate({ to: "/runners/$runnerId", params: { runnerId: id }, search: (previous) => previous, replace: true }); }} /><PageNavigation page={runners.data} label="runners" loading={runners.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} /></>;
+  return <>
+    {error}
+    <RunnersView
+      controlsDisabled={failedQueries.length > 0}
+      runners={runners.data?.items ?? []}
+      q={q}
+      canAdmin={canAdmin}
+      onEnroll={async (input) => {
+        const created = await createRunnerEnrollment(input);
+        await runners.refetch();
+        return created;
+      }}
+    />
+    <PageNavigation page={runners.data} label="runners" loading={runners.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
+  </>;
 }

@@ -21,7 +21,7 @@ function runnerState(runner: Runner): string {
   return "Active and recently observed.";
 }
 
-export function RunnersView({ runners, q, canAdmin, controlsDisabled = false, onEnroll, onRevokeRunner }: { runners: Runner[]; q?: string; canAdmin: boolean; controlsDisabled?: boolean; onEnroll: (input: { runner_id: string; runner_name: string; tags: string[]; capabilities: string[]; ttl_seconds: number }) => Promise<CreatedRunnerEnrollment>; onRevokeRunner: (id: string) => Promise<void> }): ReactNode {
+export function RunnersView({ runners, q, canAdmin, controlsDisabled = false, onEnroll }: { runners: Runner[]; q?: string; canAdmin: boolean; controlsDisabled?: boolean; onEnroll: (input: { runner_id: string; runner_name: string; tags: string[]; capabilities: string[]; ttl_seconds: number }) => Promise<CreatedRunnerEnrollment> }): ReactNode {
   const [enrollment, setEnrollment] = useState<CreatedRunnerEnrollment>();
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const [error, setError] = useState("");
