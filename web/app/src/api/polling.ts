@@ -89,12 +89,11 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
   };
 }
 
-// Deployments are the only route-local resource which needs lifecycle polling.
-// Query polling stops as soon as every listed deployment is terminal.
+// Stop lifecycle polling on errors or when all deployments are terminal.
 export function useDeploymentsPollingQuery(filters?: DeploymentFilters, enabled = true) {
   return useQuery({ ...deploymentsQuery(filters as DeploymentFilters), enabled, retryOnMount: false, refetchInterval: (query) => query.state.status !== "error" && shouldPollDeploymentList(query.state.data) ? 3_000 : false });
 }
 
 export function useDeploymentPollingQuery(id: string) {
-  return useQuery({ ...deploymentQuery(id), refetchInterval: (query) => shouldPollDeploymentList(query.state.data ? { items: [query.state.data], count: 1, total: 1, limit: 1, offset: 0 } : undefined) ? 3_000 : false });
+  return useQuery({ ...deploymentQuery(id), retryOnMount: false, refetchInterval: (query) => query.state.status !== "error" && shouldPollDeploymentList(query.state.data ? { items: [query.state.data], count: 1, total: 1, limit: 1, offset: 0 } : undefined) ? 3_000 : false });
 }

@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { allProjectsQuery, auditEventsQuery, projectsQuery, runLogsQuery, runQuery, runsQuery } from "./queries";
 import { useProjectMutations, useRunMutations } from "./mutations";
-import { useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
+import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; vi.useRealTimers(); });
@@ -197,6 +197,32 @@ test("run list polling pauses on failure and resumes after explicit recovery", a
   });
   const { wrapper } = setup();
   const mounted = renderHook(() => ({ ...useRunsPollingQuery() }), { wrapper });
+  await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });
+  fail = true;
+  await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });
+  expect(mounted.result.current.isError).toBe(true);
+  const failedCalls = calls;
+  await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+  expect(calls).toBe(failedCalls);
+  fail = false;
+  await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });
+  expect(mounted.result.current.isError).toBe(false);
+  const recoveredCalls = calls;
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+  expect(calls).toBeGreaterThan(recoveredCalls);
+  mounted.unmount();
+});
+
+test("deployment detail polling pauses on failure and resumes after explicit recovery", async () => {
+  vi.useFakeTimers();
+  let fail = false;
+  let calls = 0;
+  globalThis.fetch = vi.fn<typeof fetch>(() => {
+    calls++;
+    return Promise.resolve(fail ? new Response(JSON.stringify({ error: "Temporary failure" }), { status: 503 }) : json({ id: "dep_1", status: "queued" }));
+  });
+  const { wrapper } = setup();
+  const mounted = renderHook(() => ({ ...useDeploymentPollingQuery("dep_1") }), { wrapper });
   await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });
   fail = true;
   await act(async () => { await mounted.result.current.refetch(); await vi.advanceTimersByTimeAsync(10); });

@@ -41,7 +41,7 @@ function DeploymentDetailRoute() {
   const revision = revisions.data?.find((item) => item.id === deployment.data?.desired_revision_id);
   const previousRevision = revisions.data?.find((item) => item.id === deployment.data?.previous_healthy_revision_id);
   const related = (history.data ?? []).filter((item) => item.id !== deploymentId && (item.rollback_of_id === deploymentId || deployment.data?.rollback_of_id === item.id || (item.rollback_of_id && item.rollback_of_id === deployment.data?.rollback_of_id)));
-  const runs = useQuery({ ...runQuery(deployment.data?.task_run_id ?? ""), enabled: Boolean(deployment.data?.task_run_id), refetchInterval: (query) => shouldPollRun(query.state.data) ? 3_000 : false });
+  const runs = useQuery({ ...runQuery(deployment.data?.task_run_id ?? ""), enabled: Boolean(deployment.data?.task_run_id), retryOnMount: false, refetchInterval: (query) => query.state.status !== "error" && shouldPollRun(query.state.data) ? 3_000 : false });
   const taskRun = runs.data ?? undefined;
   const logs = useSelectedRunLogsPollingQuery(taskRun?.id ?? "", shouldPollRun(taskRun));
   const failedQueries = [deployment, environments, services, revisions, history, principal, members, runs].filter((query) => query.isError);
