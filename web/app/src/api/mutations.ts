@@ -160,6 +160,7 @@ export function useApprovalDecision() {
   });
   return {
     busy: mutation.isPending,
+    error: mutation.isError && mutation.variables ? { key: mutation.variables.runID, message: mutation.error.message } : undefined,
     decide: (runID: string, decision: ApprovalDecision) => {
       if (pending.current) return;
       pending.current = true;

@@ -22,7 +22,7 @@ function ApprovalsRoute() {
   const runQueries = useQueries({ queries: (approvals.data?.items ?? []).map((approval) => runQuery(approval.run_id)) });
   const projects = useQuery({ ...allProjectsQuery(), retryOnMount: false });
   const templates = useQuery({ ...allTemplatesQuery(), retryOnMount: false });
-  const { busy, decide } = useApprovalDecision();
+  const { busy, decide, error } = useApprovalDecision();
   const principal = useQuery({ ...principalQuery(), retryOnMount: false });
   const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
   const queries = [approvals, projects, templates, principal, members, ...runQueries];
@@ -35,7 +35,7 @@ function ApprovalsRoute() {
     </section> : null}
     {approvals.data || !approvals.isError ? <ApprovalsView
       q={q} snapshot={apiSnapshot({ approvals: approvals.data, runs, projects: projects.data, templates: templates.data })}
-      busy={failed.length > 0 || busy} onDecide={(runID, decision) => { if (!failed.length) decide(runID, decision); }}
+      busy={failed.length > 0 || busy} decisionError={error} onDecide={(runID, decision) => { if (!failed.length) decide(runID, decision); }}
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
       loading={queries.some((query) => query.isPending)}
     /> : null}

@@ -39,7 +39,7 @@ function HomeRoute() {
   const runs = useQuery({ ...runsQuery(), refetchInterval: (query) => query.state.status !== "error" && shouldPollRunList(query.state.data) ? 3_000 : false });
   const approvals = useQuery(approvalsQuery());
   const logs = useQuery(runLogsQuery({ limit: 5, offset: 0 }));
-  const { busy, decide } = useApprovalDecision();
+  const { busy, decide, error } = useApprovalDecision();
   const principal = useQuery(principalQuery());
   const members = useQuery(allProjectMembersQuery());
   const queries = [health, projects, templates, runs, approvals, logs, principal, members];
@@ -58,7 +58,7 @@ function HomeRoute() {
       query={q}
       onClearQuery={() => void navigate({ search: (previous) => ({ ...previous, q: undefined }), replace: true })}
       busy={busy || failed.length > 0}
-      onDecide={(runID, decision) => { if (!failed.length) decide(runID, decision); }}
+      decisionError={error} onDecide={(runID, decision) => { if (!failed.length) decide(runID, decision); }}
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
       loading={queries.some((query) => query.isPending)}
       totals={{ projects: projects.data?.total ?? 0, templates: templates.data?.total ?? 0, logs: logs.data?.total ?? 0 }}

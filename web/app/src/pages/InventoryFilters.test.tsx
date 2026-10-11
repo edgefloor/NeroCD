@@ -68,3 +68,13 @@ test("approval filter includes history and distinguishes unmatched pending appro
   expect(screen.getByText("No pending approvals match this filter on the loaded page.")).toBeTruthy();
   expect(screen.getByText("1 waiting")).toBeTruthy();
 });
+
+
+test("approval errors remain scoped to their run and clear on retry", () => {
+  const view = render(<ApprovalsView snapshot={snapshot} busy={false} onDecide={vi.fn()} canOperateProject={() => true} decisionError={{ key: "run_alpha", message: "Decision unavailable" }} />);
+  expect(screen.getByRole("alert").textContent).toBe("Unable to record decision: Decision unavailable");
+  view.rerender(<ApprovalsView snapshot={snapshot} busy={false} onDecide={vi.fn()} decisionError={{ key: "run_other", message: "Decision unavailable" }} />);
+  expect(screen.queryByRole("alert")).toBeNull();
+  view.rerender(<ApprovalsView snapshot={snapshot} busy={true} onDecide={vi.fn()} />);
+  expect(screen.queryByRole("alert")).toBeNull();
+});

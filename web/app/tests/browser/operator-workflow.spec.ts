@@ -1539,7 +1539,7 @@ test("approval decisions respect project roles and prevent conflicting requests"
     await operator.route(/\/api\/v1\/approvals(?:\?.*)?$/, (route) => failApprovalRefresh
       ? route.fulfill({ status: 503, json: { error: "Approval refresh unavailable" } })
       : route.continue());
-    await operator.route("**/api/v1/runs/approve", async (route) => {
+    await operator.route(/\/api\/v1\/runs\/(approve|reject)$/, async (route) => {
       if (!failFirst) return route.continue();
       failFirst = false;
       await new Promise<void>((resolve) => { releaseFailure = resolve; });
@@ -1554,9 +1554,11 @@ test("approval decisions respect project roles and prevent conflicting requests"
       await operator.goto(`${path}?q=${runID}`);
       const approve = operator.getByRole("button", { name: "Approve", exact: true });
       const reject = operator.getByRole("button", { name: "Reject", exact: true });
-      if (decision === "Approve") {
-        const failed = operator.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/approve");
-        await approve.click();
+      failFirst = true;
+      releaseFailure = undefined;
+      {
+        const failed = operator.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/runs/${decision.toLowerCase()}`);
+        await operator.getByRole("button", { name: decision, exact: true }).click();
         await expect(approve).toBeDisabled();
         await expect(reject).toBeDisabled();
         await expect.poll(() => Boolean(releaseFailure)).toBe(true);
@@ -1564,6 +1566,12 @@ test("approval decisions respect project roles and prevent conflicting requests"
         expect((await failed).status()).toBe(503);
         await expect(approve).toBeEnabled();
         await expect(reject).toBeEnabled();
+        for (const errorWidth of [320, 390, 430, 1440]) {
+          await operator.setViewportSize({ width: errorWidth, height: 1000 });
+          await expect(operator.getByRole("alert").filter({ hasText: "Unable to record decision: Temporary approval failure" })).toBeInViewport();
+          expect(await operator.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+          if (errorWidth === 320) await operator.screenshot({ path: testInfo.outputPath(`approval-${decision}-error-320.png`), animations: "disabled" });
+        }
       }
       failApprovalRefresh = decision === "Reject";
       const saved = operator.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/runs/${decision.toLowerCase()}`);
@@ -1573,6 +1581,7 @@ test("approval decisions respect project roles and prevent conflicting requests"
       expect(await response.json()).toMatchObject({ run_id: runID, status: decision === "Approve" ? "approved" : "rejected" });
       await expect(approve).toHaveCount(0);
       await expect(reject).toHaveCount(0);
+      await expect(operator.getByRole("alert").filter({ hasText: "Unable to record decision:" })).toHaveCount(0);
       if (decision === "Reject") {
         await expect(operator.getByText("Unable to refresh approval information. Decisions are unavailable until retry succeeds.")).toBeVisible();
         for (const recoveryWidth of [320, 390, 430, 1440]) {

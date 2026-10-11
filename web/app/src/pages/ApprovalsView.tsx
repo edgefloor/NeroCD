@@ -3,8 +3,9 @@ import { Link } from "@tanstack/react-router";
 import { CheckCircle2, GitBranch, XCircle, ShieldCheck, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import type { ApiSnapshot, Approval, ApprovalDecision } from "@/api";
+import type { ActionError, ApiSnapshot, Approval, ApprovalDecision } from "@/api";
 import { StatusBadge } from "@/components/common/StatusBadge";
+import { ActionErrorMessage } from "@/components/common/ActionErrorMessage";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
 import { formatDate, matchesQuery, matchesRunQuery, projectName, templateName } from "@/lib/format";
@@ -14,12 +15,14 @@ export function ApprovalList({
   snapshot,
   busy,
   onDecide,
+  decisionError,
   canOperateProject,
 }: {
   approvals: Approval[];
   snapshot: ApiSnapshot;
   busy: boolean;
   onDecide: (runID: string, decision: ApprovalDecision) => void;
+  decisionError?: ActionError;
   canOperateProject?: (projectID: string) => boolean;
 }): ReactNode {
   if (approvals.length === 0) {
@@ -74,6 +77,7 @@ export function ApprovalList({
                 </Button>
               </div>
             ) : null}
+            <ActionErrorMessage error={decisionError} actionKey={approval.run_id} label="Unable to record decision" />
           </div>
         );
       })}
@@ -86,6 +90,7 @@ export function ApprovalsView({
   q,
   busy,
   onDecide,
+  decisionError,
   canOperateProject,
   loading,
 }: {
@@ -93,6 +98,7 @@ export function ApprovalsView({
   q?: string;
   busy: boolean;
   onDecide: (runID: string, decision: ApprovalDecision) => void;
+  decisionError?: ActionError;
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
 }): ReactNode {
@@ -136,7 +142,7 @@ export function ApprovalsView({
             approvals={visiblePending}
             snapshot={snapshot}
             busy={busy}
-            onDecide={onDecide}
+            onDecide={onDecide} decisionError={decisionError}
             canOperateProject={canOperateProject}
           />}
         </CardContent>
