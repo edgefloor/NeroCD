@@ -84,6 +84,29 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   const createdPage = await createdAccountResponse.json() as { items: Array<{ id: string; name: string }> };
   const account = createdPage.items.find((candidate) => candidate.name === `Browser bot ${suffix}`);
   expect(account).toBeTruthy();
+  let failList = true;
+  await page.route("**/api/v1/service-accounts?*", (route) => failList
+    ? route.fulfill({ status: 503, json: { error: "Temporary service account list failure" } })
+    : route.continue());
+  const draftName = page.getByLabel(`Name for Browser bot ${suffix}`);
+  await draftName.fill("Unsaved account rename");
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Unable to refresh service accounts. Showing previously loaded accounts.");
+  await expect(draftName).toHaveValue("Unsaved account rename");
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Retry service accounts", exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("service-account-refresh-failure-320.png"), fullPage: true });
+  }
+  failList = false;
+  await page.getByRole("button", { name: "Retry service accounts", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(draftName).toHaveValue("Unsaved account rename");
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await draftName.fill(`Browser bot ${suffix}`);
   const runResponse = await postJSON(page, "/api/v1/runs", firstToken, { project_id: projectOne.id, run_spec: { type: "shell", inputs: { command: "true" } }, workflow: { steps: [] }, runner_tags: [] });
   expect(runResponse.status()).toBe(201);
   const run = await runResponse.json() as { requested_by: string };

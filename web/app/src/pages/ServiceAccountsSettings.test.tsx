@@ -33,7 +33,7 @@ afterEach(() => {
 
 function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><ServiceAccountsSettingsPanel projects={projects} /></QueryClientProvider>);
+  return { ...render(<QueryClientProvider client={client}><ServiceAccountsSettingsPanel projects={projects} /></QueryClientProvider>), client };
 }
 
 test("creates and clears one-time credential on close and project navigation", async () => {
@@ -80,4 +80,24 @@ test("updates, rotates, revokes, and pages service accounts", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "Next accounts" }));
   await waitFor(() => expect(serviceAccountsAPI.list).toHaveBeenCalledWith("proj_one", 10, 10, expect.any(Object)));
+});
+
+
+test("refresh failure preserves service account edits until retry", async () => {
+  const result = { items: [account], count: 1, total: 1, offset: 0, limit: 10 };
+  serviceAccountsAPI.list.mockResolvedValue(result);
+  const { client } = renderPanel();
+  const name = await screen.findByLabelText<HTMLInputElement>("Name for Build bot");
+  fireEvent.change(name, { target: { value: "Unsaved rename" } });
+  serviceAccountsAPI.list.mockRejectedValue(new Error("Temporary failure"));
+  await client.invalidateQueries({ queryKey: ["service-accounts"] });
+  await screen.findByText("Unable to refresh service accounts. Showing previously loaded accounts.");
+  expect(name.value).toBe("Unsaved rename");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save" }).disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Rotate" }).disabled).toBe(true);
+  serviceAccountsAPI.list.mockResolvedValue(result);
+  fireEvent.click(screen.getByRole("button", { name: "Retry service accounts" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(name.value).toBe("Unsaved rename");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save" }).disabled).toBe(false);
 });
