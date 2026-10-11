@@ -50,10 +50,15 @@ revision=$(git rev-parse HEAD)
 short_revision=${revision:0:12}
 source_date_epoch=$(git log -1 --format=%ct)
 [[ "$source_date_epoch" =~ ^[0-9]+$ ]] || fail 'git commit time is not a valid SOURCE_DATE_EPOCH'
-describe=$(git describe --tags --always --match 'v[0-9]*' 2>/dev/null || true)
-[[ -n "$describe" ]] || describe="0.1.0-dev"
-release_version="${describe#v}+git.${short_revision}"
-[[ "$release_version" =~ ^[0-9A-Za-z._+-]+$ ]] || fail 'derived release version contains unsafe characters'
+if [[ -n "${NEROCD_RELEASE_CANDIDATE_VERSION:-}" ]]; then
+  # Candidate validation must use the intended version without requiring a tag.
+  release_version="$NEROCD_RELEASE_CANDIDATE_VERSION"
+else
+  describe=$(git describe --tags --always --match 'v[0-9]*' 2>/dev/null || true)
+  [[ -n "$describe" ]] || describe="0.1.0-dev"
+  release_version="${describe#v}+git.${short_revision}"
+fi
+[[ "$release_version" =~ ^[0-9A-Za-z._+-]+$ ]] || fail 'release version contains unsafe characters'
 kind=real
 [[ "${NEROCD_RELEASE_SYNTHETIC:-}" == 1 ]] && kind=synthetic_untrusted
 

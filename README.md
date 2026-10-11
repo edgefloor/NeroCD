@@ -57,10 +57,12 @@ secret files, HTTPS and proxy boundaries, bootstrap, and OIDC overrides.
 
 ## Releases
 
-Tag the reviewed revision with the next unused annotated `vMAJOR.MINOR.PATCH`
-tag. GitHub Actions validates evidence, publishes an immutable multi-architecture
-image after protected-environment approval, and verifies release trust. Local
-release gates are unsigned and do not publish. See [release trust](docs/release-trust.md).
+Dispatch the release workflow from `main` with the intended version and exact
+commit SHA. GitHub Actions validates the commit before tagging, then requests
+protected-environment approval and publishes the multi-architecture image.
+Failed attempts may reuse a version until an image, release, or release asset
+is published. Published versions are immutable. Local release gates are unsigned
+and do not publish. See [release trust](docs/release-trust.md).
 
 ## Documentation
 

@@ -128,10 +128,24 @@ rg -q 'evidence.sha256' "$release" || fail 'release-trust does not bind every ev
 rg -q '^      packages: write$' "$release" || fail 'publish must request package write only in its job'
 rg -q '^      id-token: write$' "$release" || fail 'publish must request OIDC only in its job'
 rg -q '^      attestations: write$' "$release" || fail 'publish must request attestation write only in its job'
-rg -q 'git show-ref --verify --quiet' "$release" || fail 'release tag existence is not verified'
-rg -q 'git cat-file -t' "$release" || fail 'release tag must be annotated'
-rg -q '\[\[ "\$tag" =~ \^v\(' "$release" || fail 'release tag is not strict semantic version input'
-rg -q 'release tag already exists; immutable publication refused' "$release" || fail 'release does not reject an existing registry tag'
+release_triggers=$(sed -n '/^on:/,/^permissions:/p' "$release")
+printf '%s\n' "$release_triggers" | rg -q '^  workflow_dispatch:$' || fail 'release must be manually dispatched'
+! printf '%s\n' "$release_triggers" | rg -q '^  (push|pull_request|workflow_run):' || fail 'release must validate before any tag trigger'
+printf '%s\n' "$release_triggers" | rg -q '^      revision:$' || fail 'release requires an explicit commit SHA'
+rg -Fq "github.ref == 'refs/heads/main'" "$release" || fail 'dispatch must use the trusted main workflow'
+rg -Fqx '  group: release-${{ github.repository }}' "$release" || fail 'release publication must be serialized across versions'
+rg -Fq 'scripts/release-candidate.py validate --tag "$TAG" --revision "$REVISION"' "$release" || fail 'candidate validation is required'
+rg -Fq '[[ "$REVISION" == "$GITHUB_SHA" ]]' "$release" || fail 'candidate must match the dispatch revision used by GitHub provenance'
+rg -Fq "'.version == \$version' release-evidence/manifest.json" "$release" || fail 'publication must verify the candidate evidence version'
+[[ $(rg -Fc 'ref: ${{ needs.validate.outputs.revision }}' "$release") -eq 3 ]] || fail 'all artifact jobs must check out the exact validated commit'
+printf '%s\n' "$evidence_job" | rg -Fq 'NEROCD_RELEASE_CANDIDATE_VERSION: ${{ needs.validate.outputs.tag }}' || fail 'evidence must use the requested version before tagging'
+[[ $(rg -c 'contents: write' "$release") -eq 1 ]] || fail 'only publication may write tags'
+printf '%s\n' "$publish_job" | rg -q '^      contents: write$' || fail 'protected publication must create the validated tag'
+tag_line=$(first_job_line "$publish_job" 'python3 -B scripts/release-candidate.py tag --tag "$TAG" --revision "$REVISION"')
+[[ -n "$tag_line" ]] || fail 'publication must use the publication guard and leased tag helper'
+evidence_verify_line=$(first_job_line "$publish_job" 'bash scripts/verify-release-evidence.sh')
+(( evidence_verify_line < tag_line && publish_preflight_line < tag_line && tag_line < publish_build_line )) || fail 'tagging must follow evidence verification and preflight, before image publication'
+! printf '%s\n' "$evidence_job" | rg -q 'git (tag|push)|release-candidate.py.* tag ' || fail 'evidence must never tag or push'
 rg -q 'platforms: linux/amd64,linux/arm64' "$release" || fail 'release must publish both supported architectures'
 rg -q 'push: true' "$release" || fail 'release does not publish its OCI index'
 rg -q 'Capture exact registry digest and reject tag/digest divergence' "$release" || fail 'publish does not capture and compare the registry digest'
@@ -141,7 +155,7 @@ rg -Fq 'cosign sign-blob --yes --new-bundle-format=true --bundle artifacts/relea
 rg -q 'sha256sum github-attestation\.json image\.bundle image-digest\.txt release-trust\.bundle release-trust\.json >trust\.sha256' "$release" || fail 'retained image bundle must remain in the checksummed trust artifact'
 rg -q 'actions/attest-build-provenance@[0-9a-f]{40}' "$release" || fail 'release lacks pinned provenance attestation'
 rg -q 'docker buildx imagetools inspect --raw' "$release" || fail 'release lacks immutable digest platform verification'
-rg -q -- '--certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/\$TAG"' "$release" || fail 'release signature verification is not bound to this workflow identity'
+rg -q -- '--certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/heads/main"' "$release" || fail 'release signature verification is not bound to this workflow identity'
 rg -q 'certificate-oidc-issuer https://token.actions.githubusercontent.com' "$release" || fail 'release lacks OIDC signature verification'
 rg -q 'gh attestation verify "oci://\$IMAGE@\$DIGEST"' "$release" || fail 'release lacks GitHub OCI provenance verification'
 image_verify_command=$(printf '%s\n' "$verify_job" | sed -n '/^[[:space:]]*cosign verify \\$/,/"\$IMAGE@\$DIGEST"/p')
@@ -189,6 +203,7 @@ done
 policy_target=$(sed -n '/^ci-release-policy-gate:/,/^contract:/p' "$makefile")
 [[ $(printf '%s\n' "$policy_target" | rg -Fc 'bash scripts/release-evidence-concurrency-test.sh') -eq 1 ]] || fail 'CI release policy target must run the evidence concurrency mutation exactly once'
 [[ $(printf '%s\n' "$policy_target" | rg -Fc 'bash scripts/release-runtime-scheduling-test.sh') -eq 1 ]] || fail 'CI release policy target must run the runtime scheduling test exactly once'
+[[ $(printf '%s\n' "$policy_target" | rg -Fc 'python3 -B scripts/release-candidate-test.py') -eq 1 ]] || fail 'CI release policy target must test publication boundaries exactly once'
 check_target=$(sed -n '/^check:/,/^clean:/p' "$makefile")
 [[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }' <<<"$check_target") -eq 1 ]] || fail 'ordinary make check must run ci-release-policy-gate exactly once'
 [[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "race") count++ } END { print count + 0 }' <<<"$check_target") -eq 1 ]] || fail 'ordinary make check must run the race gate exactly once'

@@ -1,13 +1,14 @@
 name: Release Trust
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing annotated semantic-version tag to release
+        description: Semantic version to publish (new or unpublished)
+        required: true
+        type: string
+      revision:
+        description: Full 40-character main HEAD SHA to validate before tagging
         required: true
         type: string
 
@@ -18,13 +19,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.repository }}-${{ inputs.tag || github.ref_name }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   validate:
-    name: Validate protected release reference
-    if: github.repository_owner == 'edgefloor'
+    name: Validate release candidate commit
+    if: github.repository_owner == 'edgefloor' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -33,40 +34,22 @@ jobs:
       revision: ${{ steps.release.outputs.revision }}
       source_date_epoch: ${{ steps.release.outputs.source_date_epoch }}
     steps:
-      - name: Check out the requested tag only
+      - name: Check out trusted workflow revision
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify repository owner, annotated tag, and exact target
+      - name: Validate version and exact candidate commit
         id: release
-        shell: bash
         env:
-          TAG_INPUT: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ inputs.tag }}
+          REVISION: ${{ inputs.revision }}
         run: |
           set -Eeuo pipefail
-          tag=$TAG_INPUT
-          [[ "$GITHUB_REPOSITORY_OWNER" == edgefloor ]]
-          [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]
-          git check-ref-format --allow-onelevel "refs/tags/$tag"
-          git show-ref --verify --quiet "refs/tags/$tag"
-          [[ "$(git cat-file -t "refs/tags/$tag")" == tag ]]
-          revision=$(git rev-list -n 1 "$tag")
-          checked_out=$(git rev-parse HEAD)
-          source_date_epoch=$(git log -1 --format=%ct "$revision")
-          [[ "$revision" == "$checked_out" ]]
-          [[ "$source_date_epoch" =~ ^[0-9]+$ ]]
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" == "$tag" && "$revision" == "$GITHUB_SHA" ]]
-          else
-            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -n "$tag" ]]
-          fi
-          printf 'tag=%s\n' "$tag" >>"$GITHUB_OUTPUT"
-          printf 'revision=%s\n' "$revision" >>"$GITHUB_OUTPUT"
-          printf 'source_date_epoch=%s\n' "$source_date_epoch" >>"$GITHUB_OUTPUT"
-          printf 'image=ghcr.io/edgefloor/nerocd\n' >>"$GITHUB_OUTPUT"
+          [[ "$REVISION" == "$GITHUB_SHA" ]]
+          python3 -B scripts/release-candidate.py validate --tag "$TAG" --revision "$REVISION"
 
   evidence:
     name: Fail-closed release evidence
@@ -77,7 +60,7 @@ jobs:
       - name: Check out verified release target
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ needs.validate.outputs.tag }}
+          ref: ${{ needs.validate.outputs.revision }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -144,6 +127,8 @@ jobs:
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
       - name: Run exact local evidence inventory
+        env:
+          NEROCD_RELEASE_CANDIDATE_VERSION: ${{ needs.validate.outputs.tag }}
         run: make release-evidence-gate
 
       - name: Upload local evidence for workflow review
@@ -157,13 +142,13 @@ jobs:
   publish:
     name: Publish immutable multi-architecture image
     needs: [validate, evidence]
-    if: github.repository_owner == 'edgefloor'
+    if: github.repository_owner == 'edgefloor' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
       name: release
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
       attestations: write
@@ -174,7 +159,7 @@ jobs:
       - name: Check out verified release target
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ needs.validate.outputs.tag }}
+          ref: ${{ needs.validate.outputs.revision }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -187,7 +172,10 @@ jobs:
       - name: Verify transferred local evidence before publication
         env:
           REVISION: ${{ needs.validate.outputs.revision }}
-        run: bash scripts/verify-release-evidence.sh release-evidence "$REVISION"
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          bash scripts/verify-release-evidence.sh release-evidence "$REVISION"
+          jq -e --arg version "$TAG" '.version == $version' release-evidence/manifest.json >/dev/null
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -226,17 +214,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Refuse an existing release tag
+      - name: Guard publication and tag validated commit
         env:
-          IMAGE: ${{ needs.validate.outputs.image }}
           TAG: ${{ needs.validate.outputs.tag }}
+          REVISION: ${{ needs.validate.outputs.revision }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          if docker buildx imagetools inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
-            echo 'release tag already exists; immutable publication refused' >&2
-            exit 1
-          fi
+          python3 -B scripts/release-candidate.py tag --tag "$TAG" --revision "$REVISION"
 
       - name: Build and publish immutable OCI index
         id: build
@@ -353,7 +339,7 @@ jobs:
       - name: Check out verifier scripts at the verified release target
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ needs.validate.outputs.tag }}
+          ref: ${{ needs.validate.outputs.revision }}
           persist-credentials: false
 
       - name: Download exact release evidence
@@ -431,7 +417,7 @@ jobs:
           jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort == ["amd64", "arm64"]' index.json >/dev/null
           cosign verify \
             --new-bundle-format=true \
-            --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/$TAG" \
+            --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/heads/main" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$IMAGE@$DIGEST" >/dev/null
 
@@ -444,7 +430,7 @@ jobs:
           cosign verify-blob release-trust/release-trust.json \
             --bundle release-trust/release-trust.bundle \
             --new-bundle-format=true \
-            --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/tags/$TAG" \
+            --certificate-identity "https://github.com/edgefloor/NeroCD/.github/workflows/release.yml@refs/heads/main" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
 
       - name: Verify GitHub provenance attestation

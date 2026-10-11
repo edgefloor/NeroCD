@@ -165,6 +165,7 @@ release-evidence-post-gate-check:
 # Static CI/release orchestration checks only. This target intentionally never
 # calls GitHub, GHCR, a signer, or any publication endpoint.
 ci-release-policy-gate:
+	python3 -B scripts/release-candidate-test.py
 	bash scripts/ci-release-policy-gate.sh .
 	bash scripts/ci-release-policy-gate-test.sh
 	bash scripts/release-artifact-verifier-test.sh

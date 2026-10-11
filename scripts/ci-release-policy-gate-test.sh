@@ -160,4 +160,40 @@ candidate missing-runtime-secrets-gate
 perl -0pi -e 's/\bruntime-secrets-gate\b//g' "$tmp/missing-runtime-secrets-gate/Makefile"
 expect_reject missing-runtime-secrets-gate
 
+candidate tag-first-release
+perl -0pi -e 's/^on:\n/on:\n  push:\n    tags: ["v*"]\n/m' "$tmp/tag-first-release/.github/workflows/release.yml"
+expect_reject tag-first-release
+
+candidate mutable-candidate-checkout
+perl -0pi -e 's/outputs\.revision/outputs.tag/g' "$tmp/mutable-candidate-checkout/.github/workflows/release.yml"
+expect_reject mutable-candidate-checkout
+
+candidate no-publication-guard
+sed -i.bak '/python3 -B.*release-candidate.py.* tag --tag/d' "$tmp/no-publication-guard/.github/workflows/release.yml"
+expect_reject no-publication-guard
+
+candidate missing-candidate-version
+sed -i.bak '/NEROCD_RELEASE_CANDIDATE_VERSION:/d' "$tmp/missing-candidate-version/.github/workflows/release.yml"
+expect_reject missing-candidate-version
+
+candidate old-signing-identity
+perl -0pi -e 's#release.yml\@refs/heads/main#release.yml\@refs/tags/wrong#g' "$tmp/old-signing-identity/.github/workflows/release.yml"
+expect_reject old-signing-identity
+
+candidate missing-publication-tests
+sed -i.bak '/python3 -B scripts\/release-candidate-test.py/d' "$tmp/missing-publication-tests/Makefile"
+expect_reject missing-publication-tests
+
+candidate mismatched-provenance-source
+sed -i.bak '/REVISION.*==.*GITHUB_SHA/d' "$tmp/mismatched-provenance-source/.github/workflows/release.yml"
+expect_reject mismatched-provenance-source
+
+candidate per-version-concurrency
+perl -0pi -e 's/group: release-/group: version-release-/' "$tmp/per-version-concurrency/.github/workflows/release.yml"
+expect_reject per-version-concurrency
+
+candidate missing-version-binding
+sed -i.bak '/jq -e --arg version/d' "$tmp/missing-version-binding/.github/workflows/release.yml"
+expect_reject missing-version-binding
+
 printf 'ci-release-policy mutation PASS\n'

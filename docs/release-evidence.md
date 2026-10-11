@@ -18,3 +18,11 @@ that case.
 The gate runs its accepted local inventory and fails when required Buildx,
 emulation, browser, or executable dependencies are missing. It also compares
 repeat outputs and detects a tampered binary/checksum mismatch.
+
+CI supplies `NEROCD_RELEASE_CANDIDATE_VERSION` with the requested version while
+checking out its full commit SHA. The evidence gate uses that version for binaries
+and image builds without requiring or creating a Git tag. Local runs can supply
+the same value to reproduce candidate metadata; without it, local runs retain
+the Git-derived development version. The release workflow validates version
+syntax before invoking this gate. See [Release trust](release-trust.md) for the
+publication boundary and retry rules.
