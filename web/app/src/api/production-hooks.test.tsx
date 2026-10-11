@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { templatesQuery, allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentHistoryQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
-import { useApprovalDecision, useDeploymentActions, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
+import { runLogRetentionStatusQuery, templatesQuery, allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentHistoryQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
+import { useRunLogRetentionMutations, useApprovalDecision, useDeploymentActions, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
@@ -685,5 +685,23 @@ test("a failed log count refresh pauses live output until recovery", async () =>
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
   expect(tailCalls).toBeGreaterThan(resumedCalls);
   expect(mounted.result.current.data).toEqual([log]);
+  mounted.unmount();
+});
+
+
+test("saved retention policy survives a failed status refresh", async () => {
+  const original = { policy: { enabled: false, keep_days: 30, batch_size: 25, version: 1 }, preview: { eligible_logs: 12, eligible_bytes: 100, cutoff: "2026-01-01T00:00:00Z" } };
+  const saved = { policy: { ...original.policy, keep_days: 60, version: 2 }, preview: { ...original.preview, eligible_logs: 4, eligible_bytes: 30 } };
+  let changed = false;
+  globalThis.fetch = vi.fn<typeof fetch>((_path, init) => {
+    if (init?.method === "PUT") { changed = true; return Promise.resolve(json(saved)); }
+    return Promise.resolve(changed ? new Response(JSON.stringify({ error: "Refresh unavailable" }), { status: 503 }) : json(original));
+  });
+  const { client, wrapper } = setup();
+  const mounted = renderHook(() => { useQuery(runLogRetentionStatusQuery()); return useRunLogRetentionMutations(); }, { wrapper });
+  await waitFor(() => expect(client.getQueryData(queryKeys.runLogRetentionStatus)).toEqual(original));
+  await act(async () => { await mounted.result.current.update.mutateAsync({ enabled: false, keep_days: 60, batch_size: 25 }); });
+  expect(client.getQueryData(queryKeys.runLogRetentionStatus)).toEqual(saved);
+  expect(client.getQueryState(queryKeys.runLogRetentionStatus)?.status).toBe("error");
   mounted.unmount();
 });

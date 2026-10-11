@@ -3497,7 +3497,9 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   let release!: () => void;
   const pending = new Promise<void>((resolve) => { release = resolve; });
   let saves = 0;
+  let failRefresh = false;
   await page.route("**/api/v1/run-log-retention", async (route) => {
+    if (route.request().method() === "GET" && failRefresh) return route.fulfill({ status: 503, json: { error: "Saved policy refresh unavailable" } });
     if (route.request().method() !== "PUT" || ++saves > 1) return route.continue();
     await pending;
     return route.fulfill({ status: 503, json: { error: "Temporary policy save failure" } });
@@ -3543,6 +3545,7 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
       await page.screenshot({ path: testInfo.outputPath("retention-save-error-320.png"), animations: "disabled" });
     }
   }
+  failRefresh = true;
   const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/run-log-retention" && response.request().method() === "PUT");
   await policy.getByRole("button", { name: "Save policy", exact: true }).click();
   expect((await saved).status()).toBe(200);
@@ -3550,6 +3553,17 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   expect(saves).toBe(2);
   await expect(policy.getByRole("alert")).toHaveCount(0);
   await expect(policy.getByText("Save or reset your changes before previewing a deletion.", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry operations", exact: true })).toBeEnabled();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(days).toHaveValue("21");
+    await expect(batch).toHaveValue("17");
+    await expect(policy.getByRole("button", { name: "Save policy", exact: true })).toBeDisabled();
+    await expect(policy.getByText("Save or reset your changes before previewing a deletion.", { exact: true })).toHaveCount(0);
+  }
+  failRefresh = false;
+  await page.getByRole("button", { name: "Retry operations", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Retry operations", exact: true })).toHaveCount(0);
   const enabled = await policy.getByRole("checkbox").isChecked();
   await days.fill("99");
   await batch.fill("101");
