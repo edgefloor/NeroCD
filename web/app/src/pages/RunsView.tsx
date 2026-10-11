@@ -60,7 +60,7 @@ export function RunsTable({
             </div>
             <div className="flex flex-wrap gap-2">
               <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
-                <Link data-run-detail-link={run.id} to="/runs/$runId" params={{ runId: run.id }} search={detailSearch ?? {}}>
+                <Link data-run-detail-link={run.id} to="/runs/$runId" params={{ runId: run.id }} search={{ q: detailSearch?.q || undefined, offset: detailSearch?.offset || undefined }}>
                   <ListTree className="mr-1.5 h-4 w-4" />
                   Details
                 </Link>
@@ -120,7 +120,7 @@ export function RunsTable({
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-2">
                     <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
-                      <Link data-run-detail-link={run.id} to="/runs/$runId" params={{ runId: run.id }} search={detailSearch ?? {}}>
+                      <Link data-run-detail-link={run.id} to="/runs/$runId" params={{ runId: run.id }} search={{ q: detailSearch?.q || undefined, offset: detailSearch?.offset || undefined }}>
                         <ListTree className="mr-1.5 h-4 w-4" />
                         Details
                       </Link>
