@@ -24,15 +24,15 @@ const snapshot = apiSnapshot({
 const props = { snapshot, token: "", busy: "", mutate: vi.fn(async () => undefined) };
 
 test("project filtering uses descriptions and preserves form choices and drafts", () => {
-  const view = render(<ProjectsView {...props} q="production" />);
+  const view = render(<ProjectsView canOperateProject={() => true} {...props} q="production" />);
   expect(screen.getByRole("heading", { name: "Alpha project" })).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Beta project" })).toBeNull();
   expect(screen.getByRole("option", { name: "Beta project" })).toBeTruthy();
   fireEvent.change(screen.getByPlaceholderText("My Project"), { target: { value: "Draft project" } });
-  view.rerender(<ProjectsView {...props} q="no-match" />);
+  view.rerender(<ProjectsView canOperateProject={() => true} {...props} q="no-match" />);
   expect(screen.getByText("No projects match this filter on the loaded page.")).toBeTruthy();
   expect((screen.getByPlaceholderText("My Project") as HTMLInputElement).value).toBe("Draft project");
-  view.rerender(<ProjectsView {...props} q="" />);
+  view.rerender(<ProjectsView canOperateProject={() => true} {...props} q="" />);
   expect(screen.getByRole("heading", { name: "Beta project" })).toBeTruthy();
 });
 

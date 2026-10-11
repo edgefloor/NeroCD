@@ -58,7 +58,7 @@ test("templates created without tags remain visible and editable", () => {
 
 
 test("project form labels identify fields and mobile dialog fields stay independent", () => {
-  render(<ProjectsView snapshot={snapshot} token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  render(<ProjectsView canOperateProject={() => true} snapshot={snapshot} token="" busy="" mutate={vi.fn(async () => undefined)} />);
   const desktopName = screen.getByRole("textbox", { name: "Project Name" }) as HTMLInputElement;
   for (const name of ["Description", "Repository Name", "Repository URL", "Provider", "Default Ref"]) {
     expect(screen.getByRole("textbox", { name })).toBeTruthy();

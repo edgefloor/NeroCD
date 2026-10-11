@@ -21,6 +21,7 @@ function ProjectCard({
   token,
   busy,
   mutate,
+  canOperate,
 }: {
   project: Project;
   templates: ApiSnapshot["templates"];
@@ -29,6 +30,7 @@ function ProjectCard({
   token: string;
   busy: string;
   mutate: MutateFn;
+  canOperate: boolean;
 }): ReactNode {
   const formId = useId();
   const projectTemplates = templates.filter((template) => template.project_id === project.id);
@@ -75,7 +77,7 @@ function ProjectCard({
             {projectRepos.length} sources in loaded page
           </Badge>
         </div>
-        <div className="flex flex-wrap gap-2">
+        {canOperate ? <div className="flex flex-wrap gap-2">
           <Dialog open={editOpen} onOpenChange={setEditOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm" className="h-8 rounded-xl">
@@ -112,7 +114,7 @@ function ProjectCard({
             <Archive className="mr-1.5 h-4 w-4" />
             Archive
           </Button>
-        </div>
+        </div> : null}
       </CardContent>
     </Card>
   );
@@ -168,7 +170,7 @@ function ProjectForms({
           Create project
         </Button>
       </form>
-      <form className="space-y-3 border-t pt-6" onSubmit={(event) => void createRepoSubmit(event)}>
+      {projects.length > 0 ? <form className="space-y-3 border-t pt-6" onSubmit={(event) => void createRepoSubmit(event)}>
         <div className="space-y-1.5">
           <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
           <select id={`${formId}-project`}
@@ -206,7 +208,7 @@ function ProjectForms({
           <GitBranch className="h-4 w-4 mr-2" />
           Register source
         </Button>
-      </form>
+      </form> : null}
     </div>
   );
 }
@@ -218,6 +220,7 @@ export function ProjectsView({
   token,
   busy,
   mutate,
+  canOperateProject,
   loading,
 }: {
   snapshot: ApiSnapshot;
@@ -226,8 +229,10 @@ export function ProjectsView({
   token: string;
   busy: string;
   mutate: MutateFn;
+  canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
 }): ReactNode {
+  const writableProjects = formProjects.filter((project) => canOperateProject?.(project.id));
   const filtering = Boolean(q?.trim());
   const visibleProjects = snapshot.projects.filter((project) => matchesQuery(q, project.id, project.name, project.description));
   if (loading) {
@@ -257,7 +262,7 @@ export function ProjectsView({
               <DialogHeader>
                 <DialogTitle>Configure project</DialogTitle>
               </DialogHeader>
-              <ProjectForms projects={formProjects} token={token} busy={busy} mutate={mutate} />
+              <ProjectForms projects={writableProjects} token={token} busy={busy} mutate={mutate} />
             </DialogContent>
           </Dialog>
         </div>
@@ -273,6 +278,7 @@ export function ProjectsView({
             <ProjectCard
               key={project.id}
               project={project}
+              canOperate={Boolean(canOperateProject?.(project.id))}
               templates={snapshot.templates}
               runs={snapshot.runs}
               repositories={snapshot.repositories}
@@ -288,7 +294,7 @@ export function ProjectsView({
           <CardTitle className="text-base font-semibold">Configure project</CardTitle>
         </CardHeader>
         <CardContent>
-          <ProjectForms projects={formProjects} token={token} busy={busy} mutate={mutate} />
+          <ProjectForms projects={writableProjects} token={token} busy={busy} mutate={mutate} />
         </CardContent>
       </Card>
     </section>

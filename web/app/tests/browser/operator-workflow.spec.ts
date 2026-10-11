@@ -1363,3 +1363,53 @@ test("template actions and creation projects follow project membership", async (
     await context.close();
   }
 });
+
+test("project controls and source registration follow project membership", async ({ page, browser }, testInfo) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const maintained = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: "Maintained project controls" });
+  const viewed = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: "Viewed project controls" });
+  await postJSON(page, "/api/v1/project-members", { project_id: maintained.id, email: "oidc-browser@example.invalid", role: "maintainer" });
+  await postJSON(page, "/api/v1/project-members", { project_id: viewed.id, email: "oidc-browser@example.invalid", role: "viewer" });
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.goto("/sign-in");
+    await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    for (const width of [320, 390, 430, 1440]) {
+      await operator.setViewportSize({ width, height: 1000 });
+      await operator.goto(`/projects?q=${viewed.id}`);
+      await expect(operator.getByRole("heading", { name: "Viewed project controls", exact: true })).toBeVisible();
+      await expect(operator.getByRole("button", { name: /^(Edit|Archive)$/ })).toHaveCount(0);
+      if (width < 1280) await operator.getByRole("button", { name: "Configure project", exact: true }).click();
+      await expect(operator.getByRole("button", { name: "Create project", exact: true })).toBeVisible();
+      const project = operator.getByRole("combobox", { name: "Project", exact: true });
+      await expect(project.locator(`option[value="${maintained.id}"]`)).toHaveCount(1);
+      await expect(project.locator(`option[value="${viewed.id}"]`)).toHaveCount(0);
+      if (width < 1280) await operator.keyboard.press("Escape");
+      await operator.goto(`/projects?q=${maintained.id}`);
+      await expect(operator.getByRole("button", { name: "Archive", exact: true })).toBeVisible();
+      await operator.getByRole("button", { name: "Edit", exact: true }).click();
+      const dialog = operator.getByRole("dialog", { name: "Edit project", exact: true });
+      await dialog.getByRole("textbox", { name: "Project Name", exact: true }).fill(`Maintained project ${width}`);
+      const edited = operator.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === "/api/v1/projects");
+      await dialog.getByRole("button", { name: "Save project", exact: true }).click();
+      expect((await edited).status()).toBe(200);
+      await expect(dialog).toHaveCount(0);
+      expect(await operator.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (width === 320) await operator.screenshot({ path: testInfo.outputPath("project-controls-320.png"), fullPage: true });
+    }
+    await operator.getByRole("combobox", { name: "Project", exact: true }).selectOption(maintained.id);
+    await operator.getByRole("textbox", { name: "Repository Name", exact: true }).fill("Maintained source");
+    await operator.getByRole("textbox", { name: "Repository URL", exact: true }).fill("https://example.invalid/maintained.git");
+    const registered = operator.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/repositories");
+    await operator.getByRole("button", { name: "Register source", exact: true }).click();
+    expect((await registered).status()).toBe(201);
+    const denied = await operator.request.patch("/api/v1/projects", { headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" }, data: { id: viewed.id, name: "Denied edit" } });
+    expect(denied.status()).toBe(403);
+  } finally {
+    await context.close();
+  }
+});
