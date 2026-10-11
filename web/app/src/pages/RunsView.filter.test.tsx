@@ -44,3 +44,10 @@ test("run filtering accepts omitted tags returned as null by the API", () => {
   render(<RunsView snapshot={nullableTags} q="release" token="" busy="" mutate={vi.fn(async () => undefined)} />);
   expect(screen.getByText("1 of 1 runs match on this page.")).toBeTruthy();
 });
+
+test("run detail links preserve the active filter and page", () => {
+  render(<RunsView snapshot={snapshot} q="running" offset={50} token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  const links = screen.getAllByRole("link", { name: "Details" });
+  expect(links).toHaveLength(2);
+  for (const link of links) expect(link.getAttribute("href")).toBe("/runs/run_release?q=running&offset=50");
+});

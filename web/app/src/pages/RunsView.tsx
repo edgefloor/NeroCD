@@ -25,6 +25,7 @@ export function RunsTable({
   mutate,
   canOperateProject,
   onOpenLogs,
+  detailSearch,
 }: {
   runs: TaskRun[];
   projects: Project[];
@@ -34,7 +35,12 @@ export function RunsTable({
   mutate?: MutateFn;
   canOperateProject?: (projectID: string) => boolean;
   onOpenLogs?: (runID: string) => void;
+  detailSearch?: { q?: string; offset?: number };
 }): ReactNode {
+  const search = new URLSearchParams();
+  if (detailSearch?.q) search.set("q", detailSearch.q);
+  if (detailSearch?.offset) search.set("offset", String(detailSearch.offset));
+  const suffix = search.size ? `?${search}` : "";
   if (runs.length === 0) {
     return <EmptyState title="No runs yet" icon={FileText} />;
   }
@@ -58,7 +64,7 @@ export function RunsTable({
             </div>
             <div className="flex flex-wrap gap-2">
               <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
-                <a data-run-detail-link={run.id} href={`/runs/${run.id}`}>
+                <a data-run-detail-link={run.id} href={`/runs/${encodeURIComponent(run.id)}${suffix}`}>
                   <ListTree className="mr-1.5 h-4 w-4" />
                   Details
                 </a>
@@ -118,7 +124,7 @@ export function RunsTable({
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-2">
                     <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
-                      <a data-run-detail-link={run.id} href={`/runs/${run.id}`}>
+                      <a data-run-detail-link={run.id} href={`/runs/${encodeURIComponent(run.id)}${suffix}`}>
                         <ListTree className="mr-1.5 h-4 w-4" />
                         Details
                       </a>
@@ -165,6 +171,7 @@ export function RunsTable({
 export function RunsView({
   snapshot,
   q,
+  offset,
   token,
   busy,
   mutate,
@@ -187,6 +194,7 @@ export function RunsView({
 }: {
   snapshot: ApiSnapshot;
   q?: string;
+  offset?: number;
   token: string;
   busy: string;
   mutate: MutateFn;
@@ -258,6 +266,7 @@ export function RunsView({
             <p className="px-4 py-5 text-sm text-muted-foreground">No runs match this filter on the loaded page.</p>
           ) : <RunsTable
             runs={visibleRuns}
+            detailSearch={{ q, offset }}
             projects={snapshot.projects}
             templates={snapshot.templates}
             token={token}

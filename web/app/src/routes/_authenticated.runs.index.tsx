@@ -49,6 +49,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
       {selectedRunID ? <SelectedRunLogs runID={selectedRunID} follow={shouldPollRun(selectedRun.data)} onChange={setSelectedLogs} /> : null}
     <RunsView
       q={q}
+      offset={page.offset}
       snapshot={apiSnapshot({ runs: runs.data, projects: projects.data, templates: templates.data })}
       token=""
       busy={busy}

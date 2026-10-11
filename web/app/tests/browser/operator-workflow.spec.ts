@@ -1747,3 +1747,34 @@ test("completed run logs recover from failed loading without reopening the dialo
     await expect(dialog).toHaveCount(0);
   }
 });
+
+test("run Details links retain filtered page context", async ({ page }) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  const response = await page.request.get(`/api/v1/runs/${runID}`);
+  const run = await response.json();
+  await page.route("**/api/v1/runs?*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("offset") !== "50") return route.continue();
+    return route.fulfill({ json: { items: [run], count: 1, total: 51, offset: 50, limit: 50 } });
+  });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/runs?q=browser-logs&offset=50");
+    const links = page.locator(`[data-run-detail-link="${runID}"]`);
+    const link = width < 768 ? links.first() : links.last();
+    const target = new URL((await link.getAttribute("href"))!, page.url());
+    expect(target.searchParams.get("q")).toBe("browser-logs");
+    expect(target.searchParams.get("offset")).toBe("50");
+    await link.click();
+    await expect(page).toHaveURL((url) => url.pathname === `/runs/${runID}` && url.searchParams.get("q") === "browser-logs" && url.searchParams.get("offset") === "50");
+    await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("Showing 51-51 of 51", { exact: true })).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL((url) => url.pathname === "/runs" && url.searchParams.get("q") === "browser-logs" && url.searchParams.get("offset") === "50");
+    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser-logs");
+  }
+});
