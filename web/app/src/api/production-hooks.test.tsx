@@ -647,3 +647,40 @@ test("deployment creation retains its receipt when the first detail fetch fails"
   expect(client.getQueryState(queryKeys.deployment(acknowledged.id))?.status).toBe("error");
   mounted.unmount();
 });
+
+
+test("a failed log count refresh pauses live output until recovery", async () => {
+  vi.useFakeTimers();
+  let failProbe = false;
+  let tailCalls = 0;
+  const log = { id: "log_probe", run_id: "run_probe", sequence: 1, stream: "stdout", message: "Retained output" };
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    const url = new URL(String(path), "http://localhost");
+    const offset = Number(url.searchParams.get("offset"));
+    const limit = Number(url.searchParams.get("limit"));
+    if (limit === 1 && failProbe) return Promise.resolve(new Response(JSON.stringify({ error: "Log count unavailable" }), { status: 503 }));
+    if (offset > 0) tailCalls++;
+    const items = offset === 0 ? [log] : [];
+    return Promise.resolve(json({ items, count: items.length, total: 1, limit, offset }));
+  });
+  const { wrapper } = setup();
+  const mounted = renderHook(() => useSelectedRunLogsPollingQuery("run_probe", true), { wrapper });
+  for (let index = 0; index < 10; index++) await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(mounted.result.current.data).toEqual([log]);
+  failProbe = true;
+  await act(async () => { await mounted.result.current.retry(); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(mounted.result.current.error?.message).toBe("Log count unavailable");
+  const pausedCalls = tailCalls;
+  await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+  expect(tailCalls).toBe(pausedCalls);
+  failProbe = false;
+  await act(async () => { await mounted.result.current.retry(); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(mounted.result.current.isError).toBe(false);
+  const resumedCalls = tailCalls;
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+  expect(tailCalls).toBeGreaterThan(resumedCalls);
+  expect(mounted.result.current.data).toEqual([log]);
+  mounted.unmount();
+});
