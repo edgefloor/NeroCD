@@ -6,11 +6,12 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 
 const apiTarget = process.env.NEROCD_API_PROXY_TARGET ?? "http://127.0.0.1:8080";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     tanstackRouter({
       target: "react",
-      autoCodeSplitting: false,
+      // Unit tests mock route components directly; browser tests cover split builds.
+      autoCodeSplitting: mode !== "test",
       // Colocated tests belong to Vitest, not the generated application routes.
       routeFileIgnorePattern: "\\.test\\.[jt]sx?$",
     }),
@@ -43,4 +44,4 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     exclude: ["**/node_modules/**", "tests/browser/**"],
   },
-});
+}));

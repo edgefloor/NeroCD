@@ -1255,6 +1255,7 @@ test("deployment selectors and detail labels include records beyond the first hu
     await page.getByRole("combobox", { name: "Immutable revision", exact: true }).selectOption(fixture.revisionID);
     await expect(page.getByRole("button", { name: "Request deployment", exact: true })).toBeEnabled();
     await page.locator(`a[href*="/deployments/${fixture.deploymentID}"]`).click();
+    await expect(page.getByText(`Deployment ${fixture.deploymentID}`, { exact: true })).toBeVisible();
     await expect(page.getByText("Later environment", { exact: true })).toBeVisible();
     await expect(page.getByText("Later revision (abc123456789)", { exact: true })).toBeVisible();
   }
@@ -1982,4 +1983,23 @@ test("deployment refresh failure retains details and recovers controls", async (
   await expect(cancel).toBeEnabled();
   await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
   await expect(title).toBeVisible();
+});
+
+test("page code loads on demand during navigation", async ({ page }) => {
+  const operationsChunks: number[] = [];
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("response", (response) => {
+    if (/\/assets\/_authenticated\.operations-[^/]+\.js$/.test(new URL(response.url()).pathname)) operationsChunks.push(response.status());
+  });
+  await page.goto("/runners");
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  expect(operationsChunks).toEqual([]);
+  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+  expect(operationsChunks).toEqual([200]);
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
 });
