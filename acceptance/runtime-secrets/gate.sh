@@ -65,7 +65,10 @@ record "compose_version=$(docker compose version --short)"
 
 docker build --pull --tag "$image" "$repo_root" >"$runtime_dir/docker-build.txt" 2>&1 || fail "fresh NeroCD image build failed"
 record "image_id=$(docker image inspect --format '{{.Id}}' "$image")"
-compose up --detach --wait postgres server proxy >"$runtime_dir/compose-up.txt" 2>&1 || fail "isolated PostgreSQL/server/proxy stack failed"
+compose up --detach --wait postgres server proxy >"$runtime_dir/compose-up.txt" 2>&1 || {
+  cat "$runtime_dir/compose-up.txt" >&2
+  fail "isolated PostgreSQL/server/proxy stack failed"
+}
 server_published=$(compose port server 8080 | tail -n1)
 server_port=${server_published##*:}
 proxy_published=$(compose port proxy 8081 | tail -n1)
@@ -112,7 +115,7 @@ start_or_restart_runner() {
   if [[ -n "$(compose ps --all --quiet runner)" ]]; then
     compose restart --timeout 5 runner >"$runtime_dir/runner-restart-$1.txt" 2>&1 || fail "runner restart failed ($1)"
   else
-    compose up --detach runner >"$runtime_dir/runner-start-$1.txt" 2>&1 || fail "runner start failed ($1)"
+    compose up --detach --no-deps runner >"$runtime_dir/runner-start-$1.txt" 2>&1 || fail "runner start failed ($1)"
   fi
 }
 marker_absent() {
