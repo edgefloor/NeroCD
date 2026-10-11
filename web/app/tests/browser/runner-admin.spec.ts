@@ -247,3 +247,20 @@ test("runner refresh failure preserves an open enrollment dialog", async ({ page
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByLabel("Runner name")).toHaveValue("Refresh enrollment");
 });
+
+test("runner heartbeat ages into stale status when refreshed data is unchanged", async ({ page }) => {
+  await createRunnerAdmin(page);
+  const runner = await registerRunner(page);
+  const response = await page.request.get(`/api/v1/runners/${runner.id}`);
+  const record = { ...await response.json(), last_heartbeat_at: new Date(Date.now() - 115_000).toISOString() };
+  let requests = 0;
+  await page.route(`**/api/v1/runners/${runner.id}`, (route) => {
+    requests += 1;
+    return route.fulfill({ json: record });
+  });
+  await page.goto(`/runners/${runner.id}`);
+  await expect(page.getByText("Active and recently observed.", { exact: true })).toBeVisible();
+  const initialRequests = requests;
+  await expect(page.getByText("Heartbeat is stale; wait for recovery or inspect runner connectivity.", { exact: true })).toBeVisible({ timeout: 15_000 });
+  expect(requests).toBeGreaterThan(initialRequests);
+});

@@ -18,7 +18,13 @@ export const Route = createFileRoute("/_authenticated/runners/$runnerId")({
 
 function RunnerDetailRoute() {
   const { runnerId } = Route.useParams();
-  const runner = useQuery({ ...runnerQuery(runnerId), retryOnMount: false, refetchInterval: (query) => query.state.status === "error" ? false : 10_000 });
+  const runner = useQuery({
+    ...runnerQuery(runnerId),
+    retryOnMount: false,
+    // Heartbeat age changes even when a successful refresh returns identical data.
+    notifyOnChangeProps: "all",
+    refetchInterval: (query) => query.state.status === "error" ? false : 10_000,
+  });
   const principal = useQuery({ ...principalQuery(), retryOnMount: false });
   const failedQueries = [runner, principal].filter((query) => query.isError);
   const error = failedQueries.length || (!runner.isPending && !runner.data) ? <section className="space-y-3">
