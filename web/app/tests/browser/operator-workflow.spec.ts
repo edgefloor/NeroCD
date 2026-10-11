@@ -119,7 +119,7 @@ test("authenticated navigation and sign out work with runtime-only credentials",
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
-test("dashboard route states retain the shell and retry a transient loader failure", async ({ page }) => {
+test("dashboard route states retain the shell and retry a transient loader failure", async ({ page }, testInfo) => {
   await page.goto("/projects");
   await signIn(page);
   await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
@@ -150,12 +150,21 @@ test("dashboard route states retain the shell and retry a transient loader failu
   failHealth = false;
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await page.getByRole("searchbox", { name: "Filter this page", exact: true }).fill("dashboard recovery");
   failHealth = true;
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page.getByRole("button", { name: "Refresh data", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("We could not load the dashboard", { timeout: 16_000 });
+  await expect(page.getByRole("alert")).toHaveText("Unable to refresh dashboard. Showing previously loaded information.", { timeout: 16_000 });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("dashboard recovery");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("dashboard-refresh-error-320.png"), animations: "disabled" });
+  }
   failHealth = false;
-  await page.getByRole("button", { name: "Try again" }).click();
+  await page.getByRole("button", { name: "Retry dashboard" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
   await page.unroute("**/api/v1/health");
 });

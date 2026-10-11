@@ -36,15 +36,32 @@ function HomeRoute() {
   const health = useQuery(healthQuery());
   const projects = useQuery(projectsQuery());
   const templates = useQuery(templatesQuery());
-  const runs = useQuery({ ...runsQuery(), refetchInterval: (query) => shouldPollRunList(query.state.data) ? 3_000 : false });
+  const runs = useQuery({ ...runsQuery(), refetchInterval: (query) => query.state.status !== "error" && shouldPollRunList(query.state.data) ? 3_000 : false });
   const approvals = useQuery(approvalsQuery());
   const logs = useQuery(runLogsQuery({ limit: 5, offset: 0 }));
   const { busy, decide } = useApprovalDecision();
   const principal = useQuery(principalQuery());
   const members = useQuery(allProjectMembersQuery());
   const queries = [health, projects, templates, runs, approvals, logs, principal, members];
-  const error = queries.find((query) => query.isError)?.error;
-  if (error) return <DashboardUnavailable />;
+  const failed = queries.filter((query) => query.isError);
+  const hasSnapshot = queries.every((query) => query.data !== undefined);
+  if (failed.length > 0 && !hasSnapshot) return <DashboardUnavailable />;
   const snapshot = apiSnapshot({ health: health.data, projects: projects.data, templates: templates.data, runs: runs.data, approvals: approvals.data, logs: logs.data });
-  return <HomeView snapshot={snapshot} workSnapshot={snapshot} query={q} onClearQuery={() => void navigate({ search: (previous) => ({ ...previous, q: undefined }), replace: true })} busy={busy} onDecide={decide} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} loading={queries.some((query) => query.isPending)} totals={{ projects: projects.data?.total ?? 0, templates: templates.data?.total ?? 0, logs: logs.data?.total ?? 0 }} />;
+  return <div className="grid min-w-0 gap-4">
+    {failed.length > 0 ? <section className="space-y-3">
+      <p role="alert">Unable to refresh dashboard. Showing previously loaded information.</p>
+      <Button disabled={failed.some((query) => query.isFetching)} onClick={() => { for (const query of failed) void query.refetch(); }}>Retry dashboard</Button>
+    </section> : null}
+    <HomeView
+      snapshot={snapshot}
+      workSnapshot={snapshot}
+      query={q}
+      onClearQuery={() => void navigate({ search: (previous) => ({ ...previous, q: undefined }), replace: true })}
+      busy={busy || failed.length > 0}
+      onDecide={(runID, decision) => { if (!failed.length) decide(runID, decision); }}
+      canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
+      loading={queries.some((query) => query.isPending)}
+      totals={{ projects: projects.data?.total ?? 0, templates: templates.data?.total ?? 0, logs: logs.data?.total ?? 0 }}
+    />
+  </div>;
 }
