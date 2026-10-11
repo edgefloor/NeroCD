@@ -5,7 +5,7 @@ import {
   getCurrentPrincipal, getHealth, getBootstrapStatus, getOIDCStatus, getOperationsStatus, getRunLogRetentionStatus, listApprovals, listAuditEvents,
   listProjectMembers, listProjects, listRepositories, listRunLogs, listRuns, getRun, listTemplates, listServices, listEnvironments, listRevisions, listDeployments, getDeployment, listRunners, getRunner,
 } from "./resources";
-import type { TaskRunListResponse } from "./resources";
+import type { TaskRun, TaskRunListResponse } from "./resources";
 
 type GetQuery<Path extends keyof paths> = paths[Path] extends { get?: infer Operation }
   ? Operation extends { parameters: { query?: infer Query } } ? Query : never
@@ -144,11 +144,14 @@ export function retryRemote(failureCount: number, error: unknown): boolean {
 
 const terminalRunStatuses = new Set(["succeeded", "failed", "canceled", "rejected"]);
 const terminalDeploymentStatuses = new Set(["succeeded", "failed", "canceled", "rolled_back", "rollback_failed", "manual_intervention"]);
+export function shouldPollRun(run: TaskRun | null | undefined): boolean {
+  return Boolean(run && !terminalRunStatuses.has(run.status));
+}
 export function shouldPollRunList(runs: TaskRunListResponse | undefined): boolean {
-  return Boolean(runs?.items.some((run) => !terminalRunStatuses.has(run.status)));
+  return Boolean(runs?.items.some(shouldPollRun));
 }
 export function shouldPollSelectedLogs(runID: string, runs: TaskRunListResponse | undefined): boolean {
-  return Boolean(runs?.items.some((run) => run.id === runID && !terminalRunStatuses.has(run.status)));
+  return Boolean(runs?.items.some((run) => run.id === runID && shouldPollRun(run)));
 }
 export function shouldPollDeploymentList(deployments: import("./resources").DeploymentList | undefined): boolean {
   return Boolean(deployments?.items.some((deployment) => !terminalDeploymentStatuses.has(deployment.status)));

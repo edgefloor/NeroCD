@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { allProjectMembersQuery, principalQuery, allProjectsQuery, allTemplatesQuery, runQuery, runsQuery, type RunLog, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "@/api";
+import { allProjectMembersQuery, principalQuery, shouldPollRun, allProjectsQuery, allTemplatesQuery, runQuery, runsQuery, type RunLog, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "@/api";
 import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { RunsView } from "@/pages/RunsView";
@@ -33,7 +33,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const selectedRun = useQuery({
     ...runQuery(selectedRunID),
     enabled: Boolean(selectedRunID),
-    refetchInterval: (query) => query.state.data && !["succeeded", "failed", "canceled", "rejected"].includes(query.state.data.status) ? 3_000 : false,
+    refetchInterval: (query) => shouldPollRun(query.state.data) ? 3_000 : false,
   });
   useEffect(() => {
     if (!runId) return;
@@ -46,7 +46,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const logsMatchSelection = selectedLogs.runID === selectedRunID;
   return (
     <>
-      {selectedRunID ? <SelectedRunLogs runID={selectedRunID} follow={Boolean(selectedRun.data && !["succeeded", "failed", "canceled", "rejected"].includes(selectedRun.data.status))} onChange={setSelectedLogs} /> : null}
+      {selectedRunID ? <SelectedRunLogs runID={selectedRunID} follow={shouldPollRun(selectedRun.data)} onChange={setSelectedLogs} /> : null}
     <RunsView
       q={q}
       snapshot={apiSnapshot({ runs: runs.data, projects: projects.data, templates: templates.data })}
@@ -59,7 +59,7 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
       selectedLogs={logsMatchSelection ? selectedLogs.logs : []}
       logsLoading={Boolean(selectedRunID) && (!logsMatchSelection || selectedLogs.loading)}
       logsError={logsMatchSelection ? selectedLogs.error : undefined}
-      logsFollowing={Boolean(selectedRun.data && !["succeeded", "failed", "canceled", "rejected"].includes(selectedRun.data.status))}
+      logsFollowing={shouldPollRun(selectedRun.data)}
       logsHavePrevious={logsMatchSelection && selectedLogs.hasPrevious}
       logsLoadingPrevious={logsMatchSelection && selectedLogs.loadingPrevious}
       onLoadPreviousLogs={logsMatchSelection ? selectedLogs.loadPrevious : undefined}

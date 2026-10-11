@@ -1492,3 +1492,41 @@ test("run detail selection keeps URL diagnostics and browser history aligned", a
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-detail-history-320.png"), fullPage: true });
   }
 });
+
+test("workflow details keep updating after logs close and stop at completion", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  let finished = false;
+  let requests = 0;
+  await page.route(`**/api/v1/runs/${runID}`, async (route) => {
+    requests += 1;
+    const response = await route.fetch();
+    const run = await response.json();
+    await route.fulfill({ response, json: {
+      ...run, status: finished ? "succeeded" : "running",
+      workflow: { steps: [{ id: "build", name: "Build application", run_spec: { type: "shell", inputs: {} }, requires_ack: false }] },
+      workflow_state: { steps: [{ id: "build", name: "Build application", status: finished ? "succeeded" : "running", started_at: "2026-01-01T00:00:00Z", ...(finished ? { finished_at: "2026-01-01T00:00:05Z" } : {}) }] },
+    } });
+  });
+  const diagnostics = page.locator('[aria-labelledby="workflow-diagnostics-title"]');
+  for (const width of [320, 390, 430, 1440]) {
+    finished = false;
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runs/${runID}`);
+    await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(diagnostics.getByText("Running", { exact: true })).toBeVisible();
+    finished = true;
+    await expect(diagnostics.getByText("Succeeded", { exact: true })).toBeVisible();
+    await expect(diagnostics.getByText("5s", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await diagnostics.screenshot({ path: testInfo.outputPath("workflow-completed-320.png") });
+  }
+  const completedRequests = requests;
+  // Observe beyond the three-second interval to ensure completed runs stop polling.
+  await page.waitForTimeout(3500);
+  expect(requests).toBe(completedRequests);
+});
