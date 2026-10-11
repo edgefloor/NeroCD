@@ -3,6 +3,8 @@ import { afterEach, expect, test, vi } from "vitest";
 import { apiSnapshot } from "@/api/compat";
 import { HomeView } from "./HomeView";
 
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
+
 afterEach(cleanup);
 
 const snapshot = apiSnapshot({

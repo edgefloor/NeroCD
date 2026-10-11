@@ -2209,3 +2209,36 @@ test("short mobile menus keep lower navigation and Close usable", async ({ page 
     await expect(drawer).toHaveCount(0);
   }
 });
+
+
+test("log stream links to runs and contains long output on mobile and desktop", async ({ page }, testInfo) => {
+  await page.goto("/logs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  const message = `Long-output-${"abcdef0123456789".repeat(40)}\nSecond line`;
+  await page.route("**/api/v1/run-logs?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.has("run_id")) return route.continue();
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      items: [{ id: "log_long_output", run_id: runID, sequence: 1, stream: "stdout", message, created_at: "2026-01-01T00:00:00Z" }],
+      count: 1, total: 51, limit: 50, offset: Number(url.searchParams.get("offset") ?? 0),
+    }) });
+  });
+  await page.goto("/logs?q=Long-output&offset=50");
+  const link = page.getByRole("link", { name: `View run ${runID}`, exact: true });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", `/runs/${runID}?q=Long-output&offset=50`);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByText(message, { exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`log-stream-${width}.png`), fullPage: true });
+  }
+  await link.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/runs/${runID}\\?q=Long-output&offset=50$`));
+  await page.goBack();
+  await expect(page).toHaveURL(/\/logs\?q=Long-output&offset=50$/);
+  await expect(link).toBeVisible();
+});
