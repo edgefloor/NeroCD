@@ -58,6 +58,7 @@ export const queryKeys = {
   environments: (value?: EnvironmentFilters) => ["environments", filters(value)] as const,
   revisions: (value?: RevisionFilters) => ["revisions", filters(value)] as const,
   deployments: (value?: DeploymentFilters) => ["deployments", filters(value)] as const,
+  deploymentHistory: (environmentID: string) => ["deployments", "history", { environment_id: environmentID }] as const,
   deployment: (id: string) => ["deployment", id] as const,
   runners: (value?: RunnerFilters) => ["runners", filters(value)] as const,
   runner: (id: string) => ["runner", id] as const,
@@ -112,6 +113,12 @@ export const servicesQuery = (value?: ServiceFilters) => queryOptions({ queryKey
 export const environmentsQuery = (value?: EnvironmentFilters) => queryOptions({ queryKey: queryKeys.environments(value), queryFn: ({ signal }) => listEnvironments(value, { signal }) });
 export const revisionsQuery = (value?: RevisionFilters) => queryOptions({ queryKey: queryKeys.revisions(value), queryFn: ({ signal }) => listRevisions(value, { signal }) });
 export const deploymentsQuery = (value?: DeploymentFilters) => queryOptions({ queryKey: queryKeys.deployments(value), queryFn: ({ signal }) => listDeployments(value, { signal }) });
+export const deploymentHistoryQuery = (environmentID: string) => queryOptions({
+  queryKey: queryKeys.deploymentHistory(environmentID),
+  queryFn: ({ signal }) => collectBoundedPages((offset) => listDeployments({ environment_id: environmentID, limit: 100, offset }, { signal })),
+  enabled: Boolean(environmentID),
+  refetchInterval: (query) => query.state.data?.some((deployment) => !terminalDeploymentStatuses.has(deployment.status)) ? 3_000 : false,
+});
 export const runQuery = (id: string) => queryOptions({ queryKey: queryKeys.run(id), queryFn: async ({ signal }) => {
   try {
     return await getRun(id, { signal });

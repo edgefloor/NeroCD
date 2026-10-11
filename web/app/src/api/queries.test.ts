@@ -4,7 +4,7 @@ import { render, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "./errors";
-import { allRevisionsQuery, allProjectMembersQuery, configureQueryClient, deploymentQuery, deploymentsQuery, environmentsQuery, healthQuery, projectsQuery, queryKeys, repositoriesQuery, retryRemote, revisionsQuery, runLogsQuery, runsQuery, servicesQuery, shouldPollDeploymentList, shouldPollRunList, shouldPollSelectedLogs, templatesQuery, approvalsQuery } from "./queries";
+import { deploymentHistoryQuery, allRevisionsQuery, allProjectMembersQuery, configureQueryClient, deploymentQuery, deploymentsQuery, environmentsQuery, healthQuery, projectsQuery, queryKeys, repositoriesQuery, retryRemote, revisionsQuery, runLogsQuery, runsQuery, servicesQuery, shouldPollDeploymentList, shouldPollRunList, shouldPollSelectedLogs, templatesQuery, approvalsQuery } from "./queries";
 import { Route as HomeRoute } from "../routes/_authenticated.index";
 import { Route as ProjectsRoute } from "../routes/_authenticated.projects";
 import { Route as RunDetailRoute } from "../routes/_authenticated.runs.$runId";
@@ -161,4 +161,23 @@ test("revision choices paginate within the selected service and keep separate ca
   expect(second[100]?.id).toBe("service_b_100");
   expect(calls).toHaveLength(4);
   for (const path of calls) expect(new URL(path, "http://local").searchParams.get("limit")).toBe("100");
+});
+
+
+test("deployment history loads every environment page and shares mutation invalidation", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    calls.push(String(path));
+    const offset = Number(new URL(String(path), "http://local").searchParams.get("offset"));
+    const count = offset === 0 ? 100 : 1;
+    return Promise.resolve(new Response(JSON.stringify({ items: Array.from({ length: count }, (_, index) => ({ id: `dep_${offset + index}`, status: "failed" })), count, total: 101, offset, limit: 100 }), { headers: { "Content-Type": "application/json" } }));
+  });
+  const queryClient = client();
+  const options = deploymentHistoryQuery("env_history");
+  const result = await queryClient.fetchQuery(options);
+  expect(result).toHaveLength(101);
+  expect(result[100]?.id).toBe("dep_100");
+  expect(calls).toEqual(["/api/v1/deployments?environment_id=env_history&limit=100&offset=0", "/api/v1/deployments?environment_id=env_history&limit=100&offset=100"]);
+  await queryClient.invalidateQueries({ queryKey: ["deployments"] });
+  expect(queryClient.getQueryState(options.queryKey)?.isInvalidated).toBe(true);
 });

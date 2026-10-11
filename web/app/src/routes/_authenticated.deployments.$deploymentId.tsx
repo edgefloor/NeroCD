@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { allProjectMembersQuery, allEnvironmentsQuery, principalQuery, allRevisionsQuery, runLogsQuery, runQuery, allServicesQuery, useDeploymentMutations, useDeploymentPollingQuery, useDeploymentsPollingQuery } from "@/api";
+import { allProjectMembersQuery, allEnvironmentsQuery, principalQuery, allRevisionsQuery, runLogsQuery, runQuery, allServicesQuery, useDeploymentMutations, useDeploymentPollingQuery, deploymentHistoryQuery } from "@/api";
 import { DeploymentDetailView } from "@/pages/DeploymentsView";
 import { canMaintainProject } from "@/lib/permissions";
 import { validateSearch } from "@/router/search";
@@ -28,13 +28,13 @@ function DeploymentDetailRoute() {
   const services = useQuery(allServicesQuery());
   const service = services.data?.find((item) => item.id === environment?.service_id);
   const revisions = useQuery({ ...allRevisionsQuery(environment?.service_id ?? ""), enabled: Boolean(environment) });
-  const history = useDeploymentsPollingQuery(deployment.data ? { environment_id: deployment.data.environment_id } : undefined, Boolean(deployment.data));
+  const history = useQuery(deploymentHistoryQuery(deployment.data?.environment_id ?? ""));
   const principal = useQuery(principalQuery());
   const members = useQuery(allProjectMembersQuery());
   const mutation = useDeploymentMutations();
   const revision = revisions.data?.find((item) => item.id === deployment.data?.desired_revision_id);
   const previousRevision = revisions.data?.find((item) => item.id === deployment.data?.previous_healthy_revision_id);
-  const related = (history.data?.items ?? []).filter((item) => item.id !== deploymentId && (item.rollback_of_id === deploymentId || deployment.data?.rollback_of_id === item.id || (item.rollback_of_id && item.rollback_of_id === deployment.data?.rollback_of_id)));
+  const related = (history.data ?? []).filter((item) => item.id !== deploymentId && (item.rollback_of_id === deploymentId || deployment.data?.rollback_of_id === item.id || (item.rollback_of_id && item.rollback_of_id === deployment.data?.rollback_of_id)));
   const runs = useQuery({ ...runQuery(deployment.data?.task_run_id ?? ""), enabled: Boolean(deployment.data?.task_run_id) });
   const taskRun = runs.data ?? undefined;
   const logs = useQuery({ ...runLogsQuery(deployment.data?.task_run_id ? { run_id: deployment.data.task_run_id, limit: 100, offset: 0 } : { limit: 100, offset: 0 }), enabled: Boolean(deployment.data?.task_run_id) });

@@ -1584,3 +1584,41 @@ test("run detail request failures can be retried without losing the route", asyn
   await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/runs/${runID}\\?q=browser$`));
 });
+
+test("deployment rollback links include history beyond the first page", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const response = await page.request.get(`/api/v1/deployments/${fixture.deploymentID}`);
+  expect(response.status()).toBe(200);
+  const deployment = await response.json();
+  const relatedID = "dep_older_rollback_fixture";
+  const history = Array.from({ length: 101 }, (_, index) => ({ ...deployment, id: index === 100 ? relatedID : `dep_history_${index}`, status: "failed", rollback_of_id: index === 100 ? fixture.deploymentID : undefined }));
+  const offsets: number[] = [];
+  await page.route("**/api/v1/deployments?*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("environment_id") !== fixture.environmentID) return route.continue();
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const limit = Number(url.searchParams.get("limit") ?? 50);
+    offsets.push(offset);
+    const items = history.slice(offset, offset + limit);
+    return route.fulfill({ json: { items, count: items.length, total: history.length, limit, offset } });
+  });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/deployments/${fixture.deploymentID}`);
+    const related = page.getByRole("link").filter({ hasText: relatedID });
+    await expect(related).toBeVisible();
+    await expect(related).toHaveAttribute("href", `/deployments/${relatedID}`);
+    for (const link of [related, page.getByRole("link").filter({ hasText: deployment.task_run_id })]) {
+      const bounds = await link.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      expect(await link.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("rollback-history-320.png"), fullPage: true });
+  }
+  expect(offsets).toContain(100);
+});
