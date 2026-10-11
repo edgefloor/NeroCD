@@ -1834,3 +1834,39 @@ test("deployment provenance remains explicit before a revision is resolved", asy
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-unresolved-320.png"), fullPage: true });
   }
 });
+
+
+test("deployment detail loading, retry, and missing states preserve a return path", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let fail = true;
+  await page.route(`**/api/v1/deployments/${fixture.deploymentID}`, async (route) => {
+    await held;
+    return fail ? route.fulfill({ status: 503, json: { error: "Temporary deployment failure" } }) : route.continue();
+  });
+  const search = `?service_id=${fixture.serviceID}&environment_id=${fixture.environmentID}`;
+  await page.goto(`/deployments/${fixture.deploymentID}${search}`);
+  await expect(page.getByRole("status").filter({ hasText: "Loading deployment" })).toBeVisible();
+  await expect(page.getByText("Deployment is unavailable or you do not have access.", { exact: true })).toHaveCount(0);
+  release!();
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Back to deployments", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-retry-320.png"), fullPage: false });
+  }
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText(`Deployment ${fixture.deploymentID}`, { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/deployments/${fixture.deploymentID}`));
+  await page.goto(`/deployments/dep_missing${search}`);
+  await expect(page.getByText("Deployment is unavailable or you do not have access.", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Back to deployments", exact: true }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/deployments" && url.searchParams.get("service_id") === fixture.serviceID && url.searchParams.get("environment_id") === fixture.environmentID);
+});

@@ -1,10 +1,12 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { allProjectMembersQuery, allEnvironmentsQuery, principalQuery, allRevisionsQuery, useSelectedRunLogsPollingQuery, shouldPollRun, runQuery, allServicesQuery, useDeploymentMutations, useDeploymentPollingQuery, deploymentHistoryQuery } from "@/api";
 import { DeploymentDetailView } from "@/pages/DeploymentsView";
 import { canMaintainProject } from "@/lib/permissions";
 import { validateSearch } from "@/router/search";
+import { Button } from "@/components/ui/button";
+import { SkeletonCard } from "@/components/common/SkeletonCard";
 
 export const Route = createFileRoute("/_authenticated/deployments/$deploymentId")({
   validateSearch,
@@ -17,7 +19,11 @@ export const Route = createFileRoute("/_authenticated/deployments/$deploymentId"
 });
 
 function DeploymentUnavailable() {
-  return <p role="alert">Deployment is unavailable or you do not have access.</p>;
+  return <section className="space-y-3"><p role="alert">Deployment is unavailable or you do not have access.</p><BackToDeployments /></section>;
+}
+
+function BackToDeployments() {
+  return <Button asChild variant="outline"><Link to="/deployments" search={true}>Back to deployments</Link></Button>;
 }
 
 function DeploymentDetailRoute() {
@@ -38,8 +44,16 @@ function DeploymentDetailRoute() {
   const runs = useQuery({ ...runQuery(deployment.data?.task_run_id ?? ""), enabled: Boolean(deployment.data?.task_run_id), refetchInterval: (query) => shouldPollRun(query.state.data) ? 3_000 : false });
   const taskRun = runs.data ?? undefined;
   const logs = useSelectedRunLogsPollingQuery(taskRun?.id ?? "", shouldPollRun(taskRun));
-  const error = [deployment, environments, services, revisions, history, principal, members, runs].find((query) => query.isError)?.error;
-  if (error) return <p role="alert">Unable to load deployment: {error.message}</p>;
+  const failedQueries = [deployment, environments, services, revisions, history, principal, members, runs].filter((query) => query.isError);
+  if (deployment.isPending) return <section className="space-y-3"><p role="status">Loading deployment...</p><SkeletonCard rows={4} /></section>;
+  if (!deployment.isError && !deployment.data) return <DeploymentUnavailable />;
+  if (failedQueries.length) return <section className="space-y-3">
+    <p role="alert">Unable to load deployment. Try again.</p>
+    <div className="flex flex-wrap gap-2">
+      <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button>
+      <BackToDeployments />
+    </div>
+  </section>;
   const canOperate = canMaintainProject(principal.data, members.data ?? [], service?.project_id);
   return <DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} service={service} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} busy={mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed"), onError: (cause) => toast.error(cause.message) })} onCancel={(input) => mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested"), onError: (cause) => toast.error(cause.message) })} />;
 }
