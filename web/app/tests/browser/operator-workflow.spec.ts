@@ -3308,6 +3308,7 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
     await expect(batch).toBeDisabled();
     await expect(policy.getByRole("checkbox")).toBeDisabled();
     await expect(policy.getByRole("button", { name: "Save policy", exact: true })).toBeDisabled();
+    await expect(policy.getByRole("button", { name: "Reset changes", exact: true })).toBeDisabled();
     expect(await policy.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (width === 320) {
       await policy.scrollIntoViewIfNeeded();
@@ -3340,4 +3341,13 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   await expect(policy).toHaveAttribute("aria-busy", "false");
   expect(saves).toBe(2);
   await expect(policy.getByRole("alert")).toHaveCount(0);
+  const enabled = await policy.getByRole("checkbox").isChecked();
+  await days.fill("99");
+  await batch.fill("101");
+  await policy.getByRole("checkbox").setChecked(!enabled);
+  await policy.getByRole("button", { name: "Reset changes", exact: true }).click();
+  await expect(days).toHaveValue("21");
+  await expect(batch).toHaveValue("17");
+  expect(await policy.getByRole("checkbox").isChecked()).toBe(enabled);
+  expect(saves).toBe(2);
 });

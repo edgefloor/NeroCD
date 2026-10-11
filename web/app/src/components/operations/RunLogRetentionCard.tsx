@@ -12,12 +12,13 @@ type RunLogRetentionCardProps = {
   busy?: boolean;
   saveError?: string;
   execution?: RunLogRetentionExecution;
+  onReset?: () => void;
   onUpdate?: (input: { enabled: boolean; keep_days: number; batch_size: number }) => void;
   onExecute?: (policyVersion: number, requestID: string) => Promise<unknown> | void;
 };
 
 export function RunLogRetentionCard({
-  status, loading, unavailable, busy, saveError, execution, onUpdate, onExecute,
+  status, loading, unavailable, busy, saveError, execution, onReset, onUpdate, onExecute,
 }: RunLogRetentionCardProps): ReactNode {
   const [confirming, setConfirming] = useState(false);
   const [confirmation, setConfirmation] = useState<RunLogRetentionStatus>();
@@ -72,7 +73,7 @@ export function RunLogRetentionCard({
           <div><dt className="text-muted-foreground">Eligible bytes</dt><dd>{preview.eligible_bytes}</dd></div>
           <div><dt className="text-muted-foreground">Cutoff</dt><dd><time dateTime={preview.cutoff}>{new Date(preview.cutoff).toLocaleString()}</time></dd></div>
         </dl>
-        <form className="grid gap-3 sm:grid-cols-3" aria-label="Run-log retention policy" aria-busy={Boolean(busy)} onSubmit={update}>
+        <form className="grid gap-3 sm:grid-cols-3" aria-label="Run-log retention policy" aria-busy={Boolean(busy)} onSubmit={update} onReset={onReset}>
           <label className="flex items-center gap-2 text-sm">
             <input disabled={busy} name="enabled" type="checkbox" defaultChecked={policy.enabled} /> Enable manual retention
           </label>
@@ -86,6 +87,7 @@ export function RunLogRetentionCard({
           </label>
           <div className="sm:col-span-3 flex flex-wrap gap-2">
             <Button type="submit" variant="outline" disabled={busy}>Save policy</Button>
+            <Button type="reset" variant="outline" disabled={busy}>Reset changes</Button>
             <Button type="button" disabled={!policy.enabled || busy} onClick={openConfirm}>Previewed delete batch</Button>
           </div>
           {saveError && !busy ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] sm:col-span-3">Unable to save retention policy: {saveError}</p> : null}

@@ -80,3 +80,22 @@ test("retention save failures stay beside the draft and clear while retrying", (
   view.rerender(<OperationsView {...props} />);
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+
+test("reset restores the latest loaded retention policy without saving", () => {
+  const update = vi.fn();
+  const reset = vi.fn();
+  const props = { status, loading: false, unavailable: false, canAdmin: true, retention, onRetentionUpdate: update, onRetentionReset: reset };
+  const view = render(<OperationsView {...props} />);
+  const days = screen.getByRole("spinbutton", { name: "Keep days" }) as HTMLInputElement;
+  fireEvent.change(days, { target: { value: "21" } });
+  const refreshed = { policy: { enabled: false, keep_days: 60, batch_size: 50, version: 5 }, preview: { eligible_logs: 0 } } as never;
+  view.rerender(<OperationsView {...props} retention={refreshed} />);
+  expect(days.value).toBe("21");
+  fireEvent.click(screen.getByRole("button", { name: "Reset changes" }));
+  expect(days.value).toBe("60");
+  expect((screen.getByRole("spinbutton", { name: "Batch size" }) as HTMLInputElement).value).toBe("50");
+  expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+  expect(update).not.toHaveBeenCalled();
+  expect(reset).toHaveBeenCalledOnce();
+});
