@@ -140,3 +140,23 @@ test("selected logs discard the previous run when selection changes", async () =
   expect(mounted.result.current.data.every((entry) => entry.run_id === "run_second")).toBe(true);
   mounted.unmount();
 });
+
+test("a failed log probe stops loading and can be retried for a completed run", async () => {
+  let fail = true;
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    if (fail) return Promise.resolve(new Response(JSON.stringify({ error: "Logs unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+    const url = new URL(String(path), "http://local");
+    const offset = Number(url.searchParams.get("offset"));
+    const items = offset === 0 ? [{ id: "log_final", run_id: "run_done", sequence: 1, stream: "stdout", message: "Complete" }] : [];
+    return Promise.resolve(json({ items, count: items.length, total: 1, limit: Number(url.searchParams.get("limit")), offset }));
+  });
+  const { wrapper } = setup();
+  const mounted = renderHook(() => useSelectedRunLogsPollingQuery("run_done", false), { wrapper });
+  await waitFor(() => expect(mounted.result.current.isError).toBe(true));
+  expect(mounted.result.current.isPending).toBe(false);
+  fail = false;
+  await act(async () => { await mounted.result.current.retry(); });
+  await waitFor(() => expect(mounted.result.current.data[0]?.message).toBe("Complete"));
+  expect(mounted.result.current.isError).toBe(false);
+  mounted.unmount();
+});

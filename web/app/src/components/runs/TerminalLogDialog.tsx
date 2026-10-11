@@ -16,6 +16,8 @@ export function TerminalLogDialog({
   logs,
   loading = false,
   error,
+  onRetry,
+  retrying,
   following = false,
   hasPrevious = false,
   loadingPrevious = false,
@@ -27,6 +29,8 @@ export function TerminalLogDialog({
   logs: RunLog[];
   loading?: boolean;
   error?: Error;
+  onRetry?: () => void;
+  retrying?: boolean;
   following?: boolean;
   hasPrevious?: boolean;
   loadingPrevious?: boolean;
@@ -42,7 +46,7 @@ export function TerminalLogDialog({
       <DialogContent
         showCloseButton={false}
         aria-describedby={undefined}
-        className="max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-4xl border-border bg-background"
+        className="min-w-0 grid-cols-1 max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-4xl border-border bg-background"
         onOpenAutoFocus={() => {
           openerRef.current = pendingOpener;
           pendingOpener = null;
@@ -63,14 +67,14 @@ export function TerminalLogDialog({
           });
         }}
       >
-        <DialogHeader className="border-b border-border bg-muted px-4 py-3">
+        <DialogHeader className="min-w-0 border-b border-border bg-muted px-4 py-3">
           <div className="flex min-w-0 items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
               <DialogTitle className="min-w-0 truncate font-mono text-sm text-foreground">
                 {run ? `run ${run.id}` : "run terminal"}
               </DialogTitle>
               {run ? (
-                <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground border border-border">
+                <span className="shrink-0 rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground border border-border">
                   {run.status}
                 </span>
               ) : null}
@@ -83,9 +87,9 @@ export function TerminalLogDialog({
             </DialogClose>
           </div>
         </DialogHeader>
-        <div className="max-h-[70dvh] min-h-[360px] overflow-auto bg-background p-4 font-mono text-[13px] leading-6 text-foreground">
+        <div className="min-w-0 max-h-[70dvh] min-h-[360px] overflow-auto bg-background p-4 font-mono text-[13px] leading-6 text-foreground">
           {run ? (
-            <div className="mb-3 grid gap-1 border-b border-border pb-3 text-xs text-muted-foreground">
+            <div className="mb-3 grid min-w-0 gap-1 break-all border-b border-border pb-3 text-xs text-muted-foreground">
               <span>$ nerocd runs inspect {run.id}</span>
               <span>project={run.project_id} template={run.template_id ?? "adhoc"}</span>
               {following ? <span aria-live="polite">Following active run output.</span> : null}
@@ -104,7 +108,7 @@ export function TerminalLogDialog({
               Loading run output...
             </div>
           ) : error ? (
-            <div className="text-destructive" role="alert">Unable to load run output: {error.message}</div>
+            <div className="grid gap-3"><p className="min-w-0 break-words text-destructive" role="alert">Unable to load run output: {error.message}</p>{onRetry ? <Button variant="outline" disabled={retrying} onClick={onRetry}>Retry logs</Button> : null}</div>
           ) : orderedLogs.length === 0 ? (
             <div className="text-muted-foreground">
               <span className="text-success">system</span> waiting for runner output...

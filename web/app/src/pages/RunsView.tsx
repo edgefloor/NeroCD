@@ -174,6 +174,8 @@ export function RunsView({
   selectedLogs,
   logsLoading,
   logsError,
+  onRetryLogs,
+  logsRetrying,
   logsFollowing,
   logsHavePrevious,
   logsLoadingPrevious,
@@ -193,6 +195,8 @@ export function RunsView({
   selectedLogs?: RunLog[];
   logsLoading?: boolean;
   logsError?: Error;
+  onRetryLogs?: () => void;
+  logsRetrying?: boolean;
   logsFollowing?: boolean;
   logsHavePrevious?: boolean;
   logsLoadingPrevious?: boolean;
@@ -262,7 +266,7 @@ export function RunsView({
           />}
         </CardContent>
       </Card>
-      <TerminalLogDialog run={terminalRun} logs={terminalLogs} loading={controlledLogs && logsLoading} error={controlledLogs ? logsError : undefined} following={controlledLogs && logsFollowing} hasPrevious={controlledLogs && logsHavePrevious} loadingPrevious={controlledLogs && logsLoadingPrevious} onLoadPrevious={onLoadPreviousLogs} open={terminalOpen} onOpenChange={changeTerminalOpen} />
+      <TerminalLogDialog run={terminalRun} logs={terminalLogs} loading={controlledLogs && logsLoading} error={controlledLogs ? logsError : undefined} onRetry={onRetryLogs} retrying={logsRetrying} following={controlledLogs && logsFollowing} hasPrevious={controlledLogs && logsHavePrevious} loadingPrevious={controlledLogs && logsLoadingPrevious} onLoadPrevious={onLoadPreviousLogs} open={terminalOpen} onOpenChange={changeTerminalOpen} />
     </section>
   );
 }

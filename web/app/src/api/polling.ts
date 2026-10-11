@@ -75,7 +75,7 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
     retry,
     isFetching: probe.isFetching || page.isFetching,
     data: current.logs,
-    isPending: probe.isPending || (current.logs.length === 0 && page.isPending),
+    isPending: !probe.isError && !page.isError && (probe.isPending || (current.logs.length === 0 && page.isPending)),
     isError: probe.isError || page.isError,
     error: (probe.error ?? page.error) ?? undefined,
     hasPrevious: current.firstOffset > 0,

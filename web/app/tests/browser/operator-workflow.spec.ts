@@ -1686,3 +1686,35 @@ test("deployment log failures preserve status and controls and can be retried", 
     await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
   }
 });
+
+test("completed run logs recover from failed loading without reopening the dialog", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  await postJSON(page, "/api/v1/runs/cancel", { run_id: runID });
+  let fail = true;
+  await page.route("**/api/v1/run-logs?*", (route) => fail
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary output failure" }) })
+    : route.continue());
+  for (const width of [320, 1440]) {
+    fail = true;
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runs/${runID}`);
+    const dialog = page.getByRole("dialog", { name: `run ${runID}` });
+    await expect(dialog.getByRole("button", { name: "Retry logs", exact: true })).toBeEnabled();
+    await expect(dialog.getByRole("alert")).toContainText("Unable to load run output");
+    const dialogBounds = await dialog.boundingBox();
+    const closeBounds = await dialog.getByRole("button", { name: "Close", exact: true }).boundingBox();
+    expect(closeBounds!.x + closeBounds!.width).toBeLessThanOrEqual(dialogBounds!.x + dialogBounds!.width);
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-log-retry-320.png"), fullPage: true });
+    fail = false;
+    await dialog.getByRole("button", { name: "Retry logs", exact: true }).click();
+    await expect(dialog.getByText("Run canceled by user", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Retry logs", exact: true })).toHaveCount(0);
+    await expect(dialog.getByText("Following active run output.", { exact: true })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+});
