@@ -79,7 +79,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
             <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <DialogTrigger asChild><Button variant="ghost" size="sm" className="lg:hidden" aria-label="Open mobile navigation">Menu</Button></DialogTrigger>
               <DialogContent aria-modal="true" className="mobile-navigation-drawer inset-y-0 left-0 flex h-dvh w-72 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:max-w-72">
-                <DialogHeader className="shrink-0 border-b border-border px-6 py-4 pr-12"><DialogTitle>Mobile navigation</DialogTitle><DialogDescription className="sr-only">Choose a page.</DialogDescription></DialogHeader>
+                <DialogHeader className="sr-only"><DialogTitle>Mobile navigation</DialogTitle><DialogDescription className="sr-only">Choose a page.</DialogDescription></DialogHeader>
                 {navigation("Mobile navigation")}
               </DialogContent>
             </Dialog>
