@@ -28,7 +28,7 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
   const page = useQuery({
     ...runLogsQuery({ run_id: runID, limit: logPageSize, offset: current.nextOffset ?? 0 }),
     enabled: Boolean(runID) && current.nextOffset !== undefined,
-    refetchInterval: follow ? 3_000 : false,
+    refetchInterval: (query) => follow && query.state.status !== "error" ? 3_000 : false,
   });
   const wasFollowing = useRef(follow);
   useEffect(() => {

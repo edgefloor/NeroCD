@@ -542,3 +542,38 @@ test("deployment creation blocks duplicate requests and retains retry input", as
   for (const [, options] of vi.mocked(globalThis.fetch).mock.calls) expect(JSON.parse(String(options?.body))).toEqual(input);
   expect(mounted.result.current.creationError).toBeUndefined();
 });
+
+
+test("active log polling pauses on failure and resumes after explicit retry", async () => {
+  vi.useFakeTimers();
+  let fail = true;
+  let tailCalls = 0;
+  const log = { id: "log_first", run_id: "run_follow", sequence: 1, stream: "stdout", message: "Retained output" };
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    const url = new URL(String(path), "http://localhost");
+    const offset = Number(url.searchParams.get("offset"));
+    const limit = Number(url.searchParams.get("limit"));
+    if (offset === 0) return Promise.resolve(json({ items: [log], count: 1, total: 1, limit, offset }));
+    tailCalls++;
+    return Promise.resolve(fail
+      ? new Response(JSON.stringify({ error: "Log tail unavailable" }), { status: 503 })
+      : json({ items: [], count: 0, total: 1, limit, offset }));
+  });
+  const { wrapper } = setup();
+  const mounted = renderHook(() => useSelectedRunLogsPollingQuery("run_follow", true), { wrapper });
+  for (let index = 0; index < 10; index++) await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(mounted.result.current.isError).toBe(true);
+  expect(mounted.result.current.data).toEqual([log]);
+  const failedCalls = tailCalls;
+  await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+  expect(tailCalls).toBe(failedCalls);
+  fail = false;
+  await act(async () => { await mounted.result.current.retry(); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(mounted.result.current.isError).toBe(false);
+  const recoveredCalls = tailCalls;
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+  expect(tailCalls).toBeGreaterThan(recoveredCalls);
+  expect(mounted.result.current.data).toEqual([log]);
+  mounted.unmount();
+});
