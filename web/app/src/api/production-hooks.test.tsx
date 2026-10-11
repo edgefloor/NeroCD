@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { allProjectsQuery, auditEventsQuery, projectsQuery, runLogsQuery, runQuery, runsQuery } from "./queries";
+import { allProjectsQuery, auditEventsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
 import { useProjectMutations, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
@@ -236,5 +236,30 @@ test("deployment detail polling pauses on failure and resumes after explicit rec
   const recoveredCalls = calls;
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
   expect(calls).toBeGreaterThan(recoveredCalls);
+  mounted.unmount();
+});
+
+
+test("confirmed cancellation remains in run list and detail when their refreshes fail", async () => {
+  let canceled = false;
+  const queued = { id: "run_1", project_id: "project_one", status: "queued" };
+  const result = { ...queued, status: "canceled" };
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    if (String(path) === "/api/v1/runs/cancel") {
+      canceled = true;
+      return Promise.resolve(json(result));
+    }
+    if (canceled) return Promise.resolve(new Response(JSON.stringify({ error: "Refresh unavailable" }), { status: 503 }));
+    return Promise.resolve(json(String(path) === "/api/v1/runs/run_1" ? queued : { items: [queued], count: 1, total: 1, limit: 50, offset: 0 }));
+  });
+  const { client, wrapper } = setup();
+  function Observer() { useQuery(runsQuery()); useQuery(runQuery("run_1")); return useRunMutations(); }
+  const mounted = renderHook(() => Observer(), { wrapper });
+  await waitFor(() => expect(client.getQueryState(queryKeys.run("run_1"))?.status).toBe("success"));
+  await act(async () => { await mounted.result.current.cancel.mutateAsync("run_1"); });
+  expect(client.getQueryData(queryKeys.run("run_1"))).toEqual(result);
+  expect(client.getQueryData(queryKeys.runs())).toMatchObject({ items: [result], count: 1, total: 1 });
+  expect(client.getQueryState(queryKeys.run("run_1"))?.status).toBe("error");
+  expect(client.getQueryState(queryKeys.runs())?.status).toBe("error");
   mounted.unmount();
 });

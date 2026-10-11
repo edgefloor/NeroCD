@@ -25,14 +25,14 @@ const snapshot = apiSnapshot({
 });
 
 test.each(["run_release", "pLaTfOrM", "Release", "running", "production", "operator_one"])("run filter matches %s without unrelated rows", (q) => {
-  const { container } = render(<RunsView snapshot={snapshot} q={q} token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  const { container } = render(<RunsView snapshot={snapshot} q={q} busy={false} onCancel={vi.fn(async () => undefined)} />);
   expect(container.querySelector('[data-run-detail-link="run_release"]')).not.toBeNull();
   expect(container.querySelector('[data-run-detail-link="run_other"]')).toBeNull();
   expect(screen.getByText("1 of 2 runs match on this page.")).toBeTruthy();
 });
 
 test("unmatched run filters explain the empty state and clearing restores rows", () => {
-  const props = { snapshot, token: "", busy: "", mutate: vi.fn(async () => undefined) };
+  const props = { snapshot, busy: false, onCancel: vi.fn(async () => undefined) };
   const view = render(<RunsView {...props} q="no-match" />);
   expect(screen.getByText("No runs match this filter on the loaded page.")).toBeTruthy();
   expect(view.container.querySelector('[data-run-detail-link]')).toBeNull();
@@ -41,7 +41,7 @@ test("unmatched run filters explain the empty state and clearing restores rows",
 });
 
 test("filtering out a selected run preserves its log dialog and output", () => {
-  render(<RunsView snapshot={snapshot} q="no-match" token="" busy="" mutate={vi.fn(async () => undefined)} selectedRunID={run.id} selectedLogs={[{ id: "log_one", run_id: run.id, sequence: 1, stream: "stdout", message: "Live release output", created_at: "2026-01-01T00:00:00Z" }]} onSelectRun={vi.fn()} />);
+  render(<RunsView snapshot={snapshot} q="no-match" busy={false} onCancel={vi.fn(async () => undefined)} selectedRunID={run.id} selectedLogs={[{ id: "log_one", run_id: run.id, sequence: 1, stream: "stdout", message: "Live release output", created_at: "2026-01-01T00:00:00Z" }]} onSelectRun={vi.fn()} />);
   expect(screen.getByRole("dialog", { name: "run run_release" })).toBeTruthy();
   expect(screen.getByText("Live release output")).toBeTruthy();
   expect(screen.getByText("No runs match this filter on the loaded page.")).toBeTruthy();
@@ -49,12 +49,12 @@ test("filtering out a selected run preserves its log dialog and output", () => {
 
 test("run filtering accepts omitted tags returned as null by the API", () => {
   const nullableTags = apiSnapshot({ ...snapshot, runs: [{ ...run, runner_tags: null as unknown as string[] }] });
-  render(<RunsView snapshot={nullableTags} q="release" token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  render(<RunsView snapshot={nullableTags} q="release" busy={false} onCancel={vi.fn(async () => undefined)} />);
   expect(screen.getByText("1 of 1 runs match on this page.")).toBeTruthy();
 });
 
 test("run detail links preserve the active filter and page", () => {
-  render(<RunsView snapshot={snapshot} q="running" offset={50} token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  render(<RunsView snapshot={snapshot} q="running" offset={50} busy={false} onCancel={vi.fn(async () => undefined)} />);
   const links = screen.getAllByRole("link", { name: "Details" });
   expect(links).toHaveLength(2);
   for (const link of links) expect(link.getAttribute("href")).toBe("/runs/run_release?q=running&offset=50");

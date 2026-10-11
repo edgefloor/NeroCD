@@ -1126,13 +1126,17 @@ test("running a template opens its detail route and follows scoped output", asyn
   }
 });
 
-test("session-authenticated operators can cancel queued runs on desktop and mobile", async ({ page }) => {
+test("session-authenticated operators can cancel queued runs on desktop and mobile", async ({ page }, testInfo) => {
   await page.goto("/runs");
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const first = await createRunLogFixture(page);
   const second = await createRunLogFixture(page);
   let failFirst = true;
+  let failRefresh = false;
+  await page.route(/\/api\/v1\/runs(?:\?.*)?$/, (route) => failRefresh
+    ? route.fulfill({ status: 503, json: { error: "Refresh after cancellation unavailable" } })
+    : route.continue());
   await page.route("**/api/v1/runs/cancel", async (route) => {
     if (failFirst) {
       failFirst = false;
@@ -1151,6 +1155,7 @@ test("session-authenticated operators can cancel queued runs on desktop and mobi
       expect((await failed).status()).toBe(503);
       await expect(cancel).toBeEnabled();
     }
+    failRefresh = true;
     const canceled = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/cancel");
     await cancel.click();
     const response = await canceled;
@@ -1158,7 +1163,13 @@ test("session-authenticated operators can cancel queued runs on desktop and mobi
     expect(await response.json()).toMatchObject({ id: runID, status: "canceled" });
     await expect(cancel).toHaveCount(0);
     await expect(page.getByText("canceled", { exact: true }).nth(width < 768 ? 0 : 1)).toBeVisible();
+    await expect(page.getByText("Unable to refresh run information. Loaded output remains available; retry before changing runs.")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-canceled-refresh-error-320.png"), animations: "disabled" });
+    failRefresh = false;
+    await page.getByRole("button", { name: "Retry runs", exact: true }).click();
+    await expect(page.getByText("Unable to refresh run information. Loaded output remains available; retry before changing runs.")).toHaveCount(0);
+    await expect(cancel).toHaveCount(0);
   }
 });
 

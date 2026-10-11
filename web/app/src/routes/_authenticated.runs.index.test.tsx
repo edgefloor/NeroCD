@@ -3,7 +3,8 @@ import { afterEach, expect, test, vi } from "vitest";
 import { RunsRoute } from "./_authenticated.runs.index";
 
 const navigate = vi.hoisted(() => vi.fn());
-afterEach(() => { cleanup(); navigate.mockClear(); });
+const cancellation = vi.hoisted(() => ({ isPending: false, mutate: vi.fn() }));
+afterEach(() => { cleanup(); navigate.mockClear(); cancellation.mutate.mockClear(); });
 
 const noLogs: never[] = [];
 const loadPrevious = vi.fn();
@@ -15,17 +16,13 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
 
 vi.mock("@/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/api")>(),
+  useRunMutations: vi.fn(() => ({ cancel: cancellation })),
   useRunsPollingQuery: vi.fn(() => ({ data: { items: [], count: 0, total: 0, limit: 50, offset: 0 }, isError: false, isPending: false, isFetching: false })),
   useSelectedRunLogsPollingQuery: vi.fn(() => ({ data: noLogs, isError: false, isPending: false, hasPrevious: false, loadingPrevious: false, loadPrevious })),
 }));
 
-vi.mock("@/api/compat", async (importOriginal) => ({
-  ...await importOriginal<typeof import("@/api/compat")>(),
-  useSnapshotMutation: vi.fn(() => ({ busy: "", mutate: vi.fn() })),
-}));
-
 vi.mock("@/pages/RunsView", () => ({
-  RunsView: ({ selectedRunID, onSelectRun, onCloseLogs }: { selectedRunID?: string; onSelectRun: (id: string) => void; onCloseLogs: () => void }) => <><output data-testid="selected-run">{selectedRunID}</output><button onClick={() => onSelectRun("run_second")}>Open second run</button><button onClick={onCloseLogs}>Close logs</button></>,
+  RunsView: ({ selectedRunID, onSelectRun, onCloseLogs, onCancel }: { onCancel: (runID: string) => void; selectedRunID?: string; onSelectRun: (id: string) => void; onCloseLogs: () => void }) => <><button onClick={() => onCancel("run_first")}>Cancel first run</button><output data-testid="selected-run">{selectedRunID}</output><button onClick={() => onSelectRun("run_second")}>Open second run</button><button onClick={onCloseLogs}>Close logs</button></>,
 }));
 
 test("detail run identity follows a changed route parameter", async () => {
@@ -59,4 +56,17 @@ test("list previews and reopening the current detail stay on the current route",
   fireEvent.click(screen.getByRole("button", { name: "Open second run" }));
   expect(screen.getByTestId("selected-run").textContent).toBe("run_second");
   expect(navigate).not.toHaveBeenCalled();
+});
+
+
+test("cancellation blocks repeated submissions until the request settles", () => {
+  render(<RunsRoute />);
+  const button = screen.getByRole("button", { name: "Cancel first run" });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  expect(cancellation.mutate).toHaveBeenCalledTimes(1);
+  expect(cancellation.mutate.mock.calls[0]?.[0]).toBe("run_first");
+  cancellation.mutate.mock.calls[0]?.[1].onSettled();
+  fireEvent.click(button);
+  expect(cancellation.mutate).toHaveBeenCalledTimes(2);
 });

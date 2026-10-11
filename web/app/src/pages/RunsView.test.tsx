@@ -29,9 +29,8 @@ function renderRuns(selectedRunID = "", selectedLogs: unknown[] = [], logsLoadin
   const view = render(
     <RunsView
       snapshot={apiSnapshot({ runs: [run], projects: [{ id: "proj_logs", name: "Logs project" } as never], templates: [{ id: "tmpl_logs", name: "Logs template" } as never] })}
-      token=""
-      busy=""
-      mutate={vi.fn() as never}
+      busy={false}
+      onCancel={vi.fn() as never}
       selectedRunID={selectedRunID}
       selectedLogs={selectedLogs as never}
       logsLoading={logsLoading}
@@ -62,9 +61,8 @@ test("selected run exposes loading, output, errors, and close behavior", () => {
   rerender(
     <RunsView
       snapshot={apiSnapshot({ runs: [run] })}
-      token=""
-      busy=""
-      mutate={vi.fn() as never}
+      busy={false}
+      onCancel={vi.fn() as never}
       selectedRunID="run_logs"
       selectedLogs={[{ id: "log_1", run_id: "run_logs", sequence: 1, stream: "system", message: "Run requested" } as never]}
       onSelectRun={vi.fn()}
@@ -84,7 +82,7 @@ test("selected run remains identifiable when the refreshed list drops it", () =>
       if (selectedRunID) setRuns([]);
     }, [selectedRunID]);
     return <>
-      <RunsView snapshot={apiSnapshot({ runs, projects: [{ id: "proj_logs", name: "Logs project" } as never], templates: [{ id: "tmpl_logs", name: "Logs template" } as never] })} token="" busy="" mutate={vi.fn() as never} selectedRunID={selectedRunID} selectedLogs={[]} logsFollowing={false} onSelectRun={setSelectedRunID} onCloseLogs={() => setSelectedRunID("")} />
+      <RunsView snapshot={apiSnapshot({ runs, projects: [{ id: "proj_logs", name: "Logs project" } as never], templates: [{ id: "tmpl_logs", name: "Logs template" } as never] })} busy={false} onCancel={vi.fn() as never} selectedRunID={selectedRunID} selectedLogs={[]} logsFollowing={false} onSelectRun={setSelectedRunID} onCloseLogs={() => setSelectedRunID("")} />
     </>;
   }
   render(<Harness />);

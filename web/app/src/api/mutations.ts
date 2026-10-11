@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createEnvironment, createProject, createRepository, createRevision, createService, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy } from "./resources";
+import { archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createEnvironment, createProject, createRepository, createRevision, createService, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse } from "./resources";
 import { queryKeys } from "./queries";
 
 export function useProjectMutations() {
@@ -16,7 +16,23 @@ export function useProjectMutations() {
 
 export function useRunMutations() {
   const client = useQueryClient();
-  return { cancel: useMutation({ mutationFn: (run_id: string) => cancelRun({ run_id }), onSuccess: async (_result, runID) => { await Promise.all([client.invalidateQueries({ queryKey: ["runs"] }), client.invalidateQueries({ queryKey: queryKeys.run(runID) }), client.invalidateQueries({ predicate: (query) => query.queryKey[0] === "runLogs" && (query.queryKey[1] as { run_id?: string } | undefined)?.run_id === runID })]); toast.success("Run canceled"); }, onError: (error) => toast.error(error.message) }) };
+  return { cancel: useMutation({
+    mutationFn: (run_id: string) => cancelRun({ run_id }),
+    onSuccess: async (result, runID) => {
+      client.setQueryData(queryKeys.run(runID), result);
+      client.setQueriesData<TaskRunListResponse>({ queryKey: ["runs"] }, (cached) => cached ? {
+        ...cached,
+        items: cached.items.map((run) => run.id === result.id ? result : run),
+      } : cached);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["runs"] }),
+        client.invalidateQueries({ queryKey: queryKeys.run(runID) }),
+        client.invalidateQueries({ predicate: (query) => query.queryKey[0] === "runLogs" && (query.queryKey[1] as { run_id?: string } | undefined)?.run_id === runID }),
+      ]);
+      toast.success("Run canceled");
+    },
+    onError: (error) => toast.error(error.message),
+  }) };
 }
 
 /** Retention is deliberately manual.  The execution key is owned by the view

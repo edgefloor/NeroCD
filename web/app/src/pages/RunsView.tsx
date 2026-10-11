@@ -5,8 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import type { ApiSnapshot, RunLog, TaskRun, Project, TaskTemplate } from "@/api";
-import { cancelRun } from "@/api/compat";
-import type { MutateFn } from "@/hooks/useApi";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
@@ -21,9 +19,8 @@ export function RunsTable({
   runs,
   projects,
   templates,
-  token = "",
   busy,
-  mutate,
+  onCancel,
   canOperateProject,
   onOpenLogs,
   detailSearch,
@@ -31,9 +28,8 @@ export function RunsTable({
   runs: TaskRun[];
   projects: Project[];
   templates: TaskTemplate[];
-  token?: string;
-  busy?: string;
-  mutate?: MutateFn;
+  busy?: boolean;
+  onCancel?: (runID: string) => void;
   canOperateProject?: (projectID: string) => boolean;
   onOpenLogs?: (runID: string) => void;
   detailSearch?: { q?: string; offset?: number };
@@ -80,13 +76,13 @@ export function RunsTable({
                   Logs
                 </Button>
               ) : null}
-              {mutate && canOperateProject?.(run.project_id) && canCancel(run) ? (
+              {onCancel && canOperateProject?.(run.project_id) && canCancel(run) ? (
                 <Button
                   variant="outline"
                   size="sm"
                   className="h-8 rounded-xl"
                   disabled={Boolean(busy)}
-                  onClick={() => void mutate(`cancel:${run.id}`, () => cancelRun(token, run.id), "Run canceled")}
+                  onClick={() => onCancel(run.id)}
                 >
                   <Ban className="mr-1.5 h-4 w-4" />
                   Cancel
@@ -125,13 +121,13 @@ export function RunsTable({
                         Details
                       </Link>
                     </Button>
-                    {mutate && canOperateProject?.(run.project_id) && canCancel(run) ? (
+                    {onCancel && canOperateProject?.(run.project_id) && canCancel(run) ? (
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-8 rounded-xl"
                         disabled={Boolean(busy)}
-                        onClick={() => void mutate(`cancel:${run.id}`, () => cancelRun(token, run.id), "Run canceled")}
+                        onClick={() => onCancel(run.id)}
                       >
                         <Ban className="mr-1.5 h-4 w-4" />
                         Cancel
@@ -168,9 +164,8 @@ export function RunsView({
   snapshot,
   q,
   offset,
-  token,
   busy,
-  mutate,
+  onCancel,
   canOperateProject,
   loading,
   selectedRunID,
@@ -192,9 +187,8 @@ export function RunsView({
   snapshot: ApiSnapshot;
   q?: string;
   offset?: number;
-  token: string;
-  busy: string;
-  mutate: MutateFn;
+  busy: boolean;
+  onCancel?: (runID: string) => void;
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
   selectedRunID?: string;
@@ -267,9 +261,8 @@ export function RunsView({
             detailSearch={{ q, offset }}
             projects={snapshot.projects}
             templates={snapshot.templates}
-            token={token}
             busy={busy}
-            mutate={mutate}
+            onCancel={onCancel}
             canOperateProject={canOperateProject}
             onOpenLogs={openTerminal}
           />}

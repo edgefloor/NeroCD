@@ -1,8 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { allProjectMembersQuery, principalQuery, shouldPollRun, allProjectsQuery, allTemplatesQuery, runQuery, runsQuery, type RunLog, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "@/api";
-import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
+import { useEffect, useRef, useState } from "react";
+import { allProjectMembersQuery, principalQuery, shouldPollRun, allProjectsQuery, allTemplatesQuery, runQuery, runsQuery, type RunLog, useRunMutations, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "@/api";
+import { apiSnapshot } from "@/api/compat";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { RunsView } from "@/pages/RunsView";
 import { canMaintainProject } from "@/lib/permissions";
@@ -29,7 +29,8 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const principal = useQuery({ ...principalQuery(), retryOnMount: false });
   const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
   const templates = useQuery({ ...allTemplatesQuery(), retryOnMount: false });
-  const { busy, mutate } = useSnapshotMutation();
+  const { cancel } = useRunMutations();
+  const cancelPending = useRef(false);
   const [selectedRunID, setSelectedRunID] = useState(runId ?? "");
   const [selectedLogs, setSelectedLogs] = useState<SelectedLogsState>({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
   const selectedRun = useQuery({
@@ -58,10 +59,13 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
       q={q}
       offset={page.offset}
       snapshot={apiSnapshot({ runs: runs.data, projects: projects.data, templates: templates.data })}
-      token=""
-      busy={failed.length > 0 ? "refresh-unavailable" : busy}
+      busy={failed.length > 0 || cancel.isPending}
       recovery={recovery}
-      mutate={mutate}
+      onCancel={(runID) => {
+        if (failed.length > 0 || cancelPending.current) return;
+        cancelPending.current = true;
+        cancel.mutate(runID, { onSettled: () => { cancelPending.current = false; } });
+      }}
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
       loading={queries.some((query) => query.isPending)}
       selectedRunID={selectedRunID}
