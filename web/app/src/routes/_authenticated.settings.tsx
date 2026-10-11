@@ -47,9 +47,9 @@ function SettingsRoute() {
     {hasContext || failed.length === 0 ? <SettingsView
       principal={principal.data ?? { id: "", name: "", email: "", provider: "", roles: [] }}
       projects={projects.data ?? []} members={members.data?.items ?? []} authorizationMembers={allMembers.data ?? []}
+      memberNavigation={<PageNavigation page={members.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="project members" loading={members.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />}
       loading={!hasContext} readOnly={permissionsUnavailable} updatingMember={upsert.isPending}
       onUpsertMember={(input, onSuccess) => { if (!permissionsUnavailable) upsert.mutate(input, { onSuccess }); }}
     /> : null}
-    <PageNavigation page={members.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="project members" loading={members.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
   </div>;
 }

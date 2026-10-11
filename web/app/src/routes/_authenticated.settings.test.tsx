@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useQuery } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
@@ -12,7 +12,7 @@ vi.mock("@tanstack/react-query", async (original) => ({
   ...await original<typeof import("@tanstack/react-query")>(), useQuery: vi.fn(),
   useQueryClient: () => ({}), useMutation: () => ({ isPending: false, mutate: vi.fn() }),
 }));
-vi.mock("@/pages/SettingsView", () => ({ SettingsView: ({ readOnly, members }: { readOnly: boolean; members: Array<{ email: string }> }) => <div>Settings {readOnly ? "read only" : "editable"}{members.map((member) => <p key={member.email}>{member.email}</p>)}</div> }));
+vi.mock("@/pages/SettingsView", () => ({ SettingsView: ({ readOnly, members, memberNavigation }: { readOnly: boolean; members: Array<{ email: string }>; memberNavigation: ReactNode }) => <div>Settings {readOnly ? "read only" : "editable"}{members.map((member) => <p key={member.email}>{member.email}</p>)}{memberNavigation}</div> }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 const SettingsRoute = Route.options.component as ComponentType;
 const ready = (data: unknown) => ({ data, isError: false, isPending: false, isFetching: false, refetch: vi.fn() });

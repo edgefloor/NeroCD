@@ -326,6 +326,8 @@ test("settings pages member history while authorization lookup spans every bound
   await expect(page.getByText("Showing 51-100 of 131")).toBeVisible();
   await expect(page.getByText(/member-51@example\.test/)).toBeVisible();
   const pager = page.getByRole("navigation", { name: "project members pages" });
+  const accessCard = page.getByText("Project access", { exact: true }).locator('xpath=ancestor::*[@data-slot="card"]');
+  await expect(accessCard.getByRole("navigation", { name: "project members pages" })).toHaveCount(1);
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     await pager.scrollIntoViewIfNeeded();

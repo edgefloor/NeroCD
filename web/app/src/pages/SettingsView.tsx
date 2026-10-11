@@ -15,6 +15,7 @@ type SettingsViewProps = {
   principal: Principal;
   projects: Project[];
   members: ProjectMember[];
+  memberNavigation?: ReactNode;
   authorizationMembers?: ProjectMember[];
   loading?: boolean;
   readOnly?: boolean;
@@ -24,7 +25,7 @@ type SettingsViewProps = {
 
 export function SettingsView({
   principal, projects, members, authorizationMembers = members,
-  loading, readOnly, updatingMember, onUpsertMember,
+  loading, readOnly, updatingMember, onUpsertMember, memberNavigation,
 }: SettingsViewProps): ReactNode {
   const formID = useId();
   if (loading) return <SkeletonCard rows={6} />;
@@ -75,6 +76,7 @@ export function SettingsView({
           <span className="min-w-0 break-words">{member.email} · {projectName(projects, member.project_id)}</span>
           <Badge>{member.role}</Badge>
         </div>)}
+        {memberNavigation}
       </CardContent>
     </Card>
     {manageableProjects.length > 0 ? <ServiceAccountsSettingsPanel projects={manageableProjects} readOnly={readOnly} /> : null}
