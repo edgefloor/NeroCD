@@ -51,7 +51,7 @@ export function PageNavigation({ page, label, loading = false, onFirst, onPrevio
       <div className="flex flex-wrap gap-2">
         {page && page.offset > 0 ? <Button type="button" variant="outline" size="sm" aria-label={`First ${label} page`} disabled={loading} onClick={onFirst}>First</Button> : null}
         <Button type="button" variant="outline" size="sm" aria-label={`Previous ${label}`} disabled={loading || !page || page.offset === 0} onClick={onPrevious}>Previous</Button>
-        <Button type="button" variant="outline" size="sm" aria-label={`Next ${label}`} disabled={loading || !page || page.count === 0 || last >= page.total} onClick={onNext}>Next</Button>
+        <Button type="button" variant="outline" size="sm" aria-label={`Next ${label}`} disabled={loading || !page || page.count === 0 || page.offset >= maximumPageOffset || last >= page.total} onClick={onNext}>Next</Button>
       </div>
     </nav>
   );

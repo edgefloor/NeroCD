@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { maximumPageOffset } from "@/router/search";
 import { PageNavigation, usePage } from "./PageNavigation";
 
 const navigate = vi.hoisted(() => vi.fn());
@@ -36,4 +37,16 @@ test("first-page recovery is available on empty distant pages and disabled durin
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "First logs page" }).disabled).toBe(true);
   view.rerender(<PageNavigation {...props} page={{ ...props.page, offset: 0 }} />);
   expect(screen.queryByRole("button", { name: "First logs page" })).toBeNull();
+});
+
+
+test("the maximum supported offset disables forward navigation without blocking recovery", () => {
+  const next = vi.fn();
+  render(<PageNavigation page={{ count: 50, limit: 50, offset: maximumPageOffset, total: maximumPageOffset + 100 }} label="runs" onFirst={vi.fn()} onPrevious={vi.fn()} onNext={next} />);
+  const button = screen.getByRole<HTMLButtonElement>("button", { name: "Next runs" });
+  expect(button.disabled).toBe(true);
+  fireEvent.click(button);
+  expect(next).not.toHaveBeenCalled();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Previous runs" }).disabled).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "First runs page" }).disabled).toBe(false);
 });
