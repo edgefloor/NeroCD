@@ -9,7 +9,7 @@ import type { MutateFn } from "@/hooks/useApi";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
-import { formatDate, formatDuration, projectName, templateName } from "@/lib/format";
+import { formatDate, formatDuration, matchesQuery, projectName, templateName } from "@/lib/format";
 import { rememberTerminalLogOpener, TerminalLogDialog } from "@/components/runs/TerminalLogDialog";
 
 function canCancel(run: TaskRun): boolean {
@@ -162,6 +162,7 @@ export function RunsTable({
 
 export function RunsView({
   snapshot,
+  q,
   token,
   busy,
   mutate,
@@ -179,6 +180,7 @@ export function RunsView({
   onCloseLogs,
 }: {
   snapshot: ApiSnapshot;
+  q?: string;
   token: string;
   busy: string;
   mutate: MutateFn;
@@ -195,6 +197,10 @@ export function RunsView({
   onSelectRun?: (runID: string) => void;
   onCloseLogs?: () => void;
 }): ReactNode {
+  const filtering = Boolean(q?.trim());
+  const visibleRuns = filtering ? snapshot.runs.filter((run) => matchesQuery(q,
+    run.id, run.status, run.requested_by, run.run_spec.type, ...run.runner_tags,
+    projectName(snapshot.projects, run.project_id), templateName(snapshot.templates, run.template_id, run))) : snapshot.runs;
   const [localTerminalRunID, setLocalTerminalRunID] = useState("");
   const [terminalRunFallback, setTerminalRunFallback] = useState<TaskRun | undefined>();
   const [localTerminalOpen, setLocalTerminalOpen] = useState(false);
@@ -235,17 +241,20 @@ export function RunsView({
       <Card>
         <CardHeader className="border-b py-3">
           <CardTitle className="text-base font-semibold">Execution queue</CardTitle>
+          {filtering && <p className="text-sm text-muted-foreground" role="status">{visibleRuns.length} of {snapshot.runs.length} runs match on this page.</p>}
         </CardHeader>
         <CardContent className="p-0">
-          <RunsTable
-            runs={snapshot.runs}
+          {filtering && visibleRuns.length === 0 ? (
+            <p className="px-4 py-5 text-sm text-muted-foreground">No runs match this filter on the loaded page.</p>
+          ) : <RunsTable
+            runs={visibleRuns}
             projects={snapshot.projects}
             templates={snapshot.templates}
             token={token}
             busy={busy}
             mutate={mutate}
             onOpenLogs={openTerminal}
-          />
+          />}
         </CardContent>
       </Card>
       <TerminalLogDialog run={terminalRun} logs={terminalLogs} loading={controlledLogs && logsLoading} error={controlledLogs ? logsError : undefined} following={controlledLogs && logsFollowing} hasPrevious={controlledLogs && logsHavePrevious} loadingPrevious={controlledLogs && logsLoadingPrevious} onLoadPrevious={onLoadPreviousLogs} open={terminalOpen} onOpenChange={changeTerminalOpen} />

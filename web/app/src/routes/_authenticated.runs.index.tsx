@@ -18,7 +18,7 @@ function RunsIndexRoute() { return <RunsRoute q={Route.useSearch().q} />; }
 type RunsRouteProps = { runId?: string; q?: string };
 type SelectedLogsState = { runID: string; logs: RunLog[]; loading: boolean; error?: Error; hasPrevious: boolean; loadingPrevious: boolean; loadPrevious?: () => void };
 
-export function RunsRoute({ runId, q: _q }: RunsRouteProps = {}) {
+export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const page = usePage();
   const runs = useRunsPollingQuery({ limit: page.limit, offset: page.offset });
   const projects = useQuery(allProjectsQuery());
@@ -44,6 +44,7 @@ export function RunsRoute({ runId, q: _q }: RunsRouteProps = {}) {
     <>
       {selectedRunID ? <SelectedRunLogs runID={selectedRunID} follow={Boolean(selectedRun.data && !["succeeded", "failed", "canceled", "rejected"].includes(selectedRun.data.status))} onChange={setSelectedLogs} /> : null}
     <RunsView
+      q={q}
       snapshot={apiSnapshot({ runs: runs.data, projects: projects.data, templates: templates.data })}
       token=""
       busy={busy}

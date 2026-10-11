@@ -685,3 +685,28 @@ test("dashboard filtering removes unrelated rows and its Clear action restores t
   expect(await page.evaluate(() => history.length)).toBe(historyLength);
   await expect(page.getByText("No runs match this search.")).toHaveCount(0);
 });
+
+test("runs filter narrows the loaded page and retains usable log actions", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID, secondRunID } = await createRunLogFixture(page);
+  await page.reload();
+  const filter = page.getByRole("searchbox", { name: "Filter this page", exact: true });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await filter.fill(runID);
+    await expect(page.locator(`[data-run-detail-link="${runID}"]`)).toHaveCount(2);
+    await expect(page.locator(`[data-run-detail-link="${secondRunID}"]`)).toHaveCount(0);
+    await expect(page.getByText(/1 of \d+ runs match on this page\./)).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("runs-filter-320.png") });
+  }
+  await page.locator(`[data-run-log-trigger="${runID}"]`).last().click();
+  await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await filter.fill("no-such-run-filter");
+  await expect(page.getByText("No runs match this filter on the loaded page.")).toBeVisible();
+  await page.getByRole("button", { name: "Clear filter", exact: true }).click();
+  await expect(page.locator(`[data-run-detail-link="${secondRunID}"]`)).toHaveCount(2);
+});
