@@ -175,3 +175,19 @@ test("runner inventory does not report an empty list while loading", () => {
   expect(screen.getByRole("status").textContent).toBe("Loading runners...");
   expect(screen.queryByText("No runners match this view")).toBeNull();
 });
+
+test("runner inventory and details accept null tag and capability arrays", () => {
+  const record = { ...runner, tags: null, capabilities: null };
+  vi.mocked(useQuery).mockImplementation((options) => {
+    const key = (options as { queryKey?: readonly string[] }).queryKey?.[0];
+    return { data: key === "runners" ? { items: [record] } : key === "runner" ? record : { roles: ["runner_admin"] }, isError: false, isPending: false } as never;
+  });
+  const List = RunnersRoute.options.component!;
+  const list = render(<List />);
+  expect(screen.getByText("Edge runner")).toBeTruthy();
+  expect(screen.getByText(/no tags/)).toBeTruthy();
+  list.unmount();
+  const Detail = RunnerDetailRoute.options.component!;
+  render(<Detail />);
+  expect(screen.getAllByText("None")).toHaveLength(2);
+});

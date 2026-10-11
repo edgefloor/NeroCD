@@ -190,3 +190,25 @@ test("runner inventory retries the selected page without losing its filter", asy
   await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser");
   await expect(page).toHaveURL((url) => url.pathname === "/runners" && url.searchParams.get("offset") === "50");
 });
+
+test("runners registered without tags remain filterable and open normally", async ({ page }) => {
+  await createRunnerAdmin(page);
+  const id = `runner_untagged_${Date.now()}${Math.floor(Math.random() * 10_000)}`;
+  await postJSON(page, "/api/v1/runners/register", { id, name: "Untagged runner", tags: [], capabilities: ["compose-deploy"] });
+  const response = await page.request.get(`/api/v1/runners/${id}`);
+  expect(response.ok()).toBe(true);
+  expect((await response.json()).tags ?? []).toEqual([]);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runners?q=${id}`);
+    const link = page.getByRole("link", { name: /Untagged runner/ });
+    await expect(link).toContainText("no tags");
+    await link.click();
+    await expect(page.getByText("Untagged runner", { exact: true })).toBeVisible();
+    await expect(page.getByText("None", { exact: true })).toBeVisible();
+    await expect(page.getByText("compose-deploy", { exact: true })).toBeVisible();
+  }
+  expect(pageErrors).toEqual([]);
+});
