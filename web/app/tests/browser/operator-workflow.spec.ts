@@ -638,7 +638,7 @@ test("runner enrollment stays local to the reveal dialog and browser avoids runn
   await signIn(page);
   await expect(page.getByRole("heading", { name: "Runners" })).toBeVisible();
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
-  await page.getByLabel("Runner ID").fill(`runner_browser_${suffix}`);
+  await page.getByLabel("Runner ID").fill(`runner_browser_${suffix}_${"x".repeat(24)}`);
   await page.getByLabel("Runner name").fill("Browser enrollment runner");
   const creation = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runner-enrollments" && response.request().method() === "POST");
   await page.getByRole("button", { name: "Create enrollment" }).click();
@@ -656,6 +656,21 @@ test("runner enrollment stays local to the reveal dialog and browser avoids runn
     await expect(dialog.getByRole("button", { name: "Copy", exact: true })).toBeEnabled();
     expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("clipboard-error-320.png"), fullPage: false, mask: [dialog.getByLabel("Enrollment secret")] });
+  }
+  for (const viewport of [{ width: 320, height: 320 }, { width: 640, height: 320 }, { width: 1440, height: 360 }]) {
+    await page.setViewportSize(viewport);
+    await expect.poll(async () => {
+      const bounds = await dialog.boundingBox();
+      return Boolean(bounds && bounds.y >= 0 && bounds.y + bounds.height <= viewport.height);
+    }).toBe(true);
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const downloadButton = dialog.getByRole("button", { name: "Download once", exact: true });
+    await downloadButton.scrollIntoViewIfNeeded();
+    const downloadBounds = await downloadButton.boundingBox();
+    expect(downloadBounds!.y + downloadBounds!.height).toBeLessThanOrEqual(viewport.height);
+    await dialog.evaluate((element) => { element.scrollTop = 0; });
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeInViewport();
+    if (viewport.width === 640) await page.screenshot({ path: testInfo.outputPath("enrollment-landscape.png"), fullPage: false, mask: [dialog.getByLabel("Enrollment secret")] });
   }
   await page.evaluate(() => { Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => undefined } }); });
   await dialog.getByRole("button", { name: "Copy", exact: true }).click();
