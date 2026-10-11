@@ -34,6 +34,11 @@ test("refresh failures preserve the edit draft and expose recovery inside its di
   const dialog = screen.getByRole("dialog");
   const name = within(dialog).getByRole<HTMLInputElement>("textbox", { name: "Template Name" });
   fireEvent.change(name, { target: { value: "Unsaved template" } });
+  view.rerender(<TemplatesView {...props} canOperateProject={() => true} busy="template:update:template_maintained" />);
+  expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Saving template..." }).disabled).toBe(true);
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
   const retry = vi.fn();
   view.rerender(<TemplatesView {...props} canOperateProject={() => true} recovery={<button onClick={retry}>Retry templates</button>} />);
   expect(name.value).toBe("Unsaved template");

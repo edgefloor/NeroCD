@@ -119,6 +119,7 @@ function TemplateEditDialog({
 }): ReactNode {
   const formId = useId();
   const [open, setOpen] = useState(false);
+  const saving = busy === `template:update:${template.id}`;
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (recovery || busy) return;
@@ -151,7 +152,7 @@ function TemplateEditDialog({
   const command = template.run_spec.process?.command?.join(" ") ?? "";
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!saving) setOpen(nextOpen); }}>
       <DialogTrigger asChild>
         {trigger ?? (
           <Button variant="outline" size="sm" className="h-8 rounded-xl">
@@ -160,7 +161,7 @@ function TemplateEditDialog({
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      <DialogContent showCloseButton={!saving} className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit template</DialogTitle>
         </DialogHeader>
@@ -212,7 +213,7 @@ function TemplateEditDialog({
             <span>Requires approval before execution</span>
           </label>
           <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">
-            Save template
+            {saving ? "Saving template..." : "Save template"}
           </Button>
         </form>
       </DialogContent>

@@ -39,6 +39,7 @@ function ProjectCard({
   const projectRuns = runs.filter((run) => run.project_id === project.id);
   const projectRepos = repositories.filter((repo) => repo.project_id === project.id);
   const [editOpen, setEditOpen] = useState(false);
+  const saving = busy === `project:update:${project.id}`;
 
   async function updateSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -81,14 +82,14 @@ function ProjectCard({
           </Badge>
         </div>
         {canOperate ? <div className="flex flex-wrap gap-2">
-          <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <Dialog open={editOpen} onOpenChange={(open) => { if (!saving) setEditOpen(open); }}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm" className="h-8 rounded-xl">
                 <Pencil className="mr-1.5 h-4 w-4" />
                 Edit
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <DialogContent showCloseButton={!saving} className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Edit project</DialogTitle>
               </DialogHeader>
@@ -103,7 +104,7 @@ function ProjectCard({
                   <Textarea disabled={Boolean(busy)} id={`${formId}-description`} name="description" defaultValue={project.description} className="min-h-[80px] rounded-xl" />
                 </div>
                 <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">
-                  Save project
+                  {saving ? "Saving project..." : "Save project"}
                 </Button>
               </form>
             </DialogContent>

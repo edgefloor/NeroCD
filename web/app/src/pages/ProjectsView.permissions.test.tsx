@@ -33,6 +33,11 @@ test("project refresh failure preserves edit and source drafts while blocking wr
   const dialog = screen.getByRole("dialog");
   const name = within(dialog).getByRole<HTMLInputElement>("textbox", { name: "Project Name" });
   fireEvent.change(name, { target: { value: "Unsaved project" } });
+  view.rerender(<ProjectsView {...props} canOperateProject={() => true} busy="project:update:maintained" />);
+  expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Saving project..." }).disabled).toBe(true);
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
   const retry = vi.fn();
   view.rerender(<ProjectsView {...props} canOperateProject={() => true} recovery={<button onClick={retry}>Retry projects</button>} />);
   expect(name.value).toBe("Unsaved project");

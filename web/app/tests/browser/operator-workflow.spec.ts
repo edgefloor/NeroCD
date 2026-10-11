@@ -872,7 +872,7 @@ test("inventory and approval filters apply URL queries and recover after clearin
   }
 });
 
-test("project and template forms retain failed drafts and reset only after successful saves", async ({ page }) => {
+test("project and template forms retain failed drafts and reset only after successful saves", async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   const failed = new Set<string>();
@@ -934,6 +934,15 @@ test("project and template forms retain failed drafts and reset only after succe
     await save.click();
     try {
       for (const field of await dialog.locator("input, select, textarea").all()) await expect(field).toBeDisabled();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+      for (const width of [320, 390, 430, 1440]) {
+        await page.setViewportSize({ width, height: 844 });
+        await expect(dialog.getByRole("button", { name: `Saving ${resource}...`, exact: true })).toBeDisabled();
+        expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+        if (width === 320) await page.screenshot({ path: testInfo.outputPath(`${resource}-saving-320.png`) });
+      }
     } finally { releaseReply(); }
     expect((await editFailure).status()).toBe(503);
     await expect(save).toBeEnabled();
