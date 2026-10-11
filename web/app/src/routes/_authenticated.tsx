@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/sonner";
 import { Shell } from "@/components/layout/Shell";
 import { CommandPalette } from "@/components/CommandPalette";
-import { useTheme } from "@/hooks/useApi";
+import { useTheme } from "@/hooks/useTheme";
 import { approvalsQuery, healthQuery, principalQuery, runsQuery } from "@/api";
 import { apiSnapshot } from "@/api/compat";
 import { useAuthState } from "@/router/context";

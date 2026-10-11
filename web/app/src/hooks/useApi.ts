@@ -66,24 +66,3 @@ export function useAuth() {
 
   return { authenticated, authError, signIn, signOut };
 }
-
-const THEME_STORAGE_KEY = "nerocd.theme.v2";
-
-export function useTheme() {
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    if (saved === "dark" || saved === "light") return saved;
-    return "dark";
-  });
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((current) => (current === "dark" ? "light" : "dark"));
-  }, []);
-
-  return { theme, toggleTheme };
-}

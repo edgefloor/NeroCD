@@ -2047,3 +2047,29 @@ test("unknown URLs provide a usable return to the dashboard", async ({ page }, t
     await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   }
 });
+
+test("saved theme applies to sign-in, unknown routes, and account toggles", async ({ page }) => {
+  await page.goto("/missing-theme-page");
+  await page.evaluate(() => localStorage.setItem("nerocd.theme.v2", "dark"));
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await page.goto("/sign-in");
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  await page.goto("/runners");
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  expect(await page.evaluate(() => localStorage.getItem("nerocd.theme.v2"))).toBe("light");
+  await page.goto("/missing-theme-page");
+  await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await page.getByRole("link", { name: "Go to dashboard", exact: true }).click();
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
+  await page.goto("/missing-theme-page");
+  await expect(page.locator("html")).toHaveClass(/dark/);
+});
