@@ -170,3 +170,28 @@ test("pending account updates lock fields and preserve failed edits beside the r
   await waitFor(() => expect(within(row).queryByRole("alert")).toBeNull());
   expect(serviceAccountsAPI.update.mock.calls[1]).toEqual(serviceAccountsAPI.update.mock.calls[0]);
 });
+
+
+test("account creation keeps failed drafts and scopes the error to its project", async () => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [], count: 0, total: 0, offset: 0, limit: 10 });
+  let reject!: (error: Error) => void;
+  serviceAccountsAPI.create.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+  renderPanel();
+  await screen.findByText("No service accounts on this page.");
+  const form = screen.getByRole("form", { name: "Create service account" });
+  const name = screen.getByLabelText<HTMLInputElement>("Service account name");
+  fireEvent.change(name, { target: { value: "Draft automation" } });
+  fireEvent.submit(form);
+  await waitFor(() => expect(form.getAttribute("aria-busy")).toBe("true"));
+  expect(name.disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Creating…" }).disabled).toBe(true);
+  fireEvent.submit(form);
+  expect(serviceAccountsAPI.create).toHaveBeenCalledOnce();
+  await act(async () => reject(new Error("Temporary create failure")));
+  await waitFor(() => expect(name.disabled).toBe(false));
+  expect(name.value).toBe("Draft automation");
+  expect(within(form).getByRole("alert").textContent).toBe("Unable to create account: Temporary create failure");
+  fireEvent.change(screen.getByLabelText("Service account project"), { target: { value: "proj_two" } });
+  expect(within(form).queryByRole("alert")).toBeNull();
+  expect(name.value).toBe("Draft automation");
+});

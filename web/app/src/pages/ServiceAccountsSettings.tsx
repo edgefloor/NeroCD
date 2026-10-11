@@ -54,7 +54,6 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
       setSecret({ accountName: result.service_account.name, token: result.token, expiresAt: result.credential.expires_at });
       await invalidate();
     },
-    onError: (error) => toast.error(error.message),
   });
   const update = useMutation({ mutationFn: (input: ServiceAccountUpdateInput) => updateServiceAccount(input), onSuccess: invalidate });
   const rotate = useMutation({
@@ -97,11 +96,12 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
       <CardHeader><CardTitle><Bot className="mr-2 inline h-4 w-4" />Service accounts</CardTitle></CardHeader>
       <CardContent className="grid min-w-0 gap-4">
         <label className="grid gap-1 text-sm">Project<Select aria-label="Service account project" disabled={busy} value={projectID} onChange={(event) => setProjectID(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select></label>
-        <form className="grid min-w-0 gap-2 md:grid-cols-4" onSubmit={submitCreate}>
+        <form className="grid min-w-0 gap-2 md:grid-cols-4" aria-label="Create service account" aria-busy={create.isPending} onSubmit={submitCreate}>
           <Input name="name" aria-label="Service account name" disabled={busy} placeholder="Automation account" maxLength={128} required />
           <Select name="role" aria-label="Service account role" disabled={busy} defaultValue="maintainer"><option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option></Select>
           <Input name="expires_at" aria-label="Credential expiry" disabled={busy} type="datetime-local" />
-          <Button type="submit" disabled={controlsDisabled || !projectID}><KeyRound className="h-4 w-4" />Create account</Button>
+          <Button type="submit" disabled={controlsDisabled || !projectID}><KeyRound className="h-4 w-4" />{create.isPending ? "Creating…" : "Create account"}</Button>
+          {create.error && !create.isPending && create.variables?.project_id === projectID ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] md:col-span-4">Unable to create account: {create.error.message}</p> : null}
         </form>
         {page.isError ? <section className="space-y-3">
           <p role="alert">{result ? "Unable to refresh service accounts. Showing previously loaded accounts." : "Unable to load service accounts."}</p>

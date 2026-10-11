@@ -47,11 +47,33 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   await page.getByLabel("Service account name").fill(`Browser bot ${suffix}`);
   await page.getByLabel("Service account role").selectOption("maintainer");
   let failCreate = true;
-  await page.route("**/api/v1/service-accounts", (route) => route.request().method() === "POST" && failCreate
-    ? route.fulfill({ status: 503, json: { error: "Temporary account creation failure" } })
-    : route.continue());
+  let releaseCreate!: () => void;
+  const pendingCreate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+  await page.route("**/api/v1/service-accounts", async (route) => {
+    if (route.request().method() !== "POST" || !failCreate) return route.continue();
+    await pendingCreate;
+    return route.fulfill({ status: 503, json: { error: "Temporary account creation failure" } });
+  });
+  const createForm = page.getByRole("form", { name: "Create service account", exact: true });
   await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page.getByText("Temporary account creation failure", { exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(createForm).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByLabel("Service account project")).toBeDisabled();
+    for (const label of ["Service account name", "Service account role", "Credential expiry"]) await expect(createForm.getByLabel(label)).toBeDisabled();
+    await expect(createForm.getByRole("button", { name: "Creating…", exact: true })).toBeDisabled();
+  }
+  releaseCreate();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(createForm.getByRole("alert")).toHaveText("Unable to create account: Temporary account creation failure");
+    await expect(createForm.getByRole("button", { name: "Create account", exact: true })).toBeEnabled();
+    expect(await createForm.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) {
+      await createForm.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("account-create-error-320.png"), animations: "disabled" });
+    }
+  }
   await expect(page.getByLabel("Service account name")).toHaveValue(`Browser bot ${suffix}`);
   await expect(page.getByLabel("Service account role")).toHaveValue("maintainer");
   failCreate = false;
@@ -60,6 +82,7 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   expect((await createResponse).status()).toBe(201);
   const secretInput = page.getByLabel("One-time service account credential");
   await expect(secretInput).toBeVisible();
+  await expect(createForm.getByRole("alert")).toHaveCount(0);
   const firstToken = await secretInput.inputValue();
   expect(firstToken).toMatch(/^nca_/);
   await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new Error("Clipboard denied"); } } }));
