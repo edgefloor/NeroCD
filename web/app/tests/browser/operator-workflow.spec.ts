@@ -284,6 +284,16 @@ test("project paging reaches rows beyond one hundred on a narrow viewport", asyn
   await page.getByRole("button", { name: "Next projects" }).click();
   await expect(page.getByText("Showing 101-150 of 151")).toBeVisible();
   await expect(page.getByText("Paged project 101", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("100");
+  await page.reload();
+  await expect(page.getByText("Showing 101-150 of 151")).toBeVisible();
+  await page.goBack();
+  await expect(page.getByText("Showing 51-100 of 151")).toBeVisible();
+  await page.goForward();
+  await expect(page.getByText("Showing 101-150 of 151")).toBeVisible();
+  await page.goto("/runs");
+  await page.goBack();
+  await expect(page.getByText("Showing 101-150 of 151")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("projects-page-3-320.png"), fullPage: true });
 });

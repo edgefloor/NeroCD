@@ -31,3 +31,9 @@ test("detail run identity follows a changed route parameter", async () => {
   view.rerender(<RunsRoute runId="run_second" />);
   await waitFor(() => expect(screen.getByTestId("selected-run").textContent).toBe("run_second"));
 });
+
+vi.mock("@tanstack/react-router", async (original) => ({
+  ...await original<typeof import("@tanstack/react-router")>(),
+  useNavigate: () => vi.fn(),
+  useSearch: () => ({}),
+}));

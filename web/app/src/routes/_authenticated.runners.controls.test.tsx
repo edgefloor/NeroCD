@@ -16,6 +16,7 @@ vi.mock("@tanstack/react-router", () => ({
     useSearch: () => router.search,
   }),
   useNavigate: () => vi.fn(),
+  useSearch: () => router.search,
   Link: ({ children }: { children: ReactNode }) => <a href="#runner">{children}</a>,
 }));
 

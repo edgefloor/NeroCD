@@ -1,4 +1,6 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { maximumPageOffset } from "@/router/search";
 import { Button } from "@/components/ui/button";
 
 export const operatorPageSize = 50;
@@ -10,19 +12,24 @@ export type PageMetadata = {
   total: number;
 };
 
-export function usePage(resetKey = ""): {
+export function usePage(): {
   limit: number;
   offset: number;
   previous: () => void;
   next: () => void;
 } {
-  const [offset, setOffset] = useState(0);
-  useEffect(() => setOffset(0), [resetKey]);
+  const navigate = useNavigate();
+  const { offset = 0 } = useSearch({ strict: false });
+  const move = (delta: number) => void navigate({
+    to: ".",
+    search: (previous) => ({ ...previous, offset: Math.min(maximumPageOffset, Math.max(0, (previous.offset ?? 0) + delta)) || undefined }),
+    resetScroll: false,
+  });
   return {
     limit: operatorPageSize,
     offset,
-    previous: () => setOffset((value) => Math.max(0, value - operatorPageSize)),
-    next: () => setOffset((value) => value + operatorPageSize),
+    previous: () => move(-operatorPageSize),
+    next: () => move(operatorPageSize),
   };
 }
 
