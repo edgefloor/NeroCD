@@ -29,7 +29,7 @@ function TemplateForm({
   const formId = useId();
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (recovery) return;
+    if (recovery || busy) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const kind = String(form.get("kind") ?? "shell");
@@ -92,7 +92,7 @@ function TemplateForm({
         <input name="requires_ack" type="checkbox" className="rounded border-border" />
         <span>Requires approval before execution</span>
       </label>
-      <Button type="submit" disabled={Boolean(recovery) || busy === "template"} className="h-9 w-full rounded-xl">
+      <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">
         <Plus className="h-4 w-4 mr-2" />
         Create template
       </Button>
@@ -121,7 +121,7 @@ function TemplateEditDialog({
   const [open, setOpen] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (recovery) return;
+    if (recovery || busy) return;
     const form = new FormData(event.currentTarget);
     const kind = String(form.get("kind") ?? template.kind);
     const command = String(form.get("command") ?? "").trim().split(/\s+/).filter(Boolean);
@@ -211,7 +211,7 @@ function TemplateEditDialog({
             <input name="requires_ack" type="checkbox" defaultChecked={template.requires_ack} className="rounded border-border" />
             <span>Requires approval before execution</span>
           </label>
-          <Button type="submit" disabled={Boolean(recovery) || busy === `template:update:${template.id}`} className="h-9 w-full rounded-xl">
+          <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">
             Save template
           </Button>
         </form>
@@ -248,7 +248,7 @@ export function TemplatesView({
   const visibleTemplates = snapshot.templates.filter((template) => matchesQuery(q,
     template.id, template.name, template.project_id, projectName(snapshot.projects, template.project_id), template.kind, ...(template.runner_tags ?? [])));
   async function playTemplate(template: TaskTemplate): Promise<void> {
-    if (recovery) return;
+    if (recovery || busy) return;
     const run = await mutate(`template:run:${template.id}`, () => requestRun(token, { template_id: template.id }), "Run requested");
     if (run) onRunRequested(run.id);
   }
@@ -342,7 +342,7 @@ export function TemplatesView({
                             <Button
                               size="sm"
                               className="h-8 rounded-xl"
-                              disabled={Boolean(recovery) || busy === `template:run:${template.id}`}
+                              disabled={Boolean(recovery) || Boolean(busy)}
                               onClick={() => void playTemplate(template)}
                             >
                               <Play className="mr-1.5 h-4 w-4" />
@@ -391,7 +391,7 @@ export function TemplatesView({
                         <Button
                           size="sm"
                           className="h-8 w-8 rounded-xl"
-                          disabled={Boolean(recovery) || busy === `template:run:${template.id}`}
+                          disabled={Boolean(recovery) || Boolean(busy)}
                           onClick={() => void playTemplate(template)}
                           aria-label="Play"
                         >

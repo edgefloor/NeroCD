@@ -23,8 +23,8 @@ describe("resource query options", () => {
     await HomeRoute.options.loader!({ context: { queryClient: homeClient } } as never);
     expect(calls).toEqual(["/api/v1/health", "/api/v1/projects", "/api/v1/templates", "/api/v1/runs", "/api/v1/approvals", "/api/v1/run-logs?limit=5&offset=0"]);
     calls.length = 0;
-    await ProjectsRoute.options.loader!({ context: { queryClient: client() } } as never);
-    expect(calls).toEqual(["/api/v1/projects?limit=50&offset=0", "/api/v1/projects?limit=100&offset=0", "/api/v1/repositories"]);
+    await ProjectsRoute.options.loader!({ context: { queryClient: client() }, deps: { offset: 50 } } as never);
+    expect(calls).toEqual(["/api/v1/projects?limit=50&offset=50", "/api/v1/projects?limit=100&offset=0", "/api/v1/repositories"]);
     calls.length = 0;
     await RunDetailRoute.options.loader!({ context: { queryClient: client() }, params: { runId: "run_1" } } as never);
     expect(calls).toEqual(["/api/v1/runs/run_1"]);

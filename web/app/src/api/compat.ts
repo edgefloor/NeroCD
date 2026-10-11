@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
@@ -73,7 +73,10 @@ export type MutateFn = <T>(key: string, action: () => Promise<T>, success: strin
 export function useSnapshotMutation(): { busy: string; mutate: MutateFn } {
   const client = useQueryClient();
   const [busy, setBusy] = useState("");
+  const pending = useRef(false);
   const mutate = useCallback<MutateFn>(async (key, action, success) => {
+    if (pending.current) return undefined;
+    pending.current = true;
     setBusy(key);
     try {
       const result = await action();
@@ -84,6 +87,7 @@ export function useSnapshotMutation(): { busy: string; mutate: MutateFn } {
       toast.error(error instanceof Error ? error.message : String(error));
       return undefined;
     } finally {
+      pending.current = false;
       setBusy("");
     }
   }, [client]);

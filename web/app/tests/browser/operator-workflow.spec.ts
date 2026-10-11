@@ -2866,3 +2866,38 @@ test("projects recover their selected page and preserve edits through source ref
   expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
   expect(new URL(page.url()).searchParams.get("q")).toBe(fixture.projectID);
 });
+
+test("pending template actions disable competing writes and recover after failure", async ({ page }) => {
+  await page.goto("/templates");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  await createRunLogFixture(page);
+  await createRunLogFixture(page);
+  await page.reload();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let requests = 0;
+  await page.route("**/api/v1/runs", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    requests++;
+    await gate;
+    return route.fulfill({ status: 503, json: { error: "Temporary run request failure" } });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const play = page.getByRole("button", { name: "Play", exact: true });
+  expect(await play.count()).toBeGreaterThanOrEqual(2);
+  await play.first().click();
+  try {
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 844 });
+      const visiblePlay = page.getByRole("button", { name: "Play", exact: true });
+      for (const button of await visiblePlay.all()) await expect(button).toBeDisabled();
+      if (width === 1440) await expect(page.getByRole("button", { name: "Create template", exact: true })).toBeDisabled();
+    }
+    expect(requests).toBe(1);
+  } finally {
+    release();
+  }
+  for (const button of await play.all()) await expect(button).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Create template", exact: true })).toBeEnabled();
+});
