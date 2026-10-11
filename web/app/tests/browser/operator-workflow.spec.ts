@@ -3323,10 +3323,15 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(policy.getByRole("alert")).toBeVisible();
+    const savePolicy = policy.getByRole("button", { name: "Save policy", exact: true });
+    await expect(savePolicy).toBeEnabled();
+    await expect(savePolicy).toHaveCSS("opacity", "1");
+    await savePolicy.click({ trial: true });
+    await expect(savePolicy).toBeInViewport();
     expect(await policy.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (width === 320) {
       await policy.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: testInfo.outputPath("retention-save-error-320.png") });
+      await page.screenshot({ path: testInfo.outputPath("retention-save-error-320.png"), animations: "disabled" });
     }
   }
   const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/run-log-retention" && response.request().method() === "PUT");
