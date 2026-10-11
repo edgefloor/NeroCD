@@ -955,12 +955,14 @@ test("project and template forms retain failed drafts and reset only after succe
     expect((await failure).status()).toBe(503);
     await expect(create).toBeEnabled();
     await expect(name).toHaveValue(draft);
+    await expect(form.getByRole("alert")).toContainText(`Unable to create ${resource}:`);
     const success = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/${resource}s` && response.request().method() === "POST");
     await create.click();
     const response = await success;
     expect(response.status()).toBe(201);
     if (resource === "project") projectID = (await response.json()).id;
     await expect(name).toHaveValue("");
+    await expect(form.getByRole("alert")).toHaveCount(0);
     await page.getByRole("searchbox", { name: "Filter this page", exact: true }).fill(draft);
     await page.getByRole("button", { name: "Edit", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: `Edit ${resource}` });
@@ -985,6 +987,12 @@ test("project and template forms retain failed drafts and reset only after succe
     expect((await editFailure).status()).toBe(503);
     await expect(save).toBeEnabled();
     await expect(editedName).toHaveValue(`${draft} saved`);
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(dialog.getByRole("alert")).toContainText(`Unable to save ${resource}:`);
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      if (width === 320) await page.screenshot({ path: testInfo.outputPath(`${resource}-save-error-320.png`), animations: "disabled" });
+    }
     const editSuccess = page.waitForResponse((candidate) => new URL(candidate.url()).pathname === `/api/v1/${resource}s` && candidate.request().method() === "PATCH");
     failedRefreshResource = `${resource}s`;
     await save.click();
@@ -1022,6 +1030,8 @@ test("project and template forms retain failed drafts and reset only after succe
     expect((await saved).status()).toBe(status);
     await expect(register).toBeEnabled();
     await expect(sourceForm.locator('input[name="name"]')).toHaveValue(status === 503 ? `Retry source ${suffix}` : "");
+    if (status === 503) await expect(sourceForm.getByRole("alert")).toContainText("Unable to register source:");
+    else await expect(sourceForm.getByRole("alert")).toHaveCount(0);
   }
   expect(pageErrors).toEqual([]);
 });
@@ -1150,6 +1160,10 @@ test("running a template opens its detail route and follows scoped output", asyn
   expect((await failedRequest).status()).toBe(503);
   await expect(page.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
   expect(new URL(page.url()).pathname).toBe("/templates");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("alert").filter({ hasText: "Unable to request run:" })).toBeVisible();
+  }
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     const requested = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs" && response.request().method() === "POST");
@@ -3718,7 +3732,21 @@ test("project archives remove cards and source choices even when refresh fails",
   await expect(page.getByRole("button", { name: "Archive", exact: true })).toBeVisible();
   let release = () => {};
   const gate = new Promise<void>((resolve) => { release = resolve; });
-  await page.route("**/api/v1/projects/archive", async (route) => { await gate; await route.continue(); });
+  let attempts = 0;
+  await page.route("**/api/v1/projects/archive", async (route) => {
+    attempts++;
+    if (attempts === 1) return route.fulfill({ status: 503, body: "Temporary archive failure" });
+    await gate;
+    await route.continue();
+  });
+  const failed = page.waitForResponse((result) => new URL(result.url()).pathname === "/api/v1/projects/archive");
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  expect((await failed).status()).toBe(503);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("alert")).toContainText("Unable to archive project:");
+    await expect(page.getByRole("button", { name: "Archive", exact: true })).toBeEnabled();
+  }
   await page.route(/\/api\/v1\/projects([?].*)?$/, async (route) => {
     if (route.request().method() === "GET") return route.fulfill({ status: 503, body: "Unavailable" });
     return route.continue();
@@ -3729,6 +3757,7 @@ test("project archives remove cards and source choices even when refresh fails",
     for (const width of [320, 390, 430, 1440]) {
       await page.setViewportSize({ width, height: 1000 });
       await expect(page.getByRole("button", { name: "Archiving…", exact: true })).toBeDisabled();
+      await expect(page.getByRole("alert").filter({ hasText: "Unable to archive project:" })).toHaveCount(0);
     }
   } finally { release(); }
   expect((await response).status()).toBe(200);

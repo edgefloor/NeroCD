@@ -6,7 +6,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ApiSnapshot, Project } from "@/api";
-import type { ProjectActions } from "@/api/mutations";
+import type { ActionError, ProjectActions } from "@/api/mutations";
+import { ActionErrorMessage } from "@/components/common/ActionErrorMessage";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
 import { formatDate, matchesQuery } from "@/lib/format";
@@ -19,6 +20,7 @@ function ProjectCard({
   repositories,
   busy,
   actions,
+  actionError,
   recovery,
   canOperate,
 }: {
@@ -28,6 +30,7 @@ function ProjectCard({
   repositories: ApiSnapshot["repositories"];
   busy: string;
   actions: ProjectActions;
+  actionError?: ActionError;
   recovery?: ReactNode;
   canOperate: boolean;
 }): ReactNode {
@@ -99,6 +102,7 @@ function ProjectCard({
                 <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">
                   {saving ? "Saving project..." : "Save project"}
                 </Button>
+                <ActionErrorMessage error={actionError} actionKey={`project:update:${project.id}`} label="Unable to save project" />
               </form>
             </DialogContent>
           </Dialog>
@@ -113,6 +117,7 @@ function ProjectCard({
             {busy === `project:archive:${project.id}` ? "Archiving…" : "Archive"}
           </Button>
         </div> : null}
+        <ActionErrorMessage error={actionError} actionKey={`project:archive:${project.id}`} label="Unable to archive project" />
       </CardContent>
     </Card>
   );
@@ -122,11 +127,13 @@ function ProjectForms({
   projects,
   busy,
   actions,
+  actionError,
   recovery,
 }: {
   projects: Project[];
   busy: string;
   actions: ProjectActions;
+  actionError?: ActionError;
   recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
@@ -168,6 +175,7 @@ function ProjectForms({
           <Plus className="h-4 w-4 mr-2" />
           Create project
         </Button>
+        <ActionErrorMessage error={actionError} actionKey="project" label="Unable to create project" />
       </form>
       {projects.length > 0 ? <form aria-busy={Boolean(busy)} className="space-y-3 border-t pt-6" onSubmit={(event) => void createRepoSubmit(event)}>
         <div className="space-y-1.5">
@@ -207,6 +215,7 @@ function ProjectForms({
           <GitBranch className="h-4 w-4 mr-2" />
           Register source
         </Button>
+        <ActionErrorMessage error={actionError} actionKey="repository" label="Unable to register source" />
       </form> : null}
     </div>
   );
@@ -218,6 +227,7 @@ export function ProjectsView({
   formProjects = snapshot.projects,
   busy,
   actions,
+  actionError,
   recovery,
   canOperateProject,
   loading,
@@ -227,6 +237,7 @@ export function ProjectsView({
   formProjects?: Project[];
   busy: string;
   actions: ProjectActions;
+  actionError?: ActionError;
   recovery?: ReactNode;
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
@@ -264,7 +275,7 @@ export function ProjectsView({
                 <DialogTitle>Configure project</DialogTitle>
               </DialogHeader>
               {recovery}
-              <ProjectForms projects={writableProjects} busy={busy} actions={actions} recovery={recovery} />
+              <ProjectForms projects={writableProjects} busy={busy} actions={actions} recovery={recovery} actionError={actionError} />
             </DialogContent>
           </Dialog>
         </div>
@@ -286,7 +297,7 @@ export function ProjectsView({
               repositories={snapshot.repositories}
               busy={busy}
               actions={actions}
-              recovery={recovery}
+              recovery={recovery} actionError={actionError}
             />
           ))
         )}
@@ -296,7 +307,7 @@ export function ProjectsView({
           <CardTitle className="text-base font-semibold">Configure project</CardTitle>
         </CardHeader>
         <CardContent>
-          <ProjectForms projects={writableProjects} busy={busy} actions={actions} recovery={recovery} />
+          <ProjectForms projects={writableProjects} busy={busy} actions={actions} recovery={recovery} actionError={actionError} />
         </CardContent>
       </Card>
     </section>

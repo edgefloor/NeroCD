@@ -26,7 +26,7 @@ function TemplatesRoute() {
   const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
   const queries = [projects, templates, principal, members];
   const failed = queries.filter((query) => query.isError);
-  const { busy, actions } = useTemplateActions(failed.length > 0);
+  const { busy, error, actions } = useTemplateActions(failed.length > 0);
   const recovery = failed.length > 0 ? <section className="space-y-3">
     <p role="alert">{templates.data ? "Unable to refresh templates. Your work is preserved; retry before saving or running a template." : "Unable to load templates."}</p>
     <Button type="button" disabled={failed.some((query) => query.isFetching)} onClick={() => { for (const query of failed) void query.refetch(); }}>Retry templates</Button>
@@ -36,7 +36,7 @@ function TemplatesRoute() {
     {templates.data || !templates.isError ? <TemplatesView
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
       onRunRequested={(runId) => void navigate({ to: "/runs/$runId", params: { runId }, search: {} })}
-      q={q} snapshot={apiSnapshot({ projects: projects.data, templates: templates.data })} busy={busy} actions={actions}
+      q={q} snapshot={apiSnapshot({ projects: projects.data, templates: templates.data })} busy={busy} actions={actions} actionError={error}
       recovery={recovery} loading={queries.some((query) => query.isPending)}
     /> : null}
     <PageNavigation page={templates.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="templates" loading={templates.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />

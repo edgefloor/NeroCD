@@ -28,7 +28,7 @@ function ProjectsRoute() {
   const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
   const queries = [projects, allProjects, repositories, templates, runs, principal, members];
   const failed = queries.filter((query) => query.isError);
-  const { busy, actions } = useProjectActions(failed.length > 0);
+  const { busy, error, actions } = useProjectActions(failed.length > 0);
   const recovery = failed.length > 0 ? <section className="space-y-3">
     <p role="alert">{projects.data ? "Unable to refresh project information. Your work is preserved; retry before making changes." : "Unable to load projects."}</p>
     <Button type="button" disabled={failed.some((query) => query.isFetching)} onClick={() => { for (const query of failed) void query.refetch(); }}>Retry projects</Button>
@@ -38,7 +38,7 @@ function ProjectsRoute() {
     {projects.data || !projects.isError ? <ProjectsView
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} q={q}
       snapshot={apiSnapshot({ projects: projects.data, repositories: repositories.data, templates: templates.data, runs: runs.data })}
-      formProjects={allProjects.data ?? []} busy={busy} actions={actions} recovery={recovery}
+      formProjects={allProjects.data ?? []} busy={busy} actions={actions} actionError={error} recovery={recovery}
       loading={queries.some((query) => query.isPending)}
     /> : null}
     <PageNavigation page={projects.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="projects" loading={projects.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />

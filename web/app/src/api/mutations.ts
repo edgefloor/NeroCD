@@ -41,10 +41,12 @@ export type ProjectActions = {
   repository: (input: Parameters<typeof createRepository>[0]) => Promise<unknown>;
 };
 
-export function useProjectActions(disabled = false): { busy: string; actions: ProjectActions } {
+export type ActionError = { key: string; message: string };
+
+export function useProjectActions(disabled = false): { busy: string; error?: ActionError; actions: ProjectActions } {
   const mutations = useProjectMutations();
-  const { busy, perform } = useActionLock(disabled);
-  return { busy, actions: {
+  const { busy, error, perform } = useActionLock(disabled);
+  return { busy, error, actions: {
     create: (input) => perform("project", () => mutations.create.mutateAsync(input)),
     update: (input) => perform(`project:update:${input.id}`, () => mutations.update.mutateAsync(input)),
     archive: (input) => perform(`project:archive:${input.id}`, () => mutations.archive.mutateAsync(input)),
@@ -55,21 +57,23 @@ export function useProjectActions(disabled = false): { busy: string; actions: Pr
 function useActionLock(disabled: boolean) {
   const pending = useRef(false);
   const [busy, setBusy] = useState("");
+  const [error, setError] = useState<ActionError>();
   async function perform<T>(key: string, action: () => Promise<T>): Promise<T | undefined> {
     if (disabled || pending.current) return undefined;
     pending.current = true;
     setBusy(key);
+    setError(undefined);
     try {
       return await action();
-    } catch {
-      // The resource mutation reports the error. Forms retain their draft.
+    } catch (cause) {
+      setError({ key, message: cause instanceof Error ? cause.message : String(cause) });
       return undefined;
     } finally {
       pending.current = false;
       setBusy("");
     }
   }
-  return { busy, perform };
+  return { busy, error, perform };
 }
 
 export type TemplateActions = {
@@ -78,9 +82,9 @@ export type TemplateActions = {
   run: (input: Parameters<typeof requestRun>[0]) => Promise<{ id: string } | undefined>;
 };
 
-export function useTemplateActions(disabled = false): { busy: string; actions: TemplateActions } {
+export function useTemplateActions(disabled = false): { busy: string; error?: ActionError; actions: TemplateActions } {
   const client = useQueryClient();
-  const { busy, perform } = useActionLock(disabled);
+  const { busy, error, perform } = useActionLock(disabled);
   const onError = (error: Error) => toast.error(error.message);
   const create = useMutation({ mutationFn: (input: Parameters<typeof createTemplate>[0]) => createTemplate(input), onError, onSuccess: async () => {
     await client.invalidateQueries({ queryKey: ["templates"] });
@@ -103,7 +107,7 @@ export function useTemplateActions(disabled = false): { busy: string; actions: T
     ]);
     toast.success("Run requested");
   } });
-  return { busy, actions: {
+  return { busy, error, actions: {
     create: (input) => perform("template", () => create.mutateAsync(input)),
     update: (input) => perform(`template:update:${input.id}`, () => update.mutateAsync(input)),
     run: (input) => perform(`template:run:${input.template_id}`, () => run.mutateAsync(input)),

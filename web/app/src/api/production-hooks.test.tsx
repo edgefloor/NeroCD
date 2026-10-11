@@ -457,8 +457,10 @@ test("template run requests recover from failure and refresh only run-related da
   const mounted = renderHook(() => useTemplateActions(), { wrapper });
   await act(async () => { expect(await mounted.result.current.actions.run({ template_id: templateFixture.id })).toBeUndefined(); });
   expect(mounted.result.current.busy).toBe("");
+  expect(mounted.result.current.error).toMatchObject({ key: `template:run:${templateFixture.id}`, message: expect.any(String) });
   for (const key of changed) expect(client.getQueryState(key)?.isInvalidated).toBe(false);
   await act(async () => { expect(await mounted.result.current.actions.run({ template_id: templateFixture.id })).toEqual(run); });
+  expect(mounted.result.current.error).toBeUndefined();
   expect(client.getQueryData(queryKeys.run(run.id))).toEqual(run);
   for (const key of changed) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
   for (const key of unchanged) expect(client.getQueryState(key)?.isInvalidated).toBe(false);

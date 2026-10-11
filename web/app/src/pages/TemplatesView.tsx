@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ApiSnapshot, TaskTemplate } from "@/api";
-import type { TemplateActions } from "@/api/mutations";
+import type { ActionError, TemplateActions } from "@/api/mutations";
+import { ActionErrorMessage } from "@/components/common/ActionErrorMessage";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
 import { matchesQuery, projectName } from "@/lib/format";
@@ -18,11 +19,13 @@ function TemplateForm({
   snapshot,
   busy,
   actions,
+  actionError,
   recovery,
 }: {
   snapshot: ApiSnapshot;
   busy: string;
   actions: TemplateActions;
+  actionError?: ActionError;
   recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
@@ -107,6 +110,7 @@ function TemplateForm({
         <Plus className="h-4 w-4 mr-2" />
         Create template
       </Button>
+      <ActionErrorMessage error={actionError} actionKey="template" label="Unable to create template" />
     </form>
   );
 }
@@ -117,6 +121,7 @@ function TemplateEditDialog({
   snapshot,
   busy,
   actions,
+  actionError,
   recovery,
 }: {
   trigger?: ReactNode;
@@ -124,6 +129,7 @@ function TemplateEditDialog({
   snapshot: ApiSnapshot;
   busy: string;
   actions: TemplateActions;
+  actionError?: ActionError;
   recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
@@ -224,6 +230,7 @@ function TemplateEditDialog({
           <Button type="submit" disabled={Boolean(recovery) || Boolean(busy)} className="h-9 w-full rounded-xl">
             {saving ? "Saving template..." : "Save template"}
           </Button>
+          <ActionErrorMessage error={actionError} actionKey={`template:update:${template.id}`} label="Unable to save template" />
         </form>
       </DialogContent>
     </Dialog>
@@ -235,6 +242,7 @@ export function TemplatesView({
   q,
   busy,
   actions,
+  actionError,
   recovery,
   loading,
   onRunRequested,
@@ -244,6 +252,7 @@ export function TemplatesView({
   q?: string;
   busy: string;
   actions: TemplateActions;
+  actionError?: ActionError;
   recovery?: ReactNode;
   loading?: boolean;
   onRunRequested: (runID: string) => void;
@@ -286,7 +295,7 @@ export function TemplatesView({
             </DialogHeader>
             <div className="min-h-0 space-y-4 overflow-y-auto">
               {recovery}
-              <TemplateForm snapshot={creationSnapshot} busy={busy} actions={actions} recovery={recovery} />
+              <TemplateForm snapshot={creationSnapshot} busy={busy} actions={actions} recovery={recovery} actionError={actionError} />
             </div>
           </DialogContent>
         </Dialog>
@@ -296,7 +305,7 @@ export function TemplatesView({
           <CardTitle className="text-base font-semibold">Create template</CardTitle>
         </CardHeader>
         <CardContent>
-          <TemplateForm snapshot={creationSnapshot} busy={busy} actions={actions} recovery={recovery} />
+          <TemplateForm snapshot={creationSnapshot} busy={busy} actions={actions} recovery={recovery} actionError={actionError} />
         </CardContent>
       </Card>
       </> : null}
@@ -358,8 +367,9 @@ export function TemplatesView({
                               <Play className="mr-1.5 h-4 w-4" />
                               Play
                             </Button>
-                            <TemplateEditDialog template={template} snapshot={snapshot} busy={busy} actions={actions} recovery={recovery} />
+                            <TemplateEditDialog template={template} snapshot={snapshot} busy={busy} actions={actions} recovery={recovery} actionError={actionError} />
                           </div> : <span className="text-xs text-muted-foreground">Read only</span>}
+                          <ActionErrorMessage error={actionError} actionKey={`template:run:${template.id}`} label="Unable to request run" />
                         </TableCell>
                       </TableRow>
                     ))}
@@ -418,10 +428,11 @@ export function TemplatesView({
 
                           busy={busy}
                           actions={actions}
-                          recovery={recovery}
+                          recovery={recovery} actionError={actionError}
                         />
                       </div> : null}
                     </div>
+                    <ActionErrorMessage error={actionError} actionKey={`template:run:${template.id}`} label="Unable to request run" />
                   </div>
                 ))}
               </div>
