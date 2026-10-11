@@ -6,6 +6,19 @@ import { SkeletonTable } from "@/components/common/SkeletonCard";
 import { matchesQuery } from "@/lib/format";
 
 const runTargetActions = new Set(["run.request", "run.approve", "run.reject", "run.cancel"]);
+const deploymentTargetActions = new Set([
+  "deployment.create", "deployment.confirm", "deployment.cancel", "deployment.preassignment_fail",
+  "runner.deployment.failed", "runner.deployment.cancellation_rollback", "runner.deployment.rollback_queued",
+  "runner.deployment.transition", "runner.deployment.provenance.resolve",
+]);
+
+function AuditTarget({ event }: { event: AuditEvent }): ReactNode {
+  if (!event.target_id) return "Not recorded";
+  if (runTargetActions.has(event.action)) return <Link to="/runs/$runId" params={{ runId: event.target_id }} search={(previous) => previous} className="underline underline-offset-4">{event.target_id}</Link>;
+  if (deploymentTargetActions.has(event.action)) return <Link to="/deployments/$deploymentId" params={{ deploymentId: event.target_id }} search={(previous) => previous} className="underline underline-offset-4">{event.target_id}</Link>;
+  return event.target_id;
+}
+
 
 export function AuditView({ events, q, loading }: { events: AuditEvent[]; q?: string; loading?: boolean }): ReactNode {
   if (loading) return <SkeletonTable rows={8} />;
@@ -23,7 +36,7 @@ export function AuditView({ events, q, loading }: { events: AuditEvent[]; q?: st
           </div>
           <dl className="grid min-w-0 gap-3 text-sm md:grid-cols-2">
             <div className="min-w-0"><dt className="text-xs text-muted-foreground">Actor</dt><dd className="break-all font-mono">{event.actor_id || "Not recorded"}</dd></div>
-            <div className="min-w-0"><dt className="text-xs text-muted-foreground">Target</dt><dd className="break-all font-mono">{event.target_id && runTargetActions.has(event.action) ? <Link to="/runs/$runId" params={{ runId: event.target_id }} search={(previous) => previous} className="underline underline-offset-4">{event.target_id}</Link> : event.target_id || "Not recorded"}</dd></div>
+            <div className="min-w-0"><dt className="text-xs text-muted-foreground">Target</dt><dd className="break-all font-mono"><AuditTarget event={event} /></dd></div>
           </dl>
           <details className="min-w-0 text-sm">
             <summary className="cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-ring">Event details</summary>

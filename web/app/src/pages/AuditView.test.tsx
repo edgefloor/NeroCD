@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { AuditView } from "./AuditView";
 
-vi.mock("@tanstack/react-router", () => ({ Link: ({ children, params }: { children: ReactNode; params: { runId: string } }) => <a href={`/runs/${params.runId}`}>{children}</a> }));
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, params }: { children: ReactNode; params: { runId?: string; deploymentId?: string } }) => <a href={params.deploymentId ? `/deployments/${params.deploymentId}` : `/runs/${params.runId}`}>{children}</a> }));
 
 afterEach(cleanup);
 const event = { id: "audit_one", actor_id: "user_operator", target_id: "run_one", action: "run.requested", metadata: { reason: "Release requested", nested: { value: "Complete evidence" } }, created_at: "2026-10-11T12:34:56Z" };
@@ -32,8 +32,14 @@ test.each(["run.request", "run.approve", "run.reject", "run.cancel"])("%s links 
   expect(screen.getByRole("link", { name: event.target_id }).getAttribute("href")).toBe(`/runs/${event.target_id}`);
 });
 
-test.each(["project.create", "run_log_retention.execute", "run.unknown"])("%s does not guess a target route", (action) => {
+test.each(["project.create", "run_log_retention.execute", "run.unknown", "deployment.unknown", "runner.deployment.unknown"])("%s does not guess a target route", (action) => {
   render(<AuditView events={[{ ...event, action }]} />);
   expect(screen.queryByRole("link")).toBeNull();
   expect(screen.getByText(event.target_id)).toBeTruthy();
+});
+
+
+test.each(["deployment.create", "deployment.confirm", "deployment.cancel", "deployment.preassignment_fail", "runner.deployment.failed", "runner.deployment.cancellation_rollback", "runner.deployment.rollback_queued", "runner.deployment.transition", "runner.deployment.provenance.resolve"])("%s links to its recorded deployment target", (action) => {
+  render(<AuditView events={[{ ...event, action, target_id: "deployment_one" }]} />);
+  expect(screen.getByRole("link", { name: "deployment_one" }).getAttribute("href")).toBe("/deployments/deployment_one");
 });
