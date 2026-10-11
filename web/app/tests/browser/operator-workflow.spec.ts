@@ -3049,7 +3049,7 @@ test("pending template actions disable competing writes and recover after failur
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   const play = page.getByRole("button", { name: "Play", exact: true });
-  expect(await play.count()).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => play.count()).toBeGreaterThanOrEqual(2);
   await play.first().click();
   try {
     for (const width of [320, 390, 430, 1440]) {
