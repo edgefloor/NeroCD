@@ -31,7 +31,7 @@ async function postJSON(page: Page, path: string, token: string | undefined, dat
   return page.request.post(path, { data, headers: { Origin: new URL(page.url()).origin, "X-NeroCD-CSRF": "1", ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
 }
 
-test("managed account creates runs with stable identity, rotates, isolates projects, and revokes", async ({ page }) => {
+test("managed account creates runs with stable identity, rotates, isolates projects, and revokes", async ({ page }, testInfo) => {
   await page.goto("/settings");
   await signIn(page);
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
@@ -53,6 +53,18 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   await expect(secretInput).toBeVisible();
   const firstToken = await secretInput.inputValue();
   expect(firstToken).toMatch(/^nca_/);
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new Error("Clipboard denied"); } } }));
+  await page.getByRole("button", { name: "Copy credential", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toHaveText("Copy failed. Select and copy the credential manually, or try again.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(secretInput).toBeVisible();
+    await expect.poll(() => page.getByRole("dialog").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("service-credential-copy-failure-320.png"), fullPage: true, mask: [secretInput] });
+  }
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => undefined } }));
+  await page.getByRole("button", { name: "Copy credential", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("status")).toHaveText("Credential copied.");
   await page.getByRole("button", { name: "I saved it" }).click();
   await expect(secretInput).toHaveCount(0);
 
@@ -74,6 +86,7 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   const rotateResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/service-accounts/rotate");
   await accountRow.getByRole("button", { name: "Rotate" }).click();
   expect((await rotateResponse).status()).toBe(201);
+  await expect(page.getByRole("dialog").getByText("Credential copied.", { exact: true })).toHaveCount(0);
   const rotatedToken = await secretInput.inputValue();
   expect(rotatedToken).toMatch(/^nca_/);
   expect(rotatedToken).not.toBe(firstToken);

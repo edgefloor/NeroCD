@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, KeyRound, RotateCw, ShieldOff } from "lucide-react";
 import { toast } from "sonner";
@@ -111,9 +111,43 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
           </form>
         ))}
         <nav className="flex flex-wrap items-center justify-between gap-2 border-t pt-3" aria-label="Service account pages"><p className="text-sm text-muted-foreground">Showing {first}–{last} of {result?.total ?? 0}</p><div className="flex gap-2"><Button variant="outline" size="sm" disabled={busy || offset === 0} onClick={() => setOffset((value) => Math.max(0, value - serviceAccountsPageSize))}>Previous accounts</Button><Button variant="outline" size="sm" disabled={busy || !result || last >= result.total} onClick={() => setOffset((value) => value + serviceAccountsPageSize)}>Next accounts</Button></div></nav>
-        <Dialog open={Boolean(secret)} onOpenChange={(open) => !open && setSecret(undefined)}><DialogContent><DialogHeader><DialogTitle>Save this credential now</DialogTitle><DialogDescription>The credential for {secret?.accountName} is shown once and expires{secret?.expiresAt ? ` ${new Date(secret.expiresAt).toLocaleString()}` : " at its configured time"}. Closing this dialog clears it from the page.</DialogDescription></DialogHeader><Input aria-label="One-time service account credential" value={secret?.token ?? ""} readOnly autoComplete="off" /><DialogFooter><Button variant="outline" onClick={() => secret && navigator.clipboard.writeText(secret.token)}>Copy credential</Button><Button onClick={() => setSecret(undefined)}>I saved it</Button></DialogFooter></DialogContent></Dialog>
+        {secret ? <ServiceAccountCredential secret={secret} onClose={() => setSecret(undefined)} /> : null}
         <Dialog open={Boolean(revoking)} onOpenChange={(open) => !open && setRevoking(undefined)}><DialogContent><DialogHeader><DialogTitle>Revoke {revoking?.name}?</DialogTitle><DialogDescription>This immediately disables the stable account and every credential issued for it.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setRevoking(undefined)}>Keep account active</Button><Button variant="destructive" disabled={busy} onClick={() => revoking && revoke.mutate(revoking.id)}>Revoke account</Button></DialogFooter></DialogContent></Dialog>
       </CardContent>
     </Card>
   );
+}
+
+
+function ServiceAccountCredential({ secret, onClose }: { secret: OneTimeSecret; onClose: () => void }): ReactNode {
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+
+  async function copyCredential() {
+    if (copyStatus === "copying") return;
+    setCopyStatus("copying");
+    try {
+      await navigator.clipboard.writeText(secret.token);
+      if (active.current) setCopyStatus("copied");
+    } catch {
+      if (active.current) setCopyStatus("failed");
+    }
+  }
+
+  return <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      <DialogHeader className="min-w-0 pr-6">
+        <DialogTitle>Save this credential now</DialogTitle>
+        <DialogDescription className="break-words">The credential for {secret.accountName} is shown once and expires{secret.expiresAt ? ` ${new Date(secret.expiresAt).toLocaleString()}` : " at its configured time"}. Closing this dialog clears it from the page.</DialogDescription>
+      </DialogHeader>
+      <Input aria-label="One-time service account credential" value={secret.token} readOnly autoComplete="off" />
+      {copyStatus === "copied" ? <p role="status" className="text-sm">Credential copied.</p> : null}
+      {copyStatus === "failed" ? <p role="alert" className="text-sm text-destructive">Copy failed. Select and copy the credential manually, or try again.</p> : null}
+      <DialogFooter>
+        <Button variant="outline" disabled={copyStatus === "copying"} onClick={() => void copyCredential()}>{copyStatus === "copying" ? "Copying..." : "Copy credential"}</Button>
+        <Button onClick={onClose}>I saved it</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>;
 }
