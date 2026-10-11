@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { createTemplate, updateTemplate, requestRun, approveRun, rejectRun, archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createProject, createRepository, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse, type Deployment, type DeploymentList, type ApprovalListResponse, type Project, type ProjectListResponse, type TaskTemplateListResponse } from "./resources";
 import { queryKeys } from "./queries";
 
-export function useProjectMutations() {
+function useProjectMutations() {
   const client = useQueryClient();
   const refreshProjects = () => client.invalidateQueries({ queryKey: ["projects"] });
   async function retainConfirmedProject(project: Project) {

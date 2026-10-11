@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { templatesQuery, allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
-import { useApprovalDecision, useDeploymentActions, useProjectMutations, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
+import { useApprovalDecision, useDeploymentActions, useProjectActions, useTemplateActions, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
@@ -11,22 +11,22 @@ afterEach(() => { globalThis.fetch = originalFetch; vi.useRealTimers(); });
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 function setup() { const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>; return { client, wrapper }; }
 
-test("mounted project mutations target only project cache", async () => {
+test("mounted project actions target only project cache", async () => {
   const counts = new Map<string, number>();
   globalThis.fetch = vi.fn<typeof fetch>((path, init) => { const key = String(path); counts.set(key, (counts.get(key) ?? 0) + 1); if (init?.method === "POST") return Promise.resolve(json({ id: "proj_new", name: "New", description: "" })); return Promise.resolve(json({ items: [], count: 0, total: 0, limit: 100, offset: 0 })); });
   const { wrapper } = setup();
-  function Observer() { useQuery(projectsQuery()); useQuery(allProjectsQuery()); useQuery(runsQuery()); useQuery(runLogsQuery({ run_id: "run_1", limit: 100, offset: 0 })); useQuery(auditEventsQuery()); return useProjectMutations(); }
+  function Observer() { useQuery(projectsQuery()); useQuery(allProjectsQuery()); useQuery(runsQuery()); useQuery(runLogsQuery({ run_id: "run_1", limit: 100, offset: 0 })); useQuery(auditEventsQuery()); return useProjectActions(); }
   const mounted = renderHook(() => Observer(), { wrapper });
   await waitFor(() => expect(counts.get("/api/v1/projects")).toBeGreaterThanOrEqual(1));
   const initialProjectRequests = counts.get("/api/v1/projects") ?? 0;
-  await act(async () => { await mounted.result.current.create.mutateAsync({ name: "New", description: "" }); });
+  await act(async () => { await mounted.result.current.actions.create({ name: "New", description: "" }); });
   await waitFor(() => expect(counts.get("/api/v1/projects")).toBe(initialProjectRequests + 2));
-  await act(async () => { await mounted.result.current.update.mutateAsync({ id: "proj_new", name: "Renamed", description: "" }); });
+  await act(async () => { await mounted.result.current.actions.update({ id: "proj_new", name: "Renamed", description: "" }); });
   await waitFor(() => expect(counts.get("/api/v1/projects")).toBe(initialProjectRequests + 4));
   expect(counts.get("/api/v1/runs")).toBe(1); expect(counts.get("/api/v1/audit-events")).toBe(1); expect(counts.get("/api/v1/run-logs?run_id=run_1&limit=100&offset=0")).toBe(1);
 });
 
-test("project mutations refresh the all-project lookup cache", async () => {
+test("project actions refresh the all-project lookup cache", async () => {
   let requests = 0;
   globalThis.fetch = vi.fn<typeof fetch>((_path, init) => {
     requests += 1;
@@ -34,14 +34,14 @@ test("project mutations refresh the all-project lookup cache", async () => {
     return Promise.resolve(json({ items: [], count: 0, total: 0, limit: 100, offset: 0 }));
   });
   const { wrapper } = setup();
-  function Observer() { useQuery(allProjectsQuery()); return useProjectMutations(); }
+  function Observer() { useQuery(allProjectsQuery()); return useProjectActions(); }
   const mounted = renderHook(() => Observer(), { wrapper });
   await waitFor(() => expect(requests).toBe(1));
-  await act(async () => { await mounted.result.current.create.mutateAsync({ name: "New", description: "" }); });
+  await act(async () => { await mounted.result.current.actions.create({ name: "New", description: "" }); });
   await waitFor(() => expect(requests).toBe(3));
 });
 
-test("mounted failed project mutation performs one request without refresh", async () => {
+test("mounted failed project action performs one request without refresh", async () => {
   const counts = new Map<string, number>();
   globalThis.fetch = vi.fn<typeof fetch>((path, init) => {
     const key = String(path); counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -49,10 +49,13 @@ test("mounted failed project mutation performs one request without refresh", asy
     return Promise.resolve(json({ items: [], count: 0, total: 0, limit: 100, offset: 0 }));
   });
   const { wrapper } = setup();
-  function Observer() { useQuery(projectsQuery()); useQuery(runsQuery()); useQuery(auditEventsQuery()); return useProjectMutations(); }
+  function Observer() { useQuery(projectsQuery()); useQuery(runsQuery()); useQuery(auditEventsQuery()); return useProjectActions(); }
   const mounted = renderHook(() => Observer(), { wrapper });
   await waitFor(() => expect(counts.get("/api/v1/projects")).toBe(1));
-  await expect(mounted.result.current.create.mutateAsync({ name: "Invalid", description: "" })).rejects.toThrow();
+  await act(async () => {
+    expect(await mounted.result.current.actions.create({ name: "Invalid", description: "" })).toBeUndefined();
+  });
+  expect(mounted.result.current.error).toMatchObject({ key: "project", message: expect.any(String) });
   expect(counts.get("/api/v1/projects")).toBe(2);
   expect(counts.get("/api/v1/runs")).toBe(1); expect(counts.get("/api/v1/audit-events")).toBe(1);
 });
