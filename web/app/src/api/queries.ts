@@ -80,7 +80,7 @@ export const oidcStatusQuery = () => queryOptions({ queryKey: queryKeys.oidcStat
 // background tab; the cached snapshot remains available for an immediate
 // render when the operator returns, then refreshes on focus.
 const visibleOperationsRefresh = (): number | false => typeof document === "undefined" || document.visibilityState === "visible" ? 10_000 : false;
-export const operationsStatusQuery = () => queryOptions({ queryKey: queryKeys.operationsStatus, staleTime: 5_000, queryFn: ({ signal }) => getOperationsStatus({ signal }), refetchInterval: visibleOperationsRefresh, refetchOnWindowFocus: true });
+export const operationsStatusQuery = () => queryOptions({ queryKey: queryKeys.operationsStatus, staleTime: 5_000, queryFn: ({ signal }) => getOperationsStatus({ signal }), refetchInterval: (query) => query.state.status === "error" ? false : visibleOperationsRefresh(), refetchOnWindowFocus: true });
 export const runLogRetentionStatusQuery = () => queryOptions({ queryKey: queryKeys.runLogRetentionStatus, staleTime: 5_000, queryFn: ({ signal }) => getRunLogRetentionStatus({ signal }), refetchOnWindowFocus: true });
 export const principalQuery = () => queryOptions({ queryKey: queryKeys.principal, staleTime: 10_000, queryFn: ({ signal }) => getCurrentPrincipal({ signal }) });
 type BoundedPage<T> = { items: T[]; count: number; total: number; offset: number };
