@@ -49,17 +49,27 @@ New signatures use the exact workflow identity
 Older releases retain their original tag-based identity and verification record.
 
 Only the protected publish job has repository contents write, package write,
-OIDC, and attestation write permissions. Configure the release environment to
-allow `main` with required reviewers, and configure tag rules to permit this
-workflow's token to create and update unpublished candidate tags. Published
-versions must remain protected. If existing tag rules reject the workflow token,
-publication stops; this change does not modify repository settings or bypass
-rules automatically. At the time of this change, the repository's environment
-allows only `v*` tag deployments and its tag rules allow only the owner to
-create or update tags. Rollout therefore requires allowing `main` deployments
-and configuring an authorized workflow tagging identity before the first run.
-Do not run external/manual publishers concurrently with
-this workflow: GitHub and GHCR do not provide a shared publication transaction.
+OIDC, and attestation write permissions. The GitHub `release` environment permits
+`main` deployments and retains its required owner review.
+
+Repository rules protect deletion of `v*` tags. Separate rules prevent updates
+and deletion of the six versions already published when this policy was rolled
+out: `v0.3.18`, `v0.3.19`, `v0.3.20`, `v0.3.23`, `v0.3.25`, and `v0.3.28`.
+GitHub release immutability is enabled for future releases. Upload all intended
+assets to a draft before publishing its release page; publication locks the
+assets and associated tag.
+
+Unpublished candidate tags can be created and updated by identities with
+repository contents write access, including the protected publication job.
+GitHub does not permit this repository to add its built-in Actions app as a
+ruleset bypass actor, so candidate tags have no blanket creation/update rule.
+The workflow independently rejects versions with any published image, release,
+or uploaded release asset. An image-only partial publication is protected by
+this check before its release page becomes immutable. Do not manually retarget
+such a version or delete its publication records.
+
+Do not run external/manual publishers concurrently with this workflow: GitHub
+and GHCR do not provide a shared publication transaction.
 
 Run the local checks before requesting release approval:
 
