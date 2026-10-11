@@ -273,11 +273,6 @@ select:focus-visible {
   outline-offset: 0px;
 }
 
-/* Prevent layout shift from scrollbar disappearance */
-body {
-  overflow-y: scroll;
-}
-
 /* Keep the fallback in its own rule so CSS optimization cannot discard it. */
 .mobile-app-shell {
   min-height: 100vh;

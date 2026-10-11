@@ -2112,3 +2112,32 @@ test("browser titles follow navigation and history", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
   await expect(page).toHaveTitle("Page not found · NeroCD");
 });
+
+test("navigation resets scroll and Back restores the previous page position", async ({ page }, testInfo) => {
+  await page.goto("/operations");
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+  for (const width of [1440, 320]) {
+    await page.setViewportSize({ width, height: 400 });
+    await page.goto("/operations");
+    await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 500));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+    const previousScroll = await page.evaluate(() => window.scrollY);
+    if (width < 1024) {
+      await expect(page.getByRole("button", { name: "Open mobile navigation", exact: true })).toBeInViewport();
+      await page.screenshot({ path: testInfo.outputPath("sticky-header-scrolled-320.png"), fullPage: false });
+      await page.getByRole("button", { name: "Open mobile navigation", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Mobile navigation", exact: true })).toBeVisible();
+      expect(await page.evaluate(() => window.scrollY), "opening the menu retains page scroll").toBe(previousScroll);
+      await page.getByRole("dialog", { name: "Mobile navigation", exact: true }).getByRole("link", { name: "Runners", exact: true }).click();
+    } else {
+      await page.getByRole("navigation", { name: "Desktop navigation", exact: true }).getByRole("link", { name: "Runners", exact: true }).click();
+    }
+    await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    await page.goBack();
+    await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+    await expect.poll(async () => Math.abs(await page.evaluate(() => window.scrollY) - previousScroll)).toBeLessThan(2);
+  }
+});

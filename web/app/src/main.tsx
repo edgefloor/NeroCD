@@ -13,7 +13,7 @@ import { PageUnavailable } from "./components/common/PageUnavailable";
 import { PageNotFound } from "./components/common/PageNotFound";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: retryRemote }, mutations: { retry: false } } });
-const router = createRouter({ routeTree, defaultPreload: "intent", defaultErrorComponent: PageUnavailable, defaultNotFoundComponent: PageNotFound, context: { queryClient } });
+const router = createRouter({ routeTree, defaultPreload: "intent", scrollRestoration: true, defaultErrorComponent: PageUnavailable, defaultNotFoundComponent: PageNotFound, context: { queryClient } });
 declare module "@tanstack/react-router" { interface Register { router: typeof router } }
 function App() {
   const auth = useAuth();
