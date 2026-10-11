@@ -4,7 +4,7 @@ import { render, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "./errors";
-import { allProjectMembersQuery, configureQueryClient, deploymentQuery, deploymentsQuery, environmentsQuery, healthQuery, projectsQuery, queryKeys, repositoriesQuery, retryRemote, revisionsQuery, runLogsQuery, runsQuery, servicesQuery, shouldPollDeploymentList, shouldPollRunList, shouldPollSelectedLogs, templatesQuery, approvalsQuery } from "./queries";
+import { allRevisionsQuery, allProjectMembersQuery, configureQueryClient, deploymentQuery, deploymentsQuery, environmentsQuery, healthQuery, projectsQuery, queryKeys, repositoriesQuery, retryRemote, revisionsQuery, runLogsQuery, runsQuery, servicesQuery, shouldPollDeploymentList, shouldPollRunList, shouldPollSelectedLogs, templatesQuery, approvalsQuery } from "./queries";
 import { Route as HomeRoute } from "../routes/_authenticated.index";
 import { Route as ProjectsRoute } from "../routes/_authenticated.projects";
 import { Route as RunDetailRoute } from "../routes/_authenticated.runs.$runId";
@@ -50,7 +50,7 @@ describe("resource query options", () => {
     const calls: string[] = [];
     globalThis.fetch = vi.fn<typeof fetch>((path) => { calls.push(String(path)); return Promise.resolve(String(path).endsWith("/me") ? new Response(JSON.stringify({ id: "usr_1", email: "operator@example.test", name: "Operator", roles: ["system_admin"], provider: "local" }), { headers: { "Content-Type": "application/json" } }) : list()); });
     await DeploymentsRoute.options.loader!({ context: { queryClient: client() } } as never);
-    expect(calls).toEqual(["/api/v1/projects?limit=100&offset=0", "/api/v1/services", "/api/v1/environments", "/api/v1/me"]);
+    expect(calls).toEqual(["/api/v1/projects?limit=100&offset=0", "/api/v1/services?limit=100&offset=0", "/api/v1/environments?limit=100&offset=0", "/api/v1/me"]);
     expect(calls.join(" ")).not.toContain("/api/v1/runners/");
   });
 
@@ -125,4 +125,40 @@ describe("resource query options", () => {
     expect(shouldPollDeploymentList({ items: [{ id: "dep_1", status: "rolled_back" }] } as never)).toBe(false);
     expect(shouldPollDeploymentList({ items: [{ id: "dep_1", status: "verifying" }] } as never)).toBe(true);
   });
+});
+
+test("deployment loader reaches services and environments beyond their first pages", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    const url = new URL(String(path), "http://local");
+    calls.push(String(path));
+    if (!["/api/v1/services", "/api/v1/environments"].includes(url.pathname)) return Promise.resolve(list());
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const count = offset === 0 ? 100 : 1;
+    return Promise.resolve(new Response(JSON.stringify({ items: Array.from({ length: count }, (_, index) => ({ id: `item_${offset + index}` })), count, total: 101, limit: 100, offset }), { headers: { "Content-Type": "application/json" } }));
+  });
+  await DeploymentsRoute.options.loader!({ context: { queryClient: client() } } as never);
+  expect(calls).toContain("/api/v1/services?limit=100&offset=100");
+  expect(calls).toContain("/api/v1/environments?limit=100&offset=100");
+});
+
+
+test("revision choices paginate within the selected service and keep separate caches", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    const url = new URL(String(path), "http://local");
+    calls.push(String(path));
+    const offset = Number(url.searchParams.get("offset"));
+    const count = offset === 0 ? 100 : 1;
+    return Promise.resolve(new Response(JSON.stringify({ items: Array.from({ length: count }, (_, index) => ({ id: `${url.searchParams.get("service_id")}_${offset + index}` })), count, total: 101, limit: 100, offset }), { headers: { "Content-Type": "application/json" } }));
+  });
+  const queryClient = client();
+  const first = await queryClient.fetchQuery(allRevisionsQuery("service_a"));
+  const second = await queryClient.fetchQuery(allRevisionsQuery("service_b"));
+  expect(first).toHaveLength(101);
+  expect(second).toHaveLength(101);
+  expect(first[100]?.id).toBe("service_a_100");
+  expect(second[100]?.id).toBe("service_b_100");
+  expect(calls).toHaveLength(4);
+  for (const path of calls) expect(new URL(path, "http://local").searchParams.get("limit")).toBe("100");
 });

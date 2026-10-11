@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { environmentsQuery, principalQuery, revisionsQuery, runLogsQuery, runQuery, servicesQuery, useDeploymentMutations, useDeploymentPollingQuery, useDeploymentsPollingQuery } from "@/api";
+import { allEnvironmentsQuery, principalQuery, allRevisionsQuery, runLogsQuery, runQuery, allServicesQuery, useDeploymentMutations, useDeploymentPollingQuery, useDeploymentsPollingQuery } from "@/api";
 import { DeploymentDetailView } from "@/pages/DeploymentsView";
 import { validateSearch } from "@/router/search";
 
@@ -22,16 +22,16 @@ function DeploymentUnavailable() {
 function DeploymentDetailRoute() {
   const { deploymentId } = Route.useParams();
   const deployment = useDeploymentPollingQuery(deploymentId);
-  const environments = useQuery(environmentsQuery());
-  const environment = environments.data?.items.find((item) => item.id === deployment.data?.environment_id);
-  const services = useQuery(servicesQuery());
-  const service = services.data?.items.find((item) => item.id === environment?.service_id);
-  const revisions = useQuery({ ...revisionsQuery(environment ? { service_id: environment.service_id } : undefined), enabled: Boolean(environment) });
+  const environments = useQuery(allEnvironmentsQuery());
+  const environment = environments.data?.find((item) => item.id === deployment.data?.environment_id);
+  const services = useQuery(allServicesQuery());
+  const service = services.data?.find((item) => item.id === environment?.service_id);
+  const revisions = useQuery({ ...allRevisionsQuery(environment?.service_id ?? ""), enabled: Boolean(environment) });
   const history = useDeploymentsPollingQuery(deployment.data ? { environment_id: deployment.data.environment_id } : undefined, Boolean(deployment.data));
   const principal = useQuery(principalQuery());
   const mutation = useDeploymentMutations();
-  const revision = revisions.data?.items.find((item) => item.id === deployment.data?.desired_revision_id);
-  const previousRevision = revisions.data?.items.find((item) => item.id === deployment.data?.previous_healthy_revision_id);
+  const revision = revisions.data?.find((item) => item.id === deployment.data?.desired_revision_id);
+  const previousRevision = revisions.data?.find((item) => item.id === deployment.data?.previous_healthy_revision_id);
   const related = (history.data?.items ?? []).filter((item) => item.id !== deploymentId && (item.rollback_of_id === deploymentId || deployment.data?.rollback_of_id === item.id || (item.rollback_of_id && item.rollback_of_id === deployment.data?.rollback_of_id)));
   const runs = useQuery({ ...runQuery(deployment.data?.task_run_id ?? ""), enabled: Boolean(deployment.data?.task_run_id) });
   const taskRun = runs.data ?? undefined;

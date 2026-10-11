@@ -51,6 +51,9 @@ export const queryKeys = {
   runLogs: (value?: RunLogFilters) => ["runLogs", filters(value)] as const,
   artifacts: (value?: ArtifactFilters) => ["artifacts", filters(value)] as const,
   capabilities: (value?: CapabilityFilters) => ["capabilities", filters(value)] as const,
+  allServices: ["services", "all"] as const,
+  allEnvironments: ["environments", "all"] as const,
+  allRevisions: (serviceID: string) => ["revisions", "all", { service_id: serviceID }] as const,
   services: (value?: ServiceFilters) => ["services", filters(value)] as const,
   environments: (value?: EnvironmentFilters) => ["environments", filters(value)] as const,
   revisions: (value?: RevisionFilters) => ["revisions", filters(value)] as const,
@@ -102,6 +105,9 @@ export const runsQuery = (value?: RunFilters) => queryOptions({ queryKey: queryK
 export const approvalsQuery = (value?: ApprovalFilters) => queryOptions({ queryKey: queryKeys.approvals(value), queryFn: ({ signal }) => listApprovals(value, { signal }) });
 export const auditEventsQuery = (value?: AuditEventFilters) => queryOptions({ queryKey: queryKeys.auditEvents(value), queryFn: ({ signal }) => listAuditEvents(value, { signal }) });
 export const runLogsQuery = (value: RunLogFilters = {}) => queryOptions({ queryKey: queryKeys.runLogs(value), queryFn: ({ signal }) => listRunLogs(value, { signal }) });
+export const allServicesQuery = () => queryOptions({ queryKey: queryKeys.allServices, queryFn: ({ signal }) => collectBoundedPages((offset) => listServices({ limit: 100, offset }, { signal })) });
+export const allEnvironmentsQuery = () => queryOptions({ queryKey: queryKeys.allEnvironments, queryFn: ({ signal }) => collectBoundedPages((offset) => listEnvironments({ limit: 100, offset }, { signal })) });
+export const allRevisionsQuery = (serviceID: string) => queryOptions({ queryKey: queryKeys.allRevisions(serviceID), queryFn: ({ signal }) => collectBoundedPages((offset) => listRevisions({ service_id: serviceID, limit: 100, offset }, { signal })) });
 export const servicesQuery = (value?: ServiceFilters) => queryOptions({ queryKey: queryKeys.services(value), queryFn: ({ signal }) => listServices(value, { signal }) });
 export const environmentsQuery = (value?: EnvironmentFilters) => queryOptions({ queryKey: queryKeys.environments(value), queryFn: ({ signal }) => listEnvironments(value, { signal }) });
 export const revisionsQuery = (value?: RevisionFilters) => queryOptions({ queryKey: queryKeys.revisions(value), queryFn: ({ signal }) => listRevisions(value, { signal }) });

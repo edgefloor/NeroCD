@@ -1131,3 +1131,41 @@ test("project viewers can browse deployment history without deployment write con
     await context.close();
   }
 });
+
+test("deployment selectors and detail labels include records beyond the first hundred", async ({ page }) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const targets = {
+    services: { id: fixture.serviceID, project_id: fixture.projectID, name: "Later service" },
+    environments: { id: fixture.environmentID, service_id: fixture.serviceID, name: "Later environment" },
+    revisions: { id: fixture.revisionID, service_id: fixture.serviceID, requested_ref: "Later revision", git_commit: "abc123456789" },
+  };
+  const requested: string[] = [];
+  for (const resource of ["services", "environments", "revisions"] as const) {
+    const target = targets[resource];
+    const records = [...Array.from({ length: 100 }, (_, index) => ({ ...target, id: `earlier_${resource}_${index}` })), target];
+    await page.route(`**/api/v1/${resource}?*`, async (route) => {
+      const url = new URL(route.request().url());
+      expect(url.searchParams.get("limit")).toBe("100");
+      if (resource === "revisions") expect(url.searchParams.get("service_id")).toBe(fixture.serviceID);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      requested.push(`${resource}:${offset}`);
+      const items = records.slice(offset, offset + 100);
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ items, count: items.length, total: records.length, limit: 100, offset }) });
+    });
+  }
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/deployments?service_id=${fixture.serviceID}&environment_id=${fixture.environmentID}`);
+    await expect(page.getByRole("combobox", { name: "Service", exact: true })).toHaveValue(fixture.serviceID);
+    await expect(page.getByRole("combobox", { name: "Environment", exact: true })).toHaveValue(fixture.environmentID);
+    await page.getByRole("combobox", { name: "Immutable revision", exact: true }).selectOption(fixture.revisionID);
+    await expect(page.getByRole("button", { name: "Request deployment", exact: true })).toBeEnabled();
+    await page.locator(`a[href*="/deployments/${fixture.deploymentID}"]`).click();
+    await expect(page.getByText("Later environment", { exact: true })).toBeVisible();
+    await expect(page.getByText("Later revision (abc123456789)", { exact: true })).toBeVisible();
+  }
+  for (const resource of ["services", "environments", "revisions"]) expect(requested).toContain(`${resource}:100`);
+});
