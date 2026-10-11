@@ -128,3 +128,21 @@ test("pending offboarding prevents duplicate requests and dismissal", async () =
   await act(async () => resolve());
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+
+test("confirmed offboarding survives a failed user refresh and invalidates service accounts", async () => {
+  const disabled = { ...activeUser, status: "disabled" };
+  usersAPI.listUsers.mockResolvedValueOnce({ items: [activeUser], count: 1, limit: usersPageSize, offset: 0, total: 1 }).mockRejectedValue(new Error("Refresh unavailable"));
+  usersAPI.offboardUser.mockResolvedValueOnce({ user: disabled, revoked_sessions: 1, revoked_api_tokens: 2, revoked_service_accounts: 1 });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const accountsKey = ["service-accounts", "project_one", 0];
+  client.setQueryData(accountsKey, { items: [], count: 0, total: 0, limit: 10, offset: 0 });
+  render(<QueryClientProvider client={client}><UsersSettingsPanel /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: `Offboard ${activeUser.email}` }));
+  fireEvent.click(screen.getByRole("button", { name: "Offboard user" }));
+  await screen.findByText("Unable to refresh users. Showing previously loaded users.");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByText("disabled")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: `Offboard ${activeUser.email}` })).toBeNull();
+  expect(client.getQueryState(accountsKey)?.isInvalidated).toBe(true);
+});

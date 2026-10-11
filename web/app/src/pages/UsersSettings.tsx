@@ -22,7 +22,14 @@ export function UsersSettingsPanel({ readOnly = false }: { readOnly?: boolean })
   const offboard = useMutation({
     mutationFn: (userID: string) => offboardUser(userID),
     onSuccess: async (result) => {
-      await client.invalidateQueries({ queryKey: ["users"] });
+      client.setQueriesData<UserListResponse>({ queryKey: ["users"] }, (cached) => cached ? {
+        ...cached,
+        items: cached.items.map((user) => user.id === result.user.id ? result.user : user),
+      } : cached);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["users"] }),
+        client.invalidateQueries({ queryKey: ["service-accounts"] }),
+      ]);
       toast.success(`User offboarded; revoked ${result.revoked_sessions} sessions, ${result.revoked_api_tokens} API tokens, and ${result.revoked_service_accounts} service accounts`);
     },
     onError: (error) => toast.error(error.message),

@@ -2682,7 +2682,10 @@ test("failed offboarding stays in its dialog and succeeds on retry", async ({ pa
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const user = { id: "user_offboard_retry", name: "Retry user", email: `${"operator".repeat(20)}@example.test`, status: "active", global_role: "user", created_at: "2026-10-11T12:00:00Z", updated_at: "2026-10-11T12:00:00Z" };
-  await page.route("**/api/v1/users?*", (route) => route.fulfill({ json: { items: [user], count: 1, total: 1, offset: 0, limit: 10 } }));
+  let failRefresh = false;
+  await page.route("**/api/v1/users?*", (route) => failRefresh
+    ? route.fulfill({ status: 503, json: { error: "Refresh after offboarding unavailable" } })
+    : route.fulfill({ json: { items: [user], count: 1, total: 1, offset: 0, limit: 10 } }));
   let attempts = 0;
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -2690,6 +2693,7 @@ test("failed offboarding stays in its dialog and succeeds on retry", async ({ pa
     attempts += 1;
     if (attempts === 1) return route.fulfill({ status: 503, json: { error: "Temporary offboarding failure" } });
     user.status = "disabled";
+    failRefresh = true;
     return route.fulfill({ json: { user, revoked_sessions: 0, revoked_api_tokens: 0, revoked_service_accounts: 0 } });
   });
   await page.reload();
@@ -2705,6 +2709,19 @@ test("failed offboarding stays in its dialog and succeeds on retry", async ({ pa
   }
   await dialog.getByRole("button", { name: "Offboard user", exact: true }).click();
   await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("Unable to refresh users. Showing previously loaded users.")).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByText("disabled", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Offboard ${user.email}`, exact: true })).toHaveCount(0);
+    if (width === 320) {
+      await page.getByText("disabled", { exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("offboarded-refresh-error-320.png"), animations: "disabled" });
+    }
+  }
+  failRefresh = false;
+  await page.getByRole("button", { name: "Retry users", exact: true }).click();
+  await expect(page.getByText("Unable to refresh users. Showing previously loaded users.")).toHaveCount(0);
   await expect(page.getByText("disabled", { exact: true })).toBeVisible();
   expect(attempts).toBe(2);
   expect(errors).toEqual([]);
