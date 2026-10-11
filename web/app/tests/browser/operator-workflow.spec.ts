@@ -380,6 +380,7 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   expect(scopedLogRequests).toBeGreaterThanOrEqual(2);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
+  await expect(page.locator(`[data-run-log-trigger="${runID}"]`).last()).toBeFocused();
 
   const secondLogRequest = page.waitForResponse((response) => {
     const url = new URL(response.url());
@@ -389,6 +390,7 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   expect((await secondLogRequest).status()).toBe(200);
   await expect(page.getByRole("dialog", { name: `run ${secondRunID}` })).toContainText("Run requested");
   await page.keyboard.press("Escape");
+  await expect(page.locator(`[data-run-log-trigger="${secondRunID}"]`).last()).toBeFocused();
 
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });
@@ -397,6 +399,7 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-logs-history-320.png"), fullPage: true });
     await page.keyboard.press("Escape");
+    await expect(page.locator(`[data-run-log-trigger="${runID}"]`).first()).toBeFocused();
   }
 });
 

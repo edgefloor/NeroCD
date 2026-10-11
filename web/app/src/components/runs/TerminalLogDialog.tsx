@@ -36,10 +36,6 @@ export function TerminalLogDialog({
 }): ReactNode {
   const orderedLogs = useMemo(() => [...logs].sort((a, b) => a.sequence - b.sequence), [logs]);
   const openerRef = useRef<HTMLElement | null>(null);
-  if (open && openerRef.current === null && pendingOpener?.isConnected) {
-    openerRef.current = pendingOpener;
-    pendingOpener = null;
-  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -47,14 +43,23 @@ export function TerminalLogDialog({
         showCloseButton={false}
         aria-describedby={undefined}
         className="max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-4xl border-border bg-background"
+        onOpenAutoFocus={() => {
+          openerRef.current = pendingOpener;
+          pendingOpener = null;
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
+          const opener = openerRef.current;
+          const runID = opener?.dataset.runLogTrigger ?? run?.id;
+          openerRef.current = null;
           requestAnimationFrame(() => {
-            if (openerRef.current?.isConnected) {
-              openerRef.current.focus();
+            if (opener?.isConnected && opener.getClientRects().length > 0) {
+              opener.focus();
               return;
             }
-            document.querySelector<HTMLButtonElement>(`[data-run-log-trigger="${run?.id}"]`)?.focus();
+            // Loading and responsive layouts can replace or hide the original button.
+            Array.from(document.querySelectorAll<HTMLButtonElement>("[data-run-log-trigger]"))
+              .find((button) => button.dataset.runLogTrigger === runID && button.getClientRects().length > 0)?.focus();
           });
         }}
       >
