@@ -141,14 +141,31 @@ test("runner credential revocation reports failure and succeeds on retry", async
   const runner = await registerRunner(page);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  let fail = true;
-  await page.route("**/api/v1/runners/revoke-token", (route) => fail
-    ? route.fulfill({ status: 503, json: { error: "Temporary revocation failure" } })
-    : route.continue());
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let attempts = 0;
+  await page.route("**/api/v1/runners/revoke-token", async (route) => {
+    if (++attempts > 1) return route.continue();
+    await pending;
+    return route.fulfill({ status: 503, json: { error: "Temporary revocation failure" } });
+  });
   await page.goto(`/runners/${runner.id}`);
   await page.getByRole("button", { name: "Revoke credential", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Revoke runner credential?" });
   await dialog.getByRole("button", { name: "Revoke credential", exact: true }).click();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(dialog).toHaveAttribute("aria-busy", "true");
+    await expect(dialog.getByRole("button", { name: "Revoking…", exact: true })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Keep credential", exact: true })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("runner-revoke-pending-320.png"), animations: "disabled" });
+  }
+  expect(attempts).toBe(1);
+  release();
   await expect(dialog.getByRole("alert")).toHaveText("Unable to revoke credential. Try again.");
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -156,10 +173,10 @@ test("runner credential revocation reports failure and succeeds on retry", async
     expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("runner-revoke-error-320.png"), fullPage: false });
   }
-  fail = false;
   await dialog.getByRole("button", { name: "Revoke credential", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText("Credential is revoked.", { exact: true })).toBeVisible();
+  expect(attempts).toBe(2);
   expect(pageErrors).toEqual([]);
 });
 

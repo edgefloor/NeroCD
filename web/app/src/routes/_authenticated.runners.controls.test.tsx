@@ -229,3 +229,28 @@ test("pending enrollment locks the submitted draft and restores it after failure
   expect((screen.getByLabelText("Runner ID") as HTMLInputElement).disabled).toBe(false);
   expect(screen.getByRole("alert").textContent).toContain("Enrollment could not be created");
 });
+
+
+test("pending runner revocation stays visible and rejects duplicate submissions", async () => {
+  let reject!: (error: Error) => void;
+  const onRevoke = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; })).mockResolvedValueOnce(undefined);
+  render(<RunnerDetailView runner={runner as never} canAdmin onRevoke={onRevoke} />);
+  fireEvent.click(screen.getByRole("button", { name: "Revoke credential" }));
+  const dialog = screen.getByRole("dialog");
+  const confirm = within(dialog).getByRole("button", { name: "Revoke credential" });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  expect(onRevoke).toHaveBeenCalledOnce();
+  expect(dialog.getAttribute("aria-busy")).toBe("true");
+  expect((within(dialog).getByRole("button", { name: "Keep credential" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  await act(async () => reject(new Error("Temporary revocation failure")));
+  expect(dialog.getAttribute("aria-busy")).toBe("false");
+  expect(within(dialog).getByRole("alert").textContent).toContain("Unable to revoke credential");
+  expect((within(dialog).getByRole("button", { name: "Keep credential" }) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Revoke credential" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(onRevoke).toHaveBeenCalledTimes(2);
+});
