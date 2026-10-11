@@ -16,12 +16,14 @@ export function ApprovalList({
   token,
   busy,
   mutate,
+  canOperateProject,
 }: {
   approvals: Approval[];
   snapshot: ApiSnapshot;
   token: string;
   busy: string;
   mutate: MutateFn;
+  canOperateProject?: (projectID: string) => boolean;
 }): ReactNode {
   if (approvals.length === 0) {
     return <EmptyState title="No approvals waiting" icon={ShieldCheck} />;
@@ -47,17 +49,18 @@ export function ApprovalList({
                   <GitBranch className="h-4 w-4" /> 
                   <span className="font-medium">{run.run_spec.type}</span>
                   <span>·</span>
-                  <span>{run.runner_tags.join(", ") || "untagged"}</span>
+                  <span>{(run.runner_tags ?? []).join(", ") || "untagged"}</span>
                 </div>
               </div>
             ) : null}
-            {approval.status === "pending" ? (
+            {run ? <a className="text-sm underline underline-offset-4" href={`/runs/${run.id}`}>Run details</a> : null}
+            {run && approval.status === "pending" && canOperateProject?.(run.project_id) ? (
               <div className="flex gap-2">
                 <Button
                   className="flex-1 sm:flex-none h-8 rounded-xl"
                   size="sm"
                   onClick={() => void mutate(`approve:${approval.run_id}`, () => approveRun(token, approval.run_id), "Run approved")}
-                  disabled={busy === `approve:${approval.run_id}`}
+                  disabled={Boolean(busy)}
                 >
                   <CheckCircle2 className="h-4 w-4 mr-1.5" /> 
                   Approve
@@ -67,7 +70,7 @@ export function ApprovalList({
                   size="sm"
                   variant="outline"
                   onClick={() => void mutate(`reject:${approval.run_id}`, () => rejectRun(token, approval.run_id), "Run rejected")}
-                  disabled={busy === `reject:${approval.run_id}`}
+                  disabled={Boolean(busy)}
                 >
                   <XCircle className="h-4 w-4 mr-1.5" /> 
                   Reject
@@ -87,6 +90,7 @@ export function ApprovalsView({
   token,
   busy,
   mutate,
+  canOperateProject,
   loading,
 }: {
   snapshot: ApiSnapshot;
@@ -94,6 +98,7 @@ export function ApprovalsView({
   token: string;
   busy: string;
   mutate: MutateFn;
+  canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
 }): ReactNode {
   if (loading) {
@@ -139,6 +144,7 @@ export function ApprovalsView({
             token={token}
             busy={busy}
             mutate={mutate}
+            canOperateProject={canOperateProject}
           />}
         </CardContent>
       </Card>

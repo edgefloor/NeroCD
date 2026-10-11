@@ -25,6 +25,7 @@ export function HomeView({
   token,
   busy,
   mutate,
+  canOperateProject,
   loading,
   totals,
 }: {
@@ -35,6 +36,7 @@ export function HomeView({
   token: string;
   busy: string;
   mutate: MutateFn;
+  canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
   totals?: { projects: number; templates: number; logs: number };
 }): ReactNode {
@@ -135,7 +137,7 @@ export function HomeView({
           </CardHeader>
           <CardContent className="p-0">
             {visiblePending.length > 0 ? (
-              <ApprovalList approvals={visiblePending} snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
+              <ApprovalList approvals={visiblePending} snapshot={snapshot} token={token} busy={busy} mutate={mutate} canOperateProject={canOperateProject} />
             ) : (
               <CompactEmpty>{query ? "No pending approvals match this search." : "No approvals are waiting."}</CompactEmpty>
             )}

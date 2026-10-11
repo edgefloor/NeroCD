@@ -72,7 +72,7 @@ async function createDetailFixture(page: Page): Promise<{ deploymentID: string; 
   return { deploymentID: deployment.id, projectID: project.id, serviceID: service.id, environmentID: environment.id, revisionID: revision.id };
 }
 
-async function createRunLogFixture(page: Page): Promise<{ runID: string; secondRunID: string; projectID: string }> {
+async function createRunLogFixture(page: Page, requiresAck = false): Promise<{ runID: string; secondRunID: string; projectID: string }> {
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Browser logs ${suffix}`, description: "run-log fixture" });
   const template = await postJSON<{ id: string }>(page, "/api/v1/templates", {
@@ -82,7 +82,7 @@ async function createRunLogFixture(page: Page): Promise<{ runID: string; secondR
     run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "browser-log-fixture"] } },
     workflow: { steps: [] },
     runner_tags: ["shell"],
-    requires_ack: false,
+    requires_ack: requiresAck,
   });
   const first = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
   const second = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
@@ -1250,6 +1250,64 @@ test("run cancellation respects project membership while viewers retain logs", a
       headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" },
       data: { run_id: viewed.runID },
     });
+    expect(denied.status()).toBe(403);
+  } finally {
+    await context.close();
+  }
+});
+
+
+test("approval decisions respect project roles and prevent conflicting requests", async ({ page, browser }) => {
+  await page.goto("/approvals");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const maintained = await createRunLogFixture(page, true);
+  const viewed = await createRunLogFixture(page, true);
+  await postJSON(page, "/api/v1/project-members", { project_id: maintained.projectID, email: "oidc-browser@example.invalid", role: "maintainer" });
+  await postJSON(page, "/api/v1/project-members", { project_id: viewed.projectID, email: "oidc-browser@example.invalid", role: "viewer" });
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.goto("/sign-in");
+    await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    let releaseFailure: (() => void) | undefined;
+    let failFirst = true;
+    await operator.route("**/api/v1/runs/approve", async (route) => {
+      if (!failFirst) return route.continue();
+      failFirst = false;
+      await new Promise<void>((resolve) => { releaseFailure = resolve; });
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary approval failure" }) });
+    });
+    for (const [width, path, runID, decision] of [[390, "/", maintained.runID, "Approve"], [1440, "/approvals", maintained.secondRunID, "Reject"]] as const) {
+      await operator.setViewportSize({ width, height: 1000 });
+      await operator.goto(`${path}?q=${viewed.runID}`);
+      await expect(operator.getByRole("link", { name: "Run details", exact: true })).toBeVisible();
+      await expect(operator.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
+      await expect(operator.getByRole("button", { name: "Reject", exact: true })).toHaveCount(0);
+      await operator.goto(`${path}?q=${runID}`);
+      const approve = operator.getByRole("button", { name: "Approve", exact: true });
+      const reject = operator.getByRole("button", { name: "Reject", exact: true });
+      if (decision === "Approve") {
+        const failed = operator.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/approve");
+        await approve.click();
+        await expect(approve).toBeDisabled();
+        await expect(reject).toBeDisabled();
+        await expect.poll(() => Boolean(releaseFailure)).toBe(true);
+        releaseFailure!();
+        expect((await failed).status()).toBe(503);
+        await expect(approve).toBeEnabled();
+        await expect(reject).toBeEnabled();
+      }
+      const saved = operator.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/runs/${decision.toLowerCase()}`);
+      await operator.getByRole("button", { name: decision, exact: true }).click();
+      const response = await saved;
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toMatchObject({ run_id: runID, status: decision === "Approve" ? "approved" : "rejected" });
+      await expect(approve).toHaveCount(0);
+      await expect(reject).toHaveCount(0);
+    }
+    const denied = await operator.request.post("/api/v1/runs/approve", { headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" }, data: { run_id: viewed.runID } });
     expect(denied.status()).toBe(403);
   } finally {
     await context.close();

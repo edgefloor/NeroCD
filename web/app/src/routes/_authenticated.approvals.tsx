@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { allProjectsQuery, allTemplatesQuery, approvalsQuery, runQuery } from "@/api";
+import { allProjectMembersQuery, principalQuery, allProjectsQuery, allTemplatesQuery, approvalsQuery, runQuery } from "@/api";
 import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { ApprovalsView } from "@/pages/ApprovalsView";
+import { canMaintainProject } from "@/lib/permissions";
 import { validateSearch } from "@/router/search";
 
 export const Route = createFileRoute("/_authenticated/approvals")({
@@ -20,9 +21,11 @@ function ApprovalsRoute() {
   const projects = useQuery(allProjectsQuery());
   const templates = useQuery(allTemplatesQuery());
   const { busy, mutate } = useSnapshotMutation();
-  const queries = [approvals, projects, templates, ...runQueries];
+  const principal = useQuery(principalQuery());
+  const members = useQuery(allProjectMembersQuery());
+  const queries = [approvals, projects, templates, principal, members, ...runQueries];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <p role="alert">{error.message}</p>;
   const runs = runQueries.flatMap((query) => query.data ? [query.data] : []);
-  return <><ApprovalsView q={q} snapshot={apiSnapshot({ approvals: approvals.data, runs, projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} loading={queries.some((query) => query.isPending)} /><PageNavigation page={approvals.data} label="approvals" loading={approvals.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
+  return <><ApprovalsView q={q} snapshot={apiSnapshot({ approvals: approvals.data, runs, projects: projects.data, templates: templates.data })} token="" busy={busy} mutate={mutate} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} loading={queries.some((query) => query.isPending)} /><PageNavigation page={approvals.data} label="approvals" loading={approvals.isFetching} onPrevious={page.previous} onNext={page.next} /></>;
 }

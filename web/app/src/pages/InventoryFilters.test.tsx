@@ -52,14 +52,14 @@ test("template filters distinguish no matches and preserve an unfinished create 
 });
 
 test.each(["Alpha project", "Alpha deploy", "alice", "approval_alpha"])("approval filtering matches %s and retains actionable run context", (q) => {
-  render(<ApprovalsView {...props} q={q} />);
+  render(<ApprovalsView canOperateProject={() => true} {...props} q={q} />);
   expect(screen.getByText("Alpha deploy")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   expect(screen.queryByText("run_beta")).toBeNull();
 });
 
 test("approval filter includes history and distinguishes unmatched pending approvals", () => {
-  render(<ApprovalsView {...props} q="carol" />);
+  render(<ApprovalsView canOperateProject={() => true} {...props} q="carol" />);
   expect(screen.getByText("run_beta")).toBeTruthy();
   expect(screen.getByText("No pending approvals match this filter on the loaded page.")).toBeTruthy();
   expect(screen.getByText("1 waiting")).toBeTruthy();

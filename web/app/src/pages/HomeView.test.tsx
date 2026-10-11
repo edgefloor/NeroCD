@@ -15,7 +15,7 @@ const snapshot = apiSnapshot({
 
 function show(query: string) {
   const onClearQuery = vi.fn();
-  render(<HomeView snapshot={snapshot} workSnapshot={snapshot} query={query} onClearQuery={onClearQuery} token="" busy="" mutate={vi.fn(async () => undefined)} />);
+  render(<HomeView canOperateProject={() => true} snapshot={snapshot} workSnapshot={snapshot} query={query} onClearQuery={onClearQuery} token="" busy="" mutate={vi.fn(async () => undefined)} />);
   return onClearQuery;
 }
 
