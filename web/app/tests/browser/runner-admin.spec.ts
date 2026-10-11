@@ -413,3 +413,25 @@ test("invalid runner timestamps leave inventory and detail controls usable", asy
   }
   expect(errors).toEqual([]);
 });
+
+
+test("healthy runner details return to their filtered inventory page without reloading", async ({ page }, testInfo) => {
+  await createRunnerAdmin(page);
+  const runner = await registerRunner(page);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runners/${runner.id}?q=browser&offset=50`);
+    await expect(page.getByText(runner.name, { exact: true })).toBeVisible();
+    const back = page.getByRole("link", { name: "Back to runners", exact: true });
+    await expect(back).toHaveCount(1);
+    await expect(back).toBeVisible();
+    const origin = await page.evaluate(() => performance.timeOrigin);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("runner-return-320.png"), animations: "disabled" });
+    await back.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL((url) => url.pathname === "/runners" && url.searchParams.get("q") === "browser" && url.searchParams.get("offset") === "50");
+    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser");
+    await expect(page.getByRole("button", { name: "First runners page", exact: true })).toBeEnabled();
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin);
+  }
+});

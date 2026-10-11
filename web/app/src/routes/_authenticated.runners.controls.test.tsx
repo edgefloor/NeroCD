@@ -138,6 +138,7 @@ test("runner details distinguish pending requests from unavailable records", () 
   const Component = RunnerDetailRoute.options.component!;
   render(<Component />);
   expect(screen.getByRole("status").textContent).toBe("Loading runner...");
+  expect(screen.getByRole("link", { name: "Back to runners" })).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 

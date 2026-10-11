@@ -16,6 +16,10 @@ export const Route = createFileRoute("/_authenticated/runners/$runnerId")({
   component: RunnerDetailRoute,
 });
 
+function BackToRunners() {
+  return <Button asChild variant="outline" className="w-fit"><Link to="/runners" search={true}>Back to runners</Link></Button>;
+}
+
 function RunnerDetailRoute() {
   const { runnerId } = Route.useParams();
   const runner = useQuery({
@@ -31,10 +35,10 @@ function RunnerDetailRoute() {
     <p role="alert">Runner is unavailable.</p>
     <div className="flex flex-wrap gap-2">
       {failedQueries.length ? <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button> : null}
-      <Button asChild variant="outline"><Link to="/runners" search={true}>Back to runners</Link></Button>
+      <BackToRunners />
     </div>
   </section> : null;
   if (error && (!runner.data || !principal.data)) return error;
-  if (runner.isPending || principal.isPending) return <section className="space-y-3"><p role="status">Loading runner...</p><SkeletonCard rows={4} /></section>;
-  return <>{error}<RunnerDetailView controlsDisabled={failedQueries.length > 0} runner={runner.data} canAdmin={(principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin")} onRevoke={async () => { await revokeRunnerToken({ runner_id: runnerId }); await runner.refetch(); }} /></>;
+  if (runner.isPending || principal.isPending) return <section className="space-y-3"><BackToRunners /><p role="status">Loading runner...</p><SkeletonCard rows={4} /></section>;
+  return <div className="grid min-w-0 gap-4">{error ?? <BackToRunners />}<RunnerDetailView controlsDisabled={failedQueries.length > 0} runner={runner.data} canAdmin={(principal.data?.roles ?? []).some((role) => role === "system_admin" || role === "runner_admin")} onRevoke={async () => { await revokeRunnerToken({ runner_id: runnerId }); await runner.refetch(); }} /></div>;
 }
