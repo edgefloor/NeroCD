@@ -3166,3 +3166,45 @@ test("deployment list recovery preserves revision selection and page context", a
   await expect(revision).toHaveValue(fixture.revisionID);
   expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
 });
+
+
+test("pending deployment requests lock the target and retain the intent on retry", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const response = await page.request.get(`/api/v1/deployments/${fixture.deploymentID}`);
+  const deployment = await response.json();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const payloads: unknown[] = [];
+  await page.route("**/api/v1/deployments", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    payloads.push(route.request().postDataJSON());
+    if (payloads.length === 1) {
+      await gate;
+      return route.fulfill({ status: 503, json: { error: "Temporary submission failure" } });
+    }
+    return route.fulfill({ status: 201, json: deployment });
+  });
+  await page.goto(`/deployments?service_id=${fixture.serviceID}&environment_id=${fixture.environmentID}`);
+  const revision = page.getByRole("combobox", { name: "Immutable revision", exact: true });
+  await revision.selectOption(fixture.revisionID);
+  await page.getByRole("button", { name: "Request deployment", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Requesting deployment...", exact: true })).toBeDisabled();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const name of ["Project", "Service", "Environment", "Immutable revision"]) await expect(page.getByRole("combobox", { name, exact: true })).toBeDisabled();
+    await expect(page.getByRole("form", { name: "Request deployment", exact: true })).toHaveAttribute("aria-busy", "true");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-submitting-320.png"), fullPage: true });
+  }
+  expect(payloads).toHaveLength(1);
+  release();
+  await expect(page.getByRole("button", { name: "Request deployment", exact: true })).toBeEnabled();
+  await expect(revision).toHaveValue(fixture.revisionID);
+  await page.getByRole("button", { name: "Request deployment", exact: true }).click();
+  await expect(page).toHaveURL((url) => url.pathname === `/deployments/${fixture.deploymentID}`);
+  expect(payloads).toHaveLength(2);
+  expect(payloads[1]).toEqual(payloads[0]);
+});
