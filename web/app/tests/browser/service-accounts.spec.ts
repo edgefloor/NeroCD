@@ -46,6 +46,15 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   await page.getByLabel("Service account project").selectOption(projectOne.id);
   await page.getByLabel("Service account name").fill(`Browser bot ${suffix}`);
   await page.getByLabel("Service account role").selectOption("maintainer");
+  let failCreate = true;
+  await page.route("**/api/v1/service-accounts", (route) => route.request().method() === "POST" && failCreate
+    ? route.fulfill({ status: 503, json: { error: "Temporary account creation failure" } })
+    : route.continue());
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByText("Temporary account creation failure", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Service account name")).toHaveValue(`Browser bot ${suffix}`);
+  await expect(page.getByLabel("Service account role")).toHaveValue("maintainer");
+  failCreate = false;
   const createResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/service-accounts" && response.request().method() === "POST");
   await page.getByRole("button", { name: "Create account" }).click();
   expect((await createResponse).status()).toBe(201);
@@ -67,6 +76,9 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   await expect(page.getByRole("dialog").getByRole("status")).toHaveText("Credential copied.");
   await page.getByRole("button", { name: "I saved it" }).click();
   await expect(secretInput).toHaveCount(0);
+  await expect(page.getByLabel("Service account name")).toHaveValue("");
+  await expect(page.getByLabel("Service account role")).toHaveValue("maintainer");
+  await expect(page.getByLabel("Credential expiry")).toHaveValue("");
 
   const createdAccountResponse = await page.request.get(`/api/v1/service-accounts?project_id=${encodeURIComponent(projectOne.id)}&limit=10&offset=0`);
   const createdPage = await createdAccountResponse.json() as { items: Array<{ id: string; name: string }> };

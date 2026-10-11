@@ -47,6 +47,8 @@ test("creates and clears one-time credential on close and project navigation", a
   expect(serviceAccountsAPI.create).toHaveBeenCalledWith(expect.objectContaining({ project_id: "proj_one", name: "Build bot", role: "maintainer" }));
   fireEvent.click(screen.getByRole("button", { name: "I saved it" }));
   expect(screen.queryByDisplayValue("nca_one_time_secret")).toBeNull();
+  await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>("Service account name").value).toBe(""));
+  fireEvent.change(screen.getByLabelText("Service account name"), { target: { value: "Next bot" } });
 
   serviceAccountsAPI.create.mockResolvedValueOnce({ service_account: account, credential: { id: "pat_two", name: account.name, kind: "service_account", roles: [], status: "active", created_by: account.owner_user_id, service_account_id: account.id, created_at: account.created_at, expires_at: "2026-12-04T10:00:00Z" }, token: "nca_navigation_secret" });
   fireEvent.click(screen.getByRole("button", { name: "Create account" }));

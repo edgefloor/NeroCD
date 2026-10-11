@@ -77,25 +77,27 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
 
   function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    if (busy || !projectID) return;
+    const element = event.currentTarget;
+    const form = new FormData(element);
     const expiry = String(form.get("expires_at") ?? "");
     create.mutate({
       project_id: projectID,
       name: String(form.get("name") ?? ""),
       role: String(form.get("role") ?? "viewer") as "owner" | "maintainer" | "viewer",
       ...(expiry ? { expires_at: new Date(expiry).toISOString() } : {}),
-    });
+    }, { onSuccess: () => element.reset() });
   }
 
   return (
     <Card className="min-w-0 lg:col-span-2">
       <CardHeader><CardTitle><Bot className="mr-2 inline h-4 w-4" />Service accounts</CardTitle></CardHeader>
       <CardContent className="grid min-w-0 gap-4">
-        <label className="grid gap-1 text-sm">Project<Select aria-label="Service account project" value={projectID} onChange={(event) => setProjectID(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select></label>
+        <label className="grid gap-1 text-sm">Project<Select aria-label="Service account project" disabled={busy} value={projectID} onChange={(event) => setProjectID(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select></label>
         <form className="grid min-w-0 gap-2 md:grid-cols-4" onSubmit={submitCreate}>
-          <Input name="name" aria-label="Service account name" placeholder="Automation account" maxLength={128} required />
-          <Select name="role" aria-label="Service account role" defaultValue="maintainer"><option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option></Select>
-          <Input name="expires_at" aria-label="Credential expiry" type="datetime-local" />
+          <Input name="name" aria-label="Service account name" disabled={busy} placeholder="Automation account" maxLength={128} required />
+          <Select name="role" aria-label="Service account role" disabled={busy} defaultValue="maintainer"><option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option></Select>
+          <Input name="expires_at" aria-label="Credential expiry" disabled={busy} type="datetime-local" />
           <Button type="submit" disabled={busy || !projectID}><KeyRound className="h-4 w-4" />Create account</Button>
         </form>
         {page.isError ? <p role="alert">{page.error.message}</p> : page.isPending ? <p role="status">Loading service accounts…</p> : result?.items.length === 0 ? <p className="text-sm text-muted-foreground">No service accounts in this project.</p> : result?.items.map((account) => (
