@@ -264,3 +264,29 @@ test("runner heartbeat ages into stale status when refreshed data is unchanged",
   await expect(page.getByText("Heartbeat is stale; wait for recovery or inspect runner connectivity.", { exact: true })).toBeVisible({ timeout: 15_000 });
   expect(requests).toBeGreaterThan(initialRequests);
 });
+
+test("long runner identities and tags stay contained on mobile", async ({ page }, testInfo) => {
+  await createRunnerAdmin(page);
+  const id = `runner_${"edge".repeat(24)}_${Date.now()}`;
+  const name = `Runner-${"longname".repeat(15)}`;
+  const tag = `pool-${"remote".repeat(15)}`;
+  await postJSON(page, "/api/v1/runners/register", { id, name, tags: [tag], capabilities: ["compose-deploy"] });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/runners?q=${id}`);
+    const link = page.getByRole("link", { name: new RegExp(name) });
+    await expect(link).toBeVisible();
+    expect(await link.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const bounds = await link.boundingBox();
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    await link.click();
+    await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toBeVisible();
+    await expect(page.getByText(name, { exact: true })).toBeVisible();
+    const card = page.locator('[data-slot="card"]').filter({ has: page.getByText(name, { exact: true }) });
+    expect(await card.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const detailBounds = await card.boundingBox();
+    expect(detailBounds!.x + detailBounds!.width).toBeLessThanOrEqual(width);
+    await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toBeVisible();
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("long-runner-320.png"), fullPage: true });
+  }
+});
