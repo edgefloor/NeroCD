@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { RunnerDetailView } from "@/pages/RunnersView";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType, ReactNode } from "react";
@@ -190,4 +191,16 @@ test("runner inventory and details accept null tag and capability arrays", () =>
   const Detail = RunnerDetailRoute.options.component!;
   render(<Detail />);
   expect(screen.getAllByText("None")).toHaveLength(2);
+});
+
+
+test("an open revocation dialog closes when the runner is revoked externally", async () => {
+  const onRevoke = vi.fn();
+  const view = render(<RunnerDetailView runner={runner as never} canAdmin onRevoke={onRevoke} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Revoke credential" }));
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  view.rerender(<RunnerDetailView runner={{ ...runner, status: "revoked" } as never} canAdmin onRevoke={onRevoke} />);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByText("Credential is revoked.")).toBeTruthy();
+  expect(onRevoke).not.toHaveBeenCalled();
 });

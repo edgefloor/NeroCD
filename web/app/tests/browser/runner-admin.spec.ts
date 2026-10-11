@@ -218,7 +218,10 @@ test("runner detail observes external credential revocation without reloading", 
   const runner = await registerRunner(page);
   await page.goto(`/runners/${runner.id}`);
   await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Revoke credential", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Revoke runner credential?" })).toBeVisible();
   await postJSON(page, "/api/v1/runners/revoke-token", { runner_id: runner.id });
+  await expect(page.getByRole("dialog", { name: "Revoke runner credential?" })).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByText("Credential is revoked.", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Revoke credential", exact: true })).toHaveCount(0);
 });

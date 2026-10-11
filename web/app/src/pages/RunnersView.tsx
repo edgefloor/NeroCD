@@ -73,6 +73,12 @@ function EnrollmentSecret({ enrollment, token, copyStatus, onOpenChange, onCopy,
 export function RunnerDetailView({ runner, canAdmin, controlsDisabled = false, onRevoke }: { runner?: RunnerDetail; canAdmin: boolean; controlsDisabled?: boolean; onRevoke: () => Promise<void> }): ReactNode {
   const [confirming, setConfirming] = useState(false); const [busy, setBusy] = useState(false);
   const [revokeError, setRevokeError] = useState("");
+  useEffect(() => {
+    if (runner?.status === "revoked") {
+      setConfirming(false);
+      setRevokeError("");
+    }
+  }, [runner?.status]);
   async function revoke() {
     setBusy(true);
     setRevokeError("");
