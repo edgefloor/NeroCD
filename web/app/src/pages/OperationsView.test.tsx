@@ -99,3 +99,21 @@ test("reset restores the latest loaded retention policy without saving", () => {
   expect(update).not.toHaveBeenCalled();
   expect(reset).toHaveBeenCalledOnce();
 });
+
+
+test("unsaved retention changes cannot open a deletion preview", () => {
+  render(<OperationsView status={status} loading={false} unavailable={false} canAdmin retention={retention} />);
+  const preview = screen.getByRole("button", { name: "Previewed delete batch" }) as HTMLButtonElement;
+  const days = screen.getByRole("spinbutton", { name: "Keep days" });
+  fireEvent.change(days, { target: { value: "21" } });
+  expect(preview.disabled).toBe(true);
+  fireEvent.click(preview);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("Save or reset your changes before previewing a deletion.")).toBeTruthy();
+  fireEvent.change(days, { target: { value: "30" } });
+  expect(preview.disabled).toBe(false);
+  fireEvent.click(screen.getByRole("checkbox"));
+  expect(preview.disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Reset changes" }));
+  expect(preview.disabled).toBe(false);
+});

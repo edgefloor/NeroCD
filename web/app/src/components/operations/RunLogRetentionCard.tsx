@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type { RunLogRetentionExecution, RunLogRetentionStatus } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,9 +17,18 @@ type RunLogRetentionCardProps = {
   onExecute?: (policyVersion: number, requestID: string) => Promise<unknown> | void;
 };
 
+function hasPolicyChanges(form: HTMLFormElement, policy: RunLogRetentionStatus["policy"]): boolean {
+  const enabled = form.elements.namedItem("enabled") as HTMLInputElement;
+  const days = form.elements.namedItem("keep_days") as HTMLInputElement;
+  const batch = form.elements.namedItem("batch_size") as HTMLInputElement;
+  return enabled.checked !== policy.enabled || Number(days.value) !== policy.keep_days || Number(batch.value) !== policy.batch_size;
+}
+
 export function RunLogRetentionCard({
   status, loading, unavailable, busy, saveError, execution, onReset, onUpdate, onExecute,
 }: RunLogRetentionCardProps): ReactNode {
+  const formRef = useRef<HTMLFormElement>(null);
+  const [draftChanged, setDraftChanged] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [confirmation, setConfirmation] = useState<RunLogRetentionStatus>();
   const [executing, setExecuting] = useState(false);
@@ -28,6 +37,9 @@ export function RunLogRetentionCard({
   const requestID = useRef<string>("");
   const policy = status?.policy;
   const preview = status?.preview;
+  useEffect(() => {
+    if (formRef.current && policy) setDraftChanged(hasPolicyChanges(formRef.current, policy));
+  }, [policy?.enabled, policy?.keep_days, policy?.batch_size, loading, unavailable]);
   if (loading) return <Card><CardHeader><CardTitle>Run-log retention</CardTitle></CardHeader><CardContent role="status">Loading retention policy…</CardContent></Card>;
   if (unavailable || !policy || !preview) return <Card><CardHeader><CardTitle>Run-log retention</CardTitle></CardHeader><CardContent role="alert">Retention controls are unavailable. No deletion can be requested until the authoritative policy is available.</CardContent></Card>;
   const update = (event: FormEvent<HTMLFormElement>) => {
@@ -41,6 +53,7 @@ export function RunLogRetentionCard({
     });
   };
   const openConfirm = () => {
+    if (busy || !policy.enabled || !formRef.current || hasPolicyChanges(formRef.current, policy)) return;
     requestID.current = crypto.randomUUID();
     setConfirmation(status);
     setExecutionError("");
@@ -73,7 +86,7 @@ export function RunLogRetentionCard({
           <div><dt className="text-muted-foreground">Eligible bytes</dt><dd>{preview.eligible_bytes}</dd></div>
           <div><dt className="text-muted-foreground">Cutoff</dt><dd><time dateTime={preview.cutoff}>{new Date(preview.cutoff).toLocaleString()}</time></dd></div>
         </dl>
-        <form className="grid gap-3 sm:grid-cols-3" aria-label="Run-log retention policy" aria-busy={Boolean(busy)} onSubmit={update} onReset={onReset}>
+        <form ref={formRef} onChange={(event) => setDraftChanged(hasPolicyChanges(event.currentTarget, policy))} className="grid gap-3 sm:grid-cols-3" aria-label="Run-log retention policy" aria-busy={Boolean(busy)} onSubmit={update} onReset={() => { setDraftChanged(false); onReset?.(); }}>
           <label className="flex items-center gap-2 text-sm">
             <input disabled={busy} name="enabled" type="checkbox" defaultChecked={policy.enabled} /> Enable manual retention
           </label>
@@ -88,8 +101,9 @@ export function RunLogRetentionCard({
           <div className="sm:col-span-3 flex flex-wrap gap-2">
             <Button type="submit" variant="outline" disabled={busy}>Save policy</Button>
             <Button type="reset" variant="outline" disabled={busy}>Reset changes</Button>
-            <Button type="button" disabled={!policy.enabled || busy} onClick={openConfirm}>Previewed delete batch</Button>
+            <Button type="button" disabled={!policy.enabled || busy || draftChanged} onClick={openConfirm}>Previewed delete batch</Button>
           </div>
+          {draftChanged ? <p className="text-sm text-muted-foreground sm:col-span-3" role="status">Save or reset your changes before previewing a deletion.</p> : null}
           {saveError && !busy ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] sm:col-span-3">Unable to save retention policy: {saveError}</p> : null}
         </form>
         {execution ? <p className="rounded border p-3 text-sm" role="status">Execution receipt: deleted {execution.deleted} logs ({execution.deleted_bytes} bytes). Aggregate result only.</p> : null}

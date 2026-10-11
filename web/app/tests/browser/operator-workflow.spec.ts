@@ -3300,6 +3300,8 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   const batch = policy.getByRole("spinbutton", { name: "Batch size", exact: true });
   await days.fill("21");
   await batch.fill("17");
+  await expect(policy.getByRole("button", { name: "Previewed delete batch", exact: true })).toBeDisabled();
+  await expect(policy.getByText("Save or reset your changes before previewing a deletion.", { exact: true })).toBeVisible();
   await policy.getByRole("button", { name: "Save policy", exact: true }).click();
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -3341,6 +3343,7 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   await expect(policy).toHaveAttribute("aria-busy", "false");
   expect(saves).toBe(2);
   await expect(policy.getByRole("alert")).toHaveCount(0);
+  await expect(policy.getByText("Save or reset your changes before previewing a deletion.", { exact: true })).toHaveCount(0);
   const enabled = await policy.getByRole("checkbox").isChecked();
   await days.fill("99");
   await batch.fill("101");
@@ -3349,5 +3352,6 @@ test("retention policy saves lock fields and preserve failed drafts", async ({ p
   await expect(days).toHaveValue("21");
   await expect(batch).toHaveValue("17");
   expect(await policy.getByRole("checkbox").isChecked()).toBe(enabled);
+  await expect(policy.getByText("Save or reset your changes before previewing a deletion.", { exact: true })).toHaveCount(0);
   expect(saves).toBe(2);
 });
