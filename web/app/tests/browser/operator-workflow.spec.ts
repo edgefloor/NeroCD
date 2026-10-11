@@ -1967,6 +1967,7 @@ test("deployment detail loading, retry, and missing states preserve a return pat
   const search = `?service_id=${fixture.serviceID}&environment_id=${fixture.environmentID}`;
   await page.goto(`/deployments/${fixture.deploymentID}${search}`);
   await expect(page.getByRole("status").filter({ hasText: "Loading deployment" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to deployments", exact: true })).toBeVisible();
   await expect(page.getByText("Deployment is unavailable or you do not have access.", { exact: true })).toHaveCount(0);
   release!();
   await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
@@ -3533,5 +3534,29 @@ test("long deployment failure reasons and image digests wrap inside their cards"
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-long-diagnostics-320.png"), fullPage: true, animations: "disabled" });
+  }
+});
+
+
+test("healthy deployment details return to their filtered list page without reloading", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const search = new URLSearchParams({ q: "browser", offset: "50", service_id: fixture.serviceID, environment_id: fixture.environmentID });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/deployments/${fixture.deploymentID}?${search}`);
+    await expect(page.getByText(`Deployment ${fixture.deploymentID}`, { exact: true })).toBeVisible();
+    const back = page.getByRole("link", { name: "Back to deployments", exact: true });
+    await expect(back).toHaveCount(1);
+    await expect(back).toBeVisible();
+    const origin = await page.evaluate(() => performance.timeOrigin);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-return-320.png"), animations: "disabled" });
+    await back.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL((url) => url.pathname === "/deployments" && url.searchParams.get("q") === "browser" && url.searchParams.get("offset") === "50" && url.searchParams.get("service_id") === fixture.serviceID && url.searchParams.get("environment_id") === fixture.environmentID);
+    await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("browser");
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin);
   }
 });

@@ -23,7 +23,7 @@ function DeploymentUnavailable() {
 }
 
 function BackToDeployments() {
-  return <Button asChild variant="outline"><Link to="/deployments" search={true}>Back to deployments</Link></Button>;
+  return <Button asChild variant="outline" className="w-fit"><Link to="/deployments" search={true}>Back to deployments</Link></Button>;
 }
 
 function DeploymentDetailRoute() {
@@ -45,7 +45,7 @@ function DeploymentDetailRoute() {
   const taskRun = runs.data ?? undefined;
   const logs = useSelectedRunLogsPollingQuery(taskRun?.id ?? "", shouldPollRun(taskRun));
   const failedQueries = [deployment, environments, services, revisions, history, principal, members, runs].filter((query) => query.isError);
-  if (deployment.isPending) return <section className="space-y-3"><p role="status">Loading deployment...</p><SkeletonCard rows={4} /></section>;
+  if (deployment.isPending) return <section className="space-y-3"><BackToDeployments /><p role="status">Loading deployment...</p><SkeletonCard rows={4} /></section>;
   if (!deployment.isError && !deployment.data) return <DeploymentUnavailable />;
   const hasLoadedData = Boolean(deployment.data) && failedQueries.every((query) => query.data !== undefined);
   const error = failedQueries.length ? <section className="space-y-3">
@@ -62,5 +62,5 @@ function DeploymentDetailRoute() {
   const pendingAction = confirm?.isPending ? "confirm" : cancel?.isPending ? "cancel" : undefined;
   const actionError = confirm?.error ? `Unable to confirm deployment: ${confirm.error.message}`
     : cancel?.error ? `Unable to request cancellation: ${cancel.error.message}` : undefined;
-  return <div className="grid min-w-0 gap-4">{error}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} pendingAction={pendingAction} actionError={actionError} busy={failedQueries.length > 0 || mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => { mutation.cancel.reset(); mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed") }); }} onCancel={(input) => { mutation.confirm.reset(); mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested") }); }} /></div>;
+  return <div className="grid min-w-0 gap-4">{error ?? <BackToDeployments />}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} pendingAction={pendingAction} actionError={actionError} busy={failedQueries.length > 0 || mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => { mutation.cancel.reset(); mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed") }); }} onCancel={(input) => { mutation.confirm.reset(); mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested") }); }} /></div>;
 }
