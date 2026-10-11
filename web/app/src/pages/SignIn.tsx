@@ -3,7 +3,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-export function SignIn({ error, oidcEnabled = false, oidcError = false, oidcHref = "/api/v1/oidc/login", bootstrapRequired = false, onSubmit }: { error: string; oidcEnabled?: boolean; oidcError?: boolean; oidcHref?: string; bootstrapRequired?: boolean; onSubmit: (email: string, password: string) => Promise<void> }): ReactNode {
+type SignInProps = {
+  error: string;
+  oidcEnabled?: boolean;
+  oidcError?: boolean;
+  oidcHref?: string;
+  oidcStatusError?: boolean;
+  oidcStatusRetrying?: boolean;
+  onRetryOIDC?: () => void;
+  bootstrapRequired?: boolean;
+  onSubmit: (email: string, password: string) => Promise<void>;
+};
+
+export function SignIn({ error, oidcEnabled = false, oidcError = false, oidcHref = "/api/v1/oidc/login", oidcStatusError = false, oidcStatusRetrying = false, onRetryOIDC, bootstrapRequired = false, onSubmit }: SignInProps): ReactNode {
   const [pending, setPending] = useState(false);
   const submitting = useRef(false);
 
@@ -48,6 +60,10 @@ export function SignIn({ error, oidcEnabled = false, oidcError = false, oidcHref
                 <p className="text-sm text-muted-foreground">Create the first administrator with the bootstrap command, then return here to sign in.</p>
               </div>
             ) : <div className="space-y-4">
+              {oidcStatusError ? <div className="space-y-2">
+                <p role="alert" className="text-sm text-destructive">Unable to check single sign-on availability.</p>
+                {onRetryOIDC ? <Button variant="outline" className="w-full" disabled={oidcStatusRetrying} onClick={onRetryOIDC}>Retry SSO check</Button> : null}
+              </div> : null}
               {oidcError ? <p className="text-sm text-destructive" role="alert">Single sign-on failed. Try again or use local sign-in.</p> : null}
               {oidcEnabled ? <>
                 <Button className="w-full h-9" variant="outline" asChild>

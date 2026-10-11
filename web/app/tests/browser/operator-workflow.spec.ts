@@ -2475,3 +2475,27 @@ test("setup status failures do not claim that administrator bootstrap is require
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page).toHaveURL((url) => url.pathname === "/sign-in" && url.searchParams.get("redirect") === "/runners");
 });
+
+test("SSO discovery errors offer retry without discarding local sign-in input", async ({ page }, testInfo) => {
+  await page.goto("/sign-in");
+  await ensureBootstrapped(page);
+  let fail = true;
+  await page.route("**/api/v1/oidc/status", (route) => fail
+    ? route.fulfill({ status: 503, json: { error: "Temporary discovery failure" } })
+    : route.continue());
+  await page.goto("/sign-in?redirect=%2Frunners");
+  await expect(page.getByRole("alert")).toHaveText("Unable to check single sign-on availability.");
+  await page.getByLabel("Email").fill("operator@example.test");
+  await expect(page.getByRole("link", { name: "Continue with SSO", exact: true })).toHaveCount(0);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Retry SSO check", exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("sso-discovery-recovery-320.png"), fullPage: true });
+  }
+  fail = false;
+  await page.getByRole("button", { name: "Retry SSO check", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Continue with SSO", exact: true })).toHaveAttribute("href", "/api/v1/oidc/login?redirect=%2Frunners");
+  await expect(page.getByLabel("Email")).toHaveValue("operator@example.test");
+});

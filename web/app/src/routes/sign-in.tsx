@@ -58,5 +58,5 @@ function SignInRoute() {
   // Only a confirmed setup state selects the CLI guidance or sign-in form.
   const bootstrapRequired = bootstrap.data?.status !== "complete";
   const oidcHref = `/api/v1/oidc/login?redirect=${encodeURIComponent(validatedInternalRedirect(redirect))}`;
-  return <SignIn error={auth.authError} bootstrapRequired={bootstrapRequired} oidcEnabled={!bootstrapRequired && oidc.data?.enabled === true} oidcError={oidcError === "failed"} oidcHref={oidcHref} onSubmit={async (email, password) => { try { await auth.signIn(email, password); } catch { /* useAuth retains the rendered authError and route stays put */ } }} />;
+  return <SignIn error={auth.authError} bootstrapRequired={bootstrapRequired} oidcEnabled={!bootstrapRequired && oidc.data?.enabled === true} oidcStatusError={oidc.isError} oidcStatusRetrying={oidc.isFetching} onRetryOIDC={() => void oidc.refetch()} oidcError={oidcError === "failed"} oidcHref={oidcHref} onSubmit={async (email, password) => { try { await auth.signIn(email, password); } catch { /* useAuth retains the rendered authError and route stays put */ } }} />;
 }

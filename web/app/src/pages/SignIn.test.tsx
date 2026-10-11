@@ -53,3 +53,14 @@ test("provider failure is generic and local recovery remains usable", () => {
   expect(screen.getByRole("alert").textContent).toBe("Single sign-on failed. Try again or use local sign-in.");
   expect(screen.getByLabelText("Password")).toBeTruthy();
 });
+
+test("SSO discovery failure offers retry while preserving local recovery", () => {
+  const retry = vi.fn();
+  const view = render(<SignIn error="" oidcStatusError onRetryOIDC={retry} onSubmit={vi.fn()} />);
+  expect(screen.getByRole("alert").textContent).toBe("Unable to check single sign-on availability.");
+  expect(screen.getByLabelText("Email")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Retry SSO check" }));
+  expect(retry).toHaveBeenCalledOnce();
+  view.rerender(<SignIn error="" oidcStatusError oidcStatusRetrying onRetryOIDC={retry} onSubmit={vi.fn()} />);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry SSO check" }).disabled).toBe(true);
+});
