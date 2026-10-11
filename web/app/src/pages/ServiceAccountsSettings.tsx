@@ -36,6 +36,8 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
   const [revoking, setRevoking] = useState<ServiceAccount>();
   const [revokeError, setRevokeError] = useState("");
   const revokingRef = useRef(false);
+  const writingRef = useRef(false);
+  const releaseWrite = () => { writingRef.current = false; };
 
   useEffect(() => {
     if (!projects.some((project) => project.id === projectID)) setProjectID(projects[0]?.id ?? "");
@@ -53,6 +55,7 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
   const invalidate = () => client.invalidateQueries({ queryKey: ["service-accounts", projectID] });
   const create = useMutation({
     mutationFn: (input: ServiceAccountCreateInput) => createServiceAccount(input),
+    onSettled: releaseWrite,
     onSuccess: async (result) => {
       setSecret({ accountName: result.service_account.name, token: result.token, expiresAt: result.credential.expires_at });
       await invalidate();
@@ -66,9 +69,10 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
     } : cached);
     await client.invalidateQueries({ queryKey });
   }
-  const update = useMutation({ mutationFn: (input: ServiceAccountUpdateInput) => updateServiceAccount(input), onSuccess: retainConfirmedAccount });
+  const update = useMutation({ mutationFn: (input: ServiceAccountUpdateInput) => updateServiceAccount(input), onSuccess: retainConfirmedAccount, onSettled: releaseWrite });
   const rotate = useMutation({
     mutationFn: ({ account }: { account: ServiceAccount }) => rotateServiceAccountCredential({ service_account_id: account.id }),
+    onSettled: releaseWrite,
     onSuccess: async (result, variables) => {
       setSecret({ accountName: variables.account.name, token: result.token, expiresAt: result.credential.expires_at });
       await invalidate();
@@ -81,10 +85,15 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
       await retainConfirmedAccount(account);
     },
     onError: () => setRevokeError("Unable to revoke this account. Try again."),
-    onSettled: () => { revokingRef.current = false; },
+    onSettled: () => { revokingRef.current = false; releaseWrite(); },
   });
   const busy = create.isPending || update.isPending || rotate.isPending || revoke.isPending;
   const controlsDisabled = readOnly || busy || page.isError;
+  function acquireWrite() {
+    if (controlsDisabled || writingRef.current) return false;
+    writingRef.current = true;
+    return true;
+  }
   const result = page.data;
   useEffect(() => {
     if (!revoking || !result || revokingRef.current) return;
@@ -110,6 +119,7 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
       element.querySelector<HTMLInputElement>('[name="expires_at"]')?.focus();
       return;
     }
+    if (!acquireWrite()) return;
     setExpiryError("");
     create.mutate({
       project_id: projectID,
@@ -149,8 +159,8 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
             rotating={rotate.isPending && rotate.variables?.account.id === account.id}
             saveError={!update.isPending && update.variables?.service_account_id === account.id ? update.error?.message : undefined}
             rotateError={!rotate.isPending && rotate.variables?.account.id === account.id ? rotate.error?.message : undefined}
-            onSave={(input) => update.mutateAsync(input)}
-            onRotate={() => rotate.mutate({ account })}
+            onSave={(input) => acquireWrite() ? update.mutateAsync(input) : Promise.resolve(undefined)}
+            onRotate={() => { if (account.status === "active" && acquireWrite()) rotate.mutate({ account }); }}
             onRevoke={() => { setRevokeError(""); setRevoking(account); }}
           />
         ))}
@@ -168,7 +178,7 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
             <DialogFooter>
               <Button variant="outline" disabled={revoke.isPending} onClick={() => { if (!revokingRef.current) setRevoking(undefined); }}>Keep account active</Button>
               <Button variant="destructive" disabled={controlsDisabled} onClick={() => {
-                if (!revoking || controlsDisabled || revokingRef.current) return;
+                if (!revoking || revoking.status !== "active" || revokingRef.current || !acquireWrite()) return;
                 revokingRef.current = true;
                 setRevokeError("");
                 revoke.mutate(revoking.id);
@@ -190,7 +200,7 @@ type ServiceAccountEditorProps = {
   rotating: boolean;
   saveError?: string;
   rotateError?: string;
-  onSave: (input: ServiceAccountUpdateInput) => Promise<ServiceAccount>;
+  onSave: (input: ServiceAccountUpdateInput) => Promise<ServiceAccount | undefined>;
   onRotate: () => void;
   onRevoke: () => void;
 };
@@ -205,8 +215,8 @@ function ServiceAccountEditor({ account, busy, disabled, saving, rotating, saveE
     event.preventDefault();
     if (disabled || account.status !== "active") return;
     try {
-      await onSave({ service_account_id: account.id, name, role });
-      setDraft({});
+      const saved = await onSave({ service_account_id: account.id, name, role });
+      if (saved) setDraft({});
     } catch {
       // The parent mutation supplies the error; retain the draft for retry.
     }

@@ -323,3 +323,36 @@ test.each(["disabled", "revoked", "removed"])("revocation confirmation closes wh
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(serviceAccountsAPI.revoke).not.toHaveBeenCalled();
 });
+
+
+test.each(["create", "update", "rotate"] as const)("%s synchronously blocks duplicate and competing account writes", async (action) => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [account], count: 1, total: 1, offset: 0, limit: 10 });
+  let reject!: (reason: Error) => void;
+  for (const mutation of [serviceAccountsAPI.create, serviceAccountsAPI.update, serviceAccountsAPI.rotate]) {
+    mutation.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+  }
+  renderPanel();
+  await screen.findByLabelText("Name for Build bot");
+  fireEvent.change(screen.getByLabelText("Service account name"), { target: { value: "New bot" } });
+  fireEvent.change(screen.getByLabelText("Name for Build bot"), { target: { value: "Unsaved name" } });
+  const actions = {
+    create: () => fireEvent.submit(screen.getByRole("form", { name: "Create service account" })),
+    update: () => fireEvent.submit(screen.getByRole("form", { name: "Edit service account Build bot" })),
+    rotate: () => fireEvent.click(screen.getByRole("button", { name: "Rotate" })),
+  };
+  await act(async () => {
+    actions[action]();
+    actions.create();
+    actions.update();
+    actions.rotate();
+  });
+  expect(serviceAccountsAPI[action]).toHaveBeenCalledTimes(1);
+  for (const other of ["create", "update", "rotate"] as const) {
+    if (other !== action) expect(serviceAccountsAPI[other]).not.toHaveBeenCalled();
+  }
+  expect(screen.getByLabelText<HTMLInputElement>("Name for Build bot").value).toBe("Unsaved name");
+  await act(async () => { reject(new Error("Temporary failure")); });
+  serviceAccountsAPI[action].mockRejectedValueOnce(new Error("Retry failure"));
+  await act(async () => { actions[action](); });
+  expect(serviceAccountsAPI[action]).toHaveBeenCalledTimes(2);
+});
