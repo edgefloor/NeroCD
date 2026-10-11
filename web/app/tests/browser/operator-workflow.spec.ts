@@ -414,6 +414,22 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
     await page.keyboard.press("Escape");
     await expect(page.locator(`[data-run-log-trigger="${runID}"]`).first()).toBeFocused();
   }
+  for (const [width, height] of [[640, 320], [320, 320], [1440, 360]] as const) {
+    await page.setViewportSize({ width, height });
+    const trigger = page.locator(`[data-run-log-trigger="${runID}"]`);
+    await (width < 768 ? trigger.first() : trigger.last()).click();
+    const lastLine = dialog.getByText("Browser output 152", { exact: true });
+    await lastLine.scrollIntoViewIfNeeded();
+    const bounds = await dialog.boundingBox();
+    const close = dialog.getByRole("button", { name: "Close", exact: true });
+    const closeBounds = await close.boundingBox();
+    const lineBounds = await lastLine.boundingBox();
+    expect(closeBounds!.y).toBeGreaterThanOrEqual(bounds!.y);
+    expect(lineBounds!.y + lineBounds!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height);
+    if (width === 640) await page.screenshot({ path: testInfo.outputPath("run-logs-landscape.png"), fullPage: false });
+    await close.click();
+    await expect(dialog).toHaveCount(0);
+  }
 });
 
 test("system administrators can open the bounded Operations summary", async ({ page }) => {

@@ -48,7 +48,7 @@ export function TerminalLogDialog({
       <DialogContent
         showCloseButton={false}
         aria-describedby={undefined}
-        className="min-w-0 grid-cols-1 max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-4xl border-border bg-background"
+        className="min-w-0 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden rounded-lg p-0 sm:max-w-4xl border-border bg-background"
         onOpenAutoFocus={() => {
           openerRef.current = pendingOpener;
           pendingOpener = null;
@@ -89,7 +89,7 @@ export function TerminalLogDialog({
             </DialogClose>
           </div>
         </DialogHeader>
-        <div className="min-w-0 max-h-[70dvh] min-h-[360px] overflow-auto bg-background p-4 font-mono text-[13px] leading-6 text-foreground">
+        <div className="min-w-0 max-h-[70dvh] min-h-0 overflow-auto bg-background p-4 font-mono text-[13px] leading-6 text-foreground">
           {run ? (
             <div className="mb-3 grid min-w-0 gap-1 break-all border-b border-border pb-3 text-xs text-muted-foreground">
               <span>$ nerocd runs inspect {run.id}</span>
