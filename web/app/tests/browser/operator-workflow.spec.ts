@@ -461,7 +461,7 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   }
 });
 
-test("system administrators can open the bounded Operations summary", async ({ page }) => {
+test("system administrators can open the bounded Operations summary", async ({ page }, testInfo) => {
 	await page.goto("/operations");
 	await signIn(page);
   await expect(page.getByRole("heading", { name: "System Operations" })).toBeVisible();
@@ -477,9 +477,36 @@ test("system administrators can open the bounded Operations summary", async ({ p
 	await executeButton.click();
 	const retentionDialog = page.getByRole("dialog", { name: "Execute one retention batch?" });
 	await expect(retentionDialog).toContainText("cannot delete artifacts, audit records, deployments, or runs");
-	const executed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/run-log-retention/execute" && response.request().method() === "POST");
-	await retentionDialog.getByRole("button", { name: "Execute retained batch" }).click();
-	expect((await executed).status()).toBe(200);
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const requests: { id: string | undefined; body: unknown }[] = [];
+  await page.route("**/api/v1/run-log-retention/execute", async (route) => {
+    requests.push({ id: route.request().headers()["x-request-id"], body: route.request().postDataJSON() });
+    if (requests.length > 1) return route.continue();
+    await pending;
+    return route.fulfill({ status: 503, json: { error: "Temporary execution failure" } });
+  });
+  await retentionDialog.getByRole("button", { name: "Execute retained batch", exact: true }).click();
+  await expect(retentionDialog.getByRole("button", { name: "Executing...", exact: true })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(retentionDialog).toBeVisible();
+  await expect(retentionDialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+  expect(requests).toHaveLength(1);
+  release();
+  await expect(retentionDialog.getByRole("alert")).toContainText("Temporary execution failure");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(retentionDialog.getByRole("button", { name: "Execute retained batch", exact: true })).toBeEnabled();
+    expect(await retentionDialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("retention-execution-retry-320.png") });
+  }
+  const executed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/run-log-retention/execute" && response.request().method() === "POST");
+  await retentionDialog.getByRole("button", { name: "Execute retained batch", exact: true }).click();
+  expect((await executed).status()).toBe(200);
+  await expect(retentionDialog).toHaveCount(0);
+  expect(requests).toHaveLength(2);
+  expect(requests[0]!.id).toBeTruthy();
+  expect(requests[1]).toEqual(requests[0]);
 	await expect(page.getByText(/Execution receipt: deleted/i)).toBeVisible();
 	await page.reload();
   await expect(page.getByRole("heading", { name: "System Operations" })).toBeVisible();
