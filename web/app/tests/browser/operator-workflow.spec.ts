@@ -51,7 +51,7 @@ async function postJSON<T>(page: Page, path: string, data: unknown, headers: Rec
   return await response.json() as T;
 }
 
-async function createDetailFixture(page: Page): Promise<{ deploymentID: string }> {
+async function createDetailFixture(page: Page): Promise<{ deploymentID: string; projectID: string; serviceID: string; environmentID: string; revisionID: string }> {
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   const runner = await postJSON<{ token: string }>(page, "/api/v1/runner-enrollments", {
     runner_id: `runner_web${suffix}`,
@@ -69,7 +69,7 @@ async function createDetailFixture(page: Page): Promise<{ deploymentID: string }
   const environment = await postJSON<{ id: string }>(page, "/api/v1/environments", { service_id: service.id, name: `environment-${suffix}`, compose_project: `browser-detail-${suffix}`, timeout_seconds: 60, rollback_safe: true });
   const revision = await postJSON<{ id: string }>(page, "/api/v1/revisions", { service_id: service.id, requested_ref: "main" });
   const deployment = await postJSON<{ id: string }>(page, "/api/v1/deployments", { environment_id: environment.id, desired_revision_id: revision.id, idempotency_key: `browser-detail-${suffix}` });
-  return { deploymentID: deployment.id };
+  return { deploymentID: deployment.id, projectID: project.id, serviceID: service.id, environmentID: environment.id, revisionID: revision.id };
 }
 
 async function createRunLogFixture(page: Page): Promise<{ runID: string; secondRunID: string }> {
@@ -1051,5 +1051,44 @@ test("project access preserves failed drafts and resets after a successful retry
     expect((await saved).status()).toBe(200);
     await expect(card.getByRole("combobox", { name: "Role", exact: true })).toHaveValue("viewer");
     await expect(email).toHaveValue(originalEmail);
+  }
+});
+
+
+test("deployment selection restores deep links and clears dependent choices on project change", async ({ page }) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const otherProject = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Other deployment project ${Date.now()}`, description: "Selection fixture" });
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/deployments?service_id=${fixture.serviceID}&environment_id=${fixture.environmentID}&offset=50`);
+    const project = page.getByRole("combobox", { name: "Project", exact: true });
+    const service = page.getByRole("combobox", { name: "Service", exact: true });
+    const environment = page.getByRole("combobox", { name: "Environment", exact: true });
+    const revision = page.getByRole("combobox", { name: "Immutable revision", exact: true });
+    await expect(project).toHaveValue(fixture.projectID);
+    await expect(service).toHaveValue(fixture.serviceID);
+    await expect(environment).toHaveValue(fixture.environmentID);
+    await revision.selectOption(fixture.revisionID);
+    await expect(page.getByRole("button", { name: "Request deployment", exact: true })).toBeEnabled();
+    await project.selectOption(otherProject.id);
+    await expect(service).toHaveValue("");
+    await expect(environment).toHaveValue("");
+    await expect(revision).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Request deployment", exact: true })).toBeDisabled();
+    expect(new URL(page.url()).searchParams.has("service_id")).toBe(false);
+    expect(new URL(page.url()).searchParams.has("environment_id")).toBe(false);
+    expect(new URL(page.url()).searchParams.has("offset")).toBe(false);
+    await page.goBack();
+    await expect(project).toHaveValue(fixture.projectID);
+    await expect(service).toHaveValue(fixture.serviceID);
+    await expect(environment).toHaveValue(fixture.environmentID);
+    expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
+    await page.reload();
+    await expect(project).toHaveValue(fixture.projectID);
+    await expect(service).toHaveValue(fixture.serviceID);
+    await expect(environment).toHaveValue(fixture.environmentID);
   }
 });
