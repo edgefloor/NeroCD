@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import type { User } from "@/api/users";
@@ -96,4 +96,35 @@ test("failed user refresh preserves loaded identities and disables destructive c
   fireEvent.click(screen.getByRole("button", { name: "Retry users" }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(screen.getByRole<HTMLButtonElement>("button", { name: `Offboard ${activeUser.email}` }).disabled).toBe(false);
+});
+
+test("offboarding failures stay in the confirmation dialog and can be retried", async () => {
+  const offboard = vi.fn().mockRejectedValueOnce(new Error("Temporary failure")).mockResolvedValue(undefined);
+  render(<UsersSettings users={[activeUser]} onOffboard={offboard} />);
+  fireEvent.click(screen.getByRole("button", { name: `Offboard ${activeUser.email}` }));
+  fireEvent.click(screen.getByRole("button", { name: "Offboard user" }));
+  await screen.findByText("Unable to offboard this user. Try again.");
+  expect(screen.getByRole("dialog").textContent).toContain(activeUser.email);
+  fireEvent.click(screen.getByRole("button", { name: "Offboard user" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(offboard).toHaveBeenCalledTimes(2);
+  expect(offboard).toHaveBeenLastCalledWith(activeUser.id);
+});
+
+
+test("pending offboarding prevents duplicate requests and dismissal", async () => {
+  let resolve!: () => void;
+  const offboard = vi.fn(() => new Promise<void>((done) => { resolve = done; }));
+  render(<UsersSettings users={[activeUser]} onOffboard={offboard} />);
+  fireEvent.click(screen.getByRole("button", { name: `Offboard ${activeUser.email}` }));
+  const submit = screen.getByRole("button", { name: "Offboard user" });
+  fireEvent.click(submit);
+  fireEvent.click(submit);
+  expect(offboard).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Offboarding..." }).disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Keep user active" }).disabled).toBe(true);
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  await act(async () => resolve());
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

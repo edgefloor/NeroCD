@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldOff, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -58,6 +58,9 @@ type UsersSettingsProps = {
 
 export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious, onNext, onOffboard }: UsersSettingsProps): ReactNode {
   const [selected, setSelected] = useState<User>();
+  const [offboardError, setOffboardError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const metadata = page ?? { count: users.length, limit: users.length, offset: 0, total: users.length };
   const first = metadata.count === 0 ? 0 : metadata.offset + 1;
   const last = metadata.count === 0 ? 0 : metadata.offset + metadata.count;
@@ -84,7 +87,7 @@ export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious,
               <Badge variant={user.status === "active" ? "success" : "secondary"}>{user.status}</Badge>
               <Badge variant="outline">{user.global_role}</Badge>
               {user.status === "active" ? (
-                <Button aria-label={`Offboard ${user.email}`} variant="destructive" size="sm" disabled={busy} onClick={() => setSelected(user)}>
+                <Button aria-label={`Offboard ${user.email}`} variant="destructive" size="sm" disabled={busy || submitting} onClick={() => { setOffboardError(""); setSelected(user); }}>
                   <ShieldOff className="h-4 w-4" />Offboard
                 </Button>
               ) : null}
@@ -103,24 +106,35 @@ export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious,
             </Button>
           </div>
         </nav>
-        <Dialog open={Boolean(selected)} onOpenChange={(open) => !open && setSelected(undefined)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Offboard {selected?.email}?</DialogTitle>
+        <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open && !submittingRef.current) { setSelected(undefined); setOffboardError(""); } }}>
+          <DialogContent showCloseButton={!submitting} className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <DialogHeader className="min-w-0 pr-6">
+              <DialogTitle className="break-all">Offboard {selected?.email}?</DialogTitle>
               <DialogDescription>This disables local and OIDC sign-in, revokes every session and active API token issued by this user, and disables every service account they own. Identity mappings and history remain.</DialogDescription>
             </DialogHeader>
+            {offboardError ? <p role="alert" className="text-sm text-destructive">{offboardError}</p> : null}
             <DialogFooter>
-              <Button variant="outline" onClick={() => setSelected(undefined)}>Keep user active</Button>
+              <Button variant="outline" disabled={submitting} onClick={() => { setSelected(undefined); setOffboardError(""); }}>Keep user active</Button>
               <Button
                 variant="destructive"
-                disabled={busy}
+                disabled={busy || submitting}
                 onClick={async () => {
-                  if (!selected) return;
-                  await onOffboard(selected.id);
-                  setSelected(undefined);
+                  if (!selected || busy || submittingRef.current) return;
+                  submittingRef.current = true;
+                  setSubmitting(true);
+                  setOffboardError("");
+                  try {
+                    await onOffboard(selected.id);
+                    setSelected(undefined);
+                  } catch {
+                    setOffboardError("Unable to offboard this user. Try again.");
+                  } finally {
+                    submittingRef.current = false;
+                    setSubmitting(false);
+                  }
                 }}
               >
-                Offboard user
+                {submitting ? "Offboarding..." : "Offboard user"}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -2603,3 +2603,36 @@ test("user list request failures retry the selected page", async ({ page }, test
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(offsets).toEqual([10]);
 });
+
+test("failed offboarding stays in its dialog and succeeds on retry", async ({ page }, testInfo) => {
+  await page.goto("/settings");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const user = { id: "user_offboard_retry", name: "Retry user", email: `${"operator".repeat(20)}@example.test`, status: "active", global_role: "user", created_at: "2026-10-11T12:00:00Z", updated_at: "2026-10-11T12:00:00Z" };
+  await page.route("**/api/v1/users?*", (route) => route.fulfill({ json: { items: [user], count: 1, total: 1, offset: 0, limit: 10 } }));
+  let attempts = 0;
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.route("**/api/v1/users/offboard", (route) => {
+    attempts += 1;
+    if (attempts === 1) return route.fulfill({ status: 503, json: { error: "Temporary offboarding failure" } });
+    user.status = "disabled";
+    return route.fulfill({ json: { user, revoked_sessions: 0, revoked_api_tokens: 0, revoked_service_accounts: 0 } });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: `Offboard ${user.email}`, exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Offboard user", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("Unable to offboard this user. Try again.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(dialog.getByRole("button", { name: "Offboard user", exact: true })).toBeEnabled();
+    await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("offboard-retry-320.png"), fullPage: true });
+  }
+  await dialog.getByRole("button", { name: "Offboard user", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("disabled", { exact: true })).toBeVisible();
+  expect(attempts).toBe(2);
+  expect(errors).toEqual([]);
+});
