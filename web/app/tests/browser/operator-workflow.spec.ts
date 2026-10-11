@@ -4142,3 +4142,27 @@ test("failed log and audit pages return to the first page with their filters", a
     }
   }
 });
+
+
+test("audit run targets open details and preserve filtered history", async ({ page }) => {
+  await page.goto("/audit");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/audit?q=${runID}`);
+    const target = page.getByRole("link", { name: runID, exact: true });
+    await expect(target).toBeVisible();
+    await expect(target).toHaveAttribute("href", `/runs/${runID}?q=${runID}`);
+    const origin = await page.evaluate(() => performance.timeOrigin);
+    await target.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog", { name: `run ${runID}` })).toBeVisible();
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin);
+    await page.goBack();
+    await expect(page).toHaveURL((url) => url.pathname === "/audit" && url.searchParams.get("q") === runID);
+    await expect(target).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});

@@ -1,6 +1,9 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import type { ReactNode } from "react";
+import { afterEach, expect, test, vi } from "vitest";
 import { AuditView } from "./AuditView";
+
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, params }: { children: ReactNode; params: { runId: string } }) => <a href={`/runs/${params.runId}`}>{children}</a> }));
 
 afterEach(cleanup);
 const event = { id: "audit_one", actor_id: "user_operator", target_id: "run_one", action: "run.requested", metadata: { reason: "Release requested", nested: { value: "Complete evidence" } }, created_at: "2026-10-11T12:34:56Z" };
@@ -21,4 +24,16 @@ test("audit filtering includes actor and distinguishes a miss from an empty page
   expect(screen.getByText("No audit events match this filter on the loaded page.")).toBeTruthy();
   view.rerender(<AuditView events={[]} />);
   expect(screen.getByText("No audit events on this page.")).toBeTruthy();
+});
+
+
+test.each(["run.request", "run.approve", "run.reject", "run.cancel"])("%s links to its recorded run target", (action) => {
+  render(<AuditView events={[{ ...event, action }]} />);
+  expect(screen.getByRole("link", { name: event.target_id }).getAttribute("href")).toBe(`/runs/${event.target_id}`);
+});
+
+test.each(["project.create", "run_log_retention.execute", "run.unknown"])("%s does not guess a target route", (action) => {
+  render(<AuditView events={[{ ...event, action }]} />);
+  expect(screen.queryByRole("link")).toBeNull();
+  expect(screen.getByText(event.target_id)).toBeTruthy();
 });
