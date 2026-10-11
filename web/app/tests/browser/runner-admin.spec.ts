@@ -33,7 +33,7 @@ async function signIn(page: Page): Promise<void> {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
 }
 
 async function postJSON<T>(page: Page, path: string, data: unknown): Promise<T> {
@@ -96,7 +96,7 @@ test("OIDC viewer principals receive runner 403 responses and no runner controls
   try {
     await page.goto("/sign-in");
     await page.getByRole("link", { name: "Continue with SSO" }).click();
-    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
     const me = await page.request.get("/api/v1/me");
     expect(me.ok()).toBeTruthy();
     expect(await me.json()).toMatchObject({ email: "oidc-browser@example.invalid", roles: [] });

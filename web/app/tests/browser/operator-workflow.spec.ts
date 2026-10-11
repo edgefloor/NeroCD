@@ -103,7 +103,7 @@ test("browser observes CLI-only bootstrap guidance before a supported CLI bootst
   await expect(page.getByLabel("Email")).toHaveValue("");
   await expect(page.getByLabel("Password")).toHaveValue("");
   await signIn(page);
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   await expect(page.locator("h1")).toBeVisible();
 });
 
@@ -114,7 +114,8 @@ test("authenticated navigation and sign out work with runtime-only credentials",
   await expect(page).toHaveURL(/\/projects/);
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(page.locator("h1")).toBeVisible();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
@@ -150,7 +151,8 @@ test("dashboard route states retain the shell and retry a transient loader failu
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
   failHealth = true;
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("We could not load the dashboard", { timeout: 16_000 });
   failHealth = false;
   await page.getByRole("button", { name: "Try again" }).click();
@@ -161,7 +163,7 @@ test("dashboard route states retain the shell and retry a transient loader failu
 test("settings cards contain controls and wrap long membership text on narrow screens", async ({ page }) => {
   await page.goto("/settings");
   await signIn(page);
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   const projectName = `Settings geometry ${"project-name-".repeat(20)}${suffix}`;
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: projectName, description: "settings layout fixture" });
@@ -202,7 +204,7 @@ test("settings cards contain controls and wrap long membership text on narrow sc
 test("dashboard reports unfinished work truthfully and shared cards keep bounded geometry", async ({ page }) => {
   await page.goto("/");
   await signIn(page);
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", {
     name: `Dashboard geometry ${suffix}`,
@@ -257,7 +259,7 @@ test("dashboard reports unfinished work truthfully and shared cards keep bounded
 test("project paging reaches rows beyond one hundred on a narrow viewport", async ({ page }, testInfo) => {
   await page.goto("/projects");
   await signIn(page);
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const projects = Array.from({ length: 151 }, (_, index) => ({
     id: `proj_page_${index + 1}`,
     name: `Paged project ${index + 1}`,
@@ -289,7 +291,7 @@ test("project paging reaches rows beyond one hundred on a narrow viewport", asyn
 test("settings pages member history while authorization lookup spans every bounded page", async ({ page }, testInfo) => {
   await page.goto("/settings");
   await signIn(page);
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Member paging ${Date.now()}`, description: "member paging fixture" });
   const members = Array.from({ length: 131 }, (_, index) => ({
     id: `member_page_${index + 1}`,
@@ -325,7 +327,7 @@ test("settings pages member history while authorization lookup spans every bound
 test("runs list fetches, follows, closes, and switches terminal logs", async ({ page }, testInfo) => {
   await page.goto("/runs");
   await signIn(page);
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const { runID, secondRunID } = await createRunLogFixture(page);
   await page.reload();
   let scopedLogRequests = 0;
@@ -415,69 +417,117 @@ test("system administrators can open the bounded Operations summary", async ({ p
   await expect(page.getByRole("dialog", { name: "Mobile navigation" }).getByRole("link", { name: "Operations" })).toBeVisible();
 });
 
-test("mobile shell keeps primary navigation usable and safely contained", async ({ page }) => {
-  await page.goto("/");
+test("mobile menu has labeled routes, traps focus, and keeps account actions reachable", async ({ page }, testInfo) => {
+  await page.goto("/projects");
   await signIn(page);
-  const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  const actionNames = ["Home", "Runs", "Deployments", "Runners", "Approvals"];
-
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });
-    await expect(primaryNavigation).toBeVisible();
-    await expect(primaryNavigation.getByRole("button")).toHaveCount(5);
-    for (const name of actionNames) {
-      await expect(primaryNavigation.getByRole("button", { name })).toBeVisible();
+    await expect(page.locator(".mobile-bottom-navigation")).toHaveCount(0);
+    const menu = page.getByRole("button", { name: "Open mobile navigation" });
+    await expect(menu).toHaveText("Menu");
+    await menu.click();
+    const drawer = page.getByRole("dialog", { name: "Mobile navigation" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveAttribute("aria-modal", "true");
+    await expect(drawer.getByRole("link", { name: "Projects", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(drawer.getByRole("link")).toHaveCount(11);
+    await expect(drawer.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    if (width === 390) await page.screenshot({ path: testInfo.outputPath("mobile-drawer-390.png") });
+    for (let tab = 0; tab < 14; tab++) {
+      await page.keyboard.press("Tab");
+      expect(await drawer.evaluate((element) => element.contains(document.activeElement))).toBe(true);
     }
-
-    const mobileMetrics = await page.evaluate(() => {
-      const navigation = document.querySelector<HTMLElement>(".mobile-bottom-navigation");
-      const content = document.querySelector<HTMLElement>(".mobile-shell-content");
-      if (!navigation || !content) throw new Error("mobile shell is unavailable");
-      const itemTops = Array.from(navigation.querySelectorAll<HTMLElement>("button"), (button) => button.getBoundingClientRect().top);
-      return {
-        contentPaddingBottom: Number.parseFloat(window.getComputedStyle(content).paddingBottom),
-        documentClientWidth: document.documentElement.clientWidth,
-        documentScrollWidth: document.documentElement.scrollWidth,
-        navigationHeight: navigation.getBoundingClientRect().height,
-        itemTops,
-      };
-    });
-    expect(mobileMetrics.documentScrollWidth).toBeLessThanOrEqual(mobileMetrics.documentClientWidth);
-    expect(mobileMetrics.contentPaddingBottom).toBeGreaterThanOrEqual(mobileMetrics.navigationHeight);
-    expect(new Set(mobileMetrics.itemTops).size).toBe(1);
+    await page.keyboard.press("Escape");
+    await expect(drawer).toHaveCount(0);
+    await expect(menu).toBeFocused();
+    await page.getByRole("button", { name: "Account", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh data", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    if (width === 390) await page.screenshot({ path: testInfo.outputPath("mobile-navigation-390.png") });
   }
-
-  expect(await page.locator('meta[name="viewport"]').getAttribute("content")).toContain("viewport-fit=cover");
-
   await page.getByRole("button", { name: "Open mobile navigation" }).click();
-  const drawer = page.getByRole("dialog", { name: "Mobile navigation" });
-  await expect(drawer).toBeVisible();
-  const drawerMetrics = await drawer.evaluate((element) => {
-    const drawer = element as HTMLElement;
-    const rect = drawer.getBoundingClientRect();
-    const style = window.getComputedStyle(drawer);
-    const alpha = style.backgroundColor.match(/^rgba\\([^,]+,[^,]+,[^,]+,\\s*([^)]+)\\)$/)?.[1];
-    return {
-      backgroundColor: style.backgroundColor,
-      backgroundAlpha: alpha === undefined ? 1 : Number(alpha),
-      bottom: rect.bottom,
-      overflowY: style.overflowY,
-      right: rect.right,
-      viewportHeight: window.innerHeight,
-      viewportWidth: window.innerWidth,
-    };
-  });
-  expect(drawerMetrics.backgroundColor).not.toBe("transparent");
-  expect(drawerMetrics.backgroundAlpha).toBe(1);
-  expect(drawerMetrics.overflowY).toBe("auto");
-  expect(drawerMetrics.right).toBeLessThanOrEqual(drawerMetrics.viewportWidth);
-  expect(drawerMetrics.bottom).toBeLessThanOrEqual(drawerMetrics.viewportHeight);
-
-  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1024, height: 844 });
-  await expect(primaryNavigation).toBeHidden();
-  await expect(page.getByRole("button", { name: "Open mobile navigation" })).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "Mobile navigation" })).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
+  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await expect(page).toHaveURL(/\/runs$/);
+});
+
+test("header and notification controls fit narrow and intermediate viewports", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 768, 820, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const label of ["Search navigation", "Notifications", "Account"]) {
+      const bounds = await page.getByRole("button", { name: label, exact: true }).boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    }
+    await page.getByRole("button", { name: "Notifications", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Notifications", exact: true });
+    await expect(dialog).toBeVisible();
+    const bounds = await dialog.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    await page.keyboard.press("Escape");
+    if (width === 768 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`navigation-${width}.png`) });
+  }
+  await page.setViewportSize({ width: 1440, height: 360 });
+  const settings = page.getByRole("navigation", { name: "Desktop navigation" }).getByRole("link", { name: "Settings", exact: true });
+  await settings.scrollIntoViewIfNeeded();
+  const bounds = await settings.boundingBox();
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(360);
+  await settings.click();
+  await expect(page).toHaveURL(/\/settings$/);
+});
+
+test("page filtering preserves deployment context without filling browser history", async ({ page }) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  await page.goto("/deployments?service_id=svc_navigation&environment_id=env_navigation");
+  const historyLength = await page.evaluate(() => history.length);
+  const filter = page.getByRole("searchbox", { name: "Filter this page", exact: true });
+  await filter.pressSequentially("audit", { delay: 40 });
+  await expect(page).toHaveURL(/q=audit/);
+  expect(new URL(page.url()).searchParams.get("service_id")).toBe("svc_navigation");
+  expect(new URL(page.url()).searchParams.get("environment_id")).toBe("env_navigation");
+  expect(await page.evaluate(() => history.length)).toBe(historyLength);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/projects$/);
+});
+
+test("navigation search supports unmatched filters and resets between openings", async ({ page }) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const search = page.getByRole("button", { name: "Search navigation", exact: true });
+  await search.click();
+  await page.getByRole("combobox").fill("zz-navigation-audit");
+  await expect(page.getByRole("option", { name: 'Filter this page for "zz-navigation-audit"' })).toBeVisible();
+  await page.getByRole("combobox").press("Enter");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page).toHaveURL(/q=zz-navigation-audit/);
+  await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("zz-navigation-audit");
+  await search.click();
+  await expect(page.getByRole("combobox")).toHaveValue("");
+  await page.getByRole("combobox").fill("Settings");
+  await expect(page.getByRole("option", { name: "Settings", exact: true })).toBeVisible();
+  await page.getByRole("combobox").press("Enter");
+  await expect(page).toHaveURL(/\/settings$/);
+  await search.click();
+  await page.getByRole("combobox").fill("zz-no-page");
+  await expect(page.getByText("No matching pages or actions.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
 });
 
 test("runner enrollment stays local to the reveal dialog and browser avoids runner-only APIs", async ({ page }) => {
@@ -523,7 +573,7 @@ test("production CSP permits shipped style attributes but blocks executable scri
   const csp = response.headers()["content-security-policy"];
   expect(csp).toBe("default-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'");
   await signIn(page);
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const { deploymentID } = await createDetailFixture(page);
   await page.goto(`/deployments/${deploymentID}`);
   await page.getByRole("button", { name: "Cancel" }).click();
@@ -573,7 +623,7 @@ test("deployment operations navigation, deep links, search, and mobile menu stay
   await expect(page).toHaveURL(new RegExp(`/deployments/${deploymentID}$`));
   await expect(page.getByText(`Deployment ${deploymentID}`)).toBeVisible();
   await page.keyboard.press("Meta+k");
-  const commandInput = page.getByPlaceholder("Type a command or search...");
+  const commandInput = page.getByPlaceholder("Find a page or action...");
   await expect(commandInput).toBeFocused();
   await page.keyboard.press("Escape");
   await page.reload();

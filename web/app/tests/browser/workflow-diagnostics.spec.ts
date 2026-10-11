@@ -23,7 +23,7 @@ async function signIn(page: Page): Promise<void> {
   await page.getByLabel("Email").fill(email!);
   await page.getByLabel("Password").fill(password!);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
 }
 
 async function postJSON<T>(page: Page, path: string, data: unknown): Promise<T> {

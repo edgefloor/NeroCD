@@ -28,7 +28,7 @@ async function signInAsAdministrator(page: Page): Promise<void> {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
 }
 
 async function provisionFirstPageUsers(): Promise<void> {
@@ -121,7 +121,8 @@ test("administrator offboards an OIDC user and the next provider login is denied
   }
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/sign-in/);
   const personaSelection = await selectOffboardingOIDCPersona(page);
   await page.getByRole("link", { name: "Continue with SSO" }).click();

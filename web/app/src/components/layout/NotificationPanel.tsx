@@ -2,7 +2,7 @@ import { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import type { ApiSnapshot } from "@/api";
 
-type ViewKey = "home" | "runs" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
+import type { ViewKey } from "@/router/metadata";
 
 export function NotificationPanel({
   snapshot,
@@ -15,9 +15,9 @@ export function NotificationPanel({
   const failed = snapshot?.runs.filter((run) => ["failed", "error"].includes(run.status)) ?? [];
 
   return (
-    <div className="absolute right-0 top-11 z-50 w-80 rounded-2xl border border-border/60 bg-popover p-2 text-popover-foreground shadow-lg ring-1 ring-black/5 dark:ring-white/5">
+    <div className="min-w-0">
       <div className="px-2.5 py-2">
-        <strong className="text-sm font-semibold">Notifications</strong>
+        <strong className="text-sm font-semibold">Loaded activity</strong>
         <p className="text-xs text-muted-foreground mt-0.5">
           {pending.length} approvals · {failed.length} failed runs
         </p>

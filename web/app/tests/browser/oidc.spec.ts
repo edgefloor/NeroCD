@@ -46,7 +46,7 @@ test("enterprise OIDC completes a real browser code and PKCE flow", async ({ con
 
   await page.getByRole("link", { name: "Continue with SSO" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const browserCookies = await context.cookies();
   const sessionCookie = browserCookies.find((cookie) => cookie.name === "nerocd_session");
   expect(sessionCookie).toMatchObject({ httpOnly: true, sameSite: "Strict", path: "/api/v1" });
@@ -69,6 +69,7 @@ test("enterprise OIDC completes a real browser code and PKCE flow", async ({ con
   }
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/sign-in/);
 });

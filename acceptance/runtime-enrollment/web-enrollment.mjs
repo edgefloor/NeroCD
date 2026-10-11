@@ -78,7 +78,7 @@ async function inspectAndRevoke() {
   const telemetryText = await page.getByText("Telemetry", { exact: true }).locator("..").innerText();
   if (!telemetryText.includes(`journal ${body.telemetry.journal_depth}`) || !telemetryText.includes(`retries ${body.telemetry.retry_count}`) || !telemetryText.includes(`renewal failures ${body.telemetry.renew_failures}`)) throw new Error("detail UI did not render exact bounded telemetry values");
   await page.keyboard.press("Meta+k");
-  if (await page.getByPlaceholder("Type a command or search...").count() === 0) throw new Error("detail keyboard navigation unavailable");
+  if (await page.getByPlaceholder("Find a page or action...").count() === 0) throw new Error("detail keyboard navigation unavailable");
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Open mobile navigation" }).click();

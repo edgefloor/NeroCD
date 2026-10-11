@@ -82,7 +82,7 @@ try {
     }
     checkpoint = "command_palette";
     await page.keyboard.press("Meta+k");
-    await page.getByPlaceholder("Type a command or search...").waitFor();
+    await page.getByPlaceholder("Find a page or action...").waitFor();
     await page.keyboard.press("Escape");
     checkpoint = "mobile_navigation";
     await page.setViewportSize({ width: 390, height: 844 });

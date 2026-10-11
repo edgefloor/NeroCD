@@ -313,24 +313,8 @@ body {
     padding-right: max(1rem, env(safe-area-inset-right));
   }
 
-  .mobile-bottom-navigation {
-    padding-left: max(0.5rem, env(safe-area-inset-left));
-    padding-right: max(0.5rem, env(safe-area-inset-right));
-  }
-
-  /* Keep the last page controls above the fixed navigation, including the
-   * home-indicator inset. 3rem button + 0.25rem top + 0.25rem bottom + 1px
-   * border equals the fixed nav before its safe-area inset; 6rem preserves
-   * the existing comfortable fallback on devices without an inset. */
   .mobile-shell-content {
-    padding-bottom: max(6rem, calc(3rem + 0.25rem + 0.25rem + 1px + env(safe-area-inset-bottom)));
-  }
-}
-
-/* Mobile nav: hide text labels only when the five actions need the extra room. */
-@media (max-width: 420px) {
-  .mobile-nav-text {
-    display: none;
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
   }
 }
 

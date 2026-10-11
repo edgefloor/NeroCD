@@ -1,17 +1,31 @@
-import { Activity, FileText, FolderKanban, Home, Layers3, type LucideIcon, Rocket, Settings, ShieldCheck, Terminal, Bot, Gauge } from "lucide-react";
+export type ViewKey = "home" | "runs" | "deployments" | "runners" | "operations" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
+export type NavigationGroup = "Operate" | "Configure" | "Observe" | "Account";
+export type NavigationPath = "/" | `/${Exclude<ViewKey, "home">}`;
+export type NavigationItem = { key: ViewKey; to: NavigationPath; label: string; group: NavigationGroup; adminOnly?: boolean; filterable?: boolean };
 
-export type NavigationItem = { to: "/" | "/runs" | "/deployments" | "/runners" | "/operations" | "/approvals" | "/projects" | "/templates" | "/logs" | "/audit" | "/settings"; label: string; mobileLabel?: string; icon: LucideIcon; mobile?: boolean; adminOnly?: boolean };
-
+export const navigationGroups: NavigationGroup[] = ["Operate", "Configure", "Observe", "Account"];
 export const navigationItems: NavigationItem[] = [
-  { to: "/", label: "Home", icon: Home, mobile: true },
-  { to: "/runs", label: "Runs", icon: Activity, mobile: true },
-  { to: "/deployments", label: "Deployments", icon: Rocket, mobile: true },
-  { to: "/runners", label: "Runners", icon: Bot, mobile: true },
-  { to: "/operations", label: "Operations", icon: Gauge, adminOnly: true },
-  { to: "/approvals", label: "Approvals", mobileLabel: "Inbox", icon: ShieldCheck, mobile: true },
-  { to: "/templates", label: "Templates", icon: Layers3, mobile: true },
-  { to: "/logs", label: "Logs", icon: Terminal, mobile: true },
-  { to: "/projects", label: "Projects", icon: FolderKanban },
-  { to: "/audit", label: "Audit", icon: FileText },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { key: "home", to: "/", label: "Home", group: "Operate", filterable: true },
+  { key: "deployments", to: "/deployments", label: "Deployments", group: "Operate", filterable: true },
+  { key: "runs", to: "/runs", label: "Runs", group: "Operate", filterable: true },
+  { key: "approvals", to: "/approvals", label: "Approvals", group: "Operate", filterable: true },
+  { key: "projects", to: "/projects", label: "Projects", group: "Configure", filterable: true },
+  { key: "templates", to: "/templates", label: "Templates", group: "Configure", filterable: true },
+  { key: "runners", to: "/runners", label: "Runners", group: "Configure", filterable: true },
+  { key: "logs", to: "/logs", label: "Logs", group: "Observe", filterable: true },
+  { key: "audit", to: "/audit", label: "Audit", group: "Observe", filterable: true },
+  { key: "operations", to: "/operations", label: "Operations", group: "Observe", adminOnly: true },
+  { key: "settings", to: "/settings", label: "Settings", group: "Account" },
 ];
+
+export function navigationForRoles(roles: readonly string[]): NavigationItem[] {
+  return navigationItems.filter((item) => !item.adminOnly || roles.includes("system_admin"));
+}
+
+export function navigationForView(view: ViewKey): NavigationItem {
+  return navigationItems.find((item) => item.key === view)!;
+}
+
+export function viewForPath(pathname: string): ViewKey {
+  return navigationItems.find((item) => item.to !== "/" && (pathname === item.to || pathname.startsWith(`${item.to}/`)))?.key ?? "home";
+}

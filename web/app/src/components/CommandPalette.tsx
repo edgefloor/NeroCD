@@ -8,43 +8,12 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import {
-  Activity,
-  FileText,
-  FolderKanban,
-  Home,
-  Layers3,
-  LogOut,
-  Moon,
-  RefreshCw,
-  Search,
-  Settings,
-  ShieldCheck,
-  Sun,
-  Terminal,
-  Rocket,
-  Bot,
-  Gauge,
-} from "lucide-react";
+import { LogOut, Moon, RefreshCw, Search, Sun } from "lucide-react";
 import type { ApiSnapshot } from "@/api";
-
-type ViewKey = "home" | "runs" | "deployments" | "runners" | "operations" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
-
-const navItems: Array<{ key: ViewKey; label: string; icon: typeof Home }> = [
-  { key: "home", label: "Home", icon: Home },
-  { key: "runs", label: "Runs", icon: Activity },
-  { key: "deployments", label: "Deployments", icon: Rocket },
-  { key: "runners", label: "Runners", icon: Bot },
-  { key: "operations", label: "Operations", icon: Gauge },
-  { key: "approvals", label: "Approvals", icon: ShieldCheck },
-  { key: "projects", label: "Projects", icon: FolderKanban },
-  { key: "templates", label: "Templates", icon: Layers3 },
-  { key: "logs", label: "Logs", icon: Terminal },
-  { key: "audit", label: "Audit", icon: FileText },
-  { key: "settings", label: "Settings", icon: Settings },
-];
+import { navigationForRoles, type ViewKey } from "@/router/metadata";
 
 export function CommandPalette({
+  roles = [],
   open,
   onOpenChange,
   snapshot,
@@ -56,6 +25,7 @@ export function CommandPalette({
   onSignOut,
   onSearch,
 }: {
+  roles?: readonly string[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   snapshot: ApiSnapshot | null;
@@ -69,6 +39,8 @@ export function CommandPalette({
 }): ReactNode {
   const [searchTerm, setSearchTerm] = useState("");
   const onKeyOpenChange = useEffectEvent(onOpenChange);
+  const navItems = navigationForRoles(roles);
+  useEffect(() => { if (!open) setSearchTerm(""); }, [open]);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -84,28 +56,14 @@ export function CommandPalette({
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
       <CommandInput
-        placeholder="Type a command or search..."
+        placeholder="Find a page or action..."
         value={searchTerm}
         onValueChange={setSearchTerm}
       />
       <CommandList>
-        <CommandEmpty>
-          {onSearch && searchTerm ? (
-            <CommandItem
-              onSelect={() => {
-                onSearch(searchTerm);
-              }}
-            >
-              <Search className="mr-2 h-4 w-4" />
-              <span>Search for "{searchTerm}"</span>
-            </CommandItem>
-          ) : (
-            "No results found."
-          )}
-        </CommandEmpty>
+        <CommandEmpty>No matching pages or actions.</CommandEmpty>
         <CommandGroup heading="Navigation">
           {navItems.map((item) => {
-            const Icon = item.icon;
             return (
               <CommandItem
                 key={item.key}
@@ -114,7 +72,6 @@ export function CommandPalette({
                   onOpenChange(false);
                 }}
               >
-                <Icon className="mr-2 h-4 w-4" />
                 <span>{item.label}</span>
                 {view === item.key && <span className="ml-auto text-xs text-muted-foreground">Current</span>}
               </CommandItem>
@@ -153,6 +110,11 @@ export function CommandPalette({
             </CommandItem>
           </CommandGroup>
         )}
+        {onSearch && searchTerm.trim() && <CommandGroup heading="Current page" forceMount>
+          <CommandItem forceMount value={`filter-page-${searchTerm}`} onSelect={() => onSearch(searchTerm)}>
+            <Search className="mr-2 h-4 w-4" /><span>Filter this page for "{searchTerm}"</span>
+          </CommandItem>
+        </CommandGroup>}
       </CommandList>
     </CommandDialog>
   );

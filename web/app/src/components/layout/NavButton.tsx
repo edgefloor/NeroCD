@@ -1,43 +1,22 @@
-import { ReactNode } from "react";
-import { type LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import type { NavigationItem } from "@/router/metadata";
 import { cn } from "@/lib/utils";
 
-type ViewKey = "home" | "runs" | "deployments" | "runners" | "operations" | "approvals" | "projects" | "templates" | "logs" | "audit" | "settings";
-
-export function NavButton({
-  item,
-  active,
-  pending,
-  onClick,
-}: {
-  item: { key: ViewKey; label: string; icon: LucideIcon; href: string };
+export function NavButton({ item, active, onClick }: {
+  item: NavigationItem;
   active: boolean;
-  pending: number;
   onClick: () => void;
 }): ReactNode {
-  const Icon = item.icon;
   return (
-    <a
-      href={item.href}
-      className={cn(
-        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
-        "hover:bg-sidebar-panel",
-        active && "bg-sidebar-panel text-foreground shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)] dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]",
-        !active && "text-sidebar-muted"
-      )}
+    <a href={item.to} aria-current={active ? "page" : undefined}
+      className={cn("flex min-h-10 w-full items-center rounded-lg border-l-2 px-3 py-2 text-sm font-medium transition-colors hover:bg-sidebar-panel",
+        active ? "border-foreground bg-sidebar-panel text-foreground" : "border-transparent text-sidebar-muted")}
       onClick={(event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         onClick();
-      }}
-    >
-      <Icon className={cn("h-4 w-4 transition-colors", active ? "text-foreground" : "text-sidebar-muted")} />
-      <span className="flex-1 text-left">{item.label}</span>
-      {item.key === "approvals" && pending > 0 ? (
-        <span className="rounded-full bg-warning px-1.5 py-0.5 text-[10px] font-semibold text-warning-foreground">
-          {pending}
-        </span>
-      ) : null}
+      }}>
+      {item.label}
     </a>
   );
 }
