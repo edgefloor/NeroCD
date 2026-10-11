@@ -2325,3 +2325,35 @@ test("empty distant log pages return to the first page without losing filters", 
     await expect(first).toHaveCount(0);
   }
 });
+
+test("audit evidence is readable and expandable across viewport sizes", async ({ page }, testInfo) => {
+  await page.goto("/audit");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const actor = `operator_${"a".repeat(160)}`;
+  const detail = `evidence_${"b".repeat(600)}`;
+  await page.route("**/api/v1/audit-events**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+    items: [{ id: "audit_browser_evidence", actor_id: actor, target_id: `target_${"c".repeat(160)}`, action: "run.requested", created_at: "2026-10-11T12:34:56Z", metadata: { detail } }],
+    count: 1, total: 1, offset: 0, limit: 50,
+  }) }));
+  await page.reload();
+  await expect(page.getByText(actor, { exact: true })).toBeVisible();
+  await expect(page.locator("time")).toHaveText("2026-10-11T12:34:56Z");
+  const summary = page.locator("summary").filter({ hasText: "Event details" });
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("audit_browser_evidence", { exact: true })).toBeVisible();
+  await expect(page.locator("pre")).toContainText(detail);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`audit-evidence-${width}.png`), fullPage: true });
+  }
+  const filter = page.getByRole("searchbox", { name: "Filter this page", exact: true });
+  await filter.fill("operator_");
+  await expect(page.getByText("1 of 1 loaded audit events match this filter.")).toBeVisible();
+  await filter.fill("missing-actor");
+  await expect(page.getByText("No audit events match this filter on the loaded page.")).toBeVisible();
+  await page.getByRole("button", { name: "Clear filter", exact: true }).click();
+  await expect(page.getByText(actor, { exact: true })).toBeVisible();
+});
