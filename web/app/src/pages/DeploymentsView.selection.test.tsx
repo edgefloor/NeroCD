@@ -129,3 +129,15 @@ test("deployment submission errors belong to their selected target and clear dur
   view.rerender(<DeploymentsView {...selected} submissionError={{ ...submissionError, environment_id: "env_b" }} />);
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+
+test.each(["environment a", "MAIN", "abc"])("deployment history matches resolved metadata %s", (q) => {
+  render(<DeploymentsView {...props} deployments={[{ id: "dep_one", environment_id: "env_a", desired_revision_id: "revision_a", status: "queued" } as never]} selectedServiceID="service_a" selectedEnvironmentID="env_a" q={q} />);
+  expect(screen.queryByText("No deployments match this view")).toBeNull();
+  expect(screen.getByText("Queued for an eligible runner.")).toBeTruthy();
+});
+
+test("deployment metadata filtering omits unrelated history", () => {
+  render(<DeploymentsView {...props} deployments={[{ id: "dep_one", environment_id: "env_a", desired_revision_id: "revision_a", status: "queued" } as never]} selectedServiceID="service_a" selectedEnvironmentID="env_a" q="unrelated" />);
+  expect(screen.getByText("No deployments match this view")).toBeTruthy();
+});

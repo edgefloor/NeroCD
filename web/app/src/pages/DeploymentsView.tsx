@@ -49,7 +49,13 @@ export function DeploymentsView({
   const scopedEnvironments = serviceID ? environments.filter((item) => item.service_id === serviceID) : [];
   const environmentID = scopedEnvironments.find((item) => item.id === selectedEnvironmentID)?.id ?? "";
   const scopedRevisions = serviceID ? revisions.filter((item) => item.service_id === serviceID) : [];
-  const visible = deployments.filter((item) => matchesQuery(q, item.id, item.status, item.environment_id, item.desired_revision_id, item.failure_code ?? ""));
+  const environmentByID = new Map(environments.map((item) => [item.id, item]));
+  const revisionByID = new Map(revisions.map((item) => [item.id, item]));
+  const visible = deployments.filter((item) => {
+    const revision = revisionByID.get(item.desired_revision_id);
+    return matchesQuery(q, item.id, item.status, item.environment_id, item.desired_revision_id, item.failure_code ?? "",
+      environmentByID.get(item.environment_id)?.name ?? "", revision?.requested_ref ?? "", revision?.git_commit ?? "");
+  });
   useEffect(() => { setRevisionID(""); }, [serviceID]);
   useEffect(() => { if (!scopedRevisions.some((item) => item.id === revisionID)) setRevisionID(""); }, [scopedRevisions, revisionID]);
   useEffect(() => { createKey.current = newDeploymentIntentKey(); }, [serviceID, environmentID, revisionID]);
@@ -71,8 +77,8 @@ export function DeploymentsView({
           : !visible.length ? <EmptyState title="No deployments match this view" icon={Rocket} />
           : visible.map((deployment) => (
             <DeploymentRow key={deployment.id} deployment={deployment}
-              environment={environments.find((item) => item.id === deployment.environment_id)}
-              revision={revisions.find((item) => item.id === deployment.desired_revision_id)} />
+              environment={environmentByID.get(deployment.environment_id)}
+              revision={revisionByID.get(deployment.desired_revision_id)} />
           ))}
       </div>
       <Card className="min-w-0">

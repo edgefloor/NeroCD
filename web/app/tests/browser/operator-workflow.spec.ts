@@ -3979,6 +3979,9 @@ test("long deployment environment names preserve history links and selectors", a
   for (const width of [320, 390, 430, 800, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto(url);
+    const filter = page.getByRole("searchbox", { name: "Filter this page" });
+    await filter.fill(name);
+    await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe(name);
     const link = page.getByRole("link", { name, exact: true });
     await expect(link).toBeVisible();
     const contained = await link.evaluate((element) => {
@@ -3992,6 +3995,11 @@ test("long deployment environment names preserve history links and selectors", a
     await expect(page.getByLabel("Environment", { exact: true })).toHaveValue(fixture.environmentID);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`deployment-history-long-name-${width}.png`), animations: "disabled" });
+    await filter.fill("unmatched-environment");
+    await expect(page.getByText("No deployments match this view", { exact: true })).toBeVisible();
+    await filter.fill("MAIN");
+    await expect(link).toBeVisible();
+    await expect(page.getByLabel("Environment", { exact: true })).toHaveValue(fixture.environmentID);
     await link.click();
     await expect(page).toHaveURL(new RegExp(`/deployments/${fixture.deploymentID}`));
     await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
