@@ -7,9 +7,10 @@ import { useAuth } from "./hooks/useApi";
 import { AuthContext } from "./router/context";
 import { retryRemote } from "./api/queries";
 import { PageUnavailable } from "./components/common/PageUnavailable";
+import { PageNotFound } from "./components/common/PageNotFound";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: retryRemote }, mutations: { retry: false } } });
-const router = createRouter({ routeTree, defaultPreload: "intent", defaultErrorComponent: PageUnavailable, context: { queryClient } });
+const router = createRouter({ routeTree, defaultPreload: "intent", defaultErrorComponent: PageUnavailable, defaultNotFoundComponent: PageNotFound, context: { queryClient } });
 declare module "@tanstack/react-router" { interface Register { router: typeof router } }
 function App() { const auth = useAuth(); return <AuthContext.Provider value={auth}><RouterProvider router={router} /></AuthContext.Provider>; }
 const root = document.querySelector<HTMLDivElement>("#app");

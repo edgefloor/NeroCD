@@ -2027,3 +2027,23 @@ test("failed page downloads offer reload recovery at the same URL", async ({ pag
   await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/operations$/);
 });
+
+test("unknown URLs provide a usable return to the dashboard", async ({ page }, testInfo) => {
+  await page.goto("/runners");
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  for (const path of ["/missing-page", "/runners/missing/extra", "/deployments/missing/extra"]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
+    const dashboard = page.getByRole("link", { name: "Go to dashboard", exact: true });
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect(dashboard).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      if (path === "/missing-page" && width === 320) await page.screenshot({ path: testInfo.outputPath("unknown-page-320.png"), fullPage: false });
+    }
+    await dashboard.click();
+    await expect(page).toHaveURL((url) => url.pathname === "/");
+    await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  }
+});
