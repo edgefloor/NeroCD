@@ -490,7 +490,12 @@ func (s *Service) CreateDeployment(ctx context.Context, in DeploymentInput) (dom
 	// compose-deploy is a typed, intentionally non-shell plan. Slice 12 owns
 	// its adapter; this slice only creates the fenced execution authority.
 	run := domain.TaskRun{ID: runID, ProjectID: projectID, RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy, Inputs: map[string]any{"deployment_id": id, "environment_id": env.ID, "desired_revision_id": in.DesiredRevisionID}, Secrets: append([]domain.SecretBinding(nil), env.SecretBindings...)}, Workflow: domain.Workflow{Steps: []domain.WorkflowStep{}}, WorkflowState: domain.WorkflowState{Steps: []domain.WorkflowStepState{}}, RunnerTags: env.RunnerSelector, Status: runStatus, RequestedBy: p.ID, StartedAt: now}
-	return r.CreateDeploymentRequest(ctx, domain.Deployment{ID: id, EnvironmentID: env.ID, DesiredRevisionID: in.DesiredRevisionID, IdempotencyKey: in.IdempotencyKey, Status: status, RequestedBy: p.ID, FenceRequired: true, CreatedAt: now, UpdatedAt: now}, run, domain.AuditEvent{ID: mustID("audit"), ActorID: p.ID, Action: "deployment.create", TargetID: id, CreatedAt: now, Metadata: map[string]any{"idempotency_key": in.IdempotencyKey, "run_id": runID, "run_type": domain.RunTypeComposeDeploy}})
+	audit, err := s.auditEvent(ctx, p.ID, "deployment.create", id, map[string]any{"idempotency_key": in.IdempotencyKey, "run_id": runID, "run_type": domain.RunTypeComposeDeploy})
+	if err != nil {
+		return domain.Deployment{}, err
+	}
+	audit.CreatedAt = now
+	return r.CreateDeploymentRequest(ctx, domain.Deployment{ID: id, EnvironmentID: env.ID, DesiredRevisionID: in.DesiredRevisionID, IdempotencyKey: in.IdempotencyKey, Status: status, RequestedBy: p.ID, FenceRequired: true, CreatedAt: now, UpdatedAt: now}, run, audit)
 }
 
 func hasDeploymentRunnerEligibility(tags, selector, capabilities []string) bool {
@@ -658,7 +663,6 @@ func (s *Service) FailPreAssignmentDeployment(ctx context.Context, in PreAssignm
 	}
 	return repo.FailPreAssignmentDeployment(ctx, deployment.ID, failureCode, audit)
 }
-func mustID(prefix string) string { id, _ := prefixedID(prefix); return id }
 
 // DeploymentTransitionInput supplies an authenticated deployment state transition.
 type DeploymentTransitionInput struct {

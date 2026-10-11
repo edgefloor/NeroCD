@@ -204,7 +204,7 @@ func TestDeploymentMutationsRequireMaintainer(t *testing.T) {
 	if _, err := mem.RegisterRunner(admin, domain.Runner{ID: "runner_compose", Name: "compose", Tags: []string{}, Capabilities: []string{domain.RunTypeComposeDeploy}, Status: domain.RunnerActive, RegisteredAt: time.Now().UTC(), LastHeartbeatAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := service.CreateDeployment(admin, DeploymentInput{EnvironmentID: environments[0].ID, DesiredRevisionID: revisions[0].ID, IdempotencyKey: "server-run"})
+	deployment, err := service.CreateDeployment(WithRequestID(admin, "deployment-create-request"), DeploymentInput{EnvironmentID: environments[0].ID, DesiredRevisionID: revisions[0].ID, IdempotencyKey: "server-run"})
 	if err != nil || deployment.TaskRunID == nil {
 		t.Fatalf("server-owned deployment run: %#v %v", deployment, err)
 	}
@@ -218,6 +218,9 @@ func TestDeploymentMutationsRequireMaintainer(t *testing.T) {
 			continue
 		}
 		found = true
+		if event.Metadata["request_id"] != "deployment-create-request" {
+			t.Fatalf("deployment audit request correlation = %v", event.Metadata["request_id"])
+		}
 		if event.CreatedAt.IsZero() || !event.CreatedAt.Equal(deployment.CreatedAt) {
 			t.Fatalf("deployment audit time = %v, want deployment creation time %v", event.CreatedAt, deployment.CreatedAt)
 		}
