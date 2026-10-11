@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { allProjectMembersQuery, principalQuery, allProjectsQuery, allTemplatesQuery, approvalsQuery, runQuery } from "@/api";
-import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
+import { allProjectMembersQuery, principalQuery, useApprovalDecision, allProjectsQuery, allTemplatesQuery, approvalsQuery, runQuery } from "@/api";
+import { apiSnapshot } from "@/api/compat";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { ApprovalsView } from "@/pages/ApprovalsView";
 import { canMaintainProject } from "@/lib/permissions";
@@ -22,7 +22,7 @@ function ApprovalsRoute() {
   const runQueries = useQueries({ queries: (approvals.data?.items ?? []).map((approval) => runQuery(approval.run_id)) });
   const projects = useQuery({ ...allProjectsQuery(), retryOnMount: false });
   const templates = useQuery({ ...allTemplatesQuery(), retryOnMount: false });
-  const { busy, mutate } = useSnapshotMutation();
+  const { busy, decide } = useApprovalDecision();
   const principal = useQuery({ ...principalQuery(), retryOnMount: false });
   const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
   const queries = [approvals, projects, templates, principal, members, ...runQueries];
@@ -35,7 +35,7 @@ function ApprovalsRoute() {
     </section> : null}
     {approvals.data || !approvals.isError ? <ApprovalsView
       q={q} snapshot={apiSnapshot({ approvals: approvals.data, runs, projects: projects.data, templates: templates.data })}
-      token="" busy={failed.length > 0 ? "refresh-unavailable" : busy} mutate={mutate}
+      busy={failed.length > 0 || busy} onDecide={(runID, decision) => { if (!failed.length) decide(runID, decision); }}
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)}
       loading={queries.some((query) => query.isPending)}
     /> : null}

@@ -1,7 +1,7 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { allProjectMembersQuery, principalQuery, approvalsQuery, healthQuery, projectsQuery, runLogsQuery, runsQuery, shouldPollRunList, templatesQuery } from "@/api";
-import { apiSnapshot, useSnapshotMutation } from "@/api/compat";
+import { allProjectMembersQuery, principalQuery, useApprovalDecision, approvalsQuery, healthQuery, projectsQuery, runLogsQuery, runsQuery, shouldPollRunList, templatesQuery } from "@/api";
+import { apiSnapshot } from "@/api/compat";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,12 +39,12 @@ function HomeRoute() {
   const runs = useQuery({ ...runsQuery(), refetchInterval: (query) => shouldPollRunList(query.state.data) ? 3_000 : false });
   const approvals = useQuery(approvalsQuery());
   const logs = useQuery(runLogsQuery({ limit: 5, offset: 0 }));
-  const { busy, mutate } = useSnapshotMutation();
+  const { busy, decide } = useApprovalDecision();
   const principal = useQuery(principalQuery());
   const members = useQuery(allProjectMembersQuery());
   const queries = [health, projects, templates, runs, approvals, logs, principal, members];
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <DashboardUnavailable />;
   const snapshot = apiSnapshot({ health: health.data, projects: projects.data, templates: templates.data, runs: runs.data, approvals: approvals.data, logs: logs.data });
-  return <HomeView snapshot={snapshot} workSnapshot={snapshot} query={q} onClearQuery={() => void navigate({ search: (previous) => ({ ...previous, q: undefined }), replace: true })} token="" busy={busy} mutate={mutate} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} loading={queries.some((query) => query.isPending)} totals={{ projects: projects.data?.total ?? 0, templates: templates.data?.total ?? 0, logs: logs.data?.total ?? 0 }} />;
+  return <HomeView snapshot={snapshot} workSnapshot={snapshot} query={q} onClearQuery={() => void navigate({ search: (previous) => ({ ...previous, q: undefined }), replace: true })} busy={busy} onDecide={decide} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} loading={queries.some((query) => query.isPending)} totals={{ projects: projects.data?.total ?? 0, templates: templates.data?.total ?? 0, logs: logs.data?.total ?? 0 }} />;
 }

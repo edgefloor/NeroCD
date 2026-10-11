@@ -1430,7 +1430,7 @@ test("run cancellation respects project membership while viewers retain logs", a
 });
 
 
-test("approval decisions respect project roles and prevent conflicting requests", async ({ page, browser }) => {
+test("approval decisions respect project roles and prevent conflicting requests", async ({ page, browser }, testInfo) => {
   await page.goto("/approvals");
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
@@ -1446,6 +1446,10 @@ test("approval decisions respect project roles and prevent conflicting requests"
     await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
     let releaseFailure: (() => void) | undefined;
     let failFirst = true;
+    let failApprovalRefresh = false;
+    await operator.route(/\/api\/v1\/approvals(?:\?.*)?$/, (route) => failApprovalRefresh
+      ? route.fulfill({ status: 503, json: { error: "Approval refresh unavailable" } })
+      : route.continue());
     await operator.route("**/api/v1/runs/approve", async (route) => {
       if (!failFirst) return route.continue();
       failFirst = false;
@@ -1472,6 +1476,7 @@ test("approval decisions respect project roles and prevent conflicting requests"
         await expect(approve).toBeEnabled();
         await expect(reject).toBeEnabled();
       }
+      failApprovalRefresh = decision === "Reject";
       const saved = operator.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/runs/${decision.toLowerCase()}`);
       await operator.getByRole("button", { name: decision, exact: true }).click();
       const response = await saved;
@@ -1479,6 +1484,21 @@ test("approval decisions respect project roles and prevent conflicting requests"
       expect(await response.json()).toMatchObject({ run_id: runID, status: decision === "Approve" ? "approved" : "rejected" });
       await expect(approve).toHaveCount(0);
       await expect(reject).toHaveCount(0);
+      if (decision === "Reject") {
+        await expect(operator.getByText("Unable to refresh approval information. Decisions are unavailable until retry succeeds.")).toBeVisible();
+        for (const recoveryWidth of [320, 390, 430, 1440]) {
+          await operator.setViewportSize({ width: recoveryWidth, height: 1000 });
+          await expect(operator.getByText("rejected", { exact: true })).toBeVisible();
+          await expect(approve).toHaveCount(0);
+          await expect(reject).toHaveCount(0);
+          expect(await operator.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+          if (recoveryWidth === 320) await operator.screenshot({ path: testInfo.outputPath("approval-decided-refresh-error-320.png"), animations: "disabled" });
+        }
+        failApprovalRefresh = false;
+        await operator.getByRole("button", { name: "Retry approvals", exact: true }).click();
+        await expect(operator.getByText("Unable to refresh approval information. Decisions are unavailable until retry succeeds.")).toHaveCount(0);
+        await expect(operator.getByText("rejected", { exact: true })).toBeVisible();
+      }
     }
     const denied = await operator.request.post("/api/v1/runs/approve", { headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" }, data: { run_id: viewed.runID } });
     expect(denied.status()).toBe(403);

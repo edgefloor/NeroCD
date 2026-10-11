@@ -3,9 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { CheckCircle2, GitBranch, XCircle, ShieldCheck, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import type { ApiSnapshot, Approval } from "@/api";
-import { approveRun, rejectRun } from "@/api/compat";
-import type { MutateFn } from "@/hooks/useApi";
+import type { ApiSnapshot, Approval, ApprovalDecision } from "@/api";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonTable } from "@/components/common/SkeletonCard";
@@ -14,16 +12,14 @@ import { formatDate, matchesQuery, projectName, templateName } from "@/lib/forma
 export function ApprovalList({
   approvals,
   snapshot,
-  token,
   busy,
-  mutate,
+  onDecide,
   canOperateProject,
 }: {
   approvals: Approval[];
   snapshot: ApiSnapshot;
-  token: string;
-  busy: string;
-  mutate: MutateFn;
+  busy: boolean;
+  onDecide: (runID: string, decision: ApprovalDecision) => void;
   canOperateProject?: (projectID: string) => boolean;
 }): ReactNode {
   if (approvals.length === 0) {
@@ -60,7 +56,7 @@ export function ApprovalList({
                 <Button
                   className="flex-1 sm:flex-none h-8 rounded-xl"
                   size="sm"
-                  onClick={() => void mutate(`approve:${approval.run_id}`, () => approveRun(token, approval.run_id), "Run approved")}
+                  onClick={() => onDecide(approval.run_id, "approve")}
                   disabled={Boolean(busy)}
                 >
                   <CheckCircle2 className="h-4 w-4 mr-1.5" /> 
@@ -70,7 +66,7 @@ export function ApprovalList({
                   className="flex-1 sm:flex-none h-8 rounded-xl"
                   size="sm"
                   variant="outline"
-                  onClick={() => void mutate(`reject:${approval.run_id}`, () => rejectRun(token, approval.run_id), "Run rejected")}
+                  onClick={() => onDecide(approval.run_id, "reject")}
                   disabled={Boolean(busy)}
                 >
                   <XCircle className="h-4 w-4 mr-1.5" /> 
@@ -88,17 +84,15 @@ export function ApprovalList({
 export function ApprovalsView({
   snapshot,
   q,
-  token,
   busy,
-  mutate,
+  onDecide,
   canOperateProject,
   loading,
 }: {
   snapshot: ApiSnapshot;
   q?: string;
-  token: string;
-  busy: string;
-  mutate: MutateFn;
+  busy: boolean;
+  onDecide: (runID: string, decision: ApprovalDecision) => void;
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
 }): ReactNode {
@@ -142,9 +136,8 @@ export function ApprovalsView({
           {filtering && visiblePending.length === 0 ? <p className="px-4 py-5 text-sm text-muted-foreground">No pending approvals match this filter on the loaded page.</p> : <ApprovalList
             approvals={visiblePending}
             snapshot={snapshot}
-            token={token}
             busy={busy}
-            mutate={mutate}
+            onDecide={onDecide}
             canOperateProject={canOperateProject}
           />}
         </CardContent>

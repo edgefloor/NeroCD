@@ -1,8 +1,7 @@
 import { ReactNode } from "react";
 import { Activity, AlertCircle, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { ApiSnapshot, TaskRun } from "@/api";
-import type { MutateFn } from "@/hooks/useApi";
+import type { ApiSnapshot, TaskRun, ApprovalDecision } from "@/api";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchScope } from "@/components/common/SearchScope";
@@ -22,9 +21,8 @@ export function HomeView({
   workSnapshot,
   query,
   onClearQuery,
-  token,
   busy,
-  mutate,
+  onDecide,
   canOperateProject,
   loading,
   totals,
@@ -33,9 +31,8 @@ export function HomeView({
   workSnapshot?: ApiSnapshot;
   query?: string;
   onClearQuery?: () => void;
-  token: string;
-  busy: string;
-  mutate: MutateFn;
+  busy: boolean;
+  onDecide: (runID: string, decision: ApprovalDecision) => void;
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
   totals?: { projects: number; templates: number; logs: number };
@@ -137,7 +134,7 @@ export function HomeView({
           </CardHeader>
           <CardContent className="p-0">
             {visiblePending.length > 0 ? (
-              <ApprovalList approvals={visiblePending} snapshot={snapshot} token={token} busy={busy} mutate={mutate} canOperateProject={canOperateProject} />
+              <ApprovalList approvals={visiblePending} snapshot={snapshot} busy={busy} onDecide={onDecide} canOperateProject={canOperateProject} />
             ) : (
               <CompactEmpty>{query ? "No pending approvals match this search." : "No approvals are waiting."}</CompactEmpty>
             )}

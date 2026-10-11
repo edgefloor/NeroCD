@@ -1,6 +1,7 @@
+import { useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createEnvironment, createProject, createRepository, createRevision, createService, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse, type Deployment, type DeploymentList } from "./resources";
+import { approveRun, rejectRun, archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createEnvironment, createProject, createRepository, createRevision, createService, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse, type Deployment, type DeploymentList, type ApprovalListResponse } from "./resources";
 import { queryKeys } from "./queries";
 
 export function useProjectMutations() {
@@ -33,6 +34,39 @@ export function useRunMutations() {
     },
     onError: (error) => toast.error(error.message),
   }) };
+}
+
+export type ApprovalDecision = "approve" | "reject";
+
+export function useApprovalDecision() {
+  const client = useQueryClient();
+  const pending = useRef(false);
+  const mutation = useMutation({
+    mutationFn: ({ runID, decision }: { runID: string; decision: ApprovalDecision }) => decision === "approve" ? approveRun({ run_id: runID }) : rejectRun({ run_id: runID }),
+    onSuccess: async (approval) => {
+      client.setQueriesData<ApprovalListResponse>({ queryKey: ["approvals"] }, (cached) => cached ? {
+        ...cached,
+        items: cached.items.map((item) => item.id === approval.id ? approval : item),
+      } : cached);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["approvals"] }),
+        client.invalidateQueries({ queryKey: ["runs"] }),
+        client.invalidateQueries({ queryKey: queryKeys.run(approval.run_id) }),
+        client.invalidateQueries({ predicate: (query) => query.queryKey[0] === "runLogs" && (!(query.queryKey[1] as { run_id?: string } | undefined)?.run_id || (query.queryKey[1] as { run_id?: string } | undefined)?.run_id === approval.run_id) }),
+      ]);
+      toast.success(approval.status === "approved" ? "Run approved" : "Run rejected");
+    },
+    onError: (error) => toast.error(error.message),
+    onSettled: () => { pending.current = false; },
+  });
+  return {
+    busy: mutation.isPending,
+    decide: (runID: string, decision: ApprovalDecision) => {
+      if (pending.current) return;
+      pending.current = true;
+      mutation.mutate({ runID, decision });
+    },
+  };
 }
 
 /** Retention is deliberately manual.  The execution key is owned by the view

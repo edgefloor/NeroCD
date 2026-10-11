@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { allProjectsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
-import { useDeploymentMutations, useProjectMutations, useRunMutations } from "./mutations";
+import { allProjectsQuery, approvalsQuery, auditEventsQuery, deploymentQuery, deploymentsQuery, projectsQuery, queryKeys, runLogsQuery, runQuery, runsQuery } from "./queries";
+import { useApprovalDecision, useDeploymentMutations, useProjectMutations, useRunMutations } from "./mutations";
 import { useDeploymentPollingQuery, useRunsPollingQuery, useSelectedRunLogsPollingQuery } from "./polling";
 
 const originalFetch = globalThis.fetch;
@@ -291,5 +291,59 @@ test.each(["confirm", "cancel"] as const)("deployment %s retains its acknowledge
   expect(client.getQueryData(queryKeys.deploymentHistory("env_one"))).toEqual([acknowledged]);
   expect(client.getQueryState(queryKeys.deployment("dep_1"))?.status).toBe("error");
   expect(client.getQueryState(queryKeys.deployments())?.status).toBe("error");
+  mounted.unmount();
+});
+
+
+test.each(["approve", "reject"] as const)("acknowledged %s decisions survive refresh failure without refreshing unrelated projects", async (decision) => {
+  let decided = false;
+  let projectRequests = 0;
+  const original = { id: "approval_one", run_id: "run_one", status: "pending", requested_by: "operator", created_at: "2026-10-11T00:00:00Z" };
+  const acknowledged = { ...original, status: decision === "approve" ? "approved" : "rejected", approved_by: "maintainer" };
+  globalThis.fetch = vi.fn<typeof fetch>((path) => {
+    const url = String(path);
+    if (url === `/api/v1/runs/${decision}`) {
+      decided = true;
+      return Promise.resolve(json(acknowledged));
+    }
+    if (url === "/api/v1/projects") {
+      projectRequests += 1;
+      return Promise.resolve(json({ items: [], count: 0, total: 0, limit: 50, offset: 0 }));
+    }
+    if (decided) return Promise.resolve(new Response(JSON.stringify({ error: "Refresh unavailable" }), { status: 503 }));
+    return Promise.resolve(json({ items: [original], count: 1, total: 1, limit: 50, offset: 0 }));
+  });
+  const { client, wrapper } = setup();
+  function Observer() { useQuery(approvalsQuery()); useQuery(projectsQuery()); return useApprovalDecision(); }
+  const mounted = renderHook(() => Observer(), { wrapper });
+  await waitFor(() => expect(client.getQueryState(queryKeys.approvals())?.status).toBe("success"));
+  await act(async () => { mounted.result.current.decide("run_one", decision); });
+  await waitFor(() => expect(client.getQueryState(queryKeys.approvals())?.status).toBe("error"));
+  expect(client.getQueryData(queryKeys.approvals())).toMatchObject({ items: [acknowledged], count: 1, total: 1 });
+  expect(client.getQueryState(queryKeys.approvals())?.status).toBe("error");
+  expect(projectRequests).toBe(1);
+  mounted.unmount();
+});
+
+
+test("approval decisions serialize competing clicks and unlock after completion", async () => {
+  let finish!: (response: Response) => void;
+  const approval = { id: "approval_one", run_id: "run_one", status: "approved" };
+  globalThis.fetch = vi.fn<typeof fetch>((path) => String(path).endsWith("/approve")
+    ? new Promise<Response>((resolve) => { finish = resolve; })
+    : Promise.resolve(json({ ...approval, status: "rejected" })));
+  const { wrapper } = setup();
+  const mounted = renderHook(() => useApprovalDecision(), { wrapper });
+  await act(async () => {
+    mounted.result.current.decide("run_one", "approve");
+    mounted.result.current.decide("run_one", "reject");
+  });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(mounted.result.current.busy).toBe(true));
+  await act(async () => { finish(json(approval)); });
+  await waitFor(() => expect(mounted.result.current.busy).toBe(false));
+  await act(async () => { mounted.result.current.decide("run_two", "reject"); });
+  await waitFor(() => expect(mounted.result.current.busy).toBe(false));
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   mounted.unmount();
 });

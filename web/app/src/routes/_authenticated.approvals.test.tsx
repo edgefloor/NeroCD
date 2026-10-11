@@ -9,8 +9,8 @@ vi.mock("@tanstack/react-router", () => ({
   useSearch: () => ({ offset: 50 }), useNavigate: () => vi.fn(),
 }));
 vi.mock("@tanstack/react-query", async (original) => ({ ...await original<typeof import("@tanstack/react-query")>(), useQuery: vi.fn(), useQueries: vi.fn() }));
-vi.mock("@/api/compat", async (original) => ({ ...await original<typeof import("@/api/compat")>(), useSnapshotMutation: () => ({ busy: "", mutate: vi.fn() }) }));
-vi.mock("@/pages/ApprovalsView", () => ({ ApprovalsView: ({ busy }: { busy: string }) => <button disabled={Boolean(busy)}>Loaded approval</button> }));
+vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), useApprovalDecision: () => ({ busy: false, decide: vi.fn() }) }));
+vi.mock("@/pages/ApprovalsView", () => ({ ApprovalsView: ({ busy }: { busy: boolean }) => <button disabled={Boolean(busy)}>Loaded approval</button> }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 const ApprovalsRoute = Route.options.component as ComponentType;
 const ready = (data: unknown) => ({ data, isError: false, isPending: false, isFetching: false, refetch: vi.fn() });
