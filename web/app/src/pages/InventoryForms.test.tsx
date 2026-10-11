@@ -85,5 +85,5 @@ test("template fields and mobile edit control have accessible names", () => {
   fireEvent.click(editButtons[1]!);
   const dialog = within(screen.getByRole("dialog", { name: "Edit template" }));
   expect((dialog.getByRole("textbox", { name: "Template Name" }) as HTMLInputElement).value).toBe("Release");
-  expect(dialog.getByRole("combobox", { name: "Project" })).toBeTruthy();
+  expect(dialog.getByRole<HTMLInputElement>("textbox", { name: "Project" }).readOnly).toBe(true);
 });

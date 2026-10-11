@@ -87,13 +87,10 @@ export function useTemplateActions(disabled = false): { busy: string; actions: T
     toast.success("Template created");
   } });
   const update = useMutation({ mutationFn: (input: Parameters<typeof updateTemplate>[0]) => updateTemplate(input), onError, onSuccess: async (template) => {
-    for (const [key, cached] of client.getQueriesData<TaskTemplateListResponse>({ queryKey: ["templates"] })) {
-      if (!cached) continue;
-      const projectID = (key[1] as { project_id?: string } | undefined)?.project_id;
-      const items = cached.items.flatMap((item) => item.id !== template.id ? [item] : projectID && projectID !== template.project_id ? [] : [template]);
-      const removed = cached.items.length - items.length;
-      client.setQueryData(key, { ...cached, items, count: items.length, total: Math.max(0, cached.total - removed) });
-    }
+    client.setQueriesData<TaskTemplateListResponse>({ queryKey: ["templates"] }, (cached) => cached ? {
+      ...cached,
+      items: cached.items.map((item) => item.id === template.id ? template : item),
+    } : cached);
     await client.invalidateQueries({ queryKey: ["templates"] });
     toast.success("Template updated");
   } });

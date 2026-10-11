@@ -49,3 +49,17 @@ test("discarding an invalid command clears its error when the editor reopens", a
   fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+test("clearing a required command reports the problem without saving the previous command", async () => {
+  const update = vi.fn(async () => ({ id: "template_one" }));
+  render(<TemplatesView snapshot={snapshot} busy="" actions={{ create: vi.fn(), update, run: vi.fn() }} onRunRequested={vi.fn()} canOperateProject={() => true} />);
+  fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+  const dialog = within(screen.getByRole("dialog", { name: "Edit template" }));
+  const input = dialog.getByRole<HTMLTextAreaElement>("textbox", { name: "Command" });
+  fireEvent.change(input, { target: { value: "" } });
+  await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Save template" })); });
+  expect(update).not.toHaveBeenCalled();
+  expect(dialog.getByRole("alert").textContent).toBe("Enter a command. This template requires a process command.");
+  expect(input.value).toBe("");
+  expect(document.activeElement).toBe(input);
+});

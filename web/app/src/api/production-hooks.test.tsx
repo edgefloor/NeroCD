@@ -429,9 +429,9 @@ test("confirmed project archives remove stale cards and choices when refresh fai
 
 const templateFixture = { id: "template_one", project_id: "proj_one", name: "Original", kind: "shell", run_spec: { type: "shell", inputs: {} }, workflow: { steps: [] }, runner_tags: [], requires_ack: false };
 
-test("confirmed template moves survive refresh failure without remaining in the former project", async () => {
+test("confirmed template edits survive refresh failure in global and project lists", async () => {
   let saved = false;
-  const updated = { ...templateFixture, name: "Saved", project_id: "proj_two" };
+  const updated = { ...templateFixture, name: "Saved" };
   globalThis.fetch = vi.fn<typeof fetch>((_path, init) => {
     if (init?.method === "PATCH") { saved = true; return Promise.resolve(json(updated)); }
     if (saved) return Promise.resolve(new Response("Unavailable", { status: 503 }));
@@ -443,7 +443,7 @@ test("confirmed template moves survive refresh failure without remaining in the 
   await waitFor(() => expect(client.getQueryData(oldKey)).toMatchObject({ items: [templateFixture] }));
   await act(async () => { await mounted.result.current.actions.update(updated); });
   expect(client.getQueryData(queryKeys.templates())).toMatchObject({ items: [updated], count: 1, total: 1 });
-  expect(client.getQueryData(oldKey)).toEqual({ items: [], count: 0, total: 0, limit: 100, offset: 0 });
+  expect(client.getQueryData(oldKey)).toEqual({ items: [updated], count: 1, total: 1, limit: 100, offset: 0 });
   expect(client.getQueryState(oldKey)?.status).toBe("error");
 });
 

@@ -3742,6 +3742,8 @@ test("template command editing preserves argument boundaries and rejects incompl
     await page.setViewportSize({ width, height: 1000 });
     await page.getByRole("button", { name: "Edit", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Edit template", exact: true });
+    await expect(dialog.getByRole("textbox", { name: "Project", exact: true })).toHaveAttribute("readonly", "");
+    await expect(dialog.getByRole("combobox", { name: "Project", exact: true })).toHaveCount(0);
     await dialog.getByRole("textbox", { name: "Template Name", exact: true }).fill(`000 Renamed command ${width}`);
     const response = page.waitForResponse((result) => result.request().method() === "PATCH" && new URL(result.url()).pathname === "/api/v1/templates");
     await dialog.getByRole("button", { name: "Save template", exact: true }).click();
@@ -3756,6 +3758,11 @@ test("template command editing preserves argument boundaries and rejects incompl
     const dialog = page.getByRole("dialog", { name: "Edit template", exact: true });
     const command = dialog.getByRole("textbox", { name: "Command", exact: true });
     const before = requests;
+    await command.fill("");
+    await dialog.getByRole("button", { name: "Save template", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toHaveText("Enter a command. This template requires a process command.");
+    await expect(command).toBeFocused();
+    expect(requests).toBe(before);
     await command.fill('echo "unfinished');
     await dialog.getByRole("button", { name: "Save template", exact: true }).click();
     await expect(dialog.getByRole("alert")).toHaveText("Close the double quote in the command.");

@@ -138,6 +138,7 @@ function TemplateEditDialog({
       const value = String(form.get("command") ?? "");
       const original = template.run_spec.process?.command ?? [];
       command = value === formatCommandArguments(original).replace(/\r\n?/g, "\n") ? original : parseCommandArguments(value);
+      if (template.run_spec.process && command.length === 0) throw new Error("Enter a command. This template requires a process command.");
       setCommandError("");
     } catch (error) {
       setCommandError((error as Error).message);
@@ -146,13 +147,13 @@ function TemplateEditDialog({
     }
     const updated = await actions.update({
       id: template.id,
-      project_id: String(form.get("project_id") ?? template.project_id),
+      project_id: template.project_id,
       name: String(form.get("name") ?? template.name),
       kind,
       run_spec: {
         ...template.run_spec,
         type: kind,
-        process: command.length ? { ...template.run_spec.process, command } : template.run_spec.process,
+        process: command.length ? { ...template.run_spec.process, command } : undefined,
       },
       workflow: template.workflow,
       runner_tags: String(form.get("runner_tags") ?? "")
@@ -183,18 +184,8 @@ function TemplateEditDialog({
         <form aria-busy={Boolean(busy)} className="space-y-4" onSubmit={(event) => void submit(event)}>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
-            <select disabled={Boolean(busy)} id={`${formId}-project`}
-              name="project_id"
-              defaultValue={template.project_id}
-              className="h-9 w-full rounded-xl border border-border bg-card px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-              required
-            >
-              {snapshot.projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+            <Input disabled={Boolean(busy)} id={`${formId}-project`} value={projectName(snapshot.projects, template.project_id)} readOnly aria-describedby={`${formId}-project-help`} className="h-9 rounded-xl" />
+            <p id={`${formId}-project-help`} className="text-xs text-muted-foreground">The project cannot be changed after creation.</p>
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-template-name`} className="text-xs font-medium text-muted-foreground">Template Name</label>
