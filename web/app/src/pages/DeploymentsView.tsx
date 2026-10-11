@@ -50,6 +50,7 @@ type DeploymentsViewProps = {
   canOperate: boolean;
   busy?: boolean;
   submitting?: boolean;
+  submissionError?: { environment_id: string; desired_revision_id: string; message: string };
   onCreate: (input: { environment_id: string; desired_revision_id: string; idempotency_key: string }) => void;
   onServiceChange: (id: string) => void;
   onEnvironmentChange: (id: string) => void;
@@ -58,7 +59,7 @@ type DeploymentsViewProps = {
 export function DeploymentsView({
   deployments, projects, services, environments, revisions, q,
   selectedServiceID, selectedEnvironmentID, loading, canOperate,
-  onCreate, onServiceChange, onEnvironmentChange, busy, submitting,
+  onCreate, onServiceChange, onEnvironmentChange, busy, submitting, submissionError,
 }: DeploymentsViewProps): ReactNode {
   const [draftProjectID, setProjectID] = useState("");
   const [revisionID, setRevisionID] = useState("");
@@ -74,6 +75,9 @@ export function DeploymentsView({
   useEffect(() => { setRevisionID(""); }, [serviceID]);
   useEffect(() => { if (!scopedRevisions.some((item) => item.id === revisionID)) setRevisionID(""); }, [scopedRevisions, revisionID]);
   useEffect(() => { createKey.current = newDeploymentIntentKey(); }, [serviceID, environmentID, revisionID]);
+
+  const failedSelection = !submitting && submissionError?.environment_id === environmentID
+    && submissionError.desired_revision_id === revisionID ? submissionError : undefined;
 
   function submitDeployment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -150,7 +154,7 @@ export function DeploymentsView({
                   <Rocket className="mr-1 h-4 w-4" />
                   {submitting ? "Requesting deployment..." : "Request deployment"}
                 </Button>
-                <p className="text-xs text-muted-foreground">This request carries one stable idempotency key. The browser never talks to runner APIs.</p>
+                {failedSelection ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere]">Unable to request deployment: {failedSelection.message}</p> : null}
               </form>
             ) : (
               <p className="text-sm text-muted-foreground" role="status">You can inspect deployment history, but an operator role is required to request, confirm, or cancel deployments.</p>

@@ -3203,6 +3203,14 @@ test("pending deployment requests lock the target and retain the intent on retry
   release();
   await expect(page.getByRole("button", { name: "Request deployment", exact: true })).toBeEnabled();
   await expect(revision).toHaveValue(fixture.revisionID);
+  const error = page.getByRole("form", { name: "Request deployment", exact: true }).getByRole("alert");
+  await expect(error).toContainText("Temporary submission failure");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(error).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-submission-error-320.png"), fullPage: true });
+  }
   await page.getByRole("button", { name: "Request deployment", exact: true }).click();
   await expect(page).toHaveURL((url) => url.pathname === `/deployments/${fixture.deploymentID}`);
   expect(payloads).toHaveLength(2);

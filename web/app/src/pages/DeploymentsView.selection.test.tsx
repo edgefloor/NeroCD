@@ -114,3 +114,17 @@ test("pending deployment submission locks its target and restores the draft on f
   expect(value("Immutable revision")).toBe("revision_a");
   for (const field of screen.getAllByRole("combobox")) expect((field as HTMLSelectElement).disabled).toBe(false);
 });
+
+
+test("deployment submission errors belong to their selected target and clear during retry", () => {
+  const selected = { ...props, selectedServiceID: "service_a", selectedEnvironmentID: "env_a" };
+  const submissionError = { environment_id: "env_a", desired_revision_id: "revision_a", message: "Temporary submission failure" };
+  const view = render(<DeploymentsView {...selected} submissionError={submissionError} />);
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.change(screen.getByRole("combobox", { name: "Immutable revision" }), { target: { value: "revision_a" } });
+  expect(screen.getByRole("alert").textContent).toContain("Temporary submission failure");
+  view.rerender(<DeploymentsView {...selected} submissionError={submissionError} submitting />);
+  expect(screen.queryByRole("alert")).toBeNull();
+  view.rerender(<DeploymentsView {...selected} submissionError={{ ...submissionError, environment_id: "env_b" }} />);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
