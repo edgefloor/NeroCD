@@ -944,7 +944,7 @@ test("project and template forms retain failed drafts and reset only after succe
     if (resource === "template") {
       await form.locator('select[name="project_id"]').selectOption(projectID);
       await form.locator('select[name="kind"]').selectOption("shell");
-      await form.locator('input[name="command"]').fill("echo form-fixture");
+      await form.locator('[name="command"]').fill("echo form-fixture");
     }
     const failure = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/${resource}s` && response.request().method() === "POST");
     responseGate = new Promise<void>((resolve) => { releaseReply = resolve; });
@@ -3052,7 +3052,7 @@ test("mobile creation dialogs retain pending project, source, and template draft
     if (resource === "repository") await form.locator('input[name="url"]').fill("https://example.invalid/pending.git");
     if (resource === "template") {
       await form.locator('select[name="kind"]').selectOption("shell");
-      await form.locator('input[name="command"]').fill("echo pending");
+      await form.locator('[name="command"]').fill("echo pending");
     }
     const path = `/api/v1/${resource === "repository" ? "repositories" : `${resource}s`}`;
     let release!: () => void;
@@ -3725,4 +3725,50 @@ test("project archives remove cards and source choices even when refresh fails",
   await page.getByRole("button", { name: "Retry projects", exact: true }).click();
   await expect(page.getByRole("button", { name: "Retry projects", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Archive", exact: true })).toHaveCount(0);
+});
+
+
+test("template command editing preserves argument boundaries and rejects incomplete quotes", async ({ page }, testInfo) => {
+  await page.goto("/templates");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Command project ${Date.now()}` });
+  const original = ["sh", "-c", "printf '%s\\n' \"hello world\"", "", "path with spaces", "line\r\nbreak"];
+  const template = await postJSON<{ id: string }>(page, "/api/v1/templates", { project_id: project.id, name: `000 Command arguments ${Date.now()}`, kind: "shell", run_spec: { type: "shell", inputs: {}, process: { command: original } }, workflow: { steps: [] }, runner_tags: [], requires_ack: false });
+  await page.goto(`/templates?q=${template.id}`);
+  let requests = 0;
+  page.on("request", (request) => { if (request.method() === "PATCH" && new URL(request.url()).pathname === "/api/v1/templates") requests++; });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit template", exact: true });
+    await dialog.getByRole("textbox", { name: "Template Name", exact: true }).fill(`000 Renamed command ${width}`);
+    const response = page.waitForResponse((result) => result.request().method() === "PATCH" && new URL(result.url()).pathname === "/api/v1/templates");
+    await dialog.getByRole("button", { name: "Save template", exact: true }).click();
+    const saved = await response;
+    expect(saved.status()).toBe(200);
+    expect((await saved.json()).run_spec.process.command).toEqual(original);
+    await expect(dialog).toHaveCount(0);
+  }
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit template", exact: true });
+    const command = dialog.getByRole("textbox", { name: "Command", exact: true });
+    const before = requests;
+    await command.fill('echo "unfinished');
+    await dialog.getByRole("button", { name: "Save template", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toHaveText("Close the double quote in the command.");
+    await expect(command).toBeFocused();
+    expect(requests).toBe(before);
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("command-error-320.png"), animations: "disabled" });
+    await command.fill(`echo "hello world" ''`);
+    const response = page.waitForResponse((result) => result.request().method() === "PATCH" && new URL(result.url()).pathname === "/api/v1/templates");
+    await dialog.getByRole("button", { name: "Save template", exact: true }).click();
+    const saved = await response;
+    expect(saved.status()).toBe(200);
+    expect((await saved.json()).run_spec.process.command).toEqual(["echo", "hello world", ""]);
+    await expect(dialog).toHaveCount(0);
+  }
 });

@@ -2,6 +2,8 @@ import { FormEvent, ReactNode, useId, useState } from "react";
 import { Layers3, Pencil, Play, Plus } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { formatCommandArguments, parseCommandArguments } from "@/lib/commandArguments";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,13 +26,22 @@ function TemplateForm({
   recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
+  const [commandError, setCommandError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (recovery || busy) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const kind = String(form.get("kind") ?? "shell");
-    const command = String(form.get("command") ?? "").trim().split(/\s+/).filter(Boolean);
+    let command: string[];
+    try {
+      command = parseCommandArguments(String(form.get("command") ?? ""));
+      setCommandError("");
+    } catch (error) {
+      setCommandError((error as Error).message);
+      event.currentTarget.querySelector<HTMLTextAreaElement>('[name="command"]')?.focus();
+      return;
+    }
     const created = await actions.create({
       project_id: String(form.get("project_id") ?? ""),
       name: String(form.get("name") ?? ""),
@@ -82,7 +93,9 @@ function TemplateForm({
       </div>
       <div className="space-y-1.5">
         <label htmlFor={`${formId}-command`} className="text-xs font-medium text-muted-foreground">Command</label>
-        <Input disabled={Boolean(busy)} id={`${formId}-command`} name="command" placeholder="ansible-playbook site.yml" className="h-9 rounded-xl" />
+        <Textarea disabled={Boolean(busy)} id={`${formId}-command`} name="command" placeholder="ansible-playbook site.yml" className="min-h-20 rounded-xl" aria-invalid={Boolean(commandError)} aria-describedby={`${formId}-command-help${commandError ? ` ${formId}-command-error` : ""}`} onChange={() => setCommandError("")} />
+        <p id={`${formId}-command-help`} className="text-xs text-muted-foreground">Quote arguments containing spaces. Variables and shell operators are passed literally.</p>
+        {commandError ? <p id={`${formId}-command-error`} role="alert" className="text-sm text-destructive">{commandError}</p> : null}
       </div>
       <label className="flex items-center gap-2 text-sm py-2">
         <input disabled={Boolean(busy)} name="requires_ack" type="checkbox" className="rounded border-border" />
@@ -112,6 +125,7 @@ function TemplateEditDialog({
   recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
+  const [commandError, setCommandError] = useState("");
   const [open, setOpen] = useState(false);
   const saving = busy === `template:update:${template.id}`;
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -119,7 +133,17 @@ function TemplateEditDialog({
     if (recovery || busy) return;
     const form = new FormData(event.currentTarget);
     const kind = String(form.get("kind") ?? template.kind);
-    const command = String(form.get("command") ?? "").trim().split(/\s+/).filter(Boolean);
+    let command: string[];
+    try {
+      const value = String(form.get("command") ?? "");
+      const original = template.run_spec.process?.command ?? [];
+      command = value === formatCommandArguments(original).replace(/\r\n?/g, "\n") ? original : parseCommandArguments(value);
+      setCommandError("");
+    } catch (error) {
+      setCommandError((error as Error).message);
+      event.currentTarget.querySelector<HTMLTextAreaElement>('[name="command"]')?.focus();
+      return;
+    }
     const updated = await actions.update({
       id: template.id,
       project_id: String(form.get("project_id") ?? template.project_id),
@@ -139,10 +163,10 @@ function TemplateEditDialog({
     });
     if (updated !== undefined) setOpen(false);
   }
-  const command = template.run_spec.process?.command?.join(" ") ?? "";
+  const command = formatCommandArguments(template.run_spec.process?.command ?? []);
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!saving) setOpen(nextOpen); }}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!saving) { setCommandError(""); setOpen(nextOpen); } }}>
       <DialogTrigger asChild>
         {trigger ?? (
           <Button variant="outline" size="sm" className="h-8 rounded-xl">
@@ -196,7 +220,9 @@ function TemplateEditDialog({
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-command`} className="text-xs font-medium text-muted-foreground">Command</label>
-            <Input disabled={Boolean(busy)} id={`${formId}-command`} name="command" defaultValue={command} className="h-9 rounded-xl" />
+            <Textarea disabled={Boolean(busy)} id={`${formId}-command`} name="command" defaultValue={command} className="min-h-20 rounded-xl" aria-invalid={Boolean(commandError)} aria-describedby={`${formId}-command-help${commandError ? ` ${formId}-command-error` : ""}`} onChange={() => setCommandError("")} />
+            <p id={`${formId}-command-help`} className="text-xs text-muted-foreground">Quote arguments containing spaces. Variables and shell operators are passed literally.</p>
+            {commandError ? <p id={`${formId}-command-error`} role="alert" className="text-sm text-destructive">{commandError}</p> : null}
           </div>
           <label className="flex items-center gap-2 text-sm py-2">
             <input disabled={Boolean(busy)} name="requires_ack" type="checkbox" defaultChecked={template.requires_ack} className="rounded border-border" />
