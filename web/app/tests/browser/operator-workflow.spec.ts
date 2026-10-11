@@ -1413,3 +1413,44 @@ test("project controls and source registration follow project membership", async
     await context.close();
   }
 });
+
+test("project access editing follows ownership and refreshes after role changes", async ({ page, browser }, testInfo) => {
+  await page.goto("/settings");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const owned = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: "Owned access fixture" });
+  const maintained = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: "Maintained access fixture" });
+  const viewed = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: "Viewed access fixture" });
+  for (const [project, role] of [[owned, "owner"], [maintained, "maintainer"], [viewed, "viewer"]] as const) {
+    await postJSON(page, "/api/v1/project-members", { project_id: project.id, email: "oidc-browser@example.invalid", role });
+  }
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.goto("/sign-in");
+    await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    await operator.goto("/settings");
+    const card = operator.getByText("Project access", { exact: true }).locator('xpath=ancestor::*[@data-slot="card"]');
+    for (const width of [320, 390, 430, 1440]) {
+      await operator.setViewportSize({ width, height: 1000 });
+      const project = card.getByRole("combobox", { name: "Project", exact: true });
+      await expect(project.locator(`option[value="${owned.id}"]`)).toHaveCount(1);
+      await expect(project.locator(`option[value="${maintained.id}"]`)).toHaveCount(0);
+      await expect(project.locator(`option[value="${viewed.id}"]`)).toHaveCount(0);
+      await expect(card.getByText("oidc-browser@example.invalid · Viewed access fixture", { exact: true })).toBeVisible();
+      expect(await operator.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (width === 320) await card.screenshot({ path: testInfo.outputPath("project-access-owner-320.png") });
+    }
+    await card.getByRole("combobox", { name: "Project", exact: true }).selectOption(owned.id);
+    await card.getByRole("combobox", { name: "Role", exact: true }).selectOption("maintainer");
+    const changed = operator.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/project-members");
+    await card.getByRole("button", { name: "Update access", exact: true }).click();
+    expect((await changed).status()).toBe(200);
+    await expect(card.locator(`select[name="project_id"] option[value="${owned.id}"]`)).toHaveCount(0);
+    const denied = await operator.request.post("/api/v1/project-members", { headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" }, data: { project_id: owned.id, email: "oidc-browser@example.invalid", role: "owner" } });
+    expect(denied.status()).toBe(403);
+  } finally {
+    await context.close();
+  }
+});

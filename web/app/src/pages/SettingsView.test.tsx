@@ -24,7 +24,7 @@ test("project access keeps its draft until saving succeeds", () => {
   render(<SettingsView
     principal={{ id: "operator", name: "Operator", email: "operator@example.test", provider: "local", roles: [] }}
     projects={[{ id: "first", name: "First", description: "", created_at: "" }, { id: "second", name: "Second", description: "", created_at: "" }]}
-    members={[]} onUpsertMember={save}
+    members={[]} authorizationMembers={["first", "second"].map((project_id) => ({ id: project_id, project_id, user_id: "operator", role: "owner" } as never))} onUpsertMember={save}
   />);
   const email = screen.getByRole("textbox") as HTMLInputElement;
   const [project, role] = screen.getAllByRole("combobox") as HTMLSelectElement[];
@@ -40,4 +40,27 @@ test("project access keeps its draft until saving succeeds", () => {
   success();
   expect(email.value).toBe("operator@example.test");
   expect(role!.value).toBe("viewer");
+});
+
+test("membership editing offers only owned projects", () => {
+  render(<SettingsView
+    principal={{ id: "operator", name: "Operator", email: "operator@example.test", provider: "local", roles: [] }}
+    projects={["owned", "maintained", "viewed"].map((id) => ({ id, name: id, description: "", created_at: "" }))}
+    members={[]}
+    authorizationMembers={["owner", "maintainer", "viewer"].map((role, index) => ({ id: role, project_id: ["owned", "maintained", "viewed"][index], user_id: "operator", role, email: "operator@example.test" } as never))}
+    onUpsertMember={vi.fn()}
+  />);
+  const project = screen.getByRole("combobox", { name: "Project" }) as HTMLSelectElement;
+  expect(Array.from(project.options).map((option) => option.value)).toEqual(["owned"]);
+});
+
+test("non-owners retain member visibility without membership editing", () => {
+  render(<SettingsView
+    principal={{ id: "operator", name: "Operator", email: "operator@example.test", provider: "local", roles: [] }}
+    projects={[{ id: "viewed", name: "Viewed project", description: "", created_at: "" }]}
+    members={[{ id: "member", project_id: "viewed", user_id: "operator", role: "viewer", email: "operator@example.test" } as never]}
+    onUpsertMember={vi.fn()}
+  />);
+  expect(screen.queryByRole("button", { name: "Update access" })).toBeNull();
+  expect(screen.getByText("operator@example.test · Viewed project")).toBeTruthy();
 });
