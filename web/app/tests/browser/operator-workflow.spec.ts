@@ -2757,3 +2757,54 @@ test("approvals retry the selected page and retain decisions context through run
   expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
   expect(new URL(page.url()).searchParams.get("q")).toBe(fixture.runID);
 });
+
+test("templates recover the selected page and keep an open edit through refresh failure", async ({ page }, testInfo) => {
+  await page.goto("/templates");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createRunLogFixture(page);
+  const response = await page.request.get("/api/v1/templates?limit=100");
+  expect(response.status()).toBe(200);
+  const result = await response.json() as { items: Array<{ id: string }> };
+  const template = result.items.find((item) => item.id === fixture.templateID);
+  expect(template).toBeTruthy();
+  let failTemplates = true;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/templates?*", async (route) => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? 0);
+    offsets.push(offset);
+    if (failTemplates) return route.fulfill({ status: 503, json: { error: "Temporary template list failure" } });
+    return route.fulfill({ json: { items: [template], count: 1, limit: 50, offset, total: 51 } });
+  });
+  await page.goto(`/templates?offset=50&q=${fixture.templateID}`);
+  await expect(page.getByRole("alert")).toHaveText("Unable to load templates.");
+  expect(offsets.every((offset) => offset === 50)).toBe(true);
+  offsets.length = 0;
+  failTemplates = false;
+  await page.getByRole("button", { name: "Retry templates", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(offsets).toEqual([50]);
+  failTemplates = true;
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh data", exact: true }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit template" });
+  const name = dialog.getByRole("textbox", { name: "Template Name", exact: true });
+  await name.fill("Unsaved template after refresh");
+  await expect(dialog.getByRole("button", { name: "Retry templates", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Save template", exact: true })).toBeDisabled();
+  await expect(name).toHaveValue("Unsaved template after refresh");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(dialog.getByRole("button", { name: "Retry templates", exact: true })).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("template-edit-recovery-320.png") });
+  }
+  failTemplates = false;
+  await dialog.getByRole("button", { name: "Retry templates", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Save template", exact: true })).toBeEnabled();
+  await expect(name).toHaveValue("Unsaved template after refresh");
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
+  expect(new URL(page.url()).searchParams.get("q")).toBe(fixture.templateID);
+});

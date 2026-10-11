@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { apiSnapshot } from "@/api/compat";
 import { TemplatesView } from "./TemplatesView";
@@ -25,4 +25,22 @@ test("mixed project access limits actions and creation choices without hiding te
   expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
   expect(screen.getAllByRole("option", { name: "maintained project" }).length).toBeGreaterThan(0);
   expect(screen.queryAllByRole("option", { name: "viewed project" })).toHaveLength(0);
+});
+
+
+test("refresh failures preserve the edit draft and expose recovery inside its dialog", () => {
+  const view = render(<TemplatesView {...props} canOperateProject={() => true} />);
+  fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+  const dialog = screen.getByRole("dialog");
+  const name = within(dialog).getByRole<HTMLInputElement>("textbox", { name: "Template Name" });
+  fireEvent.change(name, { target: { value: "Unsaved template" } });
+  const retry = vi.fn();
+  view.rerender(<TemplatesView {...props} canOperateProject={() => true} recovery={<button onClick={retry}>Retry templates</button>} />);
+  expect(name.value).toBe("Unsaved template");
+  expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Save template" }).disabled).toBe(true);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Retry templates" }));
+  expect(retry).toHaveBeenCalledOnce();
+  view.rerender(<TemplatesView {...props} canOperateProject={() => true} />);
+  expect(name.value).toBe("Unsaved template");
+  expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Save template" }).disabled).toBe(false);
 });

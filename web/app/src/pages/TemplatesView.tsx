@@ -18,15 +18,18 @@ function TemplateForm({
   token,
   busy,
   mutate,
+  recovery,
 }: {
   snapshot: ApiSnapshot;
   token: string;
   busy: string;
   mutate: MutateFn;
+  recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (recovery) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const kind = String(form.get("kind") ?? "shell");
@@ -89,7 +92,7 @@ function TemplateForm({
         <input name="requires_ack" type="checkbox" className="rounded border-border" />
         <span>Requires approval before execution</span>
       </label>
-      <Button type="submit" disabled={busy === "template"} className="h-9 w-full rounded-xl">
+      <Button type="submit" disabled={Boolean(recovery) || busy === "template"} className="h-9 w-full rounded-xl">
         <Plus className="h-4 w-4 mr-2" />
         Create template
       </Button>
@@ -104,6 +107,7 @@ function TemplateEditDialog({
   token,
   busy,
   mutate,
+  recovery,
 }: {
   trigger?: ReactNode;
   template: TaskTemplate;
@@ -111,11 +115,13 @@ function TemplateEditDialog({
   token: string;
   busy: string;
   mutate: MutateFn;
+  recovery?: ReactNode;
 }): ReactNode {
   const formId = useId();
   const [open, setOpen] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (recovery) return;
     const form = new FormData(event.currentTarget);
     const kind = String(form.get("kind") ?? template.kind);
     const command = String(form.get("command") ?? "").trim().split(/\s+/).filter(Boolean);
@@ -158,6 +164,7 @@ function TemplateEditDialog({
         <DialogHeader>
           <DialogTitle>Edit template</DialogTitle>
         </DialogHeader>
+        {recovery}
         <form className="space-y-4" onSubmit={(event) => void submit(event)}>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-project`} className="text-xs font-medium text-muted-foreground">Project</label>
@@ -204,7 +211,7 @@ function TemplateEditDialog({
             <input name="requires_ack" type="checkbox" defaultChecked={template.requires_ack} className="rounded border-border" />
             <span>Requires approval before execution</span>
           </label>
-          <Button type="submit" disabled={busy === `template:update:${template.id}`} className="h-9 w-full rounded-xl">
+          <Button type="submit" disabled={Boolean(recovery) || busy === `template:update:${template.id}`} className="h-9 w-full rounded-xl">
             Save template
           </Button>
         </form>
@@ -219,6 +226,7 @@ export function TemplatesView({
   token,
   busy,
   mutate,
+  recovery,
   loading,
   onRunRequested,
   canOperateProject,
@@ -228,6 +236,7 @@ export function TemplatesView({
   token: string;
   busy: string;
   mutate: MutateFn;
+  recovery?: ReactNode;
   loading?: boolean;
   onRunRequested: (runID: string) => void;
   canOperateProject?: (projectID: string) => boolean;
@@ -239,6 +248,7 @@ export function TemplatesView({
   const visibleTemplates = snapshot.templates.filter((template) => matchesQuery(q,
     template.id, template.name, template.project_id, projectName(snapshot.projects, template.project_id), template.kind, ...(template.runner_tags ?? [])));
   async function playTemplate(template: TaskTemplate): Promise<void> {
+    if (recovery) return;
     const run = await mutate(`template:run:${template.id}`, () => requestRun(token, { template_id: template.id }), "Run requested");
     if (run) onRunRequested(run.id);
   }
@@ -264,8 +274,9 @@ export function TemplatesView({
             <DialogHeader className="shrink-0 pr-6">
               <DialogTitle>Create template</DialogTitle>
             </DialogHeader>
-            <div className="min-h-0 overflow-y-auto">
-              <TemplateForm snapshot={creationSnapshot} token={token} busy={busy} mutate={mutate} />
+            <div className="min-h-0 space-y-4 overflow-y-auto">
+              {recovery}
+              <TemplateForm snapshot={creationSnapshot} token={token} busy={busy} mutate={mutate} recovery={recovery} />
             </div>
           </DialogContent>
         </Dialog>
@@ -275,7 +286,7 @@ export function TemplatesView({
           <CardTitle className="text-base font-semibold">Create template</CardTitle>
         </CardHeader>
         <CardContent>
-          <TemplateForm snapshot={creationSnapshot} token={token} busy={busy} mutate={mutate} />
+          <TemplateForm snapshot={creationSnapshot} token={token} busy={busy} mutate={mutate} recovery={recovery} />
         </CardContent>
       </Card>
       </> : null}
@@ -331,13 +342,13 @@ export function TemplatesView({
                             <Button
                               size="sm"
                               className="h-8 rounded-xl"
-                              disabled={busy === `template:run:${template.id}`}
+                              disabled={Boolean(recovery) || busy === `template:run:${template.id}`}
                               onClick={() => void playTemplate(template)}
                             >
                               <Play className="mr-1.5 h-4 w-4" />
                               Play
                             </Button>
-                            <TemplateEditDialog template={template} snapshot={snapshot} token={token} busy={busy} mutate={mutate} />
+                            <TemplateEditDialog template={template} snapshot={snapshot} token={token} busy={busy} mutate={mutate} recovery={recovery} />
                           </div> : <span className="text-xs text-muted-foreground">Read only</span>}
                         </TableCell>
                       </TableRow>
@@ -380,7 +391,7 @@ export function TemplatesView({
                         <Button
                           size="sm"
                           className="h-8 w-8 rounded-xl"
-                          disabled={busy === `template:run:${template.id}`}
+                          disabled={Boolean(recovery) || busy === `template:run:${template.id}`}
                           onClick={() => void playTemplate(template)}
                           aria-label="Play"
                         >
@@ -397,6 +408,7 @@ export function TemplatesView({
                           token={token}
                           busy={busy}
                           mutate={mutate}
+                          recovery={recovery}
                         />
                       </div> : null}
                     </div>
