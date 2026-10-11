@@ -55,6 +55,31 @@ test("managed account creates runs with stable identity, rotates, isolates proje
     return route.fulfill({ status: 503, json: { error: "Temporary account creation failure" } });
   });
   const createForm = page.getByRole("form", { name: "Create service account", exact: true });
+  let createRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/service-accounts" && request.method() === "POST") createRequests += 1;
+  });
+  const expiry = createForm.getByLabel("Credential expiry");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const value of ["2000-01-01T12:00", "9999-01-01T12:00"]) {
+      await expiry.fill(value);
+      await createForm.getByRole("button", { name: "Create account", exact: true }).click();
+      await expect(createForm.getByRole("alert")).toHaveText("Choose a future date within the next 365 days.");
+      await expect(expiry).toHaveAttribute("aria-invalid", "true");
+      await expect(expiry).toBeFocused();
+      await expect(expiry).toHaveValue(value);
+      await expect(createForm.getByLabel("Service account name")).toHaveValue(`Browser bot ${suffix}`);
+    }
+    expect(await createForm.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320 || width === 1440) {
+      await createForm.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath(`account-expiry-validation-${width}.png`), animations: "disabled" });
+    }
+  }
+  expect(createRequests).toBe(0);
+  await expiry.fill("");
+  await expect(createForm.getByRole("alert")).toHaveCount(0);
   await page.getByRole("button", { name: "Create account" }).click();
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });

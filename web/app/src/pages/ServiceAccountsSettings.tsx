@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, KeyRound, RotateCw, ShieldOff } from "lucide-react";
 import type { Project } from "@/api";
@@ -28,6 +28,9 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
   const client = useQueryClient();
   const [projectID, setProjectID] = useState(projects[0]?.id ?? "");
   const [offset, setOffset] = useState(0);
+  const [expiryError, setExpiryError] = useState("");
+  const expiryHintID = useId();
+  const expiryErrorID = useId();
   const [secret, setSecret] = useState<OneTimeSecret>();
   const [revoking, setRevoking] = useState<ServiceAccount>();
   const [revokeError, setRevokeError] = useState("");
@@ -81,11 +84,19 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
     const element = event.currentTarget;
     const form = new FormData(element);
     const expiry = String(form.get("expires_at") ?? "");
+    const expiresAt = expiry ? new Date(expiry) : undefined;
+    const now = Date.now();
+    if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= now || expiresAt.getTime() > now + 365 * 24 * 60 * 60 * 1000)) {
+      setExpiryError("Choose a future date within the next 365 days.");
+      element.querySelector<HTMLInputElement>('[name="expires_at"]')?.focus();
+      return;
+    }
+    setExpiryError("");
     create.mutate({
       project_id: projectID,
       name: String(form.get("name") ?? ""),
       role: String(form.get("role") ?? "viewer") as "owner" | "maintainer" | "viewer",
-      ...(expiry ? { expires_at: new Date(expiry).toISOString() } : {}),
+      ...(expiresAt ? { expires_at: expiresAt.toISOString() } : {}),
     }, { onSuccess: () => element.reset() });
   }
 
@@ -94,11 +105,15 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
       <CardHeader><CardTitle><Bot className="mr-2 inline h-4 w-4" />Service accounts</CardTitle></CardHeader>
       <CardContent className="grid min-w-0 gap-4">
         <label className="grid gap-1 text-sm">Project<Select aria-label="Service account project" disabled={busy} value={projectID} onChange={(event) => setProjectID(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select></label>
-        <form className="grid min-w-0 gap-2 md:grid-cols-4" aria-label="Create service account" aria-busy={create.isPending} onSubmit={submitCreate}>
-          <Input name="name" aria-label="Service account name" disabled={busy} placeholder="Automation account" maxLength={128} required />
-          <Select name="role" aria-label="Service account role" disabled={busy} defaultValue="maintainer"><option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option></Select>
-          <Input name="expires_at" aria-label="Credential expiry" disabled={busy} type="datetime-local" />
-          <Button type="submit" disabled={controlsDisabled || !projectID}><KeyRound className="h-4 w-4" />{create.isPending ? "Creating…" : "Create account"}</Button>
+        <form className="grid min-w-0 items-start gap-2 md:grid-cols-4" aria-label="Create service account" aria-busy={create.isPending} onSubmit={submitCreate}>
+          <label className="grid min-w-0 gap-1 text-sm">Name<Input name="name" aria-label="Service account name" disabled={busy} placeholder="Automation account" maxLength={128} required /></label>
+          <label className="grid min-w-0 gap-1 text-sm">Role<Select name="role" aria-label="Service account role" disabled={busy} defaultValue="maintainer"><option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option></Select></label>
+          <div className="grid min-w-0 gap-1">
+            <label className="grid min-w-0 gap-1 text-sm">Credential expiry<Input name="expires_at" disabled={busy} type="datetime-local" aria-invalid={Boolean(expiryError)} aria-describedby={`${expiryHintID}${expiryError ? ` ${expiryErrorID}` : ""}`} onChange={() => setExpiryError("")} /></label>
+            <p id={expiryHintID} className="text-xs text-muted-foreground">Optional, in your local time. Leave blank for 90 days, or choose a date within 365 days.</p>
+            {expiryError ? <p id={expiryErrorID} role="alert" className="text-sm text-destructive">{expiryError}</p> : null}
+          </div>
+          <Button className="self-start md:mt-6" type="submit" disabled={controlsDisabled || !projectID}><KeyRound className="h-4 w-4" />{create.isPending ? "Creating…" : "Create account"}</Button>
           {create.error && !create.isPending && create.variables?.project_id === projectID ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] md:col-span-4">Unable to create account: {create.error.message}</p> : null}
         </form>
         {page.isError ? <section className="space-y-3">

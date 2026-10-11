@@ -218,3 +218,27 @@ test("credential rotation reports pending and retryable failures on its account 
   expect(within(row).queryByRole("alert")).toBeNull();
   expect(serviceAccountsAPI.rotate).toHaveBeenCalledTimes(2);
 });
+
+
+test.each(["2000-01-01T12:00", "9999-01-01T12:00"])("invalid credential expiry %s preserves the draft without sending a request", async (expiry) => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [], count: 0, total: 0, offset: 0, limit: 10 });
+  serviceAccountsAPI.create.mockRejectedValueOnce(new Error("Retry fixture"));
+  renderPanel();
+  await screen.findByText("No service accounts on this page.");
+  const name = screen.getByLabelText<HTMLInputElement>("Service account name");
+  const input = screen.getByLabelText<HTMLInputElement>("Credential expiry");
+  fireEvent.change(name, { target: { value: "Scheduled automation" } });
+  fireEvent.change(input, { target: { value: expiry } });
+  fireEvent.submit(screen.getByRole("form", { name: "Create service account" }));
+  expect(serviceAccountsAPI.create).not.toHaveBeenCalled();
+  expect(input.getAttribute("aria-invalid")).toBe("true");
+  expect(screen.getByRole("alert").textContent).toBe("Choose a future date within the next 365 days.");
+  expect(name.value).toBe("Scheduled automation");
+  expect(input.value).toBe(expiry);
+  const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+  fireEvent.change(input, { target: { value: future } });
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.submit(screen.getByRole("form", { name: "Create service account" }));
+  await waitFor(() => expect(serviceAccountsAPI.create).toHaveBeenCalledOnce());
+  expect(serviceAccountsAPI.create).toHaveBeenCalledWith(expect.objectContaining({ name: "Scheduled automation", expires_at: new Date(future).toISOString() }));
+});
