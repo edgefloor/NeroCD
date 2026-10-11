@@ -224,16 +224,26 @@ test("managed account creates runs with stable identity, rotates, isolates proje
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("service-account-revoke-failure-320.png"), fullPage: true });
   }
   failRevoke = false;
+  failList = true;
   const revokeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/service-accounts/revoke");
   await revokeDialog.getByRole("button", { name: "Revoke account" }).click();
   expect((await revokeResponse).status()).toBe(200);
   expect((await page.request.get("/api/v1/me", { headers: { Authorization: `Bearer ${rotatedToken}` } })).status()).toBe(401);
+  await expect(revokeDialog).toHaveCount(0);
+  await expect(page.getByText("Unable to refresh service accounts. Showing previously loaded accounts.")).toBeVisible();
+  await expect(accountRow.getByText("revoked", { exact: true })).toBeVisible();
 
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await expect(page.getByRole("navigation", { name: "accounts pages" })).toBeVisible();
+    await expect(accountRow.getByText("revoked", { exact: true })).toBeVisible();
+    await expect(accountRow.getByRole("button", { name: "Rotate", exact: true })).toBeDisabled();
   }
+  failList = false;
+  await page.getByRole("button", { name: "Retry service accounts", exact: true }).click();
+  await expect(page.getByText("Unable to refresh service accounts. Showing previously loaded accounts.")).toHaveCount(0);
+  await expect(accountRow.getByText("revoked", { exact: true })).toBeVisible();
 });
 
 
@@ -289,6 +299,10 @@ test("service account saves retain pending and failed row drafts", async ({ page
       await page.screenshot({ path: testInfo.outputPath("account-save-error-320.png"), animations: "disabled" });
     }
   }
+  let failRefresh = true;
+  await page.route("**/api/v1/service-accounts?*", (route) => failRefresh
+    ? route.fulfill({ status: 503, json: { error: "Refresh after save unavailable" } })
+    : route.continue());
   await row.getByRole("button", { name: "Save", exact: true }).click();
   const saved = page.getByRole("form", { name: `Edit service account Saved bot ${suffix}`, exact: true });
   await expect(saved).toBeVisible();
@@ -296,6 +310,21 @@ test("service account saves retain pending and failed row drafts", async ({ page
   await expect(saved.getByRole("combobox")).toHaveValue("maintainer");
   expect(payloads).toHaveLength(2);
   expect(payloads[1]).toEqual(payloads[0]);
+  await expect(page.getByText("Unable to refresh service accounts. Showing previously loaded accounts.")).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(saved.getByRole("textbox")).toHaveValue(`Saved bot ${suffix}`);
+    await expect(saved.getByRole("combobox")).toHaveValue("maintainer");
+    await expect(saved.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    await expect(saved.getByRole("button", { name: "Reset", exact: true })).toBeDisabled();
+    if (width === 320) {
+      await saved.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("account-saved-refresh-error-320.png"), animations: "disabled" });
+    }
+  }
+  failRefresh = false;
+  await page.getByRole("button", { name: "Retry service accounts", exact: true }).click();
+  await expect(page.getByText("Unable to refresh service accounts. Showing previously loaded accounts.")).toHaveCount(0);
 
   await saved.getByRole("textbox").fill("Keep this draft");
   const externalUpdate = await page.request.patch("/api/v1/service-accounts", {

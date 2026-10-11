@@ -10,6 +10,7 @@ import {
   updateServiceAccount,
   type ServiceAccount,
   type ServiceAccountCreateInput,
+  type ServiceAccountListResponse,
   type ServiceAccountUpdateInput,
 } from "@/api/service-accounts";
 import { PageNavigation } from "@/components/common/PageNavigation";
@@ -57,7 +58,15 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
       await invalidate();
     },
   });
-  const update = useMutation({ mutationFn: (input: ServiceAccountUpdateInput) => updateServiceAccount(input), onSuccess: invalidate });
+  async function retainConfirmedAccount(account: ServiceAccount) {
+    const queryKey = ["service-accounts", account.project_id];
+    client.setQueriesData<ServiceAccountListResponse>({ queryKey }, (cached) => cached ? {
+      ...cached,
+      items: cached.items.map((item) => item.id === account.id ? account : item),
+    } : cached);
+    await client.invalidateQueries({ queryKey });
+  }
+  const update = useMutation({ mutationFn: (input: ServiceAccountUpdateInput) => updateServiceAccount(input), onSuccess: retainConfirmedAccount });
   const rotate = useMutation({
     mutationFn: ({ account }: { account: ServiceAccount }) => rotateServiceAccountCredential({ service_account_id: account.id }),
     onSuccess: async (result, variables) => {
@@ -67,9 +76,9 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
   });
   const revoke = useMutation({
     mutationFn: (serviceAccountID: string) => revokeServiceAccount(serviceAccountID),
-    onSuccess: async () => {
+    onSuccess: async (account) => {
       setRevoking(undefined);
-      await invalidate();
+      await retainConfirmedAccount(account);
     },
     onError: () => setRevokeError("Unable to revoke this account. Try again."),
     onSettled: () => { revokingRef.current = false; },

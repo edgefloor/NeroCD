@@ -262,3 +262,32 @@ test("account refresh updates untouched fields and reset restores the latest val
   expect(role.value).toBe("viewer");
   expect(serviceAccountsAPI.update).not.toHaveBeenCalled();
 });
+
+
+test("a confirmed save remains visible when its follow-up refresh fails", async () => {
+  serviceAccountsAPI.list.mockResolvedValueOnce({ items: [account], count: 1, total: 1, offset: 0, limit: 10 }).mockRejectedValue(new Error("Refresh unavailable"));
+  const saved = { ...account, name: "Saved account", role: "viewer" };
+  serviceAccountsAPI.update.mockResolvedValueOnce(saved);
+  renderPanel();
+  const name = await screen.findByLabelText<HTMLInputElement>("Name for Build bot");
+  fireEvent.change(name, { target: { value: saved.name } });
+  fireEvent.change(screen.getByLabelText("Role for Build bot"), { target: { value: saved.role } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Unable to refresh service accounts. Showing previously loaded accounts.");
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Saving…" })).toBeNull());
+  expect(name.value).toBe(saved.name);
+  expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Role for Saved account" }).value).toBe(saved.role);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Reset" }).disabled).toBe(true);
+});
+
+test("a confirmed revocation remains visible when its follow-up refresh fails", async () => {
+  serviceAccountsAPI.list.mockResolvedValueOnce({ items: [account], count: 1, total: 1, offset: 0, limit: 10 }).mockRejectedValue(new Error("Refresh unavailable"));
+  serviceAccountsAPI.revoke.mockResolvedValueOnce({ ...account, status: "revoked" });
+  renderPanel();
+  await screen.findByLabelText("Name for Build bot");
+  fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Revoke account" }));
+  await screen.findByText("Unable to refresh service accounts. Showing previously loaded accounts.");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("revoked")).toBeTruthy();
+});
