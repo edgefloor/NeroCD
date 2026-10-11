@@ -3631,6 +3631,8 @@ test("deployment confirmation retains its receipt through a failed detail refres
     await page.setViewportSize({ width, height: 1000 });
     await expect(page.getByText("waiting confirmation", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Confirm", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "Awaiting runner preparation." })).toBeVisible();
+    await expect(page.getByText("A runner has been assigned.", { exact: true })).toHaveCount(0);
     await expect(page.locator('[data-slot="card"]').filter({ has: page.getByText(`Deployment ${fixture.deploymentID}`, { exact: true }) }).getByText("assigned", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
