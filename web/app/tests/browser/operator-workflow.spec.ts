@@ -2003,3 +2003,27 @@ test("page code loads on demand during navigation", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("failed page downloads offer reload recovery at the same URL", async ({ page }, testInfo) => {
+  await page.goto("/runners");
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  let fail = true;
+  await page.route("**/assets/_authenticated.operations-*.js", (route) => fail ? route.abort("failed") : route.continue());
+  await page.goto("/operations");
+  const reload = page.getByRole("button", { name: "Reload page", exact: true });
+  await expect(reload).toBeVisible();
+  await expect(page.getByText("This page could not be loaded. Reload it to try again.", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/operations$/);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(reload).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.screenshot({ path: testInfo.outputPath("page-download-recovery-320.png"), fullPage: false });
+  fail = false;
+  await reload.click();
+  await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/operations$/);
+});
