@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { matchesQuery } from "@/lib/format";
+import { formatLoadedRunLogs } from "./logExport";
 
 let pendingOpener: HTMLElement | null = null;
 
@@ -49,6 +50,19 @@ export function TerminalLogDialog({
   useEffect(() => setFilter(""), [run?.id, open]);
   const filtering = Boolean(filter.trim());
   const visibleLogs = useMemo(() => orderedLogs.filter((log) => matchesQuery(filter, log.message, log.stream, `#${log.sequence}`)), [orderedLogs, filter]);
+
+  function downloadLoadedOutput() {
+    const runID = run?.id ?? "run";
+    const blob = new Blob([formatLoadedRunLogs(runID, orderedLogs)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${runID.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 128)}-loaded.log`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -114,6 +128,10 @@ export function TerminalLogDialog({
               {following ? <span aria-live="polite">Following active run output.</span> : null}
             </div>
           ) : null}
+          {orderedLogs.length ? <div className="mb-3 grid gap-1">
+            <Button variant="outline" size="sm" className="w-fit max-w-full" onClick={downloadLoadedOutput}>Download loaded output</Button>
+            <p className="text-xs text-muted-foreground">Includes all {orderedLogs.length} loaded entries, regardless of the filter.</p>
+          </div> : null}
           {hasPrevious ? (
             <div className="mb-3 grid gap-2">
               {previousError ? <p role="alert" className="text-destructive">Unable to load earlier output. Try again.</p> : null}

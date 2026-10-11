@@ -1942,6 +1942,15 @@ test("run output filter includes matching live arrivals", async ({ page }, testI
   await expect(dialog.getByText("Needle found", { exact: true })).toBeVisible();
   await expect(dialog.getByRole("status")).toHaveText("1 of 2 loaded entries match.");
   await expect(dialog.getByText("Build started", { exact: true })).toHaveCount(0);
+  const downloadPromise = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: "Download loaded output", exact: true }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe(`${runID}-loaded.log`);
+  const contents = readFileSync((await download.path())!, "utf8");
+  expect(contents).toContain("Loaded entries: 2. This snapshot may not include the complete run history.");
+  expect(contents).toContain("#1 [stdout] Build started");
+  expect(contents).toContain("#2 [stderr] Needle found");
+  await expect(input).toHaveValue("needle");
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(input).toBeVisible();
