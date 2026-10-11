@@ -2150,3 +2150,28 @@ test("navigation resets scroll and Back restores the previous page position", as
     await expect.poll(async () => Math.abs(await page.evaluate(() => window.scrollY) - previousScroll)).toBeLessThan(2);
   }
 });
+
+test("session verification failures provide reload recovery without losing the route", async ({ page }, testInfo) => {
+  await page.goto("/runners");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  let fail = true;
+  await page.route("**/api/v1/me", (route) => fail
+    ? route.fulfill({ status: 503, json: { error: "Temporary session verification failure" } })
+    : route.continue());
+  await page.goto("/runners?q=restore&offset=50");
+  await expect(page.getByRole("heading", { name: "Session unavailable", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveText("Unable to check your session. Reload this page to try again.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(page.getByRole("button", { name: "Reload page", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("session-recovery-320.png"), fullPage: false });
+  }
+  fail = false;
+  await page.getByRole("button", { name: "Reload page", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("restore");
+  await expect(page).toHaveURL((url) => url.pathname === "/runners" && url.searchParams.get("q") === "restore" && url.searchParams.get("offset") === "50");
+});
