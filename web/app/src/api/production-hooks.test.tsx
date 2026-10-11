@@ -517,3 +517,25 @@ test.each(["confirm", "cancel"] as const)("deployment %s blocks duplicate and co
   expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   expect(mounted.result.current.error).toBeUndefined();
 });
+
+
+test("deployment creation blocks duplicate requests and retains retry input", async () => {
+  let finish!: (response: Response) => void;
+  globalThis.fetch = vi.fn<typeof fetch>(() => new Promise((resolve) => { finish = resolve; }));
+  const { wrapper } = setup();
+  const mounted = renderHook(() => useDeploymentActions(), { wrapper });
+  const input = { environment_id: "env_1", desired_revision_id: "rev_1", idempotency_key: "intent_one" };
+  let pending!: Promise<unknown>;
+  await act(async () => {
+    pending = mounted.result.current.create(input);
+    void mounted.result.current.create(input);
+  });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  await act(async () => { finish(new Response(JSON.stringify({ error: "Temporary failure" }), { status: 503 })); await pending; });
+  expect(mounted.result.current.creationError).toMatchObject({ ...input, message: expect.stringContaining("Temporary failure") });
+  vi.mocked(globalThis.fetch).mockResolvedValueOnce(json({ id: "dep_1", status: "queued" }));
+  await act(async () => { await mounted.result.current.create(input); });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  for (const [, options] of vi.mocked(globalThis.fetch).mock.calls) expect(JSON.parse(String(options?.body))).toEqual(input);
+  expect(mounted.result.current.creationError).toBeUndefined();
+});

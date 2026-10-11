@@ -210,6 +210,12 @@ export function useDeploymentActions(disabled = false) {
   return {
     busy,
     error,
+    creationError: error?.key === "create" && mutations.create.variables ? { ...mutations.create.variables, message: error.message } : undefined,
+    create: (input: Parameters<typeof createDeployment>[0]) => perform("create", async () => {
+      const result = await mutations.create.mutateAsync(input);
+      toast.success("Deployment requested");
+      return result;
+    }),
     confirm: (id: string) => perform(`confirm:${id}`, async () => {
       const result = await mutations.confirm.mutateAsync({ id });
       toast.success("Deployment confirmed");
