@@ -242,6 +242,8 @@ export function TemplatesView({
   onRunRequested: (runID: string) => void;
   canOperateProject?: (projectID: string) => boolean;
 }): ReactNode {
+  const [createOpen, setCreateOpen] = useState(false);
+  const creating = busy === "template";
   const writableProjects = snapshot.projects.filter((project) => canOperateProject?.(project.id));
   const canCreate = writableProjects.length > 0;
   const creationSnapshot = { ...snapshot, projects: writableProjects };
@@ -267,11 +269,11 @@ export function TemplatesView({
     <section className={`grid items-start gap-4 ${canCreate ? "xl:grid-cols-[380px_minmax(0,1fr)]" : ""}`}>
       {canCreate ? <>
       <div className="xl:hidden">
-        <Dialog>
+        <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) setCreateOpen(open); }}>
           <DialogTrigger asChild>
             <Button className="h-9 w-full rounded-xl">Create template</Button>
           </DialogTrigger>
-          <DialogContent aria-modal="true" className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden">
+          <DialogContent showCloseButton={!creating} aria-modal="true" className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden">
             <DialogHeader className="shrink-0 pr-6">
               <DialogTitle>Create template</DialogTitle>
             </DialogHeader>

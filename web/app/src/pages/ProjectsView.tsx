@@ -243,6 +243,8 @@ export function ProjectsView({
   canOperateProject?: (projectID: string) => boolean;
   loading?: boolean;
 }): ReactNode {
+  const [configureOpen, setConfigureOpen] = useState(false);
+  const configuring = busy === "project" || busy === "repository";
   const writableProjects = formProjects.filter((project) => canOperateProject?.(project.id));
   const filtering = Boolean(q?.trim());
   const visibleProjects = snapshot.projects.filter((project) => matchesQuery(q, project.id, project.name, project.description));
@@ -262,14 +264,14 @@ export function ProjectsView({
     <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="grid items-start gap-3">
         <div className="xl:hidden">
-          <Dialog>
+          <Dialog open={configureOpen} onOpenChange={(open) => { if (!configuring) setConfigureOpen(open); }}>
             <DialogTrigger asChild>
               <Button className="h-9 w-full rounded-xl">
                 <Plus className="mr-2 h-4 w-4" />
                 Configure project
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <DialogContent showCloseButton={!configuring} className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Configure project</DialogTitle>
               </DialogHeader>

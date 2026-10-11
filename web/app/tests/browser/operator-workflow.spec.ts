@@ -2927,3 +2927,61 @@ test("pending template actions disable competing writes and recover after failur
   for (const button of await play.all()) await expect(button).toBeEnabled();
   await expect(page.getByRole("button", { name: "Create template", exact: true })).toBeEnabled();
 });
+
+test("mobile creation dialogs retain pending project, source, and template drafts", async ({ page }, testInfo) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createRunLogFixture(page);
+  for (const resource of ["project", "repository", "template"] as const) {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.goto(resource === "template" ? "/templates" : "/projects");
+    await page.getByRole("button", { name: resource === "template" ? "Create template" : "Configure project", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    const submit = dialog.getByRole("button", { name: resource === "repository" ? "Register source" : `Create ${resource}`, exact: true });
+    const form = submit.locator("xpath=ancestor::form");
+    const name = form.locator('input[name="name"]');
+    const draft = `Mobile pending ${resource} ${Date.now()}`;
+    await name.fill(draft);
+    if (resource !== "project") await form.locator('select[name="project_id"]').selectOption(fixture.projectID);
+    if (resource === "repository") await form.locator('input[name="url"]').fill("https://example.invalid/pending.git");
+    if (resource === "template") {
+      await form.locator('select[name="kind"]').selectOption("shell");
+      await form.locator('input[name="command"]').fill("echo pending");
+    }
+    const path = `/api/v1/${resource === "repository" ? "repositories" : `${resource}s`}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let fail = true;
+    await page.route(`**${path}`, async (route) => {
+      if (route.request().method() !== "POST" || !fail) return route.continue();
+      fail = false;
+      await gate;
+      return route.fulfill({ status: 503, json: { error: "Temporary creation failure" } });
+    });
+    const failed = page.waitForResponse((response) => new URL(response.url()).pathname === path && response.request().method() === "POST");
+    await submit.click();
+    try {
+      await expect(submit).toBeDisabled();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+      for (const width of [320, 390, 430]) {
+        await page.setViewportSize({ width, height: 844 });
+        await expect(name).toBeDisabled();
+        expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+        if (width === 320) await page.screenshot({ path: testInfo.outputPath(`${resource}-creation-pending-320.png`) });
+      }
+    } finally { release(); }
+    expect((await failed).status()).toBe(503);
+    await expect(submit).toBeEnabled();
+    await expect(name).toHaveValue(draft);
+    const saved = page.waitForResponse((response) => new URL(response.url()).pathname === path && response.request().method() === "POST");
+    await submit.click();
+    expect((await saved).status()).toBe(201);
+    await expect(name).toHaveValue("");
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
+});
