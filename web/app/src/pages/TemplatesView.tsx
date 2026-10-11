@@ -3,6 +3,7 @@ import { Layers3, Pencil, Play, Plus } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { formatRunnerTags, parseRunnerTags } from "@/lib/runnerTags";
 import { formatCommandArguments, parseCommandArguments } from "@/lib/commandArguments";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -32,12 +33,22 @@ function TemplateForm({
 }): ReactNode {
   const formId = useId();
   const [commandError, setCommandError] = useState("");
+  const [tagsError, setTagsError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (recovery || busy) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const kind = String(form.get("kind") ?? "shell");
+    let runnerTags: string[];
+    try {
+      runnerTags = parseRunnerTags(String(form.get("runner_tags") ?? ""));
+      setTagsError("");
+    } catch (error) {
+      setTagsError((error as Error).message);
+      event.currentTarget.querySelector<HTMLInputElement>('[name="runner_tags"]')?.focus();
+      return;
+    }
     let command: string[];
     try {
       command = parseCommandArguments(String(form.get("command") ?? ""));
@@ -53,7 +64,7 @@ function TemplateForm({
       name: String(form.get("name") ?? ""),
       kind,
       run_spec: { type: kind, inputs: {}, process: { command } },
-      runner_tags: String(form.get("runner_tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
+      runner_tags: runnerTags,
       requires_ack: form.has("requires_ack"),
     });
     if (created !== undefined) formElement.reset();
@@ -96,7 +107,9 @@ function TemplateForm({
       </div>
       <div className="space-y-1.5">
         <label htmlFor={`${formId}-runner-tags`} className="text-xs font-medium text-muted-foreground">Runner Tags</label>
-        <Input disabled={Boolean(busy)} id={`${formId}-runner-tags`} name="runner_tags" placeholder="linux, prod" className="h-9 rounded-xl" />
+        <Input disabled={Boolean(busy)} id={`${formId}-runner-tags`} name="runner_tags" placeholder="linux, prod" className="h-9 rounded-xl" aria-invalid={Boolean(tagsError)} aria-describedby={`${formId}-tags-help${tagsError ? ` ${formId}-tags-error` : ""}`} onChange={() => setTagsError("")} />
+        <p id={`${formId}-tags-help`} className="text-xs text-muted-foreground">Separate tags with commas, or use a JSON array for tags containing commas.</p>
+        {tagsError ? <p id={`${formId}-tags-error`} role="alert" className="text-sm text-destructive">{tagsError}</p> : null}
       </div>
       <div className="space-y-1.5">
         <label htmlFor={`${formId}-command`} className="text-xs font-medium text-muted-foreground">Command</label>
@@ -136,6 +149,7 @@ function TemplateEditDialog({
 }): ReactNode {
   const formId = useId();
   const [commandError, setCommandError] = useState("");
+  const [tagsError, setTagsError] = useState("");
   const [open, setOpen] = useState(false);
   const saving = busy === `template:update:${template.id}`;
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -143,6 +157,15 @@ function TemplateEditDialog({
     if (recovery || busy) return;
     const form = new FormData(event.currentTarget);
     const kind = String(form.get("kind") ?? template.kind);
+    let runnerTags: string[];
+    try {
+      runnerTags = parseRunnerTags(String(form.get("runner_tags") ?? ""));
+      setTagsError("");
+    } catch (error) {
+      setTagsError((error as Error).message);
+      event.currentTarget.querySelector<HTMLInputElement>('[name="runner_tags"]')?.focus();
+      return;
+    }
     let command: string[];
     try {
       const value = String(form.get("command") ?? "");
@@ -166,10 +189,7 @@ function TemplateEditDialog({
         process: command.length ? { ...template.run_spec.process, command } : undefined,
       },
       workflow: template.workflow,
-      runner_tags: String(form.get("runner_tags") ?? "")
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean),
+      runner_tags: runnerTags,
       requires_ack: form.has("requires_ack"),
     });
     if (updated !== undefined) setOpen(false);
@@ -177,7 +197,7 @@ function TemplateEditDialog({
   const command = formatCommandArguments(template.run_spec.process?.command ?? []);
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!saving) { setCommandError(""); setOpen(nextOpen); } }}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!saving) { setCommandError(""); setTagsError(""); setOpen(nextOpen); } }}>
       <DialogTrigger asChild>
         {trigger ?? (
           <Button variant="outline" size="sm" className="h-8 rounded-xl">
@@ -217,7 +237,9 @@ function TemplateEditDialog({
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-runner-tags`} className="text-xs font-medium text-muted-foreground">Runner Tags</label>
-            <Input disabled={Boolean(busy)} id={`${formId}-runner-tags`} name="runner_tags" defaultValue={(template.runner_tags ?? []).join(", ")} className="h-9 rounded-xl" />
+            <Input disabled={Boolean(busy)} id={`${formId}-runner-tags`} name="runner_tags" defaultValue={formatRunnerTags(template.runner_tags ?? [])} className="h-9 rounded-xl" aria-invalid={Boolean(tagsError)} aria-describedby={`${formId}-tags-help${tagsError ? ` ${formId}-tags-error` : ""}`} onChange={() => setTagsError("")} />
+            <p id={`${formId}-tags-help`} className="text-xs text-muted-foreground">Separate tags with commas, or use a JSON array for tags containing commas.</p>
+            {tagsError ? <p id={`${formId}-tags-error`} role="alert" className="text-sm text-destructive">{tagsError}</p> : null}
           </div>
           <div className="space-y-1.5">
             <label htmlFor={`${formId}-command`} className="text-xs font-medium text-muted-foreground">Command</label>

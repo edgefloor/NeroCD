@@ -3834,21 +3834,33 @@ test("renaming templates preserves unlisted kinds and their execution types", as
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Kind preservation ${Date.now()}` });
+  const tags = ["linux", "zone=west,east", "line\nbreak"];
+  let writes = 0;
+  page.on("request", (request) => { if (request.method() === "PATCH" && new URL(request.url()).pathname === "/api/v1/templates") writes++; });
   for (const kind of ["release-task", "python"]) {
     const runSpec = { type: "shell", inputs: {}, process: { command: ["echo", "unchanged"] } };
-    const template = await postJSON<{ id: string }>(page, "/api/v1/templates", { project_id: project.id, name: `000 Preserve ${kind} ${Date.now()}`, kind, run_spec: runSpec, workflow: { steps: [] }, runner_tags: [], requires_ack: false });
+    const template = await postJSON<{ id: string }>(page, "/api/v1/templates", { project_id: project.id, name: `000 Preserve ${kind} ${Date.now()}`, kind, run_spec: runSpec, workflow: { steps: [] }, runner_tags: tags, requires_ack: false });
     await page.goto(`/templates?q=${template.id}`);
     for (const width of [320, 390, 430, 1440]) {
       await page.setViewportSize({ width, height: 1000 });
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Edit template", exact: true });
       await expect(dialog.getByRole("combobox", { name: "Kind", exact: true })).toHaveValue(kind);
+      const tagInput = dialog.getByRole("textbox", { name: "Runner Tags", exact: true });
+      await expect(tagInput).toHaveValue(JSON.stringify(tags));
+      const before = writes;
+      await tagInput.fill('["invalid"');
+      await dialog.getByRole("button", { name: "Save template", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toHaveText("Enter comma-separated tags or a JSON array of strings.");
+      await expect(tagInput).toBeFocused();
+      expect(writes).toBe(before);
+      await tagInput.fill(JSON.stringify(tags));
       await dialog.getByRole("textbox", { name: "Template Name", exact: true }).fill(`000 Renamed ${kind} ${width}`);
       const response = page.waitForResponse((result) => result.request().method() === "PATCH" && new URL(result.url()).pathname === "/api/v1/templates");
       await dialog.getByRole("button", { name: "Save template", exact: true }).click();
       const saved = await response;
       expect(saved.status()).toBe(200);
-      expect(await saved.json()).toMatchObject({ kind, run_spec: runSpec });
+      expect(await saved.json()).toMatchObject({ kind, run_spec: runSpec, runner_tags: tags });
       await expect(dialog).toHaveCount(0);
     }
   }
