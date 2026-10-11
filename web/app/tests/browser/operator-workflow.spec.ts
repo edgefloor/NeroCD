@@ -2499,3 +2499,21 @@ test("SSO discovery errors offer retry without discarding local sign-in input", 
   await expect(page.getByRole("link", { name: "Continue with SSO", exact: true })).toHaveAttribute("href", "/api/v1/oidc/login?redirect=%2Frunners");
   await expect(page.getByLabel("Email")).toHaveValue("operator@example.test");
 });
+
+test("short run durations retain seconds on desktop and mobile", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  const response = await page.request.get(`/api/v1/runs/${runID}`);
+  expect(response.ok()).toBe(true);
+  const run = { ...await response.json(), status: "succeeded", started_at: "2026-10-11T12:00:00Z", finished_at: "2026-10-11T12:00:07Z" };
+  await page.route("**/api/v1/runs?*", (route) => route.fulfill({ json: { items: [run], count: 1, total: 1, limit: 50, offset: 0 } }));
+  await page.reload();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByText("7s", { exact: true }).filter({ visible: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-duration-320.png"), fullPage: true });
+  }
+});

@@ -21,8 +21,11 @@ export function formatDate(value: string | undefined): string {
 export function formatDuration(run: TaskRun): string {
   const start = new Date(run.started_at).getTime();
   const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
-  const minutes = Math.max(1, Math.round((end - start) / 60000));
-  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "Unavailable";
+  const seconds = Math.floor((end - start) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export function matchesQuery(query: string | undefined, ...values: Array<string | undefined>): boolean {
