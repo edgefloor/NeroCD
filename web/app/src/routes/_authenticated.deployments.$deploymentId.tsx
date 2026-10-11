@@ -47,13 +47,15 @@ function DeploymentDetailRoute() {
   const failedQueries = [deployment, environments, services, revisions, history, principal, members, runs].filter((query) => query.isError);
   if (deployment.isPending) return <section className="space-y-3"><p role="status">Loading deployment...</p><SkeletonCard rows={4} /></section>;
   if (!deployment.isError && !deployment.data) return <DeploymentUnavailable />;
-  if (failedQueries.length) return <section className="space-y-3">
-    <p role="alert">Unable to load deployment. Try again.</p>
+  const hasLoadedData = Boolean(deployment.data) && failedQueries.every((query) => query.data !== undefined);
+  const error = failedQueries.length ? <section className="space-y-3">
+    <p role="alert">{hasLoadedData ? "Unable to refresh deployment. Showing previously loaded data." : "Unable to load deployment. Try again."}</p>
     <div className="flex flex-wrap gap-2">
       <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button>
       <BackToDeployments />
     </div>
-  </section>;
+  </section> : null;
+  if (error && !hasLoadedData) return error;
   const canOperate = canMaintainProject(principal.data, members.data ?? [], service?.project_id);
-  return <DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} service={service} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} busy={mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed"), onError: (cause) => toast.error(cause.message) })} onCancel={(input) => mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested"), onError: (cause) => toast.error(cause.message) })} />;
+  return <div className="grid min-w-0 gap-4">{error}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} service={service} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} busy={failedQueries.length > 0 || mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed"), onError: (cause) => toast.error(cause.message) })} onCancel={(input) => mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested"), onError: (cause) => toast.error(cause.message) })} /></div>;
 }

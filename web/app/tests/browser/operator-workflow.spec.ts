@@ -1936,3 +1936,35 @@ test("run output filter includes matching live arrivals", async ({ page }, testI
   await expect(dialog.getByText("Build started", { exact: true })).toBeVisible();
   await expect(input).toBeFocused();
 });
+
+test("deployment refresh failure retains details and recovers controls", async ({ page }, testInfo) => {
+  await page.goto("/deployments");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  let fail = false;
+  await page.route(`**/api/v1/deployments/${fixture.deploymentID}`, (route) => fail
+    ? route.fulfill({ status: 503, json: { error: "Temporary refresh failure" } })
+    : route.continue());
+  await page.goto(`/deployments/${fixture.deploymentID}`);
+  const title = page.getByText(`Deployment ${fixture.deploymentID}`, { exact: true });
+  const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+  await expect(title).toBeVisible();
+  await expect(cancel).toBeEnabled();
+  fail = true;
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled({ timeout: 15_000 });
+  await expect(title).toBeVisible();
+  await expect(cancel).toBeDisabled();
+  await expect(page.getByText("Unable to refresh deployment. Showing previously loaded data.", { exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(title).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("deployment-refresh-retained-320.png"), fullPage: true });
+  }
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(cancel).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+  await expect(title).toBeVisible();
+});
