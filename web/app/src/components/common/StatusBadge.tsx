@@ -4,13 +4,13 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 export function statusTone(status: string): "good" | "pending" | "danger" | "neutral" {
-  if (["ok", "active", "succeeded", "scaffolded"].includes(status)) {
+  if (["ok", "active", "succeeded", "scaffolded", "rolled_back"].includes(status)) {
     return "good";
   }
-  if (["waiting_approval", "planned", "queued", "running", "pending"].includes(status)) {
+  if (["waiting_approval", "planned", "queued", "running", "pending", "waiting_confirmation", "assigned", "preparing", "applying", "verifying", "cancel_requested", "rolling_back"].includes(status)) {
     return "pending";
   }
-  if (["failed", "error", "canceled", "revoked", "archived"].includes(status)) {
+  if (["failed", "error", "canceled", "revoked", "archived", "rollback_failed", "manual_intervention"].includes(status)) {
     return "danger";
   }
   return "neutral";
@@ -46,7 +46,7 @@ export function StatusBadge({ status, className }: { status: string; className?:
         className
       )}
     >
-      <Icon className="h-3 w-3 shrink-0" />
+      <Icon aria-hidden="true" className="h-3 w-3 shrink-0" />
       {statusLabel(status)}
     </Badge>
   );
