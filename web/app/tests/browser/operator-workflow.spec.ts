@@ -3426,7 +3426,7 @@ test("pending deployment requests lock the target and retain the intent on retry
 });
 
 
-test("operations status and retention requests recover locally", async ({ page }, testInfo) => {
+test("operations recovery preserves drafts and session failures block retention", async ({ page }, testInfo) => {
   await page.goto("/operations");
   await signIn(page);
   await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
@@ -3434,6 +3434,8 @@ test("operations status and retention requests recover locally", async ({ page }
   await days.fill("21");
   let failStatus = true;
   let failRetention = false;
+  let failPrincipal = false;
+  await page.route("**/api/v1/me", (route) => failPrincipal ? route.fulfill({ status: 503, json: { error: "Temporary permission refresh failure" } }) : route.continue());
   await page.route("**/api/v1/operations/status", (route) => failStatus ? route.fulfill({ status: 503, json: { error: "Temporary operations failure" } }) : route.continue());
   await page.route("**/api/v1/run-log-retention", (route) => failRetention ? route.fulfill({ status: 503, json: { error: "Temporary policy failure" } }) : route.continue());
   const refresh = async () => {
@@ -3469,6 +3471,20 @@ test("operations status and retention requests recover locally", async ({ page }
   await expect(retry).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save policy", exact: true })).toBeEnabled();
   await expect(days).toHaveValue("21");
+  failPrincipal = true;
+  await refresh();
+  await expect(page.getByRole("heading", { name: "Session unavailable", exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByRole("button", { name: "Save policy", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Previewed delete batch", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reload page", exact: true })).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+  failPrincipal = false;
+  await page.getByRole("button", { name: "Reload page", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save policy", exact: true })).toBeEnabled();
   expect(new URL(page.url()).pathname).toBe("/operations");
 });
 
