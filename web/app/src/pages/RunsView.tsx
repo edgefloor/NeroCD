@@ -93,28 +93,28 @@ export function RunsTable({
         ))}
       </div>
       <div className="hidden md:block">
-        <Table>
+        <Table className="table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className="text-xs font-semibold uppercase tracking-wide">Run</TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wide">Project</TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wide">Duration</TableHead>
-              <TableHead className="text-xs font-semibold uppercase tracking-wide text-right">Status</TableHead>
+              <TableHead className="w-[35%] text-xs font-semibold uppercase tracking-wide">Run</TableHead>
+              <TableHead className="w-[20%] text-xs font-semibold uppercase tracking-wide">Project</TableHead>
+              <TableHead className="w-[10%] text-xs font-semibold uppercase tracking-wide">Duration</TableHead>
+              <TableHead className="w-[35%] text-xs font-semibold uppercase tracking-wide text-right">Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {runs.map((run) => (
               <TableRow key={run.id} className="hover:bg-muted/40 transition-colors">
-                <TableCell className="min-w-0">
-                  <div className="truncate text-sm font-medium">{templateName(templates, run.template_id, run)}</div>
-                  <div className="truncate text-xs text-muted-foreground font-mono">
+                <TableCell className="min-w-0 whitespace-normal align-top">
+                  <div className="break-words text-sm font-medium [overflow-wrap:anywhere]">{templateName(templates, run.template_id, run)}</div>
+                  <div className="break-words text-xs text-muted-foreground font-mono [overflow-wrap:anywhere]">
                     {run.id} · {formatDate(run.started_at)}
                   </div>
                 </TableCell>
-                <TableCell className="text-sm">{projectName(projects, run.project_id)}</TableCell>
-                <TableCell className="text-sm">{formatDuration(run)}</TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-2">
+                <TableCell className="whitespace-normal break-words align-top text-sm [overflow-wrap:anywhere]">{projectName(projects, run.project_id)}</TableCell>
+                <TableCell className="whitespace-normal break-words align-top text-sm">{formatDuration(run)}</TableCell>
+                <TableCell className="align-top text-right">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
                       <Link data-run-detail-link={run.id} to="/runs/$runId" params={{ runId: run.id }} search={{ q: detailSearch?.q || undefined, offset: detailSearch?.offset || undefined }}>
                         <ListTree className="mr-1.5 h-4 w-4" />
