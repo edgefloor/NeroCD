@@ -2242,3 +2242,48 @@ test("log stream links to runs and contains long output on mobile and desktop", 
   await expect(page).toHaveURL(/\/logs\?q=Long-output&offset=50$/);
   await expect(link).toBeVisible();
 });
+
+
+test("logs recover locally and remain readable when run statuses fail", async ({ page }, testInfo) => {
+  await page.goto("/logs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  let failLogs = true;
+  let failRun = true;
+  const offsets: number[] = [];
+  await page.route("**/api/v1/run-logs?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.has("run_id")) return route.continue();
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    offsets.push(offset);
+    if (failLogs) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary log failure" }) });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      items: [{ id: "log_recovery", run_id: runID, sequence: 1, stream: "stdout", message: "Retained output", created_at: "2026-01-01T00:00:00Z" }],
+      count: 1, total: 51, limit: 50, offset,
+    }) });
+  });
+  await page.route(`**/api/v1/runs/${runID}`, (route) => failRun
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary status failure" }) })
+    : route.continue());
+  await page.goto("/logs?q=Retained&offset=50");
+  await expect(page.getByRole("alert")).toHaveText("Unable to load logs.");
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  expect(offsets.length).toBeGreaterThan(0);
+  expect(offsets.every((offset) => offset === 50)).toBe(true);
+  failLogs = false;
+  await page.getByRole("button", { name: "Retry logs", exact: true }).click();
+  await expect(page.getByText("Retained output", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveText("Some run statuses are unavailable. Log output is still available.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("link", { name: `View run ${runID}`, exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("logs-status-recovery-320.png"), fullPage: true });
+  }
+  failRun = false;
+  await page.getByRole("button", { name: "Retry run statuses", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText(/#1 · queued/)).toBeVisible();
+  await expect(page).toHaveURL(/\/logs\?q=Retained&offset=50$/);
+});
