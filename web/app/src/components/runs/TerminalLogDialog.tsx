@@ -1,9 +1,11 @@
-import { ReactNode, useMemo, useRef } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, X } from "lucide-react";
 import { shouldPollRun, type RunLog, type TaskRun } from "@/api";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { matchesQuery } from "@/lib/format";
 
 let pendingOpener: HTMLElement | null = null;
 
@@ -42,6 +44,11 @@ export function TerminalLogDialog({
 }): ReactNode {
   const orderedLogs = useMemo(() => [...logs].sort((a, b) => a.sequence - b.sequence), [logs]);
   const openerRef = useRef<HTMLElement | null>(null);
+  const filterRef = useRef<HTMLInputElement | null>(null);
+  const [filter, setFilter] = useState("");
+  useEffect(() => setFilter(""), [run?.id, open]);
+  const filtering = Boolean(filter.trim());
+  const visibleLogs = useMemo(() => orderedLogs.filter((log) => matchesQuery(filter, log.message, log.stream, `#${log.sequence}`)), [orderedLogs, filter]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -88,6 +95,16 @@ export function TerminalLogDialog({
               </Button>
             </DialogClose>
           </div>
+          {orderedLogs.length ? <div className="grid min-w-0 gap-1">
+            <div className="flex min-w-0 items-end gap-2">
+              <label className="grid min-w-0 flex-1 gap-1 text-xs text-muted-foreground">
+                Filter loaded output
+                <Input ref={filterRef} type="search" className="h-8" value={filter} onChange={(event) => setFilter(event.target.value)} />
+              </label>
+              {filter ? <Button variant="outline" size="sm" className="h-8" aria-label="Clear output filter" onClick={() => { setFilter(""); filterRef.current?.focus(); }}>Clear</Button> : null}
+            </div>
+            {filtering ? <p role="status" className="text-xs text-muted-foreground">{visibleLogs.length} of {orderedLogs.length} loaded entries match.</p> : null}
+          </div> : null}
         </DialogHeader>
         <div className="min-w-0 max-h-[70dvh] min-h-0 overflow-auto bg-background p-4 font-mono text-[13px] leading-6 text-foreground">
           {run ? (
@@ -120,9 +137,11 @@ export function TerminalLogDialog({
             <div className="text-muted-foreground">
               {shouldPollRun(run) ? "waiting for runner output..." : "No run output was recorded."}
             </div>
+          ) : visibleLogs.length === 0 ? (
+            <p className="text-muted-foreground">No loaded output matches this filter.</p>
           ) : (
             <div className="grid gap-1">
-              {orderedLogs.map((log) => (
+              {visibleLogs.map((log) => (
                 <div key={log.id} className="grid gap-3 md:grid-cols-[5rem_4.5rem_minmax(0,1fr)]">
                   <span className="text-muted-foreground">#{log.sequence}</span>
                   <span className={cn(

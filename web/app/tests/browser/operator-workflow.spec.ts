@@ -382,6 +382,10 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   expect((await firstLogRequest).status()).toBe(200);
   const dialog = page.getByRole("dialog", { name: `run ${runID}` });
   await expect(dialog).toContainText("Browser output 52");
+  await dialog.getByRole("searchbox", { name: "Filter loaded output", exact: true }).fill("Browser output 27");
+  await expect(dialog.getByText("No loaded output matches this filter.", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Load earlier output", exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Clear output filter", exact: true }).click();
   await expect(dialog.getByText("Browser output 1", { exact: true })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Load earlier output" }).click();
   await expect(dialog.getByRole("alert")).toHaveText("Unable to load earlier output. Try again.");
@@ -392,6 +396,11 @@ test("runs list fetches, follows, closes, and switches terminal logs", async ({ 
   await expect(dialog.getByRole("alert")).toHaveCount(0);
   expect(pageErrors).toHaveLength(0);
   await expect(dialog.getByText("Browser output 1", { exact: true })).toBeVisible();
+  await dialog.getByRole("searchbox", { name: "Filter loaded output", exact: true }).fill("Browser output 27");
+  await expect(dialog.getByText("Browser output 27", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Browser output 52", { exact: true })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Clear output filter", exact: true }).click();
+  await expect(dialog.getByRole("searchbox", { name: "Filter loaded output", exact: true })).toBeFocused();
   await expect(dialog).toContainText("Following active run output.");
   await expect(dialog).toContainText("Browser output 152", { timeout: 10_000 });
   expect(scopedLogRequests).toBeGreaterThanOrEqual(2);
@@ -1886,4 +1895,44 @@ test("deployment detail loading, retry, and missing states preserve a return pat
   await expect(page.getByText("Deployment is unavailable or you do not have access.", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Back to deployments", exact: true }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/deployments" && url.searchParams.get("service_id") === fixture.serviceID && url.searchParams.get("environment_id") === fixture.environmentID);
+});
+
+
+test("run output filter includes matching live arrivals", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  let appended = false;
+  const records = [
+    { id: "filter_log_1", run_id: runID, sequence: 1, stream: "stdout", message: "Build started", created_at: "2026-01-01T00:00:00Z" },
+    { id: "filter_log_2", run_id: runID, sequence: 2, stream: "stderr", message: "Needle found", created_at: "2026-01-01T00:00:01Z" },
+  ];
+  await page.route("**/api/v1/run-logs?*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("run_id") !== runID) return route.continue();
+    const offset = Number(url.searchParams.get("offset"));
+    const limit = Number(url.searchParams.get("limit"));
+    const total = appended ? 2 : 1;
+    const items = records.slice(0, total).slice(offset, offset + limit);
+    return route.fulfill({ json: { items, count: items.length, total, offset, limit } });
+  });
+  await page.goto(`/runs/${runID}`);
+  const dialog = page.getByRole("dialog", { name: `run ${runID}` });
+  const input = dialog.getByRole("searchbox", { name: "Filter loaded output", exact: true });
+  await input.fill("needle");
+  await expect(dialog.getByText("No loaded output matches this filter.", { exact: true })).toBeVisible();
+  appended = true;
+  await expect(dialog.getByText("Needle found", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("status")).toHaveText("1 of 2 loaded entries match.");
+  await expect(dialog.getByText("Build started", { exact: true })).toHaveCount(0);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(input).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("filtered-live-logs-320.png"), fullPage: false });
+  }
+  await dialog.getByRole("button", { name: "Clear output filter", exact: true }).click();
+  await expect(dialog.getByText("Build started", { exact: true })).toBeVisible();
+  await expect(input).toBeFocused();
 });

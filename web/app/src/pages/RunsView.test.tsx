@@ -106,3 +106,30 @@ test("active runs with no logs explain that output is pending", () => {
   render(<TerminalLogDialog run={{ id: "run_empty", status: "queued" } as never} logs={[]} open onOpenChange={vi.fn()} />);
   expect(screen.getByText(/waiting for runner output/)).toBeTruthy();
 });
+
+
+const filterLogs = [
+  { id: "l1", run_id: "run_logs", sequence: 1, stream: "stdout", message: "Build ready" },
+  { id: "l2", run_id: "run_logs", sequence: 2, stream: "stderr", message: "Deploy failure" },
+] as never;
+
+test.each(["FAILURE", "stderr", "#2"])("log filter matches text, stream, and sequence: %s", (query) => {
+  render(<TerminalLogDialog run={run} logs={filterLogs} open onOpenChange={vi.fn()} />);
+  fireEvent.change(screen.getByRole("searchbox", { name: "Filter loaded output" }), { target: { value: query } });
+  expect(screen.getByText("Deploy failure")).toBeTruthy();
+  expect(screen.queryByText("Build ready")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("1 of 2 loaded entries match.");
+  fireEvent.click(screen.getByRole("button", { name: "Clear output filter" }));
+  expect(screen.getByText("Build ready")).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Filter loaded output" }));
+});
+
+test("log filtering retains history access and resets when switching runs", () => {
+  const view = render(<TerminalLogDialog run={run} logs={filterLogs} open hasPrevious onLoadPrevious={vi.fn()} onOpenChange={vi.fn()} />);
+  fireEvent.change(screen.getByRole("searchbox", { name: "Filter loaded output" }), { target: { value: "absent" } });
+  expect(screen.getByText("No loaded output matches this filter.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Load earlier output" })).toBeTruthy();
+  view.rerender(<TerminalLogDialog run={{ id: "another", status: "running" } as never} logs={filterLogs} open onOpenChange={vi.fn()} />);
+  expect((screen.getByRole("searchbox", { name: "Filter loaded output" }) as HTMLInputElement).value).toBe("");
+  expect(screen.getByText("Build ready")).toBeTruthy();
+});
