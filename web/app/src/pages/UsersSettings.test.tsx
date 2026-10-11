@@ -181,3 +181,14 @@ test.each(["read-only", "refresh failure"])("user pagination remains available d
   fireEvent.click(screen.getByRole("button", { name: "Next users" }));
   await screen.findByText("later@example.invalid");
 });
+
+
+test.each(["disabled", "removed"])("offboarding confirmation closes when the selected user is %s externally", (status) => {
+  const offboard = vi.fn();
+  const view = render(<UsersSettings users={[activeUser]} onOffboard={offboard} />);
+  fireEvent.click(screen.getByRole("button", { name: `Offboard ${activeUser.email}` }));
+  expect(screen.queryByRole("dialog")).not.toBeNull();
+  view.rerender(<UsersSettings users={status === "disabled" ? [{ ...activeUser, status: "disabled" }] : []} onOffboard={offboard} />);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(offboard).not.toHaveBeenCalled();
+});
