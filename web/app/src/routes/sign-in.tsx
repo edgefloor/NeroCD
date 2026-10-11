@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { SessionCheck } from "@/components/common/SessionCheck";
 import { SignIn } from "@/pages/SignIn";
 import { bootstrapStatusQuery, oidcStatusQuery } from "@/api";
 import { useAuthState } from "@/router/context";
@@ -44,7 +45,7 @@ function SignInRoute() {
       void navigate(destination as never);
     }
   }, [auth.authenticated, destination, navigate]);
-  if (auth.authenticated === null) return <main className="min-h-screen bg-background" aria-label="Checking session" />;
+  if (auth.authenticated === null) return <SessionCheck failed={Boolean(auth.authError)} />;
   if (auth.authenticated === true) return <main className="min-h-screen bg-background" aria-label="Redirecting after sign in" />;
   // Until the tiny public status is known, retain the CLI-only guidance. A
   // transient status failure must never imply that browser bootstrap exists.

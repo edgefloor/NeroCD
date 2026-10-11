@@ -2419,3 +2419,30 @@ test("sign-in shows pending feedback and recovers without duplicate submissions"
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect.poll(() => attempts).toBe(2);
 });
+
+test("sign-in session checking provides loading feedback and reload recovery", async ({ page }, testInfo) => {
+  await page.goto("/sign-in");
+  await ensureBootstrapped(page);
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => { release = resolve; });
+  let fail = true;
+  await page.route("**/api/v1/me", async (route) => {
+    if (!fail) return route.continue();
+    await ready;
+    return route.fulfill({ status: 503, json: { error: "Temporary session failure" } });
+  });
+  await page.goto("/sign-in?redirect=%2Frunners");
+  await expect(page.getByRole("status")).toHaveText("Checking session...");
+  release();
+  await expect(page.getByRole("heading", { name: "Session unavailable", exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Reload page", exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("sign-in-session-recovery-320.png"), fullPage: true });
+  }
+  fail = false;
+  await page.getByRole("button", { name: "Reload page", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(page).toHaveURL((url) => url.pathname === "/sign-in" && url.searchParams.get("redirect") === "/runners");
+});
