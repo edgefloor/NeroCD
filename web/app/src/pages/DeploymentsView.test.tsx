@@ -61,3 +61,18 @@ test("rollback deployments do not offer cancellation even while queued", () => {
   render(<DeploymentDetailView deployment={{ id: "rollback_1", status: "queued", rollback_of_id: "deployment_1" } as never} related={[]} logs={[]} canOperate onConfirm={vi.fn()} onCancel={vi.fn()} />);
   expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
 });
+
+
+test.each(["queued", "waiting_confirmation", "assigned", "preparing", "applying", "verifying", "cancel_requested", "rolling_back", "rolled_back", "rollback_failed", "manual_intervention", "succeeded", "canceled"])("%s state takes precedence over historical failure guidance", (status) => {
+  const expected = deploymentStateMessage({ status } as never);
+  for (const failure_code of ["missing_secret", "policy_denied", "runner_expired"]) {
+    expect(deploymentStateMessage({ status, failure_code } as never)).toBe(expected);
+  }
+});
+
+test.each(["missing_secret", "policy_denied", "runner_expired"])("failed deployment with %s does not promise automatic recovery", (failure_code) => {
+  const message = deploymentStateMessage({ status: "failed", failure_code } as never);
+  expect(message).toMatch(/^Deployment failed/);
+  expect(message).not.toMatch(/waiting|automatically/i);
+  expect(message).toContain("before retrying");
+});

@@ -3467,3 +3467,33 @@ test("deployment cancellation controls follow recovery and rollback states", asy
     await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
   }
 });
+
+
+test("deployment recovery state remains authoritative when a failure reason is present", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createDetailFixture(page);
+  const response = await page.request.get(`/api/v1/deployments/${fixture.deploymentID}`);
+  const record = await response.json();
+  let status = "rolling_back";
+  await page.route(`**/api/v1/deployments/${fixture.deploymentID}`, (route) => route.fulfill({ json: { ...record, status, failure_code: "runner_expired" } }));
+  const cases = [
+    ["rolling_back", "Restoring the previous healthy revision."],
+    ["rollback_failed", "Rollback failed. Operator intervention is required."],
+    ["manual_intervention", "Automatic recovery is unsafe. Operator intervention is required."],
+    ["failed", "Deployment failed after a runner or lease error. Inspect runner connectivity before retrying."],
+  ];
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const [state, message] of cases) {
+      status = state!;
+      await page.goto(`/deployments/${fixture.deploymentID}`);
+      await expect(page.getByText(message!, { exact: true })).toBeVisible();
+      await expect(page.getByText("runner_expired", { exact: true })).toBeVisible();
+      await expect(page.getByText(/Waiting for a live eligible runner/)).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      if (width === 320 && state === "manual_intervention") await page.screenshot({ path: testInfo.outputPath("deployment-intervention-320.png"), animations: "disabled" });
+    }
+  }
+});
