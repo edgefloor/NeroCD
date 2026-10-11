@@ -4019,3 +4019,41 @@ test("long deployment environment names preserve history links and selectors", a
     await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
   }
 });
+
+
+test("long approval metadata keeps decision controls reachable", async ({ page }, testInfo) => {
+  await page.goto("/approvals");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const projectName = `Approval ${"p".repeat(180)}`;
+  const templateName = `Approval ${"t".repeat(180)}`;
+  const tag = `pool_${"r".repeat(140)}`;
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: projectName, description: "approval layout fixture" });
+  const template = await postJSON<{ id: string }>(page, "/api/v1/templates", { project_id: project.id, name: templateName, kind: "shell", run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "approval"] } }, workflow: { steps: [] }, runner_tags: [tag], requires_ack: true });
+  const run = await postJSON<{ id: string }>(page, "/api/v1/runs", { template_id: template.id });
+  for (const path of ["/approvals", "/"]) {
+    await page.goto(`${path}?q=${run.id}`);
+    for (const width of [320, 390, 430, 800, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const approve = page.getByRole("button", { name: "Approve", exact: true });
+      await expect(approve).toBeVisible();
+      const row = approve.locator('xpath=../..');
+      for (const text of [row.getByText(templateName, { exact: true }), row.getByText(projectName, { exact: false }), row.getByText(tag, { exact: true })]) {
+        const contained = await text.evaluate((element) => {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          const bounds = range.getBoundingClientRect();
+          const card = element.closest('[data-slot="card"]')!.getBoundingClientRect();
+          return bounds.left >= card.left && bounds.right <= card.right;
+        });
+        expect(contained, `${path} at ${width}`).toBe(true);
+      }
+      await approve.scrollIntoViewIfNeeded();
+      await expect(approve).toBeInViewport();
+      await expect(approve).toBeEnabled();
+      await expect(row.getByRole("button", { name: "Reject", exact: true })).toBeInViewport();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (width === 320) await page.screenshot({ path: testInfo.outputPath(`${path === "/" ? "home" : "approvals"}-long-approval-320.png`), animations: "disabled" });
+    }
+  }
+});

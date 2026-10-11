@@ -26,27 +26,27 @@ export function ApprovalList({
     return <EmptyState title="No approvals waiting" icon={ShieldCheck} />;
   }
   return (
-    <div className="grid gap-2 p-3">
+    <div className="grid min-w-0 grid-cols-1 gap-2 p-3">
       {approvals.map((approval) => {
         const run = snapshot.runs.find((item) => item.id === approval.run_id);
         return (
-          <div key={approval.id} className="grid gap-2 rounded-xl border border-border/60 bg-card p-3 shadow-sm">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="font-medium text-sm">{run ? templateName(snapshot.templates, run.template_id, run) : approval.run_id}</p>
-                <p className="text-sm text-muted-foreground">
+          <div key={approval.id} className="grid min-w-0 grid-cols-1 gap-2 rounded-xl border border-border/60 bg-card p-3 shadow-sm">
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1 basis-48">
+                <p className="break-words font-medium text-sm [overflow-wrap:anywhere]">{run ? templateName(snapshot.templates, run.template_id, run) : approval.run_id}</p>
+                <p className="break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
                   {run ? projectName(snapshot.projects, run.project_id) : "Run unavailable"} · requested {formatDate(approval.created_at)}
                 </p>
               </div>
-              <StatusBadge status={approval.status} />
+              <StatusBadge className="shrink-0" status={approval.status} />
             </div>
             {run ? (
-              <div className="rounded-lg bg-muted/60 px-3 py-2 text-sm border border-border/40">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <GitBranch className="h-4 w-4" /> 
-                  <span className="font-medium">{run.run_spec.type}</span>
+              <div className="min-w-0 rounded-lg bg-muted/60 px-3 py-2 text-sm border border-border/40">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-muted-foreground">
+                  <GitBranch className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 break-all font-medium">{run.run_spec.type}</span>
                   <span>·</span>
-                  <span>{(run.runner_tags ?? []).join(", ") || "untagged"}</span>
+                  <span className="min-w-0 break-all">{(run.runner_tags ?? []).join(", ") || "untagged"}</span>
                 </div>
               </div>
             ) : null}
@@ -98,7 +98,7 @@ export function ApprovalsView({
 }): ReactNode {
   if (loading) {
     return (
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <section className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <SkeletonTable rows={5} />
         <SkeletonTable rows={5} />
       </section>
@@ -115,10 +115,10 @@ export function ApprovalsView({
   const pendingCount = snapshot.approvals.filter((approval) => approval.status === "pending").length;
 
   return (
-    <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-      <Card>
+    <section className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <Card className="min-w-0">
         <CardHeader className="border-b py-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <CardTitle className="text-base font-semibold">Pending approvals</CardTitle>
             </div>
@@ -141,17 +141,17 @@ export function ApprovalsView({
           />}
         </CardContent>
       </Card>
-      <Card>
+      <Card className="min-w-0">
         <CardHeader className="border-b py-3">
           <CardTitle className="text-base font-semibold">History</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-2 p-3">
+        <CardContent className="grid min-w-0 grid-cols-1 gap-2 p-3">
           {filtering && visibleApprovals.length === 0 && <p className="text-sm text-muted-foreground">No approval history matches this filter on the loaded page.</p>}
           {visibleApprovals.map((approval) => (
             <div key={approval.id} className="rounded-xl border border-border/60 bg-card p-3 shadow-sm">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-medium text-sm">{approval.run_id}</span>
-                <StatusBadge status={approval.status} />
+                <StatusBadge className="shrink-0" status={approval.status} />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">{formatDate(approval.created_at)}</p>
             </div>
