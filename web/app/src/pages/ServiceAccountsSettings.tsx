@@ -31,6 +31,8 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
   const [offset, setOffset] = useState(0);
   const [secret, setSecret] = useState<OneTimeSecret>();
   const [revoking, setRevoking] = useState<ServiceAccount>();
+  const [revokeError, setRevokeError] = useState("");
+  const revokingRef = useRef(false);
 
   useEffect(() => {
     if (!projects.some((project) => project.id === projectID)) setProjectID(projects[0]?.id ?? "");
@@ -69,7 +71,8 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
       setRevoking(undefined);
       await invalidate();
     },
-    onError: (error) => toast.error(error.message),
+    onError: () => setRevokeError("Unable to revoke this account. Try again."),
+    onSettled: () => { revokingRef.current = false; },
   });
   const busy = create.isPending || update.isPending || rotate.isPending || revoke.isPending;
   const controlsDisabled = busy || page.isError;
@@ -114,14 +117,31 @@ export function ServiceAccountsSettingsPanel({ projects }: { projects: Project[]
             <div className="min-w-0"><Input name="name" aria-label={`Name for ${account.name}`} defaultValue={account.name} maxLength={128} required /><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{account.id}</p></div>
             <div className="grid gap-1"><Select name="role" aria-label={`Role for ${account.name}`} defaultValue={account.role}><option value="viewer">viewer</option><option value="maintainer">maintainer</option><option value="owner">owner</option></Select><Badge variant={account.status === "active" ? "success" : "secondary"}>{account.status}</Badge></div>
             <div className="flex flex-wrap items-start gap-2"><Button type="submit" variant="outline" size="sm" disabled={controlsDisabled || account.status !== "active"}>Save</Button><Button type="button" variant="outline" size="sm" disabled={controlsDisabled || account.status !== "active"} onClick={() => rotate.mutate({ account })}><RotateCw className="h-4 w-4" />Rotate</Button></div>
-            <Button type="button" variant="destructive" size="sm" disabled={controlsDisabled || account.status !== "active"} onClick={() => setRevoking(account)}><ShieldOff className="h-4 w-4" />Revoke</Button>
+            <Button type="button" variant="destructive" size="sm" disabled={controlsDisabled || account.status !== "active"} onClick={() => { setRevokeError(""); setRevoking(account); }}><ShieldOff className="h-4 w-4" />Revoke</Button>
           </form>
         ))}
         <PageNavigation page={result ?? { count: 0, total: 0, limit: serviceAccountsPageSize, offset }} label="accounts" loading={busy || page.isFetching}
           onFirst={() => setOffset(0)} onPrevious={() => setOffset((value) => Math.max(0, value - serviceAccountsPageSize))}
           onNext={() => setOffset((value) => value + serviceAccountsPageSize)} />
         {secret ? <ServiceAccountCredential secret={secret} onClose={() => setSecret(undefined)} /> : null}
-        <Dialog open={Boolean(revoking)} onOpenChange={(open) => !open && setRevoking(undefined)}><DialogContent><DialogHeader><DialogTitle>Revoke {revoking?.name}?</DialogTitle><DialogDescription>This immediately disables the stable account and every credential issued for it.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setRevoking(undefined)}>Keep account active</Button><Button variant="destructive" disabled={controlsDisabled} onClick={() => revoking && revoke.mutate(revoking.id)}>Revoke account</Button></DialogFooter></DialogContent></Dialog>
+        <Dialog open={Boolean(revoking)} onOpenChange={(open) => { if (!open && !revokingRef.current) setRevoking(undefined); }}>
+          <DialogContent showCloseButton={!revoke.isPending} className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <DialogHeader className="min-w-0 pr-6">
+              <DialogTitle className="break-all">Revoke {revoking?.name}?</DialogTitle>
+              <DialogDescription>This immediately disables the stable account and every credential issued for it.</DialogDescription>
+            </DialogHeader>
+            {revokeError ? <p role="alert" className="text-sm text-destructive">{revokeError}</p> : null}
+            <DialogFooter>
+              <Button variant="outline" disabled={revoke.isPending} onClick={() => { if (!revokingRef.current) setRevoking(undefined); }}>Keep account active</Button>
+              <Button variant="destructive" disabled={controlsDisabled} onClick={() => {
+                if (!revoking || controlsDisabled || revokingRef.current) return;
+                revokingRef.current = true;
+                setRevokeError("");
+                revoke.mutate(revoking.id);
+              }}>{revoke.isPending ? "Revoking..." : "Revoke account"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

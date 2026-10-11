@@ -132,6 +132,20 @@ test("managed account creates runs with stable identity, rotates, isolates proje
   await accountRow.getByRole("button", { name: "Revoke" }).click();
   const revokeDialog = page.getByRole("dialog");
   await expect(revokeDialog).toContainText("every credential");
+  let failRevoke = true;
+  await page.route("**/api/v1/service-accounts/revoke", async (route) => {
+    if (failRevoke) return route.fulfill({ status: 503, json: { error: "Temporary revoke failure" } });
+    await route.continue();
+  });
+  await revokeDialog.getByRole("button", { name: "Revoke account", exact: true }).click();
+  await expect(revokeDialog.getByRole("alert")).toHaveText("Unable to revoke this account. Try again.");
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(revokeDialog.getByRole("button", { name: "Revoke account", exact: true })).toBeVisible();
+    expect(await revokeDialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("service-account-revoke-failure-320.png"), fullPage: true });
+  }
+  failRevoke = false;
   const revokeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/service-accounts/revoke");
   await revokeDialog.getByRole("button", { name: "Revoke account" }).click();
   expect((await revokeResponse).status()).toBe(200);

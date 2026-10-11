@@ -116,3 +116,29 @@ test("service account pagination recovers empty later pages through shared navig
   await screen.findByLabelText("Name for Build bot");
   expect(serviceAccountsAPI.list.mock.calls.at(-1)?.slice(0, 3)).toEqual(["proj_one", 10, 0]);
 });
+
+
+test("revoke confirmation blocks duplicate requests and dismissal, then keeps failures retryable", async () => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [account], count: 1, total: 1, offset: 0, limit: 10 });
+  let rejectRequest!: (reason: Error) => void;
+  serviceAccountsAPI.revoke.mockImplementationOnce(() => new Promise((_, reject) => { rejectRequest = reject; }));
+  renderPanel();
+  await screen.findByLabelText("Name for Build bot");
+  fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+  const dialog = screen.getByRole("dialog");
+  const confirm = within(dialog).getByRole("button", { name: "Revoke account" });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  await waitFor(() => expect(serviceAccountsAPI.revoke).toHaveBeenCalledTimes(1));
+  expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Keep account active" }).disabled).toBe(true);
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  rejectRequest(new Error("Temporary failure"));
+  await within(dialog).findByRole("alert");
+  expect(within(dialog).getByText("Revoke Build bot?")).toBeTruthy();
+  serviceAccountsAPI.revoke.mockResolvedValueOnce({ ...account, status: "revoked" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Revoke account" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(serviceAccountsAPI.revoke).toHaveBeenCalledTimes(2);
+  expect(serviceAccountsAPI.revoke).toHaveBeenLastCalledWith(account.id);
+});
