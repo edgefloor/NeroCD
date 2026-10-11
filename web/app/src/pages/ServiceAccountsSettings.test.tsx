@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ServiceAccount } from "@/api/service-accounts";
@@ -141,4 +141,32 @@ test("revoke confirmation blocks duplicate requests and dismissal, then keeps fa
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(serviceAccountsAPI.revoke).toHaveBeenCalledTimes(2);
   expect(serviceAccountsAPI.revoke).toHaveBeenLastCalledWith(account.id);
+});
+
+
+test("pending account updates lock fields and preserve failed edits beside the row", async () => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [account], count: 1, total: 1, offset: 0, limit: 10 });
+  let reject!: (error: Error) => void;
+  serviceAccountsAPI.update.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; })).mockResolvedValueOnce(account);
+  renderPanel();
+  const name = await screen.findByLabelText<HTMLInputElement>("Name for Build bot");
+  const role = screen.getByLabelText<HTMLSelectElement>("Role for Build bot");
+  fireEvent.change(name, { target: { value: "Release bot" } });
+  fireEvent.change(role, { target: { value: "viewer" } });
+  const row = screen.getByRole("form", { name: "Edit service account Build bot" });
+  fireEvent.submit(row);
+  await waitFor(() => expect(name.disabled).toBe(true));
+  expect(role.disabled).toBe(true);
+  expect(row.getAttribute("aria-busy")).toBe("true");
+  fireEvent.submit(row);
+  expect(serviceAccountsAPI.update).toHaveBeenCalledOnce();
+  await act(async () => reject(new Error("Temporary update failure")));
+  await waitFor(() => expect(name.disabled).toBe(false));
+  expect(name.value).toBe("Release bot");
+  expect(role.value).toBe("viewer");
+  expect(within(row).getByRole("alert").textContent).toBe("Unable to save account: Temporary update failure");
+  fireEvent.submit(row);
+  await waitFor(() => expect(serviceAccountsAPI.update).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(within(row).queryByRole("alert")).toBeNull());
+  expect(serviceAccountsAPI.update.mock.calls[1]).toEqual(serviceAccountsAPI.update.mock.calls[0]);
 });

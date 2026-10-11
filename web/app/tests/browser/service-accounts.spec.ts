@@ -157,3 +157,63 @@ test("managed account creates runs with stable identity, rotates, isolates proje
     await expect(page.getByRole("navigation", { name: "accounts pages" })).toBeVisible();
   }
 });
+
+
+test("service account saves retain pending and failed row drafts", async ({ page }, testInfo) => {
+  await page.goto("/settings");
+  await signIn(page);
+  const suffix = String(Date.now());
+  const projectResponse = await postJSON(page, "/api/v1/projects", undefined, { name: `Account save ${suffix}`, description: "account edit fixture" });
+  expect(projectResponse.ok()).toBe(true);
+  const project = await projectResponse.json();
+  const accountResponse = await postJSON(page, "/api/v1/service-accounts", undefined, { project_id: project.id, name: `Edit bot ${suffix}`, role: "viewer" });
+  expect(accountResponse.ok()).toBe(true);
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByLabel("Service account project").selectOption(project.id);
+  const row = page.getByRole("form", { name: `Edit service account Edit bot ${suffix}`, exact: true });
+  const name = row.getByRole("textbox");
+  const role = row.getByRole("combobox");
+  await name.fill(`Saved bot ${suffix}`);
+  await role.selectOption("maintainer");
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const payloads: unknown[] = [];
+  await page.route("**/api/v1/service-accounts", async (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    payloads.push(route.request().postDataJSON());
+    if (payloads.length > 1) return route.continue();
+    await pending;
+    return route.fulfill({ status: 503, json: { error: "Temporary account update failure" } });
+  });
+  await row.getByRole("button", { name: "Save", exact: true }).click();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(row).toHaveAttribute("aria-busy", "true");
+    await expect(name).toBeDisabled();
+    await expect(role).toBeDisabled();
+    await expect(row.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
+    await expect(row.getByRole("button", { name: "Rotate", exact: true })).toBeDisabled();
+    await expect(row.getByRole("button", { name: "Revoke", exact: true })).toBeDisabled();
+  }
+  expect(payloads).toHaveLength(1);
+  release();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(row.getByRole("alert")).toHaveText("Unable to save account: Temporary account update failure");
+    await expect(name).toHaveValue(`Saved bot ${suffix}`);
+    await expect(role).toHaveValue("maintainer");
+    await expect(row.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    expect(await row.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) {
+      await row.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("account-save-error-320.png"), animations: "disabled" });
+    }
+  }
+  await row.getByRole("button", { name: "Save", exact: true }).click();
+  const saved = page.getByRole("form", { name: `Edit service account Saved bot ${suffix}`, exact: true });
+  await expect(saved).toBeVisible();
+  await expect(saved.getByRole("alert")).toHaveCount(0);
+  await expect(saved.getByRole("combobox")).toHaveValue("maintainer");
+  expect(payloads).toHaveLength(2);
+  expect(payloads[1]).toEqual(payloads[0]);
+});
