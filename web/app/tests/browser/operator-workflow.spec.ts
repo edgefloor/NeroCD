@@ -3853,3 +3853,44 @@ test("renaming templates preserves unlisted kinds and their execution types", as
     }
   }
 });
+
+test("long project and template metadata stays readable without hiding actions", async ({ page }, testInfo) => {
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const projectName = `000 Project ${"p".repeat(180)}`;
+  const description = "d".repeat(300);
+  const templateName = `000 Template ${"t".repeat(200)}`;
+  const kind = "kind_" + "k".repeat(120);
+  const tag = "runner_" + "r".repeat(140);
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: projectName, description });
+  const template = await postJSON<{ id: string }>(page, "/api/v1/templates", { project_id: project.id, name: templateName, kind, run_spec: { type: "shell", inputs: {}, process: { command: ["echo", "metadata"] } }, workflow: { steps: [] }, runner_tags: [tag], requires_ack: false });
+  for (const [path, id, values] of [["projects", project.id, [projectName, description]], ["templates", template.id, [templateName, projectName, kind, tag]]] as const) {
+    await page.goto(`/${path}?q=${id}`);
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const value of values) {
+        const text = page.getByText(value, { exact: true }).filter({ visible: true });
+        await expect(text).toBeVisible();
+        const geometry = await text.evaluate((element) => {
+          const card = element.closest('[data-slot="card"]')!;
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          const bounds = range.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          const outer = card.getBoundingClientRect();
+          return { clipped: style.overflowX === "hidden" && element.scrollWidth > element.clientWidth + 1 || style.overflowY === "hidden" && element.scrollHeight > element.clientHeight + 1, left: bounds.left, right: bounds.right, cardLeft: outer.left, cardRight: outer.right };
+        });
+        expect(!geometry.clipped && geometry.left >= geometry.cardLeft - 1 && geometry.right <= geometry.cardRight + 1, `${path} ${width} ${value.slice(0, 18)} ${JSON.stringify(geometry)}`).toBe(true);
+      }
+      const edit = page.getByRole("button", { name: "Edit", exact: true });
+      await edit.scrollIntoViewIfNeeded();
+      await expect(edit).toBeInViewport();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`${path}-long-metadata-${width}.png`), animations: "disabled" });
+      await edit.click();
+      await expect(page.getByRole("dialog", { name: `Edit ${path === "projects" ? "project" : "template"}`, exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+    }
+  }
+});

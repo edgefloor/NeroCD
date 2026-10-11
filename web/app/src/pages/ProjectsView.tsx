@@ -55,14 +55,14 @@ function ProjectCard({
 
   return (
     <Card>
-      <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <FolderKanban className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-base font-semibold">{project.name}</h3>
+      <CardContent className="flex min-w-0 flex-col gap-3 p-4 md:flex-row md:flex-wrap md:items-center md:justify-between">
+        <div className="min-w-0 flex-1 space-y-1 md:basis-64">
+          <div className="flex items-start gap-2">
+            <FolderKanban className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+            <h3 className="min-w-0 break-words text-base font-semibold [overflow-wrap:anywhere]">{project.name}</h3>
           </div>
           {project.description ? (
-            <p className="max-w-2xl text-sm text-muted-foreground">{project.description}</p>
+            <p className="max-w-2xl break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">{project.description}</p>
           ) : null}
           <p className="text-xs text-muted-foreground">Created {formatDate(project.created_at)}</p>
         </div>
@@ -77,7 +77,7 @@ function ProjectCard({
             {projectRepos.length} sources in loaded page
           </Badge>
         </div>
-        {canOperate ? <div className="flex flex-wrap gap-2">
+        {canOperate ? <div className="flex max-w-full flex-wrap gap-2 md:shrink-0">
           <Dialog open={editOpen} onOpenChange={(open) => { if (!saving) setEditOpen(open); }}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm" className="h-8 rounded-xl">

@@ -323,30 +323,30 @@ export function TemplatesView({
             <>
               {/* Desktop Table */}
               <div className="hidden xl:block">
-                <Table>
+                <Table className="table-fixed">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Name</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Project</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Kind</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Tags</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Approval</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide text-right">Actions</TableHead>
+                      <TableHead className="w-[20%] text-xs font-semibold uppercase tracking-wide">Name</TableHead>
+                      <TableHead className="w-[18%] text-xs font-semibold uppercase tracking-wide">Project</TableHead>
+                      <TableHead className="w-[12%] text-xs font-semibold uppercase tracking-wide">Kind</TableHead>
+                      <TableHead className="w-[14%] text-xs font-semibold uppercase tracking-wide">Tags</TableHead>
+                      <TableHead className="w-[12%] text-xs font-semibold uppercase tracking-wide">Approval</TableHead>
+                      <TableHead className="w-[24%] text-xs font-semibold uppercase tracking-wide text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {visibleTemplates.map((template) => (
-                      <TableRow key={template.id} className="hover:bg-muted/40 transition-colors">
-                        <TableCell className="font-medium text-sm">{template.name}</TableCell>
-                        <TableCell className="text-sm">{projectName(snapshot.projects, template.project_id)}</TableCell>
+                      <TableRow key={template.id} className="hover:bg-muted/40 transition-colors [&>td]:align-top">
+                        <TableCell className="whitespace-normal break-words font-medium text-sm [overflow-wrap:anywhere]">{template.name}</TableCell>
+                        <TableCell className="whitespace-normal break-words text-sm [overflow-wrap:anywhere]">{projectName(snapshot.projects, template.project_id)}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="font-mono text-xs">
+                          <Badge variant="outline" className="h-auto max-w-full whitespace-normal break-all font-mono text-xs">
                             {template.kind}
                           </Badge>
                         </TableCell>
                         <TableCell>
                           {(template.runner_tags ?? []).map((tag) => (
-                            <Badge key={tag} variant="secondary" className="mr-1 text-xs">
+                            <Badge key={tag} variant="secondary" className="mr-1 h-auto max-w-full whitespace-normal break-all text-xs">
                               {tag}
                             </Badge>
                           ))}
@@ -359,7 +359,7 @@ export function TemplatesView({
                           )}
                         </TableCell>
                         <TableCell className="text-right">
-                          {canOperateProject?.(template.project_id) ? <div className="flex items-center justify-end gap-2">
+                          {canOperateProject?.(template.project_id) ? <div className="flex flex-wrap items-center justify-end gap-2">
                             <Button
                               size="sm"
                               className="h-8 rounded-xl"
@@ -383,19 +383,19 @@ export function TemplatesView({
               <div className="xl:hidden divide-y divide-border/60">
                 {visibleTemplates.map((template) => (
                   <div key={template.id} className="p-4 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="font-medium text-sm">{template.name}</div>
-                      <Badge variant="outline" className="font-mono text-xs shrink-0">
+                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1 break-words font-medium text-sm [overflow-wrap:anywhere]">{template.name}</div>
+                      <Badge variant="outline" className="h-auto max-w-full whitespace-normal break-all font-mono text-xs">
                         {template.kind}
                       </Badge>
                     </div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
                       {projectName(snapshot.projects, template.project_id)}
                     </div>
                     {(template.runner_tags ?? []).length > 0 && (
                       <div className="flex flex-wrap gap-1">
                         {(template.runner_tags ?? []).map((tag) => (
-                          <Badge key={tag} variant="secondary" className="text-xs">
+                          <Badge key={tag} variant="secondary" className="h-auto max-w-full whitespace-normal break-all text-xs">
                             {tag}
                           </Badge>
                         ))}
