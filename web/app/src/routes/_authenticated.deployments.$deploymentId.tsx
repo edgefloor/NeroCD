@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { allProjectMembersQuery, allEnvironmentsQuery, principalQuery, allRevisionsQuery, useSelectedRunLogsPollingQuery, shouldPollRun, runQuery, allServicesQuery, useDeploymentMutations, useDeploymentPollingQuery, deploymentHistoryQuery } from "@/api";
-import { DeploymentDetailView } from "@/pages/DeploymentsView";
+import { DeploymentDetailView } from "@/pages/DeploymentDetailView";
 import { canMaintainProject } from "@/lib/permissions";
 import { validateSearch } from "@/router/search";
 import { Button } from "@/components/ui/button";
@@ -62,5 +62,5 @@ function DeploymentDetailRoute() {
   const pendingAction = confirm?.isPending ? "confirm" : cancel?.isPending ? "cancel" : undefined;
   const actionError = confirm?.error ? `Unable to confirm deployment: ${confirm.error.message}`
     : cancel?.error ? `Unable to request cancellation: ${cancel.error.message}` : undefined;
-  return <div className="grid min-w-0 gap-4">{error}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} service={service} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} pendingAction={pendingAction} actionError={actionError} busy={failedQueries.length > 0 || mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => { mutation.cancel.reset(); mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed") }); }} onCancel={(input) => { mutation.confirm.reset(); mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested") }); }} /></div>;
+  return <div className="grid min-w-0 gap-4">{error}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} pendingAction={pendingAction} actionError={actionError} busy={failedQueries.length > 0 || mutation.confirm.isPending || mutation.cancel.isPending} onConfirm={(id) => { mutation.cancel.reset(); mutation.confirm.mutate({ id }, { onSuccess: () => toast.success("Deployment confirmed") }); }} onCancel={(input) => { mutation.confirm.reset(); mutation.cancel.mutate(input, { onSuccess: () => toast.success("Cancellation requested") }); }} /></div>;
 }

@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { DeploymentDetailView, deploymentStateMessage, newDeploymentIntentKey } from "./DeploymentsView";
+import { DeploymentDetailView } from "./DeploymentDetailView";
+import { deploymentStateMessage, newDeploymentIntentKey } from "@/lib/deploymentPresentation";
 
 test("deployment lifecycle has explicit safe operator messages", () => {
   const fixture = (status: string, failure_code?: string) => ({ status, failure_code }) as never;

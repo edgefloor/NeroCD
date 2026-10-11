@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { DeploymentDetailView, DeploymentsView } from "./DeploymentsView";
+import { DeploymentsView } from "./DeploymentsView";
+import { DeploymentDetailView } from "./DeploymentDetailView";
 
 vi.mock("@tanstack/react-router", () => ({ Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
 afterEach(cleanup);
