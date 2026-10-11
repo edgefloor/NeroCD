@@ -1003,3 +1003,43 @@ test("session-authenticated operators can cancel queued runs on desktop and mobi
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
 });
+
+test("project access preserves failed drafts and resets after a successful retry", async ({ page }, testInfo) => {
+  await page.goto("/settings");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Access retry ${Date.now()}`, description: "Access form fixture" });
+  await page.reload();
+  const card = page.getByText("Project access", { exact: true }).locator('xpath=ancestor::*[@data-slot="card"]');
+  const email = card.getByRole("textbox", { name: "Email", exact: true });
+  const originalEmail = await email.inputValue();
+  let failRequest = true;
+  await page.route("**/api/v1/project-members", async (route) => {
+    if (route.request().method() === "POST" && failRequest) {
+      failRequest = false;
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary access update failure" }) });
+    }
+    return route.continue();
+  });
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    failRequest = true;
+    await card.getByRole("combobox", { name: "Project", exact: true }).selectOption(project.id);
+    await email.fill("draft@example.test");
+    await card.getByRole("combobox", { name: "Role", exact: true }).selectOption("maintainer");
+    const failed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/project-members" && response.request().method() === "POST");
+    await card.getByRole("button", { name: "Update access" }).click();
+    expect((await failed).status()).toBe(503);
+    await expect(card.getByRole("button", { name: "Update access" })).toBeEnabled();
+    await expect(email).toHaveValue("draft@example.test");
+    await expect(card.getByRole("combobox", { name: "Project", exact: true })).toHaveValue(project.id);
+    await expect(card.getByRole("combobox", { name: "Role", exact: true })).toHaveValue("maintainer");
+    if (width === 390) await card.screenshot({ path: testInfo.outputPath("project-access-draft-390.png") });
+    await email.fill(originalEmail);
+    const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/project-members" && response.request().method() === "POST");
+    await card.getByRole("button", { name: "Update access" }).click();
+    expect((await saved).status()).toBe(200);
+    await expect(card.getByRole("combobox", { name: "Role", exact: true })).toHaveValue("viewer");
+    await expect(email).toHaveValue(originalEmail);
+  }
+});
