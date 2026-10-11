@@ -68,3 +68,17 @@ test("later pages remain selected when offboarding refreshes the active page", a
   expect(screen.getByText(`Showing ${usersPageSize + 1}–${usersPageSize + 1} of ${usersPageSize + 1}`)).toBeTruthy();
   expect(usersAPI.listUsers.mock.calls.at(-1)?.[0]).toEqual({ limit: usersPageSize, offset: usersPageSize });
 });
+
+test("empty user pages have a truthful range and direct first-page recovery", () => {
+  const first = vi.fn();
+  const props = { users: [], page: { count: 0, limit: 10, offset: 20, total: 15 }, onFirst: first, onPrevious: vi.fn(), onNext: vi.fn(), onOffboard: vi.fn() };
+  const view = render(<UsersSettings {...props} />);
+  expect(screen.getByText("Showing 0–0 of 15")).toBeTruthy();
+  expect(screen.getByText("No users on this page.")).toBeTruthy();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Next users" }).disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Previous users" }).disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "First users page" }));
+  expect(first).toHaveBeenCalledOnce();
+  view.rerender(<UsersSettings {...props} busy />);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "First users page" }).disabled).toBe(true);
+});

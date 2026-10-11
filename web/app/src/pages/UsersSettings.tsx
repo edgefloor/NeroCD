@@ -34,6 +34,7 @@ export function UsersSettingsPanel(): ReactNode {
       page={result}
       loading={users.isPending}
       busy={offboard.isPending}
+      onFirst={() => setOffset(0)}
       onPrevious={() => setOffset((current) => Math.max(0, current - usersPageSize))}
       onNext={() => setOffset((current) => current + usersPageSize)}
       onOffboard={(userID) => offboard.mutateAsync(userID)}
@@ -46,18 +47,19 @@ type UsersSettingsProps = {
   page?: Pick<UserListResponse, "count" | "limit" | "offset" | "total">;
   loading?: boolean;
   busy?: boolean;
+  onFirst?: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
   onOffboard: (userID: string) => Promise<unknown> | unknown;
 };
 
-export function UsersSettings({ users, page, loading, busy, onPrevious, onNext, onOffboard }: UsersSettingsProps): ReactNode {
+export function UsersSettings({ users, page, loading, busy, onFirst, onPrevious, onNext, onOffboard }: UsersSettingsProps): ReactNode {
   const [selected, setSelected] = useState<User>();
   const metadata = page ?? { count: users.length, limit: users.length, offset: 0, total: users.length };
   const first = metadata.count === 0 ? 0 : metadata.offset + 1;
-  const last = metadata.offset + metadata.count;
+  const last = metadata.count === 0 ? 0 : metadata.offset + metadata.count;
   const hasPrevious = metadata.offset > 0;
-  const hasNext = last < metadata.total;
+  const hasNext = metadata.count > 0 && last < metadata.total;
   return (
     <Card className="min-w-0 lg:col-span-2">
       <CardHeader>
@@ -67,7 +69,7 @@ export function UsersSettings({ users, page, loading, busy, onPrevious, onNext, 
         {loading ? (
           <p className="text-sm text-muted-foreground" role="status">Loading users…</p>
         ) : users.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No users are available.</p>
+          <p className="text-sm text-muted-foreground">No users on this page.</p>
         ) : users.map((user) => (
           <div key={user.id} className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded border p-3">
             <div className="min-w-0">
@@ -88,7 +90,8 @@ export function UsersSettings({ users, page, loading, busy, onPrevious, onNext, 
         ))}
         <nav className="flex flex-wrap items-center justify-between gap-2 border-t pt-3" aria-label="User pages">
           <p className="text-sm text-muted-foreground">Showing {first}–{last} of {metadata.total}</p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {hasPrevious && onFirst ? <Button variant="outline" size="sm" aria-label="First users page" disabled={loading || busy} onClick={onFirst}>First</Button> : null}
             <Button variant="outline" size="sm" disabled={loading || busy || !hasPrevious} onClick={onPrevious}>
               Previous users
             </Button>
