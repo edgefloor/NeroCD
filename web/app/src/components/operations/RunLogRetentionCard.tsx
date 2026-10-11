@@ -41,10 +41,10 @@ export function RunLogRetentionCard({
     if (formRef.current && policy) setDraftChanged(hasPolicyChanges(formRef.current, policy));
   }, [policy?.enabled, policy?.keep_days, policy?.batch_size, loading, unavailable]);
   if (loading) return <Card><CardHeader><CardTitle>Run-log retention</CardTitle></CardHeader><CardContent role="status">Loading retention policy…</CardContent></Card>;
-  if (unavailable || !policy || !preview) return <Card><CardHeader><CardTitle>Run-log retention</CardTitle></CardHeader><CardContent role="alert">Retention controls are unavailable. No deletion can be requested until the authoritative policy is available.</CardContent></Card>;
+  if (!policy || !preview) return <Card><CardHeader><CardTitle>Run-log retention</CardTitle></CardHeader><CardContent role="alert">Retention controls are unavailable. No deletion can be requested until the authoritative policy is available.</CardContent></Card>;
   const update = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy) return;
+    if (busy || unavailable) return;
     const form = new FormData(event.currentTarget);
     onUpdate?.({
       enabled: form.get("enabled") === "on",
@@ -53,7 +53,7 @@ export function RunLogRetentionCard({
     });
   };
   const openConfirm = () => {
-    if (busy || !policy.enabled || !formRef.current || hasPolicyChanges(formRef.current, policy)) return;
+    if (busy || unavailable || !policy.enabled || !formRef.current || hasPolicyChanges(formRef.current, policy)) return;
     requestID.current = crypto.randomUUID();
     setConfirmation(status);
     setExecutionError("");
@@ -62,7 +62,7 @@ export function RunLogRetentionCard({
   const confirmedPolicy = confirmation?.policy ?? policy;
   const confirmedPreview = confirmation?.preview ?? preview;
   const executeBatch = async () => {
-    if (executingRef.current || busy || !onExecute) return;
+    if (executingRef.current || busy || unavailable || !onExecute) return;
     executingRef.current = true;
     setExecuting(true);
     setExecutionError("");
@@ -80,6 +80,7 @@ export function RunLogRetentionCard({
     <Card>
       <CardHeader><CardTitle>Manual run-log retention</CardTitle></CardHeader>
       <CardContent className="grid gap-4">
+        {unavailable ? <p role="alert" className="text-sm text-warning">Refresh failed. Your draft is preserved. Retry operations before saving or deleting logs.</p> : null}
         <p className="text-sm text-muted-foreground">Only terminal-run logs older than the policy cutoff and without an active lease are eligible. Artifacts, audit evidence, deployments, and runs are never removed.</p>
         <dl className="grid gap-1 text-sm sm:grid-cols-3">
           <div><dt className="text-muted-foreground">Eligible logs</dt><dd>{preview.eligible_logs}</dd></div>
@@ -88,20 +89,20 @@ export function RunLogRetentionCard({
         </dl>
         <form ref={formRef} onChange={(event) => setDraftChanged(hasPolicyChanges(event.currentTarget, policy))} className="grid gap-3 sm:grid-cols-3" aria-label="Run-log retention policy" aria-busy={Boolean(busy)} onSubmit={update} onReset={() => { setDraftChanged(false); onReset?.(); }}>
           <label className="flex items-center gap-2 text-sm">
-            <input disabled={busy} name="enabled" type="checkbox" defaultChecked={policy.enabled} /> Enable manual retention
+            <input disabled={busy || unavailable} name="enabled" type="checkbox" defaultChecked={policy.enabled} /> Enable manual retention
           </label>
           <label className="grid gap-1 text-sm">
             Keep days
-            <Input disabled={busy} name="keep_days" type="number" min={1} max={3650} defaultValue={policy.keep_days} required />
+            <Input disabled={busy || unavailable} name="keep_days" type="number" min={1} max={3650} defaultValue={policy.keep_days} required />
           </label>
           <label className="grid gap-1 text-sm">
             Batch size
-            <Input disabled={busy} name="batch_size" type="number" min={1} max={10000} defaultValue={policy.batch_size} required />
+            <Input disabled={busy || unavailable} name="batch_size" type="number" min={1} max={10000} defaultValue={policy.batch_size} required />
           </label>
           <div className="sm:col-span-3 flex flex-wrap gap-2">
-            <Button type="submit" variant="outline" disabled={busy}>Save policy</Button>
-            <Button type="reset" variant="outline" disabled={busy}>Reset changes</Button>
-            <Button type="button" disabled={!policy.enabled || busy || draftChanged} onClick={openConfirm}>Previewed delete batch</Button>
+            <Button type="submit" variant="outline" disabled={busy || unavailable}>Save policy</Button>
+            <Button type="reset" variant="outline" disabled={busy || unavailable}>Reset changes</Button>
+            <Button type="button" disabled={!policy.enabled || busy || unavailable || draftChanged} onClick={openConfirm}>Previewed delete batch</Button>
           </div>
           {draftChanged ? <p className="text-sm text-muted-foreground sm:col-span-3" role="status">Save or reset your changes before previewing a deletion.</p> : null}
           {saveError && !busy ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere] sm:col-span-3">Unable to save retention policy: {saveError}</p> : null}
@@ -120,9 +121,10 @@ export function RunLogRetentionCard({
             </dl>
             {executing ? <p role="status">Executing retention batch...</p> : null}
             {executionError ? <p role="alert" className="break-words text-sm text-destructive [overflow-wrap:anywhere]">Unable to execute retention batch: {executionError}</p> : null}
+            {unavailable && !executing ? <p role="alert" className="text-sm text-warning">Refresh failed. Close this dialog and retry operations before executing a batch.</p> : null}
             <DialogFooter>
               <Button variant="outline" disabled={executing} onClick={() => setConfirming(false)}>Cancel</Button>
-              <Button disabled={busy || executing} onClick={() => void executeBatch()}>{executing ? "Executing..." : "Execute retained batch"}</Button>
+              <Button disabled={busy || unavailable || executing} onClick={() => void executeBatch()}>{executing ? "Executing..." : "Execute retained batch"}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -3249,6 +3249,8 @@ test("operations status and retention requests recover locally", async ({ page }
   await page.goto("/operations");
   await signIn(page);
   await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
+  const days = page.getByRole("spinbutton", { name: "Keep days", exact: true });
+  await days.fill("21");
   let failStatus = true;
   let failRetention = false;
   await page.route("**/api/v1/operations/status", (route) => failStatus ? route.fulfill({ status: 503, json: { error: "Temporary operations failure" } }) : route.continue());
@@ -3260,25 +3262,32 @@ test("operations status and retention requests recover locally", async ({ page }
   await refresh();
   const retry = page.getByRole("button", { name: "Retry operations", exact: true });
   await expect(retry).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Save policy", exact: true })).toHaveCount(0);
+  await expect(days).toHaveValue("21");
+  await expect(page.getByRole("button", { name: "Save policy", exact: true })).toBeDisabled();
   failStatus = false;
   await retry.click();
   await expect(page.getByRole("button", { name: "Save policy", exact: true })).toBeEnabled();
   failRetention = true;
   await refresh();
   await expect(retry).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Save policy", exact: true })).toHaveCount(0);
+  await expect(days).toHaveValue("21");
+  await expect(page.getByRole("button", { name: "Save policy", exact: true })).toBeDisabled();
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(retry).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Save policy", exact: true })).toHaveCount(0);
+    await expect(days).toHaveValue("21");
+    await expect(page.getByRole("button", { name: "Save policy", exact: true })).toBeDisabled();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    if (width === 320) await page.screenshot({ path: testInfo.outputPath("operations-recovery-320.png") });
+    if (width === 320) {
+      await page.getByRole("form", { name: "Run-log retention policy" }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("operations-recovery-320.png"), animations: "disabled" });
+    }
   }
   failRetention = false;
   await retry.click();
   await expect(retry).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save policy", exact: true })).toBeEnabled();
+  await expect(days).toHaveValue("21");
   expect(new URL(page.url()).pathname).toBe("/operations");
 });
 

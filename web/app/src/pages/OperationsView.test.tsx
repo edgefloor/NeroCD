@@ -58,6 +58,10 @@ test("retention execution preserves confirmation and request identity through a 
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
   expect(screen.getByRole("dialog")).toBeTruthy();
+  view.rerender(<OperationsView {...props} unavailable retentionUnavailable />);
+  expect(screen.getByRole("dialog").textContent).toContain("Executing retention batch...");
+  expect(screen.queryByText(/Close this dialog and retry/)).toBeNull();
+  view.rerender(<OperationsView {...props} />);
   await act(async () => { reject(new Error("Temporary execution failure")); });
   expect(screen.getByRole("alert").textContent).toContain("Temporary execution failure");
   view.rerender(<OperationsView {...props} retention={{ policy: { enabled: true, version: 5, batch_size: 99 }, preview: { eligible_logs: 99 } } as never} />);
@@ -116,4 +120,43 @@ test("unsaved retention changes cannot open a deletion preview", () => {
   expect(preview.disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Reset changes" }));
   expect(preview.disabled).toBe(false);
+});
+
+
+test("refresh failures preserve retention drafts and block writes until recovery", () => {
+  const update = vi.fn();
+  const props = { status, loading: false, unavailable: false, canAdmin: true, retention, onRetentionUpdate: update };
+  const view = render(<OperationsView {...props} />);
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Keep days" }), { target: { value: "21" } });
+  for (const failure of [{ unavailable: true }, { retentionUnavailable: true }]) {
+    view.rerender(<OperationsView {...props} {...failure} />);
+    if ("unavailable" in failure) {
+      expect(screen.getByText("Status unavailable")).toBeTruthy();
+      expect(screen.queryByText("Ready", { exact: true })).toBeNull();
+    }
+    expect((screen.getByRole("spinbutton", { name: "Keep days" }) as HTMLInputElement).value).toBe("21");
+    expect((screen.getByRole("button", { name: "Save policy" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.submit(screen.getByRole("form", { name: "Run-log retention policy" }));
+    expect(update).not.toHaveBeenCalled();
+  }
+  view.rerender(<OperationsView {...props} />);
+  fireEvent.submit(screen.getByRole("form", { name: "Run-log retention policy" }));
+  expect(update).toHaveBeenCalledWith({ enabled: true, keep_days: 21, batch_size: 25 });
+});
+
+test("refresh failure preserves an open confirmation and blocks execution", () => {
+  const execute = vi.fn();
+  const props = { status, loading: false, unavailable: false, canAdmin: true, retention, onRetentionExecute: execute };
+  const view = render(<OperationsView {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Previewed delete batch" }));
+  for (const failure of [{ unavailable: true }, { retentionUnavailable: true }]) {
+    view.rerender(<OperationsView {...props} {...failure} />);
+    expect(screen.getByRole("dialog").textContent).toContain("up to 25");
+    const button = screen.getByRole("button", { name: "Execute retained batch" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(execute).not.toHaveBeenCalled();
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
