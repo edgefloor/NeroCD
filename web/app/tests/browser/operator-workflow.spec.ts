@@ -2517,3 +2517,36 @@ test("short run durations retain seconds on desktop and mobile", async ({ page }
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-duration-320.png"), fullPage: true });
   }
 });
+
+test("mobile run cards reveal complete template and project names", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID, projectID, templateID } = await createRunLogFixture(page);
+  const projectName = `Production-${"p".repeat(120)}`;
+  const templateName = `Release-${"t".repeat(120)}`;
+  for (const [resource, id, name] of [["projects", projectID, projectName], ["templates", templateID, templateName]]) {
+    await page.route(`**/api/v1/${resource}?*`, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, json: { ...body, items: body.items.map((item: { id: string }) => item.id === id ? { ...item, name } : item) } });
+    });
+  }
+  await page.goto(`/runs?q=${runID}`);
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const value of [templateName, projectName, runID]) {
+      const field = page.getByText(value, { exact: true }).filter({ visible: true });
+      await expect(field).toBeVisible();
+      await expect.poll(() => field.evaluate((element) => {
+        const card = element.closest(".rounded-xl");
+        const style = getComputedStyle(element);
+        return Boolean(card && element.getBoundingClientRect().left + element.scrollWidth <= card.getBoundingClientRect().right
+          && element.scrollHeight <= element.clientHeight && style.overflowX !== "hidden" && style.whiteSpace !== "nowrap");
+      })).toBe(true);
+    }
+    await expect(page.getByRole("link", { name: "Details", exact: true }).filter({ visible: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-identities-320.png"), fullPage: true });
+  }
+});

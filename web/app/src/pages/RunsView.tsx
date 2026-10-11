@@ -49,18 +49,17 @@ export function RunsTable({
       <div className="grid min-w-0 grid-cols-1 gap-2 p-3 md:hidden">
         {runs.map((run) => (
           <div key={run.id} className="grid min-w-0 grid-cols-1 gap-2 rounded-xl border border-border/60 bg-card p-3 shadow-sm">
-            <div className="flex min-w-0 items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{templateName(templates, run.template_id, run)}</p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {projectName(projects, run.project_id)} · {formatDate(run.started_at)}
-                </p>
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1 basis-48">
+                <p className="break-words text-sm font-medium [overflow-wrap:anywhere]">{templateName(templates, run.template_id, run)}</p>
+                <p className="break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">{projectName(projects, run.project_id)}</p>
+                <p className="text-xs text-muted-foreground">{formatDate(run.started_at)}</p>
               </div>
-              <StatusBadge status={run.status} />
+              <StatusBadge status={run.status} className="shrink-0" />
             </div>
-            <div className="flex min-w-0 gap-2 text-xs text-muted-foreground">
+            <div className="flex min-w-0 flex-wrap gap-2 text-xs text-muted-foreground">
               <span className="shrink-0 rounded-lg bg-muted/60 px-2 py-1 font-mono">{formatDuration(run)}</span>
-              <span className="truncate rounded-lg bg-muted/60 px-2 py-1 font-mono">{run.id}</span>
+              <span className="min-w-0 max-w-full break-all rounded-lg bg-muted/60 px-2 py-1 font-mono">{run.id}</span>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button asChild variant="outline" size="sm" className="h-8 rounded-xl">
