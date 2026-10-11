@@ -1,13 +1,24 @@
-import { FormEvent, ReactNode } from "react";
+import { FormEvent, ReactNode, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 export function SignIn({ error, oidcEnabled = false, oidcError = false, oidcHref = "/api/v1/oidc/login", bootstrapRequired = false, onSubmit }: { error: string; oidcEnabled?: boolean; oidcError?: boolean; oidcHref?: string; bootstrapRequired?: boolean; onSubmit: (email: string, password: string) => Promise<void> }): ReactNode {
+  const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
+
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (submitting.current) return;
     const form = new FormData(event.currentTarget);
-    await onSubmit(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
+    submitting.current = true;
+    setPending(true);
+    try {
+      await onSubmit(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
+    } finally {
+      submitting.current = false;
+      setPending(false);
+    }
   }
 
   return (
@@ -48,7 +59,7 @@ export function SignIn({ error, oidcEnabled = false, oidcError = false, oidcHref
                   <span className="h-px flex-1 bg-border" />
                 </div>
               </> : null}
-              <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+              <form className="space-y-4" aria-busy={pending} onSubmit={(event) => void submit(event)}>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium" htmlFor="sign-in-email">Email</label>
                 <Input 
@@ -56,6 +67,7 @@ export function SignIn({ error, oidcEnabled = false, oidcError = false, oidcHref
                   name="email" 
                   type="email" 
                   autoComplete="email" 
+                  readOnly={pending}
                   required 
                   className="h-9"
                 />
@@ -67,15 +79,16 @@ export function SignIn({ error, oidcEnabled = false, oidcError = false, oidcHref
                   name="password" 
                   type="password" 
                   autoComplete="current-password" 
+                  readOnly={pending}
                   required 
                   className="h-9"
                 />
               </div>
-              <Button className="w-full h-9" type="submit">
-                Sign in
+              <Button className="w-full h-9" type="submit" disabled={pending}>
+                {pending ? "Signing in..." : "Sign in"}
               </Button>
               {error ? (
-                <p className="text-sm text-destructive">{error}</p>
+                <p className="break-words text-sm text-destructive" role="alert">{error}</p>
               ) : null}
               </form>
             </div>}

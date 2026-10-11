@@ -1,6 +1,31 @@
-import { render, screen } from "@testing-library/react";
-import { expect, test, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
 import { SignIn } from "./SignIn";
+
+afterEach(cleanup);
+
+test("pending sign-in prevents repeated submissions and becomes usable after completion", async () => {
+  let resolve!: () => void;
+  const onSubmit = vi.fn(() => new Promise<void>((done) => { resolve = done; }));
+  const { container, rerender } = render(<SignIn error="" onSubmit={onSubmit} />);
+  fireEvent.change(screen.getByLabelText("Email"), { target: { value: "operator@example.test" } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "test-password" } });
+  const form = container.querySelector("form")!;
+  fireEvent.submit(form);
+  fireEvent.submit(form);
+  expect(onSubmit).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Signing in..." }).disabled).toBe(true);
+  expect(screen.getByLabelText<HTMLInputElement>("Email").readOnly).toBe(true);
+  await act(async () => resolve());
+  rerender(<SignIn error="Temporary sign-in failure" onSubmit={onSubmit} />);
+  expect(screen.getByRole("alert").textContent).toBe("Temporary sign-in failure");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Sign in" }).disabled).toBe(false);
+  expect(screen.getByLabelText<HTMLInputElement>("Email").value).toBe("operator@example.test");
+  expect(screen.getByLabelText<HTMLInputElement>("Password").readOnly).toBe(false);
+  fireEvent.submit(form);
+  expect(onSubmit).toHaveBeenCalledTimes(2);
+  await act(async () => resolve());
+});
 
 test("pre-bootstrap sign-in exposes only CLI bootstrap guidance", () => {
   render(<SignIn error="" bootstrapRequired oidcEnabled onSubmit={vi.fn()} />);

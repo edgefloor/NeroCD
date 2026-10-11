@@ -2388,3 +2388,34 @@ test("audit request failures recover in place on the requested page", async ({ p
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page).toHaveURL((url) => url.pathname === "/audit" && url.searchParams.get("offset") === "50" && url.searchParams.get("q") === "operator_retry");
 });
+
+test("sign-in shows pending feedback and recovers without duplicate submissions", async ({ page }, testInfo) => {
+  await page.goto("/sign-in");
+  await ensureBootstrapped(page);
+  let release!: () => void;
+  const responseReady = new Promise<void>((resolve) => { release = resolve; });
+  let attempts = 0;
+  await page.route("**/api/v1/browser-sessions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    attempts += 1;
+    if (attempts === 1) await responseReady;
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary sign-in failure" }) });
+  });
+  await page.getByLabel("Email").fill("operator@example.test");
+  await page.getByLabel("Password").fill("test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Signing in...", exact: true })).toBeDisabled();
+  await page.getByLabel("Password").press("Enter");
+  expect(attempts).toBe(1);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Signing in...", exact: true })).toBeVisible();
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("sign-in-pending-320.png"), fullPage: true, mask: [page.getByLabel("Password")] });
+  }
+  release();
+  await expect(page.getByRole("alert")).toHaveText("Temporary sign-in failure");
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Email")).toHaveValue("operator@example.test");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect.poll(() => attempts).toBe(2);
+});
