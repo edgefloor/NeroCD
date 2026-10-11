@@ -35,7 +35,8 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
   const selectedRun = useQuery({
     ...runQuery(selectedRunID),
     enabled: Boolean(selectedRunID),
-    refetchInterval: (query) => shouldPollRun(query.state.data) ? 3_000 : false,
+    retryOnMount: false,
+    refetchInterval: (query) => query.state.status !== "error" && shouldPollRun(query.state.data) ? 3_000 : false,
   });
   useEffect(() => {
     if (!runId) return;

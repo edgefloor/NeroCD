@@ -3070,3 +3070,49 @@ test("run list recovery retains open output and its filter on the selected page"
   expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
   expect(new URL(page.url()).searchParams.get("q")).toBe(runID);
 });
+
+
+test("direct run details retain output through a status refresh failure", async ({ page }, testInfo) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const { runID } = await createRunLogFixture(page);
+  const response = await page.request.get(`/api/v1/runs/${runID}`);
+  const run = await response.json();
+  let fail = false;
+  let failedRequests = 0;
+  await page.route(`**/api/v1/runs/${runID}`, (route) => {
+    if (fail) {
+      failedRequests++;
+      return route.fulfill({ status: 503, json: { error: "Temporary run status failure" } });
+    }
+    return route.fulfill({ json: run });
+  });
+  await page.route("**/api/v1/run-logs?*", (route) => {
+    const url = new URL(route.request().url());
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const items = offset === 0 ? [{ id: "detail_output", run_id: runID, sequence: 1, stream: "stdout", message: "retained detail output" }] : [];
+    return route.fulfill({ json: { items, count: items.length, total: 1, limit: Number(url.searchParams.get("limit")), offset } });
+  });
+  await page.goto(`/runs/${runID}?q=${runID}`);
+  const dialog = page.getByRole("dialog", { name: `run ${runID}`, exact: true });
+  await expect(dialog.getByText("retained detail output", { exact: true })).toBeVisible();
+  const filter = dialog.getByRole("searchbox", { name: "Filter loaded output", exact: true });
+  await filter.fill("retained");
+  fail = true;
+  await expect(dialog.getByRole("button", { name: "Retry runs", exact: true })).toBeVisible();
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(filter).toHaveValue("retained");
+    await expect(dialog.getByText("retained detail output", { exact: true })).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (width === 320) await page.screenshot({ path: testInfo.outputPath("run-detail-recovery-320.png") });
+  }
+  expect(failedRequests).toBeGreaterThan(0);
+  fail = false;
+  await dialog.getByRole("button", { name: "Retry runs", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Retry runs", exact: true })).toHaveCount(0);
+  await expect(filter).toHaveValue("retained");
+  await expect(dialog.getByText("retained detail output", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe(`/runs/${runID}`);
+});

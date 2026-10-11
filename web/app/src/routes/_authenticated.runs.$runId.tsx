@@ -20,11 +20,11 @@ function RunDetailRoute() {
   const run = useQuery({
     ...runQuery(runId),
     retryOnMount: false,
-    refetchInterval: (query) => shouldPollRun(query.state.data) ? 3_000 : false,
+    refetchInterval: (query) => query.state.status !== "error" && shouldPollRun(query.state.data) ? 3_000 : false,
   });
   if (run.isPending) return <SkeletonCard rows={4} />;
   const back = <Button asChild variant="outline"><Link to="/runs" search={true}>Back to runs</Link></Button>;
-  if (run.isError) {
+  if (run.isError && !run.data) {
     return <section className="space-y-3">
       <p role="alert">Unable to load run. Try again.</p>
       <div className="flex flex-wrap gap-2">
