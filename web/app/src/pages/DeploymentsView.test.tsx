@@ -77,3 +77,22 @@ test.each(["missing_secret", "policy_denied", "runner_expired"])("failed deploym
   expect(message).not.toMatch(/waiting|automatically/i);
   expect(message).toContain("before retrying");
 });
+
+
+test("cancellation intent stays stable for retries and changes with deployment identity", () => {
+  const onCancel = vi.fn();
+  const props = { deployment: { id: "deployment_first", status: "queued" } as never, related: [], logs: [], canOperate: true, onConfirm: vi.fn(), onCancel };
+  const view = render(<DeploymentDetailView {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  const first = onCancel.mock.calls[0]![0];
+  expect(first.deployment_id).toBe("deployment_first");
+  expect(first.request_id).toEqual(expect.any(String));
+  view.rerender(<DeploymentDetailView {...props} actionError="Retry cancellation" />);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onCancel.mock.calls[1]![0]).toEqual(first);
+  view.rerender(<DeploymentDetailView {...props} deployment={{ id: "deployment_second", status: "queued" } as never} />);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  const second = onCancel.mock.calls[2]![0];
+  expect(second.deployment_id).toBe("deployment_second");
+  expect(second.request_id).not.toBe(first.request_id);
+});

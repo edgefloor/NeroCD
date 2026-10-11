@@ -35,7 +35,11 @@ export function DeploymentDetailView({
   logsError, logsLoading, logsRetrying, onRetryLogs, canOperate, busy,
   pendingAction, actionError, onConfirm, onCancel,
 }: DeploymentDetailViewProps): ReactNode {
-  const cancelKey = useRef(newDeploymentIntentKey());
+  const cancelIntent = useRef<{ deploymentID?: string; key: string } | null>(null);
+  if (!cancelIntent.current || cancelIntent.current.deploymentID !== deployment?.id) {
+    cancelIntent.current = { deploymentID: deployment?.id, key: newDeploymentIntentKey() };
+  }
+  const cancelKey = cancelIntent.current.key;
   if (!deployment) return (
     <Card className="min-w-0">
       <CardContent className="p-6" role="alert">
@@ -84,7 +88,7 @@ export function DeploymentDetailView({
               </Button>
             ) : null}
             {canCancel ? (
-              <Button variant="destructive" disabled={busy || Boolean(pendingAction)} onClick={() => onCancel({ deployment_id: deployment.id, request_id: cancelKey.current })}>
+              <Button variant="destructive" disabled={busy || Boolean(pendingAction)} onClick={() => onCancel({ deployment_id: deployment.id, request_id: cancelKey })}>
                 <Ban className="mr-1 h-4 w-4" />{pendingAction === "cancel" ? "Requesting cancellation…" : "Cancel"}
               </Button>
             ) : null}
