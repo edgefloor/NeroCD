@@ -1456,6 +1456,48 @@ func TestListEndpointsExposePaginationMetadata(t *testing.T) {
 	if payload.Limit != 1 || payload.Offset != 1 || payload.Count != 1 || payload.Total < 2 || len(payload.Items) != 1 {
 		t.Fatalf("unexpected pagination payload: %#v", payload)
 	}
+
+	explicitZeroReq := httptest.NewRequest(http.MethodGet, "/api/v1/runs?limit=0", nil)
+	explicitZeroReq.Header.Set("Authorization", "Bearer "+token)
+	explicitZeroRec := httptest.NewRecorder()
+	server.ServeHTTP(explicitZeroRec, explicitZeroReq)
+	if explicitZeroRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/runs?limit=0 returned %d: %s", explicitZeroRec.Code, explicitZeroRec.Body.String())
+	}
+	var explicitZeroPayload struct {
+		Items  []domain.TaskRun `json:"items"`
+		Limit  int              `json:"limit"`
+		Offset int              `json:"offset"`
+		Count  int              `json:"count"`
+		Total  int              `json:"total"`
+	}
+	if err := json.NewDecoder(explicitZeroRec.Body).Decode(&explicitZeroPayload); err != nil {
+		t.Fatal(err)
+	}
+	if explicitZeroPayload.Items == nil || explicitZeroPayload.Limit != 0 || explicitZeroPayload.Offset != 0 || explicitZeroPayload.Count != 0 || explicitZeroPayload.Total != payload.Total || len(explicitZeroPayload.Items) != 0 {
+		t.Fatalf("unexpected explicit-zero pagination payload: %#v", explicitZeroPayload)
+	}
+
+	offsetOnlyReq := httptest.NewRequest(http.MethodGet, "/api/v1/runs?offset=1", nil)
+	offsetOnlyReq.Header.Set("Authorization", "Bearer "+token)
+	offsetOnlyRec := httptest.NewRecorder()
+	server.ServeHTTP(offsetOnlyRec, offsetOnlyReq)
+	if offsetOnlyRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/runs?offset=1 returned %d: %s", offsetOnlyRec.Code, offsetOnlyRec.Body.String())
+	}
+	var offsetOnlyPayload struct {
+		Items  []domain.TaskRun `json:"items"`
+		Limit  int              `json:"limit"`
+		Offset int              `json:"offset"`
+		Count  int              `json:"count"`
+		Total  int              `json:"total"`
+	}
+	if err := json.NewDecoder(offsetOnlyRec.Body).Decode(&offsetOnlyPayload); err != nil {
+		t.Fatal(err)
+	}
+	if offsetOnlyPayload.Limit <= 0 || offsetOnlyPayload.Limit > store.MaxPageLimit || offsetOnlyPayload.Offset != 1 || offsetOnlyPayload.Count == 0 || offsetOnlyPayload.Total != payload.Total || len(offsetOnlyPayload.Items) != offsetOnlyPayload.Count {
+		t.Fatalf("unexpected offset-only pagination payload: %#v", offsetOnlyPayload)
+	}
 }
 
 func TestAccessKeysAreScopedAndAudited(t *testing.T) {

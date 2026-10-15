@@ -894,7 +894,7 @@ func paginateForService[T any](items []T, page store.Page) store.PageResult[T] {
 		limit = total
 		offset = 0
 	}
-	if page.Enabled && limit == 0 {
+	if page.Enabled && limit == 0 && !page.LimitSpecified {
 		limit = total
 	}
 	if limit > store.MaxPageLimit {
