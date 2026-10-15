@@ -177,7 +177,7 @@ export function useRunLogRetentionMutations() {
   const refresh = () => client.invalidateQueries({ queryKey: queryKeys.runLogRetentionStatus });
   return {
     update: useMutation({ mutationFn: (input: Parameters<typeof updateRunLogRetentionPolicy>[0]) => updateRunLogRetentionPolicy(input), onSuccess: (status) => { client.setQueryData(queryKeys.runLogRetentionStatus, status); return refresh(); } }),
-    execute: useMutation({ mutationFn: ({ policyVersion, requestID }: { policyVersion: number; requestID: string }) => executeRunLogRetention({ policy_version: policyVersion }, requestID), onSuccess: refresh }),
+    execute: useMutation({ mutationFn: ({ policyVersion, requestID }: { policyVersion: number; requestID: string }) => executeRunLogRetention({ policy_version: policyVersion }, requestID), onSuccess: async () => { await Promise.all([refresh(), client.invalidateQueries({ queryKey: ["runLogs"] }), client.invalidateQueries({ queryKey: ["auditEvents"] })]); } }),
   };
 }
 
