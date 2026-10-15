@@ -708,3 +708,39 @@ test("saved retention policy survives a failed status refresh", async () => {
   expect(client.getQueryState(queryKeys.runLogRetentionStatus)?.status).toBe("error");
   mounted.unmount();
 });
+
+test("successful retention execution invalidates logs and audit-event cache variants", async () => {
+  globalThis.fetch = vi.fn<typeof fetch>((_path, init) => {
+    if (init?.method === "POST") return Promise.resolve(json({ deleted_logs: 3, deleted_bytes: 30, remaining_eligible_logs: 0, policy_version: 1 }));
+    return Promise.resolve(json({ policy: { enabled: true, keep_days: 30, batch_size: 25, version: 1 }, preview: { eligible_logs: 3, eligible_bytes: 30, cutoff: "2026-01-01T00:00:00Z" } }));
+  });
+  const { client, wrapper } = setup();
+  const logKeys = [
+    queryKeys.runLogs(),
+    queryKeys.runLogs({ limit: 50, offset: 0 }),
+    queryKeys.runLogs({ run_id: "run_1", limit: 100, offset: 0 }),
+    queryKeys.runLogs({ run_id: "run_terminal", limit: 1, offset: 0 }),
+  ];
+  const auditKeys = [queryKeys.auditEvents(), queryKeys.auditEvents({ limit: 50, offset: 0 })];
+  client.setQueryData(queryKeys.runLogRetentionStatus, { policy: { enabled: true, keep_days: 30, batch_size: 25, version: 1 }, preview: { eligible_logs: 3, eligible_bytes: 30, cutoff: "2026-01-01T00:00:00Z" } });
+  for (const key of [...logKeys, ...auditKeys]) client.setQueryData(key, { items: [] });
+  const mounted = renderHook(() => useRunLogRetentionMutations(), { wrapper });
+  await act(async () => { await mounted.result.current.execute.mutateAsync({ policyVersion: 1, requestID: "retention-cache-success" }); });
+  expect(client.getQueryState(queryKeys.runLogRetentionStatus)?.isInvalidated).toBe(true);
+  for (const key of [...logKeys, ...auditKeys]) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+  mounted.unmount();
+});
+
+test("failed retention execution leaves logs and audit-event cache variants fresh", async () => {
+  globalThis.fetch = vi.fn<typeof fetch>(() => Promise.resolve(new Response(JSON.stringify({ error: "retention execution failed" }), { status: 503, headers: { "Content-Type": "application/json" } })));
+  const { client, wrapper } = setup();
+  const logKeys = [queryKeys.runLogs(), queryKeys.runLogs({ run_id: "run_1", limit: 100, offset: 0 })];
+  const auditKeys = [queryKeys.auditEvents(), queryKeys.auditEvents({ limit: 50, offset: 0 })];
+  client.setQueryData(queryKeys.runLogRetentionStatus, { policy: { enabled: true, keep_days: 30, batch_size: 25, version: 1 }, preview: { eligible_logs: 3, eligible_bytes: 30, cutoff: "2026-01-01T00:00:00Z" } });
+  for (const key of [...logKeys, ...auditKeys]) client.setQueryData(key, { items: [] });
+  const mounted = renderHook(() => useRunLogRetentionMutations(), { wrapper });
+  await act(async () => { await expect(mounted.result.current.execute.mutateAsync({ policyVersion: 1, requestID: "retention-cache-failure" })).rejects.toThrow("retention execution failed"); });
+  expect(client.getQueryState(queryKeys.runLogRetentionStatus)?.isInvalidated).toBe(false);
+  for (const key of [...logKeys, ...auditKeys]) expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+  mounted.unmount();
+});
