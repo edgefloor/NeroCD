@@ -22,27 +22,13 @@ func (s *Service) ListAuditEventsPage(ctx context.Context, page store.Page) (sto
 	if isSystemAdmin(principal) {
 		return s.audit.ListAuditEventsPage(ctx, page)
 	}
-	events, err := s.audit.ListAuditEvents(ctx)
-	if err != nil {
-		return store.PageResult[domain.AuditEvent]{}, err
-	}
 	allowed, err := s.allowedProjects(ctx, principal.ID)
 	if err != nil {
 		return store.PageResult[domain.AuditEvent]{}, err
 	}
-	out := make([]domain.AuditEvent, 0, len(events))
-	for _, event := range events {
-		if event.ActorID == principal.ID {
-			out = append(out, event)
-			continue
-		}
-		projectID, ok := s.auditProjectID(ctx, event)
-		if !ok {
-			continue
-		}
-		if _, allowedProject := allowed[projectID]; allowedProject {
-			out = append(out, event)
-		}
+	projectIDs := make([]string, 0, len(allowed))
+	for projectID := range allowed {
+		projectIDs = append(projectIDs, projectID)
 	}
-	return paginateForService(out, page), nil
+	return s.audit.ListAuditEventsPageForScope(ctx, store.AuditAuthorizationScope{ActorID: principal.ID, ProjectIDs: projectIDs}, page)
 }

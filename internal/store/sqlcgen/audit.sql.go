@@ -22,6 +22,50 @@ func (q *Queries) CountAuditEvents(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countAuditEventsForScope = `-- name: CountAuditEventsForScope :one
+SELECT count(*)
+FROM audit_events AS event
+LEFT JOIN task_runs AS audit_run
+  ON starts_with(event.target_id, 'run_')
+ AND audit_run.id=btrim(event.target_id, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')
+LEFT JOIN task_templates AS audit_template
+  ON starts_with(event.target_id, 'tpl_')
+ AND audit_template.id=btrim(event.target_id, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')
+LEFT JOIN repositories AS audit_repository
+  ON starts_with(event.target_id, 'repo_')
+ AND audit_repository.id=btrim(event.target_id, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')
+WHERE ($1::text<>'' AND event.actor_id=$1)
+   OR CASE
+        WHEN jsonb_typeof(event.metadata->'project_id')='string'
+         AND btrim(event.metadata->>'project_id', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')<>''
+          THEN btrim(event.metadata->>'project_id', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')=ANY($2::text[])
+        WHEN starts_with(event.target_id, 'proj_')
+          THEN event.target_id=ANY($2::text[])
+        WHEN starts_with(event.target_id, 'run_')
+          THEN audit_run.project_id=ANY($2::text[])
+        WHEN starts_with(event.target_id, 'tpl_')
+          THEN audit_template.project_id=ANY($2::text[])
+        WHEN starts_with(event.target_id, 'repo_')
+          THEN audit_repository.project_id=ANY($2::text[])
+        ELSE false
+      END
+`
+
+type CountAuditEventsForScopeParams struct {
+	ActorID    string   `json:"actor_id"`
+	ProjectIds []string `json:"project_ids"`
+}
+
+// Go strings.TrimSpace uses Unicode White Space. Keep this explicit btrim set
+// in both scoped queries so metadata and resource targets resolve identically
+// in the memory and PostgreSQL repositories.
+func (q *Queries) CountAuditEventsForScope(ctx context.Context, arg CountAuditEventsForScopeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAuditEventsForScope, arg.ActorID, arg.ProjectIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAuditEvent = `-- name: CreateAuditEvent :exec
 INSERT INTO audit_events (id,actor_id,action,target_id,metadata,created_at)
 VALUES ($1,$2,$3,$4,$5,$6)
@@ -150,6 +194,76 @@ type ListAuditEventsPageParams struct {
 
 func (q *Queries) ListAuditEventsPage(ctx context.Context, arg ListAuditEventsPageParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, listAuditEventsPage, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuditEvent{}
+	for rows.Next() {
+		var i AuditEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorID,
+			&i.Action,
+			&i.TargetID,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAuditEventsPageForScope = `-- name: ListAuditEventsPageForScope :many
+SELECT event.id, event.actor_id, event.action, event.target_id, event.metadata, event.created_at
+FROM audit_events AS event
+LEFT JOIN task_runs AS audit_run
+  ON starts_with(event.target_id, 'run_')
+ AND audit_run.id=btrim(event.target_id, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')
+LEFT JOIN task_templates AS audit_template
+  ON starts_with(event.target_id, 'tpl_')
+ AND audit_template.id=btrim(event.target_id, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')
+LEFT JOIN repositories AS audit_repository
+  ON starts_with(event.target_id, 'repo_')
+ AND audit_repository.id=btrim(event.target_id, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')
+WHERE ($1::text<>'' AND event.actor_id=$1)
+   OR CASE
+        WHEN jsonb_typeof(event.metadata->'project_id')='string'
+         AND btrim(event.metadata->>'project_id', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')<>''
+          THEN btrim(event.metadata->>'project_id', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')=ANY($2::text[])
+        WHEN starts_with(event.target_id, 'proj_')
+          THEN event.target_id=ANY($2::text[])
+        WHEN starts_with(event.target_id, 'run_')
+          THEN audit_run.project_id=ANY($2::text[])
+        WHEN starts_with(event.target_id, 'tpl_')
+          THEN audit_template.project_id=ANY($2::text[])
+        WHEN starts_with(event.target_id, 'repo_')
+          THEN audit_repository.project_id=ANY($2::text[])
+        ELSE false
+      END
+ORDER BY event.created_at DESC, event.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListAuditEventsPageForScopeParams struct {
+	ActorID    string   `json:"actor_id"`
+	ProjectIds []string `json:"project_ids"`
+	PageOffset int32    `json:"page_offset"`
+	PageLimit  int32    `json:"page_limit"`
+}
+
+func (q *Queries) ListAuditEventsPageForScope(ctx context.Context, arg ListAuditEventsPageForScopeParams) ([]AuditEvent, error) {
+	rows, err := q.db.Query(ctx, listAuditEventsPageForScope,
+		arg.ActorID,
+		arg.ProjectIds,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
