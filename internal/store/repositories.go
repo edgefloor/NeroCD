@@ -192,6 +192,7 @@ type ApprovalRepository interface {
 type AuditRepository interface {
 	ListAuditEvents(context.Context) ([]domain.AuditEvent, error)
 	ListAuditEventsPage(context.Context, Page) (PageResult[domain.AuditEvent], error)
+	ListAuditEventsPageForScope(context.Context, AuditAuthorizationScope, Page) (PageResult[domain.AuditEvent], error)
 	CreateAuditEvent(context.Context, domain.AuditEvent) error
 }
 

@@ -101,6 +101,14 @@ func (s RunAuthorizationScope) permits(projectID string) bool {
 	return false
 }
 
+// AuditAuthorizationScope identifies the actor and projects whose audit
+// events an authenticated principal may inspect. An empty scope denies access
+// to every audit event.
+type AuditAuthorizationScope struct {
+	ActorID    string
+	ProjectIDs []string
+}
+
 // MemoryStore is an in-memory implementation of the store repository contracts.
 type MemoryStore struct {
 	mu                    sync.RWMutex

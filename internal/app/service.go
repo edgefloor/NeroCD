@@ -728,61 +728,6 @@ func (s *Service) runByID(ctx context.Context, runID string) (domain.TaskRun, er
 	return s.runs.GetRun(ctx, runID)
 }
 
-func (s *Service) templateByID(ctx context.Context, templateID string) (domain.TaskTemplate, error) {
-	templateID = strings.TrimSpace(templateID)
-	if templateID == "" {
-		return domain.TaskTemplate{}, store.ErrNotFound
-	}
-	return s.templates.GetTemplate(ctx, templateID)
-}
-
-func (s *Service) repositoryByID(ctx context.Context, repositoryID string) (domain.Repository, error) {
-	repositoryID = strings.TrimSpace(repositoryID)
-	if repositoryID == "" {
-		return domain.Repository{}, store.ErrNotFound
-	}
-	repositories, err := s.sources.ListRepositories(ctx, "")
-	if err != nil {
-		return domain.Repository{}, err
-	}
-	for _, repository := range repositories {
-		if repository.ID == repositoryID {
-			return repository, nil
-		}
-	}
-	return domain.Repository{}, store.ErrNotFound
-}
-
-func (s *Service) auditProjectID(ctx context.Context, event domain.AuditEvent) (string, bool) {
-	if projectID, ok := event.Metadata["project_id"].(string); ok && strings.TrimSpace(projectID) != "" {
-		return strings.TrimSpace(projectID), true
-	}
-	switch {
-	case strings.HasPrefix(event.TargetID, "proj_"):
-		return event.TargetID, true
-	case strings.HasPrefix(event.TargetID, "run_"):
-		run, err := s.runByID(ctx, event.TargetID)
-		if err != nil {
-			return "", false
-		}
-		return run.ProjectID, true
-	case strings.HasPrefix(event.TargetID, "tpl_"):
-		template, err := s.templateByID(ctx, event.TargetID)
-		if err != nil {
-			return "", false
-		}
-		return template.ProjectID, true
-	case strings.HasPrefix(event.TargetID, "repo_"):
-		repository, err := s.repositoryByID(ctx, event.TargetID)
-		if err != nil {
-			return "", false
-		}
-		return repository.ProjectID, true
-	default:
-		return "", false
-	}
-}
-
 func isSystemAdmin(principal auth.Principal) bool {
 	for _, role := range principal.Roles {
 		if role == domain.RoleSystemAdmin {
