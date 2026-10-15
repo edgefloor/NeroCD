@@ -67,9 +67,10 @@ func immutableGitCommit(value string) bool {
 
 // Page specifies a bounded offset page for a list operation.
 type Page struct {
-	Limit   int
-	Offset  int
-	Enabled bool
+	Limit          int
+	Offset         int
+	Enabled        bool
+	LimitSpecified bool
 }
 
 // PageResult contains a page of items and the total available count.
@@ -256,7 +257,7 @@ func paginateSlice[T any](items []T, page Page) PageResult[T] {
 		limit = total
 		offset = 0
 	}
-	if page.Enabled && limit == 0 {
+	if page.Enabled && limit == 0 && !page.LimitSpecified {
 		limit = total
 	}
 	if limit > MaxPageLimit {

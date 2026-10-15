@@ -168,7 +168,7 @@ func resolvePage(page Page, total int) (int, int) {
 		limit = page.Limit
 		offset = page.Offset
 	}
-	if page.Enabled && limit == 0 {
+	if page.Enabled && limit == 0 && !page.LimitSpecified {
 		limit = total
 	}
 	if limit > MaxPageLimit {
