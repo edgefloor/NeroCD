@@ -138,6 +138,7 @@ runtime-web-operator-gate:
 	bash acceptance/runtime-web-operator/gate.sh
 
 web-policy: web-install
+	node --test scripts/license-policy.test.mjs
 	node scripts/supply-chain-policy.mjs
 
 supply-chain: web-install web-policy
