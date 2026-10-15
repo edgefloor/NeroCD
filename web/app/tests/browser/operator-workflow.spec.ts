@@ -119,6 +119,33 @@ test("authenticated navigation and sign out work with runtime-only credentials",
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("template edits succeed after the runs and approvals lookups share an all-template cache", async ({ page }) => {
+  await page.goto("/runs");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const fixture = await createRunLogFixture(page);
+
+  const templatesLoaded = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/v1/templates");
+  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
+  expect((await templatesLoaded).status()).toBe(200);
+
+  await page.getByRole("link", { name: "Approvals", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Approvals", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Templates", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Templates", exact: true })).toBeVisible();
+  await page.getByRole("searchbox", { name: "Filter this page", exact: true }).fill(fixture.templateID);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit template", exact: true });
+  const savedName = `Cache-safe template ${Date.now()}`;
+  await dialog.getByRole("textbox", { name: "Template Name", exact: true }).fill(savedName);
+  const saved = page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === "/api/v1/templates");
+  await dialog.getByRole("button", { name: "Save template", exact: true }).click();
+  expect((await saved).status()).toBe(200);
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("cell", { name: savedName, exact: true })).toBeVisible();
+});
+
 test("dashboard route states retain the shell and retry a transient loader failure", async ({ page }, testInfo) => {
   await page.goto("/projects");
   await signIn(page);

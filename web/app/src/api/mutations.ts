@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { createTemplate, updateTemplate, requestRun, approveRun, rejectRun, archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createProject, createRepository, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse, type Deployment, type DeploymentList, type ApprovalListResponse, type Project, type ProjectListResponse, type TaskTemplateListResponse } from "./resources";
+import { createTemplate, updateTemplate, requestRun, approveRun, rejectRun, archiveProject, cancelDeployment, cancelRun, confirmDeployment, createDeployment, createProject, createRepository, executeRunLogRetention, updateProject, updateRunLogRetentionPolicy, type TaskRunListResponse, type Deployment, type DeploymentList, type ApprovalListResponse, type Project, type ProjectListResponse, type TaskTemplate, type TaskTemplateListResponse } from "./resources";
 import { queryKeys } from "./queries";
 
 function useProjectMutations() {
@@ -91,10 +91,11 @@ export function useTemplateActions(disabled = false): { busy: string; error?: Ac
     toast.success("Template created");
   } });
   const update = useMutation({ mutationFn: (input: Parameters<typeof updateTemplate>[0]) => updateTemplate(input), onError, onSuccess: async (template) => {
-    client.setQueriesData<TaskTemplateListResponse>({ queryKey: ["templates"] }, (cached) => cached ? {
-      ...cached,
-      items: cached.items.map((item) => item.id === template.id ? template : item),
-    } : cached);
+    client.setQueriesData<TaskTemplateListResponse | TaskTemplate[]>({ queryKey: ["templates"] }, (cached) => {
+      if (!cached) return cached;
+      const replace = (item: TaskTemplate) => item.id === template.id ? template : item;
+      return Array.isArray(cached) ? cached.map(replace) : { ...cached, items: cached.items.map(replace) };
+    });
     await client.invalidateQueries({ queryKey: ["templates"] });
     toast.success("Template updated");
   } });
