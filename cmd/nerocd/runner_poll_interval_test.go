@@ -11,14 +11,21 @@ import (
 	"nerocd/internal/domain"
 )
 
-func TestRunRunnerRejectsNonPositivePollIntervalBeforeNetworkRequests(t *testing.T) {
+func TestRunRunnerValidatesPollIntervalsBeforeNetworkRequests(t *testing.T) {
 	t.Setenv("NEROCD_MODE", "development")
 	tests := []struct {
-		name     string
-		interval string
+		name       string
+		args       []string
+		wantErr    string
+		wantNoHTTP bool
 	}{
-		{name: "zero", interval: "0s"},
-		{name: "negative", interval: "-1s"},
+		{name: "zero poll interval", args: []string{"--poll-interval", "0s"}, wantErr: "--poll-interval must be greater than zero", wantNoHTTP: true},
+		{name: "negative poll interval", args: []string{"--poll-interval", "-1s"}, wantErr: "--poll-interval must be greater than zero", wantNoHTTP: true},
+		{name: "zero cancel poll interval", args: []string{"--cancel-poll-interval", "0s"}, wantErr: "--cancel-poll-interval must be greater than zero", wantNoHTTP: true},
+		{name: "negative cancel poll interval", args: []string{"--cancel-poll-interval", "-1s"}, wantErr: "--cancel-poll-interval must be greater than zero", wantNoHTTP: true},
+		{name: "default intervals"},
+		{name: "positive poll interval", args: []string{"--poll-interval", "10ms"}},
+		{name: "positive cancel poll interval", args: []string{"--cancel-poll-interval", "10ms"}},
 	}
 
 	for _, tc := range tests {
@@ -26,36 +33,6 @@ func TestRunRunnerRejectsNonPositivePollIntervalBeforeNetworkRequests(t *testing
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				w.WriteHeader(http.StatusInternalServerError)
-			}))
-			defer server.Close()
-
-			err := runRunner([]string{
-				"--server", server.URL,
-				"--token", "privileged",
-				"--poll-interval", tc.interval,
-			})
-			if err == nil || !strings.Contains(err.Error(), "--poll-interval must be greater than zero") {
-				t.Errorf("runRunner() error = %v, want poll interval validation error", err)
-			}
-			if got := requests.Load(); got != 0 {
-				t.Fatalf("network requests = %d, want 0", got)
-			}
-		})
-	}
-}
-
-func TestRunRunnerAcceptsDefaultAndPositivePollIntervalWithOnce(t *testing.T) {
-	t.Setenv("NEROCD_MODE", "development")
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{name: "default"},
-		{name: "positive", args: []string{"--poll-interval", "10ms"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/runners/register":
 					_ = json.NewEncoder(w).Encode(runnerRegisterResponse{Token: "runner-token"})
@@ -79,8 +56,16 @@ func TestRunRunnerAcceptsDefaultAndPositivePollIntervalWithOnce(t *testing.T) {
 				"--once",
 			}
 			args = append(args, tc.args...)
-			if err := runRunner(args); err != nil {
+			err := runRunner(args)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("runRunner() error = %v, want %q", err, tc.wantErr)
+				}
+			} else if err != nil {
 				t.Fatalf("runRunner() error = %v", err)
+			}
+			if got := requests.Load(); tc.wantNoHTTP && got != 0 {
+				t.Fatalf("network requests = %d, want 0", got)
 			}
 		})
 	}
