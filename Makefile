@@ -172,6 +172,7 @@ ci-release-policy-gate:
 	bash scripts/release-artifact-verifier-test.sh
 	bash scripts/release-evidence-concurrency-test.sh
 	bash scripts/release-runtime-scheduling-test.sh
+	bash scripts/runtime-builder-selection-test.sh
 
 contract:
 	GOCACHE="$(GOCACHE_DIR)" go run ./cmd/nerocd contract
