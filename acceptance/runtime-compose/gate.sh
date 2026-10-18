@@ -81,6 +81,10 @@ select_engine_builder(){
     5) builder_diagnostic=active_builder_unsafe; return 1 ;;
     *) builder_diagnostic=active_list_invalid; return 1 ;;
   esac
+  if [[ "$context" != default && "$active" == default ]]; then
+    builder_diagnostic=active_builder_context_mismatch
+    return 1
+  fi
   if engine_builder_running "$active" "$dir/buildx-active.inspect"; then
     rc=0
   else

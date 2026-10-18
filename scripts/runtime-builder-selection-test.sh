@@ -54,6 +54,7 @@ run_case() {
           ;;
         'buildx ls')
           case "$scenario" in
+            context-mismatch) printf '%s\n' '{"Name":"default","Current":true}' ;;
             malformed-listing) printf '%s\n' '{"Name":"orbstack","Current":"true"}' ;;
             ambiguous-active)
               printf '%s\n' '{"Name":"orbstack","Current":true}' '{"Name":"other","Current":true}'
@@ -92,6 +93,7 @@ gates=(
 for gate in "${gates[@]}"; do
   run_case "$gate" default-context 0 default default default_selected
   run_case "$gate" nondefault-context 0 orbstack active active_selected
+  run_case "$gate" context-mismatch 1 '' '' active_builder_context_mismatch
   run_case "$gate" context-failure 1 '' '' context_unavailable
   run_case "$gate" malformed-listing 1 '' '' active_list_invalid
   run_case "$gate" ambiguous-active 1 '' '' active_builder_ambiguous
@@ -99,4 +101,4 @@ for gate in "${gates[@]}"; do
 done
 
 (( failures == 0 )) || exit 1
-printf 'runtime builder selection PASS gates=%s scenarios=6\n' "${#gates[@]}"
+printf 'runtime builder selection PASS gates=%s scenarios=7\n' "${#gates[@]}"
