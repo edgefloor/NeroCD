@@ -75,6 +75,15 @@ or claim a proposed runtime change is implemented. For example:
 `docs(skills): sharpen Go failure checks and commit guidance`. Do not rewrite
 history or push without authorization.
 
+Prefer one narrow, independently reviewable behavior or decision per commit.
+Plan commit boundaries before editing, and split independent fixes, refactors,
+and cleanup even when they touch the same subsystem. Keep required regression
+tests, supporting documentation, dependency or generated-file updates, and
+skill-lock changes with the owning change. Each commit should be coherent and
+buildable with its relevant checks passing. Judge commit size by review burden:
+there is no hard line or file cap, and tests should not be separated merely to
+make a diff smaller. Choose the smallest complete change that preserves context.
+
 ## Validate and review the candidate
 
 After committing, run `scripts/orchestration/native_check.py candidate` with the full base and
