@@ -79,12 +79,22 @@ Prefer one narrow, independently reviewable behavior or decision per commit.
 Plan commit boundaries before editing, and split independent fixes, refactors,
 and cleanup even when they touch the same subsystem. Keep required regression
 tests, supporting documentation, dependency or generated-file updates, and
-skill-lock changes with the owning change. Each commit should be coherent and
-buildable with its relevant checks passing. Judge commit size by review burden:
+skill-lock changes with the owning change. Each commit should leave a coherent,
+buildable code state; that does not require running the full application build
+for every commit. Judge commit size by review burden:
 there is no hard line or file cap, and tests should not be separated merely to
 make a diff smaller. Choose the smallest complete change that preserves context.
 
 ## Validate and review the candidate
+
+Choose validation from the affected behavior and dependencies, not from commit
+creation or line count. During implementation, use the cheapest existing check
+that provides meaningful evidence. Run broader builds or suites when accumulated
+changes, affected interface or integration boundaries, failures, or established
+final-check requirements justify them. Required CI, integration, and release
+checks still run at their defined boundary. Retain evidence for unaffected checks
+with its original revision and record why that evidence remains valid; rerun
+checks affected by subsequent changes, and report unrun checks accurately.
 
 After committing, run `scripts/orchestration/native_check.py candidate` with the full base and
 candidate SHAs and one `--allow` argument per owned file or directory prefix. The command
