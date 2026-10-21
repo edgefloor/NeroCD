@@ -23,6 +23,9 @@ on:
       - "scripts/orchestration/**"
       - "scripts/skills/**"
       - "skills-lock.json"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
   pull_request:
     paths:
       - "AGENTS.md"
@@ -43,6 +46,9 @@ on:
       - "scripts/orchestration/**"
       - "scripts/skills/**"
       - "skills-lock.json"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
 
 permissions:
   contents: read
@@ -73,12 +79,14 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python3 -m unittest scripts/orchestration/test_native_check.py
 
-      - name: Validate canonical skills
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: |
-          python3 -m unittest discover -s scripts/skills -p 'test_*.py'
-          python3 scripts/skills/validate.py --json
+      - name: Set up Go for skill analyzers
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Validate skill tools and canonical inventory
+        run: make skill-tools-test
 
       - name: Validate policy hooks
         env:

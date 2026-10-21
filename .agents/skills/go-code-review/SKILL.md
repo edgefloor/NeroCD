@@ -11,7 +11,7 @@ allowed-tools: Bash(bash:*)
 ## Resource Routing
 
 - `assets/review-template.md` - Use when formatting review output with Must Fix, Should Fix, and Nits sections.
-- `scripts/pre-review.sh` - Run before manual review to collect gofmt, go vet, and golangci-lint results.
+- `scripts/pre-review.sh` - Run before manual review to collect formatting and repository-pinned lint results. Use `--base COMMIT` for changed-code lint; the default checks product packages. Missing tools fail before analysis; `--force` explicitly skips unavailable lint and runs standalone vet.
 - `references/WEB-SERVER.md` - Read when reviewing an HTTP server that combines concurrency, context, logging, error handling, and shutdown behavior.
 - `references/FAILURE-BOUNDARIES.md` - Read when a diff changes execution admission, streamed or replayed results, reload readiness, per-run files, signal shutdown, or structured configuration input.
 

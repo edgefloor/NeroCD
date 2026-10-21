@@ -11,7 +11,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "c512efb8db057a05aafd65053f6d19a81928f50b5fc5e5f428e86a79bc89f750"
+      "localHash": "f44663e757b103c92ad64d526ef4da8a5200c14e74c0338fb295c4377fbaca82"
     },
     "go-concurrency": {
       "source": "cxuu/golang-skills",
@@ -88,7 +88,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "73d57046dc69435a9111be4cd61d622263bf9ac8a08a4617ae0d640a6dc36e2a"
+      "localHash": "4981486b794d05b947a84f59bb41f4fabf95e65318260b16b7a89ef1a1e7eb4c"
     },
     "go-error-handling": {
       "source": "cxuu/golang-skills",
@@ -99,7 +99,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "22c2dcb5a68beed0619f9d9f1d42a9929a408842addba5fd0f316a6152de4bcf"
+      "localHash": "2464dc6ecbe70d84d6b15ccd6a5ae3ab546d28cda4a224c6882109f8e8d2aafc"
     },
     "go-functional-options": {
       "source": "cxuu/golang-skills",
@@ -143,7 +143,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "d95443d44a34f852996ab26ee6f3f52e6879a6a1d113dd156abe361672ec4938"
+      "localHash": "099e58d9f9a830d739b714ddd4c8f3a1fd35a9bb54ba36cc5698b1802c957140"
     },
     "go-linting": {
       "source": "cxuu/golang-skills",
@@ -154,7 +154,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "780598184b44d649995e32b153e08f824cb89fa009d71b7d35c2e9f34a2e71ca"
+      "localHash": "8e1504eaa52ea8a749e97b71caf693b3686fb3c2dcda3ba817aea84a275ece6e"
     },
     "go-logging": {
       "source": "cxuu/golang-skills",
@@ -176,7 +176,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "c9b66f0965b0d07b28a44cbfb006de7c6f254ca6d2629b0ce06e53b1bf673bca"
+      "localHash": "bd2c2901f680e7d44900f90c4b702429057d845c08c174e187037ccd08f68802"
     },
     "go-packages": {
       "source": "cxuu/golang-skills",
@@ -198,7 +198,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "1a5faa6c8f56cac5a2b811b49242476392c6dc13c7eab2ca7a977efb68a2dab6"
+      "localHash": "800ff1d0eca08a0f89d6bc9e3bc6d412ac6becc9647a862050eb52230c3eba73"
     },
     "go-style-core": {
       "source": "cxuu/golang-skills",
@@ -243,7 +243,7 @@
       "provenanceStatus": "repository-local",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "77684165d5aa22c29b31fa312eb0a91d66c87460281218128ef77824dba5f0f8"
+      "localHash": "8d9a1cdb8c86815e5b9ac3eeb524e033c158a9c8c8593e196f3dcd7a3ffe6750"
     },
     "nerocd-ui-artifact-verification": {
       "source": "NeroCD",
@@ -253,7 +253,7 @@
       "provenanceStatus": "repository-local",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "2a4cea3f0840ecf80ab2d578b9160af8cd105b69e724f3ad745727b967c2251a"
+      "localHash": "463f61e3debeaa09293edd2597a6b43f4399b33cb752493bc81600b2c204321f"
     },
     "research": {
       "source": "mattpocock/skills",
@@ -266,5 +266,10 @@
       "hashAlgorithm": "sha256-path-content-v1",
       "localHash": "630a4810dc5fc7981407a798b2ea354851e079a1d87bae600065f56609ae7441"
     }
+  },
+  "supportFiles": {
+    "scripts/skills/run_analyzer.py": "66e6ac4b32fdeab25dc489f7f2172e4d9309030b754ad8a419a4590a2ec2fb85",
+    "scripts/skills/runner_checks.py": "2a435ae0459e4f37a8bc5aef293a03556cede0a64ae5f3fa63f7232811cd33bf",
+    "scripts/skills/ui_manifest.py": "81ab1a48ea5612526d568d520100bc81d3d64e0734358807e4e1b1a23498519d"
   }
 }

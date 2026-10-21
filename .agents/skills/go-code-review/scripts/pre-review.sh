@@ -5,14 +5,13 @@ VERSION="1.0.0"
 SCRIPT_NAME="$(basename "$0")"
 
 usage() {
-    cat <<EOF
-$SCRIPT_NAME v$VERSION — Run automated pre-review checks on Go code
+    printf '%s\n' "$SCRIPT_NAME v$VERSION — Run automated pre-review checks on Go code
 
 USAGE
     bash $SCRIPT_NAME [options] [path]
 
 DESCRIPTION
-    Runs gofmt, go vet, and golangci-lint against the target path and
+    Runs gofmt and the repository-pinned lint target against the target path and
     reports any findings. Use before manual code review to catch
     mechanical issues early.
 
@@ -22,19 +21,19 @@ OPTIONS
     -h, --help       Show this help message
     -v, --version    Show version
     --json           Output results as JSON
-    --force          Run even if golangci-lint is not installed (skip it)
+    --force          Allow standalone vet when the pinned linter is missing
+    --base REV       Report only lint findings added since REV
     --limit N        Max items reported per section (0 = unlimited, default: 0)
 
 ARGUMENTS
-    path             Package pattern to check (default: ./...)
+    path             Local package pattern (default: product packages)
 
 EXAMPLES
     bash $SCRIPT_NAME
     bash $SCRIPT_NAME ./pkg/...
     bash $SCRIPT_NAME --json ./cmd/server/...
     bash $SCRIPT_NAME --force ./...
-    bash $SCRIPT_NAME --json --limit 10 ./...
-EOF
+    bash $SCRIPT_NAME --json --limit 10 ./..."
 }
 
 json_escape() {
@@ -51,6 +50,8 @@ JSON_OUTPUT=false
 FORCE=false
 LIMIT=0
 TARGET=""
+BASE=""
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -58,6 +59,7 @@ while [[ $# -gt 0 ]]; do
         -v|--version) echo "$SCRIPT_NAME v$VERSION"; exit 0 ;;
         --json)       JSON_OUTPUT=true; shift ;;
         --force)      FORCE=true; shift ;;
+        --base)       BASE="${2:?error: --base requires a revision}"; shift 2 ;;
         --limit)
             if [[ $# -lt 2 ]]; then
                 echo "error: --limit requires a number" >&2
@@ -71,7 +73,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-TARGET="${TARGET:-./...}"
+cd "$REPO_ROOT"
+# Resolve the pinned executable through the same Makefile used by CI.
+LINT_BIN=$(make --no-print-directory -s skill-lint-path)
+if [[ ! -x "$LINT_BIN" ]] && ! $FORCE; then
+    echo "error: pinned golangci-lint is missing; run make lint-install or use --force" >&2
+    exit 2
+fi
+if [[ -n "$BASE" ]]; then
+    BASE=$(git rev-parse --verify "$BASE^{commit}")
+    [[ "$BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "error: invalid base commit" >&2; exit 2; }
+fi
+TARGET="${TARGET:-./cmd/... ./internal/...}"
+read -r -a PACKAGES < <(printf '%s\n' "$TARGET")
+for package in "${PACKAGES[@]}"; do
+    [[ "$package" =~ ^\./[A-Za-z0-9_./-]+$ ]] || {
+        echo "error: expected a local Go package pattern" >&2
+        exit 2
+    }
+done
 
 if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
     echo "error: --limit must be a non-negative integer, got: $LIMIT" >&2
@@ -88,40 +108,44 @@ if ! command -v gofmt &>/dev/null; then
     exit 2
 fi
 
-GOFMT_STATUS="pass"
+GOFMT_STATUS="passed"
 GOFMT_FINDINGS=()
-GOFMT_DIR="${TARGET%%/...}"
-GOFMT_DIR="${GOFMT_DIR:-.}"
-UNFORMATTED=$(gofmt -l "$GOFMT_DIR" 2>&1) || true
+GOFMT_DIRS=()
+for package in "${PACKAGES[@]}"; do
+    GOFMT_DIRS+=("${package%/...}")
+done
+UNFORMATTED=$(gofmt -l "${GOFMT_DIRS[@]}" 2>&1) || GOFMT_STATUS="failed"
 if [[ -n "$UNFORMATTED" ]]; then
-    GOFMT_STATUS="fail"
+    GOFMT_STATUS="failed"
     while IFS= read -r f; do
         [[ -n "$f" ]] && GOFMT_FINDINGS+=("$f")
-    done <<< "$UNFORMATTED"
+    done < <(printf '%s\n' "$UNFORMATTED")
 fi
 
-GOVET_STATUS="pass"
-GOVET_OUTPUT=""
-if ! GOVET_OUTPUT=$(go vet "$TARGET" 2>&1); then
-    GOVET_STATUS="fail"
-fi
-
-LINT_STATUS="skip"
+GOVET_STATUS="not_run"
+GOVET_OUTPUT="Covered by the pinned linter's govet analyzer"
+LINT_STATUS="not_run"
 LINT_OUTPUT=""
-if command -v golangci-lint &>/dev/null; then
-    LINT_STATUS="pass"
-    if ! LINT_OUTPUT=$(golangci-lint run "$TARGET" 2>&1); then
-        LINT_STATUS="fail"
+if [[ -x "$LINT_BIN" ]]; then
+    LINT_STATUS="passed"
+    LINT_TARGET=lint
+    [[ -z "$BASE" ]] || LINT_TARGET=lint-new
+    if ! LINT_OUTPUT=$(GOCACHE="$REPO_ROOT/.cache/go-build" make --no-print-directory "$LINT_TARGET" \
+        "PRODUCT_PACKAGES=$TARGET" "LINT_BASE_REV=$BASE" 2>&1); then
+        LINT_STATUS="failed"
     fi
-elif ! $FORCE; then
-    echo "error: golangci-lint not installed (use --force to skip)" >&2
-    exit 2
+else
+    GOVET_STATUS="passed"
+    GOVET_OUTPUT=""
+    if ! GOVET_OUTPUT=$(GOCACHE="$REPO_ROOT/.cache/go-build" go vet "${PACKAGES[@]}" 2>&1); then
+        GOVET_STATUS="failed"
+    fi
 fi
 
 FAILED=0
-[[ "$GOFMT_STATUS" == "fail" ]] && FAILED=1
-[[ "$GOVET_STATUS" == "fail" ]] && FAILED=1
-[[ "$LINT_STATUS" == "fail" ]] && FAILED=1
+[[ "$GOFMT_STATUS" == "failed" ]] && FAILED=1
+[[ "$GOVET_STATUS" == "failed" ]] && FAILED=1
+[[ "$LINT_STATUS" == "failed" ]] && FAILED=1
 
 if $JSON_OUTPUT; then
     GOFMT_TRUNCATED=false
@@ -146,7 +170,7 @@ if $JSON_OUTPUT; then
         GOVET_ARR=()
         while IFS= read -r line; do
             GOVET_ARR+=("$line")
-        done <<< "$GOVET_OUTPUT"
+        done < <(printf '%s\n' "$GOVET_OUTPUT")
         if [[ ${#GOVET_ARR[@]} -gt $LIMIT ]]; then
             GOVET_DISPLAY=""
             for (( i=0; i<LIMIT; i++ )); do
@@ -164,7 +188,7 @@ if $JSON_OUTPUT; then
         LINT_ARR=()
         while IFS= read -r line; do
             LINT_ARR+=("$line")
-        done <<< "$LINT_OUTPUT"
+        done < <(printf '%s\n' "$LINT_OUTPUT")
         if [[ ${#LINT_ARR[@]} -gt $LIMIT ]]; then
             LINT_DISPLAY=""
             for (( i=0; i<LIMIT; i++ )); do
@@ -183,12 +207,10 @@ if $JSON_OUTPUT; then
     LINT_TRUNC=""
     $LINT_TRUNCATED && LINT_TRUNC=',"truncated":true'
 
-    cat <<EOF
-{"gofmt":{"status":"$GOFMT_STATUS","files":$GOFMT_JSON$GOFMT_TRUNC},"govet":{"status":"$GOVET_STATUS","output":"$GOVET_ESC"$GOVET_TRUNC},"golangci_lint":{"status":"$LINT_STATUS","output":"$LINT_ESC"$LINT_TRUNC},"passed":$( [[ $FAILED -eq 0 ]] && echo true || echo false )}
-EOF
+    printf '%s\n' "{\"gofmt\":{\"status\":\"$GOFMT_STATUS\",\"files\":$GOFMT_JSON$GOFMT_TRUNC},\"govet\":{\"status\":\"$GOVET_STATUS\",\"output\":\"$GOVET_ESC\"$GOVET_TRUNC},\"golangci_lint\":{\"status\":\"$LINT_STATUS\",\"output\":\"$LINT_ESC\"$LINT_TRUNC},\"exit_code\":$FAILED,\"status\":\"$( [[ $FAILED -eq 0 ]] && echo passed || echo failed )\",\"passed\":$( [[ $FAILED -eq 0 ]] && echo true || echo false )}"
 else
     echo "=== gofmt ==="
-    if [[ "$GOFMT_STATUS" == "fail" ]]; then
+    if [[ "$GOFMT_STATUS" == "failed" ]]; then
         echo "Unformatted files:"
         GOFMT_COUNT=0
         for f in "${GOFMT_FINDINGS[@]}"; do
@@ -205,12 +227,14 @@ else
 
     echo ""
     echo "=== go vet ==="
-    if [[ "$GOVET_STATUS" == "fail" ]]; then
+    if [[ "$GOVET_STATUS" == "not_run" ]]; then
+        echo "$GOVET_OUTPUT"
+    elif [[ "$GOVET_STATUS" == "failed" ]]; then
         if [[ $LIMIT -gt 0 ]]; then
             GOVET_ARR=()
             while IFS= read -r line; do
                 GOVET_ARR+=("$line")
-            done <<< "$GOVET_OUTPUT"
+            done < <(printf '%s\n' "$GOVET_OUTPUT")
             for (( i=0; i<${#GOVET_ARR[@]} && i<LIMIT; i++ )); do
                 echo "${GOVET_ARR[$i]}"
             done
@@ -226,14 +250,14 @@ else
 
     echo ""
     echo "=== golangci-lint ==="
-    if [[ "$LINT_STATUS" == "skip" ]]; then
+    if [[ "$LINT_STATUS" == "not_run" ]]; then
         echo "Skipped (not installed)"
-    elif [[ "$LINT_STATUS" == "fail" ]]; then
+    elif [[ "$LINT_STATUS" == "failed" ]]; then
         if [[ $LIMIT -gt 0 ]]; then
             LINT_ARR=()
             while IFS= read -r line; do
                 LINT_ARR+=("$line")
-            done <<< "$LINT_OUTPUT"
+            done < <(printf '%s\n' "$LINT_OUTPUT")
             for (( i=0; i<${#LINT_ARR[@]} && i<LIMIT; i++ )); do
                 echo "${LINT_ARR[$i]}"
             done

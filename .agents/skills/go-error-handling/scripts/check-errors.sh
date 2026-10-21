@@ -7,8 +7,7 @@ VERSION="1.1.0"
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
-            cat <<EOF
-check-errors.sh v$VERSION - Check Go code for common error handling anti-patterns
+            printf '%s\n' "check-errors.sh v$VERSION - Check Go code for common error handling anti-patterns
 
 USAGE
     bash check-errors.sh [options] [path]
@@ -18,8 +17,7 @@ OPTIONS
     -v, --version    Show version
     --json           Output results as JSON
     --no-bare-return Skip the bare 'return err' check (high false-positive rate)
-    --limit N        Show at most N results (default: all)
-EOF
+    --limit N        Show at most N results (default: all)"
             exit 0
             ;;
         -v|--version)
@@ -29,23 +27,5 @@ EOF
     esac
 done
 
-if ! command -v go >/dev/null 2>&1; then
-    echo "error: go is not installed or not in PATH" >&2
-    exit 2
-fi
-
-CACHE_ROOT="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}/golang-skills"
-if ! mkdir -p "$CACHE_ROOT"; then
-    CACHE_ROOT="${TMPDIR:-/tmp}/golang-skills-cache"
-    mkdir -p "$CACHE_ROOT"
-fi
-
-SRC="$SCRIPT_DIR/check-errors-ast.go"
-STAMP="$(cksum "$SRC" | awk '{print $1 "-" $2}')"
-BIN="$CACHE_ROOT/check-errors-ast-$STAMP"
-
-if [[ ! -x "$BIN" ]]; then
-    GOCACHE="${GOCACHE:-$CACHE_ROOT/go-build}" go build -o "$BIN" "$SRC"
-fi
-
-exec "$BIN" "$@"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+exec python3 -B "$REPO_ROOT/scripts/skills/run_analyzer.py" "$SCRIPT_DIR/check-errors-ast.go" "$@"

@@ -5,8 +5,7 @@ VERSION="1.0.0"
 SCRIPT_NAME="$(basename "$0")"
 
 usage() {
-    cat <<EOF
-$SCRIPT_NAME v$VERSION — Generate .golangci.yml and run initial lint
+    printf '%s\n' "$SCRIPT_NAME v$VERSION — Generate .golangci.yml and run initial lint
 
 USAGE
     bash $SCRIPT_NAME [options] [local-prefix]
@@ -37,8 +36,7 @@ EXAMPLES
     bash $SCRIPT_NAME --force github.com/myorg/myrepo
     bash $SCRIPT_NAME --dry-run github.com/myorg/myrepo
     bash $SCRIPT_NAME --json
-    bash $SCRIPT_NAME --json --limit 20
-EOF
+    bash $SCRIPT_NAME --json --limit 20"
 }
 
 json_escape() {
@@ -83,8 +81,7 @@ if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
 fi
 
 generate_config() {
-    cat <<'YAML'
-version: "2"
+    printf '%s\n' 'version: "2"
 linters:
   enable:
     # Minimum recommended
@@ -123,16 +120,13 @@ formatters:
     paths:
       - third_party$
       - builtin$
-      - examples$
-YAML
+      - examples$'
 
     if [[ -n "$LOCAL_PREFIX" ]]; then
-        cat <<YAML
-  settings:
+        printf '%s\n' "  settings:
     goimports:
       local-prefixes:
-        - ${LOCAL_PREFIX}
-YAML
+        - ${LOCAL_PREFIX}"
     fi
 }
 
@@ -148,16 +142,29 @@ if [[ -f "$CONFIG_PATH" ]] && ! $FORCE; then
     exit 2
 fi
 
-generate_config > "$CONFIG_PATH"
-
-LINT_OUTPUT=""
-LINT_EXIT=0
 if ! command -v golangci-lint &>/dev/null; then
-    echo "error: golangci-lint is not installed" >&2
+    echo "error: golangci-lint is not installed; existing configuration preserved" >&2
     exit 2
 fi
-
+CONFIG_STAGE=$(mktemp -d .golangci.XXXXXXXX)
+TEMP_CONFIG="$CONFIG_STAGE/config.yml"
+trap 'rm -rf -- "$CONFIG_STAGE"' EXIT
+generate_config > "$TEMP_CONFIG"
+if ! golangci-lint config verify --config "$TEMP_CONFIG" >&2; then
+    echo "error: generated configuration is invalid; existing configuration preserved" >&2
+    exit 2
+fi
+mv "$TEMP_CONFIG" "$CONFIG_PATH"
+LINT_OUTPUT=""
+LINT_EXIT=0
 LINT_OUTPUT=$(golangci-lint run ./... 2>&1) || LINT_EXIT=$?
+
+FINAL_EXIT=0
+if [[ $LINT_EXIT -eq 1 ]]; then
+    FINAL_EXIT=1
+elif [[ $LINT_EXIT -ne 0 ]]; then
+    FINAL_EXIT=2
+fi
 
 if $JSON_OUTPUT; then
     LINT_TRUNCATED=false
@@ -166,7 +173,7 @@ if $JSON_OUTPUT; then
         LINT_ARR=()
         while IFS= read -r line; do
             LINT_ARR+=("$line")
-        done <<< "$LINT_OUTPUT"
+        done < <(printf '%s\n' "$LINT_OUTPUT")
         if [[ ${#LINT_ARR[@]} -gt $LIMIT ]]; then
             LINT_DISPLAY=""
             for (( i=0; i<LIMIT; i++ )); do
@@ -183,9 +190,7 @@ if $JSON_OUTPUT; then
     HAS_ISSUES=$( [[ $LINT_EXIT -ne 0 ]] && echo true || echo false )
     TRUNC_FIELD=""
     $LINT_TRUNCATED && TRUNC_FIELD=',"truncated":true'
-    cat <<EOF
-{"config_path":"$CONFIG_ESC","local_prefix":"$PREFIX_ESC","created":$CREATED,"lint_issues":$HAS_ISSUES,"lint_output":"$LINT_ESC"$TRUNC_FIELD}
-EOF
+    printf '%s\n' "{\"config_path\":\"$CONFIG_ESC\",\"local_prefix\":\"$PREFIX_ESC\",\"created\":$CREATED,\"exit_code\":$FINAL_EXIT,\"tool_exit_code\":$LINT_EXIT,\"status\":\"$( [[ $FINAL_EXIT -eq 0 ]] && echo passed || echo failed )\",\"lint_issues\":$HAS_ISSUES,\"lint_output\":\"$LINT_ESC\"$TRUNC_FIELD}"
 else
     echo "Created $CONFIG_PATH"
     if [[ $LINT_EXIT -ne 0 ]]; then
@@ -198,7 +203,4 @@ else
     fi
 fi
 
-if [[ $LINT_EXIT -ne 0 ]]; then
-    exit 1
-fi
-exit 0
+exit "$FINAL_EXIT"

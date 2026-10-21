@@ -5,7 +5,7 @@ description: Preserve NeroCD runner lease authority, cancellation, durable journ
 
 # NeroCD runner lifecycle
 
-Map the affected path through `cmd/nerocd/runner.go`, `cmd/nerocd/runner_replay.go`, and `internal/runner` before changing it. Preserve these coupled invariants:
+Map the affected path through `internal/runnerruntime/runtime.go`, `internal/runnerruntime/replay.go`, and `internal/runner` before changing it. Preserve these coupled invariants:
 
 - Authority is the full run ID, lease ID, attempt, and fence tuple. Renewals, observations, events, artifacts, provenance, and completion must use the same attempt authority; stale or mismatched authority fails closed.
 - The attempt supervisor owns cancellation. Lease expiry, a terminal lease observation, non-transient transport failure, or renewal failure cancels work and prevents later mutations from escaping that boundary.
@@ -16,4 +16,13 @@ Map the affected path through `cmd/nerocd/runner.go`, `cmd/nerocd/runner_replay.
 
 Validate the narrow package first, then the relevant replay and lifecycle tests. Use race detection when shared state or cancellation ordering changes. For outage or replay changes, include a test proving append-before-send, restart replay, acknowledgment ordering, stale-fence rejection, and no duplicate terminal mutation as applicable.
 
-Repository anchors: `cmd/nerocd/main_test.go`, `cmd/nerocd/runner_replay_test.go`, `internal/runner/executor_test.go`, `internal/runner/journal_test.go`, and the runtime acceptance fixtures. This skill defines domain invariants, not task scope, model choice, agent fanout, or worktree policy.
+Repository anchors: `internal/runnerruntime/runtime_from_command_test.go`, `internal/runnerruntime/replay_test.go`, `internal/runner/executor_test.go`, `internal/runner/journal_test.go`, and the runtime acceptance fixtures. This skill defines domain invariants, not task scope, model choice, agent fanout, or worktree policy.
+
+Use `python3 -B scripts/skills/runner_checks.py CONCERN` from the repository
+root to print focused commands. `CONCERN` is `lease`, `replay`, `journal`, or
+`shutdown`. Add `--run` to execute them and `--race` when shared state or
+cancellation ordering changes, for example:
+`python3 -B scripts/skills/runner_checks.py shutdown --race --run`.
+The runner checks that every selected group matches tests before execution.
+These package tests do not replace runtime acceptance fixtures for transport,
+container, or outage behavior.

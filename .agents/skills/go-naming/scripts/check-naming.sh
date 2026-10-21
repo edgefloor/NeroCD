@@ -5,8 +5,7 @@ VERSION="1.0.0"
 SCRIPT_NAME="$(basename "$0")"
 
 usage() {
-    cat <<EOF
-$SCRIPT_NAME v$VERSION — Check Go code for common naming anti-patterns
+    printf '%s\n' "$SCRIPT_NAME v$VERSION — Check Go code for common naming anti-patterns
 
 USAGE
     bash $SCRIPT_NAME [options] [path]
@@ -16,7 +15,7 @@ DESCRIPTION
       - SCREAMING_SNAKE_CASE constants (should be MixedCaps)
       - Get-prefixed getter methods (should omit Get)
       - Packages named util/helper/common/misc
-      - Receivers named "this" or "self"
+      - Receivers named \"this\" or \"self\"
 
     Exits 0 if no violations found, 1 if violations found, 2 on error.
 
@@ -33,8 +32,7 @@ EXAMPLES
     bash $SCRIPT_NAME
     bash $SCRIPT_NAME ./cmd/server
     bash $SCRIPT_NAME --json ./pkg/...
-    bash $SCRIPT_NAME myfile.go
-EOF
+    bash $SCRIPT_NAME myfile.go"
 }
 
 JSON_OUTPUT=false
@@ -226,7 +224,7 @@ if $JSON_OUTPUT; then
     echo '  "violations": ['
     first=true
     for v in "${VIOLATIONS[@]+"${VIOLATIONS[@]}"}"; do
-        IFS='|' read -r location rule message <<< "$v"
+        IFS='|' read -r location rule message < <(printf '%s\n' "$v")
         file="${location%%:*}"
         line="${location#*:}"
         $first || echo ","
@@ -248,7 +246,7 @@ else
     echo "Naming violations found:"
     echo ""
     for v in "${VIOLATIONS[@]}"; do
-        IFS='|' read -r location rule message <<< "$v"
+        IFS='|' read -r location rule message < <(printf '%s\n' "$v")
         printf "  %s  [%s] %s\n" "$location" "$rule" "$message"
     done
     if $TRUNCATED; then

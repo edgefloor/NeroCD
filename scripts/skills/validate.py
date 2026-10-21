@@ -58,6 +58,11 @@ PINNED_SOURCES = {
         "upstreamLocalHash": "8dc90b6844c55a1bf424fbc86e51e63d22a2c2443950e52e041a62f2bc58ebc8",
     },
 }
+SUPPORT_FILES = {
+    "scripts/skills/run_analyzer.py",
+    "scripts/skills/ui_manifest.py",
+    "scripts/skills/runner_checks.py",
+}
 LOCAL_SKILLS = {"nerocd-runner-lifecycle", "nerocd-ui-artifact-verification"}
 
 
@@ -366,6 +371,16 @@ def validate_repository(root: Path) -> tuple[dict[str, str], list[dict[str, Any]
         or not isinstance(lock.get("skills"), dict)
     ):
         raise ValidationError("skills-lock.json must use version 1 with a skills object")
+    support = lock.get("supportFiles")
+    if not isinstance(support, dict) or set(support) != SUPPORT_FILES:
+        raise ValidationError("shared skill support inventory mismatch")
+    for name, expected in support.items():
+        path = root / name
+        if any((root / Path(*Path(name).parts[:count])).is_symlink()
+               for count in range(1, len(Path(name).parts) + 1)):
+            raise ValidationError(f"shared skill support symlink rejected: {name}")
+        if not path.is_file() or _sha256(path.read_bytes()) != expected:
+            raise ValidationError(f"shared skill support hash mismatch: {name}")
     records: dict[str, Any] = lock["skills"]
     inventory = {
         path.name
