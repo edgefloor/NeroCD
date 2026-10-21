@@ -38,6 +38,32 @@ func (s *PostgresStore) ListAuditEventsPage(ctx context.Context, page Page) (Pag
 	return PageResult[domain.AuditEvent]{Items: events, Limit: limit, Offset: offset, Total: total}, nil
 }
 
+// ListAuditEventsPageForScope filters authorization before counting and paging.
+func (s *PostgresStore) ListAuditEventsPageForScope(ctx context.Context, scope AuditAuthorizationScope, page Page) (PageResult[domain.AuditEvent], error) {
+	countParams := sqlcgen.CountAuditEventsForScopeParams{ActorID: scope.ActorID, ProjectIds: scope.ProjectIDs}
+	total64, err := s.queries.CountAuditEventsForScope(ctx, countParams)
+	if err != nil {
+		return PageResult[domain.AuditEvent]{}, fmt.Errorf("count scoped audit events query: %w", err)
+	}
+	total := int(total64)
+	limit, offset := resolvePage(page, total)
+	rows, err := s.queries.ListAuditEventsPageForScope(ctx, sqlcgen.ListAuditEventsPageForScopeParams{
+		ActorID: scope.ActorID, ProjectIds: scope.ProjectIDs, PageLimit: int32(limit), PageOffset: int32(offset),
+	})
+	if err != nil {
+		return PageResult[domain.AuditEvent]{}, fmt.Errorf("list scoped audit events query: %w", err)
+	}
+	events := make([]domain.AuditEvent, 0, len(rows))
+	for _, row := range rows {
+		event, err := auditEventFromSQLC(row)
+		if err != nil {
+			return PageResult[domain.AuditEvent]{}, fmt.Errorf("decode scoped audit event row: %w", err)
+		}
+		events = append(events, event)
+	}
+	return PageResult[domain.AuditEvent]{Items: events, Limit: limit, Offset: offset, Total: total}, nil
+}
+
 // CreateAuditEvent implements the corresponding repository operation.
 func (s *PostgresStore) CreateAuditEvent(ctx context.Context, event domain.AuditEvent) error {
 	metadata, err := json.Marshal(event.Metadata)

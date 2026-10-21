@@ -169,7 +169,7 @@ func (s *Server) renewLease(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runnerLease(w http.ResponseWriter, r *http.Request) {
 	attempt, err := strconv.Atoi(r.URL.Query().Get("attempt"))
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "attempt is required"})
+		writeErrorEnvelope(w, http.StatusBadRequest, "bad_request", "attempt is required")
 		return
 	}
 	lease, err := s.app.RunnerLease(r.Context(), r.URL.Query().Get("lease_id"), attempt, r.URL.Query().Get("fence"))
@@ -196,7 +196,7 @@ func (s *Server) appendRunLog(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runnerDeploymentPlan(w http.ResponseWriter, r *http.Request) {
 	attempt, err := strconv.Atoi(r.URL.Query().Get("attempt"))
 	if err != nil || attempt <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "attempt is required"})
+		writeErrorEnvelope(w, http.StatusBadRequest, "bad_request", "attempt is required")
 		return
 	}
 	v, err := s.app.RunnerDeploymentPlan(r.Context(), app.DeploymentPlanInput{DeploymentID: r.URL.Query().Get("deployment_id"), RunID: r.URL.Query().Get("run_id"), LeaseID: r.URL.Query().Get("lease_id"), Attempt: attempt, Fence: r.URL.Query().Get("fence")})
@@ -210,7 +210,7 @@ func (s *Server) runnerDeploymentPlan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runnerDeploymentStatus(w http.ResponseWriter, r *http.Request) {
 	attempt, err := strconv.Atoi(r.URL.Query().Get("attempt"))
 	if err != nil || attempt <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "attempt is required"})
+		writeErrorEnvelope(w, http.StatusBadRequest, "bad_request", "attempt is required")
 		return
 	}
 	v, err := s.app.RunnerDeploymentStatus(r.Context(), app.DeploymentPlanInput{DeploymentID: r.URL.Query().Get("deployment_id"), RunID: r.URL.Query().Get("run_id"), LeaseID: r.URL.Query().Get("lease_id"), Attempt: attempt, Fence: r.URL.Query().Get("fence")})
@@ -305,7 +305,7 @@ func (s *Server) completeLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Attempt <= 0 || req.Fence == "" || strings.TrimSpace(req.CompletionKey) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "attempt, fence, and completion_key are required"})
+		writeErrorEnvelope(w, http.StatusBadRequest, "bad_request", "attempt, fence, and completion_key are required")
 		return
 	}
 	lease, err := s.app.CompleteLease(r.Context(), req.LeaseID, req.Status, req.Attempt, req.Fence, req.CompletionKey)

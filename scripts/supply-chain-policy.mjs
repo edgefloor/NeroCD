@@ -5,6 +5,8 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { assessLicenseDeclaration } from "./license-policy.mjs";
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const allowedLicenses = new Set(["0BSD", "Apache-2.0", "BlueOak-1.0.0", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "ISC", "MIT", "MIT-0", "MPL-2.0", "OFL-1.1", "Python-2.0", "Unlicense"]);
 const allowedWebRuntimeDependencies = new Set([
@@ -145,13 +147,6 @@ async function assertNoCDNs() {
   }
 }
 
-function normalizeLicense(value) {
-  if (!value) {
-    return "";
-  }
-  return String(value).replace(/[()]/g, "").split(/\s+OR\s+|\s+AND\s+/i)[0].trim();
-}
-
 async function detectGoLicense(moduleDir) {
   const names = await readdir(moduleDir);
   const licenseFile = names.find((name) => /^licen[cs]e/i.test(name) || /^copying/i.test(name));
@@ -202,8 +197,13 @@ async function collectNodeComponents() {
       continue;
     }
     const pkg = JSON.parse(await readFile(packagePath, "utf8"));
-    const license = normalizeLicense(pkg.license);
-    if (!allowedLicenses.has(license)) {
+    let license;
+    try {
+      license = assessLicenseDeclaration(pkg.license, allowedLicenses);
+    } catch (error) {
+      fail(`invalid npm package license for ${pkg.name}: ${pkg.license ?? "missing"} (${error.message})`);
+    }
+    if (!license.approved) {
       fail(`unapproved npm package license for ${pkg.name}: ${pkg.license ?? "missing"}`);
     }
     components.push({
@@ -211,7 +211,7 @@ async function collectNodeComponents() {
       ecosystem: "npm",
       name: pkg.name,
       version: pkg.version,
-      licenses: [{ license: { id: license } }],
+      licenses: [license.cycloneDXLicense],
       purl: `pkg:npm/${encodeURIComponent(pkg.name).replace("%40", "@")}@${pkg.version}`,
       path: relative(root, dir),
     });

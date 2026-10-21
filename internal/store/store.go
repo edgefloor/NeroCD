@@ -67,9 +67,10 @@ func immutableGitCommit(value string) bool {
 
 // Page specifies a bounded offset page for a list operation.
 type Page struct {
-	Limit   int
-	Offset  int
-	Enabled bool
+	Limit          int
+	Offset         int
+	Enabled        bool
+	LimitSpecified bool
 }
 
 // PageResult contains a page of items and the total available count.
@@ -98,6 +99,14 @@ func (s RunAuthorizationScope) permits(projectID string) bool {
 		}
 	}
 	return false
+}
+
+// AuditAuthorizationScope identifies the actor and projects whose audit
+// events an authenticated principal may inspect. An empty scope denies access
+// to every audit event.
+type AuditAuthorizationScope struct {
+	ActorID    string
+	ProjectIDs []string
 }
 
 // MemoryStore is an in-memory implementation of the store repository contracts.
@@ -256,7 +265,7 @@ func paginateSlice[T any](items []T, page Page) PageResult[T] {
 		limit = total
 		offset = 0
 	}
-	if page.Enabled && limit == 0 {
+	if page.Enabled && limit == 0 && !page.LimitSpecified {
 		limit = total
 	}
 	if limit > MaxPageLimit {

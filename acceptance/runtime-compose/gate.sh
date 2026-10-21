@@ -58,9 +58,13 @@ engine_builder_running(){
   [[ "$statuses" == running ]] || return 4
 }
 select_engine_builder(){
-  local active rc listing="$dir/buildx-ls.json"
+  local active context rc listing="$dir/buildx-ls.json"
   engine_builder=''; builder_source=''; builder_diagnostic=selection_started
-  if engine_builder_running default "$dir/buildx-default.inspect"; then
+  if ! context=$(docker context show 2>"$dir/docker-context.err"); then
+    builder_diagnostic=context_unavailable
+    return 1
+  fi
+  if [[ "$context" == default ]] && engine_builder_running default "$dir/buildx-default.inspect"; then
     engine_builder=default; builder_source=default; builder_diagnostic=default_selected
     return 0
   fi
@@ -77,6 +81,10 @@ select_engine_builder(){
     5) builder_diagnostic=active_builder_unsafe; return 1 ;;
     *) builder_diagnostic=active_list_invalid; return 1 ;;
   esac
+  if [[ "$context" != default && "$active" == default ]]; then
+    builder_diagnostic=active_builder_context_mismatch
+    return 1
+  fi
   if engine_builder_running "$active" "$dir/buildx-active.inspect"; then
     rc=0
   else

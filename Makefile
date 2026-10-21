@@ -138,6 +138,7 @@ runtime-web-operator-gate:
 	bash acceptance/runtime-web-operator/gate.sh
 
 web-policy: web-install
+	node --test scripts/license-policy.test.mjs
 	node scripts/supply-chain-policy.mjs
 
 supply-chain: web-install web-policy
@@ -171,6 +172,7 @@ ci-release-policy-gate:
 	bash scripts/release-artifact-verifier-test.sh
 	bash scripts/release-evidence-concurrency-test.sh
 	bash scripts/release-runtime-scheduling-test.sh
+	bash scripts/runtime-builder-selection-test.sh
 
 contract:
 	GOCACHE="$(GOCACHE_DIR)" go run ./cmd/nerocd contract

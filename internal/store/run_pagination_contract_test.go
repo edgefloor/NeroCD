@@ -83,6 +83,38 @@ func runPaginationContract(t *testing.T, repository runPaginationContractStore, 
 	}
 
 	scope := store.RunAuthorizationScope{ProjectIDs: []string{allowedProject.ID}}
+	explicitZero, err := repository.ListRunsPageForScope(ctx, scope, store.Page{Enabled: true, LimitSpecified: true})
+	if err != nil {
+		t.Fatalf("list scoped run page with explicit zero limit: %v", err)
+	}
+	if explicitZero.Total != 130 || explicitZero.Offset != 0 || explicitZero.Limit != 0 || len(explicitZero.Items) != 0 {
+		t.Fatalf("explicit-zero scoped run page = %#v, want total 130 and no items", explicitZero)
+	}
+
+	offsetOnly, err := repository.ListRunsPageForScope(ctx, scope, store.Page{Enabled: true, Offset: 100})
+	if err != nil {
+		t.Fatalf("list scoped run page with offset only: %v", err)
+	}
+	if offsetOnly.Total != 130 || offsetOnly.Offset != 100 || offsetOnly.Limit != store.MaxPageLimit || len(offsetOnly.Items) != 30 {
+		t.Fatalf("offset-only scoped run page = %#v, want bounded default and 30 later-page items", offsetOnly)
+	}
+
+	positive, err := repository.ListRunsPageForScope(ctx, scope, store.Page{Enabled: true, Limit: 1})
+	if err != nil {
+		t.Fatalf("list scoped run page with positive limit: %v", err)
+	}
+	if positive.Total != 130 || positive.Offset != 0 || positive.Limit != 1 || len(positive.Items) != 1 {
+		t.Fatalf("positive-limit scoped run page = %#v, want one of 130 items", positive)
+	}
+
+	maxBounded, err := repository.ListRunsPageForScope(ctx, scope, store.Page{Enabled: true, Limit: store.MaxPageLimit + 1})
+	if err != nil {
+		t.Fatalf("list scoped run page above maximum limit: %v", err)
+	}
+	if maxBounded.Total != 130 || maxBounded.Offset != 0 || maxBounded.Limit != store.MaxPageLimit || len(maxBounded.Items) != store.MaxPageLimit {
+		t.Fatalf("maximum-bounded scoped run page = %#v, want %d of 130 items", maxBounded, store.MaxPageLimit)
+	}
+
 	page := store.Page{Enabled: true, Limit: 100, Offset: 100}
 	runs, err := repository.ListRunsPageForScope(ctx, scope, page)
 	if err != nil {

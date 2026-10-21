@@ -493,9 +493,10 @@ func paginated[T any](r *http.Request, items []T) map[string]any {
 
 func pageFromRequest(r *http.Request) store.Page {
 	return store.Page{
-		Limit:   parseNonNegativeInt(r.URL.Query().Get("limit"), 0),
-		Offset:  parseNonNegativeInt(r.URL.Query().Get("offset"), 0),
-		Enabled: r.URL.Query().Has("limit") || r.URL.Query().Has("offset"),
+		Limit:          parseNonNegativeInt(r.URL.Query().Get("limit"), 0),
+		Offset:         parseNonNegativeInt(r.URL.Query().Get("offset"), 0),
+		Enabled:        r.URL.Query().Has("limit") || r.URL.Query().Has("offset"),
+		LimitSpecified: r.URL.Query().Has("limit"),
 	}
 }
 

@@ -50,6 +50,12 @@ func runRunner(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *pollInterval <= 0 {
+		return errors.New("runner --poll-interval must be greater than zero")
+	}
+	if *cancelPollInterval <= 0 {
+		return errors.New("runner --cancel-poll-interval must be greater than zero")
+	}
 	if err := validateRunnerOperatingGuardrails(*server, *workDir); err != nil {
 		return err
 	}
