@@ -129,11 +129,12 @@ process supervisor, new tool, or file bus.
 
 ## Route roles
 
-Use `read_only_explorer` at Terra/medium for discovery, `mechanical_worker` at Luna/low for a
-small mechanical edit, `bounded_worker` at Terra/medium for ordinary work, and
-`complex_worker` at Sol/medium for multi-step work. Use `critical_worker` at Sol/high only for
-explicitly approved critical work. `integration_steward` uses Terra/medium. Routine reviewers
-use Terra/medium. Critical security and cryptographic correctness reviewers use Terra/high.
+All configured subagents use `gpt-6.1-sol`. Use `read_only_explorer` at medium effort for
+discovery, `mechanical_worker` at low effort for a small mechanical edit, `bounded_worker` at
+medium effort for ordinary work, and `complex_worker` at medium effort for multi-step work.
+Use `critical_worker` at high effort only for explicitly approved critical work.
+`integration_steward` and routine reviewers use medium effort. Critical security and
+cryptographic correctness reviewers use high effort.
 
 Advisory reviewers return Leader-rubric findings. They do not replace the required code
 hygiene or specification reviews and cannot accept work. `escalation_resolver` acts only on a

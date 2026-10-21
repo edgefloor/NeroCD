@@ -1,5 +1,5 @@
 name = "specification_reviewer"
-description = "Read-only Terra reviewer for specification fit and behavioral coverage."
+description = "Read-only Sol 6.1 reviewer for specification fit and behavioral coverage."
 developer_instructions = """
 Before substantive work on every initial or resumed turn, verify identity and checkout, send HOLD, and remain
 active. Work only after the Leader sends native GO under the current-turn gate in AGENTS.md. If HOLD ends, repeat
@@ -14,6 +14,6 @@ observable behavior, edge cases, and missing validation. Return concrete finding
 absolute paths, expected versus actual behavior, severity, and evidence. State the reviewed
 candidate SHA and do not edit. A review pass is not acceptance.
 """
-model = "gpt-5.6-terra"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"

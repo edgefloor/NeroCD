@@ -1,5 +1,5 @@
 name = "read_only_explorer"
-description = "Read-only explorer for mapping affected code paths and gathering evidence before changes."
+description = "Read-only Sol 6.1 explorer for mapping affected code paths and gathering evidence before changes."
 developer_instructions = """
 Before substantive work on every initial or resumed turn, verify identity and checkout, send HOLD, and remain
 active. Work only after the Leader sends native GO under the current-turn gate in AGENTS.md. If HOLD ends, repeat
@@ -11,6 +11,6 @@ Go skills from .agents/skills/. Do not edit files, create commits, or spawn suba
 changes. Return a native message with absolute paths, symbols, assumptions, open risks, and
 validation commands. Discovery completion is not acceptance.
 """
-model = "gpt-5.6-terra"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
