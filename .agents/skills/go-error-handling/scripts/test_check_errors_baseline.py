@@ -52,6 +52,9 @@ class BaselineComparatorTest(unittest.TestCase):
         scanner_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(WRAPPER, scanner_dir / WRAPPER.name)
         shutil.copy2(AST, scanner_dir / AST.name)
+        launcher = self.repo / module.LAUNCHER
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(HERE.parents[3] / module.LAUNCHER, launcher)
 
     def commit(self, message: str) -> str:
         self.git("add", ".")
@@ -113,6 +116,15 @@ class BaselineComparatorTest(unittest.TestCase):
         scanner.write_text(scanner.read_text(encoding="utf-8") + "\n", encoding="utf-8")
         candidate = self.commit("scanner change")
         self.assertEqual(2, self.invoke(base, candidate, "pkg/example.go").returncode)
+
+    def test_different_shared_launcher_is_rejected(self) -> None:
+        base = self.seed("package pkg\nfunc f() {}\n")
+        launcher = self.repo / module.LAUNCHER
+        launcher.write_text(launcher.read_text() + "\n# changed\n")
+        candidate = self.commit("launcher change")
+        result = self.invoke(base, candidate, "pkg/example.go")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("differs between base and candidate", result.stderr)
 
     def test_ambient_scanner_cache_cannot_replace_real_scan(self) -> None:
         base = self.seed("package pkg\nfunc f() error {\n var err error\n return err\n}\n")

@@ -21,6 +21,7 @@ SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 SCANNER_DIR = ".agents/skills/go-error-handling/scripts"
 WRAPPER = f"{SCANNER_DIR}/check-errors.sh"
 AST = f"{SCANNER_DIR}/check-errors-ast.go"
+LAUNCHER = "scripts/skills/run_analyzer.py"
 DISPLAY_LIMIT = 50
 
 
@@ -109,12 +110,12 @@ def git_blob(repo: Path, commit: str, path: str) -> tuple[str, bytes]:
 
 def scanner_provenance(repo: Path, base: str, candidate: str) -> dict[str, str]:
     result: dict[str, str] = {}
-    for name, path in (("wrapper_blob", WRAPPER), ("ast_blob", AST)):
+    for name, path in (("wrapper_blob", WRAPPER), ("ast_blob", AST), ("launcher_blob", LAUNCHER)):
         _, base_blob = object_info(repo, base, path)
         _, candidate_blob = object_info(repo, candidate, path)
         if base_blob != candidate_blob:
             raise ComparisonError(f"scanner {path} differs between base and candidate")
-        local = (Path(__file__).resolve().parent / Path(path).name).read_bytes()
+        local = (Path(__file__).resolve().parents[4] / path).read_bytes()
         recorded = subprocess.run(
             ["git", "cat-file", "blob", base_blob], cwd=repo, capture_output=True, check=False
         )
@@ -125,7 +126,7 @@ def scanner_provenance(repo: Path, base: str, candidate: str) -> dict[str, str]:
 
 
 def materialize(root: Path, repo: Path, commit: str, path: str) -> Path:
-    for scanner_path in (WRAPPER, AST):
+    for scanner_path in (WRAPPER, AST, LAUNCHER):
         _, data = git_blob(repo, commit, scanner_path)
         destination = root / scanner_path
         destination.parent.mkdir(parents=True, exist_ok=True)

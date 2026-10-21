@@ -241,7 +241,9 @@ if $JSON_OUTPUT; then
     printf '"benchmarks_found":%d,' "$BENCH_COUNT"
     printf '"baseline":"%s",' "$escaped_baseline"
     printf '"save":"%s",' "$escaped_save"
-    printf '"exit_code":%d,' "$GO_EXIT"
+    printf '"exit_code":%d,' "$FINAL_EXIT"
+    printf '"tool_exit_code":%d,' "$GO_EXIT"
+    printf '"status":"%s",' "$( [[ $FINAL_EXIT -eq 0 ]] && echo passed || echo failed )"
     printf '"output":"%s"' "$escaped_output"
     if $TRUNCATED; then
         printf ',"truncated":true'

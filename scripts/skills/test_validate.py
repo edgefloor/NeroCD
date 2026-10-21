@@ -50,6 +50,12 @@ class SkillValidatorTest(unittest.TestCase):
         self.assertEqual(set(hashes), {path.name for path in (REPO_ROOT / ".agents/skills").iterdir() if path.is_dir()})
         self.assertEqual({scenario["kind"] for scenario in scenarios}, {"positive", "negative", "overlap"})
 
+    def test_shared_launcher_tampering_is_rejected(self) -> None:
+        helper = self.root / "scripts/skills/run_analyzer.py"
+        helper.write_text(helper.read_text() + "\n# mutation\n")
+        with self.assertRaisesRegex(VALIDATE.ValidationError, "shared skill support hash mismatch"):
+            VALIDATE.validate_repository(self.root)
+
     def test_digest_mismatch_is_rejected(self) -> None:
         skill = self.root / ".agents/skills/go-context/SKILL.md"
         skill.write_text(skill.read_text(encoding="utf-8") + "\nmutation\n", encoding="utf-8")

@@ -39,7 +39,7 @@ NAMING_SCRIPT_COMPONENTS = (
     "scripts",
     "check-naming.sh",
 )
-NAMING_SCRIPT_SHA256 = "5eae9d2d5133cae2bb5d9b58058cc79f62d367f77efe3f6c3e837ac82dd9bca7"
+NAMING_SCRIPT_SHA256 = "e103cc087233e60d5e744da2c5b52ba1e81d750866d7bcf066ec03fdd9acc331"
 SAFE_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z", re.ASCII)
 
 

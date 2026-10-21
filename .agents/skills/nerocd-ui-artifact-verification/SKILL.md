@@ -16,3 +16,12 @@ Treat the frontend source, the built `web/dist` tree, and the Go-served embedded
 Useful evidence includes the focused test command, frontend build result, `web/dist` hash manifest, browser assertion or screenshot when layout matters, and Go build/test result. Mark Docker, browser, or deployed-environment checks `not_run` when those prerequisites are unavailable, and state what remains unverified. This skill does not authorize release, deployment, version changes, or unrelated artifact regeneration; deployed-state inspection must stay within the user's existing access and requested scope.
 
 Repository anchors: `web/app/package.json`, `web/app/vite.config.ts`, `web/app/tests/browser/operator-workflow.spec.ts`, `web/app/scripts/browser-server.sh`, and `web/assets.go`.
+
+From the repository root, capture the built artifact with
+`python3 -B scripts/skills/ui_manifest.py > /tmp/nerocd-ui-before.json`.
+After rebuilding, compare it with
+`python3 -B scripts/skills/ui_manifest.py --compare /tmp/nerocd-ui-before.json`.
+The comparison reports added, removed, and changed paths; exit 1 means the
+artifacts differ, and exit 2 means verification could not run. Store manifests
+outside `web/dist`. This command checks built bytes, not browser behavior or
+bytes embedded in an already-built server.

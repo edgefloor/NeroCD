@@ -8,7 +8,7 @@ GOLANGCI_LINT := $(TOOLS_BIN)/$(GOLANGCI_LINT_VERSION)/golangci-lint
 LINT_BASE_REV ?= HEAD
 SQLC_TOOL_IMAGE := golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299a562f08707eb0ecb24b659e5bd6c108e1
 PRODUCT_PACKAGES := ./cmd/... ./internal/...
-TEST_PACKAGES := $(shell go list ./... | grep -v '/agent/skills/')
+TEST_PACKAGES = $(shell go list ./... | grep -v '/agent/skills/')
 
 .PHONY: build test fmt-check vet race lint lint-new lint-install shell-check verify postgres-test generate check-generated web-install web-test web-build web-policy browser-smoke docker-build production-compose-policy-gate local-image-registry-gate identity-artifact-gate runtime-fencing-gate runtime-spool-gate runtime-secrets-gate runtime-enrollment-gate runtime-web-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate production-profile-gate backup-restore-gate backup-scheduler-gate dogfood-gate system-operations-gate observability-gate release-evidence-accepted-gates release-evidence-gate release-evidence-synthetic-gate ci-release-policy-gate supply-chain release-artifacts contract check clean run smoke docker-up docker-down docker-logs
 
@@ -200,3 +200,13 @@ docker-down:
 
 docker-logs:
 	docker compose logs -f
+
+.PHONY: skill-lint-path skill-tools-test
+skill-lint-path:
+	@printf '%s\n' '$(GOLANGCI_LINT)'
+
+skill-tools-test:
+	GOCACHE="$(GOCACHE_DIR)" go test -count=1 ./.agents/skills/go-documentation/scripts ./.agents/skills/go-interfaces/scripts
+	PYTHONDONTWRITEBYTECODE=1 GOCACHE="$(GOCACHE_DIR)" python3 -m unittest discover -s .agents/skills/go-error-handling/scripts -p 'test_*.py'
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/skills -p 'test_*.py'
+	python3 -B scripts/skills/validate.py --json

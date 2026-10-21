@@ -19,7 +19,12 @@ Consistent linting helps catch common issues and establishes a high bar for code
 
 ## Setup Procedure
 
-1. Create `.golangci.yml` with `scripts/setup-lint.sh` or copy `assets/golangci.yml`
+For NeroCD, retain the existing configuration and use `make lint` or
+`make lint-new LINT_BASE_REV=COMMIT`. Install the repository-pinned executable
+with `make lint-install` when needed. The setup helper is for a new configuration;
+it verifies prerequisites and schema before replacing a file.
+
+1. For a new project, create `.golangci.yml` with `scripts/setup-lint.sh` or copy `assets/golangci.yml`
 2. Run `golangci-lint run ./...`
 3. If errors appear, fix them category by category (formatting first, then vet, then style)
 4. Re-run until clean

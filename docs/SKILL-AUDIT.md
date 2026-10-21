@@ -54,3 +54,32 @@ PYTHONDONTWRITEBYTECODE=1 python3 .codex/hooks/test_product_go_advisory.py
 ```
 
 The validator is read-only and uses only the Python 3.11+ standard library. Its tests mutate temporary copies to prove that digest mismatch, broken compatibility links, duplicate trees, and package-internal symlinks are rejected.
+
+## Skill tool checks
+
+Run `make skill-tools-test` to execute the documentation and interface analyzer
+Go tests, the historical error-baseline tests, helper behavior tests, and the
+inventory validator. The Agent policy workflow runs this target when skills,
+shared helpers, the Makefile, or Go dependencies change. Analyzer tests run with
+`-count=1` because their shell and Python dependencies live outside Go's package
+source files.
+
+The three analyzer wrappers share `scripts/skills/run_analyzer.py`. Cache keys
+bind source SHA-256, the Go version, the host platform, and the launcher itself.
+Builds use private temporary outputs and atomic replacement. These are host tools;
+product cross-compilation settings do not select their execution platform.
+
+`skills-lock.json` retains the existing package hash algorithm and separately
+pins shared helpers in `supportFiles` by SHA-256. The validator checks those
+files before validating packages; its JSON output contract remains unchanged.
+The historical error comparator verifies and materializes the committed shared
+launcher alongside its scanner, so ambient helper changes cannot alter a
+comparison silently.
+
+Use the UI manifest and runner concern commands documented in the two NeroCD
+skills for focused verification. UI manifest differences are reported as
+`failed` with exit 1; invalid inputs return exit 2. Runner commands are plans
+marked `not_run` until `--run` is supplied. Pre-review uses repository-pinned
+lint and reports standalone vet as `not_run` when lint covers it. `--force`
+allows an unavailable linter to be skipped explicitly. Benchmark JSON separates
+the overall `exit_code` from the underlying Go `tool_exit_code`.
