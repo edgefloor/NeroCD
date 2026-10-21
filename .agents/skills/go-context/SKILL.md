@@ -112,6 +112,16 @@ default:
 }
 ```
 
+When shutdown is initiated by an operating-system signal, test the signal path
+with a started-process handshake and bounded cleanup. A unit test that cancels a
+context verifies propagation, but does not establish that the process receives
+and turns the signal into that cancellation.
+
+Use `signal.NotifyContext` with platform-supported termination signals and call
+its returned `stop` function after shutdown to release signal registration. If
+the shutdown path calls `os.Exit`, call `stop` explicitly first because deferred
+calls do not run.
+
 ### Context Immutability
 
 Contexts are immutable — it's safe to pass the same `ctx` to multiple

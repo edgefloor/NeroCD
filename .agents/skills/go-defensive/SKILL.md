@@ -104,6 +104,14 @@ Field tags are a **serialization contract** — renaming a struct field without
 updating the tag silently breaks wire compatibility. Treat tags as part of
 the public API for any type that crosses a serialization boundary.
 
+## Structured Configuration
+
+Use the maintained decoder for the declared input format instead of splitting
+lines or fields by hand. For YAML-like formats, test quoting, block values,
+comments, wrong types, and duplicate semantic identities after decoding; JSON
+does not have every YAML syntax case. Follow the schema's existing unknown-field
+policy; do not make rejection of every extra field an accidental rule.
+
 ## Start Enums at One
 
 Start enums at non-zero to distinguish uninitialized from valid values.

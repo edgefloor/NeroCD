@@ -27,6 +27,15 @@ Treat tests as executable specifications and adapt the procedure to the assigned
 
 Register test cleanup immediately after successful resource acquisition so fatal assertions cannot leak resources. When explicit `Close` or release behavior is under test, retain the explicit assertions and add a safe fallback cleanup that is idempotent or state-aware on failure.
 
+For subprocess signal handling, wait for a started handshake before sending the
+signal and use bounded cleanup. A cancelled context test alone does not prove
+the OS signal path. For admission control, prove rejected work did not start
+and cancellation releases capacity. For YAML-like format decoding, cover quotes,
+block values, comments, wrong types, and duplicate semantic identities after
+decoding; JSON does not have every YAML syntax case. Use the schema's
+unknown-field policy. When an API allows partial results with an error, assert
+both the usable prefix and the explicit incomplete outcome.
+
 ## Load detail when needed
 
 Read only the references relevant to the current task.

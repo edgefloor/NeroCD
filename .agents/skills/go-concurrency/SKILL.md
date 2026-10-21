@@ -80,6 +80,18 @@ counter. Prefer the primitive that makes ownership and synchronization clear.
 > unnecessary concurrency at the caller side. Let the caller add concurrency
 > when needed.
 
+## Admission Is More Than Execution
+
+For a queue, runner, or service with synchronous callers, model limits for
+waiting callers, waiting time, and active execution separately. A capacity
+rejection must leave the work unstarted; cancellation must release any
+reservation. Do not use a page-size or batch-size cap as proof that these
+budgets are bounded.
+
+For reloadable state, keep the desired generation separate from the last
+successfully loaded generation when an older good value remains usable. Preserve
+the established readiness contract while exposing a failed reload accurately.
+
 ---
 
 ## Zero-value Mutexes

@@ -13,6 +13,7 @@ allowed-tools: Bash(bash:*)
 - `assets/review-template.md` - Use when formatting review output with Must Fix, Should Fix, and Nits sections.
 - `scripts/pre-review.sh` - Run before manual review to collect gofmt, go vet, and golangci-lint results.
 - `references/WEB-SERVER.md` - Read when reviewing an HTTP server that combines concurrency, context, logging, error handling, and shutdown behavior.
+- `references/FAILURE-BOUNDARIES.md` - Read when a diff changes execution admission, streamed or replayed results, reload readiness, per-run files, signal shutdown, or structured configuration input.
 
 ## Review Procedure
 
@@ -49,6 +50,7 @@ allowed-tools: Bash(bash:*)
 - [ ] **Error strings**: Lowercase, no punctuation (unless starting with proper noun/acronym) → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **In-band errors**: No magic values (-1, "", nil); use multiple returns with error or ok bool → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **Indent error flow**: Handle errors first and return; keep normal path at minimal indentation → [go-error-handling](../go-error-handling/SKILL.md)
+- [ ] **Terminal outcomes**: A structured terminal failure stops follow-on work in both live and replayed paths; preserve usable partial data only when its contract explicitly permits it → [FAILURE-BOUNDARIES.md](references/FAILURE-BOUNDARIES.md)
 
 ---
 
@@ -68,6 +70,7 @@ allowed-tools: Bash(bash:*)
 - [ ] **Goroutine lifetimes**: Clear when/whether goroutines exit; document if not obvious → [go-concurrency](../go-concurrency/SKILL.md)
 - [ ] **Synchronous functions**: Prefer sync over async; let callers add concurrency if needed → [go-concurrency](../go-concurrency/SKILL.md)
 - [ ] **Contexts**: First parameter; not in structs; no custom Context types; pass even if you think you don't need to → [go-context](../go-context/SKILL.md)
+- [ ] **Admission budgets**: Review waiters, waiting time, and execution slots as separate limits; rejection must not start work, and cancellation must release reserved capacity → [FAILURE-BOUNDARIES.md](references/FAILURE-BOUNDARIES.md)
 
 ---
 
@@ -152,6 +155,7 @@ allowed-tools: Bash(bash:*)
 - [ ] **Useful test failures**: Messages include what was wrong, inputs, got, and want; order is `got != want` → [golang-testing](../golang-testing/SKILL.md)
 - [ ] **TestMain**: Use only when all tests need common setup with teardown; prefer scoped helpers first → [golang-testing](../golang-testing/SKILL.md)
 - [ ] **Real transports**: Prefer `httptest.NewServer` + real client over mocking HTTP → [golang-testing](../golang-testing/SKILL.md)
+- [ ] **Boundary coverage**: For changed failure boundaries, test the observable stop, retained contract, or release behavior; context cancellation alone does not prove operating-system signal handling → [FAILURE-BOUNDARIES.md](references/FAILURE-BOUNDARIES.md)
 
 ---
 

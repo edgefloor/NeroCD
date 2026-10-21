@@ -63,7 +63,38 @@ must not control task state.
   This removes a v1 record-format limit. It does not expand authority.
 - Run meaningful checks at task boundaries. Do not run the full suite on every Stop event.
 
+## Commit messages
+
+NeroCD uses concise conventional, lower-case subjects: `type(scope): imperative
+behavior`. Use a real component as the optional scope. A `fix` includes its
+regression test; use `test` only when production behavior is unchanged, `docs`
+for instructions, and `perf` only with measurement evidence. Keep each commit
+to one coherent outcome. Add a body when the reason is not clear from the
+subject, state actual validation limits, and do not copy merge-generated titles
+or claim a proposed runtime change is implemented. For example:
+`docs(skills): sharpen Go failure checks and commit guidance`. Do not rewrite
+history or push without authorization.
+
+Prefer one narrow, independently reviewable behavior or decision per commit.
+Plan commit boundaries before editing, and split independent fixes, refactors,
+and cleanup even when they touch the same subsystem. Keep required regression
+tests, supporting documentation, dependency or generated-file updates, and
+skill-lock changes with the owning change. Each commit should leave a coherent,
+buildable code state; that does not require running the full application build
+for every commit. Judge commit size by review burden:
+there is no hard line or file cap, and tests should not be separated merely to
+make a diff smaller. Choose the smallest complete change that preserves context.
+
 ## Validate and review the candidate
+
+Choose validation from the affected behavior and dependencies, not from commit
+creation or line count. During implementation, use the cheapest existing check
+that provides meaningful evidence. Run broader builds or suites when accumulated
+changes, affected interface or integration boundaries, failures, or established
+final-check requirements justify them. Required CI, integration, and release
+checks still run at their defined boundary. Retain evidence for unaffected checks
+with its original revision and record why that evidence remains valid; rerun
+checks affected by subsequent changes, and report unrun checks accurately.
 
 After committing, run `scripts/orchestration/native_check.py candidate` with the full base and
 candidate SHAs and one `--allow` argument per owned file or directory prefix. The command
