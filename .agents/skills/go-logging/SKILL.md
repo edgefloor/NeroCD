@@ -142,6 +142,13 @@ handle-once pattern and error wrapping guidance.
 - Request/response bodies that may contain user data
 - Entire slices or maps of unbounded size
 
+## Per-Run Files
+
+When a log file belongs to one run, allocate it atomically with a unique name
+such as `os.CreateTemp` rather than deriving a shared timestamp filename.
+Preserve intentional shared-stream contracts; uniqueness is for isolation, not
+a replacement for coordinated shared output.
+
 ---
 
 ## Quick Reference

@@ -63,6 +63,18 @@ must not control task state.
   This removes a v1 record-format limit. It does not expand authority.
 - Run meaningful checks at task boundaries. Do not run the full suite on every Stop event.
 
+## Commit messages
+
+NeroCD uses concise conventional, lower-case subjects: `type(scope): imperative
+behavior`. Use a real component as the optional scope. A `fix` includes its
+regression test; use `test` only when production behavior is unchanged, `docs`
+for instructions, and `perf` only with measurement evidence. Keep each commit
+to one coherent outcome. Add a body when the reason is not clear from the
+subject, state actual validation limits, and do not copy merge-generated titles
+or claim a proposed runtime change is implemented. For example:
+`docs(skills): sharpen Go failure checks and commit guidance`. Do not rewrite
+history or push without authorization.
+
 ## Validate and review the candidate
 
 After committing, run `scripts/orchestration/native_check.py candidate` with the full base and

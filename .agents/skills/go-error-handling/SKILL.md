@@ -70,6 +70,13 @@ as unspecified unless explicitly documented.
 **Tip**: Functions taking a `context.Context` should usually return an `error`
 so callers can determine if the context was cancelled.
 
+For APIs that explicitly return a result with an error, preserve the documented
+usable prefix and report incompleteness; do not imply full success or discard
+validated partial data by default. For a structured terminal response status,
+apply the terminal failure consistently to live handling and replay before
+scheduling follow-on tools. See the conditional source notes in
+[go-code-review](../go-code-review/references/FAILURE-BOUNDARIES.md).
+
 ---
 
 ## Handling Errors
