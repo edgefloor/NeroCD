@@ -30,7 +30,7 @@ import (
 )
 
 func TestPostgresHostingDockerAgentAndRiver(t *testing.T) {
-	for _, interruption := range []string{"lease_loss", "cancel"} {
+	for _, interruption := range []string{"lease_loss", "cancel", "retained"} {
 		t.Run(interruption, func(t *testing.T) { testHostingDockerAgentAndRiver(t, interruption) })
 	}
 }
@@ -43,6 +43,11 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 	var stopConsumer func(context.Context) error
 	pg, database, resource, target, _ := hostingExecutionFixture(t, &stopConsumer)
 	ctx := t.Context()
+	if interruption == "retained" {
+		if _, err := database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, target.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+			t.Fatal(err)
+		}
+	}
 	fixtureDocker := func(args ...string) {
 		t.Helper()
 		commandCtx, stop := context.WithTimeout(ctx, 20*time.Second)
@@ -158,7 +163,11 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 	})
 	requestDeployment := func(key string) domain.HostingOperation {
 		t.Helper()
-		body, _ := json.Marshal(domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, IdempotencyKey: key, ContainerPort: 8080, HostPort: port, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 5}})
+		readiness := domain.HostingReadiness{Path: "/", TimeoutSeconds: 5}
+		if key == "actual-agent-retained-unready" {
+			readiness = domain.HostingReadiness{Path: "/unready", TimeoutSeconds: 1}
+		}
+		body, _ := json.Marshal(domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, IdempotencyKey: key, ContainerPort: 8080, HostPort: port, Readiness: readiness})
 		request, requestErr := http.NewRequestWithContext(ctx, "POST", httpServer.URL+"/api/v1/resources/"+resource.ID+"/deployments", bytes.NewReader(body))
 		if requestErr != nil {
 			t.Fatal(requestErr)
@@ -189,7 +198,18 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 		}
 	}
 	var lastHealthy domain.HostingOperation
+	var firstHealthy domain.HostingOperation
 	for _, version := range []string{"A", "B"} {
+		if version == "B" && interruption == "retained" {
+			listener, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			port = listener.Addr().(*net.TCPAddr).Port
+			if err = listener.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
 		op := requestDeployment("actual-agent-" + version)
 		runAgent()
 		completed, err := pg.GetHostingOperation(ctx, op.ID)
@@ -198,6 +218,9 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 		}
 		ownedContainers = append(ownedContainers, completed.Result.ContainerID)
 		lastHealthy = completed
+		if version == "A" {
+			firstHealthy = completed
+		}
 		response, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/")
 		if err != nil {
 			t.Fatal(err)
@@ -208,6 +231,89 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 			t.Fatalf("ordinary HTTP version %s got %q err=%v", version, body, err)
 		}
 		t.Logf("River/API/agent operation=%s state=%s release=%s ordinary HTTP=%s", completed.ID, completed.State, completed.Release.CanonicalImage, strings.TrimSpace(string(body)))
+	}
+	if interruption == "retained" {
+		servingPort := port
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port = listener.Addr().(*net.TCPAddr).Port
+		if err = listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+		unready := requestDeployment("actual-agent-retained-unready")
+		if err = runnerruntime.Run(runnerruntime.Config{Server: httpServer.URL, Token: "image-hosting-fixture-token", RunnerID: target.RunnerID, WorkDir: workDir, JournalDir: journalDir, Execute: true, Once: true, CancelPollInterval: 100 * time.Millisecond}); err == nil {
+			t.Fatal("unready replacement succeeded")
+		}
+		unready, err = pg.GetHostingOperation(ctx, unready.ID)
+		if err != nil || unready.State != "failed" || unready.MutationHold || unready.Result == nil || !unready.Result.Restored || unready.Result.Uncertain {
+			t.Fatalf("unready replacement: %+v %v", unready, err)
+		}
+		port = servingPort
+		response, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		servingBody, readErr := io.ReadAll(io.LimitReader(response.Body, 1024))
+		if err = response.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if readErr != nil || strings.TrimSpace(string(servingBody)) != "B" {
+			t.Fatalf("unready replacement interrupted B: %q %v", servingBody, readErr)
+		}
+		t.Log("readiness-failed different-port replacement left settled B serving and verified restoration without stopping it")
+		oldURL := "http://127.0.0.1:" + strconv.Itoa(firstHealthy.Snapshot.HostPort) + "/"
+		response, err = http.Get(oldURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 1024))
+		if err = response.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if readErr != nil || strings.TrimSpace(string(body)) != "A" || lastHealthy.Plan == nil || !lastHealthy.Plan.RetainPrevious {
+			t.Fatalf("replacement interrupted retained A: %q %v", body, readErr)
+		}
+		cleanupBody, err := json.Marshal(domain.HostingCleanupInput{ExpectedGeneration: resource.Generation, IdempotencyKey: "actual-cleanup-A"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, httpServer.URL+"/api/v1/resources/"+resource.ID+"/retained-releases/"+firstHealthy.ID+"/cleanup", bytes.NewReader(cleanupBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+session.Token)
+		response, err = http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cleanup domain.HostingOperation
+		decodeErr := json.NewDecoder(response.Body).Decode(&cleanup)
+		if err = response.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusAccepted || decodeErr != nil {
+			t.Fatalf("cleanup request: status=%d op=%+v err=%v", response.StatusCode, cleanup, decodeErr)
+		}
+		cleanup = awaitHostingDispatch(t, pg, cleanup.ID)
+		runAgent()
+		cleanup, err = pg.GetHostingOperation(ctx, cleanup.ID)
+		if err != nil || cleanup.State != "succeeded" || cleanup.MutationHold || cleanup.CompleteReceipt == nil {
+			t.Fatalf("real cleanup: %+v %v", cleanup, err)
+		}
+		if response, err = http.Get(oldURL); err == nil {
+			if closeErr := response.Body.Close(); closeErr != nil {
+				t.Error(closeErr)
+			}
+			t.Fatal("removed retained A still served")
+		}
+		var targetState string
+		if err = database.QueryRow(ctx, `SELECT state FROM hosting_retained_releases WHERE operation_id=$1`, firstHealthy.ID).Scan(&targetState); err != nil || targetState != "removed" {
+			t.Fatalf("cleanup ledger=%s %v", targetState, err)
+		}
+		t.Log("different-port B kept A serving; exact API/agent cleanup removed A and committed its receipt while B remained live")
 	}
 	preCanceled := requestDeployment("actual-agent-cancel-before-admission")
 	cancelRequest, err := http.NewRequestWithContext(ctx, "POST", httpServer.URL+"/api/v1/hosting-operations/"+preCanceled.ID+"/cancel", strings.NewReader("{}"))

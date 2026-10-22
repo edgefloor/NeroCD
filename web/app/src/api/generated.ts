@@ -28,6 +28,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/retained-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List releases retained for one authorized resource */
+        get: operations["listHostingRetainedReleases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/retained-releases/{operation_id}/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request exact cleanup of an unreferenced retained release
+         * @description Requires project maintainer authority and a versioned release-port agent. Desired, queued, loaded, admitted and unresolved route references prevent cleanup; ownership remains held until a verified exact-target receipt.
+         */
+        post: operations["requestHostingReleaseCleanup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/hosting-operations/{id}": {
         parameters: {
             query?: never;
@@ -1751,7 +1788,8 @@ export interface components {
             expected_generation: number;
             idempotency_key: string;
             container_port: number;
-            host_port: number;
+            /** @description Omit or use zero for allocation from the operator-controlled range; requires image_release_ports_v1. Explicit nonzero ports must be available. */
+            host_port?: number | 0 | unknown;
             readiness: components["schemas"]["HostingReadiness"];
         };
         HostingSnapshot: {
@@ -1768,7 +1806,7 @@ export interface components {
             host_port: number;
             readiness: components["schemas"]["HostingReadiness"];
             /** @enum {string} */
-            policy_version: "public-image.loopback.v1";
+            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1";
         };
         HostingRelease: {
             canonical_image: string;
@@ -1787,12 +1825,33 @@ export interface components {
             release: components["schemas"]["HostingRelease"];
             plan_hash: string;
         };
+        HostingCleanupInput: {
+            /** Format: int64 */
+            expected_generation: number;
+            idempotency_key: string;
+        };
+        HostingCleanupPlan: {
+            target: components["schemas"]["HostingHealthy"];
+            current_healthy_operation_id: string;
+            /** @enum {string} */
+            compiler_version: "image-hosting.release-ports.v1";
+            hash: string;
+        };
+        HostingRetainedRelease: {
+            healthy: components["schemas"]["HostingHealthy"];
+            /** @enum {string} */
+            state: "retained" | "cleanup_pending" | "removed";
+            retained_running: boolean;
+            cleanup_operation_id?: string;
+        };
         HostingApplyPlan: {
+            retained_releases?: components["schemas"]["HostingHealthy"][];
+            retain_previous?: boolean;
             snapshot: components["schemas"]["HostingSnapshot"];
             release: components["schemas"]["HostingRelease"];
             previous_healthy?: components["schemas"]["HostingHealthy"];
             /** @enum {string} */
-            compiler_version: "image-hosting.v1";
+            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1";
             hash: string;
         };
         HostingReceipt: {
@@ -1873,6 +1932,7 @@ export interface components {
             /** @enum {string} */
             state: "queued" | "dispatched" | "preparing" | "prepared" | "applying" | "verifying" | "succeeded" | "failed" | "canceled" | "cancel_requested" | "reconciliation_required";
             snapshot: components["schemas"]["HostingSnapshot"];
+            cleanup_plan?: components["schemas"]["HostingCleanupPlan"];
             release?: components["schemas"]["HostingRelease"];
             plan?: components["schemas"]["HostingApplyPlan"];
             prepared_receipt?: components["schemas"]["HostingReceipt"];
@@ -1887,7 +1947,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             /** @enum {string} */
-            task_mode?: "deploy" | "observe";
+            task_mode?: "deploy" | "observe" | "cleanup";
             observation_lease?: components["schemas"]["RunLease"];
             reconciliation_healthy?: components["schemas"]["HostingHealthy"];
         };
@@ -3206,6 +3266,65 @@ export interface operations {
         };
         responses: {
             /** @description Hosting operation state */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingRetainedReleases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resource-owned retained releases */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRetainedRelease"][];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingReleaseCleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+                operation_id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingCleanupInput"];
+            };
+        };
+        responses: {
+            /** @description Fenced cleanup operation */
             202: {
                 headers: {
                     [name: string]: unknown;

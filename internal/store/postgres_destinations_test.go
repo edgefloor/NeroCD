@@ -172,6 +172,14 @@ func TestPostgresDestinationMissingMigrationBlocksStartup(t *testing.T) {
 	ctx := t.Context()
 	pg, db := openPostgresIntegrationStore(t, ctx, "dest_missing")
 	t.Cleanup(func() { closePostgresStore(t, pg) })
+	// Remove the newest additive dependencies first; missing proxy/port schema
+	// must fail readiness before the older destination regression is exercised.
+	if _, err := db.Exec(ctx, `DROP TABLE hosting_release_claims,hosting_release_slots,hosting_cleanup_targets,hosting_retained_releases,hosting_proxy_release_references,hosting_proxy_receipts,hosting_proxy_admissions,hosting_proxy_task_targets,hosting_proxy_operations,hosting_proxy_routes,hosting_proxy_hostname_grants,hosting_proxy_restore_holds,hosting_proxies; DROP FUNCTION nerocd_hosting_proxy_schema_compatible(); DROP FUNCTION nerocd_hosting_release_identity(); DROP FUNCTION nerocd_hosting_release_claim_identity(); DROP FUNCTION nerocd_hosting_proxy_identity(); DROP FUNCTION nerocd_hosting_proxy_operation_identity()`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := pg.SchemaCompatible(ctx); ok || err == nil {
+		t.Fatalf("missing0046 readiness=%v %v", ok, err)
+	}
 	// Remove the additive hosting execution dependencies before reproducing
 	// an absent 0042 schema, then restore both migration layers below.
 	if _, err := db.Exec(ctx, `DROP TABLE hosting_binding_restore_holds,hosting_reconciliation_receipts,hosting_apply_admissions,hosting_binding_state,hosting_receipts,hosting_dispatch_receipts,hosting_task_targets,hosting_apply_plans,hosting_releases,hosting_snapshots,hosting_operations; DROP FUNCTION nerocd_hosting_execution_schema_compatible(); DROP FUNCTION nerocd_hosting_binding_identity(); DROP FUNCTION nerocd_hosting_operation_identity(); DROP FUNCTION nerocd_hosting_execution_immutable()`); err != nil {
@@ -199,6 +207,12 @@ func TestPostgresDestinationMissingMigrationBlocksStartup(t *testing.T) {
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {
 		t.Fatalf("restored0042 readiness=%v %v", ok, err)
 	}
+	reopened, err := store.OpenPostgres(ctx, db.Config().ConnConfig.ConnString())
+	if err != nil {
+		t.Fatalf("latest schema reopen: %v", err)
+	}
+	closePostgresStore(t, reopened)
+
 }
 func TestPostgresDestinationRevokeSerializesWithBinding(t *testing.T) {
 	ctx := t.Context()

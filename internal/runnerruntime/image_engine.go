@@ -227,8 +227,24 @@ func (e *imageEngine) mutate(ctx context.Context, daemon string, args ...string)
 func verifyImagePlan(plan domain.HostingApplyPlan) error {
 	hash := plan.Hash
 	plan.Hash = ""
-	if hash == "" || hash != domain.HostingDocumentHash(plan) || plan.CompilerVersion != domain.HostingCompilerVersion || plan.Snapshot.PolicyVersion != domain.HostingPolicyVersion || !imageNamespace.MatchString(plan.Snapshot.RuntimeNamespace) {
+	if hash == "" || hash != domain.HostingDocumentHash(plan) || !imageNamespace.MatchString(plan.Snapshot.RuntimeNamespace) {
 		return errors.New("invalid immutable image apply plan")
+	}
+	switch plan.CompilerVersion {
+	case domain.HostingCompilerVersion:
+		if plan.Snapshot.PolicyVersion != domain.HostingPolicyVersion || plan.RetainPrevious || len(plan.RetainedReleases) != 0 {
+			return errors.New("retained release fields require versioned image protocol")
+		}
+	case domain.HostingReleaseCompilerVersion:
+		expected, err := domain.CompileRetainedHostingPlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, plan.RetainedReleases)
+		if err != nil || expected.Hash != hash {
+			return errors.New("invalid retained image apply plan")
+		}
+	default:
+		return errors.New("unsupported image compiler version")
+	}
+	if plan.Snapshot.HostPort < 1024 {
+		return errors.New("image apply requires a resolved host port")
 	}
 	in := domain.HostingDeploymentInput{ExpectedGeneration: plan.Snapshot.ResourceGeneration, IdempotencyKey: "internal-plan", ContainerPort: plan.Snapshot.ContainerPort, HostPort: plan.Snapshot.HostPort, Readiness: plan.Snapshot.Readiness}
 	if err := domain.ValidateHostingDeployment(in); err != nil {
@@ -261,16 +277,37 @@ func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain
 		result.Uncertain = true
 		return result
 	}
+	known := map[string]domain.HostingHealthy{}
+	if plan.PreviousHealthy != nil {
+		known[plan.PreviousHealthy.ContainerID] = *plan.PreviousHealthy
+	}
+	for _, retained := range plan.RetainedReleases {
+		known[retained.ContainerID] = retained
+	}
 	for _, id := range strings.Fields(string(raw)) {
-		if plan.PreviousHealthy == nil || id != plan.PreviousHealthy.ContainerID {
-			preserved, inspectErr := e.inspectContainer(ctx, id)
-			if inspectErr != nil || preserved.State.Running {
+		container, inspectErr := e.inspectContainer(ctx, id)
+		expected, allowed := known[id]
+		if inspectErr != nil {
+			result.Uncertain = true
+			return result
+		}
+		if allowed {
+			port := container.HostConfig.PortBindings[strconv.Itoa(expected.Snapshot.ContainerPort)+"/tcp"]
+			if !ownedImageContainer(container, expected.Snapshot.BindingID, expected.OperationID, expected.Release.Hash, expected.PlanHash) || container.Image != expected.Release.ImageID || len(port) != 1 || port[0].HostIP != "127.0.0.1" || port[0].HostPort != strconv.Itoa(expected.Snapshot.HostPort) {
 				result.Uncertain = true
 				return result
 			}
+			delete(known, id)
+		} else if container.State.Running {
+			result.Uncertain = true
+			return result
 		}
 	}
-	if plan.PreviousHealthy != nil {
+	if len(known) != 0 {
+		result.Uncertain = true
+		return result
+	}
+	if plan.PreviousHealthy != nil && !plan.RetainPrevious {
 		if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "stop", "--time", "10", plan.PreviousHealthy.ContainerID); err != nil {
 			result.Uncertain = true
 			return result
@@ -322,9 +359,11 @@ func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain
 		result.Restored = true
 		return result
 	}
-	if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "start", plan.PreviousHealthy.ContainerID); err != nil {
-		result.Uncertain = true
-		return result
+	if !plan.RetainPrevious {
+		if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "start", plan.PreviousHealthy.ContainerID); err != nil {
+			result.Uncertain = true
+			return result
+		}
 	}
 	restored := plan
 	restored.Snapshot = plan.PreviousHealthy.Snapshot
@@ -433,4 +472,65 @@ func (e *imageEngine) EnsurePreparedRelease(ctx context.Context, release domain.
 		return err
 	}
 	return e.verifyLocalRelease(ctx, release)
+}
+
+// Cleanup removes only the exact server-selected retained container. A failed or
+// ambiguous Docker command never releases external ownership through observation.
+func (e *imageEngine) Cleanup(ctx context.Context, plan domain.HostingCleanupPlan) domain.HostingResult {
+	result := domain.HostingResult{Outcome: "failed", DaemonID: plan.Target.Release.DaemonID, ImageID: plan.Target.Release.ImageID, ContainerID: plan.Target.ContainerID, PlanHash: plan.Hash}
+	expected, err := domain.CompileHostingCleanupPlan(plan.Target, plan.CurrentHealthyOperationID)
+	if err != nil || expected.Hash != plan.Hash || !dockerObjectID.MatchString(plan.Target.ContainerID) || !imageNamespace.MatchString(plan.Target.Snapshot.RuntimeNamespace) {
+		return result
+	}
+	absent := func() (bool, error) {
+		if err := e.verifyDaemon(ctx, plan.Target.Release.DaemonID); err != nil {
+			return false, err
+		}
+		raw, err := e.docker(ctx, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "id="+plan.Target.ContainerID)
+		if err != nil {
+			return false, err
+		}
+		ids := strings.Fields(string(raw))
+		if len(ids) == 0 {
+			return true, nil
+		}
+		if len(ids) != 1 || ids[0] != plan.Target.ContainerID {
+			return false, errors.New("cleanup target listing mismatch")
+		}
+		return false, nil
+	}
+	missing, err := absent()
+	if err != nil {
+		result.Uncertain = true
+		return result
+	}
+	if !missing {
+		container, err := e.inspectContainer(ctx, plan.Target.ContainerID)
+		if err != nil {
+			result.Uncertain = true
+			return result
+		}
+		target := plan.Target
+		ports := container.HostConfig.PortBindings[strconv.Itoa(target.Snapshot.ContainerPort)+"/tcp"]
+		if !ownedImageContainer(container, target.Snapshot.BindingID, target.OperationID, target.Release.Hash, target.PlanHash) || container.Image != target.Release.ImageID || len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(target.Snapshot.HostPort) {
+			result.Uncertain = true
+			return result
+		}
+		if container.State.Running {
+			if _, err = e.mutate(ctx, target.Release.DaemonID, "container", "stop", "--time", "10", target.ContainerID); err != nil {
+				result.Uncertain = true
+				return result
+			}
+		}
+		if _, err = e.mutate(ctx, target.Release.DaemonID, "container", "rm", target.ContainerID); err != nil {
+			result.Uncertain = true
+			return result
+		}
+	}
+	if missing, err = absent(); err != nil || !missing {
+		result.Uncertain = true
+		return result
+	}
+	result.Outcome = "succeeded"
+	return result
 }

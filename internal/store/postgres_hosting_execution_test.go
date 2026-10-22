@@ -87,6 +87,171 @@ func hostingExecutionFixture(t *testing.T, stopOut ...*func(context.Context) err
 func hostingDeploymentRequest() domain.HostingDeploymentInput {
 	return domain.HostingDeploymentInput{ExpectedGeneration: 1, IdempotencyKey: "deploy-image", ContainerPort: 80, HostPort: 18080, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 5}}
 }
+
+func TestPostgresHostingUnadmittedCancelReleasesOnlyItsPortClaim(t *testing.T) {
+	pg, database, resource, _, _ := hostingExecutionFixture(t)
+	ctx := t.Context()
+	in := hostingDeploymentRequest()
+	op, err := pg.RequestHostingDeployment(ctx, "hop_cancel_port", resource.ID, "usr_bootstrap", in, destinationEvent("cancel_port"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.CancelHostingOperation(ctx, op.ID, destinationEvent("cancel_port_now")); err != nil {
+		t.Fatal(err)
+	}
+	var claim string
+	if err = database.QueryRow(ctx, `SELECT state FROM hosting_release_claims WHERE operation_id=$1`, op.ID).Scan(&claim); err != nil || claim != "released" {
+		t.Fatalf("unadmitted claim=%s %v", claim, err)
+	}
+	in.IdempotencyKey = "after-cancel"
+	if _, err = pg.RequestHostingDeployment(ctx, "hop_after_cancel_port", resource.ID, "usr_bootstrap", in, destinationEvent("after_cancel_port")); err != nil {
+		t.Fatalf("canceled reservation blocked same port: %v", err)
+	}
+}
+
+func TestPostgresHostingReleasePortsRequireCapabilityAndStableAllocation(t *testing.T) {
+	pg, database, resource, server, _ := hostingExecutionFixture(t)
+	ctx := t.Context()
+	in := hostingDeploymentRequest()
+	in.HostPort = 0
+	if _, err := pg.RequestHostingDeployment(ctx, "hop_old_auto", resource.ID, "usr_bootstrap", in, destinationEvent("old_auto")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("old agent accepted allocated port protocol: %v", err)
+	}
+	if _, err := database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	op, err := pg.RequestHostingDeployment(ctx, "hop_auto", resource.ID, "usr_bootstrap", in, destinationEvent("auto"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.Snapshot.HostPort < 20000 || op.Snapshot.HostPort > 60999 || op.Snapshot.PolicyVersion != domain.HostingReleasePolicyVersion {
+		t.Fatalf("uncontrolled allocation: %+v", op.Snapshot)
+	}
+	replayed, err := pg.RequestHostingDeployment(ctx, "hop_auto_replay", resource.ID, "usr_bootstrap", in, destinationEvent("auto_replay"))
+	if err != nil || replayed.ID != op.ID || replayed.Snapshot.HostPort != op.Snapshot.HostPort {
+		t.Fatalf("raw auto input lost idempotency: %+v %v", replayed, err)
+	}
+	op = awaitHostingDispatch(t, pg, op.ID)
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old agent claimed new release task: %v", err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	a, prepared := prepareHostingAttempt(t, pg, op, server.RunnerID)
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("admission ignored removed capability: %v", err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
+	if err != nil || admitted.Plan == nil || admitted.Plan.CompilerVersion != domain.HostingReleaseCompilerVersion {
+		t.Fatalf("new protocol admission: %+v %v", admitted, err)
+	}
+	complete := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "auto_result", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, ContainerID: strings.Repeat("c", 64), ImageID: prepared.Release.ImageID, DaemonID: prepared.Release.DaemonID, PlanHash: admitted.Plan.Hash}}
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, complete); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("fresh result ignored removed capability: %v", err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, complete); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, complete); err != nil {
+		t.Fatalf("committed receipt replay required fresh capability: %v", err)
+	}
+}
+
+func TestPostgresHostingRetainedReleaseRequiresExactCleanupReceipt(t *testing.T) {
+	pg, database, resource, server, _ := hostingExecutionFixture(t)
+	ctx := t.Context()
+	if _, err := database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	var first domain.HostingOperation
+	for index, id := range []string{"hop_retained_first", "hop_retained_second"} {
+		in := hostingDeploymentRequest()
+		in.IdempotencyKey = id
+		in.HostPort += index
+		op, err := pg.RequestHostingDeployment(ctx, id, resource.ID, "usr_bootstrap", in, destinationEvent(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		op = awaitHostingDispatch(t, pg, op.ID)
+		a, prepared := prepareHostingAttempt(t, pg, op, server.RunnerID)
+		admitted, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 1 && (!admitted.Plan.RetainPrevious || admitted.Plan.PreviousHealthy == nil || admitted.Plan.PreviousHealthy.OperationID != first.ID) {
+			t.Fatalf("old serving release not retained: %+v", admitted.Plan)
+		}
+		finished, err := pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: id + "_result", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, ContainerID: strings.Repeat(string(rune('c'+index)), 64), ImageID: prepared.Release.ImageID, DaemonID: prepared.Release.DaemonID, PlanHash: admitted.Plan.Hash}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			first = finished
+		}
+	}
+	retained, err := pg.ListHostingRetainedReleases(ctx, resource.ID)
+	if err != nil || len(retained) != 1 || retained[0].Healthy.OperationID != first.ID || !retained[0].RetainedRunning {
+		t.Fatalf("retained ledger: %+v %v", retained, err)
+	}
+	cleanup, err := pg.RequestHostingReleaseCleanup(ctx, "hop_cleanup", resource.ID, first.ID, "usr_bootstrap", domain.HostingCleanupInput{ExpectedGeneration: 1, IdempotencyKey: "cleanup-first"}, destinationEvent("cleanup_first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup = awaitHostingDispatch(t, pg, cleanup.ID)
+	claim, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := domain.HostingAuthority{OperationID: cleanup.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	prepared, err := pg.HostingRunnerPlan(ctx, server.RunnerID, a)
+	if err != nil || prepared.CleanupPlan == nil || prepared.TaskMode != "cleanup" {
+		t.Fatalf("cleanup preparation: %+v %v", prepared, err)
+	}
+	admitted, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
+	if err != nil || !admitted.MutationHold {
+		t.Fatalf("cleanup admission: %+v %v", admitted, err)
+	}
+	var state string
+	if err = database.QueryRow(ctx, `SELECT state FROM hosting_retained_releases WHERE operation_id=$1`, first.ID).Scan(&state); err != nil || state != "cleanup_pending" {
+		t.Fatalf("target released before receipt: %s %v", state, err)
+	}
+	result := domain.HostingResult{Outcome: "succeeded", ContainerID: prepared.CleanupPlan.Target.ContainerID, ImageID: prepared.CleanupPlan.Target.Release.ImageID, DaemonID: prepared.CleanupPlan.Target.Release.DaemonID, PlanHash: prepared.CleanupPlan.Hash}
+	wrong := result
+	wrong.ContainerID = strings.Repeat("f", 64)
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "wrong_cleanup", Result: wrong}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("wrong target receipt accepted: %v", err)
+	}
+	request := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "exact_cleanup", Result: result}
+	finished, err := pg.HostingComplete(ctx, server.RunnerID, request)
+	if err != nil || finished.MutationHold || finished.State != "succeeded" {
+		t.Fatalf("cleanup completion: %+v %v", finished, err)
+	}
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, request); err != nil {
+		t.Fatalf("cleanup replay: %v", err)
+	}
+	if err = database.QueryRow(ctx, `SELECT state FROM hosting_retained_releases WHERE operation_id=$1`, first.ID).Scan(&state); err != nil || state != "removed" {
+		t.Fatalf("target not released after exact receipt: %s %v", state, err)
+	}
+}
 func awaitHostingDispatch(t *testing.T, pg *store.PostgresStore, id string) domain.HostingOperation {
 	t.Helper()
 	deadline := time.NewTimer(5 * time.Second)

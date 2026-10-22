@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -18,6 +19,12 @@ const (
 	RunTypeImageDeploy     = "image_deploy"
 	HostingCompilerVersion = "image-hosting.v1"
 	HostingPolicyVersion   = "public-image.loopback.v1"
+	// HostingReleasePortsCapability identifies agents that preserve retained releases.
+	HostingReleasePortsCapability = "image_release_ports_v1"
+	// HostingReleaseCompilerVersion identifies per-release port and retention plans.
+	HostingReleaseCompilerVersion = "image-hosting.release-ports.v1"
+	// HostingReleasePolicyVersion keeps per-release effects separate from legacy replacement.
+	HostingReleasePolicyVersion = "public-image.release-ports.v1"
 )
 
 // ContainsHostingExecution inspects both accepted workflow representations for
@@ -59,6 +66,8 @@ func ValidateImageDeploymentTask(run TaskRun) error {
 	prefix := "run_"
 	if spec.HostingMode == "observe" {
 		prefix = "observe_"
+	} else if spec.HostingMode == "cleanup" {
+		prefix = "cleanup_"
 	} else if spec.HostingMode != "deploy" {
 		return errors.New("invalid internal image deployment mode")
 	}
@@ -122,11 +131,13 @@ type HostingHealthy struct {
 
 // HostingApplyPlan is compiled once from an immutable release and target.
 type HostingApplyPlan struct {
-	Snapshot        HostingSnapshot `json:"snapshot"`
-	Release         HostingRelease  `json:"release"`
-	PreviousHealthy *HostingHealthy `json:"previous_healthy,omitempty"`
-	CompilerVersion string          `json:"compiler_version"`
-	Hash            string          `json:"hash"`
+	RetainedReleases []HostingHealthy `json:"retained_releases,omitempty"`
+	RetainPrevious   bool             `json:"retain_previous,omitempty"`
+	Snapshot         HostingSnapshot  `json:"snapshot"`
+	Release          HostingRelease   `json:"release"`
+	PreviousHealthy  *HostingHealthy  `json:"previous_healthy,omitempty"`
+	CompilerVersion  string           `json:"compiler_version"`
+	Hash             string           `json:"hash"`
 }
 
 // HostingReceipt acknowledges one stable, immutable runner document.
@@ -152,28 +163,29 @@ type HostingResult struct {
 
 // HostingOperation exposes control state independently from task run terminal state.
 type HostingOperation struct {
-	ObservationLease      *RunLease         `json:"observation_lease,omitempty"`
-	TaskMode              string            `json:"task_mode,omitempty"`
-	ReconciliationRunID   string            `json:"reconciliation_run_id,omitempty"`
-	ReconciliationHealthy *HostingHealthy   `json:"reconciliation_healthy,omitempty"`
-	ID                    string            `json:"id"`
-	ProjectID             string            `json:"project_id"`
-	ResourceID            string            `json:"resource_id"`
-	BindingID             string            `json:"binding_id"`
-	RunID                 string            `json:"run_id,omitempty"`
-	State                 string            `json:"state"`
-	Snapshot              HostingSnapshot   `json:"snapshot"`
-	Release               *HostingRelease   `json:"release,omitempty"`
-	Plan                  *HostingApplyPlan `json:"plan,omitempty"`
-	PreparedReceipt       *HostingReceipt   `json:"prepared_receipt,omitempty"`
-	CompleteReceipt       *HostingReceipt   `json:"complete_receipt,omitempty"`
-	Result                *HostingResult    `json:"result,omitempty"`
-	RestoreOwnershipHeld  bool              `json:"restore_ownership_held"`
-	MutationHold          bool              `json:"mutation_hold"`
-	ReconcileRequested    bool              `json:"reconcile_requested"`
-	CreatedBy             string            `json:"created_by"`
-	CreatedAt             time.Time         `json:"created_at"`
-	UpdatedAt             time.Time         `json:"updated_at"`
+	CleanupPlan           *HostingCleanupPlan `json:"cleanup_plan,omitempty"`
+	ObservationLease      *RunLease           `json:"observation_lease,omitempty"`
+	TaskMode              string              `json:"task_mode,omitempty"`
+	ReconciliationRunID   string              `json:"reconciliation_run_id,omitempty"`
+	ReconciliationHealthy *HostingHealthy     `json:"reconciliation_healthy,omitempty"`
+	ID                    string              `json:"id"`
+	ProjectID             string              `json:"project_id"`
+	ResourceID            string              `json:"resource_id"`
+	BindingID             string              `json:"binding_id"`
+	RunID                 string              `json:"run_id,omitempty"`
+	State                 string              `json:"state"`
+	Snapshot              HostingSnapshot     `json:"snapshot"`
+	Release               *HostingRelease     `json:"release,omitempty"`
+	Plan                  *HostingApplyPlan   `json:"plan,omitempty"`
+	PreparedReceipt       *HostingReceipt     `json:"prepared_receipt,omitempty"`
+	CompleteReceipt       *HostingReceipt     `json:"complete_receipt,omitempty"`
+	Result                *HostingResult      `json:"result,omitempty"`
+	RestoreOwnershipHeld  bool                `json:"restore_ownership_held"`
+	MutationHold          bool                `json:"mutation_hold"`
+	ReconcileRequested    bool                `json:"reconcile_requested"`
+	CreatedBy             string              `json:"created_by"`
+	CreatedAt             time.Time           `json:"created_at"`
+	UpdatedAt             time.Time           `json:"updated_at"`
 }
 
 // HostingAuthority must match the authenticated runner and persisted task target.
@@ -218,7 +230,7 @@ func ValidateHostingDeployment(in HostingDeploymentInput) error {
 	if in.ExpectedGeneration < 1 || len(in.IdempotencyKey) < 1 || len(in.IdempotencyKey) > 128 || strings.ContainsFunc(in.IdempotencyKey, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
 		return errors.New("expected_generation and a bounded idempotency_key are required")
 	}
-	if in.ContainerPort < 1 || in.ContainerPort > 65535 || in.HostPort < 1024 || in.HostPort > 65535 {
+	if in.ContainerPort < 1 || in.ContainerPort > 65535 || in.HostPort != 0 && in.HostPort < 1024 || in.HostPort > 65535 {
 		return errors.New("invalid container or loopback host port")
 	}
 	p, err := url.ParseRequestURI(in.Readiness.Path)
@@ -291,4 +303,73 @@ func CompileHostingPlan(snapshot HostingSnapshot, release HostingRelease, previo
 type HostingStatusRequest struct {
 	HostingAuthority
 	Phase string `json:"phase,omitempty"`
+}
+
+// CompileRetainedHostingPlan binds all permitted running releases to one daemon.
+// It does not authorize any of those containers for cleanup.
+func CompileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy) (HostingApplyPlan, error) {
+	if err := ValidateHostingRelease(release); err != nil {
+		return HostingApplyPlan{}, err
+	}
+	if snapshot.PolicyVersion != HostingReleasePolicyVersion || snapshot.HostPort < 1024 || snapshot.HostPort > 65535 || len(retained) > 32 {
+		return HostingApplyPlan{}, errors.New("invalid retained release policy")
+	}
+	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: HostingReleaseCompilerVersion, RetainedReleases: append([]HostingHealthy(nil), retained...)}
+	seen := map[string]bool{}
+	for _, old := range plan.RetainedReleases {
+		if old.OperationID == "" || seen[old.OperationID] || old.Snapshot.HostPort < 1024 || old.Snapshot.HostPort > 65535 || old.Snapshot.BindingID != snapshot.BindingID || old.Snapshot.DestinationID != snapshot.DestinationID || old.Release.DaemonID != release.DaemonID || old.ContainerID == "" || ValidateHostingRelease(old.Release) != nil {
+			return HostingApplyPlan{}, errors.New("retained release identity mismatch")
+		}
+		seen[old.OperationID] = true
+	}
+	if previous != nil {
+		if ValidateHostingRelease(previous.Release) != nil || previous.OperationID == "" || previous.Snapshot.HostPort < 1024 || previous.Snapshot.HostPort > 65535 || previous.Snapshot.BindingID != snapshot.BindingID || previous.Snapshot.DestinationID != snapshot.DestinationID || previous.Release.DaemonID != release.DaemonID || previous.ContainerID == "" || seen[previous.OperationID] {
+			return HostingApplyPlan{}, errors.New("previous release identity mismatch")
+		}
+		ownedPrevious := *previous
+		plan.PreviousHealthy = &ownedPrevious
+		plan.RetainPrevious = previous.Snapshot.HostPort != snapshot.HostPort
+	}
+	sort.Slice(plan.RetainedReleases, func(i, j int) bool {
+		return plan.RetainedReleases[i].OperationID < plan.RetainedReleases[j].OperationID
+	})
+	raw, err := json.Marshal(plan)
+	if err != nil || len(raw) > 48<<10 {
+		return HostingApplyPlan{}, errors.New("retained release plan exceeds journal limit")
+	}
+	plan.Hash = HostingDocumentHash(plan)
+	return plan, nil
+}
+
+// HostingCleanupInput requests cleanup of a server-selected retained release.
+// Container identities and ports are never supplied by the caller.
+type HostingCleanupInput struct {
+	ExpectedGeneration int64  `json:"expected_generation"`
+	IdempotencyKey     string `json:"idempotency_key"`
+}
+
+// HostingRetainedRelease exposes one resource's retained release ownership.
+type HostingRetainedRelease struct {
+	Healthy            HostingHealthy `json:"healthy"`
+	State              string         `json:"state"`
+	RetainedRunning    bool           `json:"retained_running"`
+	CleanupOperationID string         `json:"cleanup_operation_id,omitempty"`
+}
+
+// HostingCleanupPlan authorizes only one exact retained container and release.
+type HostingCleanupPlan struct {
+	Target                    HostingHealthy `json:"target"`
+	CurrentHealthyOperationID string         `json:"current_healthy_operation_id"`
+	CompilerVersion           string         `json:"compiler_version"`
+	Hash                      string         `json:"hash"`
+}
+
+// CompileHostingCleanupPlan pins the cleanup target independently of current traffic.
+func CompileHostingCleanupPlan(target HostingHealthy, current string) (HostingCleanupPlan, error) {
+	if target.OperationID == "" || target.OperationID == current || current == "" || target.ContainerID == "" || target.Snapshot.HostPort < 1024 || target.Snapshot.HostPort > 65535 || ValidateHostingRelease(target.Release) != nil {
+		return HostingCleanupPlan{}, errors.New("invalid retained cleanup target")
+	}
+	plan := HostingCleanupPlan{Target: target, CurrentHealthyOperationID: current, CompilerVersion: HostingReleaseCompilerVersion}
+	plan.Hash = HostingDocumentHash(plan)
+	return plan, nil
 }

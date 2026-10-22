@@ -7,6 +7,7 @@ UPDATE hosting_operations SET updated_at=clock_timestamp() WHERE id=$1;
 -- name: GetHostingOperationSnapshot :one
 SELECT o.id,o.project_id,o.resource_id,o.binding_id,coalesce(o.run_id,'') AS run_id,coalesce(o.reconciliation_run_id,'') AS reconciliation_run_id,o.state,o.reconcile_requested,o.created_by,o.created_at,o.updated_at,
  sn.body AS snapshot,rel.body AS release,plan.body AS plan,
+ (SELECT plan FROM hosting_cleanup_targets WHERE operation_id=o.id) AS cleanup_plan,
  (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_receipts WHERE operation_id=o.id AND phase='prepared') AS prepared_receipt,
  (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_receipts WHERE operation_id=o.id AND phase='complete') AS complete_receipt,
  (SELECT body FROM hosting_receipts WHERE operation_id=o.id AND phase='complete') AS result,
@@ -209,3 +210,92 @@ SELECT count(*) FROM hosting_operations WHERE resource_id=$1;
 
 -- name: ListHostingOperationIDs :many
 SELECT id FROM hosting_operations WHERE resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3;
+
+-- name: HostingResourceDestination :one
+SELECT b.destination_id FROM resource_bindings b WHERE b.resource_id=$1;
+
+-- name: LockHostingExecutionDestination :exec
+SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0));
+
+-- name: PickHostingReleasePort :one
+SELECT port::integer AS host_port FROM generate_series(sqlc.arg(min_port)::integer,sqlc.arg(max_port)::integer) port
+WHERE NOT EXISTS(SELECT 1 FROM hosting_release_slots s WHERE s.destination_id=sqlc.arg(destination_id) AND s.host_port=port)
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state s WHERE s.destination_id=sqlc.arg(destination_id) AND s.host_port=port)
+AND NOT EXISTS(SELECT 1 FROM hosting_proxies p WHERE p.destination_id=sqlc.arg(destination_id) AND (p.configuration->>'management_port')::integer=port)
+ORDER BY port LIMIT 1;
+
+-- name: ReserveHostingReleaseSlot :execrows
+INSERT INTO hosting_release_slots(destination_id,host_port,binding_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING;
+
+-- name: LockHostingReleaseSlot :one
+SELECT binding_id FROM hosting_release_slots WHERE destination_id=$1 AND host_port=$2 FOR UPDATE;
+
+-- name: HostingReleasePortReferenced :one
+SELECT EXISTS(
+ SELECT 1 FROM hosting_proxy_routes r JOIN hosting_snapshots hs ON hs.operation_id=r.selected_release_operation_id
+ WHERE r.enabled AND (hs.body->>'destination_id')=sqlc.arg(destination_id)::text AND (hs.body->>'host_port')::integer=sqlc.arg(host_port)::integer
+ UNION ALL
+ SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots hs ON hs.operation_id=ref.release_operation_id
+ WHERE (hs.body->>'destination_id')=sqlc.arg(destination_id)::text AND (hs.body->>'host_port')::integer=sqlc.arg(host_port)::integer
+ AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
+);
+
+-- name: HostingReleaseSlotReusable :one
+SELECT NOT EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=sqlc.arg(destination_id) AND c.host_port=sqlc.arg(host_port) AND c.state IN ('reserved','held'))
+AND NOT EXISTS(SELECT 1 FROM hosting_retained_releases r WHERE r.destination_id=sqlc.arg(destination_id) AND r.host_port=sqlc.arg(host_port) AND r.operation_id<>sqlc.arg(previous_operation_id)::text AND (r.state='cleanup_pending' OR (r.state<>'removed' AND r.retained_running)))
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE b.destination_id=sqlc.arg(destination_id) AND b.host_port=sqlc.arg(host_port) AND b.binding_id<>sqlc.arg(binding_id))
+AND NOT EXISTS(SELECT 1 FROM hosting_proxies p WHERE p.destination_id=sqlc.arg(destination_id) AND (p.configuration->>'management_port')::integer=sqlc.arg(host_port));
+
+-- name: CreateHostingReleaseClaim :execrows
+INSERT INTO hosting_release_claims(operation_id,destination_id,host_port,binding_id,state) VALUES($1,$2,$3,$4,'reserved');
+
+-- name: GetHostingRetainedReleases :many
+SELECT operation_id,body,state,retained_running FROM hosting_retained_releases WHERE binding_id=$1 AND state<>'removed' ORDER BY operation_id;
+
+-- name: RecordHostingHealthyRelease :execrows
+INSERT INTO hosting_retained_releases(operation_id,binding_id,destination_id,host_port,body,body_hash,state,retained_running)
+VALUES($1,$2,$3,$4,sqlc.arg(body)::jsonb,'sha256:'||encode(sha256(convert_to((sqlc.arg(body)::jsonb)::text,'UTF8')),'hex'),'healthy',true);
+
+-- name: RetainPreviousHostingRelease :execrows
+UPDATE hosting_retained_releases SET state='retained',retained_running=$2 WHERE operation_id=$1 AND state='healthy';
+
+-- name: RetainHostingReleaseClaim :execrows
+UPDATE hosting_release_claims SET state='retained' WHERE operation_id=$1 AND state IN ('reserved','held');
+
+-- name: HoldHostingReleaseClaim :execrows
+UPDATE hosting_release_claims SET state='held' WHERE operation_id=$1 AND state='reserved';
+
+-- name: ReleaseHostingFailedClaim :execrows
+UPDATE hosting_release_claims SET state='released' WHERE operation_id=$1;
+
+-- name: GetHostingRetainedRelease :one
+SELECT operation_id,body,state,retained_running,coalesce(cleanup_operation_id,'') AS cleanup_operation_id FROM hosting_retained_releases WHERE operation_id=$1;
+
+-- name: CreateHostingCleanupTarget :execrows
+INSERT INTO hosting_cleanup_targets(operation_id,target_operation_id,plan,plan_hash) VALUES($1,$2,$3,$4);
+
+-- name: CreateHostingCleanupTaskTarget :execrows
+INSERT INTO hosting_task_targets(run_id,operation_id,binding_id,runner_id,mode) VALUES($1,$2,$3,$4,'cleanup');
+
+-- name: MarkHostingCleanupPending :execrows
+UPDATE hosting_retained_releases SET state='cleanup_pending',cleanup_operation_id=$2 WHERE operation_id=$1 AND state='retained';
+
+-- name: MarkHostingCleanupRemoved :execrows
+UPDATE hosting_retained_releases SET state='removed',retained_running=false WHERE operation_id=$1 AND state='cleanup_pending' AND cleanup_operation_id=$2;
+
+-- name: ReleaseHostingCleanupClaim :execrows
+UPDATE hosting_release_claims SET state='released' WHERE operation_id=$1;
+
+-- name: ReleaseUnusedHostingSlot :execrows
+DELETE FROM hosting_release_slots s WHERE s.destination_id=sqlc.arg(destination_id) AND s.host_port=sqlc.arg(host_port)
+AND NOT EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=s.destination_id AND c.host_port=s.host_port AND c.state<>'released')
+AND NOT EXISTS(SELECT 1 FROM hosting_retained_releases r WHERE r.destination_id=s.destination_id AND r.host_port=s.host_port AND r.state<>'removed')
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE b.destination_id=s.destination_id AND b.host_port=s.host_port);
+
+-- name: HostingReleaseReferenced :one
+SELECT EXISTS(
+ SELECT 1 FROM hosting_proxy_routes r WHERE r.enabled AND r.selected_release_operation_id=$1
+ UNION ALL
+ SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id
+ WHERE ref.release_operation_id=$1 AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
+);
