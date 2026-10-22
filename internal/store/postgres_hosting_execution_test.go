@@ -3,8 +3,10 @@ package store_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -604,5 +606,140 @@ func TestPostgresHostingAuditFailureRollsBackIntentAndSettlement(t *testing.T) {
 		if !actions[action] {
 			t.Fatalf("project viewer cannot see %s", action)
 		}
+	}
+}
+
+func TestPostgresHostingFirstCompletionRequiresLiveUncanceledAuthority(t *testing.T) {
+	for _, stale := range []string{"expired", "canceled"} {
+		for _, outcome := range []string{"succeeded", "failed"} {
+			t.Run(stale+"/"+outcome, func(t *testing.T) {
+				pg, database, resource, server, _ := hostingExecutionFixture(t)
+				ctx := t.Context()
+				op, err := pg.RequestHostingDeployment(ctx, "hop_stale_complete", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("stale_complete"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				op = awaitHostingDispatch(t, pg, op.ID)
+				a, prepared := prepareHostingAttempt(t, pg, op, server.RunnerID)
+				admitted, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if stale == "expired" {
+					if _, err = database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+						t.Fatal(err)
+					}
+					if err = pg.ExpireLeases(ctx, time.Now().UTC()); err != nil {
+						t.Fatal(err)
+					}
+				} else if _, err = pg.CancelHostingOperation(ctx, op.ID, destinationEvent("stale_cancel")); err != nil {
+					t.Fatal(err)
+				}
+				before, err := pg.GetHostingOperation(ctx, op.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				type state struct {
+					lease, task      string
+					audits, receipts int
+					healthy          bool
+				}
+				readState := func() state {
+					t.Helper()
+					var value state
+					if err := database.QueryRow(ctx, `SELECT (SELECT status FROM run_leases WHERE id=$1),(SELECT status FROM task_runs WHERE id=$2),(SELECT count(*) FROM audit_events),(SELECT count(*) FROM hosting_receipts WHERE operation_id=$3 AND phase='complete'),(SELECT healthy IS NOT NULL FROM hosting_binding_state WHERE binding_id=$4)`, a.LeaseID, a.RunID, op.ID, op.BindingID).Scan(&value.lease, &value.task, &value.audits, &value.receipts, &value.healthy); err != nil {
+						t.Fatal(err)
+					}
+					return value
+				}
+				prior := readState()
+				request := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "first_stale_complete", Result: domain.HostingResult{Outcome: outcome, Ready: outcome == "succeeded", Restored: outcome == "failed", ContainerID: "container_stale", ImageID: prepared.Release.ImageID, DaemonID: prepared.Release.DaemonID, PlanHash: admitted.Plan.Hash}}
+				if _, err = pg.HostingComplete(ctx, server.RunnerID, request); !errors.Is(err, store.ErrNotFound) {
+					t.Fatalf("fresh stale result accepted: %v", err)
+				}
+				after, err := pg.GetHostingOperation(ctx, op.ID)
+				if err != nil || !reflect.DeepEqual(before, after) || readState() != prior || !after.MutationHold || after.Result != nil || after.CompleteReceipt != nil {
+					t.Fatalf("stale completion mutated durable authority/evidence: before=%+v after=%+v err=%v", before, after, err)
+				}
+			})
+		}
+	}
+}
+
+func TestPostgresHostingCommittedCompletionReplaysAfterAuthorityEnds(t *testing.T) {
+	pg, database, resource, server, _ := hostingExecutionFixture(t)
+	ctx := t.Context()
+	op, err := pg.RequestHostingDeployment(ctx, "hop_committed_replay", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("committed_replay"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	op = awaitHostingDispatch(t, pg, op.ID)
+	a, prepared := prepareHostingAttempt(t, pg, op, server.RunnerID)
+	admitted, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "committed_replay", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, ContainerID: "container_committed", ImageID: prepared.Release.ImageID, DaemonID: prepared.Release.DaemonID, PlanHash: admitted.Plan.Hash}}
+	committed, err := pg.HostingComplete(ctx, server.RunnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	var before int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := pg.HostingComplete(ctx, server.RunnerID, request)
+	if err != nil || !reflect.DeepEqual(committed, replayed) {
+		t.Fatalf("committed replay failed: %+v %v", replayed, err)
+	}
+	var after int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&after); err != nil || before != after {
+		t.Fatalf("replay created mutation: %d->%d %v", before, after, err)
+	}
+	request.ReceiptID = "new_receipt_after_expiry"
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, request); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("new receipt replaced committed evidence: %v", err)
+	}
+}
+
+func TestPostgresClaimRejectsPersistedInternalWorkflowWithoutTarget(t *testing.T) {
+	pg, database, _, server, _ := hostingExecutionFixture(t)
+	ctx := t.Context()
+	image := domain.RunSpec{Type: domain.RunTypeImageDeploy}
+	nested := &domain.Workflow{Steps: []domain.WorkflowStep{{ID: "internal", RunSpec: image}}}
+	for i, run := range []domain.TaskRun{
+		{RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy}, Workflow: *nested},
+		{RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy, Workflow: nested}},
+		{RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy}, Workflow: domain.Workflow{Steps: []domain.WorkflowStep{{ID: "wrapper", RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy, Workflow: nested}}}}},
+		{RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy, HostingMode: "deploy"}},
+		{ID: "run_hop_no_target", RunSpec: domain.RunSpec{Type: domain.RunTypeImageDeploy, HostingOperationID: "hop_no_target", HostingMode: "deploy"}},
+	} {
+		if run.ID == "" {
+			run.ID = fmt.Sprintf("run_persisted_internal_%d", i)
+		}
+		run.ProjectID = "proj_platform"
+		run.RequestedBy = "usr_bootstrap"
+		run.Status = domain.RunQueued
+		run.StartedAt = time.Now().UTC()
+		if _, err := pg.CreateRun(ctx, run); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("generic creation accepted internal workflow: %v", err)
+		}
+		spec, _ := json.Marshal(run.RunSpec)
+		workflow, _ := json.Marshal(run.Workflow)
+		// Simulate a previously persisted malformed row. There is no command or
+		// execution demonstration, only a claim admission assertion.
+		if _, err := database.Exec(ctx, `INSERT INTO task_runs(id,project_id,run_spec,workflow,workflow_state,runner_tags,status,requested_by,started_at,created_at,claim_order_at) VALUES($1,'proj_platform',$2,$3,'{}','{}','queued','usr_bootstrap',clock_timestamp(),clock_timestamp(),clock_timestamp())`, run.ID, spec, workflow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("persisted internal workflow acquired authority: %v", err)
+	}
+	var leases int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM run_leases`).Scan(&leases); err != nil || leases != 0 {
+		t.Fatalf("rejected internal tasks created %d leases: %v", leases, err)
 	}
 }

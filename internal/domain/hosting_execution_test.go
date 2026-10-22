@@ -65,3 +65,23 @@ func TestHostingReleaseAndPlanHashBindTarget(t *testing.T) {
 		t.Fatal("unsupported policy bypassed")
 	}
 }
+
+func TestHostingExecutionDetectionCoversEveryWorkflowRepresentation(t *testing.T) {
+	internal := RunSpec{Type: RunTypeImageDeploy}
+	for _, spec := range []RunSpec{internal, {Type: "ansible", HostingMode: "deploy"}, {Type: "ansible", HostingOperationID: "hop_internal"}} {
+		if !ContainsHostingExecution(spec, Workflow{}) {
+			t.Fatal("internal root was public")
+		}
+		inner := &Workflow{Steps: []WorkflowStep{{ID: "internal", RunSpec: spec}}}
+		for range 10000 {
+			inner = &Workflow{Steps: []WorkflowStep{{ID: "wrapper", RunSpec: RunSpec{Type: "ansible", Workflow: inner}}}}
+		}
+		if !ContainsHostingExecution(RunSpec{Type: "ansible", Workflow: inner}, Workflow{}) || !ContainsHostingExecution(RunSpec{Type: "ansible"}, *inner) {
+			t.Fatal("deep nested authority was public")
+		}
+	}
+	shared := &Workflow{Steps: []WorkflowStep{{ID: "generic", RunSpec: RunSpec{Type: "ansible"}}}}
+	if ContainsHostingExecution(RunSpec{Type: "ansible", Workflow: shared}, *shared) {
+		t.Fatal("legitimate generic workflow rejected")
+	}
+}

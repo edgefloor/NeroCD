@@ -61,8 +61,16 @@ failure happens after apply; the runner preserves the previous container and
 attempts bounded restoration while it still has live authority. Unknown command
 effects, lease loss and failed restoration retain the independent mutation hold.
 Cancellation after admission requests cancellation but does not erase uncertainty.
-Durable local apply intent and result survive process restart. A successful
-completion settles the lease, operation, healthy pointer, receipt and audit record
+Durable local apply intent and result survive process restart. Every first
+completion requires a live, uncanceled lease. After authority ends, the server
+only replays an exact previously committed receipt; it cannot accept a fresh
+result or change terminal lease/task state. Rejected results and mutation intent
+remain in the local journal, and startup stops before heartbeat or new claims.
+Read-only observation cannot publish an uncommitted local result. A separate
+explicitly authorized recovery contract is still needed for that case.
+
+A successful completion under live authority settles the lease, operation,
+healthy pointer, receipt and audit record
 in one transaction before clearing its owned hold.
 
 **Restore recovery remains blocked in this slice.** A restored binding reports

@@ -157,7 +157,7 @@ func (s *MemoryStore) ListArtifactsPageForScope(_ context.Context, scope RunAuth
 
 // CreateRun implements the corresponding repository operation.
 func (s *MemoryStore) CreateRun(_ context.Context, run domain.TaskRun) (domain.TaskRun, error) {
-	if run.RunSpec.Type == domain.RunTypeImageDeploy {
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
 		return domain.TaskRun{}, ErrConflict
 	}
 	s.mu.Lock()
@@ -172,7 +172,7 @@ func (s *MemoryStore) CreateRun(_ context.Context, run domain.TaskRun) (domain.T
 
 // CreateRunRequest implements the corresponding repository operation.
 func (s *MemoryStore) CreateRunRequest(_ context.Context, run domain.TaskRun, log domain.RunLog, approval *domain.Approval, audit domain.AuditEvent) (domain.TaskRun, error) {
-	if run.RunSpec.Type == domain.RunTypeImageDeploy {
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
 		return domain.TaskRun{}, ErrConflict
 	}
 	s.mu.Lock()

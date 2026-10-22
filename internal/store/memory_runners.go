@@ -228,7 +228,7 @@ func (s *MemoryStore) ClaimRun(_ context.Context, runnerID string, now time.Time
 	for _, runIndex := range candidateIndexes[:examineCount] {
 		run := s.runs[runIndex]
 		cursor := memoryClaimCursor{claimOrderAt: s.claimOrderByRun[run.ID], runID: run.ID}
-		if run.RunSpec.Type == domain.RunTypeImageDeploy || !covers(runner.Tags, run.RunnerTags) || !contains(runner.Capabilities, claimRunType(run)) {
+		if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) || !covers(runner.Tags, run.RunnerTags) || !contains(runner.Capabilities, claimRunType(run)) {
 			storedCursor = cursor
 			continue
 		}

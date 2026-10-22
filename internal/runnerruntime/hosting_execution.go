@@ -34,7 +34,7 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 
 func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string) error {
 	mode := claim.Run.RunSpec.HostingMode
-	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe") || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 {
+	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe") || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
 		return errors.New("invalid typed image task")
 	}
 	a := hostingAuthority(claim.Run.ID, claim.Run.RunSpec.HostingOperationID, claim.Lease)
@@ -164,15 +164,10 @@ func journalHostingResult(supervisor *attemptSupervisor, journal *runner.Attempt
 			return domain.HostingOperation{}, err
 		}
 	} else {
-		// Evidence reporting after loss of authority grants no workload mutation.
-		// The server retains its independent hold and requires owner observation.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		var err error
-		op, err = client.HostingComplete(ctx, request)
-		if err != nil {
-			return domain.HostingOperation{}, err
-		}
+		// Retain the durable local result and intent. Fresh reports cannot gain
+		// authority after expiry or cancellation; only committed receipt replay
+		// may be acknowledged by the server during startup reconciliation.
+		return domain.HostingOperation{}, errLeaseAuthorityLost
 	}
 	if op.CompleteReceipt == nil || op.CompleteReceipt.ID != request.ReceiptID || op.CompleteReceipt.BodyHash != domain.HostingDocumentHash(result) {
 		return domain.HostingOperation{}, errors.New("hosting result acknowledgement changed")
@@ -244,20 +239,7 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 		op, err := client.HostingComplete(ctx, *entry.Result)
 		cancel()
 		if err != nil {
-			// An expired pre-apply failure has no external mutation to settle.
-			// It may have been requeued before its failure receipt committed.
-			// Apply results and any attempt with an intent never use this path.
-			if entry.Result.Result == (domain.HostingResult{Outcome: "failed"}) && !hostingAttemptHasIntent(journal.Snapshot(), entry.Attempt) && runnerHTTPStatus(err, 404) {
-				probeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-				status, probeErr := client.HostingStatus(probeCtx, domain.HostingStatusRequest{HostingAuthority: entry.Result.HostingAuthority})
-				stop()
-				if probeErr == nil && status.ID == entry.OperationID && !status.MutationHold && status.CompleteReceipt == nil {
-					if ackErr := journal.AckHosting(entry.ID); ackErr != nil {
-						return ackErr
-					}
-					continue
-				}
-			}
+
 			return err
 		}
 		if op.CompleteReceipt == nil || op.CompleteReceipt.ID != entry.Result.ReceiptID || op.CompleteReceipt.BodyHash != domain.HostingDocumentHash(entry.Result.Result) {
@@ -370,13 +352,4 @@ func replayHostingEvents(server, token string, journal *runner.AttemptJournal, a
 		}
 	}
 	return nil
-}
-
-func hostingAttemptHasIntent(snapshot runner.JournalSnapshot, authority runner.AttemptIdentity) bool {
-	for _, entry := range snapshot.Hosting {
-		if entry.Phase == "apply_intent" && entry.Attempt.RunID == authority.RunID && entry.Attempt.LeaseID == authority.LeaseID && entry.Attempt.Attempt == authority.Attempt && entry.Attempt.Fence == authority.Fence {
-			return true
-		}
-	}
-	return false
 }

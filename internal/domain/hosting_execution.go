@@ -20,6 +20,54 @@ const (
 	HostingPolicyVersion   = "public-image.loopback.v1"
 )
 
+// ContainsHostingExecution inspects both accepted workflow representations for
+// internal task types or authority fields. The iterative walk visits each nested
+// workflow pointer once, without recursive traversal of untrusted graph depth.
+func ContainsHostingExecution(spec RunSpec, workflow Workflow) bool {
+	internal := func(spec RunSpec) bool {
+		return strings.TrimSpace(spec.Type) == RunTypeImageDeploy || spec.HostingOperationID != "" || spec.HostingMode != ""
+	}
+	if internal(spec) {
+		return true
+	}
+	pending := []*Workflow{&workflow, spec.Workflow}
+	seen := map[*Workflow]bool{}
+	for len(pending) > 0 {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if current == nil || seen[current] {
+			continue
+		}
+		seen[current] = true
+		for _, step := range current.Steps {
+			if internal(step.RunSpec) {
+				return true
+			}
+			pending = append(pending, step.RunSpec.Workflow)
+		}
+	}
+	return false
+}
+
+// ValidateImageDeploymentTask checks canonical internal construction. Persisted
+// target and lease authorization remain mandatory at claim and hosting endpoints.
+func ValidateImageDeploymentTask(run TaskRun) error {
+	spec := run.RunSpec
+	if spec.Type != RunTypeImageDeploy || spec.HostingOperationID == "" || len(spec.HostingOperationID) > 128 || strings.TrimSpace(spec.HostingOperationID) != spec.HostingOperationID || spec.Process != nil || spec.Repository != nil || spec.Workflow != nil || len(spec.Inputs) != 0 || len(spec.Secrets) != 0 || len(spec.Artifacts) != 0 || len(run.Workflow.Steps) != 0 {
+		return errors.New("invalid internal image deployment task")
+	}
+	prefix := "run_"
+	if spec.HostingMode == "observe" {
+		prefix = "observe_"
+	} else if spec.HostingMode != "deploy" {
+		return errors.New("invalid internal image deployment mode")
+	}
+	if run.ID != prefix+spec.HostingOperationID {
+		return errors.New("image deployment task identity does not match operation")
+	}
+	return nil
+}
+
 // HostingReadiness is an origin-relative HTTP probe on the reserved local port.
 type HostingReadiness struct {
 	Path           string `json:"path"`

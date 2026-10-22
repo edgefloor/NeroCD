@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -57,5 +58,54 @@ func TestHostingExecutionMemoryFailsUnavailableBeforeMutation(t *testing.T) {
 	}
 	if _, err = server.app.RequestRunWithSpec(ctx, app.RunRequestInput{ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeImageDeploy}}); err == nil {
 		t.Fatal("generic image request bypassed operation authority")
+	}
+}
+
+func TestPublicRunAndTemplateAPIsRejectNestedHostingTasks(t *testing.T) {
+	server, mem := newTestServer()
+	token := createTestSession(t, server)
+	generic := domain.RunSpec{Type: "ansible"}
+	internal := domain.RunSpec{Type: domain.RunTypeImageDeploy}
+	nested := &domain.Workflow{Steps: []domain.WorkflowStep{{ID: "nested", RunSpec: internal}}}
+	for _, shape := range []struct {
+		name     string
+		spec     domain.RunSpec
+		workflow domain.Workflow
+	}{
+		{"top", internal, domain.Workflow{}},
+		{"workflow", generic, *nested},
+		{"run_spec_workflow", domain.RunSpec{Type: "ansible", Workflow: nested}, domain.Workflow{}},
+		{"deep_step", generic, domain.Workflow{Steps: []domain.WorkflowStep{{ID: "outer", RunSpec: domain.RunSpec{Type: "ansible", Workflow: nested}}}}},
+		{"unexpected_operation", domain.RunSpec{Type: "ansible", HostingOperationID: "hop_forbidden"}, domain.Workflow{}},
+		{"unexpected_step_mode", generic, domain.Workflow{Steps: []domain.WorkflowStep{{ID: "mode", RunSpec: domain.RunSpec{Type: "ansible", HostingMode: "observe"}}}}},
+	} {
+		for _, endpoint := range []struct{ method, path string }{{"POST", "/api/v1/runs"}, {"POST", "/api/v1/templates"}, {"PATCH", "/api/v1/templates"}} {
+			t.Run(shape.name+endpoint.method+endpoint.path, func(t *testing.T) {
+				body, _ := json.Marshal(map[string]any{"project_id": "proj_platform", "name": "internal-denial", "kind": "ansible", "run_spec": shape.spec, "workflow": shape.workflow})
+				if endpoint.method == "PATCH" {
+					body, _ = json.Marshal(map[string]any{"id": "tpl_plan", "project_id": "proj_platform", "name": "internal-denial", "kind": "ansible", "run_spec": shape.spec, "workflow": shape.workflow})
+				}
+				if endpoint.path == "/api/v1/runs" {
+					body, _ = json.Marshal(map[string]any{"project_id": "proj_platform", "run_spec": shape.spec, "workflow": shape.workflow})
+				}
+				r := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(string(body)))
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("Authorization", "Bearer "+token)
+				w := httptest.NewRecorder()
+				server.ServeHTTP(w, r)
+				if w.Code != 400 || !strings.Contains(w.Body.String(), `"code":"bad_request"`) {
+					t.Fatalf("internal task accepted: status=%d body=%s", w.Code, w.Body.String())
+				}
+			})
+		}
+	}
+	runs, err := mem.ListRuns(t.Context(), "proj_platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range runs {
+		if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+			t.Fatal("public validation persisted internal authority")
+		}
 	}
 }

@@ -746,6 +746,11 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if replay {
 		return hostingOperation(ctx, tx, in.OperationID)
 	}
+	// Only a previously committed matching receipt survives loss of authority.
+	// Every first result remains a fenced mutation, even when a hold exists.
+	if err = hostingAuthorityExists(ctx, tx, runnerID, in.HostingAuthority, true); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	op, err := hostingOperation(ctx, tx, in.OperationID)
 	if err != nil {
 		return op, err
@@ -753,25 +758,10 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if op.State == "succeeded" || op.State == "failed" || op.State == "canceled" {
 		return domain.HostingOperation{}, ErrConflict
 	}
-	var live bool
-	if err = func() error {
-		row, queryErr := sqlcgen.New(tx).HostingLeaseLive(ctx, in.LeaseID)
-		if queryErr != nil {
-			return queryErr
-		}
-		if row == nil {
-			return ErrConflict
-		}
-		live = *row
-		return nil
-	}(); err != nil {
-		return domain.HostingOperation{}, err
-	}
-	// Pre-apply failure may finish only under live authority and cannot assert
-	// external success. Expired post-admission evidence is retained for owner
-	// reconciliation, never treated as renewed permission to mutate a workload.
+	// Pre-apply failure cannot assert external success. A post-admission
+	// uncertain result retains the independent hold under live authority.
 	if !op.MutationHold {
-		if !live || in.Result.Outcome != "failed" || in.Result.Uncertain || op.State == "cancel_requested" {
+		if in.Result.Outcome != "failed" || in.Result.Uncertain || op.State == "cancel_requested" {
 			return domain.HostingOperation{}, ErrConflict
 		}
 	} else {
@@ -785,7 +775,7 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if err = insertHostingReceipt(ctx, tx, in.HostingAuthority, "complete", in.ReceiptID, in.Result); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	uncertain := op.MutationHold && (!live || in.Result.Uncertain || (in.Result.Outcome == "failed" && !in.Result.Restored))
+	uncertain := op.MutationHold && (in.Result.Uncertain || (in.Result.Outcome == "failed" && !in.Result.Restored))
 	state := in.Result.Outcome
 	if uncertain {
 		state = "reconciliation_required"
@@ -1132,7 +1122,10 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 
 func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runnerID string) (bool, error) {
 	if run.RunSpec.Type != domain.RunTypeImageDeploy {
-		return true, nil
+		return !domain.ContainsHostingExecution(run.RunSpec, run.Workflow), nil
+	}
+	if domain.ValidateImageDeploymentTask(run) != nil {
+		return false, nil
 	}
 	var operationID, mode string
 	err := func() error {

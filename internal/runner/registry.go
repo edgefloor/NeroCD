@@ -49,6 +49,15 @@ func (r Registry) Supports(runType string) bool {
 
 // BuildPlan converts run into its runner primitive plan.
 func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, error) {
+	if run.RunSpec.Type == domain.RunTypeImageDeploy {
+		if err := domain.ValidateImageDeploymentTask(run); err != nil {
+			return domain.RunnerPrimitivePlan{}, err
+		}
+		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
+	}
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+		return domain.RunnerPrimitivePlan{}, errors.New("hosting execution cannot be embedded in a generic plan")
+	}
 	adapter, ok := r.adapters[run.RunSpec.Type]
 	if !ok {
 		return domain.RunnerPrimitivePlan{}, fmt.Errorf("run_spec.type %q is not registered", run.RunSpec.Type)

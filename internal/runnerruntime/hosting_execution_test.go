@@ -148,3 +148,59 @@ func TestHostingResultReplayRejectsCompletionBeforePendingEvents(t *testing.T) {
 		t.Fatal("failed replay discarded durable evidence")
 	}
 }
+
+func TestHostingStaleCompletionRejectionRetainsLocalEvidence(t *testing.T) {
+	journal, err := runner.OpenAttemptJournal(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = journal.Close() }()
+	now := time.Now().UTC()
+	lease := domain.RunLease{ID: "lease_stale", RunID: "run_hop_stale", RunnerID: "runner_stale", Attempt: 1, Fence: "fence_stale", Status: domain.LeaseActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}
+	supervisor := newAttemptSupervisor(lease)
+	defer supervisor.Close()
+	a := hostingAuthority(lease.RunID, "hop_stale", lease)
+	plan := imageTestPlan(t)
+	if _, err = journal.AppendHosting(runner.JournalHosting{ID: "intent_stale", Attempt: journalAttemptIdentity(lease.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "apply_intent", Plan: &plan, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"code":"not_found","error":"not found"}`))
+	}))
+	defer server.Close()
+	result := domain.HostingResult{Outcome: "failed", ContainerID: "container_unknown", DaemonID: plan.Release.DaemonID, PlanHash: plan.Hash, Uncertain: true}
+	if _, err = journalHostingResult(supervisor, journal, runnerclient.New(server.URL, "token"), a, lease, result, func(context.Context) error { return nil }); err == nil {
+		t.Fatal("stale completion acknowledged")
+	}
+	before := journal.Snapshot().Hosting
+	if len(before) != 2 || before[1].Result == nil || before[1].Result.Result != result {
+		t.Fatal("stale rejection lost local result/intent")
+	}
+	if err = reconcileHostingJournal(server.URL, "token", journal, ""); err == nil {
+		t.Fatal("stale startup report acknowledged")
+	}
+	if requests != 2 || !reflect.DeepEqual(before, journal.Snapshot().Hosting) {
+		t.Fatal("rejection or replay discarded local evidence")
+	}
+}
+
+func TestGenericRuntimeRejectsNestedHostingBeforeAnyLifecycleRequest(t *testing.T) {
+	journal, err := runner.OpenAttemptJournal(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = journal.Close() }()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	claim := domain.ClaimedRun{Run: domain.TaskRun{ID: "run_generic", RunSpec: domain.RunSpec{Type: "ansible"}, Workflow: domain.Workflow{Steps: []domain.WorkflowStep{{ID: "nested", RunSpec: domain.RunSpec{Type: domain.RunTypeImageDeploy}}}}}}
+	if err = executeClaimWithJournalAndSecretRootAndCounters(server.URL, "token", claim, t.TempDir(), time.Second, journal, "", composeImagePolicyPreloaded, &runnerOperationalCounters{}); err == nil {
+		t.Fatal("nested internal task entered generic runtime")
+	}
+	if requests != 0 || journal.Depth() != 0 {
+		t.Fatalf("rejected task created lifecycle traffic or journal mutations: requests=%d depth=%d", requests, journal.Depth())
+	}
+}

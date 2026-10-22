@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -21,6 +23,7 @@ import (
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/runner"
 	"nerocd/internal/runnerruntime"
 	"nerocd/internal/store"
 	"nerocd/web"
@@ -178,9 +181,10 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 		return awaitHostingDispatch(t, pg, op.ID)
 	}
 	workDir := t.TempDir()
+	journalDir := filepath.Join(workDir, "hosting-journal")
 	runAgent := func() {
 		t.Helper()
-		if err := runnerruntime.Run(runnerruntime.Config{Server: httpServer.URL, Token: "image-hosting-fixture-token", RunnerID: target.RunnerID, WorkDir: workDir, Execute: true, Once: true, CancelPollInterval: 100 * time.Millisecond}); err != nil {
+		if err := runnerruntime.Run(runnerruntime.Config{Server: httpServer.URL, Token: "image-hosting-fixture-token", RunnerID: target.RunnerID, WorkDir: workDir, JournalDir: journalDir, Execute: true, Once: true, CancelPollInterval: 100 * time.Millisecond}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -294,16 +298,53 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 	runAgent()
 	uncertain := requestDeployment("actual-agent-lease-loss")
 	loseLeaseOnVerifying.Store(true)
-	config := runnerruntime.Config{Server: httpServer.URL, Token: "image-hosting-fixture-token", RunnerID: target.RunnerID, WorkDir: workDir, Execute: true, Once: true, CancelPollInterval: 100 * time.Millisecond}
+	config := runnerruntime.Config{Server: httpServer.URL, Token: "image-hosting-fixture-token", RunnerID: target.RunnerID, WorkDir: workDir, JournalDir: journalDir, Execute: true, Once: true, CancelPollInterval: 100 * time.Millisecond}
 	if err := runnerruntime.Run(config); err == nil {
 		t.Fatal("lease loss after Docker start reported success")
 	}
-	uncertain, err = pg.GetHostingOperation(ctx, uncertain.ID)
-	if err != nil || !uncertain.MutationHold || uncertain.State != "reconciliation_required" || uncertain.Result == nil || !uncertain.Result.Uncertain {
-		t.Fatalf("lease loss discarded external uncertainty: %+v %v", uncertain, err)
+	readJournal := func() runner.JournalSnapshot {
+		t.Helper()
+		journal, err := runner.OpenAttemptJournal(journalDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot := journal.Snapshot()
+		if err := journal.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
 	}
-	if uncertain.Result.ContainerID != "" {
-		ownedContainers = append(ownedContainers, uncertain.Result.ContainerID)
+	local := readJournal()
+	var intent, result bool
+	for _, entry := range local.Hosting {
+		if entry.OperationID != uncertain.ID {
+			continue
+		}
+		if entry.Phase == "apply_intent" {
+			intent = true
+		}
+		if entry.Phase == "result" && entry.Result != nil {
+			result = entry.Result.Result.Uncertain
+			if entry.Result.Result.ContainerID != "" {
+				ownedContainers = append(ownedContainers, entry.Result.Result.ContainerID)
+			}
+		}
+	}
+	if !intent || !result {
+		t.Fatalf("stale rejection lost local intent/result: %+v", local.Hosting)
+	}
+	uncertain, err = pg.GetHostingOperation(ctx, uncertain.ID)
+	wantState := "reconciliation_required"
+	if interruption == "cancel" {
+		wantState = "cancel_requested"
+	}
+	if err != nil || !uncertain.MutationHold || uncertain.State != wantState || uncertain.Result != nil || uncertain.CompleteReceipt != nil {
+		t.Fatalf("fresh stale result settled authoritative state: %+v %v", uncertain, err)
+	}
+	var completedAudits int
+	var healthyOperation string
+	if err = database.QueryRow(ctx, `SELECT (SELECT count(*) FROM audit_events WHERE action='hosting.completed' AND target_id=$1),(SELECT healthy->>'operation_id' FROM hosting_binding_state WHERE binding_id=$2)`, uncertain.ID, uncertain.BindingID).Scan(&completedAudits, &healthyOperation); err != nil || completedAudits != 0 || healthyOperation != lastHealthy.ID {
+		t.Fatalf("stale result changed completion audit/healthy pointer: audits=%d healthy=%s err=%v", completedAudits, healthyOperation, err)
 	}
 	beforeRestart := heartbeatCalls.Load()
 	if err := runnerruntime.Run(config); err == nil {
@@ -312,5 +353,9 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 	if heartbeatCalls.Load() != beforeRestart {
 		t.Fatal("restart heartbeat preceded journal reconciliation")
 	}
-	t.Logf("%s after Docker start: operation=%s independent hold retained; same-workdir restart blocked before heartbeat", interruption, uncertain.ID)
+	if !reflect.DeepEqual(local.Hosting, readJournal().Hosting) {
+		t.Fatal("restart discarded unacknowledged local result/intent")
+	}
+
+	t.Logf("%s after Docker start: operation=%s independent hold and local result/intent retained without stale server receipt; same-workdir restart blocked before heartbeat", interruption, uncertain.ID)
 }

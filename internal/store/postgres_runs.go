@@ -79,7 +79,7 @@ func (s *PostgresStore) ListRunsPageForScope(ctx context.Context, scope RunAutho
 
 // CreateRun implements the corresponding repository operation.
 func (s *PostgresStore) CreateRun(ctx context.Context, run domain.TaskRun) (domain.TaskRun, error) {
-	if run.RunSpec.Type == domain.RunTypeImageDeploy {
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
 		return domain.TaskRun{}, ErrConflict
 	}
 	runSpec, workflow, state, err := runJSON(run)
@@ -95,7 +95,7 @@ func (s *PostgresStore) CreateRun(ctx context.Context, run domain.TaskRun) (doma
 
 // CreateRunRequest implements the corresponding repository operation.
 func (s *PostgresStore) CreateRunRequest(ctx context.Context, run domain.TaskRun, log domain.RunLog, approval *domain.Approval, audit domain.AuditEvent) (domain.TaskRun, error) {
-	if run.RunSpec.Type == domain.RunTypeImageDeploy {
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
 		return domain.TaskRun{}, ErrConflict
 	}
 	runSpec, workflow, state, err := runJSON(run)

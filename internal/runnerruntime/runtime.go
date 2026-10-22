@@ -276,6 +276,13 @@ func executeClaimWithJournalAndSecretRoot(server string, token string, claim dom
 }
 
 func executeClaimWithJournalAndSecretRootAndCounters(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, imageEndpoints ...string) error {
+	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
+		if err := domain.ValidateImageDeploymentTask(claim.Run); err != nil {
+			return err
+		}
+	} else if domain.ContainsHostingExecution(claim.Run.RunSpec, claim.Run.Workflow) {
+		return errors.New("hosting execution cannot enter the generic runtime")
+	}
 	sequence := 4
 	var sequenceMu sync.Mutex
 	var supervisor *attemptSupervisor
