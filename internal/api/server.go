@@ -387,6 +387,8 @@ func requiresAuth(path string) bool {
 
 func requiresRunnerAuth(path string) bool {
 	switch path {
+	case "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
+		return true
 	case "/api/v1/runners/proxy/plan", "/api/v1/runners/proxy/prepared", "/api/v1/runners/proxy/apply-begin", "/api/v1/runners/proxy/complete", "/api/v1/runners/proxy/status":
 		return true
 	case "/api/v1/runners/hosting/plan", "/api/v1/runners/hosting/prepared", "/api/v1/runners/hosting/apply-begin", "/api/v1/runners/hosting/complete", "/api/v1/runners/hosting/status", "/api/v1/runners/hosting/reconciliation", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete", "/api/v1/runners/deployments/transition", "/api/v1/runners/deployments/plan", "/api/v1/runners/deployments/status", "/api/v1/runners/deployments/provenance", "/api/v1/runners/deployments/fail-and-rollback":
@@ -578,7 +580,7 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
-	case errors.Is(err, hostingjobs.ErrUnavailable):
+	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_unavailable"
 	case errors.Is(err, app.ErrManagedSecretsUnavailable):

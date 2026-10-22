@@ -1,13 +1,13 @@
 # Shared build-agent phase protocol
 
 `internal/hostingbuildprotocol` defines nonsecret request and response DTOs for
-future server and agent wiring. It imports the domain package and standard
-library only. This candidate registers no endpoint, controller, executor, client,
-or runner capability.
+server and agent wiring. It imports the domain package and standard library
+only. The server registers the five nonsecret phase endpoints below. Runner
+execution and client integration remain separately reviewed components.
 
-## Proposed HTTP boundary
+## HTTP boundary
 
-All six operations are POST requests under `/api/v1/runners/builds/`:
+The five registered operations are POST requests under `/api/v1/runners/builds/`:
 
 | Suffix | Request | Fields beyond `authority` |
 | --- | --- | --- |
@@ -16,14 +16,14 @@ All six operations are POST requests under `/api/v1/runners/builds/`:
 | `source-commit` | `SourceCommitRequest` | `receipt_id`, `receipt` |
 | `prepare` | `PrepareRequest` | `expected_revision`, `daemon_id` |
 | `complete` | `CompleteRequest` | `receipt_id`, `expected_revision`, `completion` |
-| `source-credential` | Existing domain `HostingSourceCredentialRequest` | `delivery_id` |
+
 
 Every `authority` is the existing `domain.HostingBuildAuthority` with unchanged
 `build_id`, `run_id`, `lease_id`, `attempt`, and `fence` JSON fields. Runner ID
 comes from the authenticated dedicated bearer credential; no request has a
 caller-selected runner field. `source-commit` deliberately has no revision.
 
-Future HTTP decoders must enforce body-size limits, unknown-field rejection,
+The shared HTTP decoder enforces body-size limits, unknown-field rejection,
 and a single complete JSON document without trailing content. The DTOs and
 validation helpers do not implement those decoder checks or authenticate requests.
 No plaintext credential response belongs in this package. Credential material's
@@ -49,8 +49,7 @@ including any journal kind named `result`.
 A `ReceiptAcknowledgment` contains the exact authority, phase, receipt ID, and
 body hash. `ValidateAcknowledgment` compares it against caller-retained intent
 without normalization. This equality check is not authentication, a signature,
-or authorization to execute. The caller must obtain proof through the future
-reviewed authenticated transport.
+or authorization to execute. The caller must obtain proof through the authenticated runner transport.
 
 ## Structural validation limits
 
@@ -80,6 +79,57 @@ A historical acknowledgment can exist while `may_execute` is false. Only a
 reviewed current live authorization path may set `may_execute` true; acknowledgment
 validation itself cannot do so.
 
-The exact historical-status read and revocation policy remains deferred. It
-requires a newly reviewed store method and must not relax current mutation
+The separate historical-status store method does not relax current mutation
 admission or reuse historical replay as live execution authority.
+
+
+## Historical status and live execution
+
+`status` requires the authenticated, currently active persisted runner identity
+and an exact canonical task, historical lease, attempt and fence. This proves
+which attempt is asking. Historical acknowledgments remain readable after creator
+or grant revocation and lease expiry. Revoked runner credentials cannot authenticate.
+At most one acknowledgment exists for each source, complete and cleanup phase.
+Only receipts committed under this exact tuple are returned.
+
+`may_execute` is a separate current decision. It requires a queued, sourcing or
+building build, current creator maintainer authority, the exact current resource
+and source versions, fixed placement, current destination grant, active enrolled
+capable runner, no restore admission hold, and a running task with a live lease.
+Database time is checked after blocking locks. Lease renewal is read from the
+current lease row, never an initial caller timestamp. Cancellation and
+cleanup_required always return `may_execute: false`.
+
+Every fresh mutation repeats live authority checks after its blocking work and
+writes. An expired tuple can acknowledge a committed receipt, never create one.
+Terminal build completion also settles the exact task and lease atomically.
+Agents must not follow it with generic run completion. Cleanup uncertainty keeps
+only the existing bounded lease for explicit cleanup reporting; it never grants
+another engine execution or automatic lease extension.
+
+The `source-credential` HTTP endpoint is deliberately absent. Its existing domain
+request alias and separately reviewed delivery component do not establish a
+plaintext transport contract.
+
+## Public build requests and history
+
+`POST /api/v1/resources/{id}/builds` accepts only
+`expected_resource_generation`, `expected_source_generation` and
+`idempotency_key`. The response is `202 {"build": ...}`. Exact request replay
+returns the retained build and its original snapshot, without a second task.
+Policy, grant, credential and placement fields are rejected. Only configured
+public HTTPS Git resources are admitted.
+
+`GET /api/v1/resources/{id}/builds` returns retained history under current resource
+project viewer authority, ordered by created_at and ID descending. It uses the
+existing bounded limit/offset pagination and items/count/limit/offset/total
+response. `GET /api/v1/hosting-builds/{id}` returns `{"build": ...}` under current
+persisted project viewer authority. Cancellation requires current maintainer
+authority and `POST /api/v1/hosting-builds/{id}/cancel` with
+`{"expected_revision": n}`. Its response uses the same build envelope.
+
+Public builds use a separate whitelist projection. They expose state, revision,
+timestamps, original nonsecret Git settings and generations, exact placement,
+resolved commit/tree identity and optional output image/platform identities.
+They never serialize the runner snapshot, operator/source policy, credential
+grant, policy fingerprint, input identity or internal request hashes.

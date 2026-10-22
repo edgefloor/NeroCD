@@ -21,6 +21,218 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  "/api/v1/resources/{id}/builds":
+    "post":
+      "operationId": "requestHostingBuild"
+      "summary": "requestHostingBuild"
+      "description": "Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed."
+      "responses":
+        "202":
+          "description": "Persisted build metadata"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingBuildResponse"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/HostingBuildRequest"
+    "get":
+      "operationId": "listHostingBuilds"
+      "summary": "listHostingBuilds"
+      "description": "Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed."
+      "responses":
+        "200":
+          "description": "Persisted build metadata"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingBuildListResponse"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}, {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100}}, {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "maximum": 100000}}]
+  "/api/v1/hosting-builds/{id}": {"get": {"operationId": "getHostingBuild", "summary": "getHostingBuild", "description": "Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.", "responses": {"200": {"description": "Persisted build metadata", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingBuildResponse"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]}}
+  "/api/v1/hosting-builds/{id}/cancel": {"post": {"operationId": "cancelHostingBuild", "summary": "cancelHostingBuild", "description": "Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.", "responses": {"200": {"description": "Persisted build metadata", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingBuildResponse"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingBuildCancelInput"}}}}}}
+  "/api/v1/runners/builds/status":
+    "post":
+      "operationId": "runnerHostingBuildStatus"
+      "summary": "runnerHostingBuildStatus"
+      "description": "Authenticated exact runner only. Historical receipt proof never grants live execution."
+      "responses":
+        "200":
+          "description": "Persisted build metadata"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingBuildStatusResponse"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "security": [{"bearerAuth": []}]
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/HostingBuildStatusRequest"
+  "/api/v1/runners/builds/source-begin":
+    "post":
+      "operationId": "runnerHostingBuildSourceBegin"
+      "summary": "runnerHostingBuildSourceBegin"
+      "description": "Authenticated exact runner only. Historical receipt proof never grants live execution."
+      "responses":
+        "200":
+          "description": "Persisted build metadata"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingBuildPhaseResponse"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "security": [{"bearerAuth": []}]
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/HostingBuildSourceBeginRequest"
+  "/api/v1/runners/builds/source-commit":
+    "post":
+      "operationId": "runnerHostingBuildSourceCommit"
+      "summary": "runnerHostingBuildSourceCommit"
+      "description": "Authenticated exact runner only. Historical receipt proof never grants live execution."
+      "responses":
+        "200":
+          "description": "Persisted build metadata"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingBuildPhaseResponse"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "security": [{"bearerAuth": []}]
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/HostingBuildSourceCommitRequest"
+  "/api/v1/runners/builds/prepare":
+    "post":
+      "operationId": "runnerHostingBuildPrepare"
+      "summary": "runnerHostingBuildPrepare"
+      "description": "Authenticated exact runner only. Historical receipt proof never grants live execution."
+      "responses":
+        "200":
+          "description": "Persisted build metadata"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingBuildPhaseResponse"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "security": [{"bearerAuth": []}]
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/HostingBuildPrepareRequest"
+  "/api/v1/runners/builds/complete":
+    "post":
+      "operationId": "runnerHostingBuildComplete"
+      "summary": "runnerHostingBuildComplete"
+      "description": "Authenticated exact runner only. Historical receipt proof never grants live execution."
+      "responses":
+        "200":
+          "description": "Persisted build metadata"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingBuildPhaseResponse"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "security": [{"bearerAuth": []}]
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/HostingBuildCompleteRequest"
   "/api/v1/servers/{id}/proxy":
     get:
       operationId: "getHostingProxy"
@@ -3131,6 +3343,374 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    "HostingBuildRequest":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["expected_resource_generation", "expected_source_generation", "idempotency_key"]
+      "properties":
+        "expected_resource_generation":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "expected_source_generation":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "idempotency_key":
+          "type": "string"
+          "minLength": 1
+          "maxLength": 128
+    "HostingBuildCancelInput":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["expected_revision"]
+      "properties":
+        "expected_revision":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+    "HostingBuildAuthority":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["build_id", "run_id", "lease_id", "attempt", "fence"]
+      "properties":
+        "build_id":
+          "type": "string"
+        "run_id":
+          "type": "string"
+        "lease_id":
+          "type": "string"
+        "attempt":
+          "type": "integer"
+          "format": "int64"
+        "fence":
+          "type": "string"
+    "HostingBuildSourceReceipt":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["build_id", "source_id", "input_id", "commit", "policy_hash", "tree_digest"]
+      "properties":
+        "build_id":
+          "type": "string"
+        "source_id":
+          "type": "string"
+        "input_id":
+          "type": "string"
+        "commit":
+          "type": "string"
+        "policy_hash":
+          "type": "string"
+        "tree_digest":
+          "type": "string"
+    "HostingBuildArtifact":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["origin", "build_id", "source_id", "input_id", "source_receipt_hash", "context_digest", "request_digest", "daemon_id", "image_id", "index_digest", "manifest_digest", "config_digest", "platform"]
+      "properties":
+        "origin":
+          "type": "string"
+        "build_id":
+          "type": "string"
+        "source_id":
+          "type": "string"
+        "input_id":
+          "type": "string"
+        "source_receipt_hash":
+          "type": "string"
+        "context_digest":
+          "type": "string"
+        "request_digest":
+          "type": "string"
+        "daemon_id":
+          "type": "string"
+        "image_id":
+          "type": "string"
+        "index_digest":
+          "type": "string"
+        "manifest_digest":
+          "type": "string"
+        "config_digest":
+          "type": "string"
+        "platform":
+          "type": "string"
+        "context_policy":
+          "type": "string"
+    "HostingBuildCompletion":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["state"]
+      "properties":
+        "state":
+          "type": "string"
+          "enum": ["succeeded", "failed", "canceled", "cleanup_required"]
+        "failure_code":
+          "type": "string"
+        "artifact":
+          "$ref": "#/components/schemas/HostingBuildArtifact"
+    "HostingBuildReceiptAcknowledgment":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["authority", "phase", "receipt_id", "body_hash"]
+      "properties":
+        "authority":
+          "$ref": "#/components/schemas/HostingBuildAuthority"
+        "phase":
+          "type": "string"
+          "enum": ["source", "complete", "cleanup"]
+        "receipt_id":
+          "type": "string"
+        "body_hash":
+          "type": "string"
+    "HostingBuildRunnerSnapshot":
+      "type": "object"
+      "description": "Exact nonsecret runner snapshot. Contains trusted source and operator policy and optional credential grant metadata. Never returned by public resource/build APIs."
+      "additionalProperties": true
+    "HostingBuildRunnerDocument":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["id", "project_id", "resource_id", "state", "revision", "created_by", "snapshot", "created_at", "updated_at"]
+      "properties":
+        "id":
+          "type": "string"
+        "project_id":
+          "type": "string"
+        "resource_id":
+          "type": "string"
+        "state":
+          "type": "string"
+        "run_id":
+          "type": "string"
+        "created_by":
+          "type": "string"
+        "failure_code":
+          "type": "string"
+        "revision":
+          "type": "integer"
+          "format": "int64"
+        "created_at":
+          "type": "string"
+          "format": "date-time"
+        "updated_at":
+          "type": "string"
+          "format": "date-time"
+        "daemon_id":
+          "type": "string"
+        "snapshot":
+          "$ref": "#/components/schemas/HostingBuildRunnerSnapshot"
+        "source_receipt":
+          "$ref": "#/components/schemas/HostingBuildSourceReceipt"
+        "artifact":
+          "$ref": "#/components/schemas/HostingBuildArtifact"
+    "HostingBuildPhaseResponse":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["build"]
+      "properties":
+        "build":
+          "$ref": "#/components/schemas/HostingBuildRunnerDocument"
+        "acknowledgment":
+          "$ref": "#/components/schemas/HostingBuildReceiptAcknowledgment"
+    "HostingBuildStatusRequest":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["authority"]
+      "properties":
+        "authority":
+          "$ref": "#/components/schemas/HostingBuildAuthority"
+    "HostingBuildSourceBeginRequest":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["authority", "expected_revision"]
+      "properties":
+        "authority":
+          "$ref": "#/components/schemas/HostingBuildAuthority"
+        "expected_revision":
+          "type": "integer"
+          "format": "int64"
+    "HostingBuildSourceCommitRequest":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["authority", "receipt_id", "receipt"]
+      "properties":
+        "authority":
+          "$ref": "#/components/schemas/HostingBuildAuthority"
+        "receipt_id":
+          "type": "string"
+        "receipt":
+          "$ref": "#/components/schemas/HostingBuildSourceReceipt"
+    "HostingBuildPrepareRequest":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["authority", "expected_revision", "daemon_id"]
+      "properties":
+        "authority":
+          "$ref": "#/components/schemas/HostingBuildAuthority"
+        "expected_revision":
+          "type": "integer"
+          "format": "int64"
+        "daemon_id":
+          "type": "string"
+    "HostingBuildCompleteRequest":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["authority", "expected_revision", "receipt_id", "completion"]
+      "properties":
+        "authority":
+          "$ref": "#/components/schemas/HostingBuildAuthority"
+        "expected_revision":
+          "type": "integer"
+          "format": "int64"
+        "receipt_id":
+          "type": "string"
+        "completion":
+          "$ref": "#/components/schemas/HostingBuildCompletion"
+    "HostingBuildStatusResponse":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["build", "may_execute", "cancel_requested", "receipts"]
+      "properties":
+        "build":
+          "$ref": "#/components/schemas/HostingBuildRunnerDocument"
+        "may_execute":
+          "type": "boolean"
+        "cancel_requested":
+          "type": "boolean"
+        "receipts":
+          "type": "array"
+          "maxItems": 3
+          "items":
+            "$ref": "#/components/schemas/HostingBuildReceiptAcknowledgment"
+    "PublicHostingBuildSource":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["source_id", "repository_url", "requested_ref", "credential_kind", "generation", "settings"]
+      "properties":
+        "source_id":
+          "type": "string"
+        "repository_url":
+          "type": "string"
+        "requested_ref":
+          "type": "string"
+        "credential_kind":
+          "type": "string"
+        "generation":
+          "type": "integer"
+          "format": "int64"
+        "settings":
+          "$ref": "#/components/schemas/HostingBuildSettings"
+    "PublicHostingBuildTarget":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["binding_id", "destination_id", "server_id", "runner_id"]
+      "properties":
+        "binding_id":
+          "type": "string"
+        "destination_id":
+          "type": "string"
+        "server_id":
+          "type": "string"
+        "runner_id":
+          "type": "string"
+    "PublicHostingBuildSnapshot":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["resource_generation", "source", "target"]
+      "properties":
+        "resource_generation":
+          "type": "integer"
+          "format": "int64"
+        "source":
+          "$ref": "#/components/schemas/PublicHostingBuildSource"
+        "target":
+          "$ref": "#/components/schemas/PublicHostingBuildTarget"
+    "PublicHostingBuildSourceReceipt":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["commit", "tree_digest"]
+      "properties":
+        "commit":
+          "type": "string"
+        "tree_digest":
+          "type": "string"
+    "PublicHostingBuildArtifact":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["origin", "image_id", "index_digest", "manifest_digest", "config_digest", "platform"]
+      "properties":
+        "origin":
+          "type": "string"
+        "image_id":
+          "type": "string"
+        "index_digest":
+          "type": "string"
+        "manifest_digest":
+          "type": "string"
+        "config_digest":
+          "type": "string"
+        "platform":
+          "type": "string"
+    "PublicHostingBuild":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["id", "project_id", "resource_id", "state", "revision", "created_by", "created_at", "updated_at", "snapshot"]
+      "properties":
+        "id":
+          "type": "string"
+        "project_id":
+          "type": "string"
+        "resource_id":
+          "type": "string"
+        "state":
+          "type": "string"
+        "run_id":
+          "type": "string"
+        "created_by":
+          "type": "string"
+        "failure_code":
+          "type": "string"
+        "revision":
+          "type": "integer"
+          "format": "int64"
+        "created_at":
+          "type": "string"
+          "format": "date-time"
+        "updated_at":
+          "type": "string"
+          "format": "date-time"
+        "snapshot":
+          "$ref": "#/components/schemas/PublicHostingBuildSnapshot"
+        "source_receipt":
+          "$ref": "#/components/schemas/PublicHostingBuildSourceReceipt"
+        "artifact":
+          "$ref": "#/components/schemas/PublicHostingBuildArtifact"
+    "HostingBuildResponse":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["build"]
+      "properties":
+        "build":
+          "$ref": "#/components/schemas/PublicHostingBuild"
+    "HostingBuildListResponse":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["items", "count", "limit", "offset", "total"]
+      "properties":
+        "items":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/PublicHostingBuild"
+        "count":
+          "type": "integer"
+          "format": "int64"
+        "limit":
+          "type": "integer"
+          "format": "int64"
+        "offset":
+          "type": "integer"
+          "format": "int64"
+        "total":
+          "type": "integer"
+          "format": "int64"
     HostingProxyConfiguration:
       type: "object"
       additionalProperties: false
