@@ -45,6 +45,41 @@ func (q *Queries) HostingObservationClock(ctx context.Context) (time.Time, error
 	return now, err
 }
 
+const listObservationBindingCandidates = `-- name: ListObservationBindingCandidates :many
+SELECT b.id,b.resource_id FROM resource_bindings b JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id JOIN hosting_binding_state bs ON bs.binding_id=b.id WHERE s.runner_id=$1 AND b.id>$2::text AND bs.healthy IS NOT NULL ORDER BY b.id LIMIT $3::integer
+`
+
+type ListObservationBindingCandidatesParams struct {
+	RunnerID       string `json:"runner_id"`
+	AfterBindingID string `json:"after_binding_id"`
+	PageLimit      int32  `json:"page_limit"`
+}
+
+type ListObservationBindingCandidatesRow struct {
+	ID         string `json:"id"`
+	ResourceID string `json:"resource_id"`
+}
+
+func (q *Queries) ListObservationBindingCandidates(ctx context.Context, arg ListObservationBindingCandidatesParams) ([]ListObservationBindingCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listObservationBindingCandidates, arg.RunnerID, arg.AfterBindingID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListObservationBindingCandidatesRow{}
+	for rows.Next() {
+		var i ListObservationBindingCandidatesRow
+		if err := rows.Scan(&i.ID, &i.ResourceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockHostingRuntimeObservation = `-- name: LockHostingRuntimeObservation :one
 SELECT binding_id, pending_target, pending_identity, accepted_target, accepted_identity, accepted_body, accepted_ack FROM hosting_runtime_observations WHERE binding_id=$1 FOR UPDATE
 `
@@ -61,6 +96,145 @@ func (q *Queries) LockHostingRuntimeObservation(ctx context.Context, bindingID s
 		&i.AcceptedBody,
 		&i.AcceptedAck,
 	)
+	return i, err
+}
+
+const lockObservationBindingPlacement = `-- name: LockObservationBindingPlacement :one
+SELECT b.id,b.destination_id,b.runtime_namespace,d.server_id,s.runner_id FROM resource_bindings b JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id WHERE b.resource_id=$1 FOR SHARE OF b,s
+`
+
+type LockObservationBindingPlacementRow struct {
+	ID               string `json:"id"`
+	DestinationID    string `json:"destination_id"`
+	RuntimeNamespace string `json:"runtime_namespace"`
+	ServerID         string `json:"server_id"`
+	RunnerID         string `json:"runner_id"`
+}
+
+func (q *Queries) LockObservationBindingPlacement(ctx context.Context, resourceID string) (LockObservationBindingPlacementRow, error) {
+	row := q.db.QueryRow(ctx, lockObservationBindingPlacement, resourceID)
+	var i LockObservationBindingPlacementRow
+	err := row.Scan(
+		&i.ID,
+		&i.DestinationID,
+		&i.RuntimeNamespace,
+		&i.ServerID,
+		&i.RunnerID,
+	)
+	return i, err
+}
+
+const lockObservationDestinationRow = `-- name: LockObservationDestinationRow :one
+SELECT id FROM destinations WHERE id=$1 FOR SHARE
+`
+
+func (q *Queries) LockObservationDestinationRow(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockObservationDestinationRow, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockObservationEnrollment = `-- name: LockObservationEnrollment :one
+SELECT id FROM runner_enrollments WHERE runner_id=$1 AND used_at IS NOT NULL AND revoked_at IS NULL AND credential_hash=$2 ORDER BY id LIMIT 1 FOR SHARE
+`
+
+type LockObservationEnrollmentParams struct {
+	RunnerID       string  `json:"runner_id"`
+	CredentialHash *string `json:"credential_hash"`
+}
+
+func (q *Queries) LockObservationEnrollment(ctx context.Context, arg LockObservationEnrollmentParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockObservationEnrollment, arg.RunnerID, arg.CredentialHash)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockObservationGrant = `-- name: LockObservationGrant :one
+SELECT revoked_at,created_at FROM destination_project_grants WHERE destination_id=$1 AND project_id=$2 FOR UPDATE
+`
+
+type LockObservationGrantParams struct {
+	DestinationID string `json:"destination_id"`
+	ProjectID     string `json:"project_id"`
+}
+
+type LockObservationGrantRow struct {
+	RevokedAt *time.Time `json:"revoked_at"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+func (q *Queries) LockObservationGrant(ctx context.Context, arg LockObservationGrantParams) (LockObservationGrantRow, error) {
+	row := q.db.QueryRow(ctx, lockObservationGrant, arg.DestinationID, arg.ProjectID)
+	var i LockObservationGrantRow
+	err := row.Scan(&i.RevokedAt, &i.CreatedAt)
+	return i, err
+}
+
+const lockObservationRunner = `-- name: LockObservationRunner :one
+SELECT token_hash,last_heartbeat_at,status,capabilities FROM runners WHERE id=$1 FOR SHARE
+`
+
+type LockObservationRunnerRow struct {
+	TokenHash       string    `json:"token_hash"`
+	LastHeartbeatAt time.Time `json:"last_heartbeat_at"`
+	Status          string    `json:"status"`
+	Capabilities    []string  `json:"capabilities"`
+}
+
+func (q *Queries) LockObservationRunner(ctx context.Context, id string) (LockObservationRunnerRow, error) {
+	row := q.db.QueryRow(ctx, lockObservationRunner, id)
+	var i LockObservationRunnerRow
+	err := row.Scan(
+		&i.TokenHash,
+		&i.LastHeartbeatAt,
+		&i.Status,
+		&i.Capabilities,
+	)
+	return i, err
+}
+
+const lockObservationSettledState = `-- name: LockObservationSettledState :one
+SELECT healthy,hold_operation_id,restore_admitted FROM hosting_binding_state WHERE binding_id=$1 FOR UPDATE
+`
+
+type LockObservationSettledStateRow struct {
+	Healthy         []byte  `json:"healthy"`
+	HoldOperationID *string `json:"hold_operation_id"`
+	RestoreAdmitted bool    `json:"restore_admitted"`
+}
+
+func (q *Queries) LockObservationSettledState(ctx context.Context, bindingID string) (LockObservationSettledStateRow, error) {
+	row := q.db.QueryRow(ctx, lockObservationSettledState, bindingID)
+	var i LockObservationSettledStateRow
+	err := row.Scan(&i.Healthy, &i.HoldOperationID, &i.RestoreAdmitted)
+	return i, err
+}
+
+const observationBindingResource = `-- name: ObservationBindingResource :one
+SELECT resource_id FROM resource_bindings WHERE id=$1
+`
+
+func (q *Queries) ObservationBindingResource(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, observationBindingResource, id)
+	var resource_id string
+	err := row.Scan(&resource_id)
+	return resource_id, err
+}
+
+const observationResourceDestination = `-- name: ObservationResourceDestination :one
+SELECT r.project_id,b.destination_id FROM resources r LEFT JOIN resource_bindings b ON b.resource_id=r.id WHERE r.id=$1
+`
+
+type ObservationResourceDestinationRow struct {
+	ProjectID     string  `json:"project_id"`
+	DestinationID *string `json:"destination_id"`
+}
+
+func (q *Queries) ObservationResourceDestination(ctx context.Context, id string) (ObservationResourceDestinationRow, error) {
+	row := q.db.QueryRow(ctx, observationResourceDestination, id)
+	var i ObservationResourceDestinationRow
+	err := row.Scan(&i.ProjectID, &i.DestinationID)
 	return i, err
 }
 

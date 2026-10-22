@@ -28,73 +28,77 @@ type observationPlacement struct {
 // No operation or task locks may be acquired after this helper's binding lock.
 func lockObservationPlacement(ctx context.Context, tx pgx.Tx, resource, runner, credential string) (observationPlacement, error) {
 	p := observationPlacement{resource: resource}
-	var destination *string
-	if err := tx.QueryRow(ctx, `SELECT r.project_id,b.destination_id FROM resources r LEFT JOIN resource_bindings b ON b.resource_id=r.id WHERE r.id=$1`, resource).Scan(&p.project, &destination); err != nil {
-		return p, err
-	}
-	if destination == nil {
-		err := tx.QueryRow(ctx, `SELECT project_id FROM resources WHERE id=$1 FOR SHARE`, resource).Scan(&p.project)
-		return p, err
-	}
 	q := sqlcgen.New(tx)
-	if err := q.LockHostingExecutionDestination(ctx, *destination); err != nil {
+	before, err := q.ObservationResourceDestination(ctx, resource)
+	if err != nil {
 		return p, err
 	}
-	var locked string
-	if err := tx.QueryRow(ctx, `SELECT id FROM destinations WHERE id=$1 FOR SHARE`, *destination).Scan(&locked); err != nil {
+	p.project = before.ProjectID
+	if before.DestinationID == nil {
+		r, e := q.ReadHostingRuntimeResource(ctx, resource)
+		p.project = r.ProjectID
+		return p, e
+	}
+	if err = q.LockHostingExecutionDestination(ctx, *before.DestinationID); err != nil {
 		return p, err
 	}
-	if err := tx.QueryRow(ctx, `SELECT project_id FROM resources WHERE id=$1 FOR UPDATE`, resource).Scan(&p.project); err != nil {
+	if _, err = q.LockObservationDestinationRow(ctx, *before.DestinationID); err != nil {
 		return p, err
 	}
-	if err := tx.QueryRow(ctx, `SELECT b.id,b.destination_id,b.runtime_namespace,d.server_id,s.runner_id FROM resource_bindings b JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id WHERE b.resource_id=$1 FOR SHARE OF b,s`, resource).Scan(&p.binding, &p.destination, &p.namespace, &p.server, &p.runner); err != nil {
+	r, err := q.LockHostingRuntimeResource(ctx, resource)
+	if err != nil {
 		return p, err
 	}
-	if p.destination != *destination || runner != "" && p.runner != runner {
+	p.project = r.ProjectID
+	placement, err := q.LockObservationBindingPlacement(ctx, resource)
+	if err != nil {
+		return p, err
+	}
+	p.binding = placement.ID
+	p.destination = placement.DestinationID
+	p.namespace = placement.RuntimeNamespace
+	p.server = placement.ServerID
+	p.runner = placement.RunnerID
+	if p.destination != *before.DestinationID || runner != "" && p.runner != runner {
 		return p, ErrConflict
 	}
-	if _, err := q.LockHostingBuildProject(ctx, p.project); err != nil {
+	if _, err = q.LockHostingBuildProject(ctx, p.project); err != nil {
 		return p, ErrConflict
 	}
-	var revoked *time.Time
-	var granted time.Time
 	var gateErr error
-	if err := tx.QueryRow(ctx, `SELECT revoked_at,created_at FROM destination_project_grants WHERE destination_id=$1 AND project_id=$2 FOR UPDATE`, p.destination, p.project).Scan(&revoked, &granted); err != nil {
+	grant, err := q.LockObservationGrant(ctx, sqlcgen.LockObservationGrantParams{DestinationID: p.destination, ProjectID: p.project})
+	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return p, err
 		}
 		gateErr = ErrConflict
 	}
-	if revoked != nil {
+	if grant.RevokedAt != nil {
 		gateErr = ErrConflict
 	}
-	var healthy []byte
-	var hold *string
-	var admitted bool
-	err := tx.QueryRow(ctx, `SELECT healthy,hold_operation_id,restore_admitted FROM hosting_binding_state WHERE binding_id=$1 FOR UPDATE`, p.binding).Scan(&healthy, &hold, &admitted)
+	state, err := q.LockObservationSettledState(ctx, p.binding)
 	if errors.Is(err, pgx.ErrNoRows) {
-		admitted = true
+		state.RestoreAdmitted = true
 	} else if err != nil {
 		return p, err
 	}
-	p.mutation = hold != nil
-	p.restore = !admitted
-	var explicitRestore bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_binding_restore_holds WHERE binding_id=$1)`, p.binding).Scan(&explicitRestore); err != nil {
-		return p, err
-	}
-	p.restore = p.restore || explicitRestore
-	var token, status string
-	var capabilities []string
-	err = tx.QueryRow(ctx, `SELECT token_hash,last_heartbeat_at,status,capabilities FROM runners WHERE id=$1 FOR SHARE`, p.runner).Scan(&token, &p.heartbeat, &status, &capabilities)
+	p.mutation = state.HoldOperationID != nil
+	p.restore = !state.RestoreAdmitted
+	explicitRestore, err := q.HostingBindingRestoreHeld(ctx, p.binding)
 	if err != nil {
 		return p, err
 	}
-	if status != "active" || token == "" || credential != "" && token != credential || !slices.Contains(capabilities, domain.HostingObservationCapability) || slices.Contains(capabilities, "shell") {
+	p.restore = p.restore || explicitRestore
+	current, err := q.LockObservationRunner(ctx, p.runner)
+	if err != nil {
+		return p, err
+	}
+	p.heartbeat = &current.LastHeartbeatAt
+	if current.Status != "active" || current.TokenHash == "" || credential != "" && current.TokenHash != credential || !slices.Contains(current.Capabilities, domain.HostingObservationCapability) || slices.Contains(current.Capabilities, "shell") {
 		gateErr = ErrConflict
 	}
-	var enrollment string
-	if err = tx.QueryRow(ctx, `SELECT id FROM runner_enrollments WHERE runner_id=$1 AND used_at IS NOT NULL AND revoked_at IS NULL AND credential_hash=$2 ORDER BY id LIMIT 1 FOR SHARE`, p.runner, token).Scan(&enrollment); err != nil {
+	enrollment, err := q.LockObservationEnrollment(ctx, sqlcgen.LockObservationEnrollmentParams{RunnerID: p.runner, CredentialHash: &current.TokenHash})
+	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return p, err
 		}
@@ -103,6 +107,7 @@ func lockObservationPlacement(ctx context.Context, tx pgx.Tx, resource, runner, 
 	if p.restore {
 		gateErr = ErrHostingRestoreHold
 	}
+	healthy := state.Healthy
 	if len(healthy) == 0 {
 		return p, gateErr
 	}
@@ -120,7 +125,7 @@ func lockObservationPlacement(ctx context.Context, tx pgx.Tx, resource, runner, 
 		Healthy           domain.HostingHealthy
 		Grant             time.Time
 		Token, Enrollment string
-	}{h, granted, token, enrollment})
+	}{h, grant.CreatedAt, current.TokenHash, enrollment})
 	return p, gateErr
 }
 
@@ -196,22 +201,7 @@ func (s *PostgresStore) HostingObservationTargets(ctx context.Context, runner, c
 	if in.Validate() != nil || credential == "" {
 		return result, ErrConflict
 	}
-	rows, err := s.pool.Query(ctx, `SELECT b.id,b.resource_id FROM resource_bindings b JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id JOIN hosting_binding_state bs ON bs.binding_id=b.id WHERE s.runner_id=$1 AND b.id>$2 AND bs.healthy IS NOT NULL ORDER BY b.id LIMIT $3`, runner, in.AfterBindingID, in.Limit+1)
-	if err != nil {
-		return result, err
-	}
-	type candidate struct{ binding, resource string }
-	candidates := []candidate{}
-	for rows.Next() {
-		var c candidate
-		if err = rows.Scan(&c.binding, &c.resource); err != nil {
-			rows.Close()
-			return result, err
-		}
-		candidates = append(candidates, c)
-	}
-	err = rows.Err()
-	rows.Close()
+	candidates, err := s.queries.ListObservationBindingCandidates(ctx, sqlcgen.ListObservationBindingCandidatesParams{RunnerID: runner, AfterBindingID: in.AfterBindingID, PageLimit: int32(in.Limit + 1)})
 	if err != nil {
 		return result, err
 	}
@@ -220,14 +210,14 @@ func (s *PostgresStore) HostingObservationTargets(ctx context.Context, runner, c
 		candidates = candidates[:in.Limit]
 	}
 	for _, c := range candidates {
-		target, e := s.issueHostingObservation(ctx, runner, credential, c.resource)
+		target, e := s.issueHostingObservation(ctx, runner, credential, c.ResourceID)
 		if e != nil && !errors.Is(e, ErrConflict) && !errors.Is(e, ErrNotFound) && !errors.Is(e, ErrHostingRestoreHold) {
 			return result, e
 		}
 		if e == nil {
 			result.Targets = append(result.Targets, target)
 		}
-		result.NextCursor = c.binding
+		result.NextCursor = c.ID
 	}
 	return result, nil
 }
@@ -239,8 +229,8 @@ func (s *PostgresStore) ReportHostingObservation(ctx context.Context, runner, cr
 		return zero, ErrConflict
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingObservationAck, error) {
-		var resource string
-		if err := tx.QueryRow(ctx, `SELECT resource_id FROM resource_bindings WHERE id=$1`, in.BindingID).Scan(&resource); err != nil {
+		resource, err := sqlcgen.New(tx).ObservationBindingResource(ctx, in.BindingID)
+		if err != nil {
 			return zero, err
 		}
 		p, err := lockObservationPlacement(ctx, tx, resource, runner, credential)
