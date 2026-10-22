@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"nerocd/internal/domain"
 )
@@ -243,5 +244,33 @@ func TestHostingCompletionLossFixtureBoundsAndRequiresSuccessProof(t *testing.T)
 	f.enable()
 	if w := fixtureCompletionCall(f, fixtureCompletionRequest(), false); w.Code != 502 || f.snapshot().Committed {
 		t.Fatal("unproven200 hidden", w.Code)
+	}
+}
+
+// Completion receipts keep the exact instant across PostgreSQL +00:00 and HTTP
+// JSON Z encodings; time.Time's location pointer is not receipt identity.
+func sameCompletionFixtureReceipt(a, b domain.HostingReceipt) bool {
+	return a.ID == b.ID && a.BodyHash == b.BodyHash && a.CreatedAt.Equal(b.CreatedAt)
+}
+func TestHostingCompletionLossFixtureReceiptTimestampIdentity(t *testing.T) {
+	a := domain.HostingReceipt{ID: "receipt", BodyHash: "hash", CreatedAt: time.Date(2026, 10, 22, 15, 0, 12, 123456000, time.FixedZone("postgres", 0))}
+	b := a
+	b.CreatedAt = b.CreatedAt.UTC()
+	if a == b || !sameCompletionFixtureReceipt(a, b) {
+		t.Fatal("equivalent database and HTTP timestamp encodings rejected")
+	}
+	b.CreatedAt = b.CreatedAt.Add(time.Nanosecond)
+	if sameCompletionFixtureReceipt(a, b) {
+		t.Fatal("changed timestamp accepted")
+	}
+	b = a
+	b.ID = "other"
+	if sameCompletionFixtureReceipt(a, b) {
+		t.Fatal("changed receipt ID accepted")
+	}
+	b = a
+	b.BodyHash = "other"
+	if sameCompletionFixtureReceipt(a, b) {
+		t.Fatal("changed receipt hash accepted")
 	}
 }

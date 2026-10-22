@@ -332,7 +332,7 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 		t.Fatalf("completion loss lacked exact real commit proof: %+v", proof)
 	}
 	committed, e := f.pg.GetHostingOperation(t.Context(), second.ID)
-	if e != nil || committed.State != "succeeded" || committed.CompleteReceipt == nil || *committed.CompleteReceipt != proof.Receipt || committed.Result == nil || *committed.Result != proof.Request.Result {
+	if e != nil || committed.State != "succeeded" || committed.CompleteReceipt == nil || !sameCompletionFixtureReceipt(*committed.CompleteReceipt, proof.Receipt) || committed.Result == nil || *committed.Result != proof.Request.Result {
 		t.Fatal("lost response did not follow persisted exact completion", e)
 	}
 	pendingJournal, e := runner.OpenAttemptJournal(f.journal)
@@ -377,7 +377,7 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 	}
 	t.Logf("startup replay acknowledged the exact committed completion: operation=%s receipt=%s", second.ID, proof.Receipt.ID)
 	second, err = f.pg.GetHostingOperation(t.Context(), second.ID)
-	if err != nil || second.State != "succeeded" || second.Result == nil || *second.Result != proof.Request.Result || second.CompleteReceipt == nil || *second.CompleteReceipt != proof.Receipt || second.Snapshot.HostPort == first.Snapshot.HostPort {
+	if err != nil || second.State != "succeeded" || second.Result == nil || *second.Result != proof.Request.Result || second.CompleteReceipt == nil || !sameCompletionFixtureReceipt(*second.CompleteReceipt, proof.Receipt) || second.Snapshot.HostPort == first.Snapshot.HostPort {
 		t.Fatal("second local release did not preserve independent port")
 	}
 	owned = append(owned, second.Result.ContainerID)
