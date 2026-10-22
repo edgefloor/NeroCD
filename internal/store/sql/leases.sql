@@ -110,4 +110,4 @@ WHERE deployment_attempt.run_id=$1 AND deployment_attempt.status='active'
 
 -- name: IsHostingRun :one
 SELECT EXISTS(SELECT 1 FROM hosting_task_targets WHERE run_id=$1)
- OR EXISTS(SELECT 1 FROM task_runs WHERE id=$1 AND run_spec->>'type'='image_deploy');
+ OR EXISTS(SELECT 1 FROM task_runs WHERE id=$1 AND run_spec->>'type' IN ('image_deploy','local_build_deploy_v1'));

@@ -30,7 +30,8 @@ AND nerocd_legacy_api_token_schema_compatible()
 AND nerocd_hosting_execution_schema_compatible()
 AND nerocd_hosting_proxy_schema_compatible()
 AND nerocd_hosting_build_schema_compatible()
-AND nerocd_hosting_git_resource_schema_compatible() AS compatible
+AND nerocd_hosting_git_resource_schema_compatible()
+AND nerocd_hosting_build_deployment_schema_compatible() AS compatible
 `
 
 func (q *Queries) SchedulerSchemaCompatible(ctx context.Context) (*bool, error) {

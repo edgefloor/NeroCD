@@ -277,6 +277,12 @@ type HostingOperation struct {
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
+type HostingOperationBuildArtifact struct {
+	OperationID  string `json:"operation_id"`
+	BuildID      string `json:"build_id"`
+	ArtifactHash string `json:"artifact_hash"`
+}
+
 type HostingProxy struct {
 	ID                string          `json:"id"`
 	ServerID          string          `json:"server_id"`

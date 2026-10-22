@@ -32,7 +32,7 @@ const (
 // workflow pointer once, without recursive traversal of untrusted graph depth.
 func ContainsHostingExecution(spec RunSpec, workflow Workflow) bool {
 	internal := func(spec RunSpec) bool {
-		return strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
+		return strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
 	}
 	if internal(spec) {
 		return true
@@ -95,29 +95,31 @@ type HostingDeploymentInput struct {
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
-	ResourceID         string           `json:"resource_id"`
-	ResourceGeneration int64            `json:"resource_generation"`
-	ImageReference     string           `json:"image_reference"`
-	BindingID          string           `json:"binding_id"`
-	DestinationID      string           `json:"destination_id"`
-	ServerID           string           `json:"server_id"`
-	RunnerID           string           `json:"runner_id"`
-	RuntimeNamespace   string           `json:"runtime_namespace"`
-	ContainerPort      int              `json:"container_port"`
-	HostPort           int              `json:"host_port"`
-	Readiness          HostingReadiness `json:"readiness"`
-	PolicyVersion      string           `json:"policy_version"`
+	ResourceID         string                  `json:"resource_id"`
+	ResourceGeneration int64                   `json:"resource_generation"`
+	ImageReference     string                  `json:"image_reference"`
+	BindingID          string                  `json:"binding_id"`
+	DestinationID      string                  `json:"destination_id"`
+	ServerID           string                  `json:"server_id"`
+	RunnerID           string                  `json:"runner_id"`
+	RuntimeNamespace   string                  `json:"runtime_namespace"`
+	ContainerPort      int                     `json:"container_port"`
+	HostPort           int                     `json:"host_port"`
+	Readiness          HostingReadiness        `json:"readiness"`
+	PolicyVersion      string                  `json:"policy_version"`
+	LocalBuild         HostingLocalBuildSource `json:"local_build,omitzero"`
 }
 
 // HostingRelease binds registry content and local image identity to one daemon.
 type HostingRelease struct {
-	CanonicalImage string `json:"canonical_image"`
-	ImageID        string `json:"image_id"`
-	OS             string `json:"os"`
-	Architecture   string `json:"architecture"`
-	Variant        string `json:"variant,omitempty"`
-	DaemonID       string `json:"daemon_id"`
-	Hash           string `json:"hash"`
+	CanonicalImage string               `json:"canonical_image"`
+	ImageID        string               `json:"image_id"`
+	OS             string               `json:"os"`
+	Architecture   string               `json:"architecture"`
+	Variant        string               `json:"variant,omitempty"`
+	DaemonID       string               `json:"daemon_id"`
+	Hash           string               `json:"hash"`
+	LocalBuild     HostingBuildArtifact `json:"local_build,omitzero"`
 }
 
 // HostingHealthy records the last atomically settled healthy workload.
@@ -258,6 +260,9 @@ func NormalizeHostingImage(value string) (string, error) {
 
 // ValidateHostingRelease checks canonical digest, platform and local daemon evidence.
 func ValidateHostingRelease(release HostingRelease) error {
+	if release.LocalBuild != (HostingBuildArtifact{}) {
+		return validateLocalBuildRelease(release)
+	}
 	named, err := reference.ParseNormalizedNamed(release.CanonicalImage)
 	if err != nil {
 		return errors.New("release requires canonical repository digest")
@@ -287,7 +292,7 @@ func HostingDocumentHash(value any) string {
 
 // CompileHostingPlan hashes the immutable release, target and prior healthy pointer.
 func CompileHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy) (HostingApplyPlan, error) {
-	if err := ValidateHostingRelease(release); err != nil {
+	if err := ValidateHostingSnapshotRelease(snapshot, release); err != nil {
 		return HostingApplyPlan{}, err
 	}
 	if snapshot.PolicyVersion != HostingPolicyVersion {
@@ -308,22 +313,26 @@ type HostingStatusRequest struct {
 // CompileRetainedHostingPlan binds all permitted running releases to one daemon.
 // It does not authorize any of those containers for cleanup.
 func CompileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy) (HostingApplyPlan, error) {
-	if err := ValidateHostingRelease(release); err != nil {
+	return compileRetainedHostingPlan(snapshot, release, previous, retained, HostingReleasePolicyVersion, HostingReleaseCompilerVersion)
+}
+
+func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy, policy, compiler string) (HostingApplyPlan, error) {
+	if err := ValidateHostingSnapshotRelease(snapshot, release); err != nil {
 		return HostingApplyPlan{}, err
 	}
-	if snapshot.PolicyVersion != HostingReleasePolicyVersion || snapshot.HostPort < 1024 || snapshot.HostPort > 65535 || len(retained) > 32 {
+	if snapshot.PolicyVersion != policy || snapshot.HostPort < 1024 || snapshot.HostPort > 65535 || len(retained) > 32 {
 		return HostingApplyPlan{}, errors.New("invalid retained release policy")
 	}
-	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: HostingReleaseCompilerVersion, RetainedReleases: append([]HostingHealthy(nil), retained...)}
+	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: compiler, RetainedReleases: append([]HostingHealthy(nil), retained...)}
 	seen := map[string]bool{}
 	for _, old := range plan.RetainedReleases {
-		if old.OperationID == "" || seen[old.OperationID] || old.Snapshot.HostPort < 1024 || old.Snapshot.HostPort > 65535 || old.Snapshot.BindingID != snapshot.BindingID || old.Snapshot.DestinationID != snapshot.DestinationID || old.Release.DaemonID != release.DaemonID || old.ContainerID == "" || ValidateHostingRelease(old.Release) != nil {
+		if old.OperationID == "" || seen[old.OperationID] || old.Snapshot.HostPort < 1024 || old.Snapshot.HostPort > 65535 || old.Snapshot.BindingID != snapshot.BindingID || old.Snapshot.DestinationID != snapshot.DestinationID || old.Release.DaemonID != release.DaemonID || old.ContainerID == "" || ValidateHostingSnapshotRelease(old.Snapshot, old.Release) != nil {
 			return HostingApplyPlan{}, errors.New("retained release identity mismatch")
 		}
 		seen[old.OperationID] = true
 	}
 	if previous != nil {
-		if ValidateHostingRelease(previous.Release) != nil || previous.OperationID == "" || previous.Snapshot.HostPort < 1024 || previous.Snapshot.HostPort > 65535 || previous.Snapshot.BindingID != snapshot.BindingID || previous.Snapshot.DestinationID != snapshot.DestinationID || previous.Release.DaemonID != release.DaemonID || previous.ContainerID == "" || seen[previous.OperationID] {
+		if ValidateHostingSnapshotRelease(previous.Snapshot, previous.Release) != nil || previous.OperationID == "" || previous.Snapshot.HostPort < 1024 || previous.Snapshot.HostPort > 65535 || previous.Snapshot.BindingID != snapshot.BindingID || previous.Snapshot.DestinationID != snapshot.DestinationID || previous.Release.DaemonID != release.DaemonID || previous.ContainerID == "" || seen[previous.OperationID] {
 			return HostingApplyPlan{}, errors.New("previous release identity mismatch")
 		}
 		ownedPrevious := *previous
@@ -366,10 +375,14 @@ type HostingCleanupPlan struct {
 
 // CompileHostingCleanupPlan pins the cleanup target independently of current traffic.
 func CompileHostingCleanupPlan(target HostingHealthy, current string) (HostingCleanupPlan, error) {
-	if target.OperationID == "" || target.OperationID == current || current == "" || target.ContainerID == "" || target.Snapshot.HostPort < 1024 || target.Snapshot.HostPort > 65535 || ValidateHostingRelease(target.Release) != nil {
+	if target.OperationID == "" || target.OperationID == current || current == "" || target.ContainerID == "" || target.Snapshot.HostPort < 1024 || target.Snapshot.HostPort > 65535 || ValidateHostingSnapshotRelease(target.Snapshot, target.Release) != nil {
 		return HostingCleanupPlan{}, errors.New("invalid retained cleanup target")
 	}
-	plan := HostingCleanupPlan{Target: target, CurrentHealthyOperationID: current, CompilerVersion: HostingReleaseCompilerVersion}
+	compiler := HostingReleaseCompilerVersion
+	if target.Snapshot.LocalBuild != (HostingLocalBuildSource{}) {
+		compiler = HostingLocalBuildCompilerVersion
+	}
+	plan := HostingCleanupPlan{Target: target, CurrentHealthyOperationID: current, CompilerVersion: compiler}
 	plan.Hash = HostingDocumentHash(plan)
 	return plan, nil
 }

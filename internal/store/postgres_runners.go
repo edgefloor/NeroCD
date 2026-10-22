@@ -392,6 +392,16 @@ func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.
 			return domain.ClaimedRun{}, err
 		}
 	}
+	if claimedRun.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+		op, err := hostingOperation(ctx, tx, claimedRun.RunSpec.HostingOperationID)
+		if err != nil {
+			return domain.ClaimedRun{}, err
+		}
+		a := domain.HostingAuthority{OperationID: op.ID, RunID: claimedRun.ID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
+		if err = finalLocalHostingAuthority(ctx, tx, runner.ID, a, op, claimedRun.RunSpec.HostingMode == "observe"); err != nil {
+			return domain.ClaimedRun{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ClaimedRun{}, fmt.Errorf("commit transaction: %w", err)
 	}
