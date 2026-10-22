@@ -1363,6 +1363,28 @@ func (q *Queries) PickHostingReleasePort(ctx context.Context, arg PickHostingRel
 	return host_port, err
 }
 
+const reclaimUnusedHostingReleaseSlots = `-- name: ReclaimUnusedHostingReleaseSlots :execrows
+DELETE FROM hosting_release_slots s WHERE s.destination_id=$1
+AND EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=s.destination_id AND c.host_port=s.host_port AND c.state='released')
+AND NOT EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=s.destination_id AND c.host_port=s.host_port AND c.state<>'released')
+AND NOT EXISTS(SELECT 1 FROM hosting_retained_releases r WHERE r.destination_id=s.destination_id AND r.host_port=s.host_port AND r.state<>'removed')
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE (b.destination_id=s.destination_id AND b.host_port=s.host_port) OR (b.binding_id=s.binding_id AND (NOT b.restore_admitted OR b.hold_operation_id IS NOT NULL)))
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_restore_holds h WHERE h.binding_id=s.binding_id)
+AND NOT EXISTS(SELECT 1 FROM hosting_operations o JOIN hosting_snapshots sn ON sn.operation_id=o.id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND o.state NOT IN ('succeeded','failed','canceled'))
+AND NOT EXISTS(SELECT 1 FROM hosting_proxy_routes r JOIN hosting_snapshots sn ON sn.operation_id=r.selected_release_operation_id WHERE r.enabled AND sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port)
+AND NOT EXISTS(SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots sn ON sn.operation_id=ref.release_operation_id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')))
+`
+
+// Caller holds destination admission. Keep immutable claims/snapshots/receipts;
+// reclaim only capacity whose claims conclusively settled without live effects.
+func (q *Queries) ReclaimUnusedHostingReleaseSlots(ctx context.Context, destinationID string) (int64, error) {
+	result, err := q.db.Exec(ctx, reclaimUnusedHostingReleaseSlots, destinationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordHostingHealthyRelease = `-- name: RecordHostingHealthyRelease :execrows
 INSERT INTO hosting_retained_releases(operation_id,binding_id,destination_id,host_port,body,body_hash,state,retained_running)
 VALUES($1,$2,$3,$4,$5::jsonb,'sha256:'||encode(sha256(convert_to(($5::jsonb)::text,'UTF8')),'hex'),'healthy',true)

@@ -12,10 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store"
+	"nerocd/internal/store/sqlcgen"
 )
 
 func hostingExecutionFixture(t *testing.T, stopOut ...*func(context.Context) error) (*store.PostgresStore, *pgxpool.Pool, domain.Resource, domain.Server, domain.Destination) {
@@ -86,6 +88,234 @@ func hostingExecutionFixture(t *testing.T, stopOut ...*func(context.Context) err
 }
 func hostingDeploymentRequest() domain.HostingDeploymentInput {
 	return domain.HostingDeploymentInput{ExpectedGeneration: 1, IdempotencyKey: "deploy-image", ContainerPort: 80, HostPort: 18080, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 5}}
+}
+
+func TestPostgresHostingAutoPortsRecycleSafeTerminalClaims(t *testing.T) {
+	t.Setenv("NEROCD_HOSTING_AUTO_PORT_MIN", "20100")
+	t.Setenv("NEROCD_HOSTING_AUTO_PORT_MAX", "20101")
+	var stopConsumer func(context.Context) error
+	pg, database, resource, server, _ := hostingExecutionFixture(t, &stopConsumer)
+	ctx := t.Context()
+	if err := stopConsumer(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	for index, outcome := range []string{"cancel", "cancel", "cancel", "preflight", "failed", "restored", "cancel"} {
+		in := hostingDeploymentRequest()
+		in.HostPort = 0
+		in.IdempotencyKey = fmt.Sprintf("recycle-%d", index)
+		op, err := pg.RequestHostingDeployment(ctx, fmt.Sprintf("hop_recycle_%d", index), resource.ID, "usr_bootstrap", in, destinationEvent(fmt.Sprintf("recycle_%d", index)))
+		if err != nil {
+			t.Fatalf("request %d after safe %s exhausted allocator: %v", index, outcome, err)
+		}
+		if op.Snapshot.HostPort != 20100 && op.Snapshot.HostPort != 20101 {
+			t.Fatalf("outside operator range: %d", op.Snapshot.HostPort)
+		}
+		if outcome == "cancel" {
+			if _, err = pg.CancelHostingOperation(ctx, op.ID, destinationEvent(fmt.Sprintf("recycle_cancel_%d", index))); err != nil {
+				t.Fatal(err)
+			}
+		} else if outcome == "preflight" {
+			if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+				t.Fatal(err)
+			}
+			if err = pg.PrepareDeployment(ctx, op.ID); err != nil {
+				t.Fatal(err)
+			}
+			failed, readErr := pg.GetHostingOperation(ctx, op.ID)
+			if readErr != nil || failed.State != "failed" {
+				t.Fatalf("preflight failure: %+v %v", failed, readErr)
+			}
+			if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if err = pg.PrepareDeployment(ctx, op.ID); err != nil {
+				t.Fatal(err)
+			}
+			op = awaitHostingDispatch(t, pg, op.ID)
+			a, prepared := prepareHostingAttempt(t, pg, op, server.RunnerID)
+			current, err := pg.GetHostingOperation(ctx, op.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if outcome == "restored" {
+				current, err = pg.HostingApplyBegin(ctx, server.RunnerID, a)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: fmt.Sprintf("recycle_result_%d", index), Result: domain.HostingResult{Outcome: "failed", Restored: outcome == "restored", PlanHash: current.Plan.Hash, DaemonID: prepared.Release.DaemonID, ImageID: prepared.Release.ImageID}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		replayed, err := pg.RequestHostingDeployment(ctx, "hop_recycle_replay", resource.ID, "usr_bootstrap", in, destinationEvent(fmt.Sprintf("recycle_replay_%d", index)))
+		if err != nil || replayed.ID != op.ID || replayed.Snapshot.HostPort != op.Snapshot.HostPort {
+			t.Fatalf("reclamation lost raw-input receipt: %+v %v", replayed, err)
+		}
+	}
+}
+
+func TestPostgresHostingAutoPortReclamationSerializesSharedDestination(t *testing.T) {
+	t.Setenv("NEROCD_HOSTING_AUTO_PORT_MIN", "20100")
+	t.Setenv("NEROCD_HOSTING_AUTO_PORT_MAX", "20103")
+	pg, database, first, server, destination := hostingExecutionFixture(t)
+	ctx := t.Context()
+	if _, err := database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	second := createDestinationResource(t, pg, "shared_auto_port", first.ProjectID)
+	if _, err := pg.BindResourceDestination(ctx, store.ResourceBindingInput{ID: "binding_shared_auto", ResourceID: second.ID, DestinationID: destination.ID, CreatedBy: "usr_bootstrap", CreatedAt: time.Now().UTC()}, destinationEvent("shared_auto_binding")); err != nil {
+		t.Fatal(err)
+	}
+	resources := []domain.Resource{first, second}
+	for round := 0; round < 6; round++ {
+		type response struct {
+			operation domain.HostingOperation
+			err       error
+		}
+		responses := make(chan response, len(resources)) // One result per bounded concurrent requester.
+		var requests sync.WaitGroup
+		for index, resource := range resources {
+			requests.Go(func() {
+				in := hostingDeploymentRequest()
+				in.HostPort = 0
+				in.IdempotencyKey = fmt.Sprintf("shared-%d-%d", round, index)
+				op, err := pg.RequestHostingDeployment(ctx, fmt.Sprintf("hop_shared_%d_%d", round, index), resource.ID, "usr_bootstrap", in, destinationEvent(fmt.Sprintf("shared_request_%d_%d", round, index)))
+				responses <- response{operation: op, err: err}
+			})
+		}
+		requests.Wait()
+		seen := map[int]bool{}
+		var operations []domain.HostingOperation
+		for range resources {
+			response := <-responses
+			if response.err != nil {
+				t.Fatal(response.err)
+			}
+			if seen[response.operation.Snapshot.HostPort] {
+				t.Fatalf("concurrent allocation reused active port %d", response.operation.Snapshot.HostPort)
+			}
+			seen[response.operation.Snapshot.HostPort] = true
+			operations = append(operations, response.operation)
+		}
+		for _, op := range operations {
+			awaitHostingDispatch(t, pg, op.ID)
+			if _, err := pg.CancelHostingOperation(ctx, op.ID, destinationEvent("cancel_"+op.ID)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var slots, claims int
+	if err := database.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_release_slots WHERE destination_id=$1),(SELECT count(*) FROM hosting_release_claims WHERE destination_id=$1)`, destination.ID).Scan(&slots, &claims); err != nil || slots > 4 || claims != 12 {
+		t.Fatalf("capacity/evidence slots=%d claims=%d err=%v", slots, claims, err)
+	}
+}
+
+func TestPostgresHostingAutoPortReclamationPreservesProtectedOwnership(t *testing.T) {
+	for _, mode := range []string{"unused", "reserved", "held", "retained-claim", "retained-ledger", "cleanup-pending", "mutation-hold", "restore-flag", "restore-hold", "uncertain", "desired-route", "queued-route", "loaded-route", "held-route"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("NEROCD_HOSTING_AUTO_PORT_MIN", "20100")
+			t.Setenv("NEROCD_HOSTING_AUTO_PORT_MAX", "20101")
+			var stopConsumer func(context.Context) error
+			pg, database, resource, server, destination := hostingExecutionFixture(t, &stopConsumer)
+			ctx := t.Context()
+			if err := stopConsumer(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
+				t.Fatal(err)
+			}
+			var target domain.HostingOperation
+			for index := 0; index < 2; index++ {
+				in := hostingDeploymentRequest()
+				in.HostPort = 0
+				in.IdempotencyKey = fmt.Sprintf("protected-%d", index)
+				op, err := pg.RequestHostingDeployment(ctx, fmt.Sprintf("hop_protected_%d", index), resource.ID, "usr_bootstrap", in, destinationEvent(fmt.Sprintf("protected_%d", index)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = pg.CancelHostingOperation(ctx, op.ID, destinationEvent(fmt.Sprintf("protected_cancel_%d", index))); err != nil {
+					t.Fatal(err)
+				}
+				target = op
+			}
+			exec := func(query string, args ...any) {
+				t.Helper()
+				if _, err := database.Exec(ctx, query, args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch mode {
+			case "reserved", "held":
+				exec(`UPDATE hosting_release_claims SET state=$2 WHERE operation_id=$1`, target.ID, mode)
+			case "retained-claim":
+				exec(`UPDATE hosting_release_claims SET state='retained' WHERE operation_id=$1`, target.ID)
+			case "retained-ledger", "cleanup-pending":
+				state := "retained"
+				if mode == "cleanup-pending" {
+					state = "cleanup_pending"
+				}
+				exec(`INSERT INTO hosting_retained_releases(operation_id,binding_id,destination_id,host_port,body,body_hash,state,retained_running) VALUES($1,$2,$3,$4,'{}',$5,$6,false)`, target.ID, target.BindingID, destination.ID, target.Snapshot.HostPort, domain.HostingDocumentHash("protected"), state)
+			case "mutation-hold":
+				exec(`UPDATE hosting_binding_state SET hold_operation_id=$2 WHERE binding_id=$1`, target.BindingID, target.ID)
+			case "restore-flag":
+				exec(`UPDATE hosting_binding_state SET restore_admitted=false WHERE binding_id=$1`, target.BindingID)
+			case "restore-hold":
+				exec(`INSERT INTO hosting_binding_restore_holds(binding_id) VALUES($1)`, target.BindingID)
+			case "uncertain":
+				exec(`UPDATE hosting_operations SET state='reconciliation_required' WHERE id=$1`, target.ID)
+			case "desired-route", "queued-route", "loaded-route", "held-route":
+				exec(`INSERT INTO hosting_proxies(id,server_id,destination_id,runner_id,control_project_id,configuration,created_by) VALUES('proxy_protect',$1,$2,$3,$4,'{}','usr_bootstrap')`, server.ID, destination.ID, server.RunnerID, resource.ProjectID)
+				exec(`INSERT INTO hosting_proxy_hostname_grants(id,proxy_id,project_id,hostname,wildcard,granted_by) VALUES('grant_protect','proxy_protect',$1,'protected.nerocd.invalid',false,'usr_bootstrap')`, resource.ProjectID)
+				exec(`INSERT INTO hosting_proxy_routes(id,proxy_id,project_id,resource_id,binding_id,grant_id,hostname,path_prefix,version,selected_release_operation_id,enabled,created_by) VALUES('route_protect','proxy_protect',$1,$2,$3,'grant_protect','protected.nerocd.invalid','/',1,$4,$5,'usr_bootstrap')`, resource.ProjectID, resource.ID, target.BindingID, target.ID, mode == "desired-route")
+				if mode != "desired-route" {
+					state := "queued"
+					if mode != "queued-route" {
+						state = "applied"
+					}
+					exec(`INSERT INTO hosting_proxy_operations(id,proxy_id,generation,idempotency_key,request_hash,state,snapshot,snapshot_hash,created_by) VALUES('proxy_operation_protect','proxy_protect',1,'protect',$1,$2,'{}',$1,'usr_bootstrap')`, domain.HostingDocumentHash("protected"), state)
+					exec(`INSERT INTO hosting_proxy_release_references(operation_id,route_id,release_operation_id) VALUES('proxy_operation_protect','route_protect',$1)`, target.ID)
+					if mode == "loaded-route" {
+						exec(`UPDATE hosting_proxies SET loaded_generation=1,desired_generation=1 WHERE id='proxy_protect'`)
+					}
+					if mode == "held-route" {
+						exec(`UPDATE hosting_proxies SET hold_operation_id='proxy_operation_protect' WHERE id='proxy_protect'`)
+					}
+				}
+			}
+			tx, err := database.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := tx.Rollback(context.Background()); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+					t.Error(err)
+				}
+			})
+			queries := sqlcgen.New(tx)
+			if err = queries.LockHostingExecutionDestination(ctx, destination.ID); err != nil {
+				t.Fatal(err)
+			}
+			removed, err := queries.ReclaimUnusedHostingReleaseSlots(ctx, destination.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := int64(0)
+			if mode == "unused" {
+				want = 1
+			}
+			if removed != want {
+				t.Fatalf("mode=%s removed=%d want=%d", mode, removed, want)
+			}
+			var legacy bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_release_slots WHERE destination_id=$1 AND host_port=20100)`, destination.ID).Scan(&legacy); err != nil || !legacy {
+				t.Fatalf("legacy reservation removed: %v", err)
+			}
+		})
+	}
 }
 
 func TestPostgresHostingUnadmittedCancelReleasesOnlyItsPortClaim(t *testing.T) {

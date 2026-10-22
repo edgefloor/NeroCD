@@ -227,6 +227,19 @@ AND NOT EXISTS(SELECT 1 FROM hosting_binding_state s WHERE s.destination_id=sqlc
 AND NOT EXISTS(SELECT 1 FROM hosting_proxies p WHERE p.destination_id=sqlc.arg(destination_id) AND (p.configuration->>'management_port')::integer=port)
 ORDER BY port LIMIT 1;
 
+-- name: ReclaimUnusedHostingReleaseSlots :execrows
+-- Caller holds destination admission. Keep immutable claims/snapshots/receipts;
+-- reclaim only capacity whose claims conclusively settled without live effects.
+DELETE FROM hosting_release_slots s WHERE s.destination_id=$1
+AND EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=s.destination_id AND c.host_port=s.host_port AND c.state='released')
+AND NOT EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=s.destination_id AND c.host_port=s.host_port AND c.state<>'released')
+AND NOT EXISTS(SELECT 1 FROM hosting_retained_releases r WHERE r.destination_id=s.destination_id AND r.host_port=s.host_port AND r.state<>'removed')
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE (b.destination_id=s.destination_id AND b.host_port=s.host_port) OR (b.binding_id=s.binding_id AND (NOT b.restore_admitted OR b.hold_operation_id IS NOT NULL)))
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_restore_holds h WHERE h.binding_id=s.binding_id)
+AND NOT EXISTS(SELECT 1 FROM hosting_operations o JOIN hosting_snapshots sn ON sn.operation_id=o.id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND o.state NOT IN ('succeeded','failed','canceled'))
+AND NOT EXISTS(SELECT 1 FROM hosting_proxy_routes r JOIN hosting_snapshots sn ON sn.operation_id=r.selected_release_operation_id WHERE r.enabled AND sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port)
+AND NOT EXISTS(SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots sn ON sn.operation_id=ref.release_operation_id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')));
+
 -- name: ReserveHostingReleaseSlot :execrows
 INSERT INTO hosting_release_slots(destination_id,host_port,binding_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING;
 

@@ -1500,6 +1500,11 @@ func requireHostingReleaseAgent(ctx context.Context, tx pgx.Tx, runnerID string)
 func (s *PostgresStore) resolveHostingReleasePort(ctx context.Context, tx pgx.Tx, snap *domain.HostingSnapshot, requested int) error {
 	q := sqlcgen.New(tx)
 	if requested == 0 {
+		// Destination admission serializes reclamation with requests, external
+		// admission, settlement and route references. Evidence rows remain intact.
+		if _, err := q.ReclaimUnusedHostingReleaseSlots(ctx, snap.DestinationID); err != nil {
+			return err
+		}
 		port, err := q.PickHostingReleasePort(ctx, sqlcgen.PickHostingReleasePortParams{MinPort: int32(s.hostingPortMin), MaxPort: int32(s.hostingPortMax), DestinationID: snap.DestinationID})
 		if err != nil {
 			return hostingError(err)

@@ -36,6 +36,11 @@ and binds only on `127.0.0.1`. Omit `host_port` or use zero to request allocatio
 from the server operator's range. The defaults are 20000–60999; operators can set
 `NEROCD_HOSTING_AUTO_PORT_MIN` and `NEROCD_HOSTING_AUTO_PORT_MAX` before startup.
 Allocation preserves the original request's idempotency key and resolved port.
+Before automatic allocation, destination admission reclaims slots whose claims
+have conclusively settled without live effects. Historical claims, snapshots and
+receipts remain available for replay. Legacy binding reservations, retained
+releases, active claims, unresolved effects, restore holds and protected route
+references keep their slots.
 Container ports are between 1 and 65535.
 Readiness accepts an origin-relative path and a bounded timeout of 1–120 seconds.
 The runner uses ordinary HTTP GET, accepts 200–399 and does not follow redirects.
