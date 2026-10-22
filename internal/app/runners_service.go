@@ -299,7 +299,7 @@ func (s *Service) RegisterRunner(ctx context.Context, input RunnerInput) (Regist
 func composeRunnerHasGenericShell(capabilities []string) bool {
 	compose, shell := false, false
 	for _, capability := range capabilities {
-		compose = compose || capability == domain.RunTypeComposeDeploy
+		compose = compose || capability == domain.RunTypeComposeDeploy || capability == domain.RunTypeImageDeploy
 		shell = shell || capability == domain.RunTypeShell
 	}
 	return compose && shell
@@ -410,6 +410,21 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
+	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
+		if err := domain.ValidateImageDeploymentTask(claim.Run); err != nil {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		a := domain.HostingAuthority{OperationID: claim.Run.RunSpec.HostingOperationID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+		op, err := s.RunnerHostingPlan(ctx, a)
+		if err != nil {
+			return domain.ClaimedRun{}, err
+		}
+		if op.TaskMode != claim.Run.RunSpec.HostingMode {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+	} else if domain.ContainsHostingExecution(claim.Run.RunSpec, claim.Run.Workflow) {
+		return domain.ClaimedRun{}, store.ErrConflict
+	}
 	claim.Run = s.ensureWorkflowState(claim.Run)
 	claim.Run, err = s.markWorkflowStepRunning(ctx, claim.Run, time.Now().UTC())
 	if err != nil {
@@ -476,7 +491,7 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 	if err != nil {
 		return domain.RunLease{}, err
 	}
-	if run.RunSpec.Type == domain.RunTypeComposeDeploy {
+	if run.RunSpec.Type == domain.RunTypeComposeDeploy || run.RunSpec.Type == domain.RunTypeImageDeploy {
 		return domain.RunLease{}, store.ErrConflict
 	}
 	if lease.CompletionKey != "" {

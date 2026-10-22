@@ -123,13 +123,15 @@ type TaskTemplate struct {
 
 // RunSpec defines the runner primitives requested by a task.
 type RunSpec struct {
-	Type       string          `json:"type"`
-	Inputs     map[string]any  `json:"inputs"`
-	Repository *RepositoryRef  `json:"repository,omitempty"`
-	Process    *ProcessSpec    `json:"process,omitempty"`
-	Artifacts  []ArtifactSpec  `json:"artifacts,omitempty"`
-	Secrets    []SecretBinding `json:"secrets,omitempty"`
-	Workflow   *Workflow       `json:"workflow,omitempty"`
+	HostingMode        string          `json:"hosting_mode,omitempty"`
+	HostingOperationID string          `json:"hosting_operation_id,omitempty"`
+	Type               string          `json:"type"`
+	Inputs             map[string]any  `json:"inputs"`
+	Repository         *RepositoryRef  `json:"repository,omitempty"`
+	Process            *ProcessSpec    `json:"process,omitempty"`
+	Artifacts          []ArtifactSpec  `json:"artifacts,omitempty"`
+	Secrets            []SecretBinding `json:"secrets,omitempty"`
+	Workflow           *Workflow       `json:"workflow,omitempty"`
 }
 
 // RepositoryRef identifies source input for a task or deployment.

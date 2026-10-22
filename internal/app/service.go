@@ -357,6 +357,9 @@ func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) 
 	if runType == "" {
 		return domain.RunSpec{}, InvalidInput(errors.New("run_spec.type is required"))
 	}
+	if runType == domain.RunTypeImageDeploy || runSpec.HostingOperationID != "" || runSpec.HostingMode != "" {
+		return domain.RunSpec{}, InvalidInput(errors.New("hosting execution tasks are internal-only"))
+	}
 	if !s.registry.Supports(runType) {
 		return domain.RunSpec{}, InvalidInput(errors.New("run_spec.type is not registered"))
 	}

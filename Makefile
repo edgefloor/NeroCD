@@ -10,7 +10,7 @@ SQLC_TOOL_IMAGE := golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670
 PRODUCT_PACKAGES := ./cmd/... ./internal/...
 TEST_PACKAGES = $(shell go list ./... | grep -v '/agent/skills/')
 
-.PHONY: build test fmt-check vet race lint lint-new lint-install shell-check verify postgres-test generate check-generated web-install web-test web-build web-policy browser-smoke docker-build production-compose-policy-gate local-image-registry-gate identity-artifact-gate runtime-fencing-gate runtime-spool-gate runtime-secrets-gate runtime-enrollment-gate runtime-web-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate production-profile-gate backup-restore-gate backup-scheduler-gate dogfood-gate system-operations-gate observability-gate release-evidence-accepted-gates release-evidence-gate release-evidence-synthetic-gate ci-release-policy-gate supply-chain release-artifacts contract check clean run smoke docker-up docker-down docker-logs
+.PHONY: build test fmt-check vet race lint lint-new lint-install shell-check verify postgres-test generate check-generated web-install web-test web-build web-policy browser-smoke docker-build production-compose-policy-gate local-image-registry-gate image-hosting-gate identity-artifact-gate runtime-fencing-gate runtime-spool-gate runtime-secrets-gate runtime-enrollment-gate runtime-web-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate production-profile-gate backup-restore-gate backup-scheduler-gate dogfood-gate system-operations-gate observability-gate release-evidence-accepted-gates release-evidence-gate release-evidence-synthetic-gate ci-release-policy-gate supply-chain release-artifacts contract check clean run smoke docker-up docker-down docker-logs
 
 build: web-build
 	mkdir -p "$(BIN_DIR)"
@@ -110,6 +110,9 @@ production-compose-policy-gate:
 
 local-image-registry-gate:
 	bash scripts/local-image-registry-gate.sh
+
+image-hosting-gate:
+	bash acceptance/image-hosting/gate.sh
 
 identity-artifact-gate:
 	bash scripts/identity-artifact-gate.sh

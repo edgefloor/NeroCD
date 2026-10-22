@@ -163,18 +163,19 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
-	Server             string
-	Token              string
-	RunnerID           string
-	WorkDir            string
-	JournalDir         string
-	SecretRoot         string
-	ImagePolicy        string
-	Execute            bool
-	Once               bool
-	PollInterval       time.Duration
-	CancelPollInterval time.Duration
-	CompleteStatus     string
+	ImageDockerEndpoint string
+	Server              string
+	Token               string
+	RunnerID            string
+	WorkDir             string
+	JournalDir          string
+	SecretRoot          string
+	ImagePolicy         string
+	Execute             bool
+	Once                bool
+	PollInterval        time.Duration
+	CancelPollInterval  time.Duration
+	CompleteStatus      string
 }
 
 // Run owns the runner loop, durable replay, lease lifecycle, and execution.
@@ -193,6 +194,9 @@ func Run(config Config) error {
 	}
 	defer func() { _ = journal.Close() }()
 	operational := &runnerOperationalCounters{}
+	if err := reconcileHostingJournal(config.Server, config.Token, journal, config.ImageDockerEndpoint); err != nil {
+		return fmt.Errorf("reconcile hosting journal: %w", err)
+	}
 	if err := reconcileRunnerJournalWithCounters(config.Server, config.Token, journal, operational); err != nil {
 		return fmt.Errorf("reconcile runner journal: %w", err)
 	}
@@ -220,10 +224,13 @@ func Run(config Config) error {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithJournalAndSecretRootAndCounters(config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational); err != nil {
+			if err := executeClaimWithJournalAndSecretRootAndCounters(config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, config.ImageDockerEndpoint); err != nil {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
+			if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
+				return errors.New("image_deploy requires --execute; generic completion is forbidden")
+			}
 			if strings.TrimSpace(claim.Lease.ID) == "" {
 				return errors.New("claim response lease did not include id")
 			}
@@ -268,7 +275,14 @@ func executeClaimWithJournalAndSecretRoot(server string, token string, claim dom
 	return executeClaimWithJournalAndSecretRootAndCounters(server, token, claim, workDir, cancelPollInterval, journal, secretRoot, composeImagePolicyPreloaded, &runnerOperationalCounters{})
 }
 
-func executeClaimWithJournalAndSecretRootAndCounters(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters) error {
+func executeClaimWithJournalAndSecretRootAndCounters(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, imageEndpoints ...string) error {
+	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
+		if err := domain.ValidateImageDeploymentTask(claim.Run); err != nil {
+			return err
+		}
+	} else if domain.ContainsHostingExecution(claim.Run.RunSpec, claim.Run.Workflow) {
+		return errors.New("hosting execution cannot enter the generic runtime")
+	}
 	sequence := 4
 	var sequenceMu sync.Mutex
 	var supervisor *attemptSupervisor
@@ -331,6 +345,13 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 	defer watcher.Stop()
 	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
 	defer reporter.Stop()
+	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
+		endpoint := ""
+		if len(imageEndpoints) > 0 {
+			endpoint = imageEndpoints[0]
+		}
+		return executeImageClaim(supervisor, journal, reporter, server, token, claim, endpoint)
+	}
 	if claim.PrimitivePlan.Process == nil {
 		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {
 			// Resolution is read-only: it cannot start containers or settle the

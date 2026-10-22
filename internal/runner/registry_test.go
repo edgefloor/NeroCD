@@ -33,3 +33,32 @@ func TestShellAdapterKeepsExplicitProcess(t *testing.T) {
 		t.Fatalf("explicit process was not preserved: %#v", plan.Process)
 	}
 }
+
+func TestImagePlanRequiresCanonicalInternalTaskAndNoGenericPrimitives(t *testing.T) {
+	valid := domain.TaskRun{ID: "run_hop_internal", RunSpec: domain.RunSpec{Type: domain.RunTypeImageDeploy, HostingOperationID: "hop_internal", HostingMode: "deploy"}}
+	plan, err := NewRegistry().BuildPlan(valid)
+	if err != nil || plan.RunID != valid.ID || plan.Process != nil || plan.Checkout != nil || len(plan.Secrets) != 0 {
+		t.Fatalf("valid internal image plan: %+v %v", plan, err)
+	}
+	for _, change := range []func(*domain.TaskRun){
+		func(run *domain.TaskRun) { run.RunSpec.HostingOperationID = "" },
+		func(run *domain.TaskRun) { run.RunSpec.HostingMode = "generic" },
+		func(run *domain.TaskRun) { run.ID = "run_other" },
+		func(run *domain.TaskRun) {
+			run.RunSpec.Process = &domain.ProcessSpec{Command: []string{"fixture-only-not-executed"}}
+		},
+		func(run *domain.TaskRun) {
+			run.Workflow = domain.Workflow{Steps: []domain.WorkflowStep{{ID: "unexpected", RunSpec: domain.RunSpec{Type: "ansible"}}}}
+		},
+	} {
+		bad := valid
+		change(&bad)
+		if _, err := NewRegistry().BuildPlan(bad); err == nil {
+			t.Fatal("invalid image task produced a plan")
+		}
+	}
+	generic := domain.TaskRun{ID: "run_generic", RunSpec: domain.RunSpec{Type: "ansible"}, Workflow: domain.Workflow{Steps: []domain.WorkflowStep{{ID: "nested", RunSpec: valid.RunSpec}}}}
+	if _, err := NewRegistry().BuildPlan(generic); err == nil {
+		t.Fatal("internal nested task produced generic primitives")
+	}
+}

@@ -6,6 +6,7 @@ toolchain go1.26.10
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/distribution/reference v0.6.0
 	github.com/getkin/kin-openapi v0.140.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/riverqueue/river v0.44.1
@@ -37,6 +38,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.18 // indirect
 	github.com/oasdiff/yaml v0.1.0 // indirect
 	github.com/oasdiff/yaml3 v0.0.13 // indirect
+	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/pganalyze/pg_query_go/v4 v4.2.3 // indirect
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63 // indirect
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c // indirect

@@ -260,6 +260,14 @@ func restoreDatabase(args []string) error {
 	if _, err := tx.Exec(ctx, `UPDATE run_leases SET status='expired', completed_at=clock_timestamp() WHERE status='active'`); err != nil {
 		return err
 	}
+	// A backup may predate a later admission or even the first operation on a
+	// binding. Record every restored binding independently of its state row.
+	if _, err := tx.Exec(ctx, `INSERT INTO hosting_binding_restore_holds(binding_id) SELECT id FROM resource_bindings ON CONFLICT DO NOTHING`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE hosting_binding_state SET restore_admitted=false`); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

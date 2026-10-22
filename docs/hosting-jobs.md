@@ -1,7 +1,9 @@
 # Hosting job infrastructure
 
-This package is infrastructure for a future real hosting preparation consumer.
-No production worker is registered or started by the server in this slice.
+The PostgreSQL server starts a real hosting consumer after validating the native
+and River schemas. It dispatches immutable image deployment operations to the
+existing fenced Go agent. See [Public image deployment](hosting-execution.md)
+for the supported image, local Docker, HTTP and recovery boundaries.
 
 ## Dependency and queue contract
 
@@ -20,13 +22,18 @@ Jobs have at most three attempts. Failed attempts retry after one and two
 seconds. The worker converts handler errors and recovered panics to fixed
 codes before River persists them. Invalid operations cancel immediately.
 River's internal logger is discarded to prevent upstream error details from
-entering application logs. A future consumer needs safe operational metrics
-and audit records in its application operation model.
+entering application logs. The hosting operation records dispatch and execution
+state separately from River job completion, with project-scoped audit records.
 
 Uniqueness uses arguments and queue within active job states. It suppresses
 simultaneous queued or running duplicates. Completion releases that uniqueness,
 and a later insert can run again. Durable business idempotency belongs to the
-operation model and handler.
+operation model and handler. The image consumer keeps a permanent dispatch
+receipt, so recovery and repeated jobs cannot create a second deployment task.
+A bounded server recovery pass discovers accepted queued operations that have
+no dispatch receipt, even after finite retries or River job cleanup. Permanent
+preflight failures become failed operations; a database outage leaves durable
+queued intent for the next recovery pass.
 
 ## Consumer integration API
 
@@ -51,17 +58,25 @@ Defaults are one worker, a one-minute job timeout, and ten seconds to drain.
 Configuration permits at most eight workers, a five-minute job timeout, and a
 one-minute drain timeout. Cancellation waits at most five further seconds.
 
-The future preparation handler must resolve operation ID to the authorized,
-immutable application snapshot and exact destination. It must produce work for
-the existing fenced runner protocol. It must not invoke Docker directly.
-Runtime worker registration, server readiness for River migrations, and restore
-admission holds remain work for that actual consumer slice.
+`PostgresStore.PrepareDeployment` resolves the operation ID to its immutable
+snapshot and exact bound runner. In one transaction it rechecks the current
+project grant and runner eligibility, creates the typed `image_deploy` task,
+and stores its target and permanent dispatch receipt. The server does not invoke
+Docker. The agent prepares and applies the release under fenced lease authority.
+
+Deployment requests atomically store the operation, snapshot, audit event and
+River enqueue. Memory mode returns explicit unavailable instead of accepting a
+simulated queue. Server startup requires the current native schema and exact
+River migration evidence. Shutdown stops the consumer and recovery loop before
+closing its database pool; a stop timeout does not permit early pool closure.
 
 ## Owner migration and checksum evidence
 
 The existing `nerocd migrate` owner command applies native migrations, then
-River migrations while retaining its advisory lock. Native migration 0044 is
-not consumed by this adapter.
+River migrations while retaining its advisory lock. Native 0044 owns destination
+capability compatibility, and native 0045 owns image operations and their durable
+execution evidence. River migrations remain separately versioned through the
+pinned upstream migration API; historical native and River SQL is unchanged.
 
 `MigrateNextTx` applies exactly one pinned River migration through upstream
 `rivermigrate.MigrateTx`, then records its version, name, and checksum in
@@ -96,8 +111,17 @@ version set and ledger afterward.
 A binary containing this adapter rejects an older backup without River
 identity entries. Restore an older backup with its matching older image, then
 run the newer owner migrations and create a new backup. This preserves the
-existing compatible-image discipline. This infrastructure does not yet add
-runtime queue registration or a restore admission hold for hosting jobs.
+existing compatible-image discipline.
+
+After restore, the same transaction that revokes sessions and expires live leases
+records an append-only ownership hold for every restored resource binding,
+including bindings whose backup contains no operation or state row. Restored
+jobs cannot dispatch or apply through this hold. Read-only target observation
+cannot clear it: the backup can predate a later Docker command still running on
+an agent. Trusted local journal and process recovery proof is not implemented in
+this slice, so restored hosting ownership cannot yet resume. There is no unlock
+API. This conservative hold is distinct from an operation's mutation hold and
+from a completed restore-resumption workflow.
 
 ## Upstream references
 

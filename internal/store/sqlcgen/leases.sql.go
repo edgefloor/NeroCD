@@ -302,6 +302,18 @@ func (q *Queries) GetLeaseRunID(ctx context.Context, id string) (string, error) 
 	return run_id, err
 }
 
+const isHostingRun = `-- name: IsHostingRun :one
+SELECT EXISTS(SELECT 1 FROM hosting_task_targets WHERE run_id=$1)
+ OR EXISTS(SELECT 1 FROM task_runs WHERE id=$1 AND run_spec->>'type'='image_deploy')
+`
+
+func (q *Queries) IsHostingRun(ctx context.Context, runID string) (*bool, error) {
+	row := q.db.QueryRow(ctx, isHostingRun, runID)
+	var column_1 *bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const lockAuthorizedLease = `-- name: LockAuthorizedLease :one
 SELECT id
 FROM run_leases
