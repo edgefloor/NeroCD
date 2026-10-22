@@ -32,6 +32,111 @@ function browserRuntimeDir(): string {
   return join("/tmp", `nerocd-browser-${runID}`);
 }
 
+test("project hosting saves image configuration and recovers stale generations across responsive widths", async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Hosting browser ${Date.now()}` });
+  await page.reload();
+  const section = page.getByRole("region", { name: "Project hosting", exact: true });
+  await section.getByLabel("Hosting project", { exact: true }).selectOption(project.id);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const environmentName = `Production ${width}`;
+    await section.getByLabel("Environment name", { exact: true }).fill(environmentName);
+    const createdEnvironment = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/project-environments");
+    await section.getByRole("button", { name: "Create shared environment", exact: true }).click();
+    expect((await createdEnvironment).status()).toBe(201);
+    const application = section.getByRole("form", { name: "Create application", exact: true });
+    await application.getByLabel("Application name", { exact: true }).fill(`Web ${width}`);
+    await application.getByLabel("Image reference", { exact: true }).fill("team/web");
+    const invalid = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/resources");
+    await application.getByRole("button", { name: "Save application", exact: true }).click();
+    expect((await invalid).status()).toBe(400);
+    await expect(application.getByLabel("Application name", { exact: true })).toHaveValue(`Web ${width}`);
+    await expect(application.getByLabel("Image reference", { exact: true })).toHaveValue("team/web");
+    await application.getByLabel("Image reference", { exact: true }).fill("registry.example.com/team/web:1");
+    const created = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/resources");
+    await application.getByRole("button", { name: "Save application", exact: true }).click();
+    const createdResponse = await created;
+    expect(createdResponse.status()).toBe(201);
+    const resource = await createdResponse.json() as { id: string; generation: number };
+    await expect(section.getByText("Saved configuration · Generation 1", { exact: true })).toBeVisible();
+    await section.getByRole("button", { name: "Edit configuration", exact: true }).click();
+    const editor = section.getByRole("form", { name: `Edit Web ${width}`, exact: true });
+    await editor.getByLabel("Application name", { exact: true }).fill(`Draft ${width}`);
+    const external = await page.request.patch(`/api/v1/resources/${resource.id}`, { headers: { Origin: new URL(page.url()).origin, "X-NeroCD-CSRF": "1" }, data: { expected_generation: resource.generation, name: `External ${width}` } });
+    expect(external.status()).toBe(200);
+    const stale = page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === `/api/v1/resources/${resource.id}`);
+    await editor.getByRole("button", { name: "Save configuration", exact: true }).click();
+    expect((await stale).status()).toBe(409);
+    await expect(editor.getByText(`External ${width}`, { exact: true })).toBeVisible();
+    await expect(editor.getByLabel("Application name", { exact: true })).toHaveValue(`Draft ${width}`);
+    await expect(editor.getByRole("button", { name: "Save configuration", exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`hosting-conflict-${width}.png`), fullPage: true, animations: "disabled" });
+    await editor.getByRole("button", { name: "Keep my draft with generation 2", exact: true }).click();
+    const saved = page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === `/api/v1/resources/${resource.id}`);
+    await editor.getByRole("button", { name: "Save configuration", exact: true }).click();
+    expect((await saved).status()).toBe(200);
+    await expect(section.getByRole("heading", { name: `Draft ${width}`, exact: true })).toBeVisible();
+    await page.reload();
+    await section.getByLabel("Hosting project", { exact: true }).selectOption(project.id);
+    await section.getByRole("button", { name: environmentName, exact: true }).click();
+    await expect(section.getByRole("heading", { name: `Draft ${width}`, exact: true })).toBeVisible();
+    await expect(section.getByText("Saved configuration · Generation 3", { exact: true })).toBeVisible();
+    await expect(section.getByRole("button", { name: /deploy/i })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath(`hosting-saved-${width}.png`), fullPage: true, animations: "disabled" });
+  }
+});
+
+test("project hosting scopes maintainer writes and viewer reads to project access", async ({ page, browser }, testInfo) => {
+  test.setTimeout(60_000);
+  await page.goto("/projects");
+  await signIn(page);
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const maintained = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: "Hosting maintained" });
+  const viewed = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: "Hosting viewed" });
+  await postJSON(page, "/api/v1/project-members", { project_id: maintained.id, email: "oidc-browser@example.invalid", role: "maintainer" });
+  await postJSON(page, "/api/v1/project-members", { project_id: viewed.id, email: "oidc-browser@example.invalid", role: "viewer" });
+  const environment = await postJSON<{ id: string }>(page, "/api/v1/project-environments", { project_id: viewed.id, name: "Read only environment" });
+  const source = { kind: "image", image: { reference: `registry.example.com/${"long-project/".repeat(8)}web@sha256:${"a".repeat(64)}` } };
+  const resource = await postJSON<{ id: string }>(page, "/api/v1/resources", { project_id: viewed.id, project_environment_id: environment.id, name: "Viewed application", kind: "application", source });
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.goto("/sign-in");
+    await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    await operator.goto("/projects");
+    const section = operator.getByRole("region", { name: "Project hosting", exact: true });
+    for (const width of [320, 390, 430, 1440]) {
+      await operator.setViewportSize({ width, height: 1000 });
+      await section.getByLabel("Hosting project", { exact: true }).selectOption(viewed.id);
+      await section.getByRole("button", { name: "Read only environment", exact: true }).click();
+      await expect(section.getByRole("heading", { name: "Viewed application", exact: true })).toBeVisible();
+      await expect(section.getByRole("button", { name: /^(Create shared environment|Save application|Edit configuration)$/ })).toHaveCount(0);
+      expect(await operator.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await operator.screenshot({ path: testInfo.outputPath(`hosting-viewer-${width}.png`), fullPage: true, animations: "disabled" });
+      await section.getByLabel("Hosting project", { exact: true }).selectOption(maintained.id);
+      await section.getByLabel("Environment name", { exact: true }).fill(`Maintainer ${width}`);
+      const created = operator.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/project-environments");
+      await section.getByRole("button", { name: "Create shared environment", exact: true }).click();
+      expect((await created).status()).toBe(201);
+      const form = section.getByRole("form", { name: "Create application", exact: true });
+      await form.getByLabel("Application name", { exact: true }).fill(`Maintainer app ${width}`);
+      await form.getByLabel("Image reference", { exact: true }).fill("team/app:2");
+      const saved = operator.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/resources");
+      await form.getByRole("button", { name: "Save application", exact: true }).click();
+      expect((await saved).status()).toBe(201);
+      await expect(section.getByRole("heading", { name: `Maintainer app ${width}`, exact: true })).toBeVisible();
+    }
+    const denied = await operator.request.patch(`/api/v1/resources/${resource.id}`, { headers: { Origin: new URL(operator.url()).origin, "X-NeroCD-CSRF": "1" }, data: { expected_generation: 1, name: "Denied edit" } });
+    expect(denied.status()).toBe(403);
+  } finally { await context.close(); }
+});
+
 async function ensureBootstrapped(page: Page): Promise<void> {
   const status = await page.request.get("/api/v1/bootstrap-status");
   if (!status.ok()) throw new Error(`browser bootstrap status failed with ${status.status()}`);
