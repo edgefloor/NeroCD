@@ -144,8 +144,9 @@ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(current_schema()||
 $$;
 
 -- Bind trigger and readiness queries to the owning schema, including restores.
+-- Explicit pg_temp last keeps connection-local relations behind owned tables.
 DO $$ DECLARE owner_schema text:=current_schema(); routine text; BEGIN
  FOREACH routine IN ARRAY ARRAY['nerocd_hosting_runtime_document_valid(jsonb)','nerocd_hosting_runtime_immutable()','nerocd_hosting_runtime_pointer_transition()','nerocd_hosting_runtime_ref_creation()','nerocd_hosting_runtime_version_consistent()','nerocd_hosting_runtime_configuration_schema_compatible()'] LOOP
-  EXECUTE format('ALTER FUNCTION %I.%s SET search_path=%I,pg_catalog',owner_schema,routine,owner_schema);
+  EXECUTE format('ALTER FUNCTION %I.%s SET search_path=%I,pg_catalog,pg_temp',owner_schema,routine,owner_schema);
  END LOOP;
 END $$;

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
@@ -408,4 +409,118 @@ func TestHostingRuntimePostgresStartupRequiresMigration(t *testing.T) {
 	if ok, err := pg.SchemaCompatible(ctx); !ok || err != nil {
 		t.Fatalf("restored migration %v %v", ok, err)
 	}
+}
+
+func TestHostingRuntimePostgresFunctionsUseOwningSchema(t *testing.T) {
+	t.Run("sealed references", func(t *testing.T) {
+		pg, db, resource := runtimeFixture(t)
+		ctx := t.Context()
+		item, record, event := managedFixture(t, "runtime_schema_secret", 1)
+		if _, err := pg.CreateManagedSecret(ctx, item, record, event); err != nil {
+			t.Fatal(err)
+		}
+		runtimeSave(t, pg, resource.ID, runtimeInput(1, 0))
+		var schema string
+		if err := db.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+			t.Fatal(err)
+		}
+		owned := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		for _, name := range []string{"hosting_runtime_configuration_versions", "hosting_runtime_configuration_secret_refs"} {
+			if _, err = tx.Exec(ctx, "CREATE TEMP TABLE "+pgx.Identifier{name}.Sanitize()+" (LIKE "+owned(name)+") ON COMMIT DROP"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// A connection-local copy must never supply the creation identity of a retained version.
+		if _, err = tx.Exec(ctx, "INSERT INTO pg_temp.hosting_runtime_configuration_versions SELECT * FROM "+owned("hosting_runtime_configuration_versions")); err != nil {
+			t.Fatal(err)
+		}
+		_, err = tx.Exec(ctx, "INSERT INTO "+owned("hosting_runtime_configuration_secret_refs")+"(resource_id,project_id,generation,secret_id,secret_version) VALUES($1,$2,1,$3,1)", resource.ID, resource.ProjectID, item.ID)
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		if err == nil {
+			t.Fatal("connection-local tables changed the retained version reference set")
+		}
+		if err = tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Fatal(err)
+		}
+		runtimeCount(t, db, "hosting_runtime_configuration_secret_refs", 0)
+	})
+	t.Run("new version consistency and history", func(t *testing.T) {
+		pg, db, resource := runtimeFixture(t)
+		ctx := t.Context()
+		item, record, event := managedFixture(t, "runtime_schema_secret", 1)
+		if _, err := pg.CreateManagedSecret(ctx, item, record, event); err != nil {
+			t.Fatal(err)
+		}
+		runtimeSave(t, pg, resource.ID, runtimeInput(1, 0))
+		var schema string
+		if err := db.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+			t.Fatal(err)
+		}
+		owned := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		for _, name := range []string{"hosting_runtime_configurations", "hosting_runtime_configuration_versions", "hosting_runtime_configuration_secret_refs", "hosting_runtime_configuration_receipts", "project_managed_secrets", "project_managed_secret_versions", "audit_events"} {
+			if _, err = tx.Exec(ctx, "CREATE TEMP TABLE "+pgx.Identifier{name}.Sanitize()+" (LIKE "+owned(name)+") ON COMMIT DROP"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		doc, _, err := domain.CanonicalHostingRuntimeDocument([]domain.HostingRuntimeEntry{{Name: "PASSWORD", Kind: "managed_secret", Secret: &domain.HostingRuntimeSecretReference{SecretID: item.ID, Version: 1}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, "UPDATE "+owned("hosting_runtime_configurations")+" SET generation=2 WHERE resource_id=$1", resource.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO "+owned("hosting_runtime_configuration_versions")+"(resource_id,project_id,generation,body,body_hash,created_by) VALUES($1,$2,2,$3,$4,'usr_bootstrap')", resource.ID, resource.ProjectID, body, domain.HostingDocumentHash(doc)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO "+owned("hosting_runtime_configuration_secret_refs")+" VALUES($1,$2,2,$3,1)", resource.ID, resource.ProjectID, item.ID); err != nil {
+			t.Fatalf("owned new-version reference: %v", err)
+		}
+		metadata, err := json.Marshal(map[string]any{"project_id": resource.ProjectID, "resource_id": resource.ID, "runtime_generation": 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO "+owned("audit_events")+"(id,actor_id,action,target_id,metadata,created_at) VALUES('runtime_schema_audit','usr_bootstrap','hosting.runtime_configuration.updated',$1,$2,clock_timestamp())", resource.ID, metadata); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO "+owned("hosting_runtime_configuration_receipts")+" VALUES($1,$2,'00000000000000000000000000000002','usr_bootstrap',$3,1,1,2,'runtime_schema_audit')", resource.ID, resource.ProjectID, domain.HostingDocumentHash(doc)); err != nil {
+			t.Fatal(err)
+		}
+		// History remains immutable while every referenced table has an empty local namesake.
+		nested, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, mutationErr := nested.Exec(ctx, "UPDATE "+owned("hosting_runtime_configuration_versions")+" SET body='{\"entries\":[]}' WHERE resource_id=$1 AND generation=1", resource.ID)
+		if mutationErr == nil {
+			t.Fatal("retained version mutation accepted")
+		}
+		if err = nested.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			t.Fatalf("owned consistency checks used local tables: %v", err)
+		}
+		saved, err := pg.GetHostingRuntimeConfiguration(ctx, "usr_bootstrap", resource.ID)
+		if err != nil || saved.RuntimeGeneration != 2 || len(saved.Entries) != 1 || saved.Entries[0].Secret == nil || *saved.Entries[0].Secret != (domain.HostingRuntimeSecretReference{SecretID: item.ID, Version: 1}) {
+			t.Fatalf("owned version %+v %v", saved, err)
+		}
+		runtimeCount(t, db, "hosting_runtime_configuration_versions", 2)
+		runtimeCount(t, db, "hosting_runtime_configuration_secret_refs", 1)
+	})
 }
