@@ -44,6 +44,36 @@ func TestRuntimeBuild(t *testing.T) {
 	if _, err = e.docker(t.Context(), setup, "pull", StaticImage); err != nil {
 		t.Fatal(err)
 	}
+	// The real planner is quiet with --hide-pretty-plan for these fixtures.
+	// Derive a fixture-only helper with known text to test raw file capture,
+	// while retaining and executing the exact original Railpack binary.
+	plannerContext := t.TempDir()
+	if _, err = e.docker(t.Context(), setup, "tag", e.config.PlannerImage, "nerocd-observer-planner:base"); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(plannerContext, "Dockerfile"), []byte("FROM nerocd-observer-planner:base\nRUN mv /usr/local/bin/railpack /usr/local/bin/railpack-real\nCOPY --chmod=755 railpack /usr/local/bin/railpack\n"))
+	writeTestFile(t, filepath.Join(plannerContext, "railpack"), []byte("#!/bin/sh\nprintf 'fixture-planner-stdout\\n'\nprintf 'fixture-planner-stderr\\n' >&2\nexec /usr/local/bin/railpack-real \"$@\"\n"))
+	if _, err = e.docker(t.Context(), setup, "build", "--pull=false", "--network=none", "--label", "io.nerocd.runtime-build=observer-planner", "-t", "nerocd-observer-planner:fixture", plannerContext); err != nil {
+		t.Fatal(err)
+	}
+	wrapperID, err := e.docker(t.Context(), setup, "image", "inspect", "--format", "{{.Id}}", "nerocd-observer-planner:fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrappedPlanner := *e
+	wrappedPlanner.config.PlannerImage = strings.TrimSpace(string(wrapperID))
+	if !digestPattern.MatchString(wrappedPlanner.config.PlannerImage) {
+		t.Fatal("fixture planner image ID is not immutable")
+	}
+	originalBinary, err := e.docker(t.Context(), setup, "run", "--rm", "--network=none", "--entrypoint", "sha256sum", e.config.PlannerImage, "/usr/local/bin/railpack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrappedBinary, err := e.docker(t.Context(), setup, "run", "--rm", "--network=none", "--entrypoint", "sha256sum", wrappedPlanner.config.PlannerImage, "/usr/local/bin/railpack-real")
+	if err != nil || len(strings.Fields(string(originalBinary))) != 2 || len(strings.Fields(string(wrappedBinary))) != 2 || strings.Fields(string(originalBinary))[0] != strings.Fields(string(wrappedBinary))[0] {
+		t.Fatalf("fixture wrapper changed real Railpack binary: %v", err)
+	}
+	t.Logf("fixture planner original=%s derived=%s real_binary_sha256=%s", e.config.PlannerImage, wrappedPlanner.config.PlannerImage, strings.Fields(string(originalBinary))[0])
 	source := func(content string) string {
 		p := t.TempDir()
 		writeTestFile(t, filepath.Join(p, "Dockerfile"), []byte(content))
@@ -76,7 +106,15 @@ func TestRuntimeBuild(t *testing.T) {
 		src := source("FROM " + StaticImage + "\nRUN echo descendant-enforcement > /usr/share/nginx/html/index.html && sleep 2\n")
 		req := request("dockerfile", Dockerfile, src)
 		var err error
-		built, err = e.Build(t.Context(), req)
+		var frames, outputBytes int
+		built, err = e.BuildWithOutput(t.Context(), req, func(_ context.Context, output Output) error {
+			if output.Component != OutputBuildKit || (output.Stream != OutputStdout && output.Stream != OutputStderr) || len(output.Data) > 16<<10 {
+				t.Errorf("invalid build output frame: component=%s stream=%s length=%d", output.Component, output.Stream, len(output.Data))
+			}
+			frames++
+			outputBytes += len(output.Data)
+			return nil
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +122,14 @@ func TestRuntimeBuild(t *testing.T) {
 			t.Fatalf("invalid receipt %#v", built)
 		}
 		t.Logf("receipt=%+v", built)
-		again, err := e.Build(t.Context(), req)
+		if frames == 0 || outputBytes == 0 {
+			t.Fatal("fresh build emitted no output")
+		}
+		t.Logf("observed fresh build: frames=%d bytes=%d", frames, outputBytes)
+		again, err := e.BuildWithOutput(t.Context(), req, func(context.Context, Output) error {
+			t.Error("receipt replay emitted output")
+			return nil
+		})
 		if err != nil || again != built {
 			t.Fatalf("immutable replay failed: %v", err)
 		}
@@ -212,10 +257,29 @@ func TestRuntimeBuild(t *testing.T) {
 			if strategy == Railpack {
 				writeTestFile(t, filepath.Join(src, "Staticfile"), []byte("root: .\n"))
 			}
-			result, err := e.Build(t.Context(), request(string(strategy), strategy, src))
+			var plannerBytes int
+			var plannerText strings.Builder
+			engine := e
+			if strategy == Railpack {
+				engine = &wrappedPlanner
+			}
+			result, err := engine.BuildWithOutput(t.Context(), request(string(strategy), strategy, src), func(_ context.Context, output Output) error {
+				if output.Component == OutputRailpack {
+					if output.Stream != OutputSystem {
+						t.Error("captured planner text must use system stream")
+					}
+					plannerBytes += len(output.Data)
+					plannerText.Write(output.Data)
+				}
+				return nil
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
+			if strategy == Railpack && (!strings.Contains(plannerText.String(), "fixture-planner-stdout\n") || !strings.Contains(plannerText.String(), "fixture-planner-stderr\n")) {
+				t.Fatal("completed Railpack planner markers were not captured")
+			}
+			t.Logf("captured planner bytes=%d", plannerBytes)
 			name := "nerocd-runtime-build-" + string(strategy)
 			if _, err = e.docker(t.Context(), setup, "run", "--detach", "--name", name, "--label", "io.nerocd.runtime-build="+string(strategy), "--env", "PORT=80", result.ImageID); err != nil {
 				t.Fatal(err)
@@ -231,6 +295,50 @@ func TestRuntimeBuild(t *testing.T) {
 
 		})
 	}
+	t.Run("empty-planner-output", func(t *testing.T) {
+		src := t.TempDir()
+		writeTestFile(t, filepath.Join(src, "index.html"), []byte("quiet real planner"))
+		writeTestFile(t, filepath.Join(src, "Staticfile"), []byte("root: .\n"))
+		var plannerFrames int
+		_, err := e.BuildWithOutput(t.Context(), request("empty-planner-output", Railpack, src), func(_ context.Context, output Output) error {
+			if output.Component == OutputRailpack {
+				plannerFrames++
+			}
+			return nil
+		})
+		if err != nil || plannerFrames != 0 {
+			t.Fatalf("quiet real planner: invented_frames=%d err=%v", plannerFrames, err)
+		}
+	})
+	t.Run("observer-failure-cleanup", func(t *testing.T) {
+		req := request("observer-failure", Dockerfile, source("FROM "+StaticImage+"\nRUN echo output-observer-cleanup\n"))
+		_, err := e.BuildWithOutput(t.Context(), req, func(context.Context, Output) error {
+			return errors.New("private observer diagnostic")
+		})
+		if !errors.Is(err, ErrOutputSink) || strings.Contains(err.Error(), "private observer diagnostic") {
+			t.Fatalf("observer failure was not safely reported: %v", err)
+		}
+		if _, err = os.Stat(filepath.Join(dir, "cleanup_unconfirmed.json")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("observer failure did not confirm owned cleanup: %v", err)
+		}
+		assertHTTP(t, survivor, "descendant-enforcement\n")
+	})
+	t.Run("failed-planner-output", func(t *testing.T) {
+		src := t.TempDir()
+		writeTestFile(t, filepath.Join(src, "unrecognized.txt"), []byte("not a supported application"))
+		var plannerBytes int
+		_, err := wrappedPlanner.BuildWithOutput(t.Context(), request("failed-planner-output", Railpack, src), func(_ context.Context, output Output) error {
+			if output.Component == OutputRailpack && output.Stream == OutputSystem {
+				plannerBytes += len(output.Data)
+			}
+			return nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "railpack planner failed") || plannerBytes == 0 {
+			t.Fatalf("completed failed planner: bytes=%d err=%v", plannerBytes, err)
+		}
+		t.Logf("captured failed planner bytes=%d", plannerBytes)
+		assertHTTP(t, survivor, "descendant-enforcement\n")
+	})
 	t.Run("descendant-cpu-memory-enforcement", func(t *testing.T) {
 		req := request("descendants", Dockerfile, source("FROM "+StaticImage+"\nRUN sh -c '(while :; do :; done) & worker=$!; sleep 4; kill \"$worker\"; wait \"$worker\" || true' nerocd-build-step-proof\n"))
 		req.Limits.CPUQuota = 50000
