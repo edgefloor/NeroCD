@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`b55bbcf7b2313e32391a4390dcbb8562de2617b5`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`132012237ee484e9cd6fce2fba656966567a1cc8`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - PostgreSQL state, checked migrations through 0054, bootstrap administration,
@@ -53,8 +53,17 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   It cannot recall bytes already sent or values delivered to a runner or container.
   Docker administrators can inspect container environment values.
 - Bounded runtime status challenge/report controls and viewer freshness reads,
-  through migration 0054. A collector, status UI and disk/CPU metrics are pending.
-  Configuration UI still needs actual browser proof before acceptance.
+  through migration 0054. The collector requires `--hosting-observation` with
+  matching persisted `hosting_observation_v1` capability. It reads narrow Docker
+  status and loopback readiness, selecting four targets fairly per 10-second cycle.
+  This is not a 10-second sampling guarantee for each resource. Status UI and
+  disk/CPU metrics remain pending.
+- Runtime configuration UI for public literals and exact managed-secret versions,
+  generation compare-and-swap, idempotent retries and fresh deployment generations.
+  Accepted browser proof covers authenticated API, compiled runner and Docker,
+  failed-readiness preservation, viewer authorization and responsive layouts.
+  It uses seeded accounts, resources and placement plus a trusted persisted Git
+  artifact; fresh Git builds, onboarding and public ACME are separate work.
 - [Public registry-image deployment](docs/hosting-execution.md) through the
   API, transactional River dispatch and explicitly enabled agent. It records
   exact image/platform/daemon identity, ordinary HTTP readiness, per-release
@@ -86,8 +95,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. The next H1 work is collector implementation and actual browser proof for runtime
-configuration, followed by runtime logs and continuous status qualification. Other gaps include onboarding,
+and extended compatibility. The next H1 work is the runtime-status dashboard and runtime logs, both active
+unaccepted work, followed by the other H1 gaps. Other gaps include onboarding,
 broader credentials, trusted triggers, deployment policy, production TLS
 qualification, broader Compose/storage, databases, backups,
 restores, previews, terminals, schedules and notifications.

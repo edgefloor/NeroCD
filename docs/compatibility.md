@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`b55bbcf7b2313e32391a4390dcbb8562de2617b5`, 2026-10-23.
+`132012237ee484e9cd6fce2fba656966567a1cc8`, 2026-10-23.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -57,11 +57,13 @@ artifact deployment, build output and private Git control-plane contracts:
 | Private HTTPS Git control plane | Source `f89e019da9a2641da9dc36592fd54908e896b003`, accepted `edf8f14c8262c896e4c886088f8058878d77e965`; [grant/API tests](../internal/store/postgres_hosting_source_grant_test.go), [capability tests](../internal/store/postgres_hosting_private_capability_test.go), [credential client tests](../internal/runnerclient/hosting_source_credential_test.go) | Private HTTPS configuration, owner-created/revoked source grants, gated build admission/dispatch and typed credential endpoint/client; final expiry, exact replay and current capability checked. At that checkpoint compiled CLI refused private capability; current runtime/UI additions are below; complete A03 remains partial |
 | Private HTTPS Git runtime | Source `4642dc413cc21be955fd9639d12fdf0606735cfc`, accepted with UI at `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; [private runtime fixture](../internal/runnerruntime/private_git_runtime_integration_test.go), [operator setup](hosting-build-runtime.md#enable-private-https-git) | Explicit private capability/configuration; real CLI Dockerfile and Railpack, exact credential-response retry, redaction/cleanup, same-host artifact deployment and test-CA HTTPS; public regression 51.44s, private cases 76.59s |
 | Private HTTPS Git WebUI | Source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`, accepted `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; [private browser test](../web/app/tests/browser/private-git-build-deployments.spec.ts), [workflow](hosting-git-resources.md#request-a-private-https-git-build) | Owner creates a new reference grant, recovers an identical retry, selects its ID, builds Dockerfile, reads typed output, deploys exact artifact and verifies test-CA HTTPS; keyboard, 320/390/430/1440px, viewer 403 and no reveal; browser 25.0s/Go 34.03s. Public browser regression 22.2s/Go 30.63s; no automatic-builder private UI qualification or complete A03 |
-| Desired runtime configuration | Source `5b435d4e8e35562ab6c9a7116a6b0b5f16e85751`, accepted `bdd5e0168655edd31df48a7818a560a49876147e`; [service](../internal/app/hosting_runtime_config_service.go), [API tests](../internal/api/hosting_runtime_config_handlers_test.go) | Migration 0052; `GET`/`PUT /api/v1/resources/{id}/runtime-configuration` for application image/Git resources; generation compare-and-swap and idempotency; explicit public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads; no decryption, injection or UI |
+| Desired runtime configuration | Source `5b435d4e8e35562ab6c9a7116a6b0b5f16e85751`, accepted `bdd5e0168655edd31df48a7818a560a49876147e`; [service](../internal/app/hosting_runtime_config_service.go), [API tests](../internal/api/hosting_runtime_config_handlers_test.go) | Migration 0052; `GET`/`PUT /api/v1/resources/{id}/runtime-configuration` for application image/Git resources; generation compare-and-swap and idempotency; explicit public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads; no decryption, injection or UI at that checkpoint; accepted execution/UI are below |
 | Runtime-configuration admission | Source `7c51350083f6fa448e8043e32158ecf9427be6d6`, accepted `1ddfb1f43416ff8109c31a852963942448035583`; [admission persistence](../internal/store/postgres_hosting_runtime_environment.go) | Migration 0053; prepares exact configuration authority for deployment; does not apply values to containers |
 | Protected runtime-environment delivery and journal | Delivery source `c7d3a0d5a4fdb00bf9b2ab5e6bd0cdfd05e6b30e`, journal source `804d4f460c6f106993c0a223f36eb42831f6a7f2`, accepted `66b58845dab1fdee6f8b12809f0434a2a94326ac`; [delivery service](../internal/app/hosting_runtime_environment_delivery.go), [endpoint tests](../internal/api/hosting_runtime_environment_handlers_test.go) | `POST /api/v1/runners/hosting/runtime-environment` checks exact prepared authority and current actor/configuration/secret versions, commits metadata audit before decryption and preserves the original bounded window; journal format 8 persists only nonsecret references and delivery ID; older formats remain legacy; runtime consumption was absent at that checkpoint; accepted execution is below |
 | Protected runtime execution | Runtime source `420300352ba14f40f082c519f6a75d04f82129c1` and credential repair `b9836b8a626fc12c5a6e4dde44ebc40e80b870a2`, accepted `0a50debdfa5ab14191e52025cd1bb62684e86cd6`; [qualification guide](../acceptance/runtime-hosting-environment/README.md), [gate](../acceptance/runtime-hosting-environment/gate.sh) | Explicit CLI/API opt-in; literals and exact managed-secret versions reach Docker through protected stdin; fixed delivery/replay windows and deadlines; after authorization commits and before returning environment bytes, the endpoint rechecks the original credential and rejects delivery if it detects rotation; it cannot recall bytes already sent or values already delivered to a runner or container; Docker administrators can inspect environment values |
-| Bounded runtime status control | Source `56baaa7ec5f155ca490fa7cc989833ed92de9189`, accepted `b55bbcf7b2313e32391a4390dcbb8562de2617b5`; [store](../internal/store/postgres_hosting_runtime_observation.go) | Migration 0054; bounded challenge/report and viewer freshness controls only; no collector, status UI or disk/CPU metrics |
+| Bounded runtime status control | Source `56baaa7ec5f155ca490fa7cc989833ed92de9189`, accepted `b55bbcf7b2313e32391a4390dcbb8562de2617b5`; [store](../internal/store/postgres_hosting_runtime_observation.go) | Migration 0054; bounded challenge/report and viewer freshness controls; collector was absent at that checkpoint and is accepted below; no status UI or disk/CPU metrics |
+| Runtime configuration WebUI | Source `558d365571630e2a701aef3f60c2e9710771ba54`, accepted `46ceb43f77085e9d11c5c6375b79d6cbfc8e1485`; [browser scenario](../web/app/tests/browser/runtime-environment-deployments.spec.ts) | Public literals, exact managed-secret references, generation compare-and-swap, idempotent retry and fresh deployment generation; authenticated cookie API plus compiled runner/Docker; failed-readiness preservation, viewer authorization and 320/390/430/1440px layouts; seeded accounts/resource/placement and trusted persisted Git artifact; no fresh Git build, onboarding or public ACME qualification |
+| Independent runtime collector | Source `bd9638c227db67e10d1ee9647b40c60c5676f0a5`, accepted `132012237ee484e9cd6fce2fba656966567a1cc8`; [operator contract](hosting-runtime-observation.md), [real gate](../acceptance/runtime-hosting-observation/gate.sh) | Opt-in `--hosting-observation` with matching persisted `hosting_observation_v1` capability; read-only narrow Docker status and loopback readiness; fair selection of four targets per 10-second cycle, not a 10-second per-resource guarantee; no metrics or status UI |
 
 The desired-configuration foundation passed actual PostgreSQL and focused race
 checks, 718 frontend tests, the 163-route contract, generated-output checks and
@@ -79,18 +81,30 @@ the original container, pinned version 1 after rotation, denial after revocation
 or new configuration, and no apply on startup. It did not qualify a new Git build,
 complete A03/A28, production ACME or full hosting parity. Log scans covered only
 controlled output; Docker administrators can inspect environment values.
-The reviewed configuration UI remains unaccepted pending actual browser proof and
-integration. Collector implementation and status UI remain pending.
+The configuration UI and independent collector are now accepted at the revisions
+above. The runtime-status dashboard and runtime-log work with migration 0055 remain
+active and unaccepted. These additions do not complete A28 or hosting parity.
+
+Accepted UI evidence records a 19.2-second browser run and 26.20-second Go fixture,
+748 frontend tests in 70 files, and a 74-asset web manifest
+`6057d72030cc23ca03fd951f340c007f60fc405a0c9500c10e6d3a1192519378`.
+The accepted collector's 43.00-second compiled CLI/test-CA/Docker gate verified
+healthy status, stopped/exited state, SIGTERM join, stale/unknown after 30.2
+seconds, resumed collection and rejection of an old report after replacement.
+The contract remains 167 routes and accepted migrations remain through 0054.
+Full-package lint failed on three existing errcheck findings in unchanged tests;
+lint of introduced changes against the accepted base passed with zero issues.
+These results do not claim whole-package lint is clean.
 
 Retained runtime evidence includes the 11.34-second combined gate and 20.691-second
 PostgreSQL race check at runtime integration `0a50debdfa5ab14191e52025cd1bb62684e86cd6`.
 Status integration `b55bbcf7b2313e32391a4390dcbb8562de2617b5` retains store/API
 race checks of 59.679/2.931 seconds and full PostgreSQL store checks of 287.732
 seconds. Its contract has 167 routes; sqlc generation compared 36 generated files. The
-canonical web artifact manifest remains
+web artifact manifest at that checkpoint was
 `2031889de69af8ec37d3999505414fa99e375b9a0e6b72a74c7d014e5d50200e`.
-These checks establish the named boundaries, not continuous collection or browser
-qualification of runtime configuration.
+Those earlier checks establish their named boundaries. The later UI and collector
+qualification is recorded above.
 
 Retained combined checks at `66b58845dab1fdee6f8b12809f0434a2a94326ac` passed
 focused race checks, 29 PostgreSQL race tests in 35.812 seconds, vet, the 164-route
@@ -163,7 +177,7 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | Databases | C7 | planned: engine-specific lifecycle; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
 | Service catalog | C8 | planned: versioned definitions, stable generated values and explicit upgrades | A21, A22; catalog-version, component-upgrade | P11, P18; initial tested catalog expands through explicit version fixtures |
 | Variables and secrets | C16 | partial: runner_file execution plus encrypted project-managed versions, create/rotate/owner reveal/revoke and protected UI; managed execution delivery, broader scopes, recovery workflows and external providers planned | A03, A18, A35; scope-denial, redaction, key-recovery, revoked-version | P03; separate build/runtime/preview grants; external-provider versions explicit |
-| Ongoing operations | C9 | partial: run logs, runner evidence and durable typed build output/viewer; continuous application-runtime observation/logs and broader resource actions planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
+| Ongoing operations | C9 | partial: run logs, runner evidence, typed build output/viewer and opt-in independent runtime collector; runtime-status dashboard/logs and broader resource actions remain unaccepted or planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
 | Recovery | C18–C20, C15 | partial: platform backup identity, image mutation/restore holds, bounded readiness-failure restoration and standalone proxy state recovery; trusted restored-ownership resumption and hosted data recovery planned | A25–A27, A37; resume-failure, new-resource-restore | P10; platform, database, storage and release rollback are distinct |
 | Automation | C21, C22 | planned: resource-bound schedules and durable notifications | A25, A30, A31; notification matrix below | P14; occurrence identity, DST, overlap and missed-run policies required |
 | Programmatic access | C1 | partial: native REST/CLI, generated client, image/secret/placement/retained-cleanup UI and proxy backend API; public source/build API/UI accepted within operator-policy bounds; private-source control API and typed credential client accepted; private HTTPS runtime and bounded UI accepted; complete hosting CLI/MCP planned, managed routing UI accepted within fixture bounds, R65 ongoing | A35, A36; interface-parity, keyboard-mobile | P16; every interface uses the same authorized application operations |
