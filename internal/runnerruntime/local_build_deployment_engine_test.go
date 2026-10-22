@@ -120,3 +120,48 @@ func TestLocalArtifactApplyUsesExactIDAndNeverPulls(t *testing.T) {
 		t.Fatalf("local apply: %+v", r)
 	}
 }
+
+func TestLocalArtifactCleanupDoesNotRequireImageCache(t *testing.T) {
+	p := localEnginePlan(t)
+	id := strings.Repeat("c", 64)
+	target := domain.HostingHealthy{Snapshot: p.Snapshot, Release: p.Release, OperationID: "old", ContainerID: id, PlanHash: p.Hash}
+	cleanup, err := domain.CompileHostingCleanupPlan(target, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := testImageEngine(t)
+	removed := false
+	e.command = imageCommandFunc(func(_ context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+		if args[4] == "info" {
+			return []byte(`"daemon-image-test"`), nil
+		}
+		if args[4] != "container" {
+			t.Fatalf("cleanup consulted missing image cache: %v", args)
+		}
+		switch args[5] {
+		case "ls":
+			if removed {
+				return nil, nil
+			}
+			return []byte(id), nil
+		case "inspect":
+			return json.Marshal(map[string]any{"Id": id, "Image": p.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: p.Snapshot.BindingID, imageOperationLabel: "old", imageReleaseLabel: p.Release.Hash, imagePlanLabel: p.Hash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(p.Snapshot.HostPort)}}}}})
+		case "stop":
+			if args[len(args)-1] != id {
+				t.Fatal("wrong cleanup target")
+			}
+			return nil, nil
+		case "rm":
+			if args[len(args)-1] != id {
+				t.Fatal("wrong cleanup target")
+			}
+			removed = true
+			return nil, nil
+		}
+		t.Fatalf("unexpected cleanup effect: %v", args)
+		return nil, nil
+	})
+	if result := e.Cleanup(t.Context(), cleanup); result.Outcome != "succeeded" || !removed || result.Uncertain {
+		t.Fatalf("cache-independent cleanup: %+v", result)
+	}
+}

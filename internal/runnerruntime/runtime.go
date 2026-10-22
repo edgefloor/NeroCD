@@ -166,6 +166,7 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
+	LocalBuildDeploy    bool
 	Build               *BuildConfig
 	Proxy               ProxyConfig
 	ImageDockerEndpoint string
@@ -192,6 +193,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if config.LocalBuildDeploy && (!config.Execute || config.CompleteStatus != "") {
+		return errors.New("local build deployment requires execution and forbids generic completion")
+	}
 	if err := config.Proxy.Validate(); err != nil {
 		return err
 	}
@@ -201,8 +205,8 @@ func RunContext(ctx context.Context, config Config) error {
 	if config.Proxy.Enabled() && !config.Execute {
 		return errors.New("configured managed proxy requires execution")
 	}
-	if config.Proxy.Enabled() || config.Build != nil {
-		if err := validateRuntimeIdentity(ctx, config); err != nil {
+	if config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy {
+		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
 	}
@@ -219,6 +223,9 @@ func RunContext(ctx context.Context, config Config) error {
 		return fmt.Errorf("open runner journal: %w", err)
 	}
 	defer func() { _ = journal.Close() }()
+	if err := validateLocalBuildJournalConfiguration(journal, config.LocalBuildDeploy); err != nil {
+		return err
+	}
 	buildReplayCtx, buildReplayCancel := context.WithTimeout(ctx, 30*time.Second)
 	buildExecutor, buildReplayErr := reconcileRuntimeBuilds(buildReplayCtx, config, journal)
 	buildReplayCancel()
@@ -229,7 +236,7 @@ func RunContext(ctx context.Context, config Config) error {
 	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, config.Proxy, ctx); err != nil {
 		return fmt.Errorf("reconcile proxy journal: %w", err)
 	}
-	if err := reconcileHostingJournal(config.Server, config.Token, journal, config.ImageDockerEndpoint, ctx); err != nil {
+	if err := reconcileHostingJournalWithLocalBuild(config.Server, config.Token, journal, config.ImageDockerEndpoint, config.LocalBuildDeploy, ctx); err != nil {
 		return fmt.Errorf("reconcile hosting journal: %w", err)
 	}
 	if err := reconcileRunnerJournalWithCounters(config.Server, config.Token, journal, operational, ctx); err != nil {
@@ -237,8 +244,8 @@ func RunContext(ctx context.Context, config Config) error {
 	}
 	// Preserve legacy uncertain-journal reconciliation before ordinary lifecycle
 	// reads. Configured build/proxy runners authenticate before their replay.
-	if !config.Proxy.Enabled() && config.Build == nil {
-		if err := validateRuntimeIdentity(ctx, config); err != nil {
+	if !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy {
+		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
 	}
@@ -276,11 +283,14 @@ func RunContext(ctx context.Context, config Config) error {
 			}
 			continue
 		}
+		if claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy && (!config.LocalBuildDeploy || !config.Execute || config.CompleteStatus != "") {
+			return errors.New("local build deployment requires explicit execution; generic completion is forbidden")
+		}
 		if err := printRunnerAuthorityEvent("claimed_run", claim.Run.ID, claim.Lease); err != nil {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy}); err != nil {
+			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy}); err != nil {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
@@ -343,6 +353,7 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 }
 
 type claimExecutionOptions struct {
+	localBuild    bool
 	imageEndpoint string
 	proxy         ProxyConfig
 	build         *BuildExecutor
@@ -358,7 +369,11 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	if isBuildClaim(claim) {
 		return executeBuildClaim(parent, server, token, claim, claim.Lease.RunnerID, cancelPollInterval, options.build, operational)
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
+	if claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+		if !options.localBuild || validateLocalBuildClaim(claim) != nil {
+			return errors.New("invalid or unconfigured local build deployment task")
+		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
 		if err := domain.ValidateImageDeploymentTask(claim.Run); err != nil {
 			return err
 		}
@@ -422,23 +437,31 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		supervisor.metrics.RenewFailure()
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
+	var validators []func(domain.RunLease) error
+	if claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+		validate := exactBuildLease(claim.Lease)
+		if err := validate(initialRenew); err != nil {
+			return err
+		}
+		validators = append(validators, validate)
+	}
 	claim.Lease.ExpiresAt = initialRenew.ExpiresAt
 	supervisor.Update(initialRenew)
 	renewEvery := time.Until(claim.Lease.ExpiresAt) / 3
 	if renewEvery <= 0 || renewEvery > 30*time.Second {
 		renewEvery = 5 * time.Second
 	}
-	renewer := startLeaseRenewer(supervisor.Context(), supervisor, server, token, claim.Lease, renewEvery)
+	renewer := startLeaseRenewer(supervisor.Context(), supervisor, server, token, claim.Lease, renewEvery, validators...)
 	defer renewer.Stop()
-	watcher := startLeaseWatcher(supervisor.Context(), server, token, claim.Lease, cancelPollInterval, supervisor.cancel)
+	watcher := startLeaseWatcher(supervisor.Context(), server, token, claim.Lease, cancelPollInterval, supervisor.cancel, validators...)
 	defer watcher.Stop()
 	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
 	defer reporter.Stop()
 	if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
 		return executeProxyClaim(supervisor, journal, reporter, server, token, claim, options.proxy)
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
-		return executeImageClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint)
+	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+		return executeImageClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.localBuild)
 	}
 	if claim.PrimitivePlan.Process == nil {
 		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {

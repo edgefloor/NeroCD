@@ -55,6 +55,7 @@ func runRunner(args []string) error {
 	proxySocket := fs.String("proxy-docker-socket", "", "absolute managed proxy Docker Unix socket path")
 	proxyProtocol := fs.String("proxy-protocol", "", "explicit managed proxy protocol managed-traefik.file.v1")
 	buildConfigFile := fs.String("build-config-file", "", "explicit owned mode0600 JSON build execution configuration; disabled when absent")
+	localBuildDeploy := fs.Bool("local-build-deploy", false, "explicitly enable same-host local build artifact deployment")
 	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
 	if err := fs.Parse(args); err != nil {
@@ -66,6 +67,9 @@ func runRunner(args []string) error {
 	}
 	if buildConfig != nil && (!*execute || *completeStatus != "") {
 		return errors.New("build configuration requires --execute and forbids --complete-status")
+	}
+	if *localBuildDeploy && (!*execute || *completeStatus != "") {
+		return errors.New("local build deployment requires execution and forbids --complete-status")
 	}
 	proxyConfig := runnerruntime.ProxyConfig{Directory: *proxyRoot, DockerBinary: *proxyBinary, DockerSocket: *proxySocket, Protocol: *proxyProtocol}
 	if err := proxyConfig.Validate(); err != nil {
@@ -93,6 +97,10 @@ func runRunner(args []string) error {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeProxyApply)
 	}
 	registrationCapabilities, err = runnerBuildCapabilities(buildConfig, proxyConfig.Enabled(), capabilitiesSpecified, registrationCapabilities)
+	if err != nil {
+		return err
+	}
+	registrationCapabilities, err = runnerLocalBuildCapabilities(*localBuildDeploy, buildConfig != nil, proxyConfig.Enabled(), capabilitiesSpecified, registrationCapabilities)
 	if err != nil {
 		return err
 	}
@@ -180,19 +188,19 @@ func runRunner(args []string) error {
 	}
 	// Resolve credential authority before runtime can select, open, or replay
 	// a journal. Enrollment IDs and local defaults do not replace this read.
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeCapabilitiesIdentity(context.Background(), proxyConfig.Enabled(), buildConfig != nil)
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentity(context.Background(), proxyConfig.Enabled(), buildConfig != nil, *localBuildDeploy)
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}
 	if (idSpecified || buildConfig != nil) && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	runtimeConfig := runnerruntime.Config{Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
+	runtimeConfig := runnerruntime.Config{LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,
 	}
-	if buildConfig != nil {
+	if buildConfig != nil || *localBuildDeploy {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		return runnerruntime.RunContext(ctx, runtimeConfig)
