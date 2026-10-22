@@ -10,7 +10,7 @@ COPY web/app/public ./public
 COPY web/app/src ./src
 RUN bun run build
 
-FROM golang:1.25.7-alpine@sha256:f6751d823c26342f9506c03797d2527668d095b0a15f1862cddb4d927a7a4ced AS build
+FROM golang:1.26.10-alpine@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS build
 
 ARG SOURCE_DATE_EPOCH=0
 ARG NEROCD_VERSION=0.1.0-dev

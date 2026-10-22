@@ -43,7 +43,7 @@ docker compose down
 
 ## Start a local server with PostgreSQL
 
-Use this path when you have PostgreSQL, Go 1.25 or newer, and Bun 1.3.6. The
+Use this path when you have PostgreSQL, Go 1.26.10, and Bun 1.3.6. The
 database must accept the URL below, or set `NEROCD_DATABASE_URL` to the URL
 for your local database. `make build` installs the locked web dependencies and
 creates `bin/nerocd`.
@@ -120,7 +120,7 @@ restore safeguards.
 
 ## Start disposable memory
 
-Use this path only for a throwaway local session. You need Go 1.25 or newer,
+Use this path only for a throwaway local session. You need Go 1.26.10,
 Bun 1.3.6, and `bin/nerocd` from `make build`. Keep the bootstrap password in
 an absolute-path, owner-only file outside the checkout. Create the file without
 putting the password in shell history.

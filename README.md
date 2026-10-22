@@ -41,7 +41,7 @@ Open <http://localhost:8080>. This starts PostgreSQL, migrates it, loads the
 development fixture, and starts NeroCD. Stop it with `docker compose down`; add
 `-v` only when you intend to discard the local database volume.
 
-To run from source outside Compose, use Go 1.25 or newer and Bun 1.3.6 (the
+To run from source outside Compose, use Go 1.26.10 and Bun 1.3.6 (the
 locked version used by CI), then build the embedded web assets. An unconfigured
 server is rejected. Disposable memory is available only with
 `NEROCD_DEV_MEMORY=true` and the required bootstrap email and owner-only

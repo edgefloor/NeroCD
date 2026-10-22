@@ -6,7 +6,7 @@ TOOLS_BIN := $(CURDIR)/.tools/bin
 GOLANGCI_LINT_VERSION := v2.10.1
 GOLANGCI_LINT := $(TOOLS_BIN)/$(GOLANGCI_LINT_VERSION)/golangci-lint
 LINT_BASE_REV ?= HEAD
-SQLC_TOOL_IMAGE := golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299a562f08707eb0ecb24b659e5bd6c108e1
+SQLC_TOOL_IMAGE := golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af
 PRODUCT_PACKAGES := ./cmd/... ./internal/...
 TEST_PACKAGES = $(shell go list ./... | grep -v '/agent/skills/')
 

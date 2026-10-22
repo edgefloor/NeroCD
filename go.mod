@@ -2,6 +2,8 @@ module nerocd
 
 go 1.25.0
 
+toolchain go1.26.10
+
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/getkin/kin-openapi v0.140.0
