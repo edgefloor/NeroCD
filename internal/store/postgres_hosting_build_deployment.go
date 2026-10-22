@@ -220,5 +220,43 @@ func finalLocalHostingAuthority(ctx context.Context, tx pgx.Tx, runner string, a
 	if err := hostingOperationTargetGate(ctx, tx, op, observe); err != nil {
 		return err
 	}
+	// Current actor expiry can advance while placement locks are acquired.
+	if err := localHostingOperationAuthority(ctx, tx, op, observe); err != nil {
+		return err
+	}
 	return hostingAuthorityExists(ctx, tx, runner, a, true)
+}
+
+// finalLocalHostingObservationReportAuthority runs only after a first report's
+// writes. The task and lease were live and locked before those writes, but this
+// transaction has now tentatively completed them. Recheck the exact historical
+// tuple and current DB expiry without mistaking our own completion for revocation.
+// Concurrent cancellation cannot pass the task/lease locks held by this transaction.
+func finalLocalHostingObservationReportAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation) error {
+	if op.Snapshot.LocalBuild == (domain.HostingLocalBuildSource{}) {
+		return nil
+	}
+	if op.ReconciliationRunID != a.RunID || op.ID != a.OperationID {
+		return ErrConflict
+	}
+	if err := hostingRequireMode(ctx, tx, a, "observe"); err != nil {
+		return err
+	}
+	if err := hostingOperationTargetGate(ctx, tx, op, true); err != nil {
+		return err
+	}
+	if err := localHostingOperationAuthority(ctx, tx, op, true); err != nil {
+		return err
+	}
+	if err := hostingAuthorityExists(ctx, tx, runner, a, false); err != nil {
+		return err
+	}
+	unexpired, err := sqlcgen.New(tx).HostingLeaseUnexpired(ctx, a.LeaseID)
+	if err != nil {
+		return hostingError(err)
+	}
+	if !unexpired {
+		return ErrConflict
+	}
+	return nil
 }

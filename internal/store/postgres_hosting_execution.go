@@ -1316,6 +1316,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 	if err != nil {
 		return op, err
 	}
+	if err = finalLocalHostingObservationReportAuthority(ctx, tx, runnerID, in.HostingAuthority, op); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	return op, tx.Commit(ctx)
 }
 
@@ -1515,6 +1518,10 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 		}
 		op.TaskMode = "observe"
 		op.ObservationLease = &lease
+		current := domain.HostingAuthority{OperationID: op.ID, RunID: lease.RunID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
+		if err = finalLocalHostingAuthority(ctx, tx, runnerID, current, op, true); err != nil {
+			return domain.HostingOperation{}, err
+		}
 		return op, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -1547,6 +1554,10 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 	op.ObservationLease = &lease
 	audit := domain.AuditEvent{ID: "aud_observe_claim_" + lease.ID, ActorID: runnerID, Action: "hosting.observation_claimed", TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"project_id": op.ProjectID, "resource_id": op.ResourceID, "binding_id": op.BindingID, "runner_id": runnerID, "destination_id": op.Snapshot.DestinationID, "task_mode": "observe"}}
 	if err = createAuditWithQueries(ctx, q, audit); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	current := domain.HostingAuthority{OperationID: op.ID, RunID: lease.RunID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
+	if err = finalLocalHostingAuthority(ctx, tx, runnerID, current, op, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	return op, tx.Commit(ctx)

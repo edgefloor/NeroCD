@@ -746,3 +746,245 @@ func TestPostgresHostingBuildDeploymentCannotCrossResourceOrProject(t *testing.T
 		}
 	}
 }
+
+func waitLocalObservationAuditExpiry(t *testing.T, ctx context.Context, f buildStoreFixture, pid int, expiredQuery string, args ...any) {
+	t.Helper()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var ready bool
+		if err := f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&ready); err != nil {
+			t.Fatal(err)
+		}
+		if ready {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	for {
+		var ready bool
+		if err := f.db.QueryRow(ctx, expiredQuery, args...).Scan(&ready); err != nil {
+			t.Fatal(err)
+		}
+		if ready {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+}
+func TestPostgresLocalObservationRejectsExpiryDuringAudit(t *testing.T) {
+	for _, expiry := range []string{"lease", "owner"} {
+		t.Run(expiry, func(t *testing.T) {
+			f, b := successfulLocalBuildFixture(t)
+			startBuildController(t, f)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			op := settleLocalDeploymentMetadata(t, f, b, "security-observation", 26001)
+			actor := "usr_bootstrap"
+			if expiry == "owner" {
+				actor = "security_observation_owner"
+				if _, err := f.db.Exec(ctx, `INSERT INTO api_tokens(id,name,kind,token_hash,roles,status,created_by) VALUES($1,$1,'service_account',$1,ARRAY['system_admin']::text[],'active','usr_bootstrap')`, actor); err != nil {
+					t.Fatal(err)
+				}
+			}
+			event := destinationEvent("security-observation-request")
+			event.ActorID = actor
+			if _, err := f.pg.RequestHostingReconciliation(ctx, op.ID, event); err != nil {
+				t.Fatal(err)
+			}
+			claim, err := f.pg.ClaimRun(ctx, f.runner, time.Now(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+			in := domain.HostingObservation{HostingAuthority: a, BindingID: op.BindingID, DaemonID: op.Release.DaemonID, ContainerID: op.Result.ContainerID, ImageID: op.Release.ImageID, PlanHash: op.Plan.Hash, ReleaseHash: op.Release.Hash, Ready: true}
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = blocker.Rollback(context.Background()) }()
+			var pid int
+			if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			audit := "aud_observed_" + a.LeaseID
+			if _, err = blocker.Exec(ctx, `INSERT INTO audit_events(id,actor_id,action,target_id,metadata,created_at) VALUES($1,'usr_bootstrap','fixture','fixture','{}',clock_timestamp())`, audit); err != nil {
+				t.Fatal(err)
+			}
+			q := `SELECT expires_at<=clock_timestamp() FROM run_leases WHERE id=$1`
+			key := a.LeaseID
+			if expiry == "lease" {
+				_, err = f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, key)
+			} else {
+				q = `SELECT expires_at<=clock_timestamp() FROM api_tokens WHERE id=$1`
+				key = actor
+				_, err = f.db.Exec(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, key)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			joined := false
+			go func() { _, e := f.pg.HostingReconciliation(ctx, f.runner, in); done <- e }()
+			defer func() {
+				cancel()
+				_ = blocker.Rollback(context.Background())
+				if !joined {
+					select {
+					case <-done:
+					case <-time.After(5 * time.Second):
+						t.Error("observation did not join")
+					}
+				}
+			}()
+			waitLocalObservationAuditExpiry(t, ctx, f, pid, q, key)
+			if err = blocker.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			err = <-done
+			joined = true
+			var receipts, audits int
+			var leaseState, taskState string
+			var requested bool
+			if e := f.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_reconciliation_receipts WHERE lease_id=$1),(SELECT count(*) FROM audit_events WHERE id=$2),(SELECT status FROM run_leases WHERE id=$1),(SELECT reconcile_requested FROM hosting_operations WHERE id=$3),(SELECT status FROM task_runs WHERE id=$4)`, a.LeaseID, audit, op.ID, a.RunID).Scan(&receipts, &audits, &leaseState, &requested, &taskState); e != nil {
+				t.Fatal(e)
+			}
+			t.Logf("expiry=%s report_error=%v receipts=%d audits=%d lease=%s task=%s reconcile_requested=%v", expiry, err, receipts, audits, leaseState, taskState, requested)
+			if err == nil || receipts != 0 || audits != 0 || leaseState != "active" || taskState != "running" || !requested {
+				t.Fatal("first local observation settled after authority expired at audit wait")
+			}
+		})
+	}
+}
+func TestPostgresLocalObservationClaimRejectsExpiryDuringAudit(t *testing.T) {
+	f, b := successfulLocalBuildFixture(t)
+	startBuildController(t, f)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	op := settleLocalDeploymentMetadata(t, f, b, "security-observation-claim", 26001)
+	old := domain.HostingAuthority{OperationID: op.ID, RunID: op.RunID}
+	if err := f.db.QueryRow(ctx, `SELECT id,attempt,fence FROM run_leases WHERE run_id=$1`, op.RunID).Scan(&old.LeaseID, &old.Attempt, &old.Fence); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pg.RequestHostingReconciliation(ctx, op.ID, destinationEvent("security-observation-claim-request")); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	var pid int
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = blocker.Exec(ctx, `LOCK TABLE audit_events IN SHARE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	joined := false
+	go func() { _, e := f.pg.ClaimHostingObservation(ctx, f.runner, old, time.Second); done <- e }()
+	defer func() {
+		cancel()
+		_ = blocker.Rollback(context.Background())
+		if !joined {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("observation claim did not join")
+			}
+		}
+	}()
+	// The uncommitted lease is invisible; a database-clock two-second bound after
+	// the observed audit block exceeds the one-second window already allocated.
+	var bound time.Time
+	if err = f.db.QueryRow(ctx, `SELECT clock_timestamp()+interval '3 seconds'`).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	waitLocalObservationAuditExpiry(t, ctx, f, pid, `SELECT clock_timestamp()>=$1::timestamptz`, bound)
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err = <-done
+	joined = true
+	var leases, audits, nextAttempt int
+	var requested bool
+	var state string
+	if e := f.db.QueryRow(ctx, `SELECT status,next_attempt,(SELECT count(*) FROM run_leases WHERE run_id=$1),(SELECT count(*) FROM audit_events WHERE target_id=$2 AND action='hosting.observation_claimed'),(SELECT reconcile_requested FROM hosting_operations WHERE id=$2) FROM task_runs WHERE id=$1`, "observe_"+op.ID, op.ID).Scan(&state, &nextAttempt, &leases, &audits, &requested); e != nil {
+		t.Fatal(e)
+	}
+	t.Logf("expired observation claim: error=%v leases=%d audits=%d next_attempt=%d task=%s requested=%v", err, leases, audits, nextAttempt, state, requested)
+	if err == nil || leases != 0 || audits != 0 || nextAttempt != 1 || !requested || state != "queued" {
+		t.Fatal("expired local observation lease committed after audit wait")
+	}
+}
+
+func TestPostgresLocalObservationCommittedReplaySurvivesLostAuthority(t *testing.T) {
+	f, b := successfulLocalBuildFixture(t)
+	startBuildController(t, f)
+	ctx := t.Context()
+	op := settleLocalDeploymentMetadata(t, f, b, "local-observation-replay", 26002)
+	const owner = "local-observation-replay-owner"
+	if _, err := f.db.Exec(ctx, `INSERT INTO api_tokens(id,name,kind,token_hash,roles,status,created_by) VALUES($1,$1,'service_account',$1,ARRAY['system_admin']::text[],'active','usr_bootstrap')`, owner); err != nil {
+		t.Fatal(err)
+	}
+	event := destinationEvent("local-observation-replay-request")
+	event.ActorID = owner
+	if _, err := f.pg.RequestHostingReconciliation(ctx, op.ID, event); err != nil {
+		t.Fatal(err)
+	}
+	previous := domain.HostingAuthority{OperationID: op.ID, RunID: op.RunID}
+	if err := f.db.QueryRow(ctx, `SELECT id,attempt,fence FROM run_leases WHERE run_id=$1`, op.RunID).Scan(&previous.LeaseID, &previous.Attempt, &previous.Fence); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := f.pg.ClaimHostingObservation(ctx, f.runner, previous, time.Minute)
+	if err != nil || observed.ObservationLease == nil {
+		t.Fatal("live observation claim", err)
+	}
+	lease := *observed.ObservationLease
+	again, err := f.pg.ClaimHostingObservation(ctx, f.runner, previous, time.Minute)
+	if err != nil || again.ObservationLease == nil || again.ObservationLease.ID != lease.ID {
+		t.Fatal("active observation lease reuse", err)
+	}
+	a := domain.HostingAuthority{OperationID: op.ID, RunID: lease.RunID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
+	in := domain.HostingObservation{HostingAuthority: a, BindingID: op.BindingID, DaemonID: op.Release.DaemonID, ContainerID: op.Result.ContainerID, ImageID: op.Release.ImageID, PlanHash: op.Plan.Hash, ReleaseHash: op.Release.Hash, Ready: true}
+	settled, err := f.pg.HostingReconciliation(ctx, f.runner, in)
+	if err != nil || settled.ReconcileRequested {
+		t.Fatal("live first report rejected after tentative completion", err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1;`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE api_tokens SET status='revoked',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id='dest_build'`); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := f.pg.HostingReconciliation(ctx, f.runner, in)
+	if err != nil || replay.ID != op.ID {
+		t.Fatal("committed acknowledgment required live owner, grant or lease", err)
+	}
+	changed := in
+	changed.Ready = false
+	if _, err = f.pg.HostingReconciliation(ctx, f.runner, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("changed historical report replay", err)
+	}
+	changed = in
+	changed.Fence = "different-fence"
+	if _, err = f.pg.HostingReconciliation(ctx, f.runner, changed); err == nil {
+		t.Fatal("different historical tuple accepted")
+	}
+	var receipts, audits int
+	if err = f.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_reconciliation_receipts WHERE lease_id=$1),(SELECT count(*) FROM audit_events WHERE id=$2)`, a.LeaseID, "aud_observed_"+a.LeaseID).Scan(&receipts, &audits); err != nil || receipts != 1 || audits != 1 {
+		t.Fatal("receipt replay duplicated writes", receipts, audits, err)
+	}
+}
