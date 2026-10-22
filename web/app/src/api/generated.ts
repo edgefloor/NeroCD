@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/api/v1/runners/hosting-observations/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * hostingObservationTargets
+         * @description Bounded continuous hosting evidence independent of deployment recovery. Disk, CPU and memory observations are unsupported. Each target or report is at most 8 KiB; target pages are at most 50 targets and 512 KiB. Current authority is required.
+         */
+        post: operations["hostingObservationTargets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting-observations/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * reportHostingObservation
+         * @description Bounded continuous hosting evidence independent of deployment recovery. Disk, CPU and memory observations are unsupported. Each target or report is at most 8 KiB; target pages are at most 50 targets and 512 KiB. Current authority is required.
+         */
+        post: operations["reportHostingObservation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/runtime-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * hostingRuntimeStatus
+         * @description Bounded continuous hosting evidence independent of deployment recovery. Disk, CPU and memory observations are unsupported. Each target or report is at most 8 KiB; target pages are at most 50 targets and 512 KiB. Current authority is required.
+         */
+        get: operations["hostingRuntimeStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting/runtime-environment": {
         parameters: {
             query?: never;
@@ -2376,6 +2436,102 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingObservationTargetsInput: {
+            after_binding_id?: string;
+            limit: number;
+        };
+        HostingObservationTarget: {
+            sample_id: string;
+            /** Format: date-time */
+            issued_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            resource_id: string;
+            binding_id: string;
+            destination_id: string;
+            server_id: string;
+            runner_id: string;
+            operation_id: string;
+            daemon_id: string;
+            container_id: string;
+            image_id: string;
+            release_hash: string;
+            plan_hash: string;
+            runtime_namespace: string;
+            container_port: number;
+            host_port: number;
+            readiness_path: string;
+            /** @enum {integer} */
+            sample_timeout_seconds: 5;
+        };
+        HostingObservationTargets: {
+            targets: components["schemas"]["HostingObservationTarget"][];
+            next_cursor: string;
+            end_of_sweep: boolean;
+        };
+        HostingRuntimeObservation: {
+            binding_id: string;
+            sample_id: string;
+            sample_duration_ms: number;
+            /** @enum {string} */
+            container_state: "running" | "exited" | "missing" | "unknown";
+            /** @enum {string} */
+            readiness: "ready" | "not_ready" | "not_checked" | "unknown";
+            /** @enum {string} */
+            collection_error: "" | "daemon_unreachable" | "daemon_mismatch" | "target_mismatch" | "inspect_failed" | "readiness_timeout";
+            exit_code?: number;
+        };
+        HostingObservationAck: {
+            sample_id: string;
+            body_hash: string;
+            /** Format: date-time */
+            received_at: string;
+        };
+        HostingRuntimeStatus: {
+            resource_id: string;
+            binding_id: string;
+            destination_id: string;
+            server_id: string;
+            runner_id: string;
+            current_operation_id: string;
+            observed_operation_id: string;
+            observed_container_id: string;
+            /** Format: date-time */
+            observed_at: string | null;
+            /** Format: date-time */
+            server_time: string;
+            /** @enum {integer} */
+            stale_after_seconds: 30;
+            /** @enum {integer} */
+            target_interval_seconds: 10;
+            /** @enum {integer} */
+            sample_timeout_seconds: 5;
+            /** @enum {string} */
+            freshness: "unknown" | "fresh" | "stale" | "blocked";
+            /** @enum {string} */
+            reason: "never_observed" | "target_changed" | "stale" | "restore_hold" | "authority_unavailable" | "observed";
+            /** @enum {string} */
+            agent_reachability: "reachable" | "unknown";
+            /** Format: date-time */
+            last_heartbeat_at: string | null;
+            /** @enum {string} */
+            container_state: "running" | "exited" | "missing" | "unknown";
+            /** @enum {string} */
+            readiness: "ready" | "not_ready" | "not_checked" | "unknown";
+            /** @enum {string} */
+            collection_error: "" | "daemon_unreachable" | "daemon_mismatch" | "target_mismatch" | "inspect_failed" | "readiness_timeout";
+            exit_code?: number;
+            mutation_hold: boolean;
+            restore_ownership_held: boolean;
+            last_observation: components["schemas"]["HostingLastObservation"] | null;
+        };
+        HostingLastObservation: {
+            operation_id: string;
+            container_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            observation: components["schemas"]["HostingRuntimeObservation"];
+        };
         HostingRuntimeEnvironmentRequest: {
             authority: components["schemas"]["HostingAuthority"];
             plan_hash: string;
@@ -4440,6 +4596,97 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    hostingObservationTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingObservationTargetsInput"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingObservationTargets"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    reportHostingObservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRuntimeObservation"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingObservationAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    hostingRuntimeStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeStatus"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     deliverHostingRuntimeEnvironment: {
         parameters: {
             query?: never;

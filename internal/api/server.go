@@ -318,6 +318,9 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	limit := maxJSONBodyBytes
+	if r.URL.Path == "/api/v1/runners/hosting-observations/targets" || r.URL.Path == "/api/v1/runners/hosting-observations/report" {
+		limit = domain.HostingObservationJSONLimit
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/resources/") && strings.HasSuffix(r.URL.Path, "/runtime-configuration") {
 		limit = domain.HostingRuntimeRequestLimit
 	}
@@ -411,6 +414,8 @@ func requiresAuth(path string) bool {
 
 func requiresRunnerAuth(path string) bool {
 	switch path {
+	case "/api/v1/runners/hosting-observations/targets", "/api/v1/runners/hosting-observations/report":
+		return true
 	case "/api/v1/runners/builds/source-credential", "/api/v1/runners/hosting/runtime-environment":
 		return true
 	case "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
