@@ -1488,8 +1488,8 @@ func lockHostingResourceDestination(ctx context.Context, tx pgx.Tx, resourceID s
 	return sqlcgen.New(tx).LockHostingExecutionDestination(ctx, destination)
 }
 func requireHostingReleaseAgent(ctx context.Context, tx pgx.Tx, runnerID string) error {
-	var capable bool
-	if err := tx.QueryRow(ctx, "SELECT $2=ANY(capabilities) FROM runners WHERE id=$1", runnerID, domain.HostingReleasePortsCapability).Scan(&capable); err != nil {
+	capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: runnerID, Capability: domain.HostingReleasePortsCapability})
+	if err != nil {
 		return hostingError(err)
 	}
 	if !capable {
@@ -1508,8 +1508,7 @@ func (s *PostgresStore) resolveHostingReleasePort(ctx context.Context, tx pgx.Tx
 		snap.PolicyVersion = domain.HostingReleasePolicyVersion
 	}
 	previousID := ""
-	var previousRaw []byte
-	err := tx.QueryRow(ctx, "SELECT healthy FROM hosting_binding_state WHERE binding_id=$1", snap.BindingID).Scan(&previousRaw)
+	previousRaw, err := q.GetHostingHealthy(ctx, snap.BindingID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}

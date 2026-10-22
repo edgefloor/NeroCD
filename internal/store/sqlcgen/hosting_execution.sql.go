@@ -1053,6 +1053,22 @@ func (q *Queries) HostingResourceDestination(ctx context.Context, resourceID str
 	return destination_id, err
 }
 
+const hostingRunnerHasReleasePorts = `-- name: HostingRunnerHasReleasePorts :one
+SELECT $1::text=ANY(capabilities) AS capable FROM runners WHERE id=$2
+`
+
+type HostingRunnerHasReleasePortsParams struct {
+	Capability string `json:"capability"`
+	RunnerID   string `json:"runner_id"`
+}
+
+func (q *Queries) HostingRunnerHasReleasePorts(ctx context.Context, arg HostingRunnerHasReleasePortsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hostingRunnerHasReleasePorts, arg.Capability, arg.RunnerID)
+	var capable bool
+	err := row.Scan(&capable)
+	return capable, err
+}
+
 const listHostingOperationIDs = `-- name: ListHostingOperationIDs :many
 SELECT id FROM hosting_operations WHERE resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3
 `

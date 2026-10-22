@@ -214,6 +214,9 @@ SELECT id FROM hosting_operations WHERE resource_id=$1 ORDER BY created_at DESC,
 -- name: HostingResourceDestination :one
 SELECT b.destination_id FROM resource_bindings b WHERE b.resource_id=$1;
 
+-- name: HostingRunnerHasReleasePorts :one
+SELECT sqlc.arg(capability)::text=ANY(capabilities) AS capable FROM runners WHERE id=sqlc.arg(runner_id);
+
 -- name: LockHostingExecutionDestination :exec
 SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0));
 
