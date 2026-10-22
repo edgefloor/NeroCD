@@ -9,7 +9,7 @@ import { PageNavigation } from "@/components/common/PageNavigation";
 import { maximumPageOffset } from "@/router/search";
 import { BuildLogs } from "./BuildLogs";
 import { eligibleSourceGrant, sourceGrantKeys, sourceGrantsQuery } from "@/api/hosting-source-grants";
-import { ResourceSourceGrants } from "./ResourceSourceGrants";
+import { ResourceSourceGrants, useSourceGrantAccess } from "./ResourceSourceGrants";
 import { LocalBuildDeployment } from "./LocalBuildDeployment";
 const names: Record<string, string> = { queued: "Queued", sourcing: "Acquiring source", building: "Building artifact", succeeded: "Succeeded", failed: "Failed", canceled: "Canceled", cleanup_required: "Cleanup required" };
 const buttonClass = "h-auto max-w-full whitespace-normal break-all";
@@ -76,15 +76,16 @@ function Builds({ resource, writable, blocked, actor }: { resource: Resource; wr
   const binding = useQuery({ ...resourceBindingQuery(resource.project_id, resource.id), enabled: !blocked && !denied });
   const source = base.source.kind === "git" ? base.source.git : undefined;
   const privateSource = source?.credential_kind === "https_basic";
-  const canReadGrants = privateSource && writable && !blocked && !denied;
-  const grants = useQuery({ ...sourceGrantsQuery(actor, resource.project_id, resource.id, grantOffset), enabled: canReadGrants });
+  const grantAccess = useSourceGrantAccess(actor, resource, !privateSource || !writable || blocked || denied);
+  const canReadGrants = grantAccess.canReadGrants;
+  const grants = useQuery({ ...sourceGrantsQuery(actor, resource.project_id, resource.id, grantOffset), enabled: canReadGrants, refetchOnWindowFocus: false });
   const currentResource = resource.generation >= base.generation ? resource : base;
   const grant = grants.data?.items.find((item) => item.id === grantID && eligibleSourceGrant(item, base) && eligibleSourceGrant(item, currentResource));
   const sourceChanged = currentResource.generation !== base.generation || currentResource.source.kind !== "git" || currentResource.source.git.source_id !== source?.source_id || currentResource.source.git.generation !== source?.generation || currentResource.source.git.credential_kind !== source?.credential_kind;
   function deny() { request.current?.abort(); metadataRequest.current?.abort(); setDenied(true); setAttempt(undefined); setGrantID(""); setAcknowledged(false); client.removeQueries({ queryKey: sourceGrantKeys.resource(actor, resource.project_id, resource.id) }); }
   const accessDenied = [grants.error, history.error, binding.error].some((cause) => cause instanceof ApiError && [401, 403, 404].includes(cause.status));
   useEffect(() => { if (accessDenied) deny(); }, [accessDenied]);
-  const paused = blocked || denied || history.isError || history.isPending || binding.isError || binding.isPending || (privateSource && writable && (grants.isError || grants.isPending));
+  const paused = blocked || denied || history.isError || history.isPending || binding.isError || binding.isPending || (privateSource && writable && (!canReadGrants || grants.isError || grants.isPending));
   async function refreshCurrent() { const controller = new AbortController(); metadataRequest.current?.abort(); metadataRequest.current = controller; setRefreshError(""); setLatest(undefined); try { const current = await getResource(resource.id, { signal: controller.signal }); if (!active.current || controller.signal.aborted) return; if (current.id !== resource.id || current.project_id !== resource.project_id) throw new Error("Resource scope mismatch"); setLatest(current); await history.refetch(); await binding.refetch(); } catch { if (active.current && !controller.signal.aborted) setRefreshError("Unable to refresh current source. The retained request remains unchanged."); } }
   async function submit() {
     if (!writable || paused || conflict || submitting.current || !binding.data || !source || !["public", "https_basic"].includes(source.credential_kind) || !acknowledged || (!attempt && (sourceChanged || (privateSource && !grant)))) return;
@@ -96,7 +97,7 @@ function Builds({ resource, writable, blocked, actor }: { resource: Resource; wr
     finally { submitting.current = false; if (request.current === controller) request.current = null; if (active.current) setBusy(false); }
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Git builds for ${resource.name}`}><h5 className="font-medium">{privateSource ? "Private HTTPS Git builds" : "Public Git builds"}</h5><p className="text-xs text-muted-foreground">Build operations acquire the configured source and produce an artifact. Select a successful build to deploy its recorded local artifact. Select a build to read its persisted output. A successful build does not mean a running application.</p>
-    <ResourceSourceGrants actor={actor} resource={resource} blocked={blocked || denied || !writable} onDenied={deny} />
+    <ResourceSourceGrants access={grantAccess} actor={actor} resource={resource} blocked={blocked || denied || !writable} onDenied={deny} />
     <Button className={buttonClass} type="button" variant="outline" disabled={busy || blocked || denied || accessDenied} onClick={() => { if (busy || blocked || denied || accessDenied) return; if (canReadGrants) void grants.refetch(); void history.refetch(); void binding.refetch(); }}>Refresh build history</Button>
     {history.isPending ? <p role="status">Loading build history...</p> : null}{history.isError || binding.isError ? <p role="alert">Unable to refresh build history or placement. Retained metadata may be stale; mutations are paused.</p> : null}
     {history.data?.items.length === 0 ? <p>No build operations recorded.</p> : null}

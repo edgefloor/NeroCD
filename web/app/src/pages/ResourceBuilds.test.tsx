@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { queryKeys } from "@/api";
 import type { Resource } from "@/api/hosting";
@@ -89,4 +89,44 @@ test("blocked private history refresh cannot manually enter disabled grant queri
 test("private sourcing state uses a source-neutral label in history and detail", async () => {
  privateBackend((url) => url.includes("/builds?") || url.includes("/hosting-builds/") ? url.includes("/builds?") ? json({ items: [{ ...build, state: "sourcing" }], count: 1, total: 1, limit: 20, offset: 0 }) : json({ build: { ...build, state: "sourcing", snapshot: { ...build.snapshot, source: { ...build.snapshot.source, credential_kind: "https_basic" } } } }) : undefined); setupPrivate();
  fireEvent.click(await screen.findByRole("button", { name: "View build build-one" })); await screen.findByText("Acquiring source", { exact: true }); expect(screen.queryByText(/Acquiring public source/)).toBeNull();
+});
+
+
+test.each(["503", "viewer"])("parent and child share verified grant access through cached owner %s", async (result) => {
+  let phase = "owner";
+  let resolve!: (response: Response) => void;
+  const membership = (role: string) => json({ items: [{ project_id: "project", user_id: "user", role }], limit: 100, offset: 0, count: 1, total: 1 });
+  const fetch = privateBackend((url) => {
+    if (url.includes("/project-members?")) return phase === "pending" ? new Promise<Response>((done) => { resolve = done; }) : membership("owner");
+    if (url.includes("/managed-secrets?")) return json({ items: [], limit: 20, offset: 0, count: 0, total: 0 });
+    return undefined;
+  });
+  setupPrivate();
+  await screen.findByRole("form", { name: "Request private source grant" });
+  await screen.findByRole("option", { name: /grant-one · source 3 · eligible/ });
+  const count = () => fetch.mock.calls.filter(([url]) => url.includes("/source-grants?")).length;
+  const before = count();
+  phase = "pending";
+  let verification!: Promise<void>;
+  act(() => { verification = client.refetchQueries({ queryKey: ["sourceGrantOwners", JSON.stringify(["oidc", "user"]), "project"] }); });
+  await waitFor(() => expect(resolve).toBeTypeOf("function"));
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Create source grant" }).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh build history" }));
+  await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
+  expect(count()).toBe(before);
+  await act(async () => { resolve(result === "503" ? json({}, 503) : membership("viewer")); await verification; });
+  if (result === "503") await screen.findByText(/Unable to verify source grant access/);
+  else await screen.findByText(/Project maintainer access is required to list source grants/);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh build history" }));
+  await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
+  expect(count()).toBe(before);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request private Git build" }).disabled).toBe(true);
+  if (result === "viewer") expect(screen.queryByRole("form", { name: "Request private source grant" })).toBeNull();
+  phase = "owner";
+  fireEvent.click(screen.getByRole("button", { name: "Refresh source grant access" }));
+  await screen.findByRole("form", { name: "Request private source grant" });
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Refresh source grants" }).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh build history" }));
+  await waitFor(() => expect(count()).toBeGreaterThan(before));
+  focusManager.setFocused(undefined);
 });

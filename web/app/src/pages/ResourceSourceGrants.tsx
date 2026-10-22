@@ -17,34 +17,46 @@ function grantError(cause: unknown) {
  if (deniedError(cause)) return "Source grant access is unavailable. Reload to verify current project access.";
  return "No confirmed response was received. Retry the identical retained request to recover its result.";
 }
-export function ResourceSourceGrants({ actor, resource, blocked, onDenied }: { actor: string; resource: Resource; blocked: boolean; onDenied: () => void }) {
- if (blocked || resource.source.kind !== "git" || resource.source.git.credential_kind !== "https_basic") return null;
- return <GrantAccess key={JSON.stringify([actor, resource.project_id, resource.id, resource.generation, resource.source.git.source_id, resource.source.git.generation])} actor={actor} resource={resource} onDenied={onDenied} />;
-}
-function GrantAccess({ actor, resource, onDenied }: { actor: string; resource: Resource; onDenied: () => void }) {
- const [offset, setOffset] = useState(0), [denied, setDenied] = useState(false);
- const client = useQueryClient();
+export function useSourceGrantAccess(actor: string, resource: Resource, blocked: boolean) {
  const principal = useQuery(principalQuery());
- const members = useQuery({ queryKey: ["sourceGrantOwners", actor, resource.project_id], retry: false, gcTime: 0, queryFn: async ({ signal }) => {
+ const members = useQuery({ queryKey: ["sourceGrantOwners", actor, resource.project_id], enabled: !blocked, refetchOnWindowFocus: false, retry: false, gcTime: 0, queryFn: async ({ signal }) => {
   const rows = []; let offset = 0;
   for (;;) { const page = await listProjectMembers({ project_id: resource.project_id, limit: 100, offset }, { signal }); if (page.items.some((member) => member.project_id !== resource.project_id)) throw new Error("Member scope mismatch"); rows.push(...page.items); if (!page.count || page.offset + page.count >= page.total) return rows; const next = page.offset + page.count; if (next <= offset || next > 100000) throw new Error("Member pagination unavailable"); offset = next; }
  } });
  const currentActor = principal.data && JSON.stringify([principal.data.provider, principal.data.id]) === actor;
  const maintainer = Boolean(currentActor && members.data && canMaintainProject(principal.data, members.data, resource.project_id));
- const canReadGrants = Boolean(currentActor && !principal.isError && !denied && maintainer && !members.isPending && !members.isError);
- const grants = useQuery({ ...sourceGrantsQuery(actor, resource.project_id, resource.id, offset), enabled: canReadGrants });
+ const canReadGrants = Boolean(currentActor && !principal.isError && !blocked && maintainer && !members.isPending && !members.isFetching && !members.isError);
  const owner = Boolean(currentActor && !principal.isError && members.data && canOwnProject(principal.data, members.data, resource.project_id));
+ return { principal, members, currentActor, maintainer, canReadGrants, owner };
+}
+type GrantAccessDecision = ReturnType<typeof useSourceGrantAccess>;
+type GrantProps = { actor: string; resource: Resource; blocked: boolean; onDenied: () => void; access?: GrantAccessDecision };
+export function ResourceSourceGrants(props: GrantProps) {
+ if (props.blocked || props.resource.source.kind !== "git" || props.resource.source.git.credential_kind !== "https_basic") return null;
+ const key = JSON.stringify([props.actor, props.resource.project_id, props.resource.id, props.resource.generation, props.resource.source.git.source_id, props.resource.source.git.generation]);
+ return props.access ? <GrantAccess key={key} {...props} access={props.access} /> : <StandaloneGrantAccess key={key} {...props} />;
+}
+function StandaloneGrantAccess(props: GrantProps) {
+ const access = useSourceGrantAccess(props.actor, props.resource, props.blocked);
+ return <GrantAccess {...props} access={access} />;
+}
+function GrantAccess({ actor, resource, onDenied, access }: GrantProps & { access: GrantAccessDecision }) {
+ const [offset, setOffset] = useState(0), [denied, setDenied] = useState(false);
+ const client = useQueryClient();
+ const { principal, members, currentActor, maintainer, owner } = access;
+ const canReadGrants = access.canReadGrants && !denied;
+ const grants = useQuery({ ...sourceGrantsQuery(actor, resource.project_id, resource.id, offset), enabled: canReadGrants, refetchOnWindowFocus: false });
  const deny = () => { setDenied(true); client.removeQueries({ queryKey: sourceGrantKeys.resource(actor, resource.project_id, resource.id) }); onDenied(); };
  useEffect(() => { if (deniedError(grants.error) || deniedError(members.error) || principal.isError || !currentActor) deny(); }, [grants.error, members.error, principal.isError, currentActor]);
  const refresh = async () => { await client.invalidateQueries({ queryKey: sourceGrantKeys.resource(actor, resource.project_id, resource.id) }); };
  if (denied || !currentActor || principal.isError) return null;
- if (!members.isPending && !members.isError && !maintainer) return <p>Project maintainer access is required to list source grants. Owners create and revoke grants.</p>;
+ if (!members.isPending && !members.isError && !maintainer) return <><p>Project maintainer access is required to list source grants. Owners create and revoke grants.</p><Button className={button} type="button" disabled={members.isFetching} onClick={() => { if (!currentActor || principal.isError || denied) return; void members.refetch(); }}>Refresh source grant access</Button></>;
  return <section className="min-w-0 space-y-3 rounded border p-3" aria-label="Private HTTPS source grants"><h5 className="font-medium">Private HTTPS source grants</h5><p className="text-xs">Grants reference an existing managed secret and an explicit version. Create or rotate a JSON credential object with username and password strings in Project secrets. These controls select references and never reveal values.</p><Button className={button} variant="outline" disabled={grants.isFetching || !canReadGrants || deniedError(grants.error)} onClick={() => { if (!canReadGrants || deniedError(grants.error)) return; void grants.refetch(); void members.refetch(); }}>Refresh source grants</Button>
   {members.isError && !deniedError(members.error) ? <><p role="alert">Unable to verify source grant access. Grant reads are paused.</p><Button className={button} type="button" disabled={members.isFetching} onClick={() => { if (!currentActor || principal.isError || denied || deniedError(members.error)) return; void members.refetch(); }}>Refresh source grant access</Button></> : null}
   {grants.isPending ? <p role="status">Loading source grants...</p> : null}{grants.isError ? <p role="alert">Unable to read current source grant metadata. Grant actions are paused.</p> : null}
-  <ul className="space-y-2">{!grants.isError && grants.data?.items.map((grant) => <li className="min-w-0 break-all rounded border p-2" key={grant.id}><p>Grant {grant.id} · v{grant.version} · source {grant.source_id} / generation {grant.source_generation} · {grant.revoked ? "revoked" : eligibleSourceGrant(grant, resource) ? "eligible for this source" : "not eligible for this source"}</p>{owner && !grant.revoked ? <RevokeGrant key={grant.id} actor={actor} resource={resource} grantID={grant.id} paused={grants.isError || members.isError || members.isPending} changed={refresh} onDenied={deny} /> : null}</li>)}</ul>
+  <ul className="space-y-2">{!grants.isError && grants.data?.items.map((grant) => <li className="min-w-0 break-all rounded border p-2" key={grant.id}><p>Grant {grant.id} · v{grant.version} · source {grant.source_id} / generation {grant.source_generation} · {grant.revoked ? "revoked" : eligibleSourceGrant(grant, resource) ? "eligible for this source" : "not eligible for this source"}</p>{owner && !grant.revoked ? <RevokeGrant key={grant.id} actor={actor} resource={resource} grantID={grant.id} paused={grants.isError || !canReadGrants} changed={refresh} onDenied={deny} /> : null}</li>)}</ul>
   <PageNavigation label="source grants" page={grants.data} loading={grants.isFetching || !canReadGrants} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(100000, offset + 20))} />
-  {owner ? <GrantRequest key="owner" actor={actor} resource={resource} paused={grants.isError || members.isError || members.isPending} changed={refresh} onDenied={deny} /> : <p className="text-xs">Project owner access is required to create or revoke source grants. Maintainers can select an eligible grant for a build.</p>}
+  {owner ? <GrantRequest key="owner" actor={actor} resource={resource} paused={grants.isError || !canReadGrants} changed={refresh} onDenied={deny} /> : <p className="text-xs">Project owner access is required to create or revoke source grants. Maintainers can select an eligible grant for a build.</p>}
  </section>;
 }
 function RevokeGrant({ grantID, resource, paused, changed, onDenied }: { actor: string; grantID: string; resource: Resource; paused: boolean; changed: () => Promise<void>; onDenied: () => void }) {
