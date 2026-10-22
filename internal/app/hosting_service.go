@@ -280,8 +280,8 @@ func (s *Service) publicGitSource(item domain.Resource, input domain.ResourceSou
 		return domain.HostingGitSource{}, InvalidInput(errors.New("git input must contain configuration only"))
 	}
 	c := input.Git.GitResourceConfiguration
-	if c.CredentialKind != "public" {
-		return domain.HostingGitSource{}, InvalidInput(errors.New("private Git credentials and SSH are not supported by resource configuration yet"))
+	if c.CredentialKind != "public" && c.CredentialKind != "https_basic" {
+		return domain.HostingGitSource{}, InvalidInput(errors.New("unsupported Git credential kind"))
 	}
 	if id == "" {
 		var err error

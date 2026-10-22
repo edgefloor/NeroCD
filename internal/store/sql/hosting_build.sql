@@ -31,7 +31,7 @@ SELECT s.id FROM project_managed_secrets s JOIN project_managed_secret_versions 
 -- name: HostingBuildTarget :one
 SELECT b.id AS binding_id,b.destination_id,d.server_id,s.runner_id FROM resource_bindings b JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id WHERE b.resource_id=$1;
 -- name: LockHostingBuildRunner :one
-SELECT r.id FROM runners r WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r;
+SELECT r.id FROM runners r WHERE r.id=sqlc.arg(runner_id) AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND (NOT sqlc.arg(require_private_git)::boolean OR 'hosting_git_https_basic_v1'=ANY(r.capabilities)) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r;
 -- name: HostingBuildObservedDaemon :one
 SELECT coalesce(daemon_id,'')::text FROM hosting_binding_state WHERE binding_id=$1 FOR SHARE;
 -- name: HostingBuildIdempotency :one
@@ -63,6 +63,12 @@ INSERT INTO hosting_build_artifacts(build_id,body,body_hash) VALUES($1,$2,$3);
 
 -- name: GetHostingSourceGrant :one
 SELECT * FROM hosting_source_grants WHERE id=$1;
+-- name: CountResourceHostingSourceGrants :one
+SELECT count(*) FROM hosting_source_grants WHERE resource_id=$1 AND kind='https_basic';
+-- name: ListResourceHostingSourceGrants :many
+SELECT jsonb_build_object('id',g.id,'version',g.version,'source_id',g.source_id,'source_generation',coalesce((a.metadata->>'source_generation')::bigint,0),'resource_id',g.resource_id,'kind',g.kind,'revoked',g.revoked_at IS NOT NULL)
+FROM hosting_source_grants g LEFT JOIN audit_events a ON a.id='aud_'||g.id AND a.action='hosting.source_grant.created'
+WHERE g.resource_id=sqlc.arg(resource_id) AND g.kind='https_basic' ORDER BY g.created_at DESC,g.id DESC LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 -- name: LockHostingBuildEnrollment :one
 SELECT e.id FROM runner_enrollments e JOIN runners r ON r.id=e.runner_id WHERE e.runner_id=$1 AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash FOR SHARE OF e;
 -- name: HostingBuildTaskExists :one

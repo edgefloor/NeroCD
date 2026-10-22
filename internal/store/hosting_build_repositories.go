@@ -51,7 +51,15 @@ var _ HostingBuildRepository = (*PostgresStore)(nil)
 // Memory stores deliberately do not implement an executable controller.
 type HostingBuildControllerRepository interface {
 	HostingBuildRepository
+	RequestConfiguredHostingBuild(context.Context, string, string, string, domain.HostingBuildRequest, domain.AuditEvent) (domain.HostingBuild, error)
 	RequestPublicHostingBuild(context.Context, string, string, string, domain.HostingBuildRequest, domain.AuditEvent) (domain.HostingBuild, error)
 	ListHostingBuilds(context.Context, string, string, Page) (PageResult[domain.HostingBuild], error)
 	HostingBuildStatus(context.Context, string, domain.HostingBuildAuthority) (hostingbuildprotocol.StatusResponse, error)
+}
+
+// HostingSourceGrantRepository owns current authorization and atomic retry intent.
+type HostingSourceGrantRepository interface {
+	RequestHostingSourceGrant(context.Context, string, string, domain.HostingSourceGrantRequest, domain.AuditEvent) (domain.PublicHostingSourceGrant, error)
+	ListHostingSourceGrants(context.Context, string, string, Page) (PageResult[domain.PublicHostingSourceGrant], error)
+	RevokeResourceHostingSourceGrant(context.Context, string, string, string, domain.AuditEvent) error
 }

@@ -4,6 +4,61 @@
  */
 
 export interface paths {
+    "/api/v1/runners/builds/source-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * deliverHostingSourceCredential
+         * @description Live sourcing authority only. Cache-Control: no-store on every response. Direct TLS required, or an immediate configured TrustedProxyCIDRs peer asserting exactly one X-Forwarded-Proto value https. Trusted proxies must strip and replace client forwarding headers. No redirects or insecure remote transport.
+         */
+        post: operations["deliverHostingSourceCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/source-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** listHostingSourceGrants */
+        get: operations["listHostingSourceGrants"];
+        put?: never;
+        /** requestHostingSourceGrant */
+        post: operations["requestHostingSourceGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/source-grants/{grant_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** revokeHostingSourceGrant */
+        post: operations["revokeHostingSourceGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/builds/events": {
         parameters: {
             query?: never;
@@ -53,13 +108,13 @@ export interface paths {
         };
         /**
          * listHostingBuilds
-         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.
+         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public or owner-granted HTTPS Basic Git; no deployment is performed.
          */
         get: operations["listHostingBuilds"];
         put?: never;
         /**
          * requestHostingBuild
-         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.
+         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public or owner-granted HTTPS Basic Git; no deployment is performed.
          */
         post: operations["requestHostingBuild"];
         delete?: never;
@@ -77,7 +132,7 @@ export interface paths {
         };
         /**
          * getHostingBuild
-         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.
+         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public or owner-granted HTTPS Basic Git; no deployment is performed.
          */
         get: operations["getHostingBuild"];
         put?: never;
@@ -99,7 +154,7 @@ export interface paths {
         put?: never;
         /**
          * cancelHostingBuild
-         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.
+         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public or owner-granted HTTPS Basic Git; no deployment is performed.
          */
         post: operations["cancelHostingBuild"];
         delete?: never;
@@ -2275,6 +2330,50 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingSourceGrantRequest: {
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** Format: int64 */
+            expected_source_generation: number;
+            secret_id: string;
+            /** Format: int64 */
+            secret_version: number;
+            request_id: string;
+        };
+        HostingSourceGrant: {
+            id: string;
+            /** Format: int64 */
+            version: number;
+            source_id: string;
+            /**
+             * Format: int64
+             * @description Zero denotes legacy grants with no generation evidence; these cannot be selected for configured builds.
+             */
+            source_generation: number;
+            resource_id: string;
+            /** @enum {string} */
+            kind: "https_basic";
+            revoked: boolean;
+        };
+        HostingSourceCredentialRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            delivery_id: string;
+        };
+        HostingSourceCredential: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            delivery_id: string;
+            request_hash: string;
+            /** @enum {string} */
+            credential_kind: "https_basic";
+            username: string;
+            /**
+             * Format: byte
+             * @description Base64 UTF-8 password. Combined username, colon and decoded password must fit 4096 bytes.
+             */
+            credential: string;
+            /** Format: date-time */
+            use_until: string;
+        };
         HostingBuildLogEvent: {
             event_key: string;
             sequence: number;
@@ -2328,6 +2427,8 @@ export interface components {
             /** Format: int64 */
             expected_source_generation: number;
             idempotency_key: string;
+            /** @description Required for https_basic; forbidden for public. */
+            grant_id?: string;
         };
         HostingBuildCancelInput: {
             /** Format: int64 */
@@ -3057,11 +3158,11 @@ export interface components {
             spa_fallback?: boolean;
         };
         GitResourceInput: {
-            /** @description Public HTTPS URL allowed by the server operator. No credentials or query/fragment components. */
+            /** @description HTTPS URL allowed by the server operator. No credentials or query/fragment components. */
             repository_url: string;
             requested_ref: string;
             /** @enum {string} */
-            credential_kind: "public";
+            credential_kind: "public" | "https_basic";
             settings: components["schemas"]["HostingBuildSettings"];
         };
         GitResourceSource: {
@@ -4207,6 +4308,142 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    deliverHostingSourceCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingSourceCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingSourceCredential"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingSourceGrants: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["HostingSourceGrant"][];
+                        limit: number;
+                        offset: number;
+                        count: number;
+                        total: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingSourceGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingSourceGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        grant: components["schemas"]["HostingSourceGrant"];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    revokeHostingSourceGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        revoked: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     appendHostingBuildLogs: {
         parameters: {
             query?: never;

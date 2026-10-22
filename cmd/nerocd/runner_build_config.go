@@ -138,6 +138,11 @@ func checkRunnerBuildJSON(d *json.Decoder, depth int) error {
 	return err
 }
 func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, specified bool, capabilities []string) ([]string, error) {
+	for _, capability := range capabilities {
+		if capability == domain.HostingPrivateGitCapability {
+			return nil, errors.New("private Git execution is not supported by this runner")
+		}
+	}
 	if c != nil && !specified {
 		capabilities = []string{domain.HostingBuildTaskType}
 		if proxyConfigured {

@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingbuildprotocol"
 	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store"
 )
@@ -23,6 +24,70 @@ import (
 type sourceRunnerIdentity struct {
 	ID  string
 	Err error
+}
+
+type connectedSourceRuns struct {
+	store.RunRepository
+	*sourceDeliveryRepository
+}
+
+type connectedSourceRunners struct {
+	store.RunnerRepository
+	reads        int
+	afterRead    func()
+	capabilities []string
+}
+
+func (r *connectedSourceRunners) GetRunnerByID(context.Context, string) (domain.Runner, error) {
+	r.reads++
+	if r.reads == 2 {
+		r.afterRead()
+	}
+	return domain.Runner{ID: "runner", Status: domain.RunnerActive, TokenHash: "fixture-hash", Capabilities: r.capabilities}, nil
+}
+
+func TestConnectedSourceCredentialWindowAfterFinalIdentityRead(t *testing.T) {
+	for _, test := range []string{"before", "at_expiry", "after_expiry", "canceled", "capability_removed"} {
+		t.Run(test, func(t *testing.T) {
+			component, repo, ctx, in := sourceDeliveryAppFixture(t)
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			in.Authority.RunID = "build_run_" + in.Authority.BuildID
+			repo.Value.Window.RequestHash = hostingbuildprotocol.SourceCredentialRequestHash("runner", in)
+			now := repo.Value.Window.UseUntil.Add(-time.Second)
+			runners := &connectedSourceRunners{capabilities: []string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}}
+			runners.afterRead = func() {
+				switch test {
+				case "at_expiry":
+					now = repo.Value.Window.UseUntil
+				case "after_expiry":
+					now = repo.Value.Window.UseUntil.Add(time.Nanosecond)
+				case "canceled":
+					cancel()
+				case "capability_removed":
+					runners.capabilities = []string{domain.HostingBuildTaskType}
+				}
+			}
+			s := &Service{auth: auth.ContextProvider{}, runs: connectedSourceRuns{sourceDeliveryRepository: repo}, runners: runners, secretKeyring: component.keys, clock: func() time.Time { return now }}
+			out, err := s.RunnerHostingSourceCredential(ctx, in)
+			if err == nil {
+				defer out.Close()
+			}
+			if runners.reads != 2 {
+				t.Fatalf("identity reads=%d", runners.reads)
+			}
+			if test == "before" {
+				if err != nil || string(out.Bytes) != "private-password" || !out.UseUntil.Equal(repo.Value.Window.UseUntil) {
+					t.Fatal("live original window rejected or changed", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrHostingSourceCredentialUnavailable) || len(out.Bytes) != 0 || !out.UseUntil.IsZero() {
+				out.Close()
+				t.Fatal("final identity wait escaped original window or cancellation", err)
+			}
+		})
+	}
 }
 
 func (r sourceRunnerIdentity) CurrentRunnerIdentity(context.Context) (RunnerIdentity, error) {

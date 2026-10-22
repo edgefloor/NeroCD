@@ -39,18 +39,22 @@ var safeRequestID = regexp.MustCompile(`\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`)
 
 // Server serves the NeroCD HTTP API.
 type Server struct {
-	app            *app.Service
-	logger         *slog.Logger
-	mux            *http.ServeMux
-	metrics        *metrics
-	cookieSecure   bool
-	publicOrigin   string
-	trustedProxies []netip.Prefix
-	draining       atomic.Bool
+	app                                 *app.Service
+	logger                              *slog.Logger
+	mux                                 *http.ServeMux
+	metrics                             *metrics
+	cookieSecure                        bool
+	publicOrigin                        string
+	trustedProxies                      []netip.Prefix
+	trustedLoopbackSourceCredentialHTTP bool
+	draining                            atomic.Bool
 }
 
 // ServerConfig controls HTTP server boundary behavior.
 type ServerConfig struct {
+	// TrustedLoopbackSourceCredentialHTTP permits this endpoint's literal loopback
+	// HTTP fixtures only. Production configuration never enables it.
+	TrustedLoopbackSourceCredentialHTTP bool
 	// AllowInsecureCookies permits non-Secure cookies only for explicit local
 	// development or HTTP test servers. The zero value remains secure.
 	AllowInsecureCookies bool
@@ -172,7 +176,7 @@ func NewServerWithConfig(appService *app.Service, logger *slog.Logger, static fs
 	if err != nil {
 		panic("invalid trusted proxy configuration")
 	}
-	s := &Server{app: appService, logger: logger, mux: http.NewServeMux(), metrics: newMetrics(), cookieSecure: !cfg.AllowInsecureCookies, publicOrigin: strings.TrimRight(strings.TrimSpace(cfg.PublicOrigin), "/"), trustedProxies: trusted}
+	s := &Server{app: appService, logger: logger, mux: http.NewServeMux(), metrics: newMetrics(), cookieSecure: !cfg.AllowInsecureCookies, publicOrigin: strings.TrimRight(strings.TrimSpace(cfg.PublicOrigin), "/"), trustedProxies: trusted, trustedLoopbackSourceCredentialHTTP: cfg.TrustedLoopbackSourceCredentialHTTP}
 	s.routes(static)
 	return s
 }
@@ -235,6 +239,9 @@ func (s *Server) clientSource(r *http.Request) string {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/v1/runners/builds/source-credential" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if r.URL.Path == "/api/v1/managed-secrets" || strings.HasPrefix(r.URL.Path, "/api/v1/managed-secrets/") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
@@ -397,6 +404,8 @@ func requiresAuth(path string) bool {
 
 func requiresRunnerAuth(path string) bool {
 	switch path {
+	case "/api/v1/runners/builds/source-credential":
+		return true
 	case "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
 		return true
 	case "/api/v1/runners/proxy/plan", "/api/v1/runners/proxy/prepared", "/api/v1/runners/proxy/apply-begin", "/api/v1/runners/proxy/complete", "/api/v1/runners/proxy/status":
@@ -593,7 +602,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_unavailable"
-	case errors.Is(err, app.ErrManagedSecretsUnavailable):
+	case errors.Is(err, app.ErrManagedSecretsUnavailable), errors.Is(err, app.ErrHostingSourceCredentialUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "unavailable"
 	case errors.Is(err, auth.ErrUnauthenticated):

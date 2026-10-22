@@ -70,6 +70,9 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 	}
 	proxyCapable, buildCapable, shellCapable, localBuildCapable := false, false, false, false
 	for _, capability := range result.Capabilities {
+		if capability == domain.HostingPrivateGitCapability {
+			return "", errors.New("authenticated private Git capability requires unavailable execution support")
+		}
 		proxyCapable = proxyCapable || capability == domain.RunTypeProxyApply
 		buildCapable = buildCapable || capability == domain.HostingBuildTaskType
 		localBuildCapable = localBuildCapable || capability == domain.RunTypeLocalBuildDeploy

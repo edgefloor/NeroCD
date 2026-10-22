@@ -7,6 +7,7 @@ type HostingBuildRequest struct {
 	ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
 	ExpectedSourceGeneration   int64  `json:"expected_source_generation"`
 	IdempotencyKey             string `json:"idempotency_key"`
+	GrantID                    string `json:"grant_id,omitempty"`
 }
 
 // PublicHostingBuild is a deliberate whitelist, never the runner snapshot.

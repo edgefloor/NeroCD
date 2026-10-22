@@ -183,7 +183,11 @@ func TestGitResourcePublicPolicyAndMemoryUnavailable(t *testing.T) {
 	}
 	input.Source.Git.RepositoryURL = "https://github.com/acme/web"
 	input.Source.Git.CredentialKind = "https_basic"
+	if _, err = service.CreateResource(ctx, input); !errors.Is(err, hostingjobs.ErrUnavailable) {
+		t.Fatal("private Git memory must refuse durable save", err)
+	}
+	input.Source.Git.CredentialKind = "ssh_private_key"
 	if _, err = service.CreateResource(ctx, input); err == nil || errors.Is(err, hostingjobs.ErrUnavailable) {
-		t.Fatal("unsupported credentials admitted", err)
+		t.Fatal("unsupported SSH accepted", err)
 	}
 }

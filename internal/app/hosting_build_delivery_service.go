@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingbuildprotocol"
 	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store"
 )
@@ -190,4 +192,36 @@ func decodeHostingSourceCredential(kind string, plaintext []byte) (HostingSource
 }
 func sourceCredentialField(value string, maximum int) bool {
 	return value != "" && len(value) <= maximum && !strings.ContainsFunc(value, unicode.IsControl)
+}
+
+// RunnerHostingSourceCredential connects persisted runner authority to the existing
+// audit-before-decrypt component. Only this connected workflow imposes Basic's budget.
+func (s *Service) RunnerHostingSourceCredential(ctx context.Context, in domain.HostingSourceCredentialRequest) (hostingbuildprotocol.SourceCredential, error) {
+	var zero hostingbuildprotocol.SourceCredential
+	if hostingbuildprotocol.ValidateAuthority(in.Authority) != nil || !domain.ValidHostingSourceDeliveryID(in.DeliveryID) {
+		return zero, InvalidInput(errors.New("invalid source credential request"))
+	}
+	repo, ok := s.runs.(store.HostingSourceCredentialRepository)
+	if !ok {
+		return zero, ErrHostingSourceCredentialUnavailable
+	}
+	component, err := NewHostingBuildCredentialDelivery(s.auth, s, repo, s.secretKeyring, s.clock)
+	if err != nil {
+		return zero, err
+	}
+	delivery, err := component.Deliver(ctx, in)
+	if err != nil {
+		return zero, err
+	}
+	defer delivery.Close()
+	material := delivery.Take()
+	defer material.Close()
+	if material.Kind != "https_basic" || !hostingbuildprotocol.ValidBasicCredential(material.Username, material.Bytes) {
+		return zero, ErrHostingSourceCredentialUnavailable
+	}
+	identity, err := s.CurrentRunnerIdentity(ctx)
+	if err != nil || !slices.Contains(identity.Capabilities, domain.HostingPrivateGitCapability) || ctx.Err() != nil || !s.clock().Before(material.UseUntil) {
+		return zero, ErrHostingSourceCredentialUnavailable
+	}
+	return hostingbuildprotocol.SourceCredential{Authority: in.Authority, DeliveryID: in.DeliveryID, RequestHash: hostingbuildprotocol.SourceCredentialRequestHash(identity.RunnerID, in), Kind: material.Kind, Username: material.Username, Bytes: bytes.Clone(material.Bytes), UseUntil: material.UseUntil}, nil
 }

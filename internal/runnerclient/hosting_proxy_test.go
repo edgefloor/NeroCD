@@ -16,6 +16,8 @@ func TestRuntimeExecutionIdentityRequiresExactLocalConfiguration(t *testing.T) {
 		proxy, build, local, valid bool
 	}{
 		{[]string{domain.RunTypeLocalBuildDeploy}, false, false, true, true},
+		{[]string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}, false, true, false, false},
+		{[]string{domain.HostingPrivateGitCapability}, false, false, false, false},
 		{[]string{domain.RunTypeLocalBuildDeploy, domain.RunTypeLocalBuildDeploy, "OPAQUE"}, false, false, true, true},
 		{[]string{domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.HostingBuildTaskType}, true, true, true, true},
 		{[]string{domain.RunTypeLocalBuildDeploy}, false, false, false, false},

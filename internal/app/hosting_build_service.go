@@ -19,14 +19,17 @@ func (s *Service) buildController() (store.HostingBuildControllerRepository, err
 	return controller, nil
 }
 
-// RequestHostingBuild accepts public Git intent, never operator or credential authority.
+// RequestHostingBuild accepts Git intent and an optional owner-created source grant.
 func (s *Service) RequestHostingBuild(ctx context.Context, resourceID string, in domain.HostingBuildRequest) (domain.PublicHostingBuild, error) {
 	resource, principal, err := s.resourceForDestinationRole(ctx, resourceID, domain.RoleMaintainer)
 	if err != nil {
 		return domain.PublicHostingBuild{}, err
 	}
-	if resource.Source.Kind != "git" || resource.Source.Git == nil || resource.Source.Git.CredentialKind != "public" {
-		return domain.PublicHostingBuild{}, InvalidInput(errors.New("builds require a public Git resource"))
+	if resource.Source.Kind != "git" || resource.Source.Git == nil || (resource.Source.Git.CredentialKind != "public" && resource.Source.Git.CredentialKind != "https_basic") {
+		return domain.PublicHostingBuild{}, InvalidInput(errors.New("unsupported Git credential kind"))
+	}
+	if (resource.Source.Git.CredentialKind == "public") != (in.GrantID == "") || len(in.GrantID) > 128 {
+		return domain.PublicHostingBuild{}, InvalidInput(errors.New("invalid source grant selection"))
 	}
 	if in.ExpectedResourceGeneration < 1 || in.ExpectedSourceGeneration < 1 || in.IdempotencyKey == "" || len(in.IdempotencyKey) > 128 || strings.TrimSpace(in.IdempotencyKey) != in.IdempotencyKey || strings.ContainsFunc(in.IdempotencyKey, unicode.IsControl) {
 		return domain.PublicHostingBuild{}, InvalidInput(errors.New("invalid hosting build request"))
@@ -44,7 +47,7 @@ func (s *Service) RequestHostingBuild(ctx context.Context, resourceID string, in
 	if err != nil {
 		return domain.PublicHostingBuild{}, err
 	}
-	b, err := controller.RequestPublicHostingBuild(ctx, id, resource.ID, principal.ID, in, audit)
+	b, err := controller.RequestConfiguredHostingBuild(ctx, id, resource.ID, principal.ID, in, audit)
 	return domain.PublicBuild(b), err
 }
 

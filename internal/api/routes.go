@@ -3,6 +3,10 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/runners/builds/source-credential"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/source-grants"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/source-grants"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/source-grants/{grant_id}/revoke"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/builds/events"},
 	{Method: http.MethodGet, Path: "/api/v1/hosting-builds/{id}/logs"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/builds"},
@@ -203,6 +207,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingRetainedReleases
 	case "/api/v1/resources/{id}/retained-releases/{operation_id}/cleanup":
 		return s.hostingReleaseCleanup
+	case "/api/v1/resources/{id}/source-grants":
+		return s.hostingSourceGrants
+	case "/api/v1/resources/{id}/source-grants/{grant_id}/revoke":
+		return s.hostingSourceGrantRevoke
+	case "/api/v1/runners/builds/source-credential":
+		return s.runnerBuildSourceCredential
 	case "/api/v1/resources/{id}/builds":
 		return s.hostingBuilds
 	case "/api/v1/hosting-builds/{id}":

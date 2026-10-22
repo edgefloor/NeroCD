@@ -153,6 +153,17 @@ func (q *Queries) CountHostingBuilds(ctx context.Context, resourceID string) (in
 	return count, err
 }
 
+const countResourceHostingSourceGrants = `-- name: CountResourceHostingSourceGrants :one
+SELECT count(*) FROM hosting_source_grants WHERE resource_id=$1 AND kind='https_basic'
+`
+
+func (q *Queries) CountResourceHostingSourceGrants(ctx context.Context, resourceID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countResourceHostingSourceGrants, resourceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createHostingBuildSource = `-- name: CreateHostingBuildSource :exec
 INSERT INTO hosting_build_sources(id,resource_id,project_id,generation) VALUES($1,$2,$3,1)
 `
@@ -512,6 +523,38 @@ func (q *Queries) ListHostingBuildIDs(ctx context.Context, arg ListHostingBuildI
 	return items, nil
 }
 
+const listResourceHostingSourceGrants = `-- name: ListResourceHostingSourceGrants :many
+SELECT jsonb_build_object('id',g.id,'version',g.version,'source_id',g.source_id,'source_generation',coalesce((a.metadata->>'source_generation')::bigint,0),'resource_id',g.resource_id,'kind',g.kind,'revoked',g.revoked_at IS NOT NULL)
+FROM hosting_source_grants g LEFT JOIN audit_events a ON a.id='aud_'||g.id AND a.action='hosting.source_grant.created'
+WHERE g.resource_id=$1 AND g.kind='https_basic' ORDER BY g.created_at DESC,g.id DESC LIMIT $3 OFFSET $2
+`
+
+type ListResourceHostingSourceGrantsParams struct {
+	ResourceID string `json:"resource_id"`
+	PageOffset int32  `json:"page_offset"`
+	PageLimit  int32  `json:"page_limit"`
+}
+
+func (q *Queries) ListResourceHostingSourceGrants(ctx context.Context, arg ListResourceHostingSourceGrantsParams) ([]json.RawMessage, error) {
+	rows, err := q.db.Query(ctx, listResourceHostingSourceGrants, arg.ResourceID, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []json.RawMessage{}
+	for rows.Next() {
+		var jsonb_build_object json.RawMessage
+		if err := rows.Scan(&jsonb_build_object); err != nil {
+			return nil, err
+		}
+		items = append(items, jsonb_build_object)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockHostingBuildEnrollment = `-- name: LockHostingBuildEnrollment :one
 SELECT e.id FROM runner_enrollments e JOIN runners r ON r.id=e.runner_id WHERE e.runner_id=$1 AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash FOR SHARE OF e
 `
@@ -566,11 +609,17 @@ func (q *Queries) LockHostingBuildResource(ctx context.Context, id string) (Lock
 }
 
 const lockHostingBuildRunner = `-- name: LockHostingBuildRunner :one
-SELECT r.id FROM runners r WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
+SELECT r.id FROM runners r WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND (NOT $2::boolean OR 'hosting_git_https_basic_v1'=ANY(r.capabilities)) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
 `
 
-func (q *Queries) LockHostingBuildRunner(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, lockHostingBuildRunner, id)
+type LockHostingBuildRunnerParams struct {
+	RunnerID          string `json:"runner_id"`
+	RequirePrivateGit bool   `json:"require_private_git"`
+}
+
+func (q *Queries) LockHostingBuildRunner(ctx context.Context, arg LockHostingBuildRunnerParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockHostingBuildRunner, arg.RunnerID, arg.RequirePrivateGit)
+	var id string
 	err := row.Scan(&id)
 	return id, err
 }

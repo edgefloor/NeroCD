@@ -300,7 +300,7 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 	} else if err != nil {
 		return target, "", err
 	}
-	if _, err = q.LockHostingBuildRunner(ctx, target.RunnerID); err != nil {
+	if _, err = q.LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{RunnerID: target.RunnerID, RequirePrivateGit: src.CredentialKind == "https_basic"}); err != nil {
 		return target, "", ErrConflict
 	}
 	if _, err = q.LockHostingBuildEnrollment(ctx, target.RunnerID); err != nil {
@@ -311,6 +311,10 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 
 // RequestHostingBuild snapshots trusted placement and inputs and invokes a DB-only enqueuer atomically.
 func (s *PostgresStore) RequestHostingBuild(ctx context.Context, id, resourceID, actor string, in domain.HostingBuildInput, policy domain.HostingBuildPolicy, enqueue HostingBuildEnqueueTx, event domain.AuditEvent) (domain.HostingBuild, error) {
+	return s.requestHostingBuild(ctx, id, resourceID, actor, in, policy, enqueue, event, false)
+}
+
+func (s *PostgresStore) requestHostingBuild(ctx context.Context, id, resourceID, actor string, in domain.HostingBuildInput, policy domain.HostingBuildPolicy, enqueue HostingBuildEnqueueTx, event domain.AuditEvent, configured bool) (domain.HostingBuild, error) {
 	if enqueue == nil {
 		return domain.HostingBuild{}, ErrHostingBuildUnavailable
 	}
@@ -343,6 +347,16 @@ func (s *PostgresStore) RequestHostingBuild(ctx context.Context, id, resourceID,
 			original, readErr := readBuild(ctx, q, old.ID)
 			if readErr != nil {
 				return original, readErr
+			}
+			// Configured private retries require current source intent and the same
+			// atomic grant evidence as admission. Replay never invokes the enqueuer.
+			if configured && original.Snapshot.Source.CredentialKind != "public" {
+				if err = currentBuildExecution(ctx, tx, original); err != nil {
+					return original, err
+				}
+				if err = checkConfiguredSourceGrant(ctx, tx, original); err != nil {
+					return original, err
+				}
 			}
 			if err = checkBuildPlacement(ctx, tx, original, true); err != nil {
 				return original, err

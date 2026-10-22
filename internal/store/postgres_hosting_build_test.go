@@ -401,6 +401,7 @@ func TestPostgresHostingBuildLeaseExpiresWhileBlocked(t *testing.T) {
 
 func TestPostgresHostingBuildSourceAndGrantAuthorization(t *testing.T) {
 	f := newBuildStoreFixture(t)
+	setPrivateGitCapability(t, f, true)
 	ctx := t.Context()
 	for _, entry := range []struct{ id, project, role string }{{"build_viewer", "proj_platform", "viewer"}, {"build_maint", "proj_platform", "maintainer"}, {"build_owner", "proj_platform", "owner"}, {"build_cross", "proj_security", "owner"}} {
 		if _, err := f.db.Exec(ctx, `INSERT INTO users(id,email,name,status,global_role) VALUES($1,$1||'@fixture.local',$1,'active','user')`, entry.id); err != nil {
@@ -556,6 +557,7 @@ func TestPostgresHostingBuildServiceAccountAndLegacyToken(t *testing.T) {
 
 func TestPostgresHostingBuildSelectedSecretVersionAndArtifactRevocation(t *testing.T) {
 	f := newBuildStoreFixture(t)
+	setPrivateGitCapability(t, f, true)
 	ctx := t.Context()
 	src := f.src
 	src.Generation = 2
