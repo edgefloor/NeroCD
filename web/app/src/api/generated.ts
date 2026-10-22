@@ -2412,7 +2412,7 @@ export interface components {
         RunnerIdentity: {
             runner_id: string;
             /** @description Current persisted capabilities of this authenticated runner; no heartbeat is performed. */
-            capabilities: string[];
+            capabilities?: string[];
         };
         HostingIdentifier: string;
         HostingServerInput: {

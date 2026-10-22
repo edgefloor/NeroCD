@@ -4033,14 +4033,13 @@ components:
     RunnerIdentity:
       type: object
       additionalProperties: false
-      required: [runner_id, capabilities]
+      required: [runner_id]
       properties:
         runner_id: {type: string, minLength: 1}
         capabilities:
           type: array
-          maxItems: 128
           description: Current persisted capabilities of this authenticated runner; no heartbeat is performed.
-          items: {type: string, minLength: 1, maxLength: 64}
+          items: {type: string}
     HostingIdentifier:
       type: string
       minLength: 1
