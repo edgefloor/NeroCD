@@ -76,13 +76,17 @@ func stageContext(ctx context.Context, src, dst string, l Limits) (string, error
 		return "", err
 	}
 	defer func() { _ = root.Close() }()
-	if err = os.Mkdir(dst, 0700); err != nil {
+	return stageRoot(ctx, root, dst, l)
+}
+
+func stageRoot(ctx context.Context, root *os.Root, dst string, l Limits) (string, error) {
+	if err := os.Mkdir(dst, 0700); err != nil {
 		return "", err
 	}
 	h := sha256.New()
 	var total int64
 	count := 0
-	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
