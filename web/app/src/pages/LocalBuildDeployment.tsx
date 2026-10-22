@@ -1,11 +1,13 @@
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError } from "@/api";
+import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
+import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
 import { getResource, type Resource } from "@/api/hosting";
 import { getHostingBuild, checkBuildScope, type HostingBuild } from "@/api/hosting-builds";
 import { HostingDeploymentError, hostingBindingQuery, hostingDeploymentKeys, hostingDeploymentsQuery, requestHostingBuildDeployment, type HostingBuildDeploymentInput } from "@/api/hosting-deployments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { canMaintainProject } from "@/lib/permissions";
 import { OperationDetail } from "./ResourceDeployments";
 
 function matchesBuildGenerations(resource: Resource, build: HostingBuild): boolean {
@@ -18,9 +20,15 @@ function matchesBuildGenerations(resource: Resource, build: HostingBuild): boole
 
 // The parent keys this component by actor, resource, permission and exact build.
 // Keep a submitted body intact until its response is known or the operator leaves.
-export function LocalBuildDeployment({ actor, resource, build, writable, blocked, onDenied }: {
-  actor: string; resource: Resource; build: HostingBuild; writable: boolean; blocked: boolean; onDenied: () => void;
-}) {
+type LocalDeploymentProps = { actor: string; resource: Resource; build: HostingBuild; writable: boolean; blocked: boolean; onDenied: () => void };
+export function LocalBuildDeployment(props: LocalDeploymentProps) {
+  const identity = useQuery(principalQuery());
+  const members = useQuery({ ...allProjectMembersQuery(), staleTime: 10_000 });
+  if (props.blocked || identity.isPending || identity.isFetching || identity.isError || members.isPending || members.isFetching || members.isError || !identity.data || JSON.stringify([identity.data.provider, identity.data.id]) !== props.actor) return <p role={identity.isError || members.isError ? "alert" : "status"}>Local deployment access is pending or unavailable. Drafts and retained requests are cleared.</p>;
+  const writable = props.writable && canMaintainProject(identity.data, members.data ?? [], props.resource.project_id);
+  return <LocalDeployment key={JSON.stringify([props.actor, props.resource.project_id, props.resource.id, props.build.id, writable])} {...props} writable={writable} />;
+}
+function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }: LocalDeploymentProps) {
   const id = useId(), client = useQueryClient();
   const [base, setBase] = useState(resource);
   const [containerPort, setContainerPort] = useState("80"), [hostPort, setHostPort] = useState("8080");
@@ -30,7 +38,8 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
   const [conflict, setConflict] = useState(false), [restoreHeld, setRestoreHeld] = useState(false), [denied, setDenied] = useState(false);
   const [error, setError] = useState(""), [selected, setSelected] = useState("");
   const active = useRef(true), submitting = useRef(false);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); }; }, []);
   const binding = useQuery(hostingBindingQuery(resource.project_id, resource.id, actor));
   const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, 0, actor));
   const changed = async () => { await Promise.all([
@@ -49,21 +58,31 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (disabled || submitting.current || !source || !binding.data) return;
-    const body = attempt ?? { build_id: build.id, expected_generation: base.generation, expected_source_generation: source.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(mode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
-    setAttempt(body); setBusy(true); submitting.current = true; setError("");
+    let body = attempt;
+    const controller = new AbortController(); request.current = controller;
+    setBusy(true); submitting.current = true; setError("");
     try {
-      const operation = await requestHostingBuildDeployment(resource.id, body);
-      if (!active.current) return;
-      if (operation.project_id !== resource.project_id || operation.resource_id !== resource.id || operation.binding_id !== build.snapshot.target.binding_id || operation.snapshot.local_build?.artifact.build_id !== body.build_id || operation.snapshot.local_build.artifact.image_id !== build.artifact?.image_id || operation.snapshot.resource_generation !== body.expected_generation || operation.snapshot.local_build.source_generation !== body.expected_source_generation) throw new Error("Deployment response does not match selected build");
+      if (!body) {
+        const { runtime_configuration: runtime } = await getHostingRuntimeConfiguration(resource.id, { signal: controller.signal });
+        if (!active.current || controller.signal.aborted) return;
+        if (runtime.resource_id !== resource.id || runtime.project_id !== resource.project_id || !Number.isSafeInteger(runtime.runtime_generation) || runtime.runtime_generation < 0) throw new Error("Runtime configuration scope mismatch");
+        body = { ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}), build_id: build.id, expected_generation: base.generation, expected_source_generation: source.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(mode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
+        setAttempt(body);
+      }
+      const operation = await requestHostingBuildDeployment(resource.id, body, { signal: controller.signal });
+      if (!active.current || controller.signal.aborted) return;
+      if (operation.project_id !== resource.project_id || operation.resource_id !== resource.id || operation.binding_id !== build.snapshot.target.binding_id || operation.snapshot.local_build?.artifact.build_id !== body.build_id || operation.snapshot.local_build.artifact.image_id !== build.artifact?.image_id || operation.snapshot.resource_generation !== body.expected_generation || operation.snapshot.local_build.source_generation !== body.expected_source_generation || (body.expected_runtime_configuration_generation !== undefined && operation.snapshot.runtime_configuration?.generation !== body.expected_runtime_configuration_generation)) throw new Error("Deployment response does not match selected build");
       setSelected(operation.id); setAttempt(undefined); setConfirmed(false); await changed();
     } catch (cause) {
-      if (!active.current) return;
+      if (!active.current || controller.signal.aborted) return;
+      if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { setDenied(true); onDenied(); return; }
+      if (!body) { setError("Unable to verify saved runtime configuration. No new deployment request was sent. Refresh access and try again."); return; }
       if (cause instanceof HostingDeploymentError && cause.code === "hosting_restore_held") { setRestoreHeld(true); setError(""); }
       else if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setDenied(true); onDenied(); setError("Deployment permission denied. Reload to refresh project access before another action."); }
       else if (cause instanceof ApiError && cause.status === 409) { setConflict(true); setError("Deployment conflicts with current resource/source generations, exact artifact, placement, runner capability, or a retained request key. Refresh the resource and build history, review the exact successful build, and explicitly select it again. No generation, build, or request was changed automatically."); }
       else if (cause instanceof ApiError && cause.status === 400) { setConflict(true); setError("The server rejected these ports or readiness settings. Reopen this build to review a separate request."); }
       else setError("Deployment delivery is unconfirmed. The operation may already exist. Retry the identical request with its retained build, generations, settings, and key.");
-    } finally { submitting.current = false; if (active.current) setBusy(false); }
+    } finally { submitting.current = false; if (request.current === controller) request.current = null; if (active.current) setBusy(false); }
   }
   async function reviewSeparateRequest() {
     if (busy || denied || restored) return;
@@ -89,6 +108,7 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label="Deploy recorded local build">
     <h6 className="font-medium">Deploy recorded local build</h6>
+    <p className="text-sm">A new deployment captures the current saved runtime generation and requires a compatible runner. Saving variables does not update the serving release.</p>
     <p className="break-all text-sm">Build {build.id} · source generation {source?.generation} · resource generation {base.generation} · image ID {build.artifact?.image_id}.</p>
     <p className="text-xs text-muted-foreground">Requires the same saved destination, runner and Docker daemon as this build, a current project grant and enrolled runner with local_build_deploy_v1, and an operator-enabled agent started with --local-build-deploy. The agent uses the recorded local image ID without fetching or transferring it.</p>
     {restored ? <p role="alert">Deployment blocked after platform restore. Trusted recovery proof is pending. Refreshing, retrying, or reconciliation cannot release restored ownership. Settings are preserved.</p> : null}
@@ -108,7 +128,7 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
       <p className="text-xs text-muted-foreground">Readiness uses ordinary HTTP at a relative path such as /health. Automatic allocation retains earlier containers until explicit cleanup. A fixed port can interrupt the current release before readiness succeeds. Deployment does not automatically switch traffic or configure HTTPS.</p>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy || Boolean(attempt)} onChange={(e) => setConfirmed(e.target.checked)} /><span>I reviewed this exact successful build and local artifact, generations, ports and readiness settings. I understand fixed-port replacement can interrupt service.</span></label>
       <Button type="submit" className="h-auto max-w-full whitespace-normal" disabled={disabled}>{busy ? "Requesting local build deployment..." : attempt ? "Retry identical local build deployment" : "Deploy selected build"}</Button>
-      {attempt ? <p className="break-all text-xs">Retained request key {attempt.idempotency_key} · build {attempt.build_id} · resource/source generations {attempt.expected_generation}/{attempt.expected_source_generation}. Inputs remain frozen for receipt recovery.</p> : null}
+      {attempt ? <p className="break-all text-xs">Retained request key {attempt.idempotency_key} · build {attempt.build_id} · resource/source/runtime generations {attempt.expected_generation}/{attempt.expected_source_generation}/{attempt.expected_runtime_configuration_generation ?? 0}. Inputs remain frozen for receipt recovery.</p> : null}
     </form> : <p>Project maintainer access is required to deploy this build.</p>}
     {attempt && !restored && !denied ? <section className="space-y-2" aria-label="Review separate local deployment request"><p className="text-xs">The earlier request may already exist. Review history before choosing a separate request. This action checks this exact build against current generations and clears its key and acknowledgment only after a successful review. It never selects another build or deploys automatically.</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" disabled={busy || blocked || held} onClick={() => void reviewSeparateRequest()}>Review this exact build for a separate request</Button></section> : null}
     {error ? <p role="alert">{error}</p> : null}

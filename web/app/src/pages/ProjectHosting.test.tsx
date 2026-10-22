@@ -5,6 +5,7 @@ import { ApiError } from "@/api";
 import * as api from "@/api/hosting";
 import { ProjectHosting } from "./ProjectHosting";
 
+vi.mock("./ResourceRuntimeConfiguration", () => ({ ResourceRuntimeConfiguration: ({ resource }: { resource: { name: string } }) => <div>Runtime variables for {resource.name}</div> }));
 vi.mock("./ResourceBuilds", () => ({ ResourceBuilds: ({ resource }: { resource: { name: string } }) => <div>Build controls for {resource.name}</div> }));
 vi.mock("./ResourceRoutes", () => ({ ResourceRoutes: ({ resource }: { resource: { name: string } }) => <div>Resource routes for {resource.name}</div> }));
 vi.mock("./ResourceDestination", () => ({ ResourceDestination: ({ resource }: { resource: { name: string } }) => <div>Desired destination for {resource.name}</div> }));
