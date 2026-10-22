@@ -68,12 +68,14 @@ type JournalProvenance struct {
 
 // JournalSnapshot is a copy of pending durable attempt mutations.
 type JournalSnapshot struct {
+	Hosting     []JournalHosting    `json:"hosting,omitempty"`
 	Events      []JournalEvent      `json:"events"`
 	Completions []JournalCompletion `json:"completions"`
 	Provenance  []JournalProvenance `json:"provenance"`
 }
 
 type journalState struct {
+	Hosting     []JournalHosting    `json:"hosting,omitempty"`
 	Version     int                 `json:"version"`
 	Events      []JournalEvent      `json:"events"`
 	Completions []JournalCompletion `json:"completions"`
@@ -272,6 +274,12 @@ func (j *AttemptJournal) AckProvenance(id string) error {
 func (j *AttemptJournal) DiscardAttempt(authority AttemptIdentity) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	for _, entry := range j.state.Hosting {
+		if sameAttemptAuthority(entry.Attempt, authority) {
+			return errors.New("hosting mutation evidence requires explicit reconciliation")
+		}
+	}
+
 	events := make([]JournalEvent, 0, len(j.state.Events))
 	for _, event := range j.state.Events {
 		if !sameAttemptAuthority(event.Attempt, authority) {
@@ -311,6 +319,7 @@ func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return JournalSnapshot{
+		Hosting:     cloneHostingEntries(j.state.Hosting),
 		Events:      append([]JournalEvent(nil), j.state.Events...),
 		Completions: append([]JournalCompletion(nil), j.state.Completions...),
 		Provenance:  append([]JournalProvenance(nil), j.state.Provenance...),
@@ -334,7 +343,7 @@ func NewJournalID(prefix string) (string, error) {
 }
 
 func (j *AttemptJournal) entryCountLocked() int {
-	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance)
+	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting)
 }
 
 func (j *AttemptJournal) persistLocked() error {
@@ -349,10 +358,10 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
-	if state.Version != journalFormatVersion {
+	if state.Version != journalFormatVersion && state.Version != 2 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
-	if len(state.Events)+len(state.Completions)+len(state.Provenance) > journalMaxEntries {
+	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
 	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))
@@ -383,6 +392,19 @@ func validateJournalState(state journalState) error {
 		}
 		ids[pending.ID] = struct{}{}
 	}
+	if len(state.Hosting) > 0 && state.Version != 2 {
+		return errors.New("hosting journal requires version2")
+	}
+	for _, entry := range state.Hosting {
+		if err := validateJournalHosting(entry); err != nil {
+			return err
+		}
+		if _, exists := ids[entry.ID]; exists {
+			return errors.New("runner journal contains duplicate ids")
+		}
+		ids[entry.ID] = struct{}{}
+	}
+
 	return nil
 }
 
