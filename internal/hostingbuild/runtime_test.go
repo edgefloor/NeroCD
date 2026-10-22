@@ -40,6 +40,10 @@ func TestRuntimeBuild(t *testing.T) {
 	}
 	daemon := strings.TrimSpace(string(b))
 	platform := "linux/" + runtime.GOARCH
+	// Provision the pinned probe separately so pull diagnostics cannot be mistaken for HTTP content.
+	if _, err = e.docker(t.Context(), setup, "pull", StaticImage); err != nil {
+		t.Fatal(err)
+	}
 	source := func(content string) string {
 		p := t.TempDir()
 		writeTestFile(t, filepath.Join(p, "Dockerfile"), []byte(content))
@@ -47,6 +51,25 @@ func TestRuntimeBuild(t *testing.T) {
 	}
 	request := func(id string, strategy Strategy, src string) Request {
 		return Request{BuildID: id, Checkout: src, SourceID: "immutable-commit", InputID: "fixture-v1", DaemonID: daemon, Strategy: strategy, Platform: platform, Limits: testLimits()}
+	}
+	assertHTTP := func(t *testing.T, name, expected string) {
+		t.Helper()
+		var response []byte
+		var requestErr error
+		for i := 0; i < 30; i++ {
+			response, requestErr = e.docker(t.Context(), setup, "run", "--pull=never", "--rm", "--label", "io.nerocd.runtime-build=client", "--network", "container:"+name, "--entrypoint", "/bin/busybox", StaticImage, "wget", "-T", "2", "-qO-", "http://127.0.0.1:80")
+			if requestErr == nil {
+				break
+			}
+			select {
+			case <-t.Context().Done():
+				t.Fatal(t.Context().Err())
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		if requestErr != nil || string(response) != expected {
+			t.Fatalf("HTTP content for %s: got %q expected %q error=%v", name, response, expected, requestErr)
+		}
 	}
 	var built Result
 	t.Run("dockerfile", func(t *testing.T) {
@@ -83,6 +106,7 @@ func TestRuntimeBuild(t *testing.T) {
 		defer cancel()
 		_, _ = e.docker(ctx, setup, "rm", "--force", survivor)
 	})
+	t.Run("dockerfile-http-and-survivor-before-failures", func(t *testing.T) { assertHTTP(t, survivor, "descendant-enforcement\n") })
 	for _, strategy := range []Strategy{Static, Railpack} {
 		t.Run(string(strategy), func(t *testing.T) {
 			src := t.TempDir()
@@ -99,17 +123,7 @@ func TestRuntimeBuild(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _, _ = e.docker(t.Context(), setup, "rm", "--force", name) }()
-			var response []byte
-			for i := 0; i < 30; i++ {
-				response, err = e.docker(t.Context(), setup, "run", "--rm", "--label", "io.nerocd.runtime-build=client", "--network", "container:"+name, "--entrypoint", "/bin/busybox", StaticImage, "wget", "-T", "2", "-qO-", "http://127.0.0.1:80")
-				if err == nil {
-					break
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			if err != nil || !strings.Contains(string(response), "runtime-build-"+string(strategy)) {
-				t.Fatalf("HTTP serve: %s %v", response, err)
-			}
+			assertHTTP(t, name, "runtime-build-"+string(strategy))
 		})
 	}
 	t.Run("descendant-cpu-memory-enforcement", func(t *testing.T) {
@@ -292,6 +306,7 @@ func TestRuntimeBuild(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("survivor-http-after-failures", func(t *testing.T) { assertHTTP(t, survivor, "descendant-enforcement\n") })
 	b, err = e.docker(t.Context(), setup, "inspect", survivor)
 	if err != nil {
 		t.Fatal(err)
