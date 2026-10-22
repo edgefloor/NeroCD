@@ -1,32 +1,64 @@
-# Compatibility ledger
+# Hosting compatibility ledger
 
-Originally recorded on 2026-10-22 against NeroCD `a763a90b3896257b784c9498d01650ccdad2427a` and [Coolify `b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3). Current accepted NeroCD assessment: `df515f3c5819627c1ee6877b2d22e1f79895f46b`, dated 2026-10-22. Official documentation is a separately dated capability reference. It can change independently of the pinned source.
+Current accepted NeroCD assessment:
+`852f8e6b8d5624a95865c276dcea4a239d1f8fea`, 2026-10-22.
+The Coolify reference remains
+[`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
+Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
+supplied revision 3 baseline `09d65d4ddcbfdf27e97158a9c08beb02a721818c`
+are historical. Official documentation is separately dated and can change.
 
-The [full specification](product-spec.md) defines the target. The [plan](plan.md) assigns P00–P18 and M0–M4. This ledger distinguishes feature compatibility, migration compatibility, and unchanged-client compatibility. Success in one dimension does not prove another.
+This ledger retains the complete direct-hosting target in revision 3 track H.
+The [workspace ledger](workspace-capabilities.md) separately covers Tasks,
+Workspaces, machines, agents, models and shared results. The [plan](plan.md)
+orders the first D0–D3 demonstration while preserving all R01–R102 and A01–A66
+in the [specification](product-spec.md). Feature, migration and unchanged-client
+compatibility remain separate claims.
 
 ## Status and evidence
 
-- `planned`: required target with no validated implementation claim.
-- `partial`: existing foundations cover only the stated limits.
-- `implemented`: code exists for the declared boundary, without complete acceptance evidence.
-- `validated`: declared fixtures pass on a named release candidate with bounded evidence.
-- `intentionally different`: an explicit behavior difference remains part of the supported contract.
+- `planned`: required target without accepted implementation evidence.
+- `partial`: bounded accepted foundations cover part of the capability.
+- `implemented`: code exists without complete acceptance of the declared boundary.
+- `validated`: named fixtures pass on a named candidate with stated limits.
+- `intentionally different`: a declared behavior difference is supported explicitly.
 
-Short fixture identifiers in the product and adapter matrices below remain
-planned acceptance fixtures. They are not existing test files or passing
-results. The accepted-foundation table separately links real source tests and
-their implementation commits. This documentation update runs no application
-tests and makes no new runtime pass claim. Future validation must name candidate
-SHA, tool and engine versions, architectures, result, evidence location and
-limits. Missing and failed required checks block acceptance.
+Short fixture names in matrices are acceptance targets, not nonexistent tests
+presented as passing. Real source paths below describe bounded evidence. Reports
+retain their original revision; this documentation candidate runs no application
+or runtime tests. No complete hosting parity or workspace milestone is inferred
+by combining separate historical results.
 
 ## Accepted foundations and evidence
 
-This assessment covers accepted code through
-`df515f3c5819627c1ee6877b2d22e1f79895f46b`. The linked tests describe bounded
-coverage. They do not establish full product-area or milestone completion.
-The [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
-[job infrastructure guide](hosting-jobs.md) describe the operational contracts.
+The latest accepted additions supersede historical absence claims for local
+artifact deployment and build output:
+
+| Foundation | Accepted revision and durable source evidence | Limits |
+| --- | --- | --- |
+| Same-host artifact deployment | `61b77e75f2d95f3f015b0275a15ce2e376d82330`; [runtime](hosting-local-build-runtime.md), [real fixture](../internal/runnerruntime/local_build_deployment_integration_test.go) | Explicit capability/configuration; exact daemon/platform/ImageID; no pull, rebuild or cross-host transfer; separate route selection |
+| Artifact deployment UI | `08b9ff21f8def396d13f9464a197469e4d59adba`; [UI and real browser gate](hosting-build-deployments.md#deploy-through-the-resource-ui) | Actual build/deployment, retries, current generations, viewer denial and responsive layouts; public DNS/production ACME remain unqualified |
+| Typed build output backend | `28fc384bdb8fb641558cd6d20224d207c7095f77`; earlier replay checkpoint `1938a2fb5b41223d5b01303b88807d09b8933e4e`; [contract](hosting-build-logs.md) | Full-authority immutable receipts and retention cursors; old pre-0051 history is explicitly unknown |
+| Typed pagination | `3ea2f815f844ff60008ecf22891bec5b370fb07f`; [API regression tests](../internal/api/hosting_build_log_pagination_test.go) | Build log limit 200 works at the global request boundary; legacy limits remain unchanged |
+| Runner output delivery | Candidate `65dc15c1462485d84c9d6d524577f26a20048677`, integration `5c0a1329c89f4a784a254aac6679591db3d6b0b0`; [delivery contract](hosting-build-log-delivery.md), [controller gate](../acceptance/runtime-hosting-build-controller/gate.sh) | Real output, redaction, format 7 cursor journal, exact historical replay, delivery before completion, retention, lease renewal and cancellation; unknown secrets are not guaranteed removed |
+| Build output viewer | Candidate `07ce38d8230a84d5d1ef469bc8f604c5230afde4`, accepted `852f8e6b8d5624a95865c276dcea4a239d1f8fea`; [viewer contract](hosting-build-logs.md#resource-build-output-viewer), [browser tests](../web/app/tests/browser/hosting-builds.spec.ts) | Opt-in persisted output with bounded local plaintext and access revalidation; runtime application logs and terminals remain planned |
+
+Retained acceptance at `65dc15c1462485d84c9d6d524577f26a20048677`
+records a real controller gate with Dockerfile, Railpack and static builds,
+response loss before completion, default-lease renewal, retention cursor,
+SIGTERM/cancellation and owned cleanup. Local deployment and its UI have
+separate real API/PostgreSQL/River/CLI and trusted-test-CA routing/browser
+evidence. They do not qualify a VM, GPU, remote builder/cache, private preview
+or model adapter. See [specification evidence limits](product-spec.md#12-evidence-and-review-limits).
+
+### Retained earlier foundations
+
+The following rows retain the original candidate/component boundaries through
+`df515f3c5819627c1ee6877b2d22e1f79895f46b`. A statement that an older
+component supplied no controller, deployment or log stream describes that
+revision and component only. The accepted additions above establish current
+local deployment and typed build output. Their absence claims must not be
+read as the current aggregate product status.
 
 | Foundation | Accepted commits and durable source evidence | Boundaries |
 | --- | --- | --- |
@@ -56,164 +88,26 @@ The [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
 | Public Git build WebUI | Accepted `63b6f21b41a095e64dfcb5e26b4be033988aa9d0`; [browser scenarios](../web/app/tests/browser/hosting-builds.spec.ts), [real admission fixture](../web/app/scripts/hosting-builds-fixture.sh), [user guide](hosting-git-resources.md) | Separately requested build, history/detail, exact request retry and revision-bound cancellation at all four widths; browser checks prove real admission/roles/CAS, not seeded build success or artifact deployment; no build-output stream |
 | Compiled public build agent | Runtime candidate `2fa37673bc03e9c2d171322b2bda9bd2fdc98847`, integration `a907703572e7e1eb7fb3858998a0cef862645198`, accepted fixture checkpoint `df515f3c5819627c1ee6877b2d22e1f79895f46b`; [real controller/CLI gate](../acceptance/runtime-hosting-build-controller/gate.sh), [runtime fixture](../internal/runnerruntime/hosting_build_controller_fixture_test.go), [operator guide](hosting-build-runtime.md) | Explicit owned agent configuration and persisted capability matching exact server policy; real HTTPS Git/API/PostgreSQL/River/CLI builds Dockerfile, Railpack and prebuilt static into immutable local artifacts, with journal/replay, lease renewal, cancellation and owned cleanup; no artifact-to-deployment handoff |
 
-At `df515f3c5819627c1ee6877b2d22e1f79895f46b`, the retained accepted runtime
-report records a passed genuine HTTPS Git, production API, PostgreSQL, River and
-compiled enrolled CLI gate. The fixture verifies actual Dockerfile, Railpack and
-prepared-static HTTP output, default-lease renewal, committed-response replay,
-failed/canceled builds, SIGTERM cleanup and independent workload survival.
-Its PostgreSQL check uses a successful query to the intended TCP database.
-Optional cached-image acquisition verifies original digest, ImageID and platform
-rather than fabricating or retagging registry evidence.
-
-The accepted build UI report at `63b6f21b41a095e64dfcb5e26b4be033988aa9d0`
-covers actual backend request/history/cancel behavior at 320, 390, 430 and 1440
-pixels. Its fixture does not run the admitted build or seed successful artifacts;
-the separate compiled-agent gate supplies build-to-artifact evidence. These are
-retained revision-specific reports, not application tests rerun by this
-documentation update or performance measurements. The full M1 journey and
-artifact deployment remain incomplete.
-
-At `904834bb41df350405776ec983529250f86f1e91`, accepted PostgreSQL and actual
-backend browser evidence covers public Git creation/update, atomic source
-references, immutable reads, authorization, CAS and complete current-settings
-review at 320, 390, 430 and 1440 pixels. It does not establish fetching, private
-source configuration, build execution, artifact handoff or a Git-to-HTTPS
-journey. Source settings are configuration, not proof of source ownership or
-built content.
-
-The accepted source-window repair `f25030f2` permits successful use after
-credential expiry only after transport cleanup and byte clearing are confirmed.
-Expiry during acquisition or receipt acceptance still prevents use. The
-protocol, journal and client evidence is component-level and revision-specific;
-no production build endpoint, controller or executor is installed at
-`08c1aaf0b6622648fd373a7e65c053bfc8a151eb`. No application tests were rerun
-for this documentation update.
-
-At `eef72d3b182acdb66f81c24787f2df8bd82abb85`, the retained acceptance report
-records 593 frontend tests in 61 files and three of three real-backend Chromium
-cases, no skips, across widths 320, 390, 430 and 1440. The cases verify actual
-HTTP and certificate-verified HTTPS, grants/revokes, withdrawal/disable,
-viewer 403, CAS conflicts and identical-request recovery. The accepted generated
-asset manifest is
-`f81fb43828a841933afcc6dc6983c34e342d97a2fb17255e5bc49a58f64dde19`;
-Go build and 145-route embedding verification followed asset generation.
-
-The retained `332b03942d7ada1cf094468620dfd069eadefcf1` report covers the merged
-Linux runtime gate with real HTTP-01, trusted fixture CA, renewal while the
-control plane is unavailable, response loss, holds and capability filtering.
-PostgreSQL store race and serial restore checks passed on that integration.
-The earlier checkpoint cleanup failure is not a pass. The accepted runtime
-report is tied to the repaired merged candidate and verified owned fixture
-cleanup. Production builds do not expose the fixture CA injection.
-
-The retained `12087174f7747f51f6d30f8314ef86c4183cb53d` report includes actual
-PostgreSQL store/application race and schema-restore checks for private source
-delivery. The retained `80e17670d8e5be3bcb461eea0ff62bd8182e735b` report includes
-actual PostgreSQL River-job and application checks for the optional adapter.
-All four new capabilities passed their required independent review lenses at
-their accepted candidates. These reports are source-revision evidence, not
-application tests rerun by this documentation worker or performance benchmarks.
-
-The earlier accepted integration report at
-`836a3a92b0ff32242bba94bf8cf0800dc638d96e` records passed PostgreSQL-backed
-race suites for store, domain, app, API, runner, runnerclient and hostingjobs,
-plus the real CLI dump/restore regression. It also records changed-code lint
-with zero findings, generation checks, vet, build and Go embedding of 145 routes.
-The [source/build schema tests](../internal/store/postgres_hosting_build_test.go)
-cover owning-schema functions and restore/replay; [proxy authority tests](../internal/store/postgres_hosting_proxy_authorization_test.go)
-cover persisted legacy-token authorization, revocation and expiry after waits.
-These are retained acceptance reports, not commands rerun for this documentation
-update or runtime throughput measurements.
-
-The persistence merge alone did not pass combined checks. Accepted evidence is
-the repaired `836a3a92` integration: additive 0048 binds 0047's functions to
-their owning schema and the regression fixtures account for build dependencies.
-Original migration SQL/checksums remain unchanged. Internal fixture queue/task
-callbacks are not a product build consumer.
-
-The earlier image-port/cleanup UI report remains associated with
-`1582114b6330341153bdce03c7f44f7d2961c7ff` and integration
-`e1eaf13aaaf3749c460f2c7ccfb3ff5c033d4a01`. Current routing UI acceptance uses
-the newer merged `eef72d3b` report above. Results and counts from these
-revisions are not added together.
-
-The execution [guide](hosting-execution.md) documents the accepted
-`make image-hosting-gate` coverage at integration
-`9822119a10d95c3108f4018bfaf8f516b0c88ca8`: real public-image preparation,
-tag freeze, ordinary HTTP, failed pull preservation, post-apply readiness
-restoration, preparation-response loss, control-plane restart and lease loss.
-The [deployment guide](hosting-image-deployments.md) defines the UI's role and
-request-recovery contract. At `69735f6ca34e68147b00cae4afbfe135b2b5fa1b`, the
-accepted UI handoff reports 552 unit tests in 58 files and real-backend Chromium
-coverage at widths 320, 390, 430 and 1440. These are revision-specific retained
-reports, not application tests rerun by this documentation worker.
-
-The [build guide](hosting-build-engine.md) and source runtime gate describe the
-accepted `e72a504863c4001d5e9c0e192c40aca971f05f93` evidence: real
-Dockerfile/Railpack/static builds and HTTP content, observed descendant CPU
-throttling and ancestor OOM events, expanded-output rejection, cancellation,
-owned cleanup and independent workload survival. This is enforcement and
-failure-path evidence, not a performance claim or a hostile-code sandbox.
-The engine requires Linux cgroup v2 and a fixed rootful daemon; its runtime
-fixture uses Docker 29.4.0 with the containerd image store.
-
-The [proxy guide](hosting-proxy-engine.md) and runtime gate describe the accepted
-`ea8bdc547f1ecda4d95739697eeb33efbdea942d` evidence: real Traefik/Pebble
-HTTP-01 issuance, trusted TLS, renewal, generation/ownership failures, rollback
-and coordinated state restoration with the CA offline. This does not validate
-the separate control-plane checkpoint's runtime execution or end-user HTTPS UI. DNS-01, wildcard and custom
-certificate support remain outside this component.
-
-Retained validation reports supplied with the accepted handoffs are
-revision-specific. At `45d7fa9a0bd20fb3733ac97c0bc93966c803dc4a`, the accepted
-WebUI report records 522 unit tests in 56 files and four Chromium browser cases
-covering widths 320, 390, 430 and 1440. At
-`751b41c4c7594fbc678f906583495325ae2be84c`, the secret-UI handoff records six
-browser cases and 501 unit tests. The destination repair at
-`169db49909035924b5ba8f71b0b90c0a807a5d64` records passed PostgreSQL migration
-0044 and race checks. These are retained handoff results, not reruns by this
-documentation worker; the linked source tests are durable descriptions of
-coverage, not archived execution logs.
-
-The repository uses the Go 1.26.10 compiler with Go 1.25 language support.
-River's pinned queue and migration contract is documented in the
-[hosting job guide](hosting-jobs.md). No evidence above completes A01, A05,
-A08 or A27. A36 requires the complete declared core workflows on one release
-candidate; results from different commits cannot be added together to satisfy it.
-The public-image path, adapters, internal persistence and proxy backend above
-are accepted only within their stated bounds. Private Git delivery, optional
-BuildID dispatch, proxy agent runtime and managed routing UI are accepted
-components at their cited revisions. Public HTTPS Git configuration and
-nonsecret protocol/journal/client infrastructure are now accepted as recorded
-above. The public controller, build UI and configured compiled-agent runtime are now
-accepted through the `df515f3c` checkpoint. Private Git configuration and
-artifact-deployment work outside this base remain unaccepted. There is no A01–A37 or M0–M4 completion claim, and R65 remains
-ongoing. Private configuration, private credential HTTP/runtime delivery,
-artifact handoff, build-output logs, public DNS/production ACME verification,
-managed runtime-secret delivery and continuous observations/runtime
-logs, automatic triggers, optional hosting approval and trusted restore
-resumption remain required for the full journey.
-
 ## Product areas
 
 The C references resolve in the specification's [source list](product-spec.md#13-sources). Source labels identify the reference capability, not proof of NeroCD support.
 
 | Product area | Upstream reference | Status and supported limits at baseline | Required fixtures | Package and deliberate difference |
 | --- | --- | --- | --- | --- |
-| Server management | C4, C11 | partial: enrolled server/default destination admission, project grants and immutable desired bindings through API/UI; SSH automation, actual host/runtime validation and full lifecycle planned | A01, A13, A14, A27; server-reenroll, host-key-mismatch, old-agent-capability | P02; persistent Go agent instead of upstream deployment over SSH |
+| Server management | C4, C11 | partial: enrolled server/default destination admission, project grants and immutable desired bindings through API/UI; SSH automation, onboarding-time host capability/readiness validation and full lifecycle planned | A01, A13, A14, A27; server-reenroll, host-key-mismatch, old-agent-capability | P02; persistent Go agent instead of upstream deployment over SSH |
 | Resource organization | C1, C10 | partial: shared project environments, image configuration and per-binding public-image mutation admission through API/UI; additional kinds, team ownership, legacy mappings and broader shared-resource concurrency planned | A08, A34, A35; legacy-membership-preservation | P01; preserve legacy IDs and explicit environment grouping |
 | Git sources | C2 | partial: public HTTPS configuration/build UI/API and controlled checkout under strict operator policy; private configuration/credential delivery, provider integration and complete source choices planned | A03, A09; provider matrix below | P04, P18; no-Git inputs need no artificial repository |
-| Builds | C2, C12, C13 | partial: production UI/API/River/controller and explicitly configured agent build public Git into immutable local artifacts; artifact deployment, logs, private sources and remote delivery planned | A02–A07; builder and architecture matrices below | P05; source-to-artifact evidence does not establish artifact deployment or the full Git-to-HTTPS journey |
+| Builds | C2, C12, C13 | partial: production UI/API/River/controller and explicitly configured agent build public Git into immutable local artifacts; same-host artifact deployment and typed build output accepted; private sources, remote delivery and shared cache planned | A02–A07; builder and architecture matrices below | P05; bounded public source-to-local-artifact/deployment evidence does not establish the complete hosting or workspace journey |
 | Inputs without Git | C2, C3, C8 | partial: public-image API/UI deployment freezes selected output without a repository; stored-Dockerfile product input, pasted Compose and catalog sources planned | A05, A15, A21; no-git-source | P04, P08, P11 |
 | Build placement | C4 | partial: controller dispatches to the exact configured enrolled build agent and fixed daemon; registry publication and dedicated-server image delivery planned | A07, A13; registry-push-pull, architecture-mismatch | P02, P05; tags never relocate stateful destinations |
 | Domains and HTTPS | C5 | partial: standalone Traefik TLS engine and authorized whole-generation backend/dispatch; explicitly capable agent execution and managed routing UI accepted with local test-CA fixtures; public DNS/production ACME and additional proxy modes remain unvalidated | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
-| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup; public traffic switch, push triggers and optional hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
+| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup; automatic public traffic switching, push triggers and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | planned: managed volumes, directories, managed files and external host files | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
 | Databases | C7 | planned: engine-specific lifecycle; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
 | Service catalog | C8 | planned: versioned definitions, stable generated values and explicit upgrades | A21, A22; catalog-version, component-upgrade | P11, P18; initial tested catalog expands through explicit version fixtures |
 | Variables and secrets | C16 | partial: runner_file execution plus encrypted project-managed versions, create/rotate/owner reveal/revoke and protected UI; managed execution delivery, broader scopes, recovery workflows and external providers planned | A03, A18, A35; scope-denial, redaction, key-recovery, revoked-version | P03; separate build/runtime/preview grants; external-provider versions explicit |
-| Ongoing operations | C9 | partial: run logs and runner evidence; continuous runtime observation and resource actions planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
+| Ongoing operations | C9 | partial: run logs, runner evidence and durable typed build output/viewer; continuous application-runtime observation/logs and broader resource actions planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
 | Recovery | C18–C20, C15 | partial: platform backup identity, image mutation/restore holds, bounded readiness-failure restoration and standalone proxy state recovery; trusted restored-ownership resumption and hosted data recovery planned | A25–A27, A37; resume-failure, new-resource-restore | P10; platform, database, storage and release rollback are distinct |
 | Automation | C21, C22 | planned: resource-bound schedules and durable notifications | A25, A30, A31; notification matrix below | P14; occurrence identity, DST, overlap and missed-run policies required |
 | Programmatic access | C1 | partial: native REST/CLI, generated client, image/secret/placement/retained-cleanup UI and proxy backend API; public source/build API/UI accepted within operator-policy bounds; private-source API and complete hosting CLI/MCP planned, managed routing UI accepted within fixture bounds, R65 ongoing | A35, A36; interface-parity, keyboard-mobile | P16; every interface uses the same authorized application operations |
@@ -267,10 +161,10 @@ integration is implemented or validated by this ledger.
 
 | Strategy | Reference | Status and planned slice | Limits and planned fixtures |
 | --- | --- | --- | --- |
-| Dockerfile | C2 | partial, public build path | Production controller/CLI acquires public HTTPS Git and runs the confined Dockerfile/context/target path into an immutable artifact. Build arguments/secrets and artifact deployment remain absent; build-dockerfile, A02, A06 |
-| Railpack | C12 | partial, public build path | Pinned 0.40.1 planner/frontend executes through public Git/controller/CLI with bounded helper and immutable artifact output; upstream Beta label retained. Private credentials, full language matrix and artifact deployment remain planned; build-railpack, A03 |
+| Dockerfile | C2 | partial, public build path | Production controller/CLI acquires public HTTPS Git and runs the confined Dockerfile/context/target path into an immutable artifact. Same-host exact artifact deployment and typed output are accepted; build arguments/secrets and remote publication remain planned; build-dockerfile, A02, A06 |
+| Railpack | C12 | partial, public build path | Pinned 0.40.1 planner/frontend executes through public Git/controller/CLI with bounded helper and immutable artifact output; upstream Beta label retained. Same-host deployment and typed output are accepted; private credentials, full language matrix and remote publication remain planned; build-railpack, A03 |
 | Nixpacks | C2 | planned, separate M3 adapter | Never infer support from Railpack; version/language fixtures; build-nixpacks |
-| Prebuilt static files | C13 | partial, public build path | Public Git/controller/CLI packages selected prepared assets and opt-in SPA fallback with pinned nginx and retained receipts; no frontend compilation or artifact deployment handoff; build-static, A04 |
+| Prebuilt static files | C13 | partial, public build path | Public Git/controller/CLI packages selected prepared assets and opt-in SPA fallback with pinned nginx and retained receipts; same-host artifact deployment is accepted; frontend compilation remains planned; build-static, A04 |
 | Compiled static/SPA | C13 | planned, M1 | Explicit build command and output directory; baked configuration requires rebuild; build-spa, A04 |
 | Compose build sections | C3 | planned, P05/P08 | Resolve all required images before mutation; initialization and optional-component semantics; build-compose, A15, A16 |
 | Dedicated builder | C4 | planned, M3 | Authorized registry delivery, cache identity, architecture/pull validation; build-remote, A07 |
@@ -281,7 +175,7 @@ Linux platform on its fixed native daemon; package receipts and the real fixture
 cover that bounded local output. This does not claim a complete linux/amd64 and
 linux/arm64 build-to-destination matrix or cross-host transfer. Each product
 strategy still needs explicit architecture/version fixtures, credentials,
-cache/retention controls and integrated build-to-deploy evidence. Disk mode is
+shared cache/retention controls and cross-host build-to-deploy evidence. Disk mode is
 monitored with no finite overshoot guarantee, not a quota. Cancellation,
 CPU/memory enforcement and expanded-output limits have bounded engine evidence
 at the accepted build candidate cited above.
@@ -303,8 +197,8 @@ DNS-01/wildcards, custom certificate rotation and DNS credential protection
 remain planned. Route authorization and generation/hold ownership have backend
 coverage using backend fixtures and the accepted combined Linux runtime and
 browser gates. The managed image-to-routing path has isolated HTTP/trusted-HTTPS
-coverage; this does not validate public DNS or production ACME. Source-build
-handoff, continuous monitoring and additional certificate/proxy modes remain required.
+coverage; this does not validate public DNS or production ACME. Same-host public source-build handoff and explicit managed route selection are accepted.
+Continuous monitoring and additional certificate/proxy modes remain required.
 A server's existing external proxy network does not prove managed routing
 support, and the image-deployment UI's loopback HTTP result is not an HTTPS URL.
 
