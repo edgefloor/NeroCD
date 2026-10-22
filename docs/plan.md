@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`bdd5e0168655edd31df48a7818a560a49876147e`, 2026-10-22, through migration 0052.
+`66b58845dab1fdee6f8b12809f0434a2a94326ac`, 2026-10-23, through migration 0053.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,10 +29,11 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0052, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0053, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding and host readiness, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Scoped managed build/runtime delivery, broader variable scopes, provider credentials and key recovery |
-| Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Deployment admission, protected delivery, workload injection and UI |
+| Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Runtime consumer, CLI opt-in, live container application and UI |
+| Admission and protected delivery | Migration 0053 admission and protected runner endpoint; metadata authorization/audit before decryption, bounded original window; journal format 8 persists only nonsecret references and delivery ID | Runtime wiring and actual Docker/API/UI proof |
 | Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack, owner grant selection and Dockerfile UI through exact artifact deployment and test-CA HTTPS | Automatic-builder private UI qualification, provider integrations, compiled static, remote publication and hosting cache |
 | Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
 | Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Runtime application logs, continuous status, resource actions and terminals |
@@ -70,8 +71,8 @@ exact local artifact deployment and test-CA HTTPS. See the
 A03 remains partial. The private browser fixture does not qualify an automatic
 builder or provider integrations, and test-CA HTTPS is not production ACME.
 
-The next H1 slice is runtime-configuration admission and managed-secret delivery,
-followed by runtime application logs and continuous status. This serves R29–R32,
+The next H1 slice is runtime wiring and actual Docker/API/UI proof, followed by
+runtime application logs and continuous status. This serves R29–R32,
 R58–R60 and the applicable hosting acceptance scenarios, including A28 and A29.
 Use existing resources, Go application authorization, managed-secret versions,
 PostgreSQL/River and fenced runner execution. Do not require a collaboration
@@ -79,8 +80,9 @@ Task, Workspace, VM or general grant platform.
 
 The accepted desired-configuration foundation fixes explicit version selection,
 current owner writes/viewer reads, generation compare-and-swap and idempotent
-requests. Freeze deployment admission, rotation/revocation, redaction, replay and
-cleanup contracts before accepting delivery. Define how configuration changes affect redeploy/restart and
+requests. Admission and protected delivery now enforce their accepted authority
+and replay contracts. Verify runtime rotation/revocation, redaction and cleanup
+before accepting workload application. Define how configuration changes affect redeploy/restart and
 retained rollback. Keep build, deployment and ongoing runtime logs distinct,
 with bounded reads, reconnect gaps and stale observation status. Verify failure,
 response loss, canceled authority and preservation of the serving release.
@@ -92,8 +94,18 @@ It saves explicit public nonsecret literals and exact managed-secret version
 references without decrypting or injecting values, and has no UI.
 The Docker protected-environment helper `8f33c86126f3eb52492490b3e7e3a11962a27e65`,
 integrated at `8e6c9c28a91f6c76981b683f444886d9ed7a193b`, remains unwired.
-Admission work, including allocated migration 0053, delivery and runtime work
-remain unaccepted. No accepted path delivers these values to workloads. Broader value
+Admission source `7c51350083f6fa448e8043e32158ecf9427be6d6` is accepted at
+`1ddfb1f43416ff8109c31a852963942448035583`, including migration 0053.
+Protected delivery source `c7d3a0d5a4fdb00bf9b2ab5e6bd0cdfd05e6b30e` and
+journal source `804d4f460c6f106993c0a223f36eb42831f6a7f2` are accepted at
+`66b58845dab1fdee6f8b12809f0434a2a94326ac`.
+Delivery checks exact prepared authority, current actor, configuration and secret
+versions, commits a metadata-only audit before decrypting, and retains the original
+bounded delivery window on retry. Journal format 8 persists only nonsecret
+references and delivery ID; older formats retain legacy behavior.
+The runtime consumer, CLI opt-in and live container application remain unimplemented.
+The reviewed configuration UI candidate remains unaccepted pending integration.
+No accepted path applies these values to workloads. Broader value
 inheritance, provider delivery, SSH, webhooks and production TLS qualification
 remain separate hosting work.
 

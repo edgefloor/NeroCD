@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`bdd5e0168655edd31df48a7818a560a49876147e`, 2026-10-22.
+`66b58845dab1fdee6f8b12809f0434a2a94326ac`, 2026-10-23.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -58,6 +58,8 @@ artifact deployment, build output and private Git control-plane contracts:
 | Private HTTPS Git runtime | Source `4642dc413cc21be955fd9639d12fdf0606735cfc`, accepted with UI at `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; [private runtime fixture](../internal/runnerruntime/private_git_runtime_integration_test.go), [operator setup](hosting-build-runtime.md#enable-private-https-git) | Explicit private capability/configuration; real CLI Dockerfile and Railpack, exact credential-response retry, redaction/cleanup, same-host artifact deployment and test-CA HTTPS; public regression 51.44s, private cases 76.59s |
 | Private HTTPS Git WebUI | Source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`, accepted `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; [private browser test](../web/app/tests/browser/private-git-build-deployments.spec.ts), [workflow](hosting-git-resources.md#request-a-private-https-git-build) | Owner creates a new reference grant, recovers an identical retry, selects its ID, builds Dockerfile, reads typed output, deploys exact artifact and verifies test-CA HTTPS; keyboard, 320/390/430/1440px, viewer 403 and no reveal; browser 25.0s/Go 34.03s. Public browser regression 22.2s/Go 30.63s; no automatic-builder private UI qualification or complete A03 |
 | Desired runtime configuration | Source `5b435d4e8e35562ab6c9a7116a6b0b5f16e85751`, accepted `bdd5e0168655edd31df48a7818a560a49876147e`; [service](../internal/app/hosting_runtime_config_service.go), [API tests](../internal/api/hosting_runtime_config_handlers_test.go) | Migration 0052; `GET`/`PUT /api/v1/resources/{id}/runtime-configuration` for application image/Git resources; generation compare-and-swap and idempotency; explicit public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads; no decryption, injection or UI |
+| Runtime-configuration admission | Source `7c51350083f6fa448e8043e32158ecf9427be6d6`, accepted `1ddfb1f43416ff8109c31a852963942448035583`; [admission persistence](../internal/store/postgres_hosting_runtime_environment.go) | Migration 0053; prepares exact configuration authority for deployment; does not apply values to containers |
+| Protected runtime-environment delivery and journal | Delivery source `c7d3a0d5a4fdb00bf9b2ab5e6bd0cdfd05e6b30e`, journal source `804d4f460c6f106993c0a223f36eb42831f6a7f2`, accepted `66b58845dab1fdee6f8b12809f0434a2a94326ac`; [delivery service](../internal/app/hosting_runtime_environment_delivery.go), [endpoint tests](../internal/api/hosting_runtime_environment_handlers_test.go) | `POST /api/v1/runners/hosting/runtime-environment` checks exact prepared authority and current actor/configuration/secret versions, commits metadata audit before decryption and preserves the original bounded window; journal format 8 persists only nonsecret references and delivery ID; older formats remain legacy; no runtime consumer, CLI opt-in or live container application |
 
 The desired-configuration foundation passed actual PostgreSQL and focused race
 checks, 718 frontend tests, the 163-route contract, generated-output checks and
@@ -66,8 +68,15 @@ These retained results do not establish all-feature test coverage.
 The Docker protected-environment helper source
 `8f33c86126f3eb52492490b3e7e3a11962a27e65`, integrated at
 `8e6c9c28a91f6c76981b683f444886d9ed7a193b`, remains unwired.
-Admission work with allocated migration 0053, delivery and runtime work remain
-unaccepted. Desired configuration does not yet reach workloads.
+Migration 0053 admission and protected delivery are accepted at the revisions above.
+The runtime consumer, CLI opt-in and live container application remain unimplemented.
+The reviewed configuration UI candidate remains unaccepted pending integration.
+Desired configuration does not yet reach workloads.
+
+Retained combined checks at `66b58845dab1fdee6f8b12809f0434a2a94326ac` passed
+focused race checks, 29 PostgreSQL race tests in 35.812 seconds, vet, the 164-route
+contract, lint, Go build, generated API types and route-generation checks. These foundation checks
+do not establish end-to-end environment application, production ACME or full parity.
 
 Reviewed source `f89e019da9a2641da9dc36592fd54908e896b003` passed unit/race, PostgreSQL authority/expiry/replay/capability and transport checks. Accepted integration separately passed focused race/vet, 161-route contract, frontend/embed checks and a 43.35-second public CLI build-to-HTTPS fixture with failed-build/missing-image preservation, lost receipts and protected cleanup. The HTTPS fixture uses a trusted test CA; it established public-path regression coverage at that checkpoint. Later private runtime/UI evidence is recorded above; production ACME and complete A03 remain unqualified.
 

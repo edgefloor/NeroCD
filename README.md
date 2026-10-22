@@ -24,10 +24,10 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`bdd5e0168655edd31df48a7818a560a49876147e`, 2026-10-22. Existing Go API/application services, PostgreSQL, River execution,
+`66b58845dab1fdee6f8b12809f0434a2a94326ac`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
-- PostgreSQL state, checked migrations through 0052, bootstrap administration,
+- PostgreSQL state, checked migrations through 0053, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -41,7 +41,12 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 - Desired runtime configuration through resource GET/PUT APIs, with generation
   compare-and-swap, idempotent requests, explicit public nonsecret literals and
   exact managed-secret version references. Current owners write and viewers read.
-  Migration 0052 is accepted; decryption, workload injection and UI are not.
+  Migration 0052 stores desired input; migration 0053 adds accepted admission.
+  Protected runner delivery checks exact prepared authority and current actor,
+  configuration and secret versions, then audits metadata before decryption.
+  Retries retain the original bounded delivery window.
+  Journal format 8 stores only nonsecret references and delivery identity.
+  Runtime consumption, CLI opt-in, live container application and UI are not shipped.
 - [Public registry-image deployment](docs/hosting-execution.md) through the
   API, transactional River dispatch and explicitly enabled agent. It records
   exact image/platform/daemon identity, ordinary HTTP readiness, per-release
@@ -73,8 +78,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. The next H1 work is runtime-configuration admission and managed-secret
-delivery, followed by runtime logs and continuous status. Other gaps include onboarding,
+and extended compatibility. The next H1 work is runtime wiring and actual Docker/API/UI proof, followed by
+runtime logs and continuous status. Other gaps include onboarding,
 broader credentials, trusted triggers, deployment policy, production TLS
 qualification, broader Compose/storage, databases, backups,
 restores, previews, terminals, schedules and notifications.
