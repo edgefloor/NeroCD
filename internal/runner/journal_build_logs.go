@@ -156,7 +156,7 @@ func (j *AttemptJournal) AckBuildCompletion(id string, ack hostingbuildprotocol.
 	previous := j.state
 	j.state.Build = nil
 	for _, entry := range previous.Build {
-		if entry.ID != id && !(entry.Phase == "attempt_intent" && buildJournalAuthority(entry) == r.Authority) {
+		if entry.ID != id && (entry.Phase != "attempt_intent" || buildJournalAuthority(entry) != r.Authority) {
 			j.state.Build = append(j.state.Build, entry)
 		}
 	}

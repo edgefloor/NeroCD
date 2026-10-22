@@ -53,13 +53,14 @@ type buildCheckout func(context.Context, domain.HostingBuildSnapshot, string, st
 // Reconcile must finish before Execute. Host and journal locks prevent concurrent
 // effects; an unresolved intent blocks another execution of the same build.
 type BuildExecutor struct {
-	config   BuildConfig
-	client   BuildPhaseClient
-	journal  *runner.AttemptJournal
-	engine   localBuildEngine
-	checkout buildCheckout
-	lock     func(string, string) (func(), error)
-	observe  func(context.Context) (string, error)
+	config     BuildConfig
+	client     BuildPhaseClient
+	journal    *runner.AttemptJournal
+	engine     localBuildEngine
+	checkout   buildCheckout
+	lock       func(string, string) (func(), error)
+	observe    func(context.Context) (string, error)
+	logSecrets []runner.SecretMaterial
 }
 
 // ComputeBuildToolchainIdentity hashes a versioned inventory without local paths.
@@ -155,6 +156,9 @@ func NewBuildExecutor(c BuildConfig, client BuildPhaseClient, journal *runner.At
 	if client == nil || journal == nil {
 		return nil, errors.New("build client and journal required")
 	}
+	if _, ok := client.(buildLogClient); !ok {
+		return nil, errors.New("typed build log client required")
+	}
 	engine, err := validatedBuildEngine(c)
 	if err != nil {
 		return nil, err
@@ -243,6 +247,10 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > e.config.Policy.Limits.Deadline || hostingbuildprotocol.ValidateAuthority(a) != nil || buildAuthority(at, a.BuildID) != a || at.CreatedAt.IsZero() || !at.ExpiresAt.After(at.CreatedAt) {
 		return errors.New("bounded build context and exact attempt required")
 	}
+	output, err := newBuildOutputAdapter(e, a, at)
+	if err != nil {
+		return err
+	}
 	unlock, err := e.lock(e.config.SourceRoot, a.BuildID)
 	if err != nil {
 		return err
@@ -288,6 +296,9 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	}
 	if response.Acknowledgment != nil || response.Build.State != "sourcing" {
 		return errors.New("source begin response mismatch")
+	}
+	if err = output.Sink(ctx, hostingbuild.Output{Component: hostingbuild.OutputBuild, Stream: hostingbuild.OutputSystem, Data: []byte("Build source acquisition started\n")}); err != nil {
+		return err
 	}
 	operation, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -408,8 +419,11 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 		if live.Build.DaemonID != daemon || live.Build.State != "building" {
 			return errors.New("build preparation lost")
 		}
-		result, buildErr := e.engine.Build(c, buildEngineRequest(s, path, daemon))
+		result, buildErr := e.engine.(buildOutputEngine).BuildWithOutput(c, buildEngineRequest(s, path, daemon), output.Sink)
 		if buildErr != nil {
+			if errors.Is(buildErr, hostingbuild.ErrOutputSink) || output.failed {
+				return errors.New("build output delivery unresolved; intent retained")
+			}
 			if errors.Is(buildErr, hostingbuild.ErrCleanupUnconfirmed) {
 				return errors.New("local build cleanup unresolved; intent retained")
 			}
@@ -427,6 +441,9 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	watchMu.Unlock()
 	if err != nil && err != buildFailed || observerErr != nil || ctx.Err() != nil {
 		return errors.New("build execution or cleanup unresolved; journal retained")
+	}
+	if finishErr := output.Finish(ctx); finishErr != nil {
+		return finishErr
 	}
 	artifact := buildArtifact(built, current)
 	completion := hostingbuildprotocol.Completion{State: "succeeded", Artifact: &artifact}
@@ -464,10 +481,7 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	if err = buildResultAcknowledged(r, entry); err != nil {
 		return err
 	}
-	if err = e.journal.AckBuild(id); err != nil {
-		return err
-	}
-	if err = e.journal.AckBuild(intentID); err != nil {
+	if err = e.journal.AckBuildCompletion(id, *r.Acknowledgment); err != nil {
 		return err
 	}
 	if completion.State != "succeeded" {

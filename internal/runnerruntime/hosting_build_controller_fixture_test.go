@@ -63,6 +63,8 @@ type controllerBuildFixture struct {
 	target                                                       app.ServerDetail
 	generic, renewals, heartbeats                                atomic.Int32
 	loseCompletion                                               atomic.Bool
+	loseLogResponse                                              atomic.Bool
+	lostLogResponses                                             atomic.Int32
 	mu                                                           sync.Mutex
 	initialExpiries                                              map[string]time.Time
 	containers                                                   []string
@@ -128,7 +130,26 @@ func newControllerBuildFixture(t *testing.T, capabilities ...string) *controller
 		case "/api/v1/runners/heartbeat":
 			f.heartbeats.Add(1)
 		}
-		if r.URL.Path == "/api/v1/runners/builds/complete" || r.URL.Path == "/api/v1/runners/claim" {
+		if r.URL.Path == "/api/v1/runners/builds/complete" {
+			raw, e := io.ReadAll(r.Body)
+			if e != nil {
+				t.Error(e)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+			var request struct {
+				Authority domain.HostingBuildAuthority `json:"authority"`
+			}
+			if json.Unmarshal(raw, &request) != nil {
+				t.Error("invalid completion body")
+				return
+			}
+			var logs, receipts int
+			if e = f.db.QueryRow(r.Context(), `SELECT (SELECT count(*) FROM run_logs WHERE run_id=$1),(SELECT count(*) FROM hosting_build_log_receipts WHERE run_id=$1)`, request.Authority.RunID).Scan(&logs, &receipts); e != nil || logs == 0 || logs != receipts {
+				t.Errorf("completion overtook durable output: rows=%d receipts=%d err=%v", logs, receipts, e)
+			}
+		}
+		if r.URL.Path == "/api/v1/runners/builds/complete" || r.URL.Path == "/api/v1/runners/claim" || r.URL.Path == "/api/v1/runners/builds/events" {
 			recorded := httptest.NewRecorder()
 			handler.ServeHTTP(recorded, r)
 			if r.URL.Path == "/api/v1/runners/claim" && recorded.Code == http.StatusOK {
@@ -140,6 +161,16 @@ func newControllerBuildFixture(t *testing.T, capabilities ...string) *controller
 				}
 			}
 			if r.URL.Path == "/api/v1/runners/builds/complete" && recorded.Code == http.StatusOK && f.loseCompletion.CompareAndSwap(true, false) {
+				connection, _, e := w.(http.Hijacker).Hijack()
+				if e != nil {
+					t.Error(e)
+					return
+				}
+				_ = connection.Close()
+				return
+			}
+			if r.URL.Path == "/api/v1/runners/builds/events" && recorded.Code == http.StatusOK && f.loseLogResponse.CompareAndSwap(true, false) {
+				f.lostLogResponses.Add(1)
 				connection, _, e := w.(http.Hijacker).Hijack()
 				if e != nil {
 					t.Error(e)

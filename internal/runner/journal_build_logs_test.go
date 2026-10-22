@@ -58,7 +58,7 @@ func TestBuildLogJournalCursorReopenAndExactSettlement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() { _ = j.Close() }()
 	next, err := j.AppendBuildLog(intent.Attempt, intent.BuildID, "build", "system", "next")
 	if err != nil || next.Batch.Events[0].Sequence != 2 {
 		t.Fatal("restart reused sequence", err)

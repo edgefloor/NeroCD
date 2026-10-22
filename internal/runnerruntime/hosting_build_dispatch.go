@@ -39,13 +39,16 @@ func validateBuildRuntimeConfig(c Config) error {
 }
 func reconcileRuntimeBuilds(ctx context.Context, c Config, journal *runner.AttemptJournal) (*BuildExecutor, error) {
 	if c.Build == nil {
-		if len(journal.Snapshot().Build) > 0 {
+		if snapshot := journal.Snapshot(); len(snapshot.Build)+len(snapshot.BuildLogs)+len(snapshot.BuildLogCursors) > 0 {
 			return nil, errors.New("build journal requires explicit build configuration")
 		}
 		return nil, nil
 	}
 	executor, err := NewBuildExecutor(*c.Build, runnerclient.New(c.Server, c.Token), journal)
 	if err != nil {
+		return nil, err
+	}
+	if err = executor.setBuildLogSecrets(c.Token); err != nil {
 		return nil, err
 	}
 	if err = executor.Reconcile(ctx); err != nil {
