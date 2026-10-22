@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`, 2026-10-22, through migration 0051.
+`bdd5e0168655edd31df48a7818a560a49876147e`, 2026-10-22, through migration 0052.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,9 +29,10 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0051, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0052, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding and host readiness, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Scoped managed build/runtime delivery, broader variable scopes, provider credentials and key recovery |
+| Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Deployment admission, protected delivery, workload injection and UI |
 | Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack, owner grant selection and Dockerfile UI through exact artifact deployment and test-CA HTTPS | Automatic-builder private UI qualification, provider integrations, compiled static, remote publication and hosting cache |
 | Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
 | Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Runtime application logs, continuous status, resource actions and terminals |
@@ -69,23 +70,30 @@ exact local artifact deployment and test-CA HTTPS. See the
 A03 remains partial. The private browser fixture does not qualify an automatic
 builder or provider integrations, and test-CA HTTPS is not production ACME.
 
-The next proposed H1 slice is runtime variables and managed-secret delivery,
+The next H1 slice is runtime-configuration admission and managed-secret delivery,
 followed by runtime application logs and continuous status. This serves R29–R32,
 R58–R60 and the applicable hosting acceptance scenarios, including A28 and A29.
 Use existing resources, Go application authorization, managed-secret versions,
 PostgreSQL/River and fenced runner execution. Do not require a collaboration
 Task, Workspace, VM or general grant platform.
 
-Before implementation, freeze effective runtime configuration identity, explicit
-version selection, authorization, rotation/revocation, redaction, replay and
-cleanup contracts. Define how configuration changes affect redeploy/restart and
+The accepted desired-configuration foundation fixes explicit version selection,
+current owner writes/viewer reads, generation compare-and-swap and idempotent
+requests. Freeze deployment admission, rotation/revocation, redaction, replay and
+cleanup contracts before accepting delivery. Define how configuration changes affect redeploy/restart and
 retained rollback. Keep build, deployment and ongoing runtime logs distinct,
 with bounded reads, reconnect gaps and stale observation status. Verify failure,
 response loss, canceled authority and preservation of the serving release.
 
-Runtime-configuration persistence/API work, including allocated migration 0052,
-is in progress on an unaccepted candidate. The accepted inventory remains 0051.
-This work does not yet deliver environment values to workloads. Broader value
+Desired runtime-configuration persistence/API source
+`5b435d4e8e35562ab6c9a7116a6b0b5f16e85751` is accepted at
+`bdd5e0168655edd31df48a7818a560a49876147e`, including migration 0052.
+It saves explicit public nonsecret literals and exact managed-secret version
+references without decrypting or injecting values, and has no UI.
+The Docker protected-environment helper `8f33c86126f3eb52492490b3e7e3a11962a27e65`,
+integrated at `8e6c9c28a91f6c76981b683f444886d9ed7a193b`, remains unwired.
+Admission work, including allocated migration 0053, delivery and runtime work
+remain unaccepted. No accepted path delivers these values to workloads. Broader value
 inheritance, provider delivery, SSH, webhooks and production TLS qualification
 remain separate hosting work.
 

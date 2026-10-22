@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`, 2026-10-22.
+`bdd5e0168655edd31df48a7818a560a49876147e`, 2026-10-22.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -57,6 +57,17 @@ artifact deployment, build output and private Git control-plane contracts:
 | Private HTTPS Git control plane | Source `f89e019da9a2641da9dc36592fd54908e896b003`, accepted `edf8f14c8262c896e4c886088f8058878d77e965`; [grant/API tests](../internal/store/postgres_hosting_source_grant_test.go), [capability tests](../internal/store/postgres_hosting_private_capability_test.go), [credential client tests](../internal/runnerclient/hosting_source_credential_test.go) | Private HTTPS configuration, owner-created/revoked source grants, gated build admission/dispatch and typed credential endpoint/client; final expiry, exact replay and current capability checked. At that checkpoint compiled CLI refused private capability; current runtime/UI additions are below; complete A03 remains partial |
 | Private HTTPS Git runtime | Source `4642dc413cc21be955fd9639d12fdf0606735cfc`, accepted with UI at `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; [private runtime fixture](../internal/runnerruntime/private_git_runtime_integration_test.go), [operator setup](hosting-build-runtime.md#enable-private-https-git) | Explicit private capability/configuration; real CLI Dockerfile and Railpack, exact credential-response retry, redaction/cleanup, same-host artifact deployment and test-CA HTTPS; public regression 51.44s, private cases 76.59s |
 | Private HTTPS Git WebUI | Source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`, accepted `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; [private browser test](../web/app/tests/browser/private-git-build-deployments.spec.ts), [workflow](hosting-git-resources.md#request-a-private-https-git-build) | Owner creates a new reference grant, recovers an identical retry, selects its ID, builds Dockerfile, reads typed output, deploys exact artifact and verifies test-CA HTTPS; keyboard, 320/390/430/1440px, viewer 403 and no reveal; browser 25.0s/Go 34.03s. Public browser regression 22.2s/Go 30.63s; no automatic-builder private UI qualification or complete A03 |
+| Desired runtime configuration | Source `5b435d4e8e35562ab6c9a7116a6b0b5f16e85751`, accepted `bdd5e0168655edd31df48a7818a560a49876147e`; [service](../internal/app/hosting_runtime_config_service.go), [API tests](../internal/api/hosting_runtime_config_handlers_test.go) | Migration 0052; `GET`/`PUT /api/v1/resources/{id}/runtime-configuration` for application image/Git resources; generation compare-and-swap and idempotency; explicit public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads; no decryption, injection or UI |
+
+The desired-configuration foundation passed actual PostgreSQL and focused race
+checks, 718 frontend tests, the 163-route contract, generated-output checks and
+build checks at accepted integration `bdd5e0168655edd31df48a7818a560a49876147e`.
+These retained results do not establish all-feature test coverage.
+The Docker protected-environment helper source
+`8f33c86126f3eb52492490b3e7e3a11962a27e65`, integrated at
+`8e6c9c28a91f6c76981b683f444886d9ed7a193b`, remains unwired.
+Admission work with allocated migration 0053, delivery and runtime work remain
+unaccepted. Desired configuration does not yet reach workloads.
 
 Reviewed source `f89e019da9a2641da9dc36592fd54908e896b003` passed unit/race, PostgreSQL authority/expiry/replay/capability and transport checks. Accepted integration separately passed focused race/vet, 161-route contract, frontend/embed checks and a 43.35-second public CLI build-to-HTTPS fixture with failed-build/missing-image preservation, lost receipts and protected cleanup. The HTTPS fixture uses a trusted test CA; it established public-path regression coverage at that checkpoint. Later private runtime/UI evidence is recorded above; production ACME and complete A03 remain unqualified.
 

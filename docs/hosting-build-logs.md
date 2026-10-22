@@ -8,6 +8,13 @@ Generic runner event and scalar log endpoints now reject build tasks, including
 nested build authority fields. A client must use the typed endpoint for build
 output; generic event acknowledgments cannot settle a build log journal.
 
+Public and granted private HTTPS Git builds use this typed output contract.
+Accepted private runtime/UI integration
+`4ba9fcac1b484244cb2c662e53f588c2dce6b71e` covers compiled CLI Dockerfile and
+Railpack builds and a Dockerfile browser workflow. Credential fetching uses a
+separate protected endpoint, not the build-log transport. See the
+[delivery contract](hosting-build-log-delivery.md).
+
 ## Ingest and acknowledgment
 
 The request has `authority` containing `build_id`, `run_id`, `lease_id`, `attempt`,

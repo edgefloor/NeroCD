@@ -1,7 +1,7 @@
 # Hosting build output delivery
 
-The public Git build executor sends engine output through the typed
-`POST /api/v1/runners/builds/events` endpoint. It requires both
+The public and granted private HTTPS Git build executor sends engine output
+through the typed `POST /api/v1/runners/builds/events` endpoint. It requires both
 `BuildWithOutput` and `BuildEvents` before it acquires source or starts a build.
 Local artifact deployment keeps its existing engine call.
 
@@ -11,7 +11,13 @@ The runtime copies its authenticated token into memory and redacts its raw,
 base64, base64url, and hexadecimal forms. The token is bounded to 4096 bytes.
 The adapter accepts at most 16 known materials, each at most 4096 bytes, and
 keeps separate streaming state for the nine component and stream combinations.
-It does not obtain private Git credentials or secrets from providers.
+Typed output transport does not fetch credentials. The accepted private HTTPS
+runtime fetches attempt-scoped Basic/PAT credentials through a separate protected
+endpoint and registers them for redaction before checkout. See
+[private HTTPS setup](hosting-build-runtime.md#enable-private-https-git).
+Accepted integration `4ba9fcac1b484244cb2c662e53f588c2dce6b71e` covers compiled
+CLI Dockerfile and Railpack builds; its browser workflow covers Dockerfile only.
+Provider credential integrations remain separate work.
 Unknown secrets printed by source code or tools can appear in output.
 
 Each framer retains at most three redacted UTF-8 tail bytes between callbacks.
