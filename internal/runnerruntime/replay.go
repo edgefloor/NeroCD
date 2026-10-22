@@ -309,31 +309,41 @@ func reconcileRunnerJournal(server, token string, journal *runner.AttemptJournal
 	return reconcileRunnerJournalWithCounters(server, token, journal, &runnerOperationalCounters{})
 }
 
-func reconcileRunnerJournalWithCounters(server, token string, journal *runner.AttemptJournal, operational *runnerOperationalCounters) error {
+func reconcileRunnerJournalWithCounters(server, token string, journal *runner.AttemptJournal, operational *runnerOperationalCounters, parents ...context.Context) error {
+	parent := replayParent(parents)
+	if parent.Err() != nil {
+		return parent.Err()
+	}
 	snapshot := journal.Snapshot()
 	// Provenance is replayed before any renewing, heartbeating, or claiming.
 	// Its request contains immutable evidence and must survive response loss
 	// without another checkout or source-policy evaluation.
 	for _, pending := range snapshot.Provenance {
-		lease, fenced, err := probeReplayAuthority(server, token, pending.Attempt)
+		lease, fenced, err := probeReplayAuthority(server, token, pending.Attempt, parent)
 		if err != nil {
 			return err
 		}
 		if fenced {
+			if parent.Err() != nil {
+				return parent.Err()
+			}
 			if err := journal.AckProvenance(pending.ID); err != nil {
 				return err
 			}
 			fmt.Printf("journal_reconciliation=stale_provenance attempt=%d\n", pending.Attempt.Attempt)
 			continue
 		}
-		if err := probeProvenancePlan(server, token, pending); err != nil {
+		if err := probeProvenancePlan(server, token, pending, parent); err != nil {
 			return err
 		}
-		supervisor := newAttemptSupervisor(lease, operational)
+		supervisor := newAttemptSupervisorFrom(parent, lease, operational)
 		err = replayJournalProvenance(server, token, supervisor, pending)
 		supervisor.Close()
 		if err != nil {
 			return err
+		}
+		if parent.Err() != nil {
+			return parent.Err()
 		}
 		if err := journal.AckProvenance(pending.ID); err != nil {
 			return err
@@ -341,20 +351,23 @@ func reconcileRunnerJournalWithCounters(server, token string, journal *runner.At
 	}
 	attempts := groupReplayAttempts(snapshot)
 	for _, pending := range attempts {
-		lease, fenced, err := probeReplayAuthority(server, token, pending.authority)
+		lease, fenced, err := probeReplayAuthority(server, token, pending.authority, parent)
 		if err != nil {
 			return err
 		}
 		if fenced {
 			// A bounded read-only request made with the exact attempt capability is
 			// the only startup outcome that authorizes durable stale-entry removal.
+			if parent.Err() != nil {
+				return parent.Err()
+			}
 			if err := journal.DiscardAttempt(pending.authority); err != nil {
 				return err
 			}
 			fmt.Printf("journal_reconciliation=fenced attempt=%d\n", pending.authority.Attempt)
 			continue
 		}
-		supervisor := newAttemptSupervisor(lease, operational)
+		supervisor := newAttemptSupervisorFrom(parent, lease, operational)
 		err = reconcileAttempt(server, token, supervisor, pending)
 		supervisor.Close()
 		if err != nil {
@@ -363,6 +376,9 @@ func reconcileRunnerJournalWithCounters(server, token string, journal *runner.At
 			// prevent heartbeat/claim traffic until a later startup can reconcile it.
 			return err
 		}
+		if parent.Err() != nil {
+			return parent.Err()
+		}
 		if err := journal.DiscardAttempt(pending.authority); err != nil {
 			return err
 		}
@@ -370,8 +386,8 @@ func reconcileRunnerJournalWithCounters(server, token string, journal *runner.At
 	return nil
 }
 
-func probeProvenancePlan(server, token string, pending runner.JournalProvenance) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func probeProvenancePlan(server, token string, pending runner.JournalProvenance, parents ...context.Context) error {
+	ctx, cancel := context.WithTimeout(replayParent(parents), 5*time.Second)
 	defer cancel()
 	plan, err := runnerclient.New(server, token).DeploymentPlan(ctx, runnerclient.DeploymentAuthority{DeploymentID: pending.DeploymentID, RunID: pending.Attempt.RunID, LeaseID: pending.Attempt.LeaseID, Attempt: pending.Attempt.Attempt, Fence: pending.Attempt.Fence})
 	if err != nil {
@@ -404,8 +420,8 @@ func replayJournalProvenance(server, token string, supervisor *attemptSupervisor
 	return nil
 }
 
-func probeReplayAuthority(server, token string, authority runner.AttemptIdentity) (domain.RunLease, bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func probeReplayAuthority(server, token string, authority runner.AttemptIdentity, parents ...context.Context) (domain.RunLease, bool, error) {
+	ctx, cancel := context.WithTimeout(replayParent(parents), 5*time.Second)
 	defer cancel()
 	lease, err := runnerclient.New(server, token).Lease(ctx, runnerclient.Authority{LeaseID: authority.LeaseID, Attempt: authority.Attempt, Fence: authority.Fence})
 	if runnerHTTPStatus(err, 404) {

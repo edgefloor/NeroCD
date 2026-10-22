@@ -17,7 +17,11 @@ func proxyEntryAuthority(entry runner.JournalProxy) domain.HostingAuthority {
 // reconcileProxyJournal runs before heartbeat or claim and never invokes Apply.
 // An unfinished admitted effect requires explicit recovery; neither expiry nor
 // a successful local observation substitutes for the missing server receipt.
-func reconcileProxyJournal(server, token, runnerID string, journal *runner.AttemptJournal, config ProxyConfig) error {
+func reconcileProxyJournal(server, token, runnerID string, journal *runner.AttemptJournal, config ProxyConfig, parents ...context.Context) error {
+	parent := replayParent(parents)
+	if parent.Err() != nil {
+		return parent.Err()
+	}
 	if len(journal.Snapshot().Proxy) == 0 {
 		return nil
 	}
@@ -29,17 +33,17 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 		if entry.Phase != "prepared" {
 			continue
 		}
-		ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, stop := context.WithTimeout(parent, 30*time.Second)
 		_, _, _, err := prepareProxyEngine(ctx, config, entry.Plan, &entry.Preparation)
 		stop()
 		if err != nil {
 			return err
 		}
-		ctx, stop = context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, stop = context.WithTimeout(parent, 5*time.Second)
 		op, err := client.ProxyPrepared(ctx, *entry.Prepared)
 		stop()
 		if err != nil {
-			ctx, stop = context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, stop = context.WithTimeout(parent, 5*time.Second)
 			status, probeErr := client.ProxyStatus(ctx, proxyEntryAuthority(entry))
 			stop()
 			if probeErr != nil || proxyResponseMatches(status, proxyEntryAuthority(entry), runnerID, &entry.Plan) != nil || status.RestoreOwnershipHeld || status.MutationHold || status.PreparedReceipt != nil || status.CompleteReceipt != nil || (status.State != "canceled" && status.State != "superseded") {
@@ -47,6 +51,9 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 			}
 		} else if err = proxyPreparedAcknowledged(op, entry, runnerID); err != nil {
 			return err
+		}
+		if parent.Err() != nil {
+			return parent.Err()
 		}
 		if err = journal.AckProxy(entry.ID); err != nil {
 			return err
@@ -56,16 +63,16 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 		if entry.Phase != "result" {
 			continue
 		}
-		ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, stop := context.WithTimeout(parent, 30*time.Second)
 		engine, local, _, err := prepareProxyEngine(ctx, config, entry.Plan, &entry.Preparation)
 		stop()
 		if err != nil {
 			return err
 		}
-		if err = replayHostingEvents(server, token, journal, entry.Attempt); err != nil {
+		if err = replayHostingEvents(server, token, journal, entry.Attempt, parent); err != nil {
 			return err
 		}
-		op, err := replayProxyResult(client, entry, runnerID, true)
+		op, err := replayProxyResult(client, entry, runnerID, true, parent)
 		if err != nil {
 			return err
 		}
@@ -74,6 +81,9 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 		}
 		if err = verifyProxyLocalReceipt(engine, local, entry.Result.Result); err != nil {
 			return err
+		}
+		if parent.Err() != nil {
+			return parent.Err()
 		}
 		if err = journal.AckProxy(entry.ID); err != nil {
 			return err
@@ -84,7 +94,7 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 			continue
 		}
 		authority := proxyEntryAuthority(entry)
-		ctx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, stop := context.WithTimeout(parent, 5*time.Second)
 		op, err := client.ProxyStatus(ctx, authority)
 		stop()
 		if err != nil {
@@ -96,6 +106,9 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 		if op.Result == nil && op.CompleteReceipt == nil && (op.State == "canceled" || op.State == "superseded") {
 			// A terminal unadmitted generation proves that no engine call was
 			// authorized. No observation or effect retry is used as that proof.
+			if parent.Err() != nil {
+				return parent.Err()
+			}
 			if err = journal.AckProxy(entry.ID); err != nil {
 				return err
 			}
@@ -111,7 +124,7 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 		if err = proxyResultAcknowledged(op, result, runnerID); err != nil {
 			return err
 		}
-		ctx, stop = context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, stop = context.WithTimeout(parent, 30*time.Second)
 		engine, local, _, err := prepareProxyEngine(ctx, config, entry.Plan, &entry.Preparation)
 		stop()
 		if err != nil {
@@ -120,6 +133,9 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 		if err = verifyProxyLocalReceipt(engine, local, *op.Result); err != nil {
 			return err
 		}
+		if parent.Err() != nil {
+			return parent.Err()
+		}
 		if err = journal.AckProxy(entry.ID); err != nil {
 			return err
 		}
@@ -127,8 +143,9 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 	return nil
 }
 
-func replayProxyResult(client runnerclient.Client, entry runner.JournalProxy, runnerID string, allowLive bool) (domain.HostingProxyOperation, error) {
-	ctx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+func replayProxyResult(client runnerclient.Client, entry runner.JournalProxy, runnerID string, allowLive bool, parents ...context.Context) (domain.HostingProxyOperation, error) {
+	parent := replayParent(parents)
+	ctx, stop := context.WithTimeout(parent, 5*time.Second)
 	op, err := client.ProxyStatus(ctx, proxyEntryAuthority(entry))
 	stop()
 	if err != nil {
@@ -141,21 +158,21 @@ func replayProxyResult(client runnerclient.Client, entry runner.JournalProxy, ru
 		if err = proxyResultAcknowledged(op, entry, runnerID); err != nil {
 			return op, err
 		}
-		ctx, stop = context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, stop = context.WithTimeout(parent, 5*time.Second)
 		defer stop()
 		return client.ProxyComplete(ctx, *entry.Result)
 	}
 	if !allowLive {
 		return op, errors.New("proxy result has no committed receipt after authority ended")
 	}
-	lease, fenced, err := probeReplayAuthority(client.Server, client.Token, entry.Attempt)
+	lease, fenced, err := probeReplayAuthority(client.Server, client.Token, entry.Attempt, parent)
 	if err != nil {
 		return op, err
 	}
 	if fenced {
 		return op, errors.New("uncommitted proxy result lost live authority")
 	}
-	supervisor := newAttemptSupervisor(lease)
+	supervisor := newAttemptSupervisorFrom(parent, lease)
 	defer supervisor.Close()
 	request, cancel, err := supervisor.RequestContext()
 	if err != nil {

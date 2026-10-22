@@ -302,6 +302,8 @@ func TestProxyTaskCannotEnterUnconfiguredExecutionOrGenericCompletion(t *testing
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var response any = map[string]any{}
 				switch r.URL.Path {
+				case "/api/v1/runners/identity":
+					response = map[string]any{"runner_id": claim.Lease.RunnerID}
 				case "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry":
 				case "/api/v1/runners/claim":
 					response = claim

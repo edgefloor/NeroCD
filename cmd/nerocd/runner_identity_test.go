@@ -138,7 +138,7 @@ func TestRunnerEnrolledIdentitySelectsSameDefaultJournalOnCredentialRestart(t *t
 	mu.Lock()
 	got := append([]string(nil), requests...)
 	mu.Unlock()
-	want := []string{"/api/v1/runners/identity", "/api/v1/runners/lease", "/api/v1/runners/events/batch", "/api/v1/runners/complete", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim"}
+	want := []string{"/api/v1/runners/identity", "/api/v1/runners/lease", "/api/v1/runners/events/batch", "/api/v1/runners/complete", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("restart ordering=%v want=%v", got, want)
 	}
@@ -253,5 +253,28 @@ func TestRunnerIdentityFailurePreventsJournalAndRuntimeTraffic(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestRunnerCredentialFileRejectsBuildCapabilityWithoutConfiguration(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
+	t.Setenv("NEROCD_TOKEN", "")
+	root := t.TempDir()
+	file := filepath.Join(root, "credential")
+	if err := os.WriteFile(file, []byte("dedicated-build-fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	effects := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/runners/identity" {
+			effects++
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_build", "capabilities": []string{"shell", domain.HostingBuildTaskType}})
+	}))
+	defer server.Close()
+	if runRunner([]string{"--server", server.URL, "--credential-file", file, "--work-dir", root, "--once"}) == nil || effects != 0 {
+		t.Fatal("credential-file build mismatch reached heartbeat/claim")
 	}
 }

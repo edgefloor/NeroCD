@@ -8,8 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"nerocd/internal/app"
@@ -52,10 +54,18 @@ func runRunner(args []string) error {
 	proxyBinary := fs.String("proxy-docker-binary", "", "absolute managed proxy Docker executable path")
 	proxySocket := fs.String("proxy-docker-socket", "", "absolute managed proxy Docker Unix socket path")
 	proxyProtocol := fs.String("proxy-protocol", "", "explicit managed proxy protocol managed-traefik.file.v1")
+	buildConfigFile := fs.String("build-config-file", "", "explicit owned mode0600 JSON build execution configuration; disabled when absent")
 	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	buildConfig, err := loadRunnerBuildConfig(*buildConfigFile)
+	if err != nil {
+		return err
+	}
+	if buildConfig != nil && (!*execute || *completeStatus != "") {
+		return errors.New("build configuration requires --execute and forbids --complete-status")
 	}
 	proxyConfig := runnerruntime.ProxyConfig{Directory: *proxyRoot, DockerBinary: *proxyBinary, DockerSocket: *proxySocket, Protocol: *proxyProtocol}
 	if err := proxyConfig.Validate(); err != nil {
@@ -81,6 +91,10 @@ func runRunner(args []string) error {
 	}
 	if proxyConfig.Enabled() && !proxyCapability {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeProxyApply)
+	}
+	registrationCapabilities, err = runnerBuildCapabilities(buildConfig, proxyConfig.Enabled(), capabilitiesSpecified, registrationCapabilities)
+	if err != nil {
+		return err
 	}
 	if *pollInterval <= 0 {
 		return errors.New("runner --poll-interval must be greater than zero")
@@ -110,6 +124,12 @@ func runRunner(args []string) error {
 			idSpecified = true
 		}
 	})
+	if buildConfig != nil {
+		if idSpecified && *id != buildConfig.Target.RunnerID {
+			return errors.New("runner --id does not match configured build target")
+		}
+		*id = buildConfig.Target.RunnerID
+	}
 	if enrollmentPath != "" {
 		enrollmentToken, credential, requestID, err := prepareRunnerEnrollmentFiles(enrollmentPath, credentialPath)
 		if err != nil {
@@ -160,18 +180,24 @@ func runRunner(args []string) error {
 	}
 	// Resolve credential authority before runtime can select, open, or replay
 	// a journal. Enrollment IDs and local defaults do not replace this read.
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeIdentity(context.Background(), proxyConfig.Enabled())
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeCapabilitiesIdentity(context.Background(), proxyConfig.Enabled(), buildConfig != nil)
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}
-	if idSpecified && strings.TrimSpace(*id) != effectiveRunnerID {
+	if (idSpecified || buildConfig != nil) && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	return runnerruntime.Run(runnerruntime.Config{ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
+	runtimeConfig := runnerruntime.Config{Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,
-	})
+	}
+	if buildConfig != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return runnerruntime.RunContext(ctx, runtimeConfig)
+	}
+	return runnerruntime.Run(runtimeConfig)
 }
 
 func validateRunnerSecretRoot(root string) error {
