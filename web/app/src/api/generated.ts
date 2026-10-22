@@ -4,6 +4,286 @@
  */
 
 export interface paths {
+    "/api/v1/servers/{id}/proxy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read managed proxy placement and status
+         * @description Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required.
+         */
+        get: operations["getHostingProxy"];
+        put?: never;
+        /**
+         * Configure or enable the managed proxy
+         * @description Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Placement and settings are immutable. Initial configuration queues an empty generation. Generated hostnames require a configured domain and matching explicit wildcard grant; no DNS proof is inferred.
+         */
+        post: operations["configureHostingProxy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/proxy/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Withdraw routes through an empty generation
+         * @description Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Withdrawal is asynchronous and may remain held. Persistent proxy state and certificates remain owned.
+         */
+        post: operations["disableHostingProxy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/proxy/hostname-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read administrator hostname delegations
+         * @description Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required.
+         */
+        get: operations["listHostingHostnameGrants"];
+        put?: never;
+        /**
+         * Delegate hostname authority to a project
+         * @description Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Exact and descendant grants must not overlap across projects. Wildcard certificates and DNS-01 are unsupported.
+         */
+        post: operations["grantHostingHostname"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/proxy/hostname-grants/{grant_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke hostname authority and queue withdrawal
+         * @description Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Existing routes remain pending withdrawal until a verified generation commits. Uncertainty retains ownership.
+         */
+        post: operations["revokeHostingHostname"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read routes for an authorized resource
+         * @description Requires resource project viewer permission. Returns only the resource’s desired routes and observed TLS status.
+         */
+        get: operations["listHostingRoutes"];
+        put?: never;
+        /**
+         * Request a route to a settled healthy release
+         * @description Requires resource project maintainer permission and an active administrator hostname grant. Placement and loopback port derive from the settled healthy release. Whole generations preserve concurrent projects. Pending DNS or certificate issuance never implies HTTPS readiness.
+         */
+        post: operations["requestHostingRoute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/routes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one authorized resource route
+         * @description Requires viewer permission in the persisted resource project.
+         */
+        get: operations["getHostingRoute"];
+        put?: never;
+        post?: never;
+        /**
+         * Queue withdrawal of one versioned route
+         * @description Requires project maintainer permission. Pending withdrawal and held state remain explicit.
+         */
+        delete: operations["deleteHostingRoute"];
+        options?: never;
+        head?: never;
+        /**
+         * Select a versioned route or healthy release
+         * @description Requires project maintainer permission and exact expected_route_version. Replacements retain the serving release until a verified generation switches references.
+         */
+        patch: operations["updateHostingRoute"];
+        trace?: never;
+    };
+    "/api/v1/proxy-operations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read authorized proxy operation status
+         * @description Server administrators receive full detail. Project viewers receive only authorized own-route status, never snapshots or other projects’ identities. This grants no generic task cancellation, retry or completion authority.
+         */
+        get: operations["getProxyOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proxy-operations/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request cancellation without clearing uncertain ownership
+         * @description Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Admitted work retains its hold until verified settlement. Generic run controls cannot cancel or retry proxy tasks.
+         */
+        post: operations["cancelProxyOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/proxy/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read an exact live proxy plan
+         * @description Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held.
+         */
+        post: operations["runnerProxyPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/proxy/prepared": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pin local engine preparation
+         * @description Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held.
+         */
+        post: operations["runnerProxyPrepared"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/proxy/apply-begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Acquire durable proxy ownership
+         * @description Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held.
+         */
+        post: operations["runnerProxyApplyBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/proxy/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Commit or replay an effect receipt
+         * @description Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held.
+         */
+        post: operations["runnerProxyComplete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/proxy/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read exact attempt proxy status
+         * @description Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held.
+         */
+        post: operations["runnerProxyStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/deployments": {
         parameters: {
             query?: never;
@@ -1771,6 +2051,184 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Immutable administrator settings. Runner paths and Docker credentials come only from operator CLI configuration. */
+        HostingProxyConfiguration: {
+            email: string;
+            /** @enum {string} */
+            ca: "letsencrypt" | "letsencrypt-staging";
+            management_port: number;
+            generated_domain?: string;
+        };
+        /** @description Requires an explicit existing control project, server administrator permission and project owner permission; system_admin keeps its existing override. A configured proxy blocks archiving that immutable project even while disabled. */
+        HostingProxyInput: {
+            control_project_id: string;
+            configuration: components["schemas"]["HostingProxyConfiguration"];
+            idempotency_key: string;
+        };
+        HostingProxyMutationInput: {
+            idempotency_key: string;
+        };
+        HostingProxy: {
+            id: string;
+            server_id: string;
+            destination_id: string;
+            runner_id: string;
+            control_project_id: string;
+            configuration: components["schemas"]["HostingProxyConfiguration"];
+            enabled: boolean;
+            desired_generation: number;
+            loaded_generation: number;
+            daemon_id?: string;
+            static_hash?: string;
+            active_operation_id?: string;
+            hold_operation_id?: string;
+            restore_ownership_held: boolean;
+        };
+        HostingHostnameGrantInput: {
+            project_id: string;
+            hostname: string;
+            wildcard: boolean;
+        };
+        HostingHostnameGrant: {
+            id: string;
+            proxy_id: string;
+            project_id: string;
+            hostname: string;
+            wildcard: boolean;
+            /** Format: date-time */
+            revoked_at?: string;
+        };
+        /** @description Selects an authorized hostname, canonical literal path and settled healthy release. Never accepts project, URL, upstream port or container identity. Wildcard delegation authorizes individual HTTP-01 hostnames only. */
+        HostingRouteInput: {
+            /** @description Zero for creation; exact current version for PATCH. */
+            expected_route_version: number;
+            idempotency_key: string;
+            hostname: string;
+            path_prefix: string;
+            expected_healthy_operation_id: string;
+            generate_hostname?: boolean;
+        };
+        HostingRouteDeletionInput: {
+            expected_route_version: number;
+            idempotency_key: string;
+        };
+        HostingRoute: {
+            id: string;
+            resource_id: string;
+            hostname: string;
+            path_prefix: string;
+            version: number;
+            selected_release_operation_id: string;
+            enabled: boolean;
+            operation_id?: string;
+            state: string;
+            http_ready: boolean;
+            https_ready: boolean;
+            certificate: components["schemas"]["HostingProxyCertificate"];
+        };
+        HostingProxyCertificate: {
+            hostname: string;
+            issuer?: string;
+            fingerprint?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            status: string;
+        };
+        HostingProxyRouteTarget: {
+            route_id: string;
+            project_id: string;
+            resource_id: string;
+            binding_id: string;
+            release_operation_id: string;
+            hostname: string;
+            path_prefix: string;
+            host_port: number;
+        };
+        HostingProxySnapshot: {
+            proxy_id: string;
+            server_id: string;
+            destination_id: string;
+            runner_id: string;
+            generation: number;
+            configuration: components["schemas"]["HostingProxyConfiguration"];
+            routes: components["schemas"]["HostingProxyRouteTarget"][];
+        };
+        HostingProxyPlan: {
+            snapshot: components["schemas"]["HostingProxySnapshot"];
+            previous_generation: number;
+            compiler_version: string;
+            daemon_id: string;
+            hash: string;
+        };
+        HostingProxyPreparedRequest: {
+            receipt_id: string;
+            operation_id: components["schemas"]["HostingIdentifier"];
+            run_id: components["schemas"]["HostingIdentifier"];
+            lease_id: components["schemas"]["HostingIdentifier"];
+            attempt: number;
+            fence: string;
+            daemon_id: string;
+            engine_hash: string;
+            static_hash: string;
+            plan_hash: string;
+        };
+        HostingProxyPreparation: {
+            daemon_id: string;
+            engine_hash: string;
+            static_hash: string;
+            plan_hash: string;
+        };
+        HostingProxyRouteObservation: {
+            route_id: string;
+            http_ready: boolean;
+            https_ready: boolean;
+            certificate: components["schemas"]["HostingProxyCertificate"];
+        };
+        HostingProxyResult: {
+            /** @enum {string} */
+            outcome: "applied" | "rolled_back" | "refused" | "uncertain";
+            loaded_generation: number;
+            plan_hash: string;
+            engine_hash: string;
+            daemon_id: string;
+            container_id?: string;
+            routes: components["schemas"]["HostingProxyRouteObservation"][] | null;
+        };
+        HostingProxyCompleteRequest: {
+            receipt_id: string;
+            result: components["schemas"]["HostingProxyResult"];
+            operation_id: components["schemas"]["HostingIdentifier"];
+            run_id: components["schemas"]["HostingIdentifier"];
+            lease_id: components["schemas"]["HostingIdentifier"];
+            attempt: number;
+            fence: string;
+        };
+        HostingProxyOperation: {
+            id: string;
+            proxy_id: string;
+            project_id: string;
+            route_id?: string;
+            generation: number;
+            state: string;
+            snapshot: components["schemas"]["HostingProxySnapshot"];
+            plan?: components["schemas"]["HostingProxyPlan"];
+            run_id?: string;
+            mutation_hold: boolean;
+            restore_ownership_held: boolean;
+            prepared_receipt?: components["schemas"]["HostingReceipt"];
+            complete_receipt?: components["schemas"]["HostingReceipt"];
+            preparation?: components["schemas"]["HostingProxyPreparation"];
+            result?: components["schemas"]["HostingProxyResult"];
+            created_by: string;
+        };
+        /** @description Contains only authorized own-route status, without placement, snapshots, engine configuration, lease authority or other project identities. */
+        HostingProxyOperationView: {
+            id: string;
+            state: string;
+            mutation_hold: boolean;
+            restore_ownership_held: boolean;
+            routes: components["schemas"]["HostingRoute"][];
+        };
         HostingOperationList: {
             items: components["schemas"]["HostingOperation"][];
             count: number;
@@ -3219,6 +3677,553 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getHostingProxy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read managed proxy placement and status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxy"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    configureHostingProxy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingProxyInput"];
+            };
+        };
+        responses: {
+            /** @description Configure or enable the managed proxy */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxy"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    disableHostingProxy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingProxyMutationInput"];
+            };
+        };
+        responses: {
+            /** @description Withdraw routes through an empty generation */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxy"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingHostnameGrants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read administrator hostname delegations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingHostnameGrant"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    grantHostingHostname: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingHostnameGrantInput"];
+            };
+        };
+        responses: {
+            /** @description Delegate hostname authority to a project */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingHostnameGrant"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    revokeHostingHostname: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+                grant_id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingProxyMutationInput"];
+            };
+        };
+        responses: {
+            /** @description Revoke hostname authority and queue withdrawal */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxy"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingRoutes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read routes for an authorized resource */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRoute"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRouteInput"];
+            };
+        };
+        responses: {
+            /** @description Request a route to a settled healthy release */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRoute"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read one authorized resource route */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRoute"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deleteHostingRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRouteDeletionInput"];
+            };
+        };
+        responses: {
+            /** @description Queue withdrawal of one versioned route */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRoute"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    updateHostingRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRouteInput"];
+            };
+        };
+        responses: {
+            /** @description Select a versioned route or healthy release */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRoute"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getProxyOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read authorized proxy operation status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperation"] | components["schemas"]["HostingProxyOperationView"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    cancelProxyOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Request cancellation without clearing uncertain ownership */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerProxyPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Read an exact live proxy plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerProxyPrepared: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingProxyPreparedRequest"];
+            };
+        };
+        responses: {
+            /** @description Pin local engine preparation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerProxyApplyBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Acquire durable proxy ownership */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerProxyComplete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingProxyCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Commit or replay an effect receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerProxyStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Read exact attempt proxy status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     listResourceHostingDeployments: {
         parameters: {
             query?: {

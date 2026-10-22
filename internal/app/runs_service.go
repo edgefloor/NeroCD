@@ -453,7 +453,7 @@ func (s *Service) CancelRun(ctx context.Context, runID string) (domain.TaskRun, 
 	if err := s.requireProjectRole(ctx, principal, targetRun.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
-	if targetRun.RunSpec.Type == domain.RunTypeImageDeploy || domain.IsTerminalRunStatus(targetRun.Status) {
+	if domain.ContainsHostingExecution(targetRun.RunSpec, targetRun.Workflow) || domain.IsTerminalRunStatus(targetRun.Status) {
 		return domain.TaskRun{}, store.ErrConflict
 	}
 	now := time.Now().UTC()

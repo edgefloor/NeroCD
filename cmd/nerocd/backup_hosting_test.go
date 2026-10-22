@@ -102,6 +102,10 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer source.Close()
+	// A disabled configured proxy with no operations still needs restore fencing.
+	if _, err = source.Exec(ctx, `INSERT INTO hosting_proxies(id,server_id,destination_id,runner_id,control_project_id,configuration,enabled,created_by) VALUES('proxy_backup','server_backup','dest_backup','runner_backup','proj_platform','{}',false,'usr_bootstrap')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = source.Exec(ctx, `INSERT INTO sessions(id,user_id,token_hash,created_at,expires_at) VALUES('session_backup','usr_bootstrap','session_backup_hash',clock_timestamp(),clock_timestamp()+interval '1 hour')`); err != nil {
 		t.Fatal(err)
 	}
@@ -164,9 +168,17 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		defer stop()
 		_ = exec.CommandContext(cleanupCtx, "docker", "exec", "--user", "0", container, "rm", "-f", "/tmp/nerocd-hosting-backup-"+suffix+".dump").Run()
 	})
-	for _, failHold := range []bool{false, true} {
+	for _, failure := range []string{"none", "binding", "proxy"} {
+		failHold := failure != "none"
 		if failHold {
-			if _, err = source.Exec(ctx, `CREATE FUNCTION reject_restore_hold() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected hold write failure'; END $$; CREATE TRIGGER reject_restore_hold BEFORE INSERT ON hosting_binding_restore_holds FOR EACH ROW EXECUTE FUNCTION reject_restore_hold()`); err != nil {
+			if _, err = source.Exec(ctx, `DROP TRIGGER IF EXISTS reject_restore_hold ON hosting_binding_restore_holds; DROP FUNCTION IF EXISTS reject_restore_hold(); CREATE FUNCTION reject_restore_hold() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected hold write failure'; END $$`); err != nil {
+				t.Fatal(err)
+			}
+			table := "hosting_binding_restore_holds"
+			if failure == "proxy" {
+				table = "hosting_proxy_restore_holds"
+			}
+			if _, err = source.Exec(ctx, "CREATE TRIGGER reject_restore_hold BEFORE INSERT ON "+table+" FOR EACH ROW EXECUTE FUNCTION reject_restore_hold()"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -178,7 +190,7 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		if err != nil || len(entries) != 1 {
 			t.Fatalf("backup archive: %v %v", entries, err)
 		}
-		targetName := fmt.Sprintf("hosting_backup_target_%s_%t", suffix, failHold)
+		targetName := fmt.Sprintf("hosting_backup_target_%s_%s", suffix, failure)
 		targetURL := createDatabase(targetName)
 		err = restoreDatabase([]string{"--database-url", targetURL, "--input-dir", filepath.Join(output, entries[0].Name()), "--allow-disposable-target", "--confirm-target-database", targetName})
 		if (err != nil) != failHold {
@@ -188,11 +200,11 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		var held, revoked, expired bool
-		err = target.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_binding_restore_holds WHERE binding_id='binding_backup'),(SELECT revoked_at IS NOT NULL FROM sessions WHERE id='session_backup'),(SELECT status='expired' FROM run_leases WHERE id='lease_backup')`).Scan(&held, &revoked, &expired)
+		var held, proxyHeld, revoked, expired bool
+		err = target.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_binding_restore_holds WHERE binding_id='binding_backup'),EXISTS(SELECT 1 FROM hosting_proxy_restore_holds WHERE proxy_id='proxy_backup'),(SELECT revoked_at IS NOT NULL FROM sessions WHERE id='session_backup'),(SELECT status='expired' FROM run_leases WHERE id='lease_backup')`).Scan(&held, &proxyHeld, &revoked, &expired)
 		target.Close()
-		if err != nil || held == failHold || revoked == failHold || expired == failHold {
-			t.Fatalf("restore invalidation atomicity: failed=%v held=%v revoked=%v expired=%v err=%v", failHold, held, revoked, expired, err)
+		if err != nil || held == failHold || proxyHeld == failHold || revoked == failHold || expired == failHold {
+			t.Fatalf("restore invalidation atomicity: failure=%s binding=%v proxy=%v revoked=%v expired=%v err=%v", failure, held, proxyHeld, revoked, expired, err)
 		}
 	}
 }

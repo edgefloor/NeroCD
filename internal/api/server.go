@@ -387,6 +387,8 @@ func requiresAuth(path string) bool {
 
 func requiresRunnerAuth(path string) bool {
 	switch path {
+	case "/api/v1/runners/proxy/plan", "/api/v1/runners/proxy/prepared", "/api/v1/runners/proxy/apply-begin", "/api/v1/runners/proxy/complete", "/api/v1/runners/proxy/status":
+		return true
 	case "/api/v1/runners/hosting/plan", "/api/v1/runners/hosting/prepared", "/api/v1/runners/hosting/apply-begin", "/api/v1/runners/hosting/complete", "/api/v1/runners/hosting/status", "/api/v1/runners/hosting/reconciliation", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete", "/api/v1/runners/deployments/transition", "/api/v1/runners/deployments/plan", "/api/v1/runners/deployments/status", "/api/v1/runners/deployments/provenance", "/api/v1/runners/deployments/fail-and-rollback":
 		return true
 	default:
@@ -600,6 +602,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrHostingRestoreHold):
 		status = http.StatusConflict
 		code = "hosting_restore_held"
+	case errors.Is(err, store.ErrHostingProxyControlProject):
+		status = http.StatusConflict
+		code = "hosting_control_project_in_use"
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrLastAdministrator):
 		status = http.StatusConflict
 		code = "conflict"
@@ -608,17 +613,18 @@ func writeError(w http.ResponseWriter, err error) {
 		code = "bad_request"
 	}
 	message := map[string]string{
-		"hosting_restore_held": "restored hosting ownership remains held; trusted local journal and process recovery proof is not yet supported",
-		"unauthenticated":      "authentication is required",
-		"forbidden":            "access is denied",
-		"rate_limited":         "request rate is limited",
-		"invalid_credentials":  "invalid credentials",
-		"not_found":            "resource not found",
-		"conflict":             "request conflicts with current state",
-		"bad_request":          "invalid request",
-		"internal_error":       "internal server error",
-		"unavailable":          "managed secrets are unavailable",
-		"hosting_unavailable":  "hosting execution requires PostgreSQL and a migrated River consumer",
+		"hosting_control_project_in_use": "this project controls a configured managed proxy and cannot be archived",
+		"hosting_restore_held":           "restored hosting ownership remains held; trusted local journal and process recovery proof is not yet supported",
+		"unauthenticated":                "authentication is required",
+		"forbidden":                      "access is denied",
+		"rate_limited":                   "request rate is limited",
+		"invalid_credentials":            "invalid credentials",
+		"not_found":                      "resource not found",
+		"conflict":                       "request conflicts with current state",
+		"bad_request":                    "invalid request",
+		"internal_error":                 "internal server error",
+		"unavailable":                    "managed secrets are unavailable",
+		"hosting_unavailable":            "hosting execution requires PostgreSQL and a migrated River consumer",
 	}[code]
 	writeErrorEnvelope(w, status, code, message)
 }

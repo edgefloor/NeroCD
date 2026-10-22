@@ -98,22 +98,24 @@ func (s *PostgresStore) UpdateProject(ctx context.Context, project domain.Projec
 // ArchiveProject implements the corresponding repository operation.
 func (s *PostgresStore) ArchiveProject(ctx context.Context, id string, archivedAt time.Time, opts ...MutationOption) (domain.Project, error) {
 	audit := resolveMutationOptions(opts)
-	if audit == nil {
-		archived, err := s.queries.ArchiveProject(ctx, sqlcgen.ArchiveProjectParams{ID: id, ArchivedAt: &archivedAt})
-		if err == pgx.ErrNoRows {
-			return domain.Project{}, ErrNotFound
-		}
-		if err != nil {
-			return domain.Project{}, fmt.Errorf("archive project query: %w", err)
-		}
-		return projectFromSQLC(archived), nil
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer rollbackTransaction(ctx, tx)
 	q := s.queries.WithTx(tx)
+	// Configuration takes a shared lock on this same lifecycle row. Check the
+	// reference only after exclusive admission, including unaudited callers.
+	if _, err = q.ProxyLockProjectLifecycle(ctx, id); err != nil {
+		return domain.Project{}, hostingError(err)
+	}
+	used, err := q.ProxyControlProjectUsed(ctx, id)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	if used {
+		return domain.Project{}, ErrHostingProxyControlProject
+	}
 	archived, err := q.ArchiveProject(ctx, sqlcgen.ArchiveProjectParams{ID: id, ArchivedAt: &archivedAt})
 	if err == pgx.ErrNoRows {
 		return domain.Project{}, ErrNotFound
@@ -121,8 +123,10 @@ func (s *PostgresStore) ArchiveProject(ctx context.Context, id string, archivedA
 	if err != nil {
 		return domain.Project{}, fmt.Errorf("archive project query: %w", err)
 	}
-	if err = createAuditWithQueries(ctx, q, *audit); err != nil {
-		return domain.Project{}, fmt.Errorf("create audit event: %w", err)
+	if audit != nil {
+		if err = createAuditWithQueries(ctx, q, *audit); err != nil {
+			return domain.Project{}, fmt.Errorf("create audit event: %w", err)
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return domain.Project{}, fmt.Errorf("commit transaction: %w", err)

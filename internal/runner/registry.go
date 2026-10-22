@@ -49,6 +49,12 @@ func (r Registry) Supports(runType string) bool {
 
 // BuildPlan converts run into its runner primitive plan.
 func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, error) {
+	if run.RunSpec.Type == domain.RunTypeProxyApply {
+		if err := domain.ValidateProxyApplyTask(run); err != nil {
+			return domain.RunnerPrimitivePlan{}, err
+		}
+		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
+	}
 	if run.RunSpec.Type == domain.RunTypeImageDeploy {
 		if err := domain.ValidateImageDeploymentTask(run); err != nil {
 			return domain.RunnerPrimitivePlan{}, err

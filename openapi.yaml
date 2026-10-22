@@ -21,6 +21,534 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  "/api/v1/servers/{id}/proxy":
+    get:
+      operationId: "getHostingProxy"
+      summary: "Read managed proxy placement and status"
+      description: "Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. "
+      responses:
+        "200":
+          description: "Read managed proxy placement and status"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxy"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+    post:
+      operationId: "configureHostingProxy"
+      summary: "Configure or enable the managed proxy"
+      description: "Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Placement and settings are immutable. Initial configuration queues an empty generation. Generated hostnames require a configured domain and matching explicit wildcard grant; no DNS proof is inferred."
+      responses:
+        "202":
+          description: "Configure or enable the managed proxy"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxy"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingProxyInput"
+  "/api/v1/servers/{id}/proxy/disable":
+    post:
+      operationId: "disableHostingProxy"
+      summary: "Withdraw routes through an empty generation"
+      description: "Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Withdrawal is asynchronous and may remain held. Persistent proxy state and certificates remain owned."
+      responses:
+        "202":
+          description: "Withdraw routes through an empty generation"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxy"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingProxyMutationInput"
+  "/api/v1/servers/{id}/proxy/hostname-grants":
+    get:
+      operationId: "listHostingHostnameGrants"
+      summary: "Read administrator hostname delegations"
+      description: "Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. "
+      responses:
+        "200":
+          description: "Read administrator hostname delegations"
+          content:
+            application/json:
+              schema:
+                type: "array"
+                items:
+                  "$ref": "#/components/schemas/HostingHostnameGrant"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+    post:
+      operationId: "grantHostingHostname"
+      summary: "Delegate hostname authority to a project"
+      description: "Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Exact and descendant grants must not overlap across projects. Wildcard certificates and DNS-01 are unsupported."
+      responses:
+        "201":
+          description: "Delegate hostname authority to a project"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingHostnameGrant"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingHostnameGrantInput"
+  "/api/v1/servers/{id}/proxy/hostname-grants/{grant_id}/revoke":
+    post:
+      operationId: "revokeHostingHostname"
+      summary: "Revoke hostname authority and queue withdrawal"
+      description: "Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Existing routes remain pending withdrawal until a verified generation commits. Uncertainty retains ownership."
+      responses:
+        "202":
+          description: "Revoke hostname authority and queue withdrawal"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxy"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}, {"name": "grant_id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingProxyMutationInput"
+  "/api/v1/resources/{id}/routes":
+    get:
+      operationId: "listHostingRoutes"
+      summary: "Read routes for an authorized resource"
+      description: "Requires resource project viewer permission. Returns only the resource’s desired routes and observed TLS status."
+      responses:
+        "200":
+          description: "Read routes for an authorized resource"
+          content:
+            application/json:
+              schema:
+                type: "array"
+                items:
+                  "$ref": "#/components/schemas/HostingRoute"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+    post:
+      operationId: "requestHostingRoute"
+      summary: "Request a route to a settled healthy release"
+      description: "Requires resource project maintainer permission and an active administrator hostname grant. Placement and loopback port derive from the settled healthy release. Whole generations preserve concurrent projects. Pending DNS or certificate issuance never implies HTTPS readiness."
+      responses:
+        "202":
+          description: "Request a route to a settled healthy release"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingRoute"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingRouteInput"
+  "/api/v1/routes/{id}":
+    get:
+      operationId: "getHostingRoute"
+      summary: "Read one authorized resource route"
+      description: "Requires viewer permission in the persisted resource project."
+      responses:
+        "200":
+          description: "Read one authorized resource route"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingRoute"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+    patch:
+      operationId: "updateHostingRoute"
+      summary: "Select a versioned route or healthy release"
+      description: "Requires project maintainer permission and exact expected_route_version. Replacements retain the serving release until a verified generation switches references."
+      responses:
+        "202":
+          description: "Select a versioned route or healthy release"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingRoute"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingRouteInput"
+    delete:
+      operationId: "deleteHostingRoute"
+      summary: "Queue withdrawal of one versioned route"
+      description: "Requires project maintainer permission. Pending withdrawal and held state remain explicit."
+      responses:
+        "202":
+          description: "Queue withdrawal of one versioned route"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingRoute"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingRouteDeletionInput"
+  "/api/v1/proxy-operations/{id}":
+    get:
+      operationId: "getProxyOperation"
+      summary: "Read authorized proxy operation status"
+      description: "Server administrators receive full detail. Project viewers receive only authorized own-route status, never snapshots or other projects’ identities. This grants no generic task cancellation, retry or completion authority."
+      responses:
+        "200":
+          description: "Read authorized proxy operation status"
+          content:
+            application/json:
+              schema:
+                oneOf: [{"$ref": "#/components/schemas/HostingProxyOperation"}, {"$ref": "#/components/schemas/HostingProxyOperationView"}]
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+  "/api/v1/proxy-operations/{id}/cancel":
+    post:
+      operationId: "cancelProxyOperation"
+      summary: "Request cancellation without clearing uncertain ownership"
+      description: "Requires server administration. Mutations also require owner permission in the explicit immutable control project. PostgreSQL and its migrated River consumer are required. Admitted work retains its hold until verified settlement. Generic run controls cannot cancel or retry proxy tasks."
+      responses:
+        "200":
+          description: "Request cancellation without clearing uncertain ownership"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxyOperation"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: "object"
+              additionalProperties: false
+  "/api/v1/runners/proxy/plan":
+    post:
+      operationId: "runnerProxyPlan"
+      summary: "Read an exact live proxy plan"
+      description: "Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held."
+      responses:
+        "200":
+          description: "Read an exact live proxy plan"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxyOperation"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingAuthority"
+      security: [{"bearerAuth": []}]
+  "/api/v1/runners/proxy/prepared":
+    post:
+      operationId: "runnerProxyPrepared"
+      summary: "Pin local engine preparation"
+      description: "Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held."
+      responses:
+        "200":
+          description: "Pin local engine preparation"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxyOperation"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingProxyPreparedRequest"
+      security: [{"bearerAuth": []}]
+  "/api/v1/runners/proxy/apply-begin":
+    post:
+      operationId: "runnerProxyApplyBegin"
+      summary: "Acquire durable proxy ownership"
+      description: "Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held."
+      responses:
+        "200":
+          description: "Acquire durable proxy ownership"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxyOperation"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingAuthority"
+      security: [{"bearerAuth": []}]
+  "/api/v1/runners/proxy/complete":
+    post:
+      operationId: "runnerProxyComplete"
+      summary: "Commit or replay an effect receipt"
+      description: "Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held."
+      responses:
+        "200":
+          description: "Commit or replay an effect receipt"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxyOperation"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingProxyCompleteRequest"
+      security: [{"bearerAuth": []}]
+  "/api/v1/runners/proxy/status":
+    post:
+      operationId: "runnerProxyStatus"
+      summary: "Read exact attempt proxy status"
+      description: "Dedicated runner credentials and the full operation/run/lease/attempt/fence tuple are mandatory. Exact target and proxy_apply capability are required. First reports require live authority; only exact committed receipt replay is allowed after expiry. Uncertain and restored ownership remain held."
+      responses:
+        "200":
+          description: "Read exact attempt proxy status"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxyOperation"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingAuthority"
+      security: [{"bearerAuth": []}]
   /api/v1/resources/{id}/deployments:
     get:
       summary: List persisted resource deployment operations
@@ -2603,6 +3131,387 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    HostingProxyConfiguration:
+      type: "object"
+      additionalProperties: false
+      required: ["email", "ca", "management_port"]
+      properties:
+        email:
+          type: "string"
+        ca:
+          type: "string"
+          enum: ["letsencrypt", "letsencrypt-staging"]
+        management_port:
+          type: "integer"
+          minimum: 1024
+          maximum: 65535
+        generated_domain:
+          type: "string"
+      description: "Immutable administrator settings. Runner paths and Docker credentials come only from operator CLI configuration."
+    HostingProxyInput:
+      type: "object"
+      additionalProperties: false
+      required: ["control_project_id", "configuration", "idempotency_key"]
+      properties:
+        control_project_id:
+          type: "string"
+        configuration:
+          "$ref": "#/components/schemas/HostingProxyConfiguration"
+        idempotency_key:
+          type: "string"
+      description: "Requires an explicit existing control project, server administrator permission and project owner permission; system_admin keeps its existing override. A configured proxy blocks archiving that immutable project even while disabled."
+    HostingProxyMutationInput:
+      type: "object"
+      additionalProperties: false
+      required: ["idempotency_key"]
+      properties:
+        idempotency_key:
+          type: "string"
+    HostingProxy:
+      type: "object"
+      additionalProperties: false
+      required: ["id", "server_id", "destination_id", "runner_id", "control_project_id", "configuration", "enabled", "desired_generation", "loaded_generation", "restore_ownership_held"]
+      properties:
+        id:
+          type: "string"
+        server_id:
+          type: "string"
+        destination_id:
+          type: "string"
+        runner_id:
+          type: "string"
+        control_project_id:
+          type: "string"
+        configuration:
+          "$ref": "#/components/schemas/HostingProxyConfiguration"
+        enabled:
+          type: "boolean"
+        desired_generation:
+          type: "integer"
+        loaded_generation:
+          type: "integer"
+        daemon_id:
+          type: "string"
+        static_hash:
+          type: "string"
+        active_operation_id:
+          type: "string"
+        hold_operation_id:
+          type: "string"
+        restore_ownership_held:
+          type: "boolean"
+    HostingHostnameGrantInput:
+      type: "object"
+      additionalProperties: false
+      required: ["project_id", "hostname", "wildcard"]
+      properties:
+        project_id:
+          type: "string"
+        hostname:
+          type: "string"
+        wildcard:
+          type: "boolean"
+    HostingHostnameGrant:
+      type: "object"
+      additionalProperties: false
+      required: ["id", "proxy_id", "project_id", "hostname", "wildcard"]
+      properties:
+        id:
+          type: "string"
+        proxy_id:
+          type: "string"
+        project_id:
+          type: "string"
+        hostname:
+          type: "string"
+        wildcard:
+          type: "boolean"
+        revoked_at:
+          type: "string"
+          format: "date-time"
+    HostingRouteInput:
+      type: "object"
+      additionalProperties: false
+      required: ["expected_route_version", "idempotency_key", "hostname", "path_prefix", "expected_healthy_operation_id"]
+      properties:
+        expected_route_version:
+          type: "integer"
+          minimum: 0
+          description: "Zero for creation; exact current version for PATCH."
+        idempotency_key:
+          type: "string"
+        hostname:
+          type: "string"
+        path_prefix:
+          type: "string"
+        expected_healthy_operation_id:
+          type: "string"
+        generate_hostname:
+          type: "boolean"
+      description: "Selects an authorized hostname, canonical literal path and settled healthy release. Never accepts project, URL, upstream port or container identity. Wildcard delegation authorizes individual HTTP-01 hostnames only."
+    HostingRouteDeletionInput:
+      type: "object"
+      additionalProperties: false
+      required: ["expected_route_version", "idempotency_key"]
+      properties:
+        expected_route_version:
+          type: "integer"
+          minimum: 1
+        idempotency_key:
+          type: "string"
+    HostingRoute:
+      type: "object"
+      additionalProperties: false
+      required: ["id", "resource_id", "hostname", "path_prefix", "version", "selected_release_operation_id", "enabled", "state", "http_ready", "https_ready", "certificate"]
+      properties:
+        id:
+          type: "string"
+        resource_id:
+          type: "string"
+        hostname:
+          type: "string"
+        path_prefix:
+          type: "string"
+        version:
+          type: "integer"
+        selected_release_operation_id:
+          type: "string"
+        enabled:
+          type: "boolean"
+        operation_id:
+          type: "string"
+        state:
+          type: "string"
+        http_ready:
+          type: "boolean"
+        https_ready:
+          type: "boolean"
+        certificate:
+          "$ref": "#/components/schemas/HostingProxyCertificate"
+    HostingProxyCertificate:
+      type: "object"
+      additionalProperties: false
+      required: ["hostname", "status"]
+      properties:
+        hostname:
+          type: "string"
+        issuer:
+          type: "string"
+        fingerprint:
+          type: "string"
+        expires_at:
+          type: "string"
+          format: "date-time"
+        status:
+          type: "string"
+    HostingProxyRouteTarget:
+      type: "object"
+      additionalProperties: false
+      required: ["route_id", "project_id", "resource_id", "binding_id", "release_operation_id", "hostname", "path_prefix", "host_port"]
+      properties:
+        route_id:
+          type: "string"
+        project_id:
+          type: "string"
+        resource_id:
+          type: "string"
+        binding_id:
+          type: "string"
+        release_operation_id:
+          type: "string"
+        hostname:
+          type: "string"
+        path_prefix:
+          type: "string"
+        host_port:
+          type: "integer"
+    HostingProxySnapshot:
+      type: "object"
+      additionalProperties: false
+      required: ["proxy_id", "server_id", "destination_id", "runner_id", "generation", "configuration", "routes"]
+      properties:
+        proxy_id:
+          type: "string"
+        server_id:
+          type: "string"
+        destination_id:
+          type: "string"
+        runner_id:
+          type: "string"
+        generation:
+          type: "integer"
+        configuration:
+          "$ref": "#/components/schemas/HostingProxyConfiguration"
+        routes:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/HostingProxyRouteTarget"
+    HostingProxyPlan:
+      type: "object"
+      additionalProperties: false
+      required: ["snapshot", "previous_generation", "compiler_version", "daemon_id", "hash"]
+      properties:
+        snapshot:
+          "$ref": "#/components/schemas/HostingProxySnapshot"
+        previous_generation:
+          type: "integer"
+        compiler_version:
+          type: "string"
+        daemon_id:
+          type: "string"
+        hash:
+          type: "string"
+    HostingProxyPreparedRequest:
+      type: "object"
+      additionalProperties: false
+      required: ["receipt_id", "operation_id", "run_id", "lease_id", "attempt", "fence", "daemon_id", "engine_hash", "static_hash", "plan_hash"]
+      properties:
+        receipt_id:
+          type: "string"
+        operation_id:
+          "$ref": "#/components/schemas/HostingIdentifier"
+        run_id:
+          "$ref": "#/components/schemas/HostingIdentifier"
+        lease_id:
+          "$ref": "#/components/schemas/HostingIdentifier"
+        attempt:
+          type: "integer"
+          minimum: 1
+        fence:
+          type: "string"
+          minLength: 1
+        daemon_id:
+          type: "string"
+        engine_hash:
+          type: "string"
+        static_hash:
+          type: "string"
+        plan_hash:
+          type: "string"
+    HostingProxyPreparation:
+      type: "object"
+      additionalProperties: false
+      required: ["daemon_id", "engine_hash", "static_hash", "plan_hash"]
+      properties:
+        daemon_id:
+          type: "string"
+        engine_hash:
+          type: "string"
+        static_hash:
+          type: "string"
+        plan_hash:
+          type: "string"
+    HostingProxyRouteObservation:
+      type: "object"
+      additionalProperties: false
+      required: ["route_id", "http_ready", "https_ready", "certificate"]
+      properties:
+        route_id:
+          type: "string"
+        http_ready:
+          type: "boolean"
+        https_ready:
+          type: "boolean"
+        certificate:
+          "$ref": "#/components/schemas/HostingProxyCertificate"
+    HostingProxyResult:
+      type: "object"
+      additionalProperties: false
+      required: ["outcome", "loaded_generation", "plan_hash", "engine_hash", "daemon_id", "routes"]
+      properties:
+        outcome:
+          type: "string"
+          enum: ["applied", "rolled_back", "refused", "uncertain"]
+        loaded_generation:
+          type: "integer"
+        plan_hash:
+          type: "string"
+        engine_hash:
+          type: "string"
+        daemon_id:
+          type: "string"
+        container_id:
+          type: "string"
+        routes:
+          type: ["array", "null"]
+          items:
+            "$ref": "#/components/schemas/HostingProxyRouteObservation"
+    HostingProxyCompleteRequest:
+      type: "object"
+      additionalProperties: false
+      required: ["receipt_id", "result", "operation_id", "run_id", "lease_id", "attempt", "fence"]
+      properties:
+        receipt_id:
+          type: "string"
+        result:
+          "$ref": "#/components/schemas/HostingProxyResult"
+        operation_id:
+          "$ref": "#/components/schemas/HostingIdentifier"
+        run_id:
+          "$ref": "#/components/schemas/HostingIdentifier"
+        lease_id:
+          "$ref": "#/components/schemas/HostingIdentifier"
+        attempt:
+          type: "integer"
+          minimum: 1
+        fence:
+          type: "string"
+          minLength: 1
+    HostingProxyOperation:
+      type: "object"
+      additionalProperties: false
+      required: ["id", "proxy_id", "project_id", "generation", "state", "snapshot", "mutation_hold", "restore_ownership_held", "created_by"]
+      properties:
+        id:
+          type: "string"
+        proxy_id:
+          type: "string"
+        project_id:
+          type: "string"
+        route_id:
+          type: "string"
+        generation:
+          type: "integer"
+        state:
+          type: "string"
+        snapshot:
+          "$ref": "#/components/schemas/HostingProxySnapshot"
+        plan:
+          "$ref": "#/components/schemas/HostingProxyPlan"
+        run_id:
+          type: "string"
+        mutation_hold:
+          type: "boolean"
+        restore_ownership_held:
+          type: "boolean"
+        prepared_receipt:
+          "$ref": "#/components/schemas/HostingReceipt"
+        complete_receipt:
+          "$ref": "#/components/schemas/HostingReceipt"
+        preparation:
+          "$ref": "#/components/schemas/HostingProxyPreparation"
+        result:
+          "$ref": "#/components/schemas/HostingProxyResult"
+        created_by:
+          type: "string"
+    HostingProxyOperationView:
+      type: "object"
+      additionalProperties: false
+      required: ["id", "state", "mutation_hold", "restore_ownership_held", "routes"]
+      properties:
+        id:
+          type: "string"
+        state:
+          type: "string"
+        mutation_hold:
+          type: "boolean"
+        restore_ownership_held:
+          type: "boolean"
+        routes:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/HostingRoute"
+      description: "Contains only authorized own-route status, without placement, snapshots, engine configuration, lease authority or other project identities."
     HostingOperationList:
       type: object
       additionalProperties: false
