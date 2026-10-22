@@ -209,11 +209,11 @@ deadline=$((SECONDS+40)); enrollment_state=''; proxy=''
 while (( SECONDS < deadline )); do
   enrollment_state=$(sql "SELECT (used_at IS NOT NULL)::text,(consume_request_id IS NOT NULL)::text,(credential_hash IS NOT NULL)::text,(SELECT count(*) FROM runners WHERE id='runner_enrollment_runtime'),(SELECT count(*) FROM audit_events WHERE action='runner.enrollment.consume' AND target_id='runner_enrollment_runtime') FROM runner_enrollments WHERE id='$race_enrollment_id';" || true)
   proxy=$(proxy_status)
-  [[ "$enrollment_state" == 'true|true|true|1|1' && "$(jq -r '.lost_enrollment_responses // 0' <<<"$proxy")" == 1 ]] && break
+  [[ "$enrollment_state" == 'true|true|true|1|1' && "$(printf '%s' "$proxy" | jq -r '.lost_enrollment_responses // 0')" == 1 ]] && break
   sleep 0.2
 done
 [[ "$enrollment_state" == 'true|true|true|1|1' ]] || fail "enrollment did not commit exactly once: $enrollment_state"
-[[ "$(jq -r '.lost_enrollment_responses' <<<"$proxy")" == 1 ]] || fail "committed response was not lost"
+[[ "$(printf '%s' "$proxy" | jq -r '.lost_enrollment_responses')" == 1 ]] || fail "committed response was not lost"
 
 # The DB commit can be observed before the dropped-response winner retries and
 # before the competing consumer reaches the server. Wait for both local
@@ -221,7 +221,7 @@ done
 deadline=$((SECONDS+20)); consume_requests=0
 while (( SECONDS < deadline )); do
   proxy=$(proxy_status)
-  consume_requests=$(jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0' <<<"$proxy")
+  consume_requests=$(printf '%s' "$proxy" | jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0')
   settled=0
   for slot in a b; do
     cid=$(compose ps -q "runner_$slot")
@@ -249,7 +249,7 @@ record "consume_race=one_bound_runner one_safe_audit loser_rejected lost_commit_
 
 # Exercise the file boundary in the real nonroot image. None of these malformed
 # enrollment files may reach the consume endpoint.
-consume_before_negative=$(jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0' <<<"$(proxy_status)")
+consume_before_negative=$(printf '%s' "$(proxy_status)" | jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0')
 negative_runner() {
   if docker exec --user 10001:10001 -e NEROCD_MODE=development "$loser_cid" nerocd runner \
     --server http://proxy:8081 --enrollment-file /identity/enrollment \
@@ -271,20 +271,24 @@ negative_runner wrong-owner
 mutate_loser_identity 'mv /identity/enrollment /identity/enrollment.real; ln -s enrollment.real /identity/enrollment; rm -f /identity/negative-credential'
 negative_runner symlink
 mutate_loser_identity 'rm /identity/enrollment; mv /identity/enrollment.real /identity/enrollment; chown 10001:10001 /identity/enrollment; chmod 0600 /identity/enrollment'
-consume_after_negative=$(jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0' <<<"$(proxy_status)")
+consume_after_negative=$(printf '%s' "$(proxy_status)" | jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0')
 [[ "$consume_after_negative" == "$consume_before_negative" ]] || fail "unsafe enrollment file reached consume API"
 record "credential_file_boundary=permissive_mode_denied wrong_owner_denied symlink_denied zero_consume_requests=true"
 
 # Three credential-only restarts must not call enrollment or registration.
 consume_before=$consume_requests
-register_before=$(jq -r '.requests["/api/v1/runners/register"] // 0' <<<"$proxy")
+register_before=$(printf '%s' "$proxy" | jq -r '.requests["/api/v1/runners/register"] // 0')
+identity_before=$(printf '%s' "$proxy" | jq -r '.requests["/api/v1/runners/identity"] // 0')
 registered_at=$(sql "SELECT floor(extract(epoch FROM registered_at))::bigint FROM runners WHERE id='runner_enrollment_runtime';")
 for restart in 1 2 3; do compose restart --timeout 3 "$winner_service" >"$runtime_dir/restart-$restart.txt" 2>&1 || fail "winner restart $restart failed"; sleep 2; done
 proxy=$(proxy_status)
-[[ "$(jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0' <<<"$proxy")" == "$consume_before" ]] || fail "credential restart reused enrollment"
-[[ "$(jq -r '.requests["/api/v1/runners/register"] // 0' <<<"$proxy")" == "$register_before" ]] || fail "credential restart used privileged registration"
+[[ "$(printf '%s' "$proxy" | jq -r '.requests["/api/v1/runner-enrollments/consume"] // 0')" == "$consume_before" ]] || fail "credential restart reused enrollment"
+[[ "$(printf '%s' "$proxy" | jq -r '.requests["/api/v1/runners/register"] // 0')" == "$register_before" ]] || fail "credential restart used privileged registration"
 restart_state=$(sql "SELECT floor(extract(epoch FROM registered_at))::bigint,(clock_timestamp()-last_heartbeat_at)<interval '5 seconds',count(*) OVER() FROM runners WHERE id='runner_enrollment_runtime';")
 [[ "$restart_state" == "$registered_at|t|1" ]] || fail "credential restart identity drift: $restart_state"
+identity_after=$(printf '%s' "$proxy" | jq -r '.requests["/api/v1/runners/identity"] // 0')
+(( identity_after >= identity_before + 3 )) || fail "credential restarts did not resolve authoritative identity"
+record "runner_identity=authenticated_without_explicit_id before_runtime_on_each_restart"
 record "credential_restart=3 same_runner_id same_registered_at same_credential_hash no_enrollment_or_register_requests heartbeat_fresh"
 
 # Revoked and naturally expired unused enrollment tokens fail through HTTP.
@@ -350,7 +354,7 @@ done
 logs_after_exit=$(sql "SELECT count(*) FROM run_logs WHERE run_id='$run_id';")
 sleep 3
 terminal_state=$(sql "SELECT (SELECT count(*) FROM run_logs WHERE run_id='$run_id'),(SELECT count(*) FROM run_artifacts WHERE run_id='$run_id'),(SELECT count(*) FROM audit_events WHERE target_id='$run_id' AND action='runner.complete'),(SELECT status FROM runners WHERE id='runner_enrollment_runtime');")
-IFS='|' read -r logs_final artifacts_final completions_final runner_status <<<"$terminal_state"
+IFS='|' read -r logs_final artifacts_final completions_final runner_status < <(printf '%s\n' "$terminal_state")
 [[ "$logs_final" == "$logs_after_exit" && "$artifacts_final" == 0 && "$completions_final" == 0 && "$runner_status" == revoked ]] || fail "post-revocation fenced mutation occurred: $terminal_state"
 record "revocation_at=$revoke_at runner_exit_within_seconds=15 process_group=gone_or_zombie_only later_logs=0 artifacts=0 completions=0"
 

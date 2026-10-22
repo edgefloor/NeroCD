@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/runners/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the authenticated runner identity without heartbeat
+         * @description Requires a current dedicated runner credential. Session, service account, enrollment, and browser credentials are rejected. This read does not update heartbeat or runner state.
+         */
+        get: operations["getRunnerIdentity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/managed-secrets": {
         parameters: {
             query?: never;
@@ -1397,6 +1417,9 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        RunnerIdentity: {
+            runner_id: string;
+        };
         ManagedSecret: {
             id: string;
             project_id: string;
@@ -2590,6 +2613,28 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getRunnerIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authoritative runner identity */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerIdentity"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
     listManagedSecrets: {
         parameters: {
             query: {

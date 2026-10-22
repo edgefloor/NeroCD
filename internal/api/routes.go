@@ -3,6 +3,7 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/runners/identity"},
 	{Method: http.MethodGet, Path: "/api/v1/managed-secrets"},
 	{Method: http.MethodPost, Path: "/api/v1/managed-secrets"},
 	{Method: http.MethodGet, Path: "/api/v1/managed-secrets/{id}"},
@@ -119,6 +120,8 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/runners/identity":
+		return s.runnerIdentity
 	case "/api/v1/managed-secrets":
 		return s.managedSecretsHandler
 	case "/api/v1/managed-secrets/{id}":

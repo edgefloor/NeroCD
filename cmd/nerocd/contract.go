@@ -217,7 +217,7 @@ func requiresContractAuth(method string, path string) bool {
 
 func requiresContractRunnerAuth(path string) bool {
 	switch path {
-	case "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
+	case "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
 		return true
 	default:
 		return false
@@ -315,6 +315,7 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodGet, path: "/api/v1/runners", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/runners/register", body: `{"id":"runner_contract","name":"Contract Runner","tags":["local"],"capabilities":["shell"]}`, auth: true, shape: "registered-runner", useAPIToken: true},
 		{method: http.MethodPost, path: "/api/v1/runners/rotate-token", body: `{"runner_id":"runner_contract"}`, auth: true, shape: "registered-runner"},
+		{method: http.MethodGet, path: "/api/v1/runners/identity", auth: true, shape: "runner-identity"},
 		{method: http.MethodPost, path: "/api/v1/runners/heartbeat", body: `{}`, auth: true, shape: "runner"},
 		{method: http.MethodPost, path: "/api/v1/runners/claim", body: `{}`, auth: true, shape: "claim"},
 		{method: http.MethodPost, path: "/api/v1/runners/logs", body: `{"run_id":"{{run_id}}","lease_id":"{{lease_id}}","attempt":{{attempt}},"fence":"{{fence}}","event_key":"contract-event-one","sequence":4,"stream":"stdout","message":"ok"}`, auth: true, shape: "run-log"},
@@ -634,6 +635,8 @@ func validatePayloadShape(key string, shape string, payload map[string]any) erro
 		if _, ok := payload["runner_tags"].([]any); !ok {
 			return fmt.Errorf("%s response missing runner_tags array", key)
 		}
+	case "runner-identity":
+		return requireString("runner_id")
 	case "runner":
 		for _, field := range []string{"id", "name", "status", "registered_at", "last_heartbeat_at"} {
 			if err := requireString(field); err != nil {

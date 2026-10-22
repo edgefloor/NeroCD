@@ -147,7 +147,14 @@ func (c Client) do(ctx context.Context, method, path string, body io.Reader, res
 	if result == nil {
 		return nil
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(result); err != nil {
+	// Identity opts into whole-document validation before runtime startup.
+	// Other protocol responses retain their existing decoding behavior.
+	if decoder, ok := result.(interface{ decodeResponse(io.Reader) error }); ok {
+		err = decoder.decodeResponse(resp.Body)
+	} else {
+		err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(result)
+	}
+	if err != nil {
 		return &APIError{Method: method, URL: RequestLabel(rawURL), Err: err}
 	}
 	return nil

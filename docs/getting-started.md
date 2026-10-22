@@ -173,3 +173,22 @@ startup fails, the command retains the file and prints its path for retry.
 Process exit discards every memory-store record. This mode is rejected by
 production configuration. For password-file rules and other secret handling,
 see [Secrets](secrets.md).
+
+## Runner identity and restart
+
+This runner CLI requires a server that implements `GET /api/v1/runners/identity`.
+Upgrade the server before deploying this runner binary. An older server returning
+404 causes startup to fail; the runner does not fall back to a local identity.
+Existing heartbeat and claim clients keep their current API contracts.
+
+After acquiring a dedicated credential through enrollment, registration, or
+`--credential-file`, the CLI reads the authenticated runner ID before opening its
+journal. Omit `--id` when restarting an enrolled runner from its credential file.
+The authenticated ID selects the same default journal under the same `--work-dir`,
+including when enrollment assigned an ID other than `runner_local`.
+
+An explicit `--id` must match the authenticated ID. A mismatch, rejected
+credential, malformed identity response, or transport failure stops startup before
+journal access, heartbeat, claim, or execution. Identity reads do not update
+heartbeat or other runner state. After identity succeeds, durable journal replay
+still finishes before heartbeat and claim traffic.

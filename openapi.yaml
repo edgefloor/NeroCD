@@ -21,6 +21,17 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  /api/v1/runners/identity:
+    get:
+      summary: Read the authenticated runner identity without heartbeat
+      operationId: getRunnerIdentity
+      security:
+        - bearerAuth: []
+      description: Requires a current dedicated runner credential. Session, service account, enrollment, and browser credentials are rejected. This read does not update heartbeat or runner state.
+      responses:
+        "200": {description: Authoritative runner identity, content: {application/json: {schema: {$ref: "#/components/schemas/RunnerIdentity"}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
   /api/v1/managed-secrets:
     get:
       summary: listManagedSecrets
@@ -2011,6 +2022,12 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    RunnerIdentity:
+      type: object
+      additionalProperties: false
+      required: [runner_id]
+      properties:
+        runner_id: {type: string, minLength: 1}
     ManagedSecret:
       type: object
       additionalProperties: false
