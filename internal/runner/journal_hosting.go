@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -13,16 +14,19 @@ import (
 // JournalHosting is nonsecret immutable prepare, apply-intent, or result
 // evidence. Apply intent is never discarded merely because its lease is stale.
 type JournalHosting struct {
-	LocalBuild  bool                           `json:"local_build,omitempty"`
-	ID          string                         `json:"id"`
-	Attempt     AttemptIdentity                `json:"attempt_authority"`
-	OperationID string                         `json:"operation_id"`
-	Phase       string                         `json:"phase"`
-	Prepared    *domain.HostingPreparedRequest `json:"prepared,omitempty"`
-	CleanupPlan *domain.HostingCleanupPlan     `json:"cleanup_plan,omitempty"`
-	Plan        *domain.HostingApplyPlan       `json:"plan,omitempty"`
-	Result      *domain.HostingCompleteRequest `json:"result,omitempty"`
-	CreatedAt   time.Time                      `json:"created_at"`
+	RuntimeEnvironment   bool                                  `json:"runtime_environment,omitempty"`
+	RuntimeConfiguration domain.HostingRuntimeConfigurationRef `json:"runtime_configuration,omitzero"`
+	DeliveryID           string                                `json:"delivery_id,omitempty"`
+	LocalBuild           bool                                  `json:"local_build,omitempty"`
+	ID                   string                                `json:"id"`
+	Attempt              AttemptIdentity                       `json:"attempt_authority"`
+	OperationID          string                                `json:"operation_id"`
+	Phase                string                                `json:"phase"`
+	Prepared             *domain.HostingPreparedRequest        `json:"prepared,omitempty"`
+	CleanupPlan          *domain.HostingCleanupPlan            `json:"cleanup_plan,omitempty"`
+	Plan                 *domain.HostingApplyPlan              `json:"plan,omitempty"`
+	Result               *domain.HostingCompleteRequest        `json:"result,omitempty"`
+	CreatedAt            time.Time                             `json:"created_at"`
 }
 
 // AppendHosting durably records nonsecret hosting evidence before external mutation or delivery.
@@ -64,6 +68,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	} // Older binaries reject retained release and cleanup authority.
 	if HostingJournalUsesLocalBuild(entry) && j.state.Version < 6 {
 		j.state.Version = 6
+	}
+	if HostingJournalUsesRuntimeEnvironment(entry) && j.state.Version < 8 {
+		j.state.Version = 8
 	}
 	j.state.Hosting = append(j.state.Hosting, entry)
 	if err = j.persistLocked(); err != nil {
@@ -108,6 +115,79 @@ func hostingJournalNeedsV3(entry JournalHosting) bool {
 	return entry.Phase == "cleanup_intent" || strings.HasPrefix(entry.Attempt.RunID, "cleanup_") || entry.Plan != nil && entry.Plan.CompilerVersion == domain.HostingReleaseCompilerVersion
 }
 
+// HostingJournalUsesRuntimeEnvironment detects nonsecret runtime authority at
+// every retained level. It does not authorize fetching values during replay.
+func HostingJournalUsesRuntimeEnvironment(entry JournalHosting) bool {
+	if entry.RuntimeEnvironment || entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || entry.DeliveryID != "" {
+		return true
+	}
+	for _, s := range hostingJournalSnapshots(entry) {
+		if s.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || s.PolicyVersion == domain.HostingRuntimePolicyVersion || s.PolicyVersion == domain.HostingLocalBuildRuntimePolicyVersion {
+			return true
+		}
+	}
+	return false
+}
+
+func hostingJournalSnapshots(entry JournalHosting) []domain.HostingSnapshot {
+	var snapshots []domain.HostingSnapshot
+	if entry.Plan != nil {
+		snapshots = append(snapshots, entry.Plan.Snapshot)
+		if entry.Plan.PreviousHealthy != nil {
+			snapshots = append(snapshots, entry.Plan.PreviousHealthy.Snapshot)
+		}
+		for _, retained := range entry.Plan.RetainedReleases {
+			snapshots = append(snapshots, retained.Snapshot)
+		}
+	}
+	if entry.CleanupPlan != nil {
+		snapshots = append(snapshots, entry.CleanupPlan.Target.Snapshot)
+	}
+	return snapshots
+}
+
+func validateHostingJournalRuntimeEnvironment(entry JournalHosting) error {
+	snapshots := hostingJournalSnapshots(entry)
+	hasReference := false
+	for _, s := range snapshots {
+		if err := domain.ValidateHostingRuntimeConfigurationRef(s); err != nil {
+			return errors.New("invalid journal runtime snapshot reference")
+		}
+		hasReference = hasReference || s.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{})
+	}
+	if !entry.RuntimeEnvironment {
+		if hasReference || entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || entry.DeliveryID != "" {
+			return errors.New("journal runtime environment marker missing")
+		}
+		return nil
+	}
+	if len(snapshots) != 0 {
+		if !hasReference || entry.RuntimeConfiguration != snapshots[0].RuntimeConfiguration {
+			return errors.New("journal runtime environment reference conflicts with target")
+		}
+	} else {
+		// Preparation and result receipts have no snapshot. Retain the exact
+		// current public reference explicitly so older readers fail closed.
+		s := domain.HostingSnapshot{RuntimeConfiguration: entry.RuntimeConfiguration, PolicyVersion: domain.HostingRuntimePolicyVersion}
+		if entry.RuntimeConfiguration == (domain.HostingRuntimeConfigurationRef{}) || domain.ValidateHostingRuntimeConfigurationRef(s) != nil {
+			return errors.New("journal runtime receipt requires configuration reference")
+		}
+	}
+	currentEnvironment := entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{})
+	if entry.Phase == "apply_intent" && currentEnvironment {
+		decoded, err := hex.DecodeString(entry.DeliveryID)
+		if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != entry.DeliveryID {
+			return errors.New("journal runtime apply intent requires canonical delivery id")
+		}
+		if entry.Plan == nil || !domain.HostingPlanFamilyMatches(entry.Plan.Snapshot, *entry.Plan) {
+			return errors.New("journal runtime apply plan family mismatch")
+		}
+	} else if entry.DeliveryID != "" {
+		return errors.New("journal delivery id requires current runtime apply intent")
+	}
+	return nil
+}
+
 // AckHosting removes only a server-acknowledged hosting document. Intent callers
 // must first establish that its durable server mutation hold has been settled.
 func (j *AttemptJournal) AckHosting(id string) error {
@@ -148,6 +228,9 @@ func cloneHostingEntries(entries []JournalHosting) []JournalHosting {
 	return copy
 }
 func validateJournalHosting(entry JournalHosting) error {
+	if err := validateHostingJournalRuntimeEnvironment(entry); err != nil {
+		return err
+	}
 	if entry.LocalBuild && entry.Phase != "result" && !hostingJournalHasLocalArtifact(entry) {
 		return errors.New("local journal marker conflicts with structured origin")
 	}

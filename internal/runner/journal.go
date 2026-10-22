@@ -391,7 +391,7 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
-	if state.Version < journalFormatVersion || state.Version > 7 {
+	if state.Version < journalFormatVersion || state.Version > 8 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
 	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
@@ -429,6 +429,9 @@ func validateJournalState(state journalState) error {
 		return errors.New("hosting journal requires version2")
 	}
 	for _, entry := range state.Hosting {
+		if state.Version < 8 && HostingJournalUsesRuntimeEnvironment(entry) {
+			return errors.New("runtime environment journal requires version 8")
+		}
 		if state.Version < 6 && HostingJournalUsesLocalBuild(entry) {
 			return errors.New("local artifact journal requires version 6")
 		}
