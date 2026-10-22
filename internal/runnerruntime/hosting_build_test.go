@@ -27,6 +27,46 @@ type buildFixtureClient struct {
 	loseSource, loseComplete     bool
 	beforeSource, beforeComplete func()
 	completeRequests             []hostingbuildprotocol.CompleteRequest
+	logs                         []domain.HostingBuildLogEvent
+	logRequests                  []domain.HostingBuildLogBatch
+	beforeLogs                   func(domain.HostingBuildLogBatch) error
+}
+
+func (f *buildFixtureClient) BuildEvents(ctx context.Context, b domain.HostingBuildLogBatch) (domain.HostingBuildLogAck, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.HostingBuildLogAck{}, err
+	}
+	if f.beforeLogs != nil {
+		if err := f.beforeLogs(b); err != nil {
+			return domain.HostingBuildLogAck{}, err
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if b.Authority != f.authority {
+		return domain.HostingBuildLogAck{}, errors.New("authority")
+	}
+	f.logRequests = append(f.logRequests, b)
+	ack := domain.HostingBuildLogAck{Authority: b.Authority}
+	for _, e := range b.Events {
+		found := false
+		for _, old := range f.logs {
+			if old.EventKey == e.EventKey {
+				if domain.HostingBuildLogBodyHash(b.Authority, old) != domain.HostingBuildLogBodyHash(b.Authority, e) {
+					return domain.HostingBuildLogAck{}, errors.New("body changed")
+				}
+				found = true
+			}
+		}
+		if !found {
+			if !f.live {
+				return domain.HostingBuildLogAck{}, errors.New("authority")
+			}
+			f.logs = append(f.logs, e)
+		}
+		ack.Receipts = append(ack.Receipts, domain.HostingBuildLogReceipt{EventKey: e.EventKey, RequestedSequence: e.Sequence, Sequence: e.Sequence, BodyHash: domain.HostingBuildLogBodyHash(b.Authority, e)})
+	}
+	return ack, nil
 }
 
 func (f *buildFixtureClient) BuildStatus(ctx context.Context, _ hostingbuildprotocol.StatusRequest) (hostingbuildprotocol.StatusResponse, error) {
@@ -116,6 +156,9 @@ func (f *buildFixtureClient) BuildComplete(_ context.Context, r hostingbuildprot
 type buildEngineFunc func(context.Context, hostingbuild.Request) (hostingbuild.Result, error)
 
 func (f buildEngineFunc) Build(c context.Context, r hostingbuild.Request) (hostingbuild.Result, error) {
+	return f(c, r)
+}
+func (f buildEngineFunc) BuildWithOutput(c context.Context, r hostingbuild.Request, _ hostingbuild.OutputSink) (hostingbuild.Result, error) {
 	return f(c, r)
 }
 func buildFixture(t *testing.T) (*BuildExecutor, *buildFixtureClient, domain.HostingBuildAuthority, runner.AttemptIdentity) {

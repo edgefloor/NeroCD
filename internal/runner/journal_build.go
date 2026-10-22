@@ -78,6 +78,13 @@ func (j *AttemptJournal) AckBuild(id string) error {
 	previous := j.state.Build
 	kept := make([]JournalBuild, 0, len(previous))
 	for _, entry := range previous {
+		if entry.ID == id && (entry.Phase == "result" || entry.Phase == "attempt_intent") {
+			for _, cursor := range j.state.BuildLogCursors {
+				if cursor.Authority == buildJournalAuthority(entry) {
+					return errors.New("build logs require exact completion acknowledgment")
+				}
+			}
+		}
 		if entry.ID != id {
 			kept = append(kept, entry)
 		}

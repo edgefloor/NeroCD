@@ -183,6 +183,10 @@ func TestBuildExecutorNeverAdoptsOrphanedEngineReceipt(t *testing.T) {
 
 type multiBuildClient map[string]*buildFixtureClient
 
+func (m multiBuildClient) BuildEvents(c context.Context, b domain.HostingBuildLogBatch) (domain.HostingBuildLogAck, error) {
+	return m[b.Authority.BuildID].BuildEvents(c, b)
+}
+
 func (m multiBuildClient) BuildStatus(c context.Context, r hostingbuildprotocol.StatusRequest) (hostingbuildprotocol.StatusResponse, error) {
 	return m[r.Authority.BuildID].BuildStatus(c, r)
 }
