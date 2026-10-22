@@ -7,6 +7,7 @@ import { buildError, buildQuery, buildsQuery, buildTerminal, cancelHostingBuild,
 import { Button } from "@/components/ui/button";
 import { PageNavigation } from "@/components/common/PageNavigation";
 import { maximumPageOffset } from "@/router/search";
+import { LocalBuildDeployment } from "./LocalBuildDeployment";
 const names: Record<string, string> = { queued: "Queued", sourcing: "Acquiring public source", building: "Building artifact", succeeded: "Succeeded", failed: "Failed", canceled: "Canceled", cleanup_required: "Cleanup required" };
 const buttonClass = "h-auto max-w-full whitespace-normal break-all";
 function cancellationError(cause: unknown): string {
@@ -44,6 +45,7 @@ function BuildDetail({ actor, resource, id, writable, blocked, changed, onDenied
       {b.failure_code === "cancel_requested" ? <p role="status">{buildTerminal(b.state) ? "Cancellation intent was recorded. See the terminal build state above; this is not application runtime status." : "Cancellation was requested. Cleanup or a terminal acknowledgment may still be pending."}</p> : null}
       {b.state === "cleanup_required" ? <p role="status">Runner cleanup is required; this state does not prove cleanup or cancellation completed.</p> : null}
       {b.state === "succeeded" ? <p>Build success records an artifact. It does not mean the application is deployed or running.</p> : null}
+      {b.state === "succeeded" && b.artifact ? <LocalBuildDeployment key={JSON.stringify([actor, resource.id, b.id, writable])} actor={actor} resource={resource} build={b} writable={writable} blocked={blocked || denied || detail.isError} onDenied={onDenied} /> : null}
       {writable && !buildTerminal(b.state) ? <div className="space-y-2"><label className="flex items-start gap-2 text-sm"><input type="checkbox" disabled={busy || attempted} checked={confirmed} onChange={(e) => { setConfirmed(e.target.checked); setRevision(e.target.checked ? b.revision : undefined); }} /><span className="min-w-0 break-all">I confirm cancellation of build {id} at {revision !== undefined ? `retained revision ${revision}` : `revision ${b.revision}`}.</span></label><Button className={buttonClass} type="button" disabled={busy || blocked || denied || detail.isError || !confirmed || conflict} onClick={() => void cancel()}>{busy ? "Requesting cancellation..." : attempted ? "Retry cancellation at retained revision" : "Request build cancellation"}</Button></div> : null}
       {conflict ? <><p role="status">Cancellation revision changed. Review the refreshed state and confirm again; no new revision was submitted automatically.</p><Button className={buttonClass} type="button" variant="outline" disabled={busy || blocked || denied || detail.isError} onClick={() => { setRevision(undefined); setAttempted(false); setConfirmed(false); setConflict(false); setError(""); }}>Review refreshed cancellation revision</Button></> : null}
     </> : null}{error ? <p role="alert">{error}</p> : null}
@@ -78,7 +80,7 @@ function Builds({ resource, writable, blocked, actor }: { resource: Resource; wr
     catch (cause) { if (active.current) { setError(buildError(cause)); if (cause instanceof ApiError && [401, 403].includes(cause.status)) setDenied(true); if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await refreshCurrent(); } } }
     finally { submitting.current = false; if (active.current) setBusy(false); }
   }
-  return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Git builds for ${resource.name}`}><h5 className="font-medium">Public Git builds</h5><p className="text-xs text-muted-foreground">Build operations acquire public source and produce an artifact. Artifact deployment and build output logs are not available in this interface. A successful build does not mean a running application.</p>
+  return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Git builds for ${resource.name}`}><h5 className="font-medium">Public Git builds</h5><p className="text-xs text-muted-foreground">Build operations acquire public source and produce an artifact. Select a successful build to deploy its recorded local artifact. Build output logs are not available in this interface. A successful build does not mean a running application.</p>
     <Button className={buttonClass} type="button" variant="outline" disabled={busy} onClick={() => { void history.refetch(); void binding.refetch(); }}>Refresh build history</Button>
     {history.isPending ? <p role="status">Loading build history...</p> : null}{history.isError || binding.isError ? <p role="alert">Unable to refresh build history or placement. Retained metadata may be stale; mutations are paused.</p> : null}
     {history.data?.items.length === 0 ? <p>No build operations recorded.</p> : null}
