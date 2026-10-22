@@ -3,6 +3,8 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/retained-releases"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/retained-releases/{operation_id}/cleanup"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/deployments"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/deployments"},
 	{Method: http.MethodGet, Path: "/api/v1/hosting-operations/{id}"},
@@ -141,6 +143,10 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/resources/{id}/retained-releases":
+		return s.hostingRetainedReleases
+	case "/api/v1/resources/{id}/retained-releases/{operation_id}/cleanup":
+		return s.hostingReleaseCleanup
 	case "/api/v1/resources/{id}/deployments":
 		return s.hostingDeploymentRequest
 	case "/api/v1/hosting-operations/{id}":

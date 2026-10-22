@@ -189,6 +189,13 @@ type HostingBindingState struct {
 	RestoreAdmitted bool    `json:"restore_admitted"`
 }
 
+type HostingCleanupTarget struct {
+	OperationID       string          `json:"operation_id"`
+	TargetOperationID string          `json:"target_operation_id"`
+	Plan              json.RawMessage `json:"plan"`
+	PlanHash          string          `json:"plan_hash"`
+}
+
 type HostingDispatchReceipt struct {
 	OperationID string    `json:"operation_id"`
 	RunID       string    `json:"run_id"`
@@ -209,6 +216,112 @@ type HostingOperation struct {
 	CreatedBy           string    `json:"created_by"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type HostingProxy struct {
+	ID                string          `json:"id"`
+	ServerID          string          `json:"server_id"`
+	DestinationID     string          `json:"destination_id"`
+	RunnerID          string          `json:"runner_id"`
+	ControlProjectID  string          `json:"control_project_id"`
+	Configuration     json.RawMessage `json:"configuration"`
+	Enabled           bool            `json:"enabled"`
+	DesiredGeneration int64           `json:"desired_generation"`
+	LoadedGeneration  int64           `json:"loaded_generation"`
+	DaemonID          *string         `json:"daemon_id"`
+	StaticHash        *string         `json:"static_hash"`
+	ActiveOperationID *string         `json:"active_operation_id"`
+	HoldOperationID   *string         `json:"hold_operation_id"`
+	CreatedBy         string          `json:"created_by"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+}
+
+type HostingProxyAdmission struct {
+	OperationID string          `json:"operation_id"`
+	RunID       string          `json:"run_id"`
+	LeaseID     string          `json:"lease_id"`
+	Authority   json.RawMessage `json:"authority"`
+	PlanHash    string          `json:"plan_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingProxyHostnameGrant struct {
+	ID        string     `json:"id"`
+	ProxyID   string     `json:"proxy_id"`
+	ProjectID string     `json:"project_id"`
+	Hostname  string     `json:"hostname"`
+	Wildcard  bool       `json:"wildcard"`
+	GrantedBy string     `json:"granted_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at"`
+}
+
+type HostingProxyOperation struct {
+	ID             string          `json:"id"`
+	ProxyID        string          `json:"proxy_id"`
+	ProjectID      *string         `json:"project_id"`
+	RouteID        *string         `json:"route_id"`
+	Generation     int64           `json:"generation"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	RequestHash    string          `json:"request_hash"`
+	State          string          `json:"state"`
+	Snapshot       json.RawMessage `json:"snapshot"`
+	SnapshotHash   string          `json:"snapshot_hash"`
+	Plan           []byte          `json:"plan"`
+	PlanHash       *string         `json:"plan_hash"`
+	RunID          *string         `json:"run_id"`
+	CreatedBy      string          `json:"created_by"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type HostingProxyReceipt struct {
+	OperationID string          `json:"operation_id"`
+	Phase       string          `json:"phase"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingProxyReleaseReference struct {
+	OperationID        string `json:"operation_id"`
+	RouteID            string `json:"route_id"`
+	ReleaseOperationID string `json:"release_operation_id"`
+}
+
+type HostingProxyRestoreHold struct {
+	ProxyID   string    `json:"proxy_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type HostingProxyRoute struct {
+	ID                         string    `json:"id"`
+	ProxyID                    string    `json:"proxy_id"`
+	ProjectID                  string    `json:"project_id"`
+	ResourceID                 string    `json:"resource_id"`
+	BindingID                  string    `json:"binding_id"`
+	GrantID                    string    `json:"grant_id"`
+	Hostname                   string    `json:"hostname"`
+	PathPrefix                 string    `json:"path_prefix"`
+	Version                    int64     `json:"version"`
+	SelectedReleaseOperationID string    `json:"selected_release_operation_id"`
+	Enabled                    bool      `json:"enabled"`
+	CreatedBy                  string    `json:"created_by"`
+	CreatedAt                  time.Time `json:"created_at"`
+	UpdatedAt                  time.Time `json:"updated_at"`
+}
+
+type HostingProxyTaskTarget struct {
+	RunID         string `json:"run_id"`
+	OperationID   string `json:"operation_id"`
+	ProxyID       string `json:"proxy_id"`
+	ServerID      string `json:"server_id"`
+	DestinationID string `json:"destination_id"`
+	RunnerID      string `json:"runner_id"`
+	Mode          string `json:"mode"`
 }
 
 type HostingReceipt struct {
@@ -233,6 +346,32 @@ type HostingRelease struct {
 	OperationID string          `json:"operation_id"`
 	Body        json.RawMessage `json:"body"`
 	BodyHash    string          `json:"body_hash"`
+}
+
+type HostingReleaseClaim struct {
+	OperationID   string `json:"operation_id"`
+	DestinationID string `json:"destination_id"`
+	HostPort      int32  `json:"host_port"`
+	BindingID     string `json:"binding_id"`
+	State         string `json:"state"`
+}
+
+type HostingReleaseSlot struct {
+	DestinationID string `json:"destination_id"`
+	HostPort      int32  `json:"host_port"`
+	BindingID     string `json:"binding_id"`
+}
+
+type HostingRetainedRelease struct {
+	OperationID        string          `json:"operation_id"`
+	BindingID          string          `json:"binding_id"`
+	DestinationID      string          `json:"destination_id"`
+	HostPort           int32           `json:"host_port"`
+	Body               json.RawMessage `json:"body"`
+	BodyHash           string          `json:"body_hash"`
+	State              string          `json:"state"`
+	RetainedRunning    bool            `json:"retained_running"`
+	CleanupOperationID *string         `json:"cleanup_operation_id"`
 }
 
 type HostingSnapshot struct {

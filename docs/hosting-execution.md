@@ -1,6 +1,6 @@
 # Public image deployment
 
-Image deployment requires PostgreSQL, the native schema through migration 0045,
+Image deployment requires PostgreSQL, the native schema through migration 0046,
 the River schema, and the server's live hosting worker. Memory mode returns
 `503 hosting_unavailable` before accepting a deployment. River dispatch creates
 one typed `image_deploy` task for the resource's bound runner. A River job finishing
@@ -31,8 +31,17 @@ public image pulls are supported in this slice.
 
 The response is `202` with a `HostingOperation`. Repeating the same request key
 returns the original operation and snapshot. Changing the request under that key
-returns `409`. The host port is a stable reservation for the binding, between
-1024 and 65535, bound only on `127.0.0.1`. Container ports are between 1 and 65535.
+returns `409`. An explicit host port must be available, between 1024 and 65535,
+and binds only on `127.0.0.1`. Omit `host_port` or use zero to request allocation
+from the server operator's range. The defaults are 20000–60999; operators can set
+`NEROCD_HOSTING_AUTO_PORT_MIN` and `NEROCD_HOSTING_AUTO_PORT_MAX` before startup.
+Allocation preserves the original request's idempotency key and resolved port.
+Before automatic allocation, destination admission reclaims slots whose claims
+have conclusively settled without live effects. Historical claims, snapshots and
+receipts remain available for replay. Legacy binding reservations, retained
+releases, active claims, unresolved effects, restore holds and protected route
+references keep their slots.
+Container ports are between 1 and 65535.
 Readiness accepts an origin-relative path and a bounded timeout of 1–120 seconds.
 The runner uses ordinary HTTP GET, accepts 200–399 and does not follow redirects.
 
@@ -72,6 +81,38 @@ explicitly authorized recovery contract is still needed for that case.
 A successful completion under live authority settles the lease, operation,
 healthy pointer, receipt and audit record
 in one transaction before clearing its owned hold.
+
+## Retained releases and targeted cleanup
+
+Auto allocation, different-port replacements, and cleanup require the runner's
+explicit `image_release_ports_v1` capability. Their frozen compiler is
+`image-hosting.release-ports.v1`; the server checks the capability again at
+dispatch, claim, prepare, admission, and first result. Legacy agents can receive
+only legacy plans without retained-release fields. A retained-release intent
+advances the local journal to version 3, which older binaries reject.
+
+A replacement on a different port keeps the previous healthy container running.
+A failed readiness check removes only the failed candidate and verifies the old
+release is still healthy. Changing the healthy pointer does not itself switch any
+proxy route: a route generation must explicitly select and verify the new release.
+The previous release and port remain recorded until targeted cleanup succeeds.
+
+Viewers can list resource-owned releases with
+`GET /api/v1/resources/{id}/retained-releases`. Maintainers request cleanup with
+`POST /api/v1/resources/{id}/retained-releases/{operation_id}/cleanup` and
+`{"expected_generation":1,"idempotency_key":"cleanup-old-release"}`. The server
+selects the exact container, image, daemon and port from persisted evidence.
+Current healthy releases and releases referenced by desired, queued, loaded,
+admitted or unresolved proxy generations cannot be cleaned up. Cleanup stops and
+removes only that exact owned container. It never prunes a daemon or accepts a
+caller-supplied container identity. The ledger remains protected until the exact
+successful receipt commits; lost responses, stale authority, restore holds and
+uncertain effects keep ownership held. The original legacy binding port remains
+reserved for compatibility even after its old container is removed.
+If cleanup is canceled before admission, its exact canceled server status, absent
+mutation and restore holds, and absence of conflicting result evidence allow the
+runner to acknowledge its durable cleanup intent on restart. Admitted or uncertain
+cleanup still blocks startup until a verified completion settles ownership.
 
 **Restore recovery remains blocked in this slice.** A restored binding reports
 `restore_ownership_held: true`. A database backup can predate an admission while

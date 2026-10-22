@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/distribution/reference"
@@ -17,6 +20,9 @@ import (
 // StartHostingExecution installs and starts the real River consumer. The server
 // must call its stop function before closing the store pool.
 func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context.Context) error, error) {
+	if err := s.configureHostingPorts(); err != nil {
+		return nil, err
+	}
 	client, err := hostingjobs.New(ctx, s.pool, s, hostingjobs.Config{})
 	if err != nil {
 		return nil, err
@@ -81,7 +87,7 @@ var ErrHostingRestoreHold = fmt.Errorf("%w: restored hosting ownership requires 
 
 func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.HostingOperation, error) {
 	var op domain.HostingOperation
-	var snapshot, release, plan, prepared, complete, result []byte
+	var snapshot, release, plan, prepared, complete, result, cleanup []byte
 	err := func() error {
 		row, queryErr := sqlcgen.New(q).GetHostingOperationSnapshot(ctx, id)
 		if queryErr != nil {
@@ -101,6 +107,7 @@ func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.Ho
 		snapshot = row.Snapshot
 		release = row.Release
 		plan = row.Plan
+		cleanup = row.CleanupPlan
 		prepared = row.PreparedReceipt
 		complete = row.CompleteReceipt
 		result = row.Result
@@ -117,7 +124,7 @@ func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.Ho
 	for _, doc := range []struct {
 		raw    []byte
 		target any
-	}{{snapshot, &op.Snapshot}, {release, &op.Release}, {plan, &op.Plan}, {prepared, &op.PreparedReceipt}, {complete, &op.CompleteReceipt}, {result, &op.Result}} {
+	}{{snapshot, &op.Snapshot}, {release, &op.Release}, {plan, &op.Plan}, {prepared, &op.PreparedReceipt}, {complete, &op.CompleteReceipt}, {result, &op.Result}, {cleanup, &op.CleanupPlan}} {
 		if len(doc.raw) > 0 {
 			if err = json.Unmarshal(doc.raw, doc.target); err != nil {
 				return domain.HostingOperation{}, fmt.Errorf("decode hosting evidence: %w", err)
@@ -146,6 +153,9 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 		return domain.HostingOperation{}, err
 	}
 	defer rollbackTransaction(ctx, tx)
+	if err = lockHostingResourceDestination(ctx, tx, resourceID); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	var snap domain.HostingSnapshot
 	var projectID string
 	var source []byte
@@ -205,6 +215,9 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err = hostingTargetGate(ctx, tx, projectID, snap, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
+	if err = s.resolveHostingReleasePort(ctx, tx, &snap, in.HostPort); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	_, err = sqlcgen.New(tx).CreateHostingPortReservation(ctx, sqlcgen.CreateHostingPortReservationParams{BindingID: snap.BindingID, DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort)})
 	if err != nil {
 		return domain.HostingOperation{}, hostingError(err)
@@ -224,7 +237,7 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if reserved != snap.HostPort || !admitted || hold != nil {
+	if reserved < 1024 || !admitted || hold != nil {
 		return domain.HostingOperation{}, ErrConflict
 	}
 	var busy bool
@@ -243,6 +256,9 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	}
 	_, err = sqlcgen.New(tx).CreateHostingOperation(ctx, sqlcgen.CreateHostingOperationParams{ID: id, ProjectID: projectID, ResourceID: resourceID, BindingID: snap.BindingID, IdempotencyKey: in.IdempotencyKey, RequestHash: domain.HostingDocumentHash(in), CreatedBy: actorID})
 	if err != nil {
+		return domain.HostingOperation{}, hostingError(err)
+	}
+	if _, err = sqlcgen.New(tx).CreateHostingReleaseClaim(ctx, sqlcgen.CreateHostingReleaseClaimParams{OperationID: id, DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort), BindingID: snap.BindingID}); err != nil {
 		return domain.HostingOperation{}, hostingError(err)
 	}
 	contents, err := json.Marshal(snap)
@@ -276,6 +292,14 @@ func hostingTargetGate(ctx context.Context, tx pgx.Tx, projectID string, snap do
 	return hostingTargetGateMode(ctx, tx, projectID, snap, allowMissingState, false)
 }
 func hostingTargetGateMode(ctx context.Context, tx pgx.Tx, projectID string, snap domain.HostingSnapshot, allowMissingState, observe bool) error {
+	if err := sqlcgen.New(tx).LockHostingExecutionDestination(ctx, snap.DestinationID); err != nil {
+		return err
+	}
+	if snap.PolicyVersion == domain.HostingReleasePolicyVersion {
+		if err := requireHostingReleaseAgent(ctx, tx, snap.RunnerID); err != nil {
+			return err
+		}
+	}
 	var revoked *time.Time
 	if err := func() error {
 		row, queryErr := sqlcgen.New(tx).LockHostingProjectGrant(ctx, sqlcgen.LockHostingProjectGrantParams{DestinationID: snap.DestinationID, ProjectID: projectID})
@@ -356,6 +380,9 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 			if _, updateErr := sqlcgen.New(tx).FailQueuedHostingOperation(ctx, id); updateErr != nil {
 				return updateErr
 			}
+			if _, releaseErr := sqlcgen.New(tx).ReleaseHostingFailedClaim(ctx, id); releaseErr != nil {
+				return releaseErr
+			}
 			if auditErr := hostingPhaseAudit(ctx, tx, s.queries, op, op.CreatedBy, "preflight_failed"); auditErr != nil {
 				return auditErr
 			}
@@ -377,8 +404,11 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 	if state != "queued" {
 		return nil
 	}
-	runID := "run_" + id
-	spec := domain.RunSpec{Type: domain.RunTypeImageDeploy, Inputs: map[string]any{}, HostingOperationID: id, HostingMode: "deploy"}
+	runID, mode := "run_"+id, "deploy"
+	if op.CleanupPlan != nil {
+		runID, mode = "cleanup_"+id, "cleanup"
+	}
+	spec := domain.RunSpec{Type: domain.RunTypeImageDeploy, Inputs: map[string]any{}, HostingOperationID: id, HostingMode: mode}
 	body, err := json.Marshal(spec)
 	if err != nil {
 		return err
@@ -387,7 +417,12 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
-	if _, err = sqlcgen.New(tx).CreateHostingDeploymentTarget(ctx, sqlcgen.CreateHostingDeploymentTargetParams{RunID: runID, OperationID: id, BindingID: op.BindingID, RunnerID: op.Snapshot.RunnerID}); err != nil {
+	if mode == "cleanup" {
+		_, err = sqlcgen.New(tx).CreateHostingCleanupTaskTarget(ctx, sqlcgen.CreateHostingCleanupTaskTargetParams{RunID: runID, OperationID: id, BindingID: op.BindingID, RunnerID: op.Snapshot.RunnerID})
+	} else {
+		_, err = sqlcgen.New(tx).CreateHostingDeploymentTarget(ctx, sqlcgen.CreateHostingDeploymentTargetParams{RunID: runID, OperationID: id, BindingID: op.BindingID, RunnerID: op.Snapshot.RunnerID})
+	}
+	if err != nil {
 		return err
 	}
 	if _, err = sqlcgen.New(tx).CreateHostingDispatchReceipt(ctx, sqlcgen.CreateHostingDispatchReceiptParams{OperationID: id, RunID: runID}); err != nil {
@@ -482,6 +517,11 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 	}
 	if _, err = sqlcgen.New(tx).BeginHostingPreparation(ctx, op.ID); err != nil {
 		return domain.HostingOperation{}, err
+	}
+	if mode == "cleanup" {
+		if _, err = sqlcgen.New(tx).FinishHostingPreparation(ctx, op.ID); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	op, err = hostingOperation(ctx, tx, op.ID)
 	if err != nil {
@@ -608,7 +648,27 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 			return domain.HostingOperation{}, err
 		}
 	}
-	plan, err := domain.CompileHostingPlan(op.Snapshot, in.Release, previous)
+	var plan domain.HostingApplyPlan
+	if op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion {
+		var retained []domain.HostingHealthy
+		rows, readErr := sqlcgen.New(tx).GetHostingRetainedReleases(ctx, op.BindingID)
+		if readErr != nil {
+			return domain.HostingOperation{}, readErr
+		}
+		for _, row := range rows {
+			if previous != nil && row.OperationID == previous.OperationID {
+				continue
+			}
+			var old domain.HostingHealthy
+			if err = json.Unmarshal(row.Body, &old); err != nil {
+				return domain.HostingOperation{}, err
+			}
+			retained = append(retained, old)
+		}
+		plan, err = domain.CompileRetainedHostingPlan(op.Snapshot, in.Release, previous, retained)
+	} else {
+		plan, err = domain.CompileHostingPlan(op.Snapshot, in.Release, previous)
+	}
 	if err != nil {
 		return domain.HostingOperation{}, ErrConflict
 	}
@@ -668,9 +728,6 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 		return domain.HostingOperation{}, err
 	}
 	defer rollbackTransaction(ctx, tx)
-	if err = hostingRequireMode(ctx, tx, a, "deploy"); err != nil {
-		return domain.HostingOperation{}, err
-	}
 	if err = hostingAuthorityExists(ctx, tx, runnerID, a, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -681,8 +738,23 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	if err = hostingTargetGate(ctx, tx, op.ProjectID, op.Snapshot, false); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if op.Plan == nil || op.Release == nil || op.Plan.CompilerVersion != domain.HostingCompilerVersion || op.Snapshot.PolicyVersion != domain.HostingPolicyVersion {
+	if op.CleanupPlan != nil {
+		return s.admitHostingCleanup(ctx, tx, runnerID, a, op)
+	}
+	if err = hostingRequireMode(ctx, tx, a, "deploy"); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if op.Plan == nil || op.Release == nil || (op.Plan.CompilerVersion != domain.HostingCompilerVersion && op.Plan.CompilerVersion != domain.HostingReleaseCompilerVersion) || (op.Snapshot.PolicyVersion != domain.HostingPolicyVersion && op.Snapshot.PolicyVersion != domain.HostingReleasePolicyVersion) {
 		return domain.HostingOperation{}, ErrConflict
+	}
+	if !op.Plan.RetainPrevious {
+		referenced, checkErr := sqlcgen.New(tx).HostingReleasePortReferenced(ctx, sqlcgen.HostingReleasePortReferencedParams{DestinationID: op.Snapshot.DestinationID, HostPort: int32(op.Snapshot.HostPort)})
+		if checkErr != nil {
+			return domain.HostingOperation{}, checkErr
+		}
+		if referenced {
+			return domain.HostingOperation{}, ErrConflict
+		}
 	}
 	// Repeated admission under the same live tuple is safe; runtime never repeats
 	// side effects merely because this acknowledgement was lost.
@@ -698,6 +770,9 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	}
 	if tag != 1 {
 		return domain.HostingOperation{}, ErrConflict
+	}
+	if _, err = sqlcgen.New(tx).HoldHostingReleaseClaim(ctx, op.ID); err != nil {
+		return domain.HostingOperation{}, err
 	}
 	authorityRaw, marshalErr := json.Marshal(a)
 	if marshalErr != nil {
@@ -733,9 +808,6 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 		return domain.HostingOperation{}, err
 	}
 	defer rollbackTransaction(ctx, tx)
-	if err = hostingRequireMode(ctx, tx, in.HostingAuthority, "deploy"); err != nil {
-		return domain.HostingOperation{}, err
-	}
 	if err = hostingAuthorityExists(ctx, tx, runnerID, in.HostingAuthority, false); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -755,8 +827,22 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if err != nil {
 		return op, err
 	}
+	if err = sqlcgen.New(tx).LockHostingExecutionDestination(ctx, op.Snapshot.DestinationID); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion {
+		if err = requireHostingReleaseAgent(ctx, tx, runnerID); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
 	if op.State == "succeeded" || op.State == "failed" || op.State == "canceled" {
 		return domain.HostingOperation{}, ErrConflict
+	}
+	if op.CleanupPlan != nil {
+		return s.completeHostingCleanup(ctx, tx, runnerID, in, op)
+	}
+	if err = hostingRequireMode(ctx, tx, in.HostingAuthority, "deploy"); err != nil {
+		return domain.HostingOperation{}, err
 	}
 	// Pre-apply failure cannot assert external success. A post-admission
 	// uncertain result retains the independent hold under live authority.
@@ -792,6 +878,22 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if op.MutationHold && !uncertain {
 		if in.Result.Outcome == "succeeded" {
 			healthy := domain.HostingHealthy{Snapshot: op.Snapshot, OperationID: op.ID, ContainerID: in.Result.ContainerID, Release: *op.Release, PlanHash: op.Plan.Hash}
+			if op.Plan.PreviousHealthy != nil {
+				if _, err = sqlcgen.New(tx).RetainPreviousHostingRelease(ctx, sqlcgen.RetainPreviousHostingReleaseParams{OperationID: op.Plan.PreviousHealthy.OperationID, RetainedRunning: op.Plan.RetainPrevious}); err != nil {
+					return domain.HostingOperation{}, err
+				}
+			}
+			healthyRaw, marshalErr := json.Marshal(healthy)
+			if marshalErr != nil {
+				return domain.HostingOperation{}, marshalErr
+			}
+			if _, err = sqlcgen.New(tx).RecordHostingHealthyRelease(ctx, sqlcgen.RecordHostingHealthyReleaseParams{OperationID: op.ID, BindingID: op.BindingID, DestinationID: op.Snapshot.DestinationID, HostPort: int32(op.Snapshot.HostPort), Body: healthyRaw}); err != nil {
+				return domain.HostingOperation{}, err
+			}
+			if _, err = sqlcgen.New(tx).RetainHostingReleaseClaim(ctx, op.ID); err != nil {
+				return domain.HostingOperation{}, err
+			}
+
 			raw, err := json.Marshal(healthy)
 			if err != nil {
 				return domain.HostingOperation{}, err
@@ -801,6 +903,11 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 			}
 		}
 		if _, err = sqlcgen.New(tx).ClearHostingMutationHold(ctx, sqlcgen.ClearHostingMutationHoldParams{BindingID: op.BindingID, HoldOperationID: hostingStringPointer(op.ID)}); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
+	if in.Result.Outcome == "failed" && !uncertain {
+		if _, err = sqlcgen.New(tx).ReleaseHostingFailedClaim(ctx, op.ID); err != nil {
 			return domain.HostingOperation{}, err
 		}
 	}
@@ -834,6 +941,9 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 		return before, err
 	}
 	if err = hostingLockOperationRuns(ctx, tx, before); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = sqlcgen.New(tx).LockHostingExecutionDestination(ctx, before.Snapshot.DestinationID); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	var hold *string
@@ -903,6 +1013,11 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 		}
 		if _, err = sqlcgen.New(tx).CancelHostingOperationState(ctx, sqlcgen.CancelHostingOperationStateParams{ID: id, State: state}); err != nil {
 			return domain.HostingOperation{}, err
+		}
+		if state == "canceled" {
+			if _, err = sqlcgen.New(tx).ReleaseHostingFailedClaim(ctx, id); err != nil {
+				return domain.HostingOperation{}, err
+			}
 		}
 		for _, runID := range []string{op.RunID, op.ReconciliationRunID} {
 			if runID != "" {
@@ -1345,3 +1460,379 @@ func (s *PostgresStore) ListHostingOperations(ctx context.Context, resourceID st
 }
 
 func hostingStringPointer(value string) *string { return &value }
+
+func (s *PostgresStore) configureHostingPorts() error {
+	s.hostingPortMin, s.hostingPortMax = 20000, 60999
+	for _, option := range []struct {
+		name   string
+		target *int
+	}{{"NEROCD_HOSTING_AUTO_PORT_MIN", &s.hostingPortMin}, {"NEROCD_HOSTING_AUTO_PORT_MAX", &s.hostingPortMax}} {
+		if value := os.Getenv(option.name); value != "" {
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return errors.New("invalid operator hosting port range")
+			}
+			*option.target = parsed
+		}
+	}
+	if s.hostingPortMin < 1024 || s.hostingPortMax > 65535 || s.hostingPortMin > s.hostingPortMax {
+		return errors.New("invalid operator hosting port range")
+	}
+	return nil
+}
+func lockHostingResourceDestination(ctx context.Context, tx pgx.Tx, resourceID string) error {
+	destination, err := sqlcgen.New(tx).HostingResourceDestination(ctx, resourceID)
+	if err != nil {
+		return hostingError(err)
+	}
+	return sqlcgen.New(tx).LockHostingExecutionDestination(ctx, destination)
+}
+func requireHostingReleaseAgent(ctx context.Context, tx pgx.Tx, runnerID string) error {
+	capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: runnerID, Capability: domain.HostingReleasePortsCapability})
+	if err != nil {
+		return hostingError(err)
+	}
+	if !capable {
+		return ErrConflict
+	}
+	return nil
+}
+func (s *PostgresStore) resolveHostingReleasePort(ctx context.Context, tx pgx.Tx, snap *domain.HostingSnapshot, requested int) error {
+	q := sqlcgen.New(tx)
+	if requested == 0 {
+		// Destination admission serializes reclamation with requests, external
+		// admission, settlement and route references. Evidence rows remain intact.
+		if _, err := q.ReclaimUnusedHostingReleaseSlots(ctx, snap.DestinationID); err != nil {
+			return err
+		}
+		port, err := q.PickHostingReleasePort(ctx, sqlcgen.PickHostingReleasePortParams{MinPort: int32(s.hostingPortMin), MaxPort: int32(s.hostingPortMax), DestinationID: snap.DestinationID})
+		if err != nil {
+			return hostingError(err)
+		}
+		snap.HostPort = int(port)
+		snap.PolicyVersion = domain.HostingReleasePolicyVersion
+	}
+	previousID := ""
+	previousRaw, err := q.GetHostingHealthy(ctx, snap.BindingID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if len(previousRaw) > 0 {
+		var old domain.HostingHealthy
+		if err = json.Unmarshal(previousRaw, &old); err != nil {
+			return err
+		}
+		previousID = old.OperationID
+		if old.Snapshot.HostPort != snap.HostPort {
+			snap.PolicyVersion = domain.HostingReleasePolicyVersion
+		}
+	}
+	referenced, err := q.HostingReleasePortReferenced(ctx, sqlcgen.HostingReleasePortReferencedParams{DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort)})
+	if err != nil {
+		return err
+	}
+	if referenced {
+		return ErrConflict
+	}
+	reusable, err := q.HostingReleaseSlotReusable(ctx, sqlcgen.HostingReleaseSlotReusableParams{DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort), PreviousOperationID: previousID, BindingID: snap.BindingID})
+	if err != nil {
+		return err
+	}
+	if reusable == nil || !*reusable {
+		return ErrConflict
+	}
+	rows, err := q.GetHostingRetainedReleases(ctx, snap.BindingID)
+	if err != nil {
+		return err
+	}
+	if len(rows) > 32 {
+		return ErrConflict
+	}
+	for _, row := range rows {
+		if row.OperationID != previousID && row.RetainedRunning {
+			snap.PolicyVersion = domain.HostingReleasePolicyVersion
+		}
+	}
+	if snap.PolicyVersion == domain.HostingReleasePolicyVersion {
+		if err = requireHostingReleaseAgent(ctx, tx, snap.RunnerID); err != nil {
+			return err
+		}
+	}
+	if _, err = q.ReserveHostingReleaseSlot(ctx, sqlcgen.ReserveHostingReleaseSlotParams{DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort), BindingID: snap.BindingID}); err != nil {
+		return hostingError(err)
+	}
+	owner, err := q.LockHostingReleaseSlot(ctx, sqlcgen.LockHostingReleaseSlotParams{DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort)})
+	if err != nil {
+		return err
+	}
+	if owner != snap.BindingID {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RequestHostingReleaseCleanup selects an exact retained target under current
+// project, destination, release-port, and route-reference transaction authority.
+func (s *PostgresStore) RequestHostingReleaseCleanup(ctx context.Context, id, resourceID, targetID, actor string, in domain.HostingCleanupInput, audit domain.AuditEvent) (domain.HostingOperation, error) {
+	if s.hostingJobs == nil {
+		return domain.HostingOperation{}, hostingjobs.ErrUnavailable
+	}
+	if err := domain.ValidateHostingDeployment(domain.HostingDeploymentInput{ExpectedGeneration: in.ExpectedGeneration, IdempotencyKey: in.IdempotencyKey, ContainerPort: 80, HostPort: 1024, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 1}}); err != nil {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	requestHash := domain.HostingDocumentHash(struct {
+		Kind, Target string
+		Input        domain.HostingCleanupInput
+	}{"cleanup", targetID, in})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	defer rollbackTransaction(ctx, tx)
+	if err = lockHostingResourceDestination(ctx, tx, resourceID); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	target, err := sqlcgen.New(tx).LockHostingResourceTarget(ctx, resourceID)
+	if err != nil {
+		return domain.HostingOperation{}, hostingError(err)
+	}
+	if row, lookupErr := sqlcgen.New(tx).GetHostingIdempotency(ctx, sqlcgen.GetHostingIdempotencyParams{ResourceID: resourceID, IdempotencyKey: in.IdempotencyKey}); lookupErr == nil {
+		if row.RequestHash != requestHash {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		return hostingOperation(ctx, tx, row.ID)
+	} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
+		return domain.HostingOperation{}, lookupErr
+	}
+	if target.Generation != in.ExpectedGeneration {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	row, err := sqlcgen.New(tx).GetHostingRetainedRelease(ctx, targetID)
+	if err != nil {
+		return domain.HostingOperation{}, hostingError(err)
+	}
+	var retained domain.HostingHealthy
+	if err = json.Unmarshal(row.Body, &retained); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if row.State != "retained" || retained.Snapshot.ResourceID != resourceID || retained.Snapshot.BindingID != target.BindingID || retained.Snapshot.DestinationID != target.DestinationID {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	raw, err := sqlcgen.New(tx).GetHostingHealthy(ctx, target.BindingID)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	var current domain.HostingHealthy
+	if err = json.Unmarshal(raw, &current); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	plan, err := domain.CompileHostingCleanupPlan(retained, current.OperationID)
+	if err != nil {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	snapshot := retained.Snapshot
+	snapshot.PolicyVersion = domain.HostingReleasePolicyVersion
+	if err = hostingTargetGate(ctx, tx, target.ProjectID, snapshot, false); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = hostingCleanupUnreferenced(ctx, tx, plan); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	state, err := sqlcgen.New(tx).LockHostingPortReservation(ctx, target.BindingID)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if state.HoldOperationID != nil || !state.RestoreAdmitted {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	busy, err := sqlcgen.New(tx).HostingBindingBusy(ctx, target.BindingID)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if busy {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	if _, err = sqlcgen.New(tx).CreateHostingOperation(ctx, sqlcgen.CreateHostingOperationParams{ID: id, ProjectID: target.ProjectID, ResourceID: resourceID, BindingID: target.BindingID, IdempotencyKey: in.IdempotencyKey, RequestHash: requestHash, CreatedBy: actor}); err != nil {
+		return domain.HostingOperation{}, hostingError(err)
+	}
+	snapshotRaw, err := json.Marshal(snapshot)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if _, err = sqlcgen.New(tx).CreateHostingSnapshot(ctx, sqlcgen.CreateHostingSnapshotParams{OperationID: id, Body: snapshotRaw, BodyHash: domain.HostingDocumentHash(snapshot)}); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	planRaw, err := json.Marshal(plan)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if _, err = sqlcgen.New(tx).CreateHostingCleanupTarget(ctx, sqlcgen.CreateHostingCleanupTargetParams{OperationID: id, TargetOperationID: targetID, Plan: planRaw, PlanHash: plan.Hash}); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	audit.ActorID, audit.Action, audit.TargetID = actor, "hosting.release_cleanup_requested", id
+	audit.Metadata = map[string]any{"resource_id": resourceID, "release_operation_id": targetID, "destination_id": target.DestinationID}
+	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if _, err = s.hostingJobs.EnqueueTx(ctx, tx, hostingjobs.PrepareDeploymentArgs{OperationID: id}); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	op, err := hostingOperation(ctx, tx, id)
+	if err != nil {
+		return op, err
+	}
+	return op, tx.Commit(ctx)
+}
+
+// ListHostingRetainedReleases returns only the selected resource's release ledger.
+func (s *PostgresStore) ListHostingRetainedReleases(ctx context.Context, resourceID string) ([]domain.HostingRetainedRelease, error) {
+	binding, err := s.GetResourceBinding(ctx, resourceID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := sqlcgen.New(s.pool).GetHostingRetainedReleases(ctx, binding.ID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.HostingRetainedRelease, 0, len(rows))
+	for _, row := range rows {
+		if row.State == "healthy" {
+			continue
+		}
+		var target domain.HostingHealthy
+		if err = json.Unmarshal(row.Body, &target); err != nil {
+			return nil, err
+		}
+		detail, err := sqlcgen.New(s.pool).GetHostingRetainedRelease(ctx, row.OperationID)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, domain.HostingRetainedRelease{Healthy: target, State: row.State, RetainedRunning: row.RetainedRunning, CleanupOperationID: detail.CleanupOperationID})
+	}
+	return result, nil
+}
+func hostingCleanupUnreferenced(ctx context.Context, tx pgx.Tx, plan domain.HostingCleanupPlan) error {
+	row, err := sqlcgen.New(tx).GetHostingRetainedRelease(ctx, plan.Target.OperationID)
+	if err != nil {
+		return hostingError(err)
+	}
+	if row.State != "retained" && row.State != "cleanup_pending" {
+		return ErrConflict
+	}
+	var target domain.HostingHealthy
+	if err = json.Unmarshal(row.Body, &target); err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(target, plan.Target) {
+		return ErrConflict
+	}
+	referenced, err := sqlcgen.New(tx).HostingReleaseReferenced(ctx, target.OperationID)
+	if err != nil {
+		return err
+	}
+	if referenced {
+		return ErrConflict
+	}
+	raw, err := sqlcgen.New(tx).GetHostingHealthy(ctx, target.Snapshot.BindingID)
+	if err != nil {
+		return err
+	}
+	var healthy domain.HostingHealthy
+	if err = json.Unmarshal(raw, &healthy); err != nil {
+		return err
+	}
+	if healthy.OperationID == target.OperationID || healthy.OperationID != plan.CurrentHealthyOperationID {
+		return ErrConflict
+	}
+	return nil
+}
+func (s *PostgresStore) admitHostingCleanup(ctx context.Context, tx pgx.Tx, runnerID string, a domain.HostingAuthority, op domain.HostingOperation) (domain.HostingOperation, error) {
+	if err := hostingRequireMode(ctx, tx, a, "cleanup"); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if op.MutationHold && op.State == "applying" {
+		return op, nil
+	}
+	if op.State != "prepared" || op.MutationHold {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	if err := hostingCleanupUnreferenced(ctx, tx, *op.CleanupPlan); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	rows, err := sqlcgen.New(tx).AdmitHostingMutation(ctx, sqlcgen.AdmitHostingMutationParams{BindingID: op.BindingID, HoldOperationID: hostingStringPointer(op.ID), DaemonID: hostingStringPointer(op.CleanupPlan.Target.Release.DaemonID)})
+	if err != nil || rows != 1 {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	authority, err := json.Marshal(a)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if _, err = sqlcgen.New(tx).CreateHostingApplyAdmission(ctx, sqlcgen.CreateHostingApplyAdmissionParams{OperationID: op.ID, RunID: a.RunID, LeaseID: a.LeaseID, Authority: authority, PlanHash: op.CleanupPlan.Hash}); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if changed, err := sqlcgen.New(tx).MarkHostingCleanupPending(ctx, sqlcgen.MarkHostingCleanupPendingParams{OperationID: op.CleanupPlan.Target.OperationID, CleanupOperationID: hostingStringPointer(op.ID)}); err != nil || changed != 1 {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	if _, err = sqlcgen.New(tx).BeginHostingApply(ctx, op.ID); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "cleanup_admitted"); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	updated, err := hostingOperation(ctx, tx, op.ID)
+	if err != nil {
+		return updated, err
+	}
+	return updated, tx.Commit(ctx)
+}
+func (s *PostgresStore) completeHostingCleanup(ctx context.Context, tx pgx.Tx, runnerID string, in domain.HostingCompleteRequest, op domain.HostingOperation) (domain.HostingOperation, error) {
+	if err := hostingRequireMode(ctx, tx, in.HostingAuthority, "cleanup"); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if in.Result.PlanHash != op.CleanupPlan.Hash || in.Result.DaemonID != op.CleanupPlan.Target.Release.DaemonID || in.Result.ImageID != op.CleanupPlan.Target.Release.ImageID || in.Result.ContainerID != op.CleanupPlan.Target.ContainerID {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	if !op.MutationHold || op.State != "applying" {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	if err := insertHostingReceipt(ctx, tx, in.HostingAuthority, "complete", in.ReceiptID, in.Result); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	uncertain := in.Result.Uncertain || in.Result.Outcome != "succeeded"
+	state := in.Result.Outcome
+	if uncertain {
+		state = "reconciliation_required"
+	}
+	q := sqlcgen.New(tx)
+	if _, err := q.SetHostingOperationState(ctx, sqlcgen.SetHostingOperationStateParams{ID: op.ID, State: state}); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if _, err := q.CompleteHostingLease(ctx, sqlcgen.CompleteHostingLeaseParams{ID: in.LeaseID, Status: in.Result.Outcome, CompletionKey: hostingStringPointer(in.ReceiptID)}); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if _, err := q.CompleteHostingTask(ctx, sqlcgen.CompleteHostingTaskParams{ID: op.RunID, Status: in.Result.Outcome}); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if !uncertain {
+		if rows, err := q.MarkHostingCleanupRemoved(ctx, sqlcgen.MarkHostingCleanupRemovedParams{OperationID: op.CleanupPlan.Target.OperationID, CleanupOperationID: hostingStringPointer(op.ID)}); err != nil || rows != 1 {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		if _, err := q.ReleaseHostingCleanupClaim(ctx, op.CleanupPlan.Target.OperationID); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if _, err := q.ReleaseUnusedHostingSlot(ctx, sqlcgen.ReleaseUnusedHostingSlotParams{DestinationID: op.Snapshot.DestinationID, HostPort: int32(op.Snapshot.HostPort)}); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if _, err := q.ClearHostingMutationHold(ctx, sqlcgen.ClearHostingMutationHoldParams{BindingID: op.BindingID, HoldOperationID: hostingStringPointer(op.ID)}); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
+	if err := hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "cleanup_completed"); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	result, err := hostingOperation(ctx, tx, op.ID)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}

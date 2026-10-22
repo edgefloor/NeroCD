@@ -299,6 +299,54 @@ func (q *Queries) CreateHostingApplyPlan(ctx context.Context, arg CreateHostingA
 	return result.RowsAffected(), nil
 }
 
+const createHostingCleanupTarget = `-- name: CreateHostingCleanupTarget :execrows
+INSERT INTO hosting_cleanup_targets(operation_id,target_operation_id,plan,plan_hash) VALUES($1,$2,$3,$4)
+`
+
+type CreateHostingCleanupTargetParams struct {
+	OperationID       string          `json:"operation_id"`
+	TargetOperationID string          `json:"target_operation_id"`
+	Plan              json.RawMessage `json:"plan"`
+	PlanHash          string          `json:"plan_hash"`
+}
+
+func (q *Queries) CreateHostingCleanupTarget(ctx context.Context, arg CreateHostingCleanupTargetParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createHostingCleanupTarget,
+		arg.OperationID,
+		arg.TargetOperationID,
+		arg.Plan,
+		arg.PlanHash,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createHostingCleanupTaskTarget = `-- name: CreateHostingCleanupTaskTarget :execrows
+INSERT INTO hosting_task_targets(run_id,operation_id,binding_id,runner_id,mode) VALUES($1,$2,$3,$4,'cleanup')
+`
+
+type CreateHostingCleanupTaskTargetParams struct {
+	RunID       string `json:"run_id"`
+	OperationID string `json:"operation_id"`
+	BindingID   string `json:"binding_id"`
+	RunnerID    string `json:"runner_id"`
+}
+
+func (q *Queries) CreateHostingCleanupTaskTarget(ctx context.Context, arg CreateHostingCleanupTaskTargetParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createHostingCleanupTaskTarget,
+		arg.RunID,
+		arg.OperationID,
+		arg.BindingID,
+		arg.RunnerID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createHostingDeploymentTarget = `-- name: CreateHostingDeploymentTarget :execrows
 INSERT INTO hosting_task_targets(run_id,operation_id,binding_id,runner_id,mode) VALUES($1,$2,$3,$4,'deploy')
 `
@@ -482,6 +530,30 @@ func (q *Queries) CreateHostingRelease(ctx context.Context, arg CreateHostingRel
 	return result.RowsAffected(), nil
 }
 
+const createHostingReleaseClaim = `-- name: CreateHostingReleaseClaim :execrows
+INSERT INTO hosting_release_claims(operation_id,destination_id,host_port,binding_id,state) VALUES($1,$2,$3,$4,'reserved')
+`
+
+type CreateHostingReleaseClaimParams struct {
+	OperationID   string `json:"operation_id"`
+	DestinationID string `json:"destination_id"`
+	HostPort      int32  `json:"host_port"`
+	BindingID     string `json:"binding_id"`
+}
+
+func (q *Queries) CreateHostingReleaseClaim(ctx context.Context, arg CreateHostingReleaseClaimParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createHostingReleaseClaim,
+		arg.OperationID,
+		arg.DestinationID,
+		arg.HostPort,
+		arg.BindingID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createHostingSnapshot = `-- name: CreateHostingSnapshot :execrows
 INSERT INTO hosting_snapshots(operation_id,body,body_hash) VALUES($1,$2,$3)
 `
@@ -629,6 +701,7 @@ func (q *Queries) GetHostingObservationBinding(ctx context.Context, bindingID st
 const getHostingOperationSnapshot = `-- name: GetHostingOperationSnapshot :one
 SELECT o.id,o.project_id,o.resource_id,o.binding_id,coalesce(o.run_id,'') AS run_id,coalesce(o.reconciliation_run_id,'') AS reconciliation_run_id,o.state,o.reconcile_requested,o.created_by,o.created_at,o.updated_at,
  sn.body AS snapshot,rel.body AS release,plan.body AS plan,
+ (SELECT plan FROM hosting_cleanup_targets WHERE operation_id=o.id) AS cleanup_plan,
  (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_receipts WHERE operation_id=o.id AND phase='prepared') AS prepared_receipt,
  (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_receipts WHERE operation_id=o.id AND phase='complete') AS complete_receipt,
  (SELECT body FROM hosting_receipts WHERE operation_id=o.id AND phase='complete') AS result,
@@ -653,6 +726,7 @@ type GetHostingOperationSnapshotRow struct {
 	Snapshot             json.RawMessage `json:"snapshot"`
 	Release              []byte          `json:"release"`
 	Plan                 []byte          `json:"plan"`
+	CleanupPlan          json.RawMessage `json:"cleanup_plan"`
 	PreparedReceipt      json.RawMessage `json:"prepared_receipt"`
 	CompleteReceipt      json.RawMessage `json:"complete_receipt"`
 	Result               json.RawMessage `json:"result"`
@@ -678,6 +752,7 @@ func (q *Queries) GetHostingOperationSnapshot(ctx context.Context, id string) (G
 		&i.Snapshot,
 		&i.Release,
 		&i.Plan,
+		&i.CleanupPlan,
 		&i.PreparedReceipt,
 		&i.CompleteReceipt,
 		&i.Result,
@@ -742,6 +817,67 @@ func (q *Queries) GetHostingReconciliationReceipt(ctx context.Context, arg GetHo
 	return body_hash, err
 }
 
+const getHostingRetainedRelease = `-- name: GetHostingRetainedRelease :one
+SELECT operation_id,body,state,retained_running,coalesce(cleanup_operation_id,'') AS cleanup_operation_id FROM hosting_retained_releases WHERE operation_id=$1
+`
+
+type GetHostingRetainedReleaseRow struct {
+	OperationID        string          `json:"operation_id"`
+	Body               json.RawMessage `json:"body"`
+	State              string          `json:"state"`
+	RetainedRunning    bool            `json:"retained_running"`
+	CleanupOperationID string          `json:"cleanup_operation_id"`
+}
+
+func (q *Queries) GetHostingRetainedRelease(ctx context.Context, operationID string) (GetHostingRetainedReleaseRow, error) {
+	row := q.db.QueryRow(ctx, getHostingRetainedRelease, operationID)
+	var i GetHostingRetainedReleaseRow
+	err := row.Scan(
+		&i.OperationID,
+		&i.Body,
+		&i.State,
+		&i.RetainedRunning,
+		&i.CleanupOperationID,
+	)
+	return i, err
+}
+
+const getHostingRetainedReleases = `-- name: GetHostingRetainedReleases :many
+SELECT operation_id,body,state,retained_running FROM hosting_retained_releases WHERE binding_id=$1 AND state<>'removed' ORDER BY operation_id
+`
+
+type GetHostingRetainedReleasesRow struct {
+	OperationID     string          `json:"operation_id"`
+	Body            json.RawMessage `json:"body"`
+	State           string          `json:"state"`
+	RetainedRunning bool            `json:"retained_running"`
+}
+
+func (q *Queries) GetHostingRetainedReleases(ctx context.Context, bindingID string) ([]GetHostingRetainedReleasesRow, error) {
+	rows, err := q.db.Query(ctx, getHostingRetainedReleases, bindingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetHostingRetainedReleasesRow{}
+	for rows.Next() {
+		var i GetHostingRetainedReleasesRow
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.Body,
+			&i.State,
+			&i.RetainedRunning,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getHostingTargetMode = `-- name: GetHostingTargetMode :one
 SELECT operation_id,mode FROM hosting_task_targets WHERE run_id=$1 AND runner_id=$2
 `
@@ -772,6 +908,18 @@ func (q *Queries) GetHostingTaskMode(ctx context.Context, runID string) (string,
 	var mode string
 	err := row.Scan(&mode)
 	return mode, err
+}
+
+const holdHostingReleaseClaim = `-- name: HoldHostingReleaseClaim :execrows
+UPDATE hosting_release_claims SET state='held' WHERE operation_id=$1 AND state='reserved'
+`
+
+func (q *Queries) HoldHostingReleaseClaim(ctx context.Context, operationID string) (int64, error) {
+	result, err := q.db.Exec(ctx, holdHostingReleaseClaim, operationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const hostingAdmissionExists = `-- name: HostingAdmissionExists :one
@@ -827,6 +975,98 @@ func (q *Queries) HostingLeaseLive(ctx context.Context, id string) (*bool, error
 	var column_1 *bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const hostingReleasePortReferenced = `-- name: HostingReleasePortReferenced :one
+SELECT EXISTS(
+ SELECT 1 FROM hosting_proxy_routes r JOIN hosting_snapshots hs ON hs.operation_id=r.selected_release_operation_id
+ WHERE r.enabled AND (hs.body->>'destination_id')=$1::text AND (hs.body->>'host_port')::integer=$2::integer
+ UNION ALL
+ SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots hs ON hs.operation_id=ref.release_operation_id
+ WHERE (hs.body->>'destination_id')=$1::text AND (hs.body->>'host_port')::integer=$2::integer
+ AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
+)
+`
+
+type HostingReleasePortReferencedParams struct {
+	DestinationID string `json:"destination_id"`
+	HostPort      int32  `json:"host_port"`
+}
+
+func (q *Queries) HostingReleasePortReferenced(ctx context.Context, arg HostingReleasePortReferencedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hostingReleasePortReferenced, arg.DestinationID, arg.HostPort)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const hostingReleaseReferenced = `-- name: HostingReleaseReferenced :one
+SELECT EXISTS(
+ SELECT 1 FROM hosting_proxy_routes r WHERE r.enabled AND r.selected_release_operation_id=$1
+ UNION ALL
+ SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id
+ WHERE ref.release_operation_id=$1 AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
+)
+`
+
+func (q *Queries) HostingReleaseReferenced(ctx context.Context, selectedReleaseOperationID string) (bool, error) {
+	row := q.db.QueryRow(ctx, hostingReleaseReferenced, selectedReleaseOperationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const hostingReleaseSlotReusable = `-- name: HostingReleaseSlotReusable :one
+SELECT NOT EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=$1 AND c.host_port=$2 AND c.state IN ('reserved','held'))
+AND NOT EXISTS(SELECT 1 FROM hosting_retained_releases r WHERE r.destination_id=$1 AND r.host_port=$2 AND r.operation_id<>$3::text AND (r.state='cleanup_pending' OR (r.state<>'removed' AND r.retained_running)))
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE b.destination_id=$1 AND b.host_port=$2 AND b.binding_id<>$4)
+AND NOT EXISTS(SELECT 1 FROM hosting_proxies p WHERE p.destination_id=$1 AND (p.configuration->>'management_port')::integer=$2)
+`
+
+type HostingReleaseSlotReusableParams struct {
+	DestinationID       string `json:"destination_id"`
+	HostPort            int32  `json:"host_port"`
+	PreviousOperationID string `json:"previous_operation_id"`
+	BindingID           string `json:"binding_id"`
+}
+
+func (q *Queries) HostingReleaseSlotReusable(ctx context.Context, arg HostingReleaseSlotReusableParams) (*bool, error) {
+	row := q.db.QueryRow(ctx, hostingReleaseSlotReusable,
+		arg.DestinationID,
+		arg.HostPort,
+		arg.PreviousOperationID,
+		arg.BindingID,
+	)
+	var column_1 *bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const hostingResourceDestination = `-- name: HostingResourceDestination :one
+SELECT b.destination_id FROM resource_bindings b WHERE b.resource_id=$1
+`
+
+func (q *Queries) HostingResourceDestination(ctx context.Context, resourceID string) (string, error) {
+	row := q.db.QueryRow(ctx, hostingResourceDestination, resourceID)
+	var destination_id string
+	err := row.Scan(&destination_id)
+	return destination_id, err
+}
+
+const hostingRunnerHasReleasePorts = `-- name: HostingRunnerHasReleasePorts :one
+SELECT $1::text=ANY(capabilities) AS capable FROM runners WHERE id=$2
+`
+
+type HostingRunnerHasReleasePortsParams struct {
+	Capability string `json:"capability"`
+	RunnerID   string `json:"runner_id"`
+}
+
+func (q *Queries) HostingRunnerHasReleasePorts(ctx context.Context, arg HostingRunnerHasReleasePortsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hostingRunnerHasReleasePorts, arg.Capability, arg.RunnerID)
+	var capable bool
+	err := row.Scan(&capable)
+	return capable, err
 }
 
 const listHostingOperationIDs = `-- name: ListHostingOperationIDs :many
@@ -906,6 +1146,15 @@ func (q *Queries) LockHostingExactRunner(ctx context.Context, arg LockHostingExa
 	return id, err
 }
 
+const lockHostingExecutionDestination = `-- name: LockHostingExecutionDestination :exec
+SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0))
+`
+
+func (q *Queries) LockHostingExecutionDestination(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockHostingExecutionDestination, dollar_1)
+	return err
+}
+
 const lockHostingMutationHold = `-- name: LockHostingMutationHold :one
 SELECT hold_operation_id FROM hosting_binding_state WHERE binding_id=$1 FOR UPDATE
 `
@@ -971,6 +1220,22 @@ func (q *Queries) LockHostingProjectGrant(ctx context.Context, arg LockHostingPr
 	return revoked_at, err
 }
 
+const lockHostingReleaseSlot = `-- name: LockHostingReleaseSlot :one
+SELECT binding_id FROM hosting_release_slots WHERE destination_id=$1 AND host_port=$2 FOR UPDATE
+`
+
+type LockHostingReleaseSlotParams struct {
+	DestinationID string `json:"destination_id"`
+	HostPort      int32  `json:"host_port"`
+}
+
+func (q *Queries) LockHostingReleaseSlot(ctx context.Context, arg LockHostingReleaseSlotParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockHostingReleaseSlot, arg.DestinationID, arg.HostPort)
+	var binding_id string
+	err := row.Scan(&binding_id)
+	return binding_id, err
+}
+
 const lockHostingResourceTarget = `-- name: LockHostingResourceTarget :one
 SELECT r.project_id,r.generation,r.source,b.id AS binding_id,b.destination_id,b.runtime_namespace,d.server_id,s.runner_id
  FROM resources r JOIN resource_bindings b ON b.resource_id=r.id JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id
@@ -1026,6 +1291,40 @@ func (q *Queries) LockHostingTaskForAuthority(ctx context.Context, id string) (i
 	return result.RowsAffected(), nil
 }
 
+const markHostingCleanupPending = `-- name: MarkHostingCleanupPending :execrows
+UPDATE hosting_retained_releases SET state='cleanup_pending',cleanup_operation_id=$2 WHERE operation_id=$1 AND state='retained'
+`
+
+type MarkHostingCleanupPendingParams struct {
+	OperationID        string  `json:"operation_id"`
+	CleanupOperationID *string `json:"cleanup_operation_id"`
+}
+
+func (q *Queries) MarkHostingCleanupPending(ctx context.Context, arg MarkHostingCleanupPendingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markHostingCleanupPending, arg.OperationID, arg.CleanupOperationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markHostingCleanupRemoved = `-- name: MarkHostingCleanupRemoved :execrows
+UPDATE hosting_retained_releases SET state='removed',retained_running=false WHERE operation_id=$1 AND state='cleanup_pending' AND cleanup_operation_id=$2
+`
+
+type MarkHostingCleanupRemovedParams struct {
+	OperationID        string  `json:"operation_id"`
+	CleanupOperationID *string `json:"cleanup_operation_id"`
+}
+
+func (q *Queries) MarkHostingCleanupRemoved(ctx context.Context, arg MarkHostingCleanupRemovedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markHostingCleanupRemoved, arg.OperationID, arg.CleanupOperationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const observeHostingDaemon = `-- name: ObserveHostingDaemon :execrows
 UPDATE hosting_binding_state SET daemon_id=coalesce(daemon_id,$2) WHERE binding_id=$1
 `
@@ -1037,6 +1336,76 @@ type ObserveHostingDaemonParams struct {
 
 func (q *Queries) ObserveHostingDaemon(ctx context.Context, arg ObserveHostingDaemonParams) (int64, error) {
 	result, err := q.db.Exec(ctx, observeHostingDaemon, arg.BindingID, arg.DaemonID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pickHostingReleasePort = `-- name: PickHostingReleasePort :one
+SELECT port::integer AS host_port FROM generate_series($1::integer,$2::integer) port
+WHERE NOT EXISTS(SELECT 1 FROM hosting_release_slots s WHERE s.destination_id=$3 AND s.host_port=port)
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state s WHERE s.destination_id=$3 AND s.host_port=port)
+AND NOT EXISTS(SELECT 1 FROM hosting_proxies p WHERE p.destination_id=$3 AND (p.configuration->>'management_port')::integer=port)
+ORDER BY port LIMIT 1
+`
+
+type PickHostingReleasePortParams struct {
+	MinPort       int32  `json:"min_port"`
+	MaxPort       int32  `json:"max_port"`
+	DestinationID string `json:"destination_id"`
+}
+
+func (q *Queries) PickHostingReleasePort(ctx context.Context, arg PickHostingReleasePortParams) (int32, error) {
+	row := q.db.QueryRow(ctx, pickHostingReleasePort, arg.MinPort, arg.MaxPort, arg.DestinationID)
+	var host_port int32
+	err := row.Scan(&host_port)
+	return host_port, err
+}
+
+const reclaimUnusedHostingReleaseSlots = `-- name: ReclaimUnusedHostingReleaseSlots :execrows
+DELETE FROM hosting_release_slots s WHERE s.destination_id=$1
+AND EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=s.destination_id AND c.host_port=s.host_port AND c.state='released')
+AND NOT EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=s.destination_id AND c.host_port=s.host_port AND c.state<>'released')
+AND NOT EXISTS(SELECT 1 FROM hosting_retained_releases r WHERE r.destination_id=s.destination_id AND r.host_port=s.host_port AND r.state<>'removed')
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE (b.destination_id=s.destination_id AND b.host_port=s.host_port) OR (b.binding_id=s.binding_id AND (NOT b.restore_admitted OR b.hold_operation_id IS NOT NULL)))
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_restore_holds h WHERE h.binding_id=s.binding_id)
+AND NOT EXISTS(SELECT 1 FROM hosting_operations o JOIN hosting_snapshots sn ON sn.operation_id=o.id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND o.state NOT IN ('succeeded','failed','canceled'))
+AND NOT EXISTS(SELECT 1 FROM hosting_proxy_routes r JOIN hosting_snapshots sn ON sn.operation_id=r.selected_release_operation_id WHERE r.enabled AND sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port)
+AND NOT EXISTS(SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots sn ON sn.operation_id=ref.release_operation_id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')))
+`
+
+// Caller holds destination admission. Keep immutable claims/snapshots/receipts;
+// reclaim only capacity whose claims conclusively settled without live effects.
+func (q *Queries) ReclaimUnusedHostingReleaseSlots(ctx context.Context, destinationID string) (int64, error) {
+	result, err := q.db.Exec(ctx, reclaimUnusedHostingReleaseSlots, destinationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordHostingHealthyRelease = `-- name: RecordHostingHealthyRelease :execrows
+INSERT INTO hosting_retained_releases(operation_id,binding_id,destination_id,host_port,body,body_hash,state,retained_running)
+VALUES($1,$2,$3,$4,$5::jsonb,'sha256:'||encode(sha256(convert_to(($5::jsonb)::text,'UTF8')),'hex'),'healthy',true)
+`
+
+type RecordHostingHealthyReleaseParams struct {
+	OperationID   string          `json:"operation_id"`
+	BindingID     string          `json:"binding_id"`
+	DestinationID string          `json:"destination_id"`
+	HostPort      int32           `json:"host_port"`
+	Body          json.RawMessage `json:"body"`
+}
+
+func (q *Queries) RecordHostingHealthyRelease(ctx context.Context, arg RecordHostingHealthyReleaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordHostingHealthyRelease,
+		arg.OperationID,
+		arg.BindingID,
+		arg.DestinationID,
+		arg.HostPort,
+		arg.Body,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -1065,6 +1434,50 @@ func (q *Queries) RecoverQueuedHostingOperations(ctx context.Context) ([]string,
 		return nil, err
 	}
 	return items, nil
+}
+
+const releaseHostingCleanupClaim = `-- name: ReleaseHostingCleanupClaim :execrows
+UPDATE hosting_release_claims SET state='released' WHERE operation_id=$1
+`
+
+func (q *Queries) ReleaseHostingCleanupClaim(ctx context.Context, operationID string) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseHostingCleanupClaim, operationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseHostingFailedClaim = `-- name: ReleaseHostingFailedClaim :execrows
+UPDATE hosting_release_claims SET state='released' WHERE operation_id=$1
+`
+
+func (q *Queries) ReleaseHostingFailedClaim(ctx context.Context, operationID string) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseHostingFailedClaim, operationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseUnusedHostingSlot = `-- name: ReleaseUnusedHostingSlot :execrows
+DELETE FROM hosting_release_slots s WHERE s.destination_id=$1 AND s.host_port=$2
+AND NOT EXISTS(SELECT 1 FROM hosting_release_claims c WHERE c.destination_id=s.destination_id AND c.host_port=s.host_port AND c.state<>'released')
+AND NOT EXISTS(SELECT 1 FROM hosting_retained_releases r WHERE r.destination_id=s.destination_id AND r.host_port=s.host_port AND r.state<>'removed')
+AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE b.destination_id=s.destination_id AND b.host_port=s.host_port)
+`
+
+type ReleaseUnusedHostingSlotParams struct {
+	DestinationID string `json:"destination_id"`
+	HostPort      int32  `json:"host_port"`
+}
+
+func (q *Queries) ReleaseUnusedHostingSlot(ctx context.Context, arg ReleaseUnusedHostingSlotParams) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseUnusedHostingSlot, arg.DestinationID, arg.HostPort)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const requestHostingObservation = `-- name: RequestHostingObservation :execrows
@@ -1096,12 +1509,59 @@ func (q *Queries) RequeueHostingObservation(ctx context.Context, id string) (int
 	return result.RowsAffected(), nil
 }
 
+const reserveHostingReleaseSlot = `-- name: ReserveHostingReleaseSlot :execrows
+INSERT INTO hosting_release_slots(destination_id,host_port,binding_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING
+`
+
+type ReserveHostingReleaseSlotParams struct {
+	DestinationID string `json:"destination_id"`
+	HostPort      int32  `json:"host_port"`
+	BindingID     string `json:"binding_id"`
+}
+
+func (q *Queries) ReserveHostingReleaseSlot(ctx context.Context, arg ReserveHostingReleaseSlotParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reserveHostingReleaseSlot, arg.DestinationID, arg.HostPort, arg.BindingID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const resetHostingObservation = `-- name: ResetHostingObservation :execrows
 UPDATE task_runs SET status='queued',runner_id=NULL,finished_at=NULL WHERE id=$1
 `
 
 func (q *Queries) ResetHostingObservation(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, resetHostingObservation, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retainHostingReleaseClaim = `-- name: RetainHostingReleaseClaim :execrows
+UPDATE hosting_release_claims SET state='retained' WHERE operation_id=$1 AND state IN ('reserved','held')
+`
+
+func (q *Queries) RetainHostingReleaseClaim(ctx context.Context, operationID string) (int64, error) {
+	result, err := q.db.Exec(ctx, retainHostingReleaseClaim, operationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retainPreviousHostingRelease = `-- name: RetainPreviousHostingRelease :execrows
+UPDATE hosting_retained_releases SET state='retained',retained_running=$2 WHERE operation_id=$1 AND state='healthy'
+`
+
+type RetainPreviousHostingReleaseParams struct {
+	OperationID     string `json:"operation_id"`
+	RetainedRunning bool   `json:"retained_running"`
+}
+
+func (q *Queries) RetainPreviousHostingRelease(ctx context.Context, arg RetainPreviousHostingReleaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, retainPreviousHostingRelease, arg.OperationID, arg.RetainedRunning)
 	if err != nil {
 		return 0, err
 	}

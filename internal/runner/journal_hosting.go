@@ -18,6 +18,7 @@ type JournalHosting struct {
 	OperationID string                         `json:"operation_id"`
 	Phase       string                         `json:"phase"`
 	Prepared    *domain.HostingPreparedRequest `json:"prepared,omitempty"`
+	CleanupPlan *domain.HostingCleanupPlan     `json:"cleanup_plan,omitempty"`
 	Plan        *domain.HostingApplyPlan       `json:"plan,omitempty"`
 	Result      *domain.HostingCompleteRequest `json:"result,omitempty"`
 	CreatedAt   time.Time                      `json:"created_at"`
@@ -51,7 +52,12 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 		return JournalHosting{}, errors.New("runner journal entry limit reached")
 	}
 	oldVersion := j.state.Version
-	j.state.Version = 2 // Older binaries reject v2 before interpreting any records.
+	if j.state.Version < 2 {
+		j.state.Version = 2
+	}
+	if hostingJournalNeedsV3(entry) {
+		j.state.Version = 3
+	} // Older binaries reject retained release and cleanup authority.
 	j.state.Hosting = append(j.state.Hosting, entry)
 	if err = j.persistLocked(); err != nil {
 		j.state.Hosting = j.state.Hosting[:len(j.state.Hosting)-1]
@@ -59,6 +65,10 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 		return JournalHosting{}, err
 	}
 	return cloneJournalHosting(entry), nil
+}
+
+func hostingJournalNeedsV3(entry JournalHosting) bool {
+	return entry.Phase == "cleanup_intent" || strings.HasPrefix(entry.Attempt.RunID, "cleanup_") || entry.Plan != nil && entry.Plan.CompilerVersion == domain.HostingReleaseCompilerVersion
 }
 
 // AckHosting removes only a server-acknowledged hosting document. Intent callers
@@ -108,7 +118,18 @@ func validateJournalHosting(entry JournalHosting) error {
 		return err
 	}
 	a := domain.HostingAuthority{OperationID: entry.OperationID, RunID: entry.Attempt.RunID, LeaseID: entry.Attempt.LeaseID, Attempt: entry.Attempt.Attempt, Fence: entry.Attempt.Fence}
+	if entry.CleanupPlan != nil && entry.Phase != "cleanup_intent" {
+		return errors.New("cleanup journal document in wrong phase")
+	}
 	switch entry.Phase {
+	case "cleanup_intent":
+		if entry.CleanupPlan == nil || entry.Plan != nil || entry.Prepared != nil || entry.Result != nil {
+			return errors.New("invalid cleanup intent")
+		}
+		expected, err := domain.CompileHostingCleanupPlan(entry.CleanupPlan.Target, entry.CleanupPlan.CurrentHealthyOperationID)
+		if err != nil || expected.Hash != entry.CleanupPlan.Hash {
+			return errors.New("cleanup journal plan hash mismatch")
+		}
 	case "prepared":
 		if entry.Prepared == nil || entry.Plan != nil || entry.Result != nil || entry.Prepared.HostingAuthority != a || domain.ValidateHostingRelease(entry.Prepared.Release) != nil {
 			return errors.New("invalid journal preparation receipt")

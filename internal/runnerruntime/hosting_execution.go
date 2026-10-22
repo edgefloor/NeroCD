@@ -18,7 +18,7 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 	if op.ID != a.OperationID || op.Snapshot.RunnerID != runnerID || op.Snapshot.BindingID != op.BindingID || op.TaskMode != mode {
 		return errors.New("hosting response does not match the exact task target")
 	}
-	if mode == "deploy" && op.RunID != a.RunID {
+	if (mode == "deploy" || mode == "cleanup") && op.RunID != a.RunID {
 		return errors.New("hosting deployment run changed")
 	}
 	if mode == "observe" && op.ReconciliationRunID != a.RunID {
@@ -34,7 +34,7 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 
 func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string) error {
 	mode := claim.Run.RunSpec.HostingMode
-	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe") || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
+	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe" && mode != "cleanup") || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
 		return errors.New("invalid typed image task")
 	}
 	a := hostingAuthority(claim.Run.ID, claim.Run.RunSpec.HostingOperationID, claim.Lease)
@@ -51,6 +51,9 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		return err
 	}
 	defer func() { _ = engine.Close() }()
+	if mode == "cleanup" {
+		return executeHostingCleanup(supervisor, journal, reporter, client, engine, a, claim.Lease, op)
+	}
 	if mode == "observe" {
 		return executeHostingObservation(supervisor, client, engine, a, op)
 	}
@@ -250,6 +253,32 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 		}
 	}
 	for _, entry := range journal.Snapshot().Hosting {
+		if entry.Phase != "cleanup_intent" {
+			continue
+		}
+		a := domain.HostingAuthority{OperationID: entry.OperationID, RunID: entry.Attempt.RunID, LeaseID: entry.Attempt.LeaseID, Attempt: entry.Attempt.Attempt, Fence: entry.Attempt.Fence}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		op, err := client.HostingStatus(ctx, domain.HostingStatusRequest{HostingAuthority: a})
+		cancel()
+		if err != nil {
+			return err
+		}
+		if op.ID != entry.OperationID || op.TaskMode != "cleanup" || op.CleanupPlan == nil || entry.CleanupPlan == nil || op.CleanupPlan.Hash != entry.CleanupPlan.Hash || op.RestoreOwnershipHeld || op.MutationHold {
+			return errors.New("cleanup intent retains ownership pending a committed result")
+		}
+		// Cancellation is terminal without a hold only before external admission.
+		// Admitted cancellation retains its hold; restored databases retain their
+		// separate restore hold. No Docker observation substitutes for that proof.
+		notAdmitted := op.State == "canceled" && op.CompleteReceipt == nil && op.Result == nil
+		completed := op.State == "succeeded" && op.CompleteReceipt != nil && op.Result != nil && !op.Result.Uncertain && op.Result.Outcome == "succeeded"
+		if !notAdmitted && !completed {
+			return errors.New("cleanup intent retains ownership pending a committed result")
+		}
+		if err = journal.AckHosting(entry.ID); err != nil {
+			return err
+		}
+	}
+	for _, entry := range journal.Snapshot().Hosting {
 		if entry.Phase != "apply_intent" {
 			continue
 		}
@@ -352,4 +381,39 @@ func replayHostingEvents(server, token string, journal *runner.AttemptJournal, a
 		}
 	}
 	return nil
+}
+
+func executeHostingCleanup(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, client runnerclient.Client, engine *imageEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation) error {
+	if op.CleanupPlan == nil {
+		return errors.New("immutable cleanup plan missing")
+	}
+	expected, err := domain.CompileHostingCleanupPlan(op.CleanupPlan.Target, op.CleanupPlan.CurrentHealthyOperationID)
+	if err != nil || expected.Hash != op.CleanupPlan.Hash {
+		return errors.New("immutable cleanup plan mismatch")
+	}
+	intentID := attemptMutationKey("hosting_cleanup_intent", a.LeaseID, a.Attempt, "cleanup")
+	entry := runner.JournalHosting{ID: intentID, Attempt: journalAttemptIdentity(a.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "cleanup_intent", CleanupPlan: op.CleanupPlan, CreatedAt: time.Now().UTC()}
+	if _, err = journal.AppendHosting(entry); err != nil {
+		return err
+	}
+	var admitted domain.HostingOperation
+	if err = retryAttemptRequest(supervisor, func(ctx context.Context) error {
+		var err error
+		admitted, err = client.HostingApplyBegin(ctx, a)
+		return err
+	}); err != nil {
+		return err
+	}
+	if admitted.CleanupPlan == nil || admitted.CleanupPlan.Hash != expected.Hash || !admitted.MutationHold {
+		return errors.New("cleanup admission changed")
+	}
+	result := engine.Cleanup(supervisor.Context(), expected)
+	finished, err := journalHostingResult(supervisor, journal, client, a, lease, result, reporter.WaitEmpty)
+	if err != nil {
+		return err
+	}
+	if finished.MutationHold || finished.RestoreOwnershipHeld || result.Uncertain {
+		return errors.New("cleanup effects remain unresolved")
+	}
+	return journal.AckHosting(intentID)
 }

@@ -5,6 +5,34 @@ import (
 	"testing"
 )
 
+func TestRetainedHostingPlanCopiesAndBindsReleaseOwnership(t *testing.T) {
+	release := HostingRelease{CanonicalImage: "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat("b", 64), OS: "linux", Architecture: "amd64", DaemonID: "daemon-retained"}
+	release.Hash = HostingDocumentHash(release)
+	snapshot := HostingSnapshot{BindingID: "binding-retained", DestinationID: "destination-retained", HostPort: 20002, PolicyVersion: HostingReleasePolicyVersion}
+	previous := HostingHealthy{Snapshot: snapshot, OperationID: "hop-previous", ContainerID: strings.Repeat("c", 64), Release: release, PlanHash: "previous-plan"}
+	previous.Snapshot.HostPort = 20001
+	retained := []HostingHealthy{previous}
+	retained[0].OperationID = "hop-retained"
+	retained[0].ContainerID = strings.Repeat("d", 64)
+	plan, err := CompileRetainedHostingPlan(snapshot, release, &previous, retained)
+	if err != nil || !plan.RetainPrevious || plan.CompilerVersion != HostingReleaseCompilerVersion {
+		t.Fatalf("retained plan: %+v %v", plan, err)
+	}
+	previous.ContainerID = "caller-mutated"
+	retained[0].ContainerID = "caller-mutated"
+	if plan.PreviousHealthy.ContainerID != strings.Repeat("c", 64) || plan.RetainedReleases[0].ContainerID != strings.Repeat("d", 64) {
+		t.Fatal("caller changed compiled ownership")
+	}
+	bad := plan.RetainedReleases
+	bad[0].Snapshot.BindingID = "other-binding"
+	if _, err = CompileRetainedHostingPlan(snapshot, release, plan.PreviousHealthy, bad); err == nil {
+		t.Fatal("cross-binding retained container accepted")
+	}
+	if _, err = CompileHostingCleanupPlan(*plan.PreviousHealthy, plan.PreviousHealthy.OperationID); err == nil {
+		t.Fatal("current healthy release authorized for cleanup")
+	}
+}
+
 func TestHostingDeploymentBoundary(t *testing.T) {
 	valid := HostingDeploymentInput{ExpectedGeneration: 1, IdempotencyKey: "deploy-key", ContainerPort: 80, HostPort: 18080, Readiness: HostingReadiness{Path: "/ready?check=1", TimeoutSeconds: 10}}
 	if err := ValidateHostingDeployment(valid); err != nil {
@@ -19,12 +47,17 @@ func TestHostingDeploymentBoundary(t *testing.T) {
 			}
 		})
 	}
-	for _, port := range []int{0, 80, 65536} {
+	for _, port := range []int{-1, 80, 65536} {
 		bad := valid
 		bad.HostPort = port
 		if ValidateHostingDeployment(bad) == nil {
 			t.Fatalf("host port%d accepted", port)
 		}
+	}
+	automatic := valid
+	automatic.HostPort = 0
+	if err := ValidateHostingDeployment(automatic); err != nil {
+		t.Fatalf("omitted host port allocation rejected: %v", err)
 	}
 	got, err := NormalizeHostingImage("nginx:1.27")
 	if err != nil || got != "docker.io/library/nginx:1.27" {

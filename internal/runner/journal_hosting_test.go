@@ -11,6 +11,55 @@ import (
 	"nerocd/internal/domain"
 )
 
+func TestHostingCleanupJournalRequiresV3AndSurvivesRestart(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "journal")
+	journal, err := OpenAttemptJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	authority := AttemptIdentity{RunID: "cleanup_hop_retained", LeaseID: "lease_cleanup", Attempt: 1, Fence: "fence_cleanup", CreatedAt: now, ExpiresAt: now.Add(time.Minute)}
+	release := domain.HostingRelease{CanonicalImage: "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat("b", 64), OS: "linux", Architecture: "amd64", DaemonID: "daemon-cleanup"}
+	release.Hash = domain.HostingDocumentHash(release)
+	plan, err := domain.CompileHostingCleanupPlan(domain.HostingHealthy{OperationID: "hop_retained", ContainerID: strings.Repeat("c", 64), Snapshot: domain.HostingSnapshot{HostPort: 20001}, Release: release}, "hop_current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := JournalHosting{ID: "cleanup_intent", Attempt: authority, OperationID: "hop_cleanup", Phase: "cleanup_intent", CleanupPlan: &plan, CreatedAt: now}
+	if _, err = journal.AppendHosting(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err = journal.DiscardAttempt(authority); err == nil {
+		t.Fatal("cleanup intent discarded after authority loss")
+	}
+	if err = journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err = json.Unmarshal(raw, &header); err != nil || header.Version != 3 {
+		t.Fatalf("old binary could open cleanup journal: version=%d %v", header.Version, err)
+	}
+	journal, err = OpenAttemptJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := journal.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	stored := journal.Snapshot().Hosting
+	if len(stored) != 1 || stored[0].CleanupPlan == nil || stored[0].CleanupPlan.Hash != plan.Hash {
+		t.Fatal("restart lost exact cleanup authority")
+	}
+}
+
 func TestHostingJournalMigratesV1AndRetainsStaleApplyIntent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "journal")
 	journal, err := OpenAttemptJournal(dir)

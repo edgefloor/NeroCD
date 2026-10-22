@@ -18,9 +18,10 @@ import (
 
 // PostgresStore is a PostgreSQL-backed implementation of the store repositories.
 type PostgresStore struct {
-	hostingJobs *hostingjobs.Client
-	pool        *pgxpool.Pool
-	queries     *sqlcgen.Queries
+	hostingJobs                    *hostingjobs.Client
+	hostingPortMin, hostingPortMax int
+	pool                           *pgxpool.Pool
+	queries                        *sqlcgen.Queries
 }
 
 // rollbackTransaction performs best-effort failure-path cleanup. It ignores all

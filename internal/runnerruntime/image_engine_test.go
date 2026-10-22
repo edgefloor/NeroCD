@@ -48,6 +48,99 @@ func testImageEngine(t *testing.T) *imageEngine {
 	return e
 }
 
+func TestImageCleanupPinsTargetAndRetainsAmbiguousEffects(t *testing.T) {
+	for _, mode := range []string{"success", "foreign-label", "daemon-mismatch", "remove-response-lost", "already-absent"} {
+		t.Run(mode, func(t *testing.T) {
+			e := testImageEngine(t)
+			base := imageTestPlan(t)
+			target := domain.HostingHealthy{Snapshot: base.Snapshot, OperationID: "hop-retained", ContainerID: strings.Repeat("c", 64), Release: base.Release, PlanHash: base.Hash}
+			plan, err := domain.CompileHostingCleanupPlan(target, "hop-current")
+			if err != nil {
+				t.Fatal(err)
+			}
+			removed := mode == "already-absent"
+			stops, removals := 0, 0
+			e.command = imageCommandFunc(func(_ context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+				if args[4] == "info" {
+					if mode == "daemon-mismatch" {
+						return []byte(`"foreign-daemon"`), nil
+					}
+					return []byte(`"daemon-image-test"`), nil
+				}
+				if args[4] != "container" {
+					t.Fatalf("unexpected command: %v", args)
+				}
+				switch args[5] {
+				case "ls":
+					if args[len(args)-1] != "id="+target.ContainerID {
+						t.Fatalf("unbounded listing: %v", args)
+					}
+					if removed {
+						return nil, nil
+					}
+					return []byte(target.ContainerID), nil
+				case "inspect":
+					if args[6] != target.ContainerID {
+						t.Fatalf("wrong inspect target: %v", args)
+					}
+					operation := target.OperationID
+					if mode == "foreign-label" {
+						operation = "foreign-operation"
+					}
+					return json.Marshal(map[string]any{"Id": target.ContainerID, "Image": target.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: target.Snapshot.BindingID, imageOperationLabel: operation, imageReleaseLabel: target.Release.Hash, imagePlanLabel: target.PlanHash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(target.Snapshot.HostPort)}}}}})
+				case "stop", "rm":
+					if args[len(args)-1] != target.ContainerID {
+						t.Fatalf("wrong mutation target: %v", args)
+					}
+					if args[5] == "stop" {
+						stops++
+						return nil, nil
+					}
+					removals++
+					removed = true
+					if mode == "remove-response-lost" {
+						return nil, errors.New("response lost")
+					}
+					return nil, nil
+				}
+				t.Fatalf("unexpected command: %v", args)
+				return nil, nil
+			})
+			result := e.Cleanup(t.Context(), plan)
+			success := mode == "success" || mode == "already-absent"
+			if (result.Outcome == "succeeded") != success || result.Uncertain == success {
+				t.Fatalf("cleanup evidence: %+v", result)
+			}
+			if (mode == "foreign-label" || mode == "daemon-mismatch" || mode == "already-absent") && (stops != 0 || removals != 0) {
+				t.Fatalf("unexpected mutations stop=%d rm=%d", stops, removals)
+			}
+			if mode == "success" && (stops != 1 || removals != 1) {
+				t.Fatalf("missing exact cleanup stop=%d rm=%d", stops, removals)
+			}
+		})
+	}
+}
+
+func TestImageRetentionRequiresVersionedProtocol(t *testing.T) {
+	legacy := imageTestPlan(t)
+	legacy.RetainPrevious = true
+	legacy.Hash = ""
+	legacy.Hash = domain.HostingDocumentHash(legacy)
+	if verifyImagePlan(legacy) == nil {
+		t.Fatal("legacy protocol ignored retention field")
+	}
+	snapshot := imageTestPlan(t).Snapshot
+	snapshot.PolicyVersion = domain.HostingReleasePolicyVersion
+	modern, err := domain.CompileRetainedHostingPlan(snapshot, imageTestRelease(), nil, nil)
+	if err != nil || verifyImagePlan(modern) != nil {
+		t.Fatalf("modern protocol rejected: %v", err)
+	}
+	snapshot.HostPort = 0
+	if _, err = domain.CompileRetainedHostingPlan(snapshot, imageTestRelease(), nil, nil); err == nil {
+		t.Fatal("unresolved port reached execution")
+	}
+}
+
 func TestImagePreparationPinsPullDigestAndIsolatesRegistryConfig(t *testing.T) {
 	e := testImageEngine(t)
 	pulls, inspections := 0, 0

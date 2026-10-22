@@ -76,6 +76,74 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/HostingDeploymentInput'
+  /api/v1/resources/{id}/retained-releases:
+    get:
+      operationId: listHostingRetainedReleases
+      summary: List releases retained for one authorized resource
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/HostingIdentifier'
+      responses:
+        '200':
+          description: Resource-owned retained releases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HostingRetainedRelease'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /api/v1/resources/{id}/retained-releases/{operation_id}/cleanup:
+    post:
+      operationId: requestHostingReleaseCleanup
+      summary: Request exact cleanup of an unreferenced retained release
+      description: Requires project maintainer authority and a versioned release-port agent. Desired, queued, loaded, admitted and unresolved route references prevent cleanup; ownership remains held until a verified exact-target receipt.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/HostingIdentifier'
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/HostingIdentifier'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingCleanupInput'
+      responses:
+        '202':
+          description: Fenced cleanup operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/v1/hosting-operations/{id}:
     get:
       summary: Read an authorized hosting operation
@@ -2570,7 +2638,6 @@ components:
         - expected_generation
         - idempotency_key
         - container_port
-        - host_port
         - readiness
       properties:
         expected_generation:
@@ -2587,8 +2654,11 @@ components:
           maximum: 65535
         host_port:
           type: integer
-          minimum: 1024
-          maximum: 65535
+          description: Omit or use zero for allocation from the operator-controlled range; requires image_release_ports_v1. Explicit nonzero ports must be available.
+          anyOf:
+            - enum: [0]
+            - minimum: 1024
+              maximum: 65535
         readiness:
           $ref: '#/components/schemas/HostingReadiness'
     HostingSnapshot:
@@ -2635,6 +2705,7 @@ components:
           type: string
           enum:
             - public-image.loopback.v1
+            - public-image.release-ports.v1
     HostingRelease:
       type: object
       additionalProperties: false
@@ -2682,6 +2753,47 @@ components:
           $ref: '#/components/schemas/HostingRelease'
         plan_hash:
           type: string
+    HostingCleanupInput:
+      type: object
+      additionalProperties: false
+      required: [expected_generation, idempotency_key]
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 1
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 128
+    HostingCleanupPlan:
+      type: object
+      additionalProperties: false
+      required: [target, current_healthy_operation_id, compiler_version, hash]
+      properties:
+        target:
+          $ref: '#/components/schemas/HostingHealthy'
+        current_healthy_operation_id:
+          type: string
+        compiler_version:
+          type: string
+          enum: [image-hosting.release-ports.v1]
+        hash:
+          type: string
+    HostingRetainedRelease:
+      type: object
+      additionalProperties: false
+      required: [healthy, state, retained_running]
+      properties:
+        healthy:
+          $ref: '#/components/schemas/HostingHealthy'
+        state:
+          type: string
+          enum: [retained, cleanup_pending, removed]
+        retained_running:
+          type: boolean
+        cleanup_operation_id:
+          type: string
     HostingApplyPlan:
       type: object
       additionalProperties: false
@@ -2691,6 +2803,13 @@ components:
         - compiler_version
         - hash
       properties:
+        retained_releases:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/HostingHealthy'
+        retain_previous:
+          type: boolean
         snapshot:
           $ref: '#/components/schemas/HostingSnapshot'
         release:
@@ -2701,6 +2820,7 @@ components:
           type: string
           enum:
             - image-hosting.v1
+            - image-hosting.release-ports.v1
         hash:
           type: string
     HostingReceipt:
@@ -2966,6 +3086,8 @@ components:
             - reconciliation_required
         snapshot:
           $ref: '#/components/schemas/HostingSnapshot'
+        cleanup_plan:
+          $ref: '#/components/schemas/HostingCleanupPlan'
         release:
           $ref: '#/components/schemas/HostingRelease'
         plan:
@@ -2994,6 +3116,7 @@ components:
           enum:
             - deploy
             - observe
+            - cleanup
         observation_lease:
           $ref: '#/components/schemas/RunLease'
         reconciliation_healthy:
