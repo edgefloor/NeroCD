@@ -62,10 +62,14 @@ func (c Client) RuntimeCapabilitiesIdentity(ctx context.Context, proxyConfigured
 	if result.RunnerID == "" || strings.TrimSpace(result.RunnerID) != result.RunnerID {
 		return "", errors.New("runner identity response did not include a valid runner_id")
 	}
-	proxyCapable, buildCapable := false, false
+	proxyCapable, buildCapable, shellCapable := false, false, false
 	for _, capability := range result.Capabilities {
 		proxyCapable = proxyCapable || capability == domain.RunTypeProxyApply
 		buildCapable = buildCapable || capability == domain.HostingBuildTaskType
+		shellCapable = shellCapable || capability == "shell"
+	}
+	if buildConfigured && shellCapable {
+		return "", errors.New("authenticated shell capability cannot share configured build execution")
 	}
 	if proxyCapable != proxyConfigured {
 		return "", errors.New("authenticated proxy_apply capability does not match explicit local proxy configuration")

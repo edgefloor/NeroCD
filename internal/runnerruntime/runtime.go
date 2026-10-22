@@ -76,7 +76,10 @@ func (r *leaseRenewer) Stop() { r.once.Do(func() { r.cancel(); <-r.done }) }
 func (w *leaseWatcher) Stop() { w.once.Do(func() { w.cancel(); <-w.done }) }
 
 func newAttemptSupervisor(lease domain.RunLease, counters ...*runnerOperationalCounters) *attemptSupervisor {
-	ctx, cancel := context.WithCancel(context.Background())
+	return newAttemptSupervisorFrom(context.Background(), lease, counters...)
+}
+func newAttemptSupervisorFrom(parent context.Context, lease domain.RunLease, counters ...*runnerOperationalCounters) *attemptSupervisor {
+	ctx, cancel := context.WithCancel(parent)
 	// created_at identifies the attempt, not the latest renewal period. After a
 	// long-running lease is read during startup replay it can be many minutes old
 	// while still carrying a fresh short TTL. Base the local guard on authority
@@ -163,6 +166,7 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
+	Build               *BuildConfig
 	Proxy               ProxyConfig
 	ImageDockerEndpoint string
 	Server              string
@@ -180,17 +184,26 @@ type Config struct {
 }
 
 // Run owns the runner loop, durable replay, lease lifecycle, and execution.
-func Run(config Config) error {
+func Run(config Config) error { return RunContext(context.Background(), config) }
+
+// RunContext joins attempt cleanup before returning after parent cancellation.
+// It retains unresolved journal evidence and never treats cancellation as success.
+func RunContext(ctx context.Context, config Config) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err := config.Proxy.Validate(); err != nil {
 		return err
 	}
-	if config.Proxy.Enabled() {
-		if !config.Execute {
-			return errors.New("configured managed proxy requires execution")
-		}
-		identity, err := runnerclient.New(config.Server, config.Token).ProxyIdentity(context.Background())
-		if err != nil || identity != config.RunnerID {
-			return errors.New("authenticated runner lacks the configured managed proxy identity or capability")
+	if err := validateBuildRuntimeConfig(config); err != nil {
+		return err
+	}
+	if config.Proxy.Enabled() && !config.Execute {
+		return errors.New("configured managed proxy requires execution")
+	}
+	if config.Proxy.Enabled() || config.Build != nil {
+		if err := validateRuntimeIdentity(ctx, config); err != nil {
+			return err
 		}
 	}
 	imagePolicy, err := parseComposeImagePolicy(config.ImagePolicy)
@@ -206,41 +219,68 @@ func Run(config Config) error {
 		return fmt.Errorf("open runner journal: %w", err)
 	}
 	defer func() { _ = journal.Close() }()
+	buildReplayCtx, buildReplayCancel := context.WithTimeout(ctx, 30*time.Second)
+	buildExecutor, buildReplayErr := reconcileRuntimeBuilds(buildReplayCtx, config, journal)
+	buildReplayCancel()
+	if buildReplayErr != nil {
+		return buildReplayErr
+	}
 	operational := &runnerOperationalCounters{}
-	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, config.Proxy); err != nil {
+	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, config.Proxy, ctx); err != nil {
 		return fmt.Errorf("reconcile proxy journal: %w", err)
 	}
-	if err := reconcileHostingJournal(config.Server, config.Token, journal, config.ImageDockerEndpoint); err != nil {
+	if err := reconcileHostingJournal(config.Server, config.Token, journal, config.ImageDockerEndpoint, ctx); err != nil {
 		return fmt.Errorf("reconcile hosting journal: %w", err)
 	}
-	if err := reconcileRunnerJournalWithCounters(config.Server, config.Token, journal, operational); err != nil {
+	if err := reconcileRunnerJournalWithCounters(config.Server, config.Token, journal, operational, ctx); err != nil {
 		return fmt.Errorf("reconcile runner journal: %w", err)
 	}
+	// Preserve legacy uncertain-journal reconciliation before ordinary lifecycle
+	// reads. Configured build/proxy runners authenticate before their replay.
+	if !config.Proxy.Enabled() && config.Build == nil {
+		if err := validateRuntimeIdentity(ctx, config); err != nil {
+			return err
+		}
+	}
 	for {
-		if _, err := runnerclient.New(config.Server, config.Token).Heartbeat(context.Background()); err != nil {
+		if _, err := runnerclient.New(config.Server, config.Token).Heartbeat(ctx); err != nil {
 			return err
 		}
 		retryCount, renewFailures := operational.Snapshot()
-		if err := runnerclient.New(config.Server, config.Token).ReportTelemetry(context.Background(), runnerclient.OperationalTelemetry{JournalDepth: journal.Depth(), RetryCount: retryCount, RenewFailures: renewFailures}); err != nil {
+		if err := runnerclient.New(config.Server, config.Token).ReportTelemetry(ctx, runnerclient.OperationalTelemetry{JournalDepth: journal.Depth(), RetryCount: retryCount, RenewFailures: renewFailures}); err != nil {
 			return fmt.Errorf("report runner telemetry: %w", err)
 		}
-		claim, err := runnerclient.New(config.Server, config.Token).Claim(context.Background())
+		claim, err := runnerclient.New(config.Server, config.Token).Claim(ctx)
 		if err != nil {
 			if runnerHTTPStatus(err, http.StatusNotFound) {
 				if config.Once {
 					fmt.Println("runner registered; no matching queued run")
 					return nil
 				}
-				time.Sleep(config.PollInterval)
+				if !waitWorkerInterval(ctx, config.PollInterval) {
+					return ctx.Err()
+				}
 				continue
 			}
 			return err
+		}
+		if isBuildClaim(claim) {
+			if !config.Execute {
+				return errors.New("hosting_build_v1 requires explicit execution; generic completion is forbidden")
+			}
+			if err := executeBuildClaim(ctx, config.Server, config.Token, claim, config.RunnerID, config.CancelPollInterval, buildExecutor, operational); err != nil {
+				return err
+			}
+			if config.Once {
+				return nil
+			}
+			continue
 		}
 		if err := printRunnerAuthorityEvent("claimed_run", claim.Run.ID, claim.Lease); err != nil {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithOptions(config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy}); err != nil {
+			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy}); err != nil {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
@@ -253,7 +293,7 @@ func Run(config Config) error {
 			if strings.TrimSpace(claim.Lease.ID) == "" {
 				return errors.New("claim response lease did not include id")
 			}
-			supervisor := newAttemptSupervisor(claim.Lease)
+			supervisor := newAttemptSupervisorFrom(ctx, claim.Lease)
 			var completed domain.RunLease
 			if err := journaledCompletion(supervisor, journal, config.Server, config.Token, claim.Run.ID, claim.Lease, config.CompleteStatus, &completed); err != nil {
 				supervisor.Close()
@@ -305,9 +345,19 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 type claimExecutionOptions struct {
 	imageEndpoint string
 	proxy         ProxyConfig
+	build         *BuildExecutor
 }
 
 func executeClaimWithOptions(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, options claimExecutionOptions) error {
+	return executeClaimWithOptionsContext(context.Background(), server, token, claim, workDir, cancelPollInterval, journal, secretRoot, imagePolicy, operational, options)
+}
+func executeClaimWithOptionsContext(parent context.Context, server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, options claimExecutionOptions) error {
+	if parent.Err() != nil {
+		return parent.Err()
+	}
+	if isBuildClaim(claim) {
+		return executeBuildClaim(parent, server, token, claim, claim.Lease.RunnerID, cancelPollInterval, options.build, operational)
+	}
 	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
 		if err := domain.ValidateImageDeploymentTask(claim.Run); err != nil {
 			return err
@@ -357,7 +407,7 @@ func executeClaimWithOptions(server string, token string, claim domain.ClaimedRu
 		}
 	}
 	// One attempt-scoped context also governs preparation and checkout.
-	supervisor = newAttemptSupervisor(claim.Lease, operational)
+	supervisor = newAttemptSupervisorFrom(parent, claim.Lease, operational)
 	defer supervisor.Close()
 	processCtx, stopProcessPolling := context.WithCancel(supervisor.Context())
 	defer stopProcessPolling()
@@ -634,7 +684,7 @@ func ensureJournaledCompletion(supervisor *attemptSupervisor, journal *runner.At
 	return completion, nil
 }
 
-func renewLeaseWhileRunning(worker context.Context, supervisor *attemptSupervisor, server, token string, lease domain.RunLease, interval time.Duration, failClosed func()) <-chan struct{} {
+func renewLeaseWhileRunning(worker context.Context, supervisor *attemptSupervisor, server, token string, lease domain.RunLease, interval time.Duration, failClosed func(), validators ...func(domain.RunLease) error) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -658,6 +708,12 @@ func renewLeaseWhileRunning(worker context.Context, supervisor *attemptSuperviso
 						failClosed()
 					}
 					return
+				}
+				for _, validate := range validators {
+					if validate(renewed) != nil {
+						failClosed()
+						return
+					}
 				}
 				supervisor.Update(renewed)
 				renewalDelay = boundedRenewalDelay(time.Until(renewed.ExpiresAt) / 3)
@@ -747,9 +803,9 @@ func retryWorkerRequest(worker context.Context, supervisor *attemptSupervisor, r
 	}
 }
 
-func startLeaseRenewer(parent context.Context, supervisor *attemptSupervisor, server, token string, lease domain.RunLease, interval time.Duration) *leaseRenewer {
+func startLeaseRenewer(parent context.Context, supervisor *attemptSupervisor, server, token string, lease domain.RunLease, interval time.Duration, validators ...func(domain.RunLease) error) *leaseRenewer {
 	ctx, cancel := context.WithCancel(parent)
-	return &leaseRenewer{cancel: cancel, done: renewLeaseWhileRunning(ctx, supervisor, server, token, lease, interval, supervisor.cancel)}
+	return &leaseRenewer{cancel: cancel, done: renewLeaseWhileRunning(ctx, supervisor, server, token, lease, interval, supervisor.cancel, validators...)}
 }
 
 func appendArtifactAPIContext(ctx context.Context, server string, token string, runID string, leaseID string, attempt int, fence string, name string, path string, found bool, required bool, size int64, kind string) error {
@@ -757,7 +813,7 @@ func appendArtifactAPIContext(ctx context.Context, server string, token string, 
 	return err
 }
 
-func watchLeaseCancellation(ctx context.Context, server string, token string, lease domain.RunLease, interval time.Duration, emit func(string), cancel func()) <-chan struct{} {
+func watchLeaseCancellation(ctx context.Context, server string, token string, lease domain.RunLease, interval time.Duration, emit func(string), cancel func(), validators ...func(domain.RunLease) error) <-chan struct{} {
 	done := make(chan struct{})
 	if interval <= 0 {
 		interval = time.Second
@@ -782,6 +838,12 @@ func watchLeaseCancellation(ctx context.Context, server string, token string, le
 					cancel()
 					return
 				}
+				for _, validate := range validators {
+					if validate(observed) != nil {
+						cancel()
+						return
+					}
+				}
 				if observed.Status != "active" {
 					cancel()
 					return
@@ -792,9 +854,9 @@ func watchLeaseCancellation(ctx context.Context, server string, token string, le
 	return done
 }
 
-func startLeaseWatcher(parent context.Context, server, token string, lease domain.RunLease, interval time.Duration, authorityCancel func()) *leaseWatcher {
+func startLeaseWatcher(parent context.Context, server, token string, lease domain.RunLease, interval time.Duration, authorityCancel func(), validators ...func(domain.RunLease) error) *leaseWatcher {
 	ctx, cancel := context.WithCancel(parent)
-	return &leaseWatcher{cancel: cancel, done: watchLeaseCancellation(ctx, server, token, lease, interval, func(string) {}, authorityCancel)}
+	return &leaseWatcher{cancel: cancel, done: watchLeaseCancellation(ctx, server, token, lease, interval, func(string) {}, authorityCancel, validators...)}
 }
 
 func attemptMutationKey(kind, leaseID string, attempt int, discriminator string) string {

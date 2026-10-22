@@ -10,6 +10,7 @@ import (
 
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
+	"nerocd/internal/hostingbuildprotocol"
 	"reflect"
 )
 
@@ -177,5 +178,75 @@ func TestBuildExecutorNeverAdoptsOrphanedEngineReceipt(t *testing.T) {
 	defer cancel()
 	if e.Execute(ctx, a, at) == nil || len(e.journal.Snapshot().Build) != 0 {
 		t.Fatal("orphaned state must reject before fresh effects")
+	}
+}
+
+type multiBuildClient map[string]*buildFixtureClient
+
+func (m multiBuildClient) BuildStatus(c context.Context, r hostingbuildprotocol.StatusRequest) (hostingbuildprotocol.StatusResponse, error) {
+	return m[r.Authority.BuildID].BuildStatus(c, r)
+}
+func (m multiBuildClient) BuildSourceBegin(c context.Context, r hostingbuildprotocol.SourceBeginRequest) (hostingbuildprotocol.PhaseResponse, error) {
+	return m[r.Authority.BuildID].BuildSourceBegin(c, r)
+}
+func (m multiBuildClient) BuildSourceCommit(c context.Context, r hostingbuildprotocol.SourceCommitRequest) (hostingbuildprotocol.PhaseResponse, error) {
+	return m[r.Authority.BuildID].BuildSourceCommit(c, r)
+}
+func (m multiBuildClient) BuildPrepare(c context.Context, r hostingbuildprotocol.PrepareRequest) (hostingbuildprotocol.PhaseResponse, error) {
+	return m[r.Authority.BuildID].BuildPrepare(c, r)
+}
+func (m multiBuildClient) BuildComplete(c context.Context, r hostingbuildprotocol.CompleteRequest) (hostingbuildprotocol.PhaseResponse, error) {
+	return m[r.Authority.BuildID].BuildComplete(c, r)
+}
+func TestBuildWildcardBindingMixedJournalRecovery(t *testing.T) {
+	for _, wrongHost := range []bool{false, true} {
+		t.Run(map[bool]string{false: "two-bindings", true: "wrong-host-retained"}[wrongHost], func(t *testing.T) {
+			e, one, a, at := buildFixture(t)
+			_, two, b, bt := buildFixture(t)
+			e.config.Target.BindingID = ""
+			b.BuildID = "second"
+			b.RunID = "build_run_second"
+			bt.RunID = b.RunID
+			two.authority = b
+			two.build.ID = b.BuildID
+			two.build.RunID = b.RunID
+			two.build.ResourceID = "resource-two"
+			two.build.Snapshot.BuildID = b.BuildID
+			two.build.Snapshot.Source.ResourceID = two.build.ResourceID
+			two.build.Snapshot.BindingID = "binding-two"
+			s := two.build.Snapshot
+			s.InputID = ""
+			two.build.Snapshot.InputID = domain.HostingDocumentHash(s)
+			e.client = multiBuildClient{a.BuildID: one, b.BuildID: two}
+			one.loseComplete = true
+			two.loseComplete = true
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			if e.Execute(ctx, a, at) == nil || e.Execute(ctx, b, bt) == nil || len(e.journal.Snapshot().Build) != 4 {
+				t.Fatal("response loss did not preserve mixed bindings")
+			}
+			if wrongHost {
+				two.build.Snapshot.ServerID = "other"
+			}
+			err := e.Reconcile(ctx)
+			if wrongHost {
+				if err == nil || len(e.journal.Snapshot().Build) != 2 || e.journal.Snapshot().Build[0].BuildID != b.BuildID {
+					t.Fatal("wrong host erased unrelated retained records")
+				}
+			} else if err != nil || len(e.journal.Snapshot().Build) != 0 {
+				t.Fatalf("mixed binding replay: %v", err)
+			}
+		})
+	}
+}
+func TestBuildBindingWildcardStillRequiresBinding(t *testing.T) {
+	e, f, a, _ := buildFixture(t)
+	e.config.Target.BindingID = ""
+	f.build.Snapshot.BindingID = ""
+	s := f.build.Snapshot
+	s.InputID = ""
+	f.build.Snapshot.InputID = domain.HostingDocumentHash(s)
+	if e.validateBuild(f.build, a, nil) == nil {
+		t.Fatal("wildcard admitted absent binding")
 	}
 }

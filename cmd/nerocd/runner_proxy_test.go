@@ -123,7 +123,7 @@ func TestRunnerOrdinaryLegacyIdentityStartsAndRestartsWithoutProxy(t *testing.T)
 			mu.Lock()
 			got := append([]string(nil), requests...)
 			mu.Unlock()
-			want := []string{"/api/v1/runners/register", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim"}
+			want := []string{"/api/v1/runners/register", "/api/v1/runners/identity", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim", "/api/v1/runners/identity", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim"}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("startup/restart order changed: %v", got)
 			}

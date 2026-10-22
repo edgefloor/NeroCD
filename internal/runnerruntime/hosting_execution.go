@@ -204,7 +204,11 @@ func executeHostingObservation(supervisor *attemptSupervisor, client runnerclien
 // reconcileHostingJournal runs before ordinary heartbeat or claim traffic.
 // It may obtain only the owner's exact read-only observation lease; unacknowledged
 // mutation intent is retained on every other stale or uncertain outcome.
-func reconcileHostingJournal(server, token string, journal *runner.AttemptJournal, endpoint string) error {
+func reconcileHostingJournal(server, token string, journal *runner.AttemptJournal, endpoint string, parents ...context.Context) error {
+	parent := replayParent(parents)
+	if parent.Err() != nil {
+		return parent.Err()
+	}
 	snapshot := journal.Snapshot()
 	if len(snapshot.Hosting) == 0 {
 		return nil
@@ -214,11 +218,11 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 		if entry.Phase != "prepared" {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 		op, err := client.HostingPrepared(ctx, *entry.Prepared)
 		cancel()
 		if err != nil {
-			probeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			probeCtx, stop := context.WithTimeout(parent, 5*time.Second)
 			status, probeErr := client.HostingStatus(probeCtx, domain.HostingStatusRequest{HostingAuthority: entry.Prepared.HostingAuthority})
 			stop()
 			if probeErr != nil || status.ID != entry.OperationID || status.PreparedReceipt != nil || status.MutationHold {
@@ -226,6 +230,9 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 			}
 		} else if op.PreparedReceipt == nil || op.PreparedReceipt.ID != entry.Prepared.ReceiptID || op.PreparedReceipt.BodyHash != domain.HostingDocumentHash(entry.Prepared.Release) {
 			return errors.New("hosting preparation replay receipt changed")
+		}
+		if parent.Err() != nil {
+			return parent.Err()
 		}
 		if err = journal.AckHosting(entry.ID); err != nil {
 			return err
@@ -235,10 +242,10 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 		if entry.Phase != "result" {
 			continue
 		}
-		if err := replayHostingEvents(server, token, journal, entry.Attempt); err != nil {
+		if err := replayHostingEvents(server, token, journal, entry.Attempt, parent); err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 		op, err := client.HostingComplete(ctx, *entry.Result)
 		cancel()
 		if err != nil {
@@ -247,6 +254,9 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 		}
 		if op.CompleteReceipt == nil || op.CompleteReceipt.ID != entry.Result.ReceiptID || op.CompleteReceipt.BodyHash != domain.HostingDocumentHash(entry.Result.Result) {
 			return errors.New("hosting result replay receipt changed")
+		}
+		if parent.Err() != nil {
+			return parent.Err()
 		}
 		if err = journal.AckHosting(entry.ID); err != nil {
 			return err
@@ -257,7 +267,7 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 			continue
 		}
 		a := domain.HostingAuthority{OperationID: entry.OperationID, RunID: entry.Attempt.RunID, LeaseID: entry.Attempt.LeaseID, Attempt: entry.Attempt.Attempt, Fence: entry.Attempt.Fence}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 		op, err := client.HostingStatus(ctx, domain.HostingStatusRequest{HostingAuthority: a})
 		cancel()
 		if err != nil {
@@ -274,6 +284,9 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 		if !notAdmitted && !completed {
 			return errors.New("cleanup intent retains ownership pending a committed result")
 		}
+		if parent.Err() != nil {
+			return parent.Err()
+		}
 		if err = journal.AckHosting(entry.ID); err != nil {
 			return err
 		}
@@ -283,7 +296,7 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 			continue
 		}
 		a := domain.HostingAuthority{OperationID: entry.OperationID, RunID: entry.Attempt.RunID, LeaseID: entry.Attempt.LeaseID, Attempt: entry.Attempt.Attempt, Fence: entry.Attempt.Fence}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 		op, err := client.HostingStatus(ctx, domain.HostingStatusRequest{HostingAuthority: a})
 		cancel()
 		if err != nil {
@@ -299,7 +312,7 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 			if !op.ReconcileRequested {
 				return errors.New("hosting apply intent awaits owner-requested reconciliation")
 			}
-			requestCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			requestCtx, stop := context.WithTimeout(parent, 5*time.Second)
 			claimed, claimErr := client.HostingStatus(requestCtx, domain.HostingStatusRequest{HostingAuthority: a, Phase: "claim_observation"})
 			stop()
 			if claimErr != nil {
@@ -309,7 +322,7 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 				return errors.New("readonly observation lease missing")
 			}
 			lease := *claimed.ObservationLease
-			supervisor := newAttemptSupervisor(lease)
+			supervisor := newAttemptSupervisorFrom(parent, lease)
 			// Observation keeps the same cancellation and renewal boundaries as execution.
 			renewer := startLeaseRenewer(supervisor.Context(), supervisor, server, token, lease, 5*time.Second)
 			watcher := startLeaseWatcher(supervisor.Context(), server, token, lease, time.Second, supervisor.cancel)
@@ -342,6 +355,9 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 				return fmt.Errorf("readonly hosting observation: %w", planErr)
 			}
 		}
+		if parent.Err() != nil {
+			return parent.Err()
+		}
 		if err = journal.AckHosting(entry.ID); err != nil {
 			return err
 		}
@@ -352,16 +368,20 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 // replayHostingEvents preserves events-before-completion for a live attempt.
 // A fenced attempt may report only its durable result; stale events remain in
 // the journal until its independent mutation intent has been settled.
-func replayHostingEvents(server, token string, journal *runner.AttemptJournal, authority runner.AttemptIdentity) error {
+func replayHostingEvents(server, token string, journal *runner.AttemptJournal, authority runner.AttemptIdentity, parents ...context.Context) error {
+	parent := replayParent(parents)
+	if parent.Err() != nil {
+		return parent.Err()
+	}
 	for _, pending := range groupReplayAttempts(journal.Snapshot()) {
 		if pending.authority.RunID != authority.RunID || pending.authority.LeaseID != authority.LeaseID || pending.authority.Attempt != authority.Attempt || pending.authority.Fence != authority.Fence || len(pending.events) == 0 {
 			continue
 		}
-		lease, fenced, err := probeReplayAuthority(server, token, authority)
+		lease, fenced, err := probeReplayAuthority(server, token, authority, parent)
 		if err != nil || fenced {
 			return err
 		}
-		supervisor := newAttemptSupervisor(lease)
+		supervisor := newAttemptSupervisorFrom(parent, lease)
 		renewer := startLeaseRenewer(supervisor.Context(), supervisor, server, token, lease, time.Second)
 		watcher := startLeaseWatcher(supervisor.Context(), server, token, lease, time.Second, supervisor.cancel)
 		pending.completions = nil
@@ -375,6 +395,9 @@ func replayHostingEvents(server, token string, journal *runner.AttemptJournal, a
 		ids := make([]string, 0, len(pending.events))
 		for _, event := range pending.events {
 			ids = append(ids, event.ID)
+		}
+		if parent.Err() != nil {
+			return parent.Err()
 		}
 		if err = journal.AckEvents(ids); err != nil {
 			return err

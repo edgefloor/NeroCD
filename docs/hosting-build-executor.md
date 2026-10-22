@@ -16,8 +16,13 @@ for Linux on the Docker daemon host, host PID and Docker storage visibility,
 rootful Docker and an explicitly delegated cgroup v2 subtree. The Buildx
 container is privileged. This is a trusted build host, not hostile-fork isolation.
 
-`BuildTarget` fixes runner, server, destination and binding. It must come from
-trusted placement, eventually from the authenticated typed claim adapter.
+`BuildTarget` fixes runner, server and destination. A nonempty binding restricts
+execution to that exact binding. An empty binding explicitly permits multiple
+valid bindings on the configured target. Each execution pins its complete
+initial authenticated snapshot; journal replay verifies its exact snapshot hash.
+Placement comes from trusted operator configuration and authenticated status.
+`BuildConfig.Validate` shares constructor prerequisite checks without a journal
+or build effects and may initialize the engine state root.
 `BuildConfig.Policy` must equal the complete persisted operator policy, including
 build and acquisition budgets. A matching policy label alone is insufficient.
 No configuration or capability is advertised by default.

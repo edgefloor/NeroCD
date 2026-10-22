@@ -340,3 +340,19 @@ func TestBuildToolchainIdentityBoundedAndPathIndependent(t *testing.T) {
 		t.Fatal("hash ignored cancellation")
 	}
 }
+
+func TestBuildConfigurationValidateSharesConstructorChecks(t *testing.T) {
+	e, _, _, _ := buildFixture(t)
+	c := e.config
+	c.Policy.Protocol = "unsupported"
+	err := c.Validate()
+	_, constructorErr := NewBuildExecutor(c, e.client, e.journal)
+	if err == nil || constructorErr == nil || err.Error() != constructorErr.Error() {
+		t.Fatal("standalone validation differs from constructor")
+	}
+	for _, id := range []string{"", "binding/escape", "with space", "binding\n", strings.Repeat("a", 129)} {
+		if validBuildPlacementID(id) {
+			t.Fatal("invalid placement ID accepted")
+		}
+	}
+}

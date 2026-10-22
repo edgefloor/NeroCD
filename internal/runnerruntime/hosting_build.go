@@ -30,7 +30,8 @@ type BuildPhaseClient interface {
 	BuildComplete(context.Context, hostingbuildprotocol.CompleteRequest) (hostingbuildprotocol.PhaseResponse, error)
 }
 
-// BuildTarget is trusted placement, never a resource-user request.
+// BuildTarget is trusted placement, never a resource-user request. An empty
+// BindingID explicitly permits bindings on this exact runner/server/destination.
 type BuildTarget struct{ RunnerID, ServerID, DestinationID, BindingID string }
 
 // BuildConfig contains explicit operator settings. Policy must exactly match the
@@ -106,13 +107,26 @@ func ComputeBuildToolchainIdentity(ctx context.Context, c hostingbuild.Config, p
 	return domain.HostingDocumentHash(inventory), nil
 }
 
-// NewBuildExecutor validates local prerequisites. It creates no build effects.
-func NewBuildExecutor(c BuildConfig, client BuildPhaseClient, journal *runner.AttemptJournal) (*BuildExecutor, error) {
-	if client == nil || journal == nil || domain.ValidateHostingBuildPolicy(c.Policy) != nil || c.Policy.Platform != "linux/"+runtime.GOARCH || c.StatusInterval < 10*time.Millisecond || c.StatusInterval > time.Second || c.RequestTimeout < 10*time.Millisecond || c.RequestTimeout > 30*time.Second {
+// Validate checks the same local prerequisites as NewBuildExecutor without a
+// journal, server request or build effects. It may initialize engine state.
+func (c BuildConfig) Validate() error { _, err := validatedBuildEngine(c); return err }
+func validBuildPlacementID(id string) bool {
+	if len(id) < 1 || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if c != '_' && c != '-' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+func validatedBuildEngine(c BuildConfig) (*hostingbuild.Engine, error) {
+	if domain.ValidateHostingBuildPolicy(c.Policy) != nil || c.Policy.Platform != "linux/"+runtime.GOARCH || c.StatusInterval < 10*time.Millisecond || c.StatusInterval > time.Second || c.RequestTimeout < 10*time.Millisecond || c.RequestTimeout > 30*time.Second {
 		return nil, errors.New("invalid explicit build configuration")
 	}
-	for _, id := range []string{c.Target.RunnerID, c.Target.ServerID, c.Target.DestinationID, c.Target.BindingID} {
-		if id == "" || len(id) > 128 {
+	for _, id := range []string{c.Target.RunnerID, c.Target.ServerID, c.Target.DestinationID} {
+		if !validBuildPlacementID(id) {
 			return nil, errors.New("explicit build target required")
 		}
 	}
@@ -126,9 +140,24 @@ func NewBuildExecutor(c BuildConfig, client BuildPhaseClient, journal *runner.At
 	if err != nil || identity != c.Policy.ToolchainIdentity {
 		return nil, errors.New("build toolchain identity mismatch")
 	}
+	if c.Target.BindingID != "" && !validBuildPlacementID(c.Target.BindingID) {
+		return nil, errors.New("invalid configured build binding")
+	}
 	engine, err := hostingbuild.New(c.Engine)
 	if err != nil {
 		return nil, errors.New("local build engine prerequisites unavailable")
+	}
+	return engine, nil
+}
+
+// NewBuildExecutor validates local prerequisites. It creates no build effects.
+func NewBuildExecutor(c BuildConfig, client BuildPhaseClient, journal *runner.AttemptJournal) (*BuildExecutor, error) {
+	if client == nil || journal == nil {
+		return nil, errors.New("build client and journal required")
+	}
+	engine, err := validatedBuildEngine(c)
+	if err != nil {
+		return nil, err
 	}
 	// Own the policy slices instead of retaining mutable caller configuration.
 	raw, err := json.Marshal(c)
@@ -153,7 +182,7 @@ func (e *BuildExecutor) validateBuild(b domain.HostingBuild, a domain.HostingBui
 	s := b.Snapshot
 	unhashed := s
 	unhashed.InputID = ""
-	if b.ID != a.BuildID || b.RunID != a.RunID || s.BuildID != a.BuildID || b.Revision < 1 || b.ResourceID != s.Source.ResourceID || b.ProjectID != s.Source.ProjectID || s.ResourceGeneration < 1 || s.InputID != domain.HostingDocumentHash(unhashed) || domain.ValidateHostingGitSource(s.Source) != nil || domain.ValidateHostingBuildPolicy(s.Policy) != nil || !reflect.DeepEqual(s.Policy, e.config.Policy) || s.Grant != nil || s.Source.CredentialKind != "public" || s.RunnerID != e.config.Target.RunnerID || s.ServerID != e.config.Target.ServerID || s.DestinationID != e.config.Target.DestinationID || s.BindingID != e.config.Target.BindingID || snapshot != nil && !reflect.DeepEqual(s, *snapshot) {
+	if b.ID != a.BuildID || b.RunID != a.RunID || s.BuildID != a.BuildID || b.Revision < 1 || b.ResourceID != s.Source.ResourceID || b.ProjectID != s.Source.ProjectID || s.ResourceGeneration < 1 || s.InputID != domain.HostingDocumentHash(unhashed) || domain.ValidateHostingGitSource(s.Source) != nil || domain.ValidateHostingBuildPolicy(s.Policy) != nil || !reflect.DeepEqual(s.Policy, e.config.Policy) || s.Grant != nil || s.Source.CredentialKind != "public" || s.RunnerID != e.config.Target.RunnerID || s.ServerID != e.config.Target.ServerID || s.DestinationID != e.config.Target.DestinationID || !validBuildPlacementID(s.BindingID) || e.config.Target.BindingID != "" && s.BindingID != e.config.Target.BindingID || snapshot != nil && !reflect.DeepEqual(s, *snapshot) {
 		return errors.New("build immutable snapshot or target mismatch")
 	}
 	u, err := s.Source.Policy.ValidateURL(s.Source.RepositoryURL, false)
