@@ -457,6 +457,42 @@ type HostingRetainedRelease struct {
 	CleanupOperationID *string         `json:"cleanup_operation_id"`
 }
 
+type HostingRuntimeConfiguration struct {
+	ResourceID string `json:"resource_id"`
+	ProjectID  string `json:"project_id"`
+	Generation int64  `json:"generation"`
+}
+
+type HostingRuntimeConfigurationReceipt struct {
+	ResourceID                 string `json:"resource_id"`
+	ProjectID                  string `json:"project_id"`
+	RequestID                  string `json:"request_id"`
+	ActorID                    string `json:"actor_id"`
+	RequestHash                string `json:"request_hash"`
+	ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
+	ExpectedRuntimeGeneration  int64  `json:"expected_runtime_generation"`
+	RuntimeGeneration          int64  `json:"runtime_generation"`
+	AuditID                    string `json:"audit_id"`
+}
+
+type HostingRuntimeConfigurationSecretRef struct {
+	ResourceID    string `json:"resource_id"`
+	ProjectID     string `json:"project_id"`
+	Generation    int64  `json:"generation"`
+	SecretID      string `json:"secret_id"`
+	SecretVersion int64  `json:"secret_version"`
+}
+
+type HostingRuntimeConfigurationVersion struct {
+	ResourceID string          `json:"resource_id"`
+	ProjectID  string          `json:"project_id"`
+	Generation int64           `json:"generation"`
+	Body       json.RawMessage `json:"body"`
+	BodyHash   string          `json:"body_hash"`
+	CreatedBy  string          `json:"created_by"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
 type HostingSnapshot struct {
 	OperationID string          `json:"operation_id"`
 	Body        json.RawMessage `json:"body"`

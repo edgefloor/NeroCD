@@ -299,6 +299,8 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodPost, path: "/api/v1/resources", body: `{"project_id":"proj_platform","project_environment_id":"penv_contract","name":"api-created","kind":"application","source":{"kind":"image","image":{"reference":"nginx:1.27"}}}`, auth: true, shape: "resource"},
 		{method: http.MethodGet, path: "/api/v1/resources/res_contract", auth: true, shape: "resource"},
 		{method: http.MethodPatch, path: "/api/v1/resources/res_contract", body: `{"name":"renamed","expected_generation":1}`, auth: true, shape: "resource"},
+		{method: http.MethodGet, path: "/api/v1/resources/res_contract/runtime-configuration", auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPut, path: "/api/v1/resources/res_contract/runtime-configuration", body: `{"expected_resource_generation":2,"expected_runtime_generation":0,"request_id":"0123456789abcdef0123456789abcdef","entries":[]}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
 		{method: http.MethodGet, path: "/api/v1/resources/res_contract/deployments?limit=1", auth: true, shape: "hosting-unavailable", expectedStatus: 503},
 		{method: http.MethodPost, path: "/api/v1/resources/res_contract/deployments", body: `{"expected_generation":2,"idempotency_key":"contract-image","container_port":80,"host_port":18080,"readiness":{"path":"/","timeout_seconds":5}}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
 		{method: http.MethodGet, path: "/api/v1/hosting-operations/hop_contract", body: ``, auth: true, shape: "hosting-unavailable", expectedStatus: 503},

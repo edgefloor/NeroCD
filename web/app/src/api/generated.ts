@@ -917,6 +917,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/runtime-configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read desired runtime literals and secret references with current project viewer access
+         * @description Reference metadata remains readable after secret revocation. Generation zero with empty entries represents untouched configuration. No secret values are expanded. Saving or reading does not imply runtime injection support.
+         */
+        get: operations["getHostingRuntimeConfiguration"];
+        /**
+         * Replace desired runtime configuration with current project owner access
+         * @description Application resources with image or Git sources only. Each new request appends an immutable version, including identical or empty documents. Exact replay reauthorizes the owner and active same-project secret versions and returns the original version; changed intent or resource generation conflicts. Separate runtime generation does not change resource/source generations or start deployment. Exact field casing is required; unknown, duplicate, trailing or malformed Unicode JSON is rejected. Maximum raw request is 512 KiB and canonical document 256 KiB. No interpolation or inheritance.
+         */
+        put: operations["putHostingRuntimeConfiguration"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/binding": {
         parameters: {
             query?: never;
@@ -3043,6 +3069,51 @@ export interface components {
         };
         ResourceBindingInput: {
             destination_id: components["schemas"]["HostingIdentifier"];
+        };
+        HostingRuntimeSecretReference: {
+            /** @description Exact same-project managed secret ID, UTF-8 at most 128 bytes without control or surrounding whitespace */
+            secret_id: string;
+            /** Format: int64 */
+            version: number;
+        };
+        HostingRuntimeEntry: {
+            /** @description Exact NEROCD_ prefix is reserved */
+            name: string;
+            /** @enum {string} */
+            kind: "literal";
+            /** @description Explicitly nonsecret viewer-readable literal, at most 4096 UTF-8 bytes, no NUL CR LF; empty allowed */
+            value: string;
+        } | {
+            /** @description Exact NEROCD_ prefix is reserved */
+            name: string;
+            /** @enum {string} */
+            kind: "managed_secret";
+            secret: components["schemas"]["HostingRuntimeSecretReference"];
+        };
+        HostingRuntimeConfigurationInput: {
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** Format: int64 */
+            expected_runtime_generation: number;
+            /** @description Client-generated cryptographically random 128-bit ID retained across retries */
+            request_id: string;
+            /** @description Unique names, at most 16 distinct secret ID/version pairs; sorted by name when saved */
+            entries: components["schemas"]["HostingRuntimeEntry"][];
+        };
+        HostingRuntimeConfigurationResponse: {
+            runtime_configuration: components["schemas"]["HostingRuntimeConfiguration"];
+        };
+        HostingRuntimeConfiguration: {
+            resource_id: components["schemas"]["HostingIdentifier"];
+            project_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            resource_generation: number;
+            /** Format: int64 */
+            runtime_generation: number;
+            entries: components["schemas"]["HostingRuntimeEntry"][];
+            created_by?: string;
+            /** Format: date-time */
+            created_at?: string;
         };
         /** @description Immutable desired placement with a platform-generated namespace. This is not an execution grant and does not deploy the resource. */
         ResourceBinding: {
@@ -5981,6 +6052,70 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    getHostingRuntimeConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Desired configuration; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeConfigurationResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    putHostingRuntimeConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRuntimeConfigurationInput"];
+            };
+        };
+        responses: {
+            /** @description Saved desired configuration; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeConfigurationResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getResourceBinding: {
