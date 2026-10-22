@@ -34,6 +34,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/retained-releases/{operation_id}/cleanup"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/deployments"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/deployments"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/deployments/from-build"},
 	{Method: http.MethodGet, Path: "/api/v1/hosting-operations/{id}"},
 	{Method: http.MethodPost, Path: "/api/v1/hosting-operations/{id}/cancel"},
 	{Method: http.MethodPost, Path: "/api/v1/hosting-operations/{id}/reconcile"},
@@ -216,6 +217,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerBuildPrepare
 	case "/api/v1/runners/builds/complete":
 		return s.runnerBuildComplete
+	case "/api/v1/resources/{id}/deployments/from-build":
+		return s.hostingBuildDeploymentRequest
 	case "/api/v1/resources/{id}/deployments":
 		return s.hostingDeploymentRequest
 	case "/api/v1/hosting-operations/{id}":
