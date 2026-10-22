@@ -68,6 +68,7 @@ type JournalProvenance struct {
 
 // JournalSnapshot is a copy of pending durable attempt mutations.
 type JournalSnapshot struct {
+	Build       []JournalBuild      `json:"build,omitempty"`
 	Proxy       []JournalProxy      `json:"proxy,omitempty"`
 	Hosting     []JournalHosting    `json:"hosting,omitempty"`
 	Events      []JournalEvent      `json:"events"`
@@ -76,6 +77,7 @@ type JournalSnapshot struct {
 }
 
 type journalState struct {
+	Build       []JournalBuild      `json:"build,omitempty"`
 	Proxy       []JournalProxy      `json:"proxy,omitempty"`
 	Hosting     []JournalHosting    `json:"hosting,omitempty"`
 	Version     int                 `json:"version"`
@@ -276,6 +278,11 @@ func (j *AttemptJournal) AckProvenance(id string) error {
 func (j *AttemptJournal) DiscardAttempt(authority AttemptIdentity) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	for _, entry := range j.state.Build {
+		if sameAttemptAuthority(entry.Attempt, authority) {
+			return errors.New("build mutation evidence requires explicit reconciliation")
+		}
+	}
 	for _, entry := range j.state.Proxy {
 		if sameAttemptAuthority(entry.Attempt, authority) {
 			return errors.New("proxy mutation evidence requires explicit reconciliation")
@@ -326,6 +333,7 @@ func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return JournalSnapshot{
+		Build:       cloneBuildEntries(j.state.Build),
 		Proxy:       cloneProxyEntries(j.state.Proxy),
 		Hosting:     cloneHostingEntries(j.state.Hosting),
 		Events:      append([]JournalEvent(nil), j.state.Events...),
@@ -351,10 +359,13 @@ func NewJournalID(prefix string) (string, error) {
 }
 
 func (j *AttemptJournal) entryCountLocked() int {
-	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy)
+	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build)
 }
 
 func (j *AttemptJournal) persistLocked() error {
+	if err := validateJournalBuildEntries(j.state); err != nil {
+		return err
+	}
 	contents, err := json.Marshal(j.state)
 	if err != nil {
 		return err
@@ -366,10 +377,10 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
-	if state.Version != journalFormatVersion && state.Version != 2 && state.Version != 3 && state.Version != 4 {
+	if state.Version != journalFormatVersion && state.Version != 2 && state.Version != 3 && state.Version != 4 && state.Version != 5 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
-	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy) > journalMaxEntries {
+	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
 	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))
@@ -428,7 +439,7 @@ func validateJournalState(state journalState) error {
 		ids[entry.ID] = struct{}{}
 	}
 
-	return nil
+	return validateJournalBuildEntries(state)
 }
 
 func validateJournalProvenance(p JournalProvenance) error {

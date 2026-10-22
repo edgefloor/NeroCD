@@ -51,7 +51,9 @@ func (j *AttemptJournal) AppendProxy(entry JournalProxy) (JournalProxy, error) {
 		return cloneJournalProxy(existing), nil
 	}
 	version := j.state.Version
-	j.state.Version = 4
+	if j.state.Version < 4 {
+		j.state.Version = 4
+	}
 	j.state.Proxy = append(j.state.Proxy, entry)
 	if err = validateJournalState(j.state); err == nil {
 		err = j.persistLocked()
