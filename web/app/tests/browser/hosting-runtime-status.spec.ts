@@ -28,8 +28,8 @@ async function refresh(status: Locator) {
 test("current observation ages independently of deployment outcome through real collector lifecycle", async ({ page, browser }, info) => {
   test.skip(!process.env.NEROCD_OBSERVATION_BROWSER_META, "requires NEROCD_OBSERVATION_BROWSER=1 acceptance gate"); test.setTimeout(180_000);
   const meta = JSON.parse(process.env.NEROCD_OBSERVATION_BROWSER_META!) as Metadata;
-  const path = `/api/v1/resources/${meta.resource_id}/runtime-status`; const writes: string[] = [];
-  page.on("request", (request) => { if (new URL(request.url()).pathname === path && request.method() !== "GET") writes.push(request.method()); });
+  const path = `/api/v1/resources/${meta.resource_id}/runtime-status`; const writes: string[] = []; let statusReads = 0;
+  page.on("request", (request) => { if (new URL(request.url()).pathname === path) { if (request.method() !== "GET") writes.push(request.method()); else statusReads++; } });
   expect((await page.request.get(path)).status()).toBe(401); await signIn(page);
   expect((await page.request.get(`/api/v1/resources/${meta.hidden_resource_id}/runtime-status`)).status()).toBe(403);
   if (process.env.NEROCD_OBSERVATION_BROWSER_FAIL_AFTER_LOGIN === "1") throw new Error("intentional observation browser failure checks cleanup");
@@ -47,6 +47,23 @@ test("current observation ages independently of deployment outcome through real 
     await status.screenshot({ path: info.outputPath(`runtime-status-${width}.png`), animations: "disabled" });
     await page.setViewportSize({ width, height: 1000 });
   }
+  // Fault injection forwards one actual server GET, then withholds its response.
+  // The server remains authoritative; no status body or success is fabricated.
+  let release!: () => void, forwarded!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; }), reachedServer = new Promise<void>((resolve) => { forwarded = resolve; });
+  await page.route(meta.origin + path, async (route) => {
+    const response = await route.fetch(); expect(response.status()).toBe(200); forwarded(); await held;
+    await route.fulfill({ response }).catch(() => {}); // Browser timeout may have aborted the route.
+  }, { times: 1 });
+  try {
+    await refresh(status); await reachedServer;
+    await expect(status.getByText(/Runtime status read timed out after 10 seconds/)).toBeVisible({ timeout: 15_000 });
+    await expect(current.getByText("Container state: Unknown", { exact: true })).toBeVisible(); await expect(history.getByText(meta.initial_container_id, { exact: true })).toBeVisible();
+    await expect(status.getByRole("button", { name: "Retry runtime status", exact: true })).toBeEnabled();
+    const pausedReads = statusReads; await page.waitForTimeout(11_000); expect(statusReads).toBe(pausedReads);
+    await refresh(status); await expect(current.getByText("Readiness: Ready", { exact: true })).toBeVisible(); release();
+    await expect(status.getByText(/Runtime status read timed out/)).toHaveCount(0);
+  } finally { release(); await page.unroute(meta.origin + path); }
   const step = async (name: string) => { const response = await page.request.post(meta.step_path + name, { headers: headers(meta), timeout: 30_000 }); expect(response.status()).toBe(200); return await response.json() as { container_id: string; operation_id: string }; };
   await step("stop"); await refresh(status); await expect(current.getByText("Container state: Exited", { exact: true })).toBeVisible(); await expect(current.getByText("Readiness: Not checked", { exact: true })).toBeVisible();
   // The successful deployment remains an earlier outcome despite verified exit.

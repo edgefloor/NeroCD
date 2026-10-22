@@ -57,10 +57,45 @@ test("principal revalidation clears protected evidence before cached identity is
   await act(async () => { void client.invalidateQueries({ queryKey: queryKeys.principal }); });
   await screen.findByText("Runtime status access is pending or unavailable."); expect(screen.queryByText("container", { exact: true })).toBeNull();
 });
+test.each(["resolve-before", "reject-before", "resolve-after", "reject-after"])("a hung read times out, pauses and isolates explicit retry from late completion: %s", async (completion) => {
+  let calls = 0, resolveOld!: (response: Response) => void, rejectOld!: (error: Error) => void, resolveRetry!: (response: Response) => void;
+  const fetch = backend((url) => {
+    if (!url.includes("runtime-status")) return;
+    calls++;
+    if (calls === 2) return new Promise<Response>((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
+    if (calls === 3) return new Promise<Response>((resolve) => { resolveRetry = resolve; });
+  });
+  setup(); await loaded(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh runtime status" }));
+  const oldSignal = fetch.mock.calls.filter(([url]) => url.includes("runtime-status"))[1]![1].signal;
+  await act(async () => { await vi.advanceTimersByTimeAsync(9999); }); expect(oldSignal?.aborted).toBe(false); expect(screen.getByText("Reading runtime status...")).toBeTruthy();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); }); expect(oldSignal?.aborted).toBe(true);
+  expect(screen.getByText(/Runtime status read timed out after 10 seconds/)).toBeTruthy(); expect(screen.queryByText("Reading runtime status...")).toBeNull(); expect(current().getByText("Container state: Unknown")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Historical runtime evidence" })).getByText("container", { exact: true })).toBeTruthy();
+  await act(async () => { await vi.advanceTimersByTimeAsync(20_000); }); expect(calls).toBe(2);
+  const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry runtime status" }); expect(retry.disabled).toBe(false); fireEvent.click(retry); expect(calls).toBe(3);
+  const completeOld = async () => { await act(async () => { if (completion.startsWith("resolve")) resolveOld(json(status)); else rejectOld(new Error("late old transport failure")); }); };
+  if (completion.endsWith("before")) {
+    await completeOld(); expect(screen.getByText("Reading runtime status...")).toBeTruthy(); expect(retry.disabled).toBe(true);
+  }
+  const next: HostingRuntimeStatus = { ...status, current_operation_id: "new-op", current_container_id: "new-container", observed_operation_id: "new-op", observed_container_id: "new-container", last_observation: { ...status.last_observation!, operation_id: "new-op", container_id: "new-container" } };
+  await act(async () => resolveRetry(json(next))); expect(current().getByText("Container state: Running")).toBeTruthy();
+  if (completion.endsWith("after")) await completeOld();
+  expect(screen.queryByText("container", { exact: true })).toBeNull(); expect(within(screen.getByRole("region", { name: "Historical runtime evidence" })).getByText("new-container", { exact: true })).toBeTruthy(); expect(screen.queryByRole("alert")).toBeNull();
+});
+test("hiding cancels the read deadline without treating lifecycle cancellation as a timeout", async () => {
+  let calls = 0; const fetch = backend((url) => url.includes("runtime-status") && ++calls > 1 ? new Promise<Response>(() => {}) : undefined); setup(); await loaded();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); fireEvent.click(screen.getByRole("button", { name: "Refresh runtime status" }));
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden"); fireEvent(document, new Event("visibilitychange"));
+  expect(fetch.mock.calls.filter(([url]) => url.includes("runtime-status"))[1]![1].signal?.aborted).toBe(true);
+  await act(async () => { await vi.advanceTimersByTimeAsync(20_000); }); expect(screen.queryByRole("alert")).toBeNull(); expect(screen.queryByText("Reading runtime status...")).toBeNull(); expect(calls).toBe(2);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible"); fireEvent(document, new Event("visibilitychange"));
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Refresh runtime status" }).disabled).toBe(false);
+});
 test("local age expires during a disconnected poll and hidden-tab return does not revive freshness", async () => {
   let now = 1000, wall = Date.parse(time), calls = 0; vi.spyOn(performance, "now").mockImplementation(() => now); vi.spyOn(Date, "now").mockImplementation(() => wall);
   backend((url) => url.includes("runtime-status") && ++calls > 1 ? new Promise<Response>(() => {}) : undefined); setup(); await loaded();
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); fireEvent(document, new Event("visibilitychange")); fireEvent.click(screen.getByRole("button", { name: "Refresh runtime status" })); now += 29_000; wall += 29_000; await act(async () => { await vi.advanceTimersByTimeAsync(29_000); }); expect(current().getByText("Container state: Running")).toBeTruthy();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); fireEvent(document, new Event("visibilitychange")); fireEvent.click(screen.getByRole("button", { name: "Refresh runtime status" })); now += 29_000; wall += 29_000; await act(async () => { await vi.advanceTimersByTimeAsync(29_000); }); expect(current().getByText("Container state: Unknown")).toBeTruthy();
   now += 1000; wall += 1000; await act(async () => { await vi.advanceTimersByTimeAsync(1000); }); expect(current().getByText("Container state: Unknown")).toBeTruthy(); expect(screen.getByText("Agent reachability: Unknown")).toBeTruthy();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden"); fireEvent(document, new Event("visibilitychange")); now += 100_000; wall += 100_000; vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible"); fireEvent(document, new Event("visibilitychange")); expect(current().getByText("Readiness: Unknown")).toBeTruthy();
 });

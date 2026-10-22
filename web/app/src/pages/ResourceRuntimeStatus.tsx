@@ -39,34 +39,50 @@ function StatusAccess({ resource, actor }: { resource: Resource; actor: string }
 }
 function StatusReader({ resourceID }: { resourceID: string }) {
   const [snapshot, setSnapshot] = useState<RuntimeStatusSnapshot>();
-  const [error, setError] = useState(false), [denied, setDenied] = useState(false), [busy, setBusy] = useState(false), [revision, setRevision] = useState(0);
+  const [error, setError] = useState<"timeout" | "request">(), [denied, setDenied] = useState(false), [busy, setBusy] = useState(false), [revision, setRevision] = useState(0);
   const [documentVisible, setDocumentVisible] = useState(document.visibilityState !== "hidden"), [inViewport, setInViewport] = useState(typeof IntersectionObserver === "undefined");
-  const node = useRef<HTMLDivElement>(null), active = useRef(false), request = useRef<AbortController | null>(null), paused = useRef(false);
+  const node = useRef<HTMLDivElement>(null), active = useRef(false), request = useRef<{ controller: AbortController; timer: number } | null>(null), paused = useRef(false);
   const visible = useRef(false); visible.current = documentVisible && inViewport;
+  const cancelRead = useCallback(() => {
+    const attempt = request.current; if (!attempt) return;
+    request.current = null; window.clearTimeout(attempt.timer); attempt.controller.abort();
+    if (active.current) { setBusy(false); setRevision((value) => value + 1); }
+  }, []);
   const load = useCallback(async () => {
     if (!active.current || request.current || paused.current || !visible.current) return;
-    const controller = new AbortController(), started = performance.now(); request.current = controller; setBusy(true);
+    const controller = new AbortController(), started = performance.now();
+    const attempt = { controller, timer: 0 };
+    request.current = attempt; setBusy(true);
+    attempt.timer = window.setTimeout(() => {
+      if (!active.current || request.current !== attempt) return;
+      // Retire the attempt before aborting: the transport may ignore cancellation
+      // or settle later, after an explicit retry has already started.
+      request.current = null; window.clearTimeout(attempt.timer); controller.abort(); paused.current = true;
+      setError("timeout"); setBusy(false); setRevision((value) => value + 1);
+    }, 10_000);
     try {
       const status = await getHostingRuntimeStatus(resourceID, { signal: controller.signal });
-      if (!active.current || controller.signal.aborted) return;
-      setSnapshot({ status, receivedMonotonic: performance.now(), receivedWall: Date.now(), requestDuration: Math.max(0, performance.now() - started) }); setError(false);
+      if (!active.current || request.current !== attempt || controller.signal.aborted) return;
+      setSnapshot({ status, receivedMonotonic: performance.now(), receivedWall: Date.now(), requestDuration: Math.max(0, performance.now() - started) }); setError(undefined);
     } catch (cause) {
-      if (!active.current || controller.signal.aborted) return;
-      paused.current = true; setError(true);
+      if (!active.current || request.current !== attempt || controller.signal.aborted) return;
+      paused.current = true; setError("request");
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { setSnapshot(undefined); setDenied(true); }
     } finally {
-      if (request.current === controller) request.current = null;
-      if (active.current) { setBusy(false); setRevision((value) => value + 1); }
+      if (request.current === attempt) {
+        request.current = null; window.clearTimeout(attempt.timer);
+        if (active.current) { setBusy(false); setRevision((value) => value + 1); }
+      }
     }
   }, [resourceID]);
   useEffect(() => {
     active.current = true;
-    const visibility = () => { setDocumentVisible(document.visibilityState !== "hidden"); setRevision((value) => value + 1); if (document.visibilityState === "hidden") request.current?.abort(); };
+    const visibility = () => { setDocumentVisible(document.visibilityState !== "hidden"); setRevision((value) => value + 1); if (document.visibilityState === "hidden") cancelRead(); };
     document.addEventListener("visibilitychange", visibility);
-    const observer = typeof IntersectionObserver === "undefined" ? undefined : new IntersectionObserver(([entry]) => { const shown = Boolean(entry?.isIntersecting); setInViewport(shown); if (!shown) request.current?.abort(); });
+    const observer = typeof IntersectionObserver === "undefined" ? undefined : new IntersectionObserver(([entry]) => { const shown = Boolean(entry?.isIntersecting); setInViewport(shown); if (!shown) cancelRead(); });
     if (node.current) observer?.observe(node.current);
-    return () => { active.current = false; request.current?.abort(); observer?.disconnect(); document.removeEventListener("visibilitychange", visibility); };
-  }, []);
+    return () => { active.current = false; cancelRead(); observer?.disconnect(); document.removeEventListener("visibilitychange", visibility); };
+  }, [cancelRead]);
   useEffect(() => {
     if (!documentVisible || !inViewport) return;
     if (!snapshot && !error && !busy) { void load(); return; }
@@ -80,14 +96,14 @@ function StatusReader({ resourceID }: { resourceID: string }) {
     const timer = window.setTimeout(() => setRevision((value) => value + 1), Math.max(1, remaining));
     return () => window.clearTimeout(timer);
   }, [snapshot, documentVisible, inViewport, revision]);
-  const status = snapshot?.status, view = snapshot ? runtimeStatusView(snapshot, performance.now(), Date.now(), error) : undefined;
+  const status = snapshot?.status, view = snapshot ? runtimeStatusView(snapshot, performance.now(), Date.now(), Boolean(error)) : undefined;
   const last = status?.last_observation;
   return <div ref={node} className="min-w-0 space-y-3">
     <p className="text-xs">Observation expires after 30 seconds. The collector targets one bounded page per 10-second cycle and bounds each sample to 5 seconds. Large fleets can become stale between sweeps.</p>
     <Button className={button} type="button" variant="outline" disabled={busy || denied || !documentVisible || !inViewport} onClick={() => { paused.current = false; void load(); }}>{error && !denied ? "Retry runtime status" : "Refresh runtime status"}</Button>
     {busy ? <p role="status">Reading runtime status...</p> : null}
     {!documentVisible || !inViewport ? <p>Automatic status reads are paused while this section is hidden.</p> : null}
-    {denied ? <p role="alert">Runtime status access is unavailable. Refresh project access before continuing. Evidence is cleared.</p> : error ? <p role="alert">Unable to read current runtime status. Automatic reads are paused. Retained evidence is historical; retry explicitly.</p> : null}
+    {denied ? <p role="alert">Runtime status access is unavailable. Refresh project access before continuing. Evidence is cleared.</p> : error ? <p role="alert">{error === "timeout" ? "Runtime status read timed out after 10 seconds." : "Unable to read current runtime status."} Automatic reads are paused. Retained evidence is historical; retry explicitly.</p> : null}
     <section aria-label="Current runtime observation" className="space-y-1"><h6 className="font-medium">Current runtime observation</h6>
       <p>Container state: {containerText[view?.container ?? "unknown"]}</p><p>Readiness: {readinessText[view?.readiness ?? "unknown"]}</p>
       <p>Evidence: {view?.fresh ? "Fresh observation of the exact current target" : "Unknown current state"}</p>
