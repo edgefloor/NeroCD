@@ -16,9 +16,9 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
   const fetch = vi.fn(async (url: string, options: RequestInit) => await handler?.(url, options) ?? (url.endsWith("/binding") ? json({ id: "binding", resource_id: "r", destination_id: "dest" }) : url.includes("/builds?") ? json({ items: [build], limit: 20, offset: 0, count: 1, total: 1 }) : url.includes("/hosting-builds/") ? json({ build }) : url.includes("/deployments?") ? json({ items: [], limit: 20, offset: 0, count: 0, total: 0 }) : json(operation, options.method === "POST" ? 202 : 200)));
   vi.stubGlobal("fetch", fetch); return fetch;
 }
-async function setup(writable = true) {
+async function setup(writable = true, currentResource = resource) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "u", provider: "oidc", roles: [] });
-  const view = render(<QueryClientProvider client={client}><ResourceBuilds resource={resource} writable={writable} blocked={false} /></QueryClientProvider>);
+  const view = render(<QueryClientProvider client={client}><ResourceBuilds resource={currentResource} writable={writable} blocked={false} /></QueryClientProvider>);
   fireEvent.click(await screen.findByRole("button", { name: "View build b" })); await screen.findByRole("region", { name: "Deploy recorded local build" }); return view;
 }
 async function submit() {
@@ -56,16 +56,59 @@ test.each(["actor", "permission", "resource"])("late response and request do not
 test("viewer sees artifact metadata but cannot deploy", async () => { backend(); await setup(false); expect(screen.getByText(/Project maintainer access is required to deploy/)).toBeTruthy(); expect(screen.queryByRole("form", { name: "Deploy selected build" })).toBeNull(); });
 test("stale source and different destination cannot authorize initial deployment", async () => { backend((url) => url.endsWith("/binding") ? json({ id: "other-binding", destination_id: "other" }) : undefined); await setup(); fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/)); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true); expect(screen.getByText(/Restore the build's exact saved destination/)).toBeTruthy(); });
 
-test("resource generation changes require explicit review and a new acknowledgment without reselecting or rebuilding", async () => {
- let count = 0; const fetch = backend((url) => url.endsWith("/from-build") ? ++count === 1 ? json({}, 409) : json({ ...operation, snapshot: { ...operation.snapshot, resource_generation: 4 } }, 202) : url === "/api/v1/resources/r" ? json({ ...resource, generation: 4 }) : undefined);
+test.each([
+ { change: "rename", latest: { ...resource, name: "Renamed Web", generation: 4 } },
+ { change: "configuration generation", latest: { ...resource, generation: 4 } },
+ { change: "source generation", latest: { ...resource, generation: 4, source: { kind: "git" as const, git: { ...source!, generation: 5 } } } },
+])("$change requires a new build and preserves the conflicted request after review", async ({ latest }) => {
+ const fetch = backend((url) => url.endsWith("/from-build") ? json({}, 409) : url === "/api/v1/resources/r" ? json(latest) : undefined);
+ await setup(); fireEvent.change(screen.getByLabelText("Build container port"), { target: { value: "3000" } }); await submit(); await screen.findByText(/Deployment conflicts with current/);
+ const original = JSON.parse(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body as string);
+ fireEvent.click(screen.getByRole("button", { name: "Review this exact build for a separate request" }));
+ await screen.findByText(/A new build is required for the current resource and source generations before a separate deployment/);
+ expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical local build deployment" }).disabled).toBe(true);
+ expect(screen.queryByRole("button", { name: "Deploy selected build" })).toBeNull();
+ expect(screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful build/).checked).toBe(true);
+ expect(screen.getByLabelText<HTMLInputElement>("Build container port").value).toBe("3000");
+ expect(screen.getByLabelText<HTMLInputElement>("Build container port").disabled).toBe(true);
+ expect(screen.getByText(new RegExp(`Retained request key ${original.idempotency_key}`))).toBeTruthy();
+ fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+ expect(fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"))).toHaveLength(1);
+ expect(fetch.mock.calls.filter(([url, o]) => o.method === "POST" && url.endsWith("/builds"))).toHaveLength(0);
+});
+test.each([
+ { change: "resource generation", latest: { ...resource, name: "Renamed Web", generation: 4 } },
+ { change: "source generation", latest: { ...resource, source: { kind: "git" as const, git: { ...source!, generation: 4 } } } },
+])("initial deployment is blocked when the build predates the $change", async ({ latest }) => {
+ const fetch = backend(); await setup(true, latest);
+ fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/));
+ expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+ await screen.findByText(/A new build is required for the current configuration/);
+ fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+ expect(fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"))).toHaveLength(0);
+});
+test("unchanged resource and source generations permit an explicitly acknowledged separate request", async () => {
+ let count = 0; const fetch = backend((url) => url.endsWith("/from-build") ? ++count === 1 ? json({}, 409) : json(operation, 202) : url === "/api/v1/resources/r" ? json(resource) : undefined);
  await setup(); await submit(); await screen.findByText(/Deployment conflicts with current/);
  fireEvent.click(screen.getByRole("button", { name: "Review this exact build for a separate request" }));
- await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true));
+ await screen.findByRole("button", { name: "Deploy selected build" });
  expect(screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful build/).checked).toBe(false);
+ expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
  await submit(); await screen.findByRole("region", { name: "Deployment operation detail" });
  const inputs = fetch.mock.calls.filter(([url]) => url.endsWith("/from-build")).map(([, o]) => JSON.parse(o.body as string));
- expect(inputs[1]).toMatchObject({ build_id: "b", expected_generation: 4, expected_source_generation: 3 }); expect(inputs[1].idempotency_key).not.toBe(inputs[0].idempotency_key);
+ expect(inputs[1]).toMatchObject({ build_id: "b", expected_generation: 2, expected_source_generation: 3 }); expect(inputs[1].idempotency_key).not.toBe(inputs[0].idempotency_key);
  expect(fetch.mock.calls.filter(([url, o]) => o.method === "POST" && url.endsWith("/builds"))).toHaveLength(0);
+});
+test("changed generations preserve an uncertain identical request for historical receipt recovery", async () => {
+ let count = 0; const fetch = backend((url) => url.endsWith("/from-build") ? ++count === 1 ? json({}, 503) : json(operation, 202) : url === "/api/v1/resources/r" ? json({ ...resource, name: "Renamed Web", generation: 4 }) : undefined);
+ const view = await setup(); await submit(); await screen.findByText(/Deployment delivery is unconfirmed/);
+ fireEvent.click(screen.getByRole("button", { name: "Review this exact build for a separate request" }));
+ await screen.findByText(/A new build is required for the current resource and source generations before a separate deployment/);
+ view.rerender(<QueryClientProvider client={client}><ResourceBuilds resource={{ ...resource, name: "Renamed Web", generation: 4 }} writable blocked={false} /></QueryClientProvider>);
+ expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical local build deployment" }).disabled).toBe(false);
+ fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" })); await screen.findByRole("region", { name: "Deployment operation detail" });
+ const writes = fetch.mock.calls.filter(([url]) => url.endsWith("/from-build")); expect(writes).toHaveLength(2); expect(writes[1]![1].body).toBe(writes[0]![1].body);
+ expect(JSON.parse(writes[1]![1].body as string)).toMatchObject({ build_id: "b", expected_generation: 2, expected_source_generation: 3 });
 });
 test("new source metadata cannot silently update an acknowledged deployment", async () => {
  const fetch = backend(); const view = await setup(); fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/));

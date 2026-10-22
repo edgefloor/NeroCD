@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OperationDetail } from "./ResourceDeployments";
 
+function matchesBuildGenerations(resource: Resource, build: HostingBuild): boolean {
+  return resource.source.kind === "git" && resource.source.git.credential_kind === "public"
+    && resource.generation === build.snapshot.resource_generation
+    && resource.source.git.source_id === build.snapshot.source.source_id
+    && resource.source.git.generation === build.snapshot.source.generation;
+}
+
 // The parent keys this component by actor, resource, permission and exact build.
 // Keep a submitted body intact until its response is known or the operator leaves.
 export function LocalBuildDeployment({ actor, resource, build, writable, blocked, onDenied }: {
@@ -31,7 +38,7 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
   ]); };
   const source = base.source.kind === "git" ? base.source.git : undefined;
   const currentSource = resource.source.kind === "git" ? resource.source.git : undefined;
-  const exactBuild = build.project_id === resource.project_id && build.resource_id === resource.id && build.state === "succeeded" && Boolean(build.artifact) && source?.credential_kind === "public" && build.snapshot.source.source_id === source.source_id && build.snapshot.source.generation === source.generation;
+  const exactBuild = build.project_id === resource.project_id && build.resource_id === resource.id && build.state === "succeeded" && Boolean(build.artifact) && matchesBuildGenerations(base, build) && matchesBuildGenerations(resource, build);
   const changedSource = resource.generation > base.generation || (currentSource?.generation ?? 0) > (source?.generation ?? 0) || currentSource?.source_id !== source?.source_id;
   const placementMatches = binding.data?.id === build.snapshot.target.binding_id && binding.data?.destination_id === build.snapshot.target.destination_id;
   const held = Boolean(history.data?.items.some((operation) => operation.mutation_hold));
@@ -64,7 +71,11 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
       const [latest, exact] = await Promise.all([getResource(resource.id), getHostingBuild(build.id)]);
       if (!active.current) return;
       checkBuildScope(exact, resource.project_id, resource.id, build.id);
-      if (latest.id !== resource.id || latest.project_id !== resource.project_id || latest.source.kind !== "git" || latest.source.git.generation !== exact.snapshot.source.generation || latest.source.git.source_id !== exact.snapshot.source.source_id || exact.state !== "succeeded" || JSON.stringify(exact.artifact) !== JSON.stringify(build.artifact)) throw new Error("Build no longer matches current source");
+      if (latest.id !== resource.id || latest.project_id !== resource.project_id || exact.state !== "succeeded" || JSON.stringify(exact.artifact) !== JSON.stringify(build.artifact)) throw new Error("Build no longer matches the reviewed artifact");
+      if (!matchesBuildGenerations(latest, exact) || !matchesBuildGenerations(latest, build)) {
+        setError("A new build is required for the current resource and source generations before a separate deployment. The retained request, key, acknowledgment, and settings are unchanged.");
+        return;
+      }
       await binding.refetch(); await changed();
       if (!active.current) return;
       setBase(latest); setAttempt(undefined); setConflict(false); setConfirmed(false); setError("");
@@ -80,7 +91,7 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
     <p className="break-all text-sm">Build {build.id} · source generation {source?.generation} · resource generation {base.generation} · image ID {build.artifact?.image_id}.</p>
     <p className="text-xs text-muted-foreground">Requires the same saved destination, runner and Docker daemon as this build, a current project grant and enrolled runner with local_build_deploy_v1, and an operator-enabled agent started with --local-build-deploy. The agent uses the recorded local image ID without fetching or transferring it.</p>
     {restored ? <p role="alert">Deployment blocked after platform restore. Trusted recovery proof is pending. Refreshing, retrying, or reconciliation cannot release restored ownership. Settings are preserved.</p> : null}
-    {!exactBuild || changedSource ? <p role="status">This build does not match the reviewed current public Git source. Refresh the resource and explicitly select a successful build for its current source generation.</p> : null}
+    {!exactBuild || changedSource ? <p role="status">This build does not match the current resource and source generations. A new build is required for the current configuration before a separate deployment.</p> : null}
     {!binding.isPending && !placementMatches ? <p role="status">Restore the build's exact saved destination before deploying. A local artifact cannot move to another host.</p> : null}
     {held ? <p role="status">A recorded mutation hold pauses new deployment requests. A retained identical request can recover its existing operation.</p> : null}
     {binding.isError || history.isError ? <p role="alert">Unable to refresh deployment placement or history. Requests are paused and settings are preserved.</p> : null}
