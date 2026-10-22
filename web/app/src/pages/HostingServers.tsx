@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PageNavigation } from "@/components/common/PageNavigation";
+import { HostingProxy } from "./HostingProxy";
 import { maximumPageOffset } from "@/router/search";
 
 export function eligibleHostingRunner(runner: Runner): boolean {
@@ -49,7 +50,7 @@ function ServerDetail({ serverID, blocked }: { serverID: string; blocked: boolea
   return <section className="min-w-0 space-y-3" aria-label="Hosting server detail">
     {detail.isPending ? <p role="status">Loading server destination...</p> : null}
     {detail.isError ? <div className="space-y-2"><p role="alert">Unable to load server destination.</p><Button type="button" variant="outline" onClick={() => void detail.refetch()}>Retry server destination</Button></div> : null}
-    {detail.data ? <><h3 className="break-words font-semibold [overflow-wrap:anywhere]">{detail.data.server.name}</h3><dl className="space-y-1 break-all text-sm"><dt>Server ID</dt><dd>{detail.data.server.id}</dd><dt>Enrolled runner</dt><dd>{detail.data.server.runner_id}</dd><dt>Default destination</dt><dd>{detail.data.destination.id}</dd><dt>Runtime kind</dt><dd>{detail.data.destination.runtime_kind}</dd></dl><ServerGrants key={detail.data.destination.id} destinationID={detail.data.destination.id} blocked={blocked || detail.isError} /></> : null}
+    {detail.data ? <><h3 className="break-words font-semibold [overflow-wrap:anywhere]">{detail.data.server.name}</h3><dl className="space-y-1 break-all text-sm"><dt>Server ID</dt><dd>{detail.data.server.id}</dd><dt>Enrolled runner</dt><dd>{detail.data.server.runner_id}</dd><dt>Default destination</dt><dd>{detail.data.destination.id}</dd><dt>Runtime kind</dt><dd>{detail.data.destination.runtime_kind}</dd></dl><ServerGrants key={detail.data.destination.id} destinationID={detail.data.destination.id} blocked={blocked || detail.isError} /><HostingProxy serverID={serverID} blocked={blocked || detail.isError} /></> : null}
   </section>;
 }
 export function HostingServers({ canAdmin, blocked }: { canAdmin: boolean; blocked: boolean }) {

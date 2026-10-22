@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { HostingServers, eligibleHostingRunner } from "./HostingServers";
 import type { Runner } from "@/api";
+vi.mock("./HostingProxy", () => ({ HostingProxy: ({ serverID }: { serverID: string }) => <div>Managed proxy for {serverID}</div> }));
 const runner: Runner = { id: "runner_one", name: "Compose runner", status: "active", capabilities: ["compose-deploy"], tags: [], registered_at: "", last_heartbeat_at: "" };
 const server = { id: "server_one", name: "Production host", runner_id: runner.id, created_by: "admin", created_at: "" };
 const destination = { id: "dest_one", server_id: server.id, name: "default", runtime_kind: "docker_compose", created_at: "" };
