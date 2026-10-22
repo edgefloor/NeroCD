@@ -1,0 +1,752 @@
+package store_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"nerocd/internal/auth"
+	"nerocd/internal/domain"
+	"nerocd/internal/hostingbuildprotocol"
+	"nerocd/internal/hostingjobs"
+	"nerocd/internal/store"
+)
+
+func startBuildController(t *testing.T, f buildStoreFixture) func(context.Context) error {
+	t.Helper()
+	for {
+		tx, err := f.db.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed, err := hostingjobs.MigrateNextTx(t.Context(), tx)
+		if err != nil {
+			_ = tx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err = tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if !changed {
+			break
+		}
+	}
+	p := buildPolicy()
+	if err := f.pg.ConfigureHostingBuild(&p); err != nil {
+		t.Fatal(err)
+	}
+	p.Platform = "caller-mutated"
+	stop, err := f.pg.StartHostingExecution(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := stop(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	return stop
+}
+func publicBuildInput(key string) domain.HostingBuildRequest {
+	return domain.HostingBuildRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, IdempotencyKey: key}
+}
+func awaitBuildDispatch(t *testing.T, f buildStoreFixture, id string) domain.HostingBuild {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		b, err := f.pg.GetHostingBuild(t.Context(), "usr_bootstrap", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.RunID != "" {
+			return b
+		}
+		if b.State == "failed" {
+			t.Fatalf("dispatch failed: %+v", b)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("real River did not dispatch")
+	return domain.HostingBuild{}
+}
+func TestPostgresHostingBuildControllerRealRiverAndExactClaim(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	startBuildController(t, f)
+	ctx := t.Context()
+	b, err := f.pg.RequestPublicHostingBuild(ctx, "controller", f.src.ResourceID, "usr_bootstrap", publicBuildInput("controller"), destinationEvent("controller"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = awaitBuildDispatch(t, f, b.ID)
+	if err = f.pg.PrepareBuild(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_build_tasks WHERE build_id=$1`, b.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("dispatch receipt count=%d %v", count, err)
+	}
+	var raw []byte
+	if err = f.db.QueryRow(ctx, `SELECT run_spec FROM task_runs WHERE id=$1`, b.RunID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var spec map[string]string
+	if json.Unmarshal(raw, &spec) != nil || len(spec) != 2 || spec["type"] != domain.HostingBuildTaskType || spec["hosting_build_id"] != b.ID {
+		t.Fatalf("noncanonical %s", raw)
+	}
+	// Identical tags and capability never substitute for immutable target identity.
+	if _, err = f.db.Exec(ctx, `INSERT INTO runners(id,name,tags,capabilities,status,token_hash,registered_at,last_heartbeat_at) SELECT 'wrong_build_runner','wrong',tags,capabilities,'active','wrong',clock_timestamp(),clock_timestamp() FROM runners WHERE id=$1`, f.runner); err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := f.pg.ClaimRun(ctx, "wrong_build_runner", time.Now(), time.Minute)
+	if err == nil && wrong.Run.ID == b.RunID {
+		t.Fatal("same-tag wrong runner claimed build")
+	}
+	claim, err := f.pg.ClaimRun(ctx, f.runner, time.Now(), time.Minute)
+	if err != nil || claim.Run.ID != b.RunID {
+		t.Fatalf("exact claim=%+v %v", claim, err)
+	}
+	a := domain.HostingBuildAuthority{BuildID: b.ID, RunID: b.RunID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	status, err := f.pg.HostingBuildStatus(ctx, f.runner, a)
+	if err != nil || !status.MayExecute || len(status.Receipts) != 0 {
+		t.Fatalf("live status=%+v %v", status, err)
+	}
+	if _, err = f.pg.UpdateRunStatus(ctx, b.RunID, domain.RunSucceeded, nil); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("generic status %v", err)
+	}
+	if _, err = f.pg.ApproveRun(ctx, b.RunID, "usr_bootstrap", time.Now()); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("generic approval %v", err)
+	}
+}
+func TestPostgresHostingBuildControllerRollbackReplayAndRecovery(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx := t.Context()
+	if _, err := f.pg.RequestPublicHostingBuild(ctx, "disabled", f.src.ResourceID, "usr_bootstrap", publicBuildInput("disabled"), destinationEvent("disabled")); !errors.Is(err, store.ErrHostingBuildUnavailable) {
+		t.Fatal(err)
+	}
+	// A startup-disabled controller registers no build worker; enabling after start is rejected.
+	startBuildController(t, f)
+	_, err := f.pg.RequestPublicHostingBuild(ctx, "rollback", f.src.ResourceID, "usr_bootstrap", publicBuildInput("rollback"), domain.AuditEvent{ID: "bad_actor", ActorID: "usr_viewer"})
+	if err == nil {
+		t.Fatal("audit failure committed")
+	}
+	var count int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_builds WHERE id='rollback'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rollback %d %v", count, err)
+	}
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM river_job WHERE args->>'build_id'='rollback'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("queue rollback %d %v", count, err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	ids := make(chan string, 2)
+	for _, id := range []string{"replay-a", "replay-b"} {
+		wg.Go(func() {
+			b, e := f.pg.RequestPublicHostingBuild(ctx, id, f.src.ResourceID, "usr_bootstrap", publicBuildInput("same"), destinationEvent(id))
+			errs <- e
+			ids <- b.ID
+		})
+	}
+	wg.Wait()
+	close(errs)
+	close(ids)
+	for e := range errs {
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	retained := ""
+	for id := range ids {
+		if retained != "" && id != retained {
+			t.Fatal("idempotency created duplicate")
+		}
+		retained = id
+	}
+	awaitBuildDispatch(t, f, retained)
+	// Simulate an accepted operation whose finite queue history was lost/cleaned.
+	// The existing recovery loop must rediscover it independently of River status.
+	b, err := f.pg.RequestHostingBuild(ctx, "recover", f.src.ResourceID, "usr_bootstrap", buildInput("recover"), buildPolicy(), buildEnqueue, destinationEvent("recover"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitBuildDispatch(t, f, b.ID)
+}
+func TestPostgresHostingBuildStatusHistoricalProofAndTerminalSettlement(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx := t.Context()
+	b, a := f.start(t, "historical")
+	receipt := sourceBuildReceipt(b)
+	b, err := f.pg.CommitHostingBuildSource(ctx, f.runner, a, "historical-source", receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err = f.pg.PrepareHostingBuild(ctx, f.runner, a, b.Revision, "daemon-build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := store.HostingBuildCompletion{State: "succeeded", Artifact: ptrBuildArtifact(buildArtifact(b))}
+	b, err = f.pg.CompleteHostingBuild(ctx, f.runner, a, "historical-complete", b.Revision, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runState, leaseState string
+	if err = f.db.QueryRow(ctx, `SELECT r.status,l.status FROM task_runs r JOIN run_leases l ON l.run_id=r.id WHERE l.id=$1`, a.LeaseID).Scan(&runState, &leaseState); err != nil || runState != "succeeded" || leaseState != "succeeded" {
+		t.Fatalf("terminal=%s/%s %v", runState, leaseState, err)
+	}
+	if _, err = f.pg.CompleteHostingBuild(ctx, f.runner, a, "historical-complete", b.Revision, c); err != nil {
+		t.Fatalf("committed receipt replay=%v", err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE users SET status='disabled' WHERE id='usr_bootstrap'`); err != nil {
+		t.Fatal(err)
+	}
+	status, err := f.pg.HostingBuildStatus(ctx, f.runner, a)
+	if err != nil || status.MayExecute || len(status.Receipts) != 2 {
+		t.Fatalf("historical=%+v %v", status, err)
+	}
+	for _, ack := range status.Receipts {
+		if ack.Authority != a {
+			t.Fatal("cross-tuple receipt")
+		}
+	}
+	forged := a
+	forged.Fence = "other"
+	if _, err = f.pg.HostingBuildStatus(ctx, f.runner, forged); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("forged historical %v", err)
+	}
+}
+func ptrBuildArtifact(a domain.HostingBuildArtifact) *domain.HostingBuildArtifact { return &a }
+func TestPostgresHostingBuildExpiryRetainsCleanupAndFreshReceiptDenied(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx := t.Context()
+	b, a := f.start(t, "expired-controller")
+	if _, err := f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pg.ExpireLeases(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	status, err := f.pg.HostingBuildStatus(ctx, f.runner, a)
+	if err != nil || status.MayExecute || status.Build.State != "cleanup_required" || status.Build.FailureCode != "authority_lost" {
+		t.Fatalf("expired=%+v %v", status, err)
+	}
+	_, err = f.pg.CompleteHostingBuild(ctx, f.runner, a, "stale-complete", status.Build.Revision, store.HostingBuildCompletion{State: "canceled", FailureCode: "canceled"})
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("fresh stale completion %v", err)
+	}
+	var count int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_build_receipts WHERE build_id=$1`, b.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("receipt written %d %v", count, err)
+	}
+	var state string
+	if err = f.db.QueryRow(ctx, `SELECT status FROM task_runs WHERE id=$1`, a.RunID).Scan(&state); err != nil || state != "failed" {
+		t.Fatalf("generic requeue=%s %v", state, err)
+	}
+	if strings.Contains(status.Build.FailureCode, " ") {
+		t.Fatal("raw diagnostic persisted")
+	}
+}
+func TestHostingBuildProtocolCompletionHashCompatibility(t *testing.T) {
+	c := hostingbuildprotocol.Completion{State: "canceled", FailureCode: "canceled"}
+	if hostingbuildprotocol.CompletionHash(c) != domain.HostingDocumentHash(store.HostingBuildCompletion{State: c.State, FailureCode: c.FailureCode}) {
+		t.Fatal("protocol body hash differs from store")
+	}
+}
+
+func TestPostgresHostingBuildStatusCurrentRevocationRenewalAndBlockingClock(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx := t.Context()
+	b, a := f.start(t, "status-current")
+	if _, err := f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	status, err := f.pg.HostingBuildStatus(ctx, f.runner, a)
+	if err != nil || status.MayExecute {
+		t.Fatalf("expired historical=%+v %v", status, err)
+	}
+	// The initial tuple expiry is not immutable execution authority. A current
+	// renewed live lease with the same tuple is authoritative.
+	if _, err = f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	status, err = f.pg.HostingBuildStatus(ctx, f.runner, a)
+	if err != nil || !status.MayExecute {
+		t.Fatalf("renewed=%+v %v", status, err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1 AND project_id=$2`, b.Snapshot.DestinationID, b.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	status, err = f.pg.HostingBuildStatus(ctx, f.runner, a)
+	if err != nil || status.MayExecute {
+		t.Fatalf("revoked grant=%+v %v", status, err)
+	}
+}
+
+func TestPostgresHostingBuildStatusExpiresAfterBlockingResourceLock(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx := t.Context()
+	b, a := f.start(t, "status-blocked")
+	if _, err := f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '500 milliseconds' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err = blocker.Exec(ctx, `SELECT id FROM resources WHERE id=$1 FOR UPDATE`, b.ResourceID); err != nil {
+		t.Fatal(err)
+	}
+	type answer struct {
+		status hostingbuildprotocol.StatusResponse
+		err    error
+	}
+	done := make(chan answer, 1)
+	go func() { status, err := f.pg.HostingBuildStatus(ctx, f.runner, a); done <- answer{status, err} }()
+	deadline := time.Now().Add(5 * time.Second)
+	waiting := false
+	for !waiting && time.Now().Before(deadline) {
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity a WHERE wait_event_type='Lock' AND query LIKE '%LockHostingResourceTarget%' AND query NOT LIKE '%pg_stat_activity%' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND l.relation='resources'::regclass))`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if !waiting {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if !waiting {
+		t.Fatal("status never reached target-resource lock")
+	}
+	expired := false
+	for !expired && time.Now().Before(deadline) {
+		if err = f.db.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM run_leases WHERE id=$1`, a.LeaseID).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !expired {
+		t.Fatal("lease never expired")
+	}
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got.err != nil || got.status.MayExecute {
+			t.Fatalf("post-lock status=%+v %v", got.status, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("status did not join")
+	}
+}
+
+func TestPostgresHostingBuildRecoversExhaustedRealRiverJob(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx := t.Context()
+	stop := startBuildController(t, f)
+	if err := stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.pg.RequestPublicHostingBuild(ctx, "last-attempt", f.src.ResourceID, "usr_bootstrap", publicBuildInput("last-attempt"), destinationEvent("last_attempt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No consumer is running. Simulate finite retry exhaustion and retained job
+	// cleanup before restart. Recovery must discover the business row itself.
+	if _, err = f.db.Exec(ctx, `UPDATE river_job SET state='discarded',attempt=max_attempts,finalized_at=clock_timestamp() WHERE args->>'build_id'=$1`, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	restartStop, err := f.pg.StartHostingExecution(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if e := restartStop(c); e != nil {
+			t.Error(e)
+		}
+	})
+	dispatched := awaitBuildDispatch(t, f, b.ID)
+	if dispatched.RunID != "build_run_"+b.ID {
+		t.Fatal("noncanonical recovery")
+	}
+	if err = f.pg.PrepareBuild(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_build_tasks WHERE build_id=$1`, b.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("duplicate dispatch %d %v", count, err)
+	}
+}
+
+func TestPostgresHostingBuildControllerPreflightFailureIsDurable(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx := t.Context()
+	f.request(t, "stale-config")
+	src := f.src
+	src.Generation = 2
+	src.Settings.ContextDir = "changed"
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 1, src, destinationEvent("stale_config")); err != nil {
+		t.Fatal(err)
+	}
+	startBuildController(t, f)
+	if err := f.pg.PrepareBuild(ctx, "stale-config"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.pg.GetHostingBuild(ctx, "usr_bootstrap", "stale-config")
+	if err != nil || b.State != "failed" || b.RunID != "" || b.FailureCode != "authority_lost" {
+		t.Fatalf("preflight=%+v %v", b, err)
+	}
+	var tasks int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_build_tasks WHERE build_id=$1`, b.ID).Scan(&tasks); err != nil || tasks != 0 {
+		t.Fatalf("stale config dispatched=%d %v", tasks, err)
+	}
+}
+
+func TestPostgresHostingBuildRenewalSerializesWithCancellation(t *testing.T) {
+	for _, cancelFirst := range []bool{true, false} {
+		name := "renew_first"
+		if cancelFirst {
+			name = "cancel_first"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newBuildStoreFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			b, a := f.start(t, "renew-cancel")
+			var before time.Time
+			if err := f.db.QueryRow(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '30 seconds' WHERE id=$1 RETURNING expires_at`, a.LeaseID).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wg sync.WaitGroup
+			defer func() { cancel(); _ = blocker.Rollback(context.Background()); wg.Wait() }()
+			if _, err = blocker.Exec(ctx, `SELECT id FROM task_runs WHERE id=$1 FOR UPDATE`, a.RunID); err != nil {
+				t.Fatal(err)
+			}
+			type result struct {
+				lease domain.RunLease
+				build domain.HostingBuild
+				err   error
+			}
+			renewDone := make(chan result, 1)
+			cancelDone := make(chan result, 1)
+			renew := func() {
+				wg.Go(func() {
+					lease, e := f.pg.RenewLease(ctx, f.runner, a.LeaseID, a.Fence, a.Attempt, time.Now(), time.Minute)
+					renewDone <- result{lease: lease, err: e}
+				})
+			}
+			cancelBuild := func() {
+				wg.Go(func() {
+					build, e := f.pg.CancelHostingBuild(ctx, "usr_bootstrap", b.ID, b.Revision, destinationEvent("renew_cancel"))
+					cancelDone <- result{build: build, err: e}
+				})
+			}
+			waitForWaiters := func(want int) {
+				t.Helper()
+				deadline := time.Now().Add(3 * time.Second)
+				for time.Now().Before(deadline) {
+					var waiting int
+					if e := f.db.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity a WHERE wait_event_type='Lock' AND query LIKE '%LockHostingTaskForAuthority%' AND query NOT LIKE '%pg_stat_activity%' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND l.relation='task_runs'::regclass)`).Scan(&waiting); e != nil {
+						t.Fatal(e)
+					}
+					if waiting >= want {
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				t.Fatalf("did not observe %d task lock waiters", want)
+			}
+			if cancelFirst {
+				cancelBuild()
+			} else {
+				renew()
+			}
+			waitForWaiters(1)
+			if cancelFirst {
+				renew()
+			} else {
+				cancelBuild()
+			}
+			waitForWaiters(2)
+			if err = blocker.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			canceled := <-cancelDone
+			renewed := <-renewDone
+			if canceled.err != nil || canceled.build.State != "cleanup_required" {
+				t.Fatalf("cancel=%+v", canceled)
+			}
+			var after time.Time
+			if err = f.db.QueryRow(ctx, `SELECT expires_at FROM run_leases WHERE id=$1`, a.LeaseID).Scan(&after); err != nil {
+				t.Fatal(err)
+			}
+			if cancelFirst {
+				if !errors.Is(renewed.err, store.ErrConflict) || !after.Equal(before) {
+					t.Fatalf("cleanup lease extended: before=%s after=%s err=%v", before, after, renewed.err)
+				}
+			} else {
+				if renewed.err != nil || !after.After(before) || !after.Equal(renewed.lease.ExpiresAt) {
+					t.Fatalf("valid renewal failed: before=%s after=%s err=%v", before, after, renewed.err)
+				}
+			}
+			if _, err = f.pg.RenewLease(ctx, f.runner, a.LeaseID, a.Fence, a.Attempt, time.Now(), 2*time.Minute); !errors.Is(err, store.ErrConflict) {
+				t.Fatalf("cleanup renewal=%v", err)
+			}
+			status, err := f.pg.HostingBuildStatus(ctx, f.runner, a)
+			if err != nil || status.MayExecute || !status.CancelRequested {
+				t.Fatalf("cleanup status=%+v %v", status, err)
+			}
+		})
+	}
+}
+
+func TestPostgresHostingBuildClaimRejectsCreatorExpiryAfterAuditWait(t *testing.T) {
+	testBuildClaimExpiryAfterAuditWait(t, true)
+}
+func TestPostgresHostingBuildClaimRejectsLeaseExpiryAfterAuditWait(t *testing.T) {
+	testBuildClaimExpiryAfterAuditWait(t, false)
+}
+func testBuildClaimExpiryAfterAuditWait(t *testing.T, expireCreator bool) {
+	t.Helper()
+	f := newBuildStoreFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	const actor = "security_build_creator"
+	if _, err := f.db.Exec(ctx, `INSERT INTO api_tokens(id,name,kind,token_hash,roles,status,created_by) VALUES($1,$1,'service_account',$1,ARRAY['system_admin']::text[],'active','usr_bootstrap')`, actor); err != nil {
+		t.Fatal(err)
+	}
+	event := destinationEvent("security_request")
+	event.ActorID = actor
+	b, err := f.pg.RequestHostingBuild(ctx, "security-claim-expiry", f.src.ResourceID, actor, buildInput("security-claim-expiry"), buildPolicy(), buildEnqueue, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event = destinationEvent("security_dispatch")
+	event.ActorID = actor
+	b, err = f.pg.DispatchHostingBuild(ctx, b.ID, buildDispatch, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := destinationEvent("security_claim_audit")
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	var pid int
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = blocker.Exec(ctx, `INSERT INTO audit_events(id,actor_id,action,target_id,metadata,created_at) VALUES($1,'usr_bootstrap','fixture','fixture','{}',clock_timestamp())`, audit.ID); err != nil {
+		t.Fatal(err)
+	}
+	ttl := time.Minute
+	var expiryBound time.Time
+	if expireCreator {
+		if _, err = f.db.Exec(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, actor); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		ttl = time.Second
+		if _, err = f.pg.HeartbeatRunner(ctx, f.runner, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type result struct {
+		claim domain.ClaimedRun
+		err   error
+	}
+	done := make(chan result, 1)
+	joined := false
+	go func() {
+		claim, e := f.pg.ClaimRun(ctx, f.runner, time.Now(), ttl, store.WithAudit(audit))
+		done <- result{claim, e}
+	}()
+	defer func() {
+		cancel()
+		_ = blocker.Rollback(context.Background())
+		if !joined {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("claim did not join")
+			}
+		}
+	}()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var waiting bool
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case r := <-done:
+			joined = true
+			t.Fatalf("claim did not wait at audit: %v", r.err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	if !expireCreator {
+		if err = f.db.QueryRow(ctx, `SELECT clock_timestamp()+interval '2 seconds'`).Scan(&expiryBound); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for {
+		var expired bool
+		if expireCreator {
+			err = f.db.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM api_tokens WHERE id=$1`, actor).Scan(&expired)
+		} else {
+			err = f.db.QueryRow(ctx, `SELECT clock_timestamp()>=$1::timestamptz`, expiryBound).Scan(&expired)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := <-done
+	joined = true
+	var leases, audits, nextAttempt int
+	var state string
+	if err = f.db.QueryRow(ctx, `SELECT status,next_attempt,(SELECT count(*) FROM run_leases WHERE run_id=$1),(SELECT count(*) FROM audit_events WHERE id=$2) FROM task_runs WHERE id=$1`, b.RunID, audit.ID).Scan(&state, &nextAttempt, &leases, &audits); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("expired authority after observed claim-audit wait: expire_creator=%v claim_error=%v task_state=%s committed_leases=%d committed_audits=%d next_attempt=%d returned_run=%s", expireCreator, r.err, state, leases, audits, nextAttempt, r.claim.Run.ID)
+	expected := store.ErrConflict
+	if expireCreator {
+		expected = auth.ErrForbidden
+	}
+	if !errors.Is(r.err, expected) {
+		t.Fatalf("expected authority denial %v, got %v", expected, r.err)
+	}
+	if r.err == nil || leases != 0 || audits != 0 || nextAttempt != 1 || state != "queued" {
+		t.Fatal("fresh typed build claim committed after authority expired")
+	}
+}
+
+func TestPostgresHostingBuildStatusRejectsCreatorExpiryAfterRunnerWait(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	const actor = "security_status_creator"
+	if _, err := f.db.Exec(ctx, `INSERT INTO api_tokens(id,name,kind,token_hash,roles,status,created_by) VALUES($1,$1,'service_account',$1,ARRAY['system_admin']::text[],'active','usr_bootstrap')`, actor); err != nil {
+		t.Fatal(err)
+	}
+	event := destinationEvent("security_status_request")
+	event.ActorID = actor
+	b, err := f.pg.RequestHostingBuild(ctx, "security-status-expiry", f.src.ResourceID, actor, buildInput("security-status-expiry"), buildPolicy(), buildEnqueue, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event = destinationEvent("security_status_dispatch")
+	event.ActorID = actor
+	b, err = f.pg.DispatchHostingBuild(ctx, b.ID, buildDispatch, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := f.pg.ClaimRun(ctx, f.runner, time.Now(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := domain.HostingBuildAuthority{BuildID: b.ID, RunID: b.RunID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	var pid int
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = blocker.Exec(ctx, `SELECT id FROM runners WHERE id=$1 FOR UPDATE`, f.runner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, actor); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		status hostingbuildprotocol.StatusResponse
+		err    error
+	}
+	done := make(chan result, 1)
+	joined := false
+	go func() { s, e := f.pg.HostingBuildStatus(ctx, f.runner, a); done <- result{s, e} }()
+	defer func() {
+		cancel()
+		_ = blocker.Rollback(context.Background())
+		if !joined {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("status did not join")
+			}
+		}
+	}()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var waiting bool
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%LockHostingBuildRunner%')`, pid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case r := <-done:
+			joined = true
+			t.Fatalf("status did not wait at runner: %v", r.err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	for {
+		var expired bool
+		if err = f.db.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM api_tokens WHERE id=$1`, actor).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := <-done
+	joined = true
+	t.Logf("expired creator after observed runner wait: status_error=%v MayExecute=%v", r.err, r.status.MayExecute)
+	if r.err != nil || r.status.MayExecute || r.status.Build.ID != b.ID {
+		t.Fatal("status lost historical metadata or grants execution after creator authority expired during runner lock wait")
+	}
+}

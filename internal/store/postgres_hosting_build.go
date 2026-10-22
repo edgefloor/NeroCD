@@ -91,6 +91,11 @@ func buildAudit(ctx context.Context, tx pgx.Tx, event domain.AuditEvent, actor, 
 	event.Action = action
 	event.TargetID = target
 	event.Metadata = nil
+	if b, err := readBuild(ctx, sqlcgen.New(tx), target); err == nil {
+		event.Metadata = map[string]any{"project_id": b.ProjectID, "resource_id": b.ResourceID, "binding_id": b.Snapshot.BindingID}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
 	}
@@ -514,6 +519,11 @@ func (s *PostgresStore) CancelHostingBuild(ctx context.Context, actor, id string
 		if err != nil {
 			return b, err
 		}
+		if b.RunID != "" {
+			if _, err = q.LockHostingTaskForAuthority(ctx, b.RunID); err != nil {
+				return b, err
+			}
+		}
 		if _, err = q.LockHostingBuildResource(ctx, b.ResourceID); err != nil {
 			return b, err
 		}
@@ -533,6 +543,14 @@ func (s *PostgresStore) CancelHostingBuild(ctx context.Context, actor, id string
 		state := "cleanup_required"
 		if b.RunID == "" {
 			state = "canceled"
+		} else {
+			changed, e := q.CancelQueuedHostingBuildTask(ctx, b.RunID)
+			if e != nil {
+				return b, e
+			}
+			if changed == 1 {
+				state = "canceled"
+			}
 		}
 		if err = casBuild(q.SetHostingBuildState(ctx, sqlcgen.SetHostingBuildStateParams{ID: id, Revision: revision, State: state, FailureCode: "cancel_requested"})); err != nil {
 			return b, err

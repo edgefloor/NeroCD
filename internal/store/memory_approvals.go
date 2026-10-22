@@ -24,7 +24,7 @@ func (s *MemoryStore) ListApprovals(_ context.Context, status string) ([]domain.
 func (s *MemoryStore) CreateApproval(_ context.Context, approval domain.Approval) (domain.Approval, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.deploymentBackedRunLocked(approval.RunID) {
+	if s.deploymentBackedRunLocked(approval.RunID) || s.internalHostingRunLocked(approval.RunID) {
 		return domain.Approval{}, ErrConflict
 	}
 	s.approvals = append(s.approvals, approval)
@@ -39,7 +39,7 @@ func (s *MemoryStore) ApproveRun(_ context.Context, runID string, actorID string
 	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
 		return domain.Approval{}, ErrConflict
 	}
-	if s.deploymentBackedRunLocked(runID) {
+	if s.deploymentBackedRunLocked(runID) || s.internalHostingRunLocked(runID) {
 		return domain.Approval{}, ErrConflict
 	}
 	for i, approval := range s.approvals {
@@ -84,7 +84,7 @@ func (s *MemoryStore) RejectRun(_ context.Context, runID string, actorID string,
 	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
 		return domain.Approval{}, ErrConflict
 	}
-	if s.deploymentBackedRunLocked(runID) {
+	if s.deploymentBackedRunLocked(runID) || s.internalHostingRunLocked(runID) {
 		return domain.Approval{}, ErrConflict
 	}
 	for i, approval := range s.approvals {
@@ -110,4 +110,13 @@ func (s *MemoryStore) RejectRun(_ context.Context, runID string, actorID string,
 		}
 	}
 	return domain.Approval{}, ErrNotFound
+}
+
+func (s *MemoryStore) internalHostingRunLocked(id string) bool {
+	for _, run := range s.runs {
+		if run.ID == id {
+			return domain.ContainsHostingExecution(run.RunSpec, run.Workflow)
+		}
+	}
+	return false
 }

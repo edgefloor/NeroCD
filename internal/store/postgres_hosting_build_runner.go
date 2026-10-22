@@ -66,6 +66,9 @@ func freshBuildAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain
 	if err := authorizeBuildActor(ctx, tx, b.CreatedBy, b.ProjectID, "maintainer"); err != nil {
 		return err
 	}
+	if err := currentBuildExecution(ctx, tx, b); err != nil {
+		return err
+	}
 	return checkBuildAuthority(ctx, sqlcgen.New(tx), runner, a, b, true)
 }
 func buildRunnerAudit(ctx context.Context, tx pgx.Tx, b domain.HostingBuild, phase, receipt string) error {
@@ -235,6 +238,14 @@ func (s *PostgresStore) CompleteHostingBuild(ctx context.Context, runner string,
 		}
 		if err = freshBuildAuthority(ctx, tx, runner, a, b); err != nil {
 			return b, err
+		}
+		if c.State != "cleanup_required" {
+			if err = casBuild(q.CompleteHostingTask(ctx, sqlcgen.CompleteHostingTaskParams{ID: a.RunID, Status: c.State})); err != nil {
+				return b, err
+			}
+			if err = casBuild(q.CompleteHostingBuildLease(ctx, sqlcgen.CompleteHostingBuildLeaseParams{LeaseID: a.LeaseID, RunID: a.RunID, RunnerID: runner, Attempt: int32(a.Attempt), Fence: a.Fence, State: c.State, ReceiptID: &id})); err != nil {
+				return b, err
+			}
 		}
 		return readBuild(ctx, q, b.ID)
 	})

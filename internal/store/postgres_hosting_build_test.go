@@ -311,7 +311,7 @@ func TestPostgresHostingBuildDispatchAdmissionAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, err = f.pg.CancelHostingBuild(ctx, "usr_bootstrap", b.ID, b.Revision, destinationEvent("cancel_dispatch"))
-	if err != nil || b.State != "cleanup_required" {
+	if err != nil || b.State != "canceled" {
 		t.Fatal(b.State, err)
 	}
 	var holds int

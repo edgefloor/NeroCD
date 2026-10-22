@@ -403,6 +403,9 @@ func (s *Service) ApproveRun(ctx context.Context, runID string) (domain.Approval
 	if err := s.requireProjectRole(ctx, principal, run.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.Approval{}, err
 	}
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+		return domain.Approval{}, store.ErrConflict
+	}
 	audit, err := s.auditEvent(ctx, principal.ID, "run.approve", strings.TrimSpace(runID), nil)
 	if err != nil {
 		return domain.Approval{}, err
@@ -426,6 +429,9 @@ func (s *Service) RejectRun(ctx context.Context, runID string) (domain.Approval,
 	}
 	if err := s.requireProjectRole(ctx, principal, run.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.Approval{}, err
+	}
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+		return domain.Approval{}, store.ErrConflict
 	}
 	audit, err := s.auditEvent(ctx, principal.ID, "run.reject", strings.TrimSpace(runID), nil)
 	if err != nil {

@@ -4,6 +4,170 @@
  */
 
 export interface paths {
+    "/api/v1/resources/{id}/builds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * listHostingBuilds
+         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.
+         */
+        get: operations["listHostingBuilds"];
+        put?: never;
+        /**
+         * requestHostingBuild
+         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.
+         */
+        post: operations["requestHostingBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting-builds/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getHostingBuild
+         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.
+         */
+        get: operations["getHostingBuild"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting-builds/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * cancelHostingBuild
+         * @description Current persisted resource project authorization. PostgreSQL and explicitly enabled trusted build policy are required for build admission. Public Git only; no deployment is performed.
+         */
+        post: operations["cancelHostingBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/builds/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * runnerHostingBuildStatus
+         * @description Authenticated exact runner only. Historical receipt proof never grants live execution.
+         */
+        post: operations["runnerHostingBuildStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/builds/source-begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * runnerHostingBuildSourceBegin
+         * @description Authenticated exact runner only. Historical receipt proof never grants live execution.
+         */
+        post: operations["runnerHostingBuildSourceBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/builds/source-commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * runnerHostingBuildSourceCommit
+         * @description Authenticated exact runner only. Historical receipt proof never grants live execution.
+         */
+        post: operations["runnerHostingBuildSourceCommit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/builds/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * runnerHostingBuildPrepare
+         * @description Authenticated exact runner only. Historical receipt proof never grants live execution.
+         */
+        post: operations["runnerHostingBuildPrepare"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/builds/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * runnerHostingBuildComplete
+         * @description Authenticated exact runner only. Historical receipt proof never grants live execution.
+         */
+        post: operations["runnerHostingBuildComplete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/servers/{id}/proxy": {
         parameters: {
             query?: never;
@@ -2051,6 +2215,186 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingBuildRequest: {
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** Format: int64 */
+            expected_source_generation: number;
+            idempotency_key: string;
+        };
+        HostingBuildCancelInput: {
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        HostingBuildAuthority: {
+            build_id: string;
+            run_id: string;
+            lease_id: string;
+            /** Format: int64 */
+            attempt: number;
+            fence: string;
+        };
+        HostingBuildSourceReceipt: {
+            build_id: string;
+            source_id: string;
+            input_id: string;
+            commit: string;
+            policy_hash: string;
+            tree_digest: string;
+        };
+        HostingBuildArtifact: {
+            origin: string;
+            build_id: string;
+            source_id: string;
+            input_id: string;
+            source_receipt_hash: string;
+            context_digest: string;
+            request_digest: string;
+            daemon_id: string;
+            image_id: string;
+            index_digest: string;
+            manifest_digest: string;
+            config_digest: string;
+            platform: string;
+            context_policy?: string;
+        };
+        HostingBuildCompletion: {
+            /** @enum {string} */
+            state: "succeeded" | "failed" | "canceled" | "cleanup_required";
+            failure_code?: string;
+            artifact?: components["schemas"]["HostingBuildArtifact"];
+        };
+        HostingBuildReceiptAcknowledgment: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            /** @enum {string} */
+            phase: "source" | "complete" | "cleanup";
+            receipt_id: string;
+            body_hash: string;
+        };
+        /** @description Exact nonsecret runner snapshot. Contains trusted source and operator policy and optional credential grant metadata. Never returned by public resource/build APIs. */
+        HostingBuildRunnerSnapshot: {
+            [key: string]: unknown;
+        };
+        HostingBuildRunnerDocument: {
+            id: string;
+            project_id: string;
+            resource_id: string;
+            state: string;
+            run_id?: string;
+            created_by: string;
+            failure_code?: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            daemon_id?: string;
+            snapshot: components["schemas"]["HostingBuildRunnerSnapshot"];
+            source_receipt?: components["schemas"]["HostingBuildSourceReceipt"];
+            artifact?: components["schemas"]["HostingBuildArtifact"];
+        };
+        HostingBuildPhaseResponse: {
+            build: components["schemas"]["HostingBuildRunnerDocument"];
+            acknowledgment?: components["schemas"]["HostingBuildReceiptAcknowledgment"];
+        };
+        HostingBuildStatusRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+        };
+        HostingBuildSourceBeginRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        HostingBuildSourceCommitRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            receipt_id: string;
+            receipt: components["schemas"]["HostingBuildSourceReceipt"];
+        };
+        HostingBuildPrepareRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            /** Format: int64 */
+            expected_revision: number;
+            daemon_id: string;
+        };
+        HostingBuildCompleteRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            /** Format: int64 */
+            expected_revision: number;
+            receipt_id: string;
+            completion: components["schemas"]["HostingBuildCompletion"];
+        };
+        HostingBuildStatusResponse: {
+            build: components["schemas"]["HostingBuildRunnerDocument"];
+            may_execute: boolean;
+            cancel_requested: boolean;
+            receipts: components["schemas"]["HostingBuildReceiptAcknowledgment"][];
+        };
+        PublicHostingBuildSource: {
+            source_id: string;
+            repository_url: string;
+            requested_ref: string;
+            credential_kind: string;
+            /** Format: int64 */
+            generation: number;
+            settings: components["schemas"]["HostingBuildSettings"];
+        };
+        PublicHostingBuildTarget: {
+            binding_id: string;
+            destination_id: string;
+            server_id: string;
+            runner_id: string;
+        };
+        PublicHostingBuildSnapshot: {
+            /** Format: int64 */
+            resource_generation: number;
+            source: components["schemas"]["PublicHostingBuildSource"];
+            target: components["schemas"]["PublicHostingBuildTarget"];
+        };
+        PublicHostingBuildSourceReceipt: {
+            commit: string;
+            tree_digest: string;
+        };
+        PublicHostingBuildArtifact: {
+            origin: string;
+            image_id: string;
+            index_digest: string;
+            manifest_digest: string;
+            config_digest: string;
+            platform: string;
+        };
+        PublicHostingBuild: {
+            id: string;
+            project_id: string;
+            resource_id: string;
+            state: string;
+            run_id?: string;
+            created_by: string;
+            failure_code?: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            snapshot: components["schemas"]["PublicHostingBuildSnapshot"];
+            source_receipt?: components["schemas"]["PublicHostingBuildSourceReceipt"];
+            artifact?: components["schemas"]["PublicHostingBuildArtifact"];
+        };
+        HostingBuildResponse: {
+            build: components["schemas"]["PublicHostingBuild"];
+        };
+        HostingBuildListResponse: {
+            items: components["schemas"]["PublicHostingBuild"][];
+            /** Format: int64 */
+            count: number;
+            /** Format: int64 */
+            limit: number;
+            /** Format: int64 */
+            offset: number;
+            /** Format: int64 */
+            total: number;
+        };
         /** @description Immutable administrator settings. Runner paths and Docker credentials come only from operator CLI configuration. */
         HostingProxyConfiguration: {
             email: string;
@@ -3716,6 +4060,279 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listHostingBuilds: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persisted build metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildListResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildRequest"];
+            };
+        };
+        responses: {
+            /** @description Persisted build metadata */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persisted build metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    cancelHostingBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildCancelInput"];
+            };
+        };
+        responses: {
+            /** @description Persisted build metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingBuildStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description Persisted build metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildStatusResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingBuildSourceBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildSourceBeginRequest"];
+            };
+        };
+        responses: {
+            /** @description Persisted build metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildPhaseResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingBuildSourceCommit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildSourceCommitRequest"];
+            };
+        };
+        responses: {
+            /** @description Persisted build metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildPhaseResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingBuildPrepare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildPrepareRequest"];
+            };
+        };
+        responses: {
+            /** @description Persisted build metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildPhaseResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingBuildComplete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Persisted build metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildPhaseResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     getHostingProxy: {
         parameters: {
             query?: never;

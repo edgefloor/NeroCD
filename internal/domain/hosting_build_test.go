@@ -87,3 +87,20 @@ func TestHostingBuildReceiptBinding(t *testing.T) {
 		t.Fatal("failure vocabulary")
 	}
 }
+
+func TestHostingBuildCanonicalAndNestedTaskBoundary(t *testing.T) {
+	run := domain.TaskRun{ID: "build_run_build-a", RunSpec: domain.RunSpec{Type: domain.HostingBuildTaskType, HostingBuildID: "build-a"}}
+	if err := domain.ValidateHostingBuildTask(run); err != nil {
+		t.Fatal(err)
+	}
+	nested := domain.RunSpec{Type: "ansible", Workflow: &domain.Workflow{Steps: []domain.WorkflowStep{{ID: "build", RunSpec: run.RunSpec}}}}
+	if !domain.ContainsHostingExecution(nested, domain.Workflow{}) {
+		t.Fatal("nested internal task escaped detection")
+	}
+	for _, bad := range []domain.RunSpec{{Type: domain.HostingBuildTaskType}, {Type: "ansible", HostingBuildID: "build-a"}, {Type: domain.HostingBuildTaskType, HostingBuildID: "build-a", ProxyMode: "apply"}, {Type: domain.HostingBuildTaskType, HostingBuildID: "build-a", Repository: &domain.RepositoryRef{URL: "https://github.com/example/project"}}} {
+		run.RunSpec = bad
+		if domain.ValidateHostingBuildTask(run) == nil {
+			t.Fatal("noncanonical task accepted")
+		}
+	}
+}

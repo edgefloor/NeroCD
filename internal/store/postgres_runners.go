@@ -387,6 +387,11 @@ func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.
 			return domain.ClaimedRun{}, fmt.Errorf("create audit event: %w", err)
 		}
 	}
+	if claimedRun.RunSpec.Type == domain.HostingBuildTaskType {
+		if err := s.validateHostingBuildClaim(ctx, tx, *claimedRun, runner.ID, lease); err != nil {
+			return domain.ClaimedRun{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ClaimedRun{}, fmt.Errorf("commit transaction: %w", err)
 	}
@@ -422,6 +427,9 @@ func expireLeasesAtDBClock(ctx context.Context, queries *sqlcgen.Queries) error 
 		if err := queries.ExpireDeploymentAttemptsForRun(ctx, runID); err != nil {
 			return fmt.Errorf("expire deployment attempts for run query: %w", err)
 		}
+		if err := queries.ExpireHostingBuildForRun(ctx, &runID); err != nil {
+			return err
+		}
 		if err := queries.RequeueExpiredRun(ctx, runID); err != nil {
 			return fmt.Errorf("requeue expired run query: %w", err)
 		}
@@ -431,6 +439,23 @@ func expireLeasesAtDBClock(ctx context.Context, queries *sqlcgen.Queries) error 
 
 // RenewLease implements the corresponding repository operation.
 func (s *PostgresStore) RenewLease(ctx context.Context, runnerID, leaseID, fence string, attempt int, now time.Time, ttl time.Duration) (domain.RunLease, error) {
+
+	// The immutable target relation selects the typed path but grants no authority.
+	// Build renewal serializes with cancellation using the task lock.
+	runID, err := s.queries.GetLeaseRunID(ctx, leaseID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.RunLease{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.RunLease{}, err
+	}
+	buildID, err := s.queries.GetHostingBuildTask(ctx, sqlcgen.GetHostingBuildTaskParams{RunID: runID, RunnerID: runnerID})
+	if err == nil {
+		return s.renewHostingBuildLease(ctx, runnerID, domain.HostingBuildAuthority{BuildID: buildID, RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence}, ttl)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.RunLease{}, err
+	}
 	// The WHERE clause is the fencing CAS: identity, generation, opaque fence and
 	// unexpired active state must all still match at the instant of extension.
 	lease, err := s.queries.RenewAuthorizedLease(ctx, sqlcgen.RenewAuthorizedLeaseParams{TtlMicroseconds: ttl.Microseconds(), LeaseID: leaseID, RunnerID: runnerID, Attempt: int32(attempt), Fence: fence})

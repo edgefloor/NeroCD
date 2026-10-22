@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingjobs"
 )
 
 func TestMemoryClaimRejectsPersistedNestedHostingSpec(t *testing.T) {
@@ -36,5 +37,34 @@ func TestMemoryClaimRejectsPersistedNestedHostingSpec(t *testing.T) {
 	claim, err := s.ClaimRun(t.Context(), "runner_internal_guard", now, time.Minute)
 	if err != nil || claim.Run.ID != good.ID {
 		t.Fatalf("legitimate workflow denied: %+v %v", claim, err)
+	}
+}
+
+func TestMemoryMalformedBuildCannotApproveClaimOrRequeue(t *testing.T) {
+	s := NewFixtureMemoryStore("admin@example.local", "viewer@example.local", "hash", "hash")
+	now := time.Now().UTC()
+	run := domain.TaskRun{ID: "build_run_malformed", ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.HostingBuildTaskType, HostingBuildID: "malformed"}, Status: domain.RunRunning, RequestedBy: "usr_bootstrap"}
+	s.runs = append(s.runs, run)
+	s.leases = append(s.leases, domain.RunLease{ID: "lease_malformed", RunID: run.ID, RunnerID: "absent", Status: domain.LeaseActive, ExpiresAt: now.Add(-time.Second)})
+	if _, err := s.CreateApproval(t.Context(), domain.Approval{ID: "bad", RunID: run.ID}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("approval bypass %v", err)
+	}
+	if err := s.ExpireLeases(t.Context(), now); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range s.runs {
+		if r.ID == run.ID && r.Status != domain.RunFailed {
+			t.Fatalf("internal build requeued: %s", r.Status)
+		}
+	}
+}
+
+func TestDisabledBuildControllerPreservesOtherWorkers(t *testing.T) {
+	handler := deploymentOnlyHandler{}
+	if _, ok := any(handler).(hostingjobs.BuildHandler); ok {
+		t.Fatal("disabled build handler registered")
+	}
+	if _, ok := any(handler).(hostingjobs.ProxyHandler); !ok {
+		t.Fatal("disabled builds removed proxy handler")
 	}
 }

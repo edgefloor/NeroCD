@@ -318,8 +318,14 @@ func (s *MemoryStore) expireLeasesLocked(now time.Time) {
 		for j, run := range s.runs {
 			if run.ID == lease.RunID && run.Status == domain.RunRunning {
 				run.Status = domain.RunQueued
+				if run.RunSpec.Type == domain.HostingBuildTaskType || run.RunSpec.HostingBuildID != "" {
+					run.Status = domain.RunFailed
+				}
 				run.RunnerID = nil
 				run.FinishedAt = nil
+				if run.Status == domain.RunFailed {
+					run.FinishedAt = &now
+				}
 				s.runs[j] = run
 				if s.claimOrderByRun == nil {
 					s.claimOrderByRun = make(map[string]time.Time)

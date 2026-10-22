@@ -6,13 +6,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingbuildprotocol"
 )
 
-// ErrHostingBuildUnavailable means no reviewed DB-only controller callback exists.
+// ErrHostingBuildUnavailable means executable build admission is not configured.
 var ErrHostingBuildUnavailable = errors.New("hosting build controller unavailable")
 
 // HostingBuildEnqueueTx must enqueue real work in this transaction, with no
-// external effects. This package provides no River kind or consumer.
+// external effects. The configured controller supplies the real River enqueuer.
 type HostingBuildEnqueueTx func(context.Context, pgx.Tx, domain.HostingBuild) error
 
 // HostingBuildDispatchTx creates the canonical new internal task in this same
@@ -27,8 +28,8 @@ type HostingBuildCompletion struct {
 	Artifact    *domain.HostingBuildArtifact `json:"artifact,omitempty"`
 }
 
-// HostingBuildRepository is an inert persistence seam until controllers, public
-// authorization, typed runner admission, and executors are independently wired.
+// HostingBuildRepository persists immutable source/build intent and fenced receipts.
+// Public admission uses the separately configured controller repository.
 type HostingBuildRepository interface {
 	GetHostingBuildSource(context.Context, string, string) (domain.HostingGitSource, error)
 	CreateHostingSourceGrant(context.Context, string, domain.HostingSourceGrant, domain.AuditEvent) (domain.HostingSourceGrant, error)
@@ -45,3 +46,12 @@ type HostingBuildRepository interface {
 }
 
 var _ HostingBuildRepository = (*PostgresStore)(nil)
+
+// HostingBuildControllerRepository is public admission and nonsecret runner status.
+// Memory stores deliberately do not implement an executable controller.
+type HostingBuildControllerRepository interface {
+	HostingBuildRepository
+	RequestPublicHostingBuild(context.Context, string, string, string, domain.HostingBuildRequest, domain.AuditEvent) (domain.HostingBuild, error)
+	ListHostingBuilds(context.Context, string, string, Page) (PageResult[domain.HostingBuild], error)
+	HostingBuildStatus(context.Context, string, domain.HostingBuildAuthority) (hostingbuildprotocol.StatusResponse, error)
+}

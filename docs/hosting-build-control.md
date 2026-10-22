@@ -45,7 +45,7 @@ caller authority. It freezes toolchain identity, protocol, Linux architecture,
 engine budgets, and distinct source acquisition budgets. Source acquisition
 bounds tree bytes, workspace bytes, free-space reserve, entry count, depth and
 polling. Engine limits retain monitored disk semantics: there is no hard quota
-claim. A later controller must give both adapters deadlines and the exact frozen
+claim. The runner bridge must give both adapters deadlines and the exact frozen
 budgets, trusted toolchain and stable owned checkout path.
 
 ## Requests and dispatch
@@ -76,8 +76,7 @@ resolved as the current deployable artifact after configuration/resource changes
 Both controller seams are trusted **DB-only** callbacks receiving the existing
 `pgx.Tx`. They must perform no external effects. A nil callback fails unavailable.
 The enqueue seam must insert real durable work. The optional River build adapter
-registers its worker only for a handler implementing `BuildHandler`; the server
-does not yet install a production Git build controller. The dispatch seam must create the new canonical task ID
+registers its worker only for a handler implementing `BuildHandler`; the server installs the DB-only controller only with explicit trusted build policy. The dispatch seam must create the new canonical task ID
 `build_run_<build-id>` with exactly
 `{"type":"hosting_build_v1","hosting_build_id":"<build-id>"}`, the original
 project/actor, queued state and no preassigned runner. The repository verifies
@@ -109,10 +108,10 @@ unbound build tasks and wrong target runners.
 
 The source receipt freezes full Git commit, repository policy hash and canonical
 tree digest against build/source/input identity. A literal full-commit requested
-ref must match. The future adapter bridge must durably acknowledge this receipt
+ref must match. The runner adapter bridge must durably acknowledge this receipt
 before checkout use, destroy credential/transport material before engine use,
 and replay using the committed frozen commit rather than resolving a moving
-branch. That bridge is not installed by this checkpoint.
+branch. Runner execution remains a separately reviewed component.
 
 Artifact success atomically commits its receipt, artifact, state and audit. It
 stores origin `local_build`, source/input/source-receipt identity, context/request
@@ -129,21 +128,21 @@ revocation policy prevents a completed private-source artifact from becoming new
 deployment authority after credential authorization is withdrawn. Historical
 metadata remains available under current viewer authorization.
 
-Non-success cleanup reports do not require an active source credential grant,
-but still require current creator authorization, target/enrollment and a live
-lease. Revoked runner/target/actor recovery therefore needs a future trusted
+Fresh cleanup reports require the current creator, source/resource, target,
+enrollment, source authorization and live lease gates. Revoked runner, target or
+actor recovery therefore needs a future trusted
 controller recovery contract; this slice does not bypass those checks or erase
 cleanup-required history.
 
 ## Remaining integration and evidence
 
 Public source choice, resource API/UI, atomic source versions, managed credential
-delivery, and an optional River build adapter now exist. No production build
-controller, typed runner build executor, source-to-engine receipt bridge,
-artifact-to-deployment wiring, or end-to-end Git-to-HTTPS acceptance is installed.
-Generic public and nested RunSpec admission must continue to deny internal build
-tasks. Enrollment/claim capability registration, internal task decoding,
-deadlines/lease renewal, retry and cleanup recovery need a separate reviewed
+delivery, the River build adapter and the explicitly enabled server controller
+now exist. No typed runner build executor, source-to-engine receipt bridge,
+artifact-to-deployment wiring, or end-to-end Git-to-HTTPS acceptance is installed
+by server wiring alone. Generic public and nested RunSpec admission denies
+internal build tasks. Agent execution, deadlines/lease renewal, retry and
+cleanup recovery need a separate reviewed
 integration. Startup/readiness now require both the accepted build predicate and
 the additive0049 Git resource reference predicate.
 
@@ -152,9 +151,10 @@ request replay, DB-only callback rollback, project authorization and cross-proje
 denial, owner grants, immutable secret-version rotation, revocation, exact source
 and artifact receipts, daemon pinning, stale attempts, terminal replay, old source
 generation rejection, atomic audit failure, and lease expiry across an observed
-row-lock wait. Fixture queues and task creation exist only in tests; they do not
-claim a product worker. Existing source/engine transport and Docker acceptance
-remain separate component evidence.
+row-lock wait. The controller tests additionally use the real River worker and
+all five authenticated HTTP phases. Test-only callback fixtures retain their
+existing rollback/security coverage. Source/engine execution and end-to-end
+Git builds still require separate combined agent acceptance.
 
 ## Function schema binding
 
@@ -179,3 +179,78 @@ shadow and temporary caller objects. It checks ordinary lease updates, correct
 build admission, wrong-target denial and owning-schema compatibility. A real
 `pg_dump`/`pg_restore` round trip and a replay of 0048 repeat the admission and
 compatibility assertions against the restored schema.
+
+## Server controller configuration
+
+The server now wires public Git requests to the existing River adapter and
+canonical exact-target task dispatch. This is server control and phase transport.
+It does not by itself install a runner source/build executor or make a Git build
+journey available on older agents. There is no private source-credential HTTP
+endpoint in this slice. Image deployment and Git build configuration remain
+separate commands.
+
+Build admission is disabled by default. Set
+`NEROCD_HOSTING_BUILD_POLICY_FILE=/absolute/operator/build-policy.json` to enable
+it with PostgreSQL and migrated River/native schemas. The file must be a regular
+file of at most 64 KiB containing one strict `HostingBuildPolicy` JSON document.
+Every identity, platform, engine limit, and source acquisition limit is explicit.
+Unknown fields, malformed or multiple documents, unsupported budgets and missing
+values fail startup. The server clones the validated policy before starting its
+workers. Configuration performs no Git, Docker, or registry IO. The platform
+never defaults to the control-plane host architecture.
+
+Durations use integer nanoseconds, matching Go JSON encoding of `time.Duration`.
+For example, 60 seconds is `60000000000` and one second is `1000000000`. A bounded
+example follows. Replace the two hashes with the operator's actual accepted
+policy and toolchain identities rather than treating these sample hashes as
+verified toolchain evidence.
+
+```json
+{
+  "identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "toolchain_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "protocol": "local-build.v1",
+  "platform": "linux/amd64",
+  "limits": {
+    "cpu_quota": 100000, "memory_bytes": 536870912, "swap_bytes": 0,
+    "deadline": 60000000000, "context_bytes": 1048576, "context_files": 100,
+    "plan_bytes": 1048576, "log_bytes": 1048576, "export_bytes": 10485760,
+    "unpacked_bytes": 10485760, "usage_bytes": 20971520,
+    "reserve_bytes": 10485760, "poll_interval": 1000000000,
+    "disk_mode": "monitored"
+  },
+  "source_limits": {
+    "max_tree_bytes": 1048576, "max_workspace_bytes": 10485760,
+    "min_free_bytes": 1048576, "max_entries": 100,
+    "max_depth": 32, "poll_interval": 1000000000
+  }
+}
+```
+
+The dedicated enrolled destination runner must explicitly support
+`hosting_build_v1`, in addition to the existing server admission requirements.
+The server registry recognizes the type but never advertises it as a default
+agent capability. A build claim is authorized inside the lease transaction by
+its immutable task relation and exact runner, current creator authority, current
+resource/source generations, destination grant, enrollment and restore gate.
+Matching tags alone cannot grant the task. Internal types and authority fields
+are forbidden in all public workflow shapes, including nested steps.
+
+## Build lifecycle settlement
+
+Terminal `succeeded`, `failed`, or `canceled` phase completion atomically commits
+the build state, exact receipt, optional artifact, audit, task status and exact
+lease status. Agents must not send generic run completion for a build task.
+Generic run approval, cancellation, status changes and generic requeue cannot
+settle this work. A first completion needs live authority after every blocking
+lock. An already committed receipt remains historical proof after expiry.
+
+`cleanup_required` records durable cleanup evidence without publishing success
+or granting engine execution. It leaves only the existing bounded lease available
+for an explicit later cleanup acknowledgment. It never renews that lease. A
+canceled dispatched task with no attempt is canceled atomically while its task
+lock excludes claim. An active attempt receives cleanup intent. An expired
+dispatched build becomes `cleanup_required` with `authority_lost`, and its task
+fails instead of being blindly requeued. There is no automatic destructive cleanup,
+engine retry, or operator uncertainty override. Historical metadata and the exact
+lease tuple remain retained.

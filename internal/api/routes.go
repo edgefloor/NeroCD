@@ -3,6 +3,15 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/builds"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/builds"},
+	{Method: http.MethodGet, Path: "/api/v1/hosting-builds/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/hosting-builds/{id}/cancel"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/builds/status"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/builds/source-begin"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/builds/source-commit"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/builds/prepare"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/builds/complete"},
 	{Method: http.MethodGet, Path: "/api/v1/servers/{id}/proxy"},
 	{Method: http.MethodPost, Path: "/api/v1/servers/{id}/proxy"},
 	{Method: http.MethodPost, Path: "/api/v1/servers/{id}/proxy/disable"},
@@ -191,6 +200,22 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingRetainedReleases
 	case "/api/v1/resources/{id}/retained-releases/{operation_id}/cleanup":
 		return s.hostingReleaseCleanup
+	case "/api/v1/resources/{id}/builds":
+		return s.hostingBuilds
+	case "/api/v1/hosting-builds/{id}":
+		return s.hostingBuild
+	case "/api/v1/hosting-builds/{id}/cancel":
+		return s.hostingBuildCancel
+	case "/api/v1/runners/builds/status":
+		return s.runnerBuildStatus
+	case "/api/v1/runners/builds/source-begin":
+		return s.runnerBuildSourceBegin
+	case "/api/v1/runners/builds/source-commit":
+		return s.runnerBuildSourceCommit
+	case "/api/v1/runners/builds/prepare":
+		return s.runnerBuildPrepare
+	case "/api/v1/runners/builds/complete":
+		return s.runnerBuildComplete
 	case "/api/v1/resources/{id}/deployments":
 		return s.hostingDeploymentRequest
 	case "/api/v1/hosting-operations/{id}":

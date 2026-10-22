@@ -217,6 +217,8 @@ func requiresContractAuth(method string, path string) bool {
 
 func requiresContractRunnerAuth(path string) bool {
 	switch path {
+	case "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
+		return true
 	case "/api/v1/runners/hosting/plan", "/api/v1/runners/hosting/prepared", "/api/v1/runners/hosting/apply-begin", "/api/v1/runners/hosting/complete", "/api/v1/runners/hosting/status", "/api/v1/runners/hosting/reconciliation", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
 		return true
 	default:
@@ -333,6 +335,11 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodPost, path: "/api/v1/runners/register", body: `{"id":"runner_contract","name":"Contract Runner","tags":["local"],"capabilities":["shell"]}`, auth: true, shape: "registered-runner", useAPIToken: true},
 		{method: http.MethodPost, path: "/api/v1/runners/rotate-token", body: `{"runner_id":"runner_contract"}`, auth: true, shape: "registered-runner"},
 		{method: http.MethodGet, path: "/api/v1/runners/identity", auth: true, shape: "runner-identity"},
+		{method: http.MethodPost, path: "/api/v1/runners/builds/status", body: `{"authority":{"build_id":"contract","run_id":"build_run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"}}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/builds/source-begin", body: `{"authority":{"build_id":"contract","run_id":"build_run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"},"expected_revision":1}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/builds/source-commit", body: `{"authority":{"build_id":"contract","run_id":"build_run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"},"receipt_id":"source_contract","receipt":{"build_id":"contract"}}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/builds/prepare", body: `{"authority":{"build_id":"contract","run_id":"build_run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"},"expected_revision":1,"daemon_id":"daemon_contract"}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/builds/complete", body: `{"authority":{"build_id":"contract","run_id":"build_run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"},"expected_revision":1,"receipt_id":"complete_contract","completion":{"state":"canceled","failure_code":"canceled"}}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
 		{method: http.MethodPost, path: "/api/v1/runners/hosting/plan", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
 		{method: http.MethodPost, path: "/api/v1/runners/hosting/prepared", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract","receipt_id":"prepared_contract","release":{}}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
 		{method: http.MethodPost, path: "/api/v1/runners/hosting/apply-begin", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
