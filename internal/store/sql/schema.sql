@@ -23,4 +23,5 @@ AND nerocd_hosting_git_resource_schema_compatible()
 AND nerocd_hosting_build_deployment_schema_compatible()
 AND nerocd_hosting_build_log_schema_compatible()
 AND nerocd_hosting_runtime_configuration_schema_compatible()
-AND nerocd_hosting_runtime_environment_schema_compatible() AS compatible;
+AND nerocd_hosting_runtime_environment_schema_compatible()
+AND nerocd_hosting_observation_schema_compatible() AS compatible;

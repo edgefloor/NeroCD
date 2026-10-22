@@ -493,6 +493,16 @@ type HostingRuntimeConfigurationVersion struct {
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
+type HostingRuntimeObservation struct {
+	BindingID        string `json:"binding_id"`
+	PendingTarget    []byte `json:"pending_target"`
+	PendingIdentity  string `json:"pending_identity"`
+	AcceptedTarget   []byte `json:"accepted_target"`
+	AcceptedIdentity string `json:"accepted_identity"`
+	AcceptedBody     []byte `json:"accepted_body"`
+	AcceptedAck      []byte `json:"accepted_ack"`
+}
+
 type HostingSnapshot struct {
 	OperationID string          `json:"operation_id"`
 	Body        json.RawMessage `json:"body"`
