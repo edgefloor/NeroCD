@@ -75,3 +75,16 @@ func TestHostingBuildRegistryTypedPlanIsInternalOnly(t *testing.T) {
 		t.Fatal("generic process accepted")
 	}
 }
+
+func TestLocalBuildDeploymentRegistryIsTypedAndEmpty(t *testing.T) {
+	registry := NewRegistry()
+	run := domain.TaskRun{ID: "run_operation", RunSpec: domain.RunSpec{Type: domain.RunTypeLocalBuildDeploy, HostingOperationID: "operation", HostingMode: "deploy"}}
+	plan, err := registry.BuildPlan(run)
+	if err != nil || plan.RunID != run.ID || plan.Process != nil || plan.Checkout != nil {
+		t.Fatalf("typed local plan: %+v %v", plan, err)
+	}
+	run.RunSpec.HostingBuildID = "build"
+	if _, err = registry.BuildPlan(run); err == nil {
+		t.Fatal("mixed authority accepted")
+	}
+}

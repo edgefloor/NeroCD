@@ -472,6 +472,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/deployments/from-build": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admit a successful same-host build artifact for deployment
+         * @description Requires current maintainer access, current source/resource generations, current target authorization and an agent with local_build_deploy_v1. Reusing a key returns the original operation only while current authorization and the exact artifact remain valid. Runtime local-image execution requires an upgraded agent.
+         */
+        post: operations["requestHostingBuildDeployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/retained-releases": {
         parameters: {
             query?: never;
@@ -2594,7 +2614,43 @@ export interface components {
             host_port?: number | 0 | unknown;
             readiness: components["schemas"]["HostingReadiness"];
         };
+        HostingBuildDeploymentInput: {
+            build_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            expected_source_generation: number;
+            /** Format: int64 */
+            expected_generation: number;
+            idempotency_key: string;
+            container_port: number;
+            /** @description Zero or omitted allocates a server-controlled loopback port. Nonzero ports must be available. */
+            host_port?: number | 0 | unknown;
+            readiness: components["schemas"]["HostingReadiness"];
+        };
+        HostingLocalBuildSource: {
+            /** Format: int64 */
+            source_generation: number;
+            artifact_hash: string;
+            artifact: components["schemas"]["HostingLocalBuildArtifact"];
+        };
+        HostingLocalBuildArtifact: {
+            /** @enum {string} */
+            origin: "local_build";
+            build_id: string;
+            source_id: string;
+            input_id: string;
+            source_receipt_hash: string;
+            context_digest: string;
+            request_digest: string;
+            daemon_id: string;
+            image_id: string;
+            index_digest: string;
+            manifest_digest: string;
+            config_digest: string;
+            platform: string;
+            context_policy?: string;
+        };
         HostingSnapshot: {
+            local_build?: components["schemas"]["HostingLocalBuildSource"];
             resource_id: string;
             image_reference: string;
             binding_id: string;
@@ -2608,9 +2664,10 @@ export interface components {
             host_port: number;
             readiness: components["schemas"]["HostingReadiness"];
             /** @enum {string} */
-            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1";
+            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1";
         };
         HostingRelease: {
+            local_build?: components["schemas"]["HostingLocalBuildArtifact"];
             canonical_image: string;
             image_id: string;
             /** @enum {string} */
@@ -2636,7 +2693,7 @@ export interface components {
             target: components["schemas"]["HostingHealthy"];
             current_healthy_operation_id: string;
             /** @enum {string} */
-            compiler_version: "image-hosting.release-ports.v1";
+            compiler_version: "image-hosting.release-ports.v1" | "local-build-hosting.v1";
             hash: string;
         };
         HostingRetainedRelease: {
@@ -2653,7 +2710,7 @@ export interface components {
             release: components["schemas"]["HostingRelease"];
             previous_healthy?: components["schemas"]["HostingHealthy"];
             /** @enum {string} */
-            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1";
+            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1";
             hash: string;
         };
         HostingReceipt: {
@@ -4927,6 +4984,38 @@ export interface operations {
         };
         responses: {
             /** @description Hosting operation state */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingBuildDeployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildDeploymentInput"];
+            };
+        };
+        responses: {
+            /** @description Immutable admitted operation */
             202: {
                 headers: {
                     [name: string]: unknown;

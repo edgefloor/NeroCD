@@ -107,7 +107,7 @@ func (q *Queries) CancelHostingTask(ctx context.Context, id string) (int64, erro
 }
 
 const checkHostingAuthority = `-- name: CheckHostingAuthority :one
-SELECT l.id FROM run_leases l JOIN hosting_task_targets t ON t.run_id=l.run_id WHERE l.id=$1 AND l.run_id=$2 AND l.runner_id=$3 AND l.attempt=$4 AND l.fence=$5 AND t.operation_id=$6 AND t.runner_id=$3 AND (NOT $7::boolean OR (l.status='active' AND l.expires_at>clock_timestamp())) FOR UPDATE OF l
+SELECT l.id FROM run_leases l JOIN hosting_task_targets t ON t.run_id=l.run_id JOIN hosting_snapshots hs ON hs.operation_id=t.operation_id JOIN task_runs tr ON tr.id=t.run_id WHERE l.id=$1 AND l.run_id=$2 AND l.runner_id=$3 AND l.attempt=$4 AND l.fence=$5 AND t.operation_id=$6 AND t.runner_id=$3 AND (NOT (hs.body ? 'local_build') OR (tr.run_spec->>'type'='local_build_deploy_v1' AND tr.run_spec->>'hosting_operation_id'=t.operation_id AND tr.run_spec->>'hosting_mode'=t.mode AND tr.run_spec - 'type' - 'hosting_operation_id' - 'hosting_mode' - 'inputs'='{}'::jsonb AND coalesce(tr.run_spec->'inputs','{}'::jsonb)='{}'::jsonb)) AND (NOT $7::boolean OR (l.status='active' AND l.expires_at>clock_timestamp())) FOR UPDATE OF l
 `
 
 type CheckHostingAuthorityParams struct {
@@ -436,6 +436,24 @@ func (q *Queries) CreateHostingOperation(ctx context.Context, arg CreateHostingO
 		arg.RequestHash,
 		arg.CreatedBy,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createHostingOperationBuildArtifact = `-- name: CreateHostingOperationBuildArtifact :execrows
+INSERT INTO hosting_operation_build_artifacts(operation_id,build_id,artifact_hash) VALUES($1,$2,$3)
+`
+
+type CreateHostingOperationBuildArtifactParams struct {
+	OperationID  string `json:"operation_id"`
+	BuildID      string `json:"build_id"`
+	ArtifactHash string `json:"artifact_hash"`
+}
+
+func (q *Queries) CreateHostingOperationBuildArtifact(ctx context.Context, arg CreateHostingOperationBuildArtifactParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createHostingOperationBuildArtifact, arg.OperationID, arg.BuildID, arg.ArtifactHash)
 	if err != nil {
 		return 0, err
 	}
@@ -977,6 +995,17 @@ func (q *Queries) HostingLeaseLive(ctx context.Context, id string) (*bool, error
 	return column_1, err
 }
 
+const hostingLeaseUnexpired = `-- name: HostingLeaseUnexpired :one
+SELECT expires_at>clock_timestamp() FROM run_leases WHERE id=$1
+`
+
+func (q *Queries) HostingLeaseUnexpired(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, hostingLeaseUnexpired, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const hostingReleasePortReferenced = `-- name: HostingReleasePortReferenced :one
 SELECT EXISTS(
  SELECT 1 FROM hosting_proxy_routes r JOIN hosting_snapshots hs ON hs.operation_id=r.selected_release_operation_id
@@ -1069,6 +1098,17 @@ func (q *Queries) HostingRunnerHasReleasePorts(ctx context.Context, arg HostingR
 	return capable, err
 }
 
+const hostingTaskActor = `-- name: HostingTaskActor :one
+SELECT requested_by FROM task_runs WHERE id=$1
+`
+
+func (q *Queries) HostingTaskActor(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, hostingTaskActor, id)
+	var requested_by string
+	err := row.Scan(&requested_by)
+	return requested_by, err
+}
+
 const listHostingOperationIDs = `-- name: ListHostingOperationIDs :many
 SELECT id FROM hosting_operations WHERE resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3
 `
@@ -1118,7 +1158,7 @@ func (q *Queries) LockHostingAdmissionState(ctx context.Context, bindingID strin
 const lockHostingExactRunner = `-- name: LockHostingExactRunner :one
 SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN resource_bindings b ON b.destination_id=d.id JOIN resources res ON res.id=b.resource_id JOIN projects p ON p.id=res.project_id
  WHERE b.id=$1 AND b.resource_id=$2 AND d.id=$3 AND s.id=$4 AND r.id=$5 AND res.project_id=$6 AND p.archived_at IS NULL
- AND r.status='active' AND r.token_hash<>'' AND 'image_deploy'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities))
+ AND r.status='active' AND r.token_hash<>'' AND $7::text=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities))
  AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash)
  FOR SHARE OF r
 `
@@ -1130,6 +1170,7 @@ type LockHostingExactRunnerParams struct {
 	ID_3       string `json:"id_3"`
 	ID_4       string `json:"id_4"`
 	ProjectID  string `json:"project_id"`
+	Capability string `json:"capability"`
 }
 
 func (q *Queries) LockHostingExactRunner(ctx context.Context, arg LockHostingExactRunnerParams) (string, error) {
@@ -1140,6 +1181,7 @@ func (q *Queries) LockHostingExactRunner(ctx context.Context, arg LockHostingExa
 		arg.ID_3,
 		arg.ID_4,
 		arg.ProjectID,
+		arg.Capability,
 	)
 	var id string
 	err := row.Scan(&id)

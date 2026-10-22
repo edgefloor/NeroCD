@@ -51,7 +51,7 @@ SELECT restore_admitted,hold_operation_id FROM hosting_binding_state WHERE bindi
 -- name: LockHostingExactRunner :one
 SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN resource_bindings b ON b.destination_id=d.id JOIN resources res ON res.id=b.resource_id JOIN projects p ON p.id=res.project_id
  WHERE b.id=$1 AND b.resource_id=$2 AND d.id=$3 AND s.id=$4 AND r.id=$5 AND res.project_id=$6 AND p.archived_at IS NULL
- AND r.status='active' AND r.token_hash<>'' AND 'image_deploy'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities))
+ AND r.status='active' AND r.token_hash<>'' AND sqlc.arg(capability)::text=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities))
  AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash)
  FOR SHARE OF r;
 
@@ -77,7 +77,7 @@ UPDATE hosting_operations SET state='dispatched',run_id=$2,updated_at=clock_time
 SELECT id FROM task_runs WHERE id=$1 FOR UPDATE;
 
 -- name: CheckHostingAuthority :one
-SELECT l.id FROM run_leases l JOIN hosting_task_targets t ON t.run_id=l.run_id WHERE l.id=$1 AND l.run_id=$2 AND l.runner_id=$3 AND l.attempt=$4 AND l.fence=$5 AND t.operation_id=$6 AND t.runner_id=$3 AND (NOT $7::boolean OR (l.status='active' AND l.expires_at>clock_timestamp())) FOR UPDATE OF l;
+SELECT l.id FROM run_leases l JOIN hosting_task_targets t ON t.run_id=l.run_id JOIN hosting_snapshots hs ON hs.operation_id=t.operation_id JOIN task_runs tr ON tr.id=t.run_id WHERE l.id=$1 AND l.run_id=$2 AND l.runner_id=$3 AND l.attempt=$4 AND l.fence=$5 AND t.operation_id=$6 AND t.runner_id=$3 AND (NOT (hs.body ? 'local_build') OR (tr.run_spec->>'type'='local_build_deploy_v1' AND tr.run_spec->>'hosting_operation_id'=t.operation_id AND tr.run_spec->>'hosting_mode'=t.mode AND tr.run_spec - 'type' - 'hosting_operation_id' - 'hosting_mode' - 'inputs'='{}'::jsonb AND coalesce(tr.run_spec->'inputs','{}'::jsonb)='{}'::jsonb)) AND (NOT $7::boolean OR (l.status='active' AND l.expires_at>clock_timestamp())) FOR UPDATE OF l;
 
 -- name: GetHostingTaskMode :one
 SELECT mode FROM hosting_task_targets WHERE run_id=$1;
@@ -315,3 +315,12 @@ SELECT EXISTS(
  SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id
  WHERE ref.release_operation_id=$1 AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
 );
+
+-- name: CreateHostingOperationBuildArtifact :execrows
+INSERT INTO hosting_operation_build_artifacts(operation_id,build_id,artifact_hash) VALUES($1,$2,$3);
+
+-- name: HostingTaskActor :one
+SELECT requested_by FROM task_runs WHERE id=$1;
+
+-- name: HostingLeaseUnexpired :one
+SELECT expires_at>clock_timestamp() FROM run_leases WHERE id=$1;

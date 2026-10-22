@@ -816,6 +816,29 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/HostingDeploymentInput'
+  /api/v1/resources/{id}/deployments/from-build:
+    post:
+      operationId: requestHostingBuildDeployment
+      summary: Admit a successful same-host build artifact for deployment
+      description: Requires current maintainer access, current source/resource generations, current target authorization and an agent with local_build_deploy_v1. Reusing a key returns the original operation only while current authorization and the exact artifact remain valid. Runtime local-image execution requires an upgraded agent.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {$ref: '#/components/schemas/HostingIdentifier'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/HostingBuildDeploymentInput'}
+      responses:
+        '202': {description: Immutable admitted operation, content: {application/json: {schema: {$ref: '#/components/schemas/HostingOperation'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/resources/{id}/retained-releases:
     get:
       operationId: listHostingRetainedReleases
@@ -4150,6 +4173,48 @@ components:
               maximum: 65535
         readiness:
           $ref: '#/components/schemas/HostingReadiness'
+    HostingBuildDeploymentInput:
+      type: object
+      additionalProperties: false
+      required: [build_id, expected_source_generation, expected_generation, idempotency_key, container_port, readiness]
+      properties:
+        build_id: {$ref: '#/components/schemas/HostingIdentifier'}
+        expected_source_generation: {type: integer, format: int64, minimum: 1}
+        expected_generation: {type: integer, format: int64, minimum: 1}
+        idempotency_key: {type: string, minLength: 1, maxLength: 128}
+        container_port: {type: integer, minimum: 1, maximum: 65535}
+        host_port:
+          type: integer
+          description: Zero or omitted allocates a server-controlled loopback port. Nonzero ports must be available.
+          anyOf: [{enum: [0]}, {minimum: 1024, maximum: 65535}]
+        readiness: {$ref: '#/components/schemas/HostingReadiness'}
+    HostingLocalBuildSource:
+      type: object
+      additionalProperties: false
+      required: [source_generation, artifact_hash, artifact]
+      properties:
+        source_generation: {type: integer, format: int64, minimum: 1}
+        artifact_hash: {type: string}
+        artifact: {$ref: '#/components/schemas/HostingLocalBuildArtifact'}
+    HostingLocalBuildArtifact:
+      type: object
+      additionalProperties: false
+      required: [origin, build_id, source_id, input_id, source_receipt_hash, context_digest, request_digest, daemon_id, image_id, index_digest, manifest_digest, config_digest, platform]
+      properties:
+        origin: {type: string, enum: [local_build]}
+        build_id: {type: string}
+        source_id: {type: string}
+        input_id: {type: string}
+        source_receipt_hash: {type: string}
+        context_digest: {type: string}
+        request_digest: {type: string}
+        daemon_id: {type: string}
+        image_id: {type: string}
+        index_digest: {type: string}
+        manifest_digest: {type: string}
+        config_digest: {type: string}
+        platform: {type: string}
+        context_policy: {type: string}
     HostingSnapshot:
       type: object
       additionalProperties: false
@@ -4167,6 +4232,7 @@ components:
         - readiness
         - policy_version
       properties:
+        local_build: {$ref: '#/components/schemas/HostingLocalBuildSource'}
         resource_id:
           type: string
         image_reference:
@@ -4195,6 +4261,7 @@ components:
           enum:
             - public-image.loopback.v1
             - public-image.release-ports.v1
+            - local-build.release-ports.v1
     HostingRelease:
       type: object
       additionalProperties: false
@@ -4206,6 +4273,7 @@ components:
         - daemon_id
         - hash
       properties:
+        local_build: {$ref: '#/components/schemas/HostingLocalBuildArtifact'}
         canonical_image:
           type: string
         image_id:
@@ -4266,7 +4334,7 @@ components:
           type: string
         compiler_version:
           type: string
-          enum: [image-hosting.release-ports.v1]
+          enum: [image-hosting.release-ports.v1, local-build-hosting.v1]
         hash:
           type: string
     HostingRetainedRelease:
@@ -4310,6 +4378,7 @@ components:
           enum:
             - image-hosting.v1
             - image-hosting.release-ports.v1
+            - local-build-hosting.v1
         hash:
           type: string
     HostingReceipt:

@@ -52,7 +52,7 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
 	if _, err := database.Exec(ctx, `DROP TRIGGER hosting_sources_resource_reference ON hosting_build_sources; DROP TRIGGER hosting_source_versions_resource_reference ON hosting_build_source_versions; DROP FUNCTION nerocd_hosting_git_reference_consistent(),nerocd_hosting_source_kind_immutable(),nerocd_hosting_git_resource_schema_compatible()`); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyEmbeddedMigrations(ctx, database, "0048_hosting_build_schema_binding.sql", ""); err != nil {
+	if err := applyEmbeddedMigrations(ctx, database, "0048_hosting_build_schema_binding.sql", "0049_hosting_git_resources.sql"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {

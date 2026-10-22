@@ -300,7 +300,7 @@ func (s *Service) RegisterRunner(ctx context.Context, input RunnerInput) (Regist
 func composeRunnerHasGenericShell(capabilities []string) bool {
 	compose, shell := false, false
 	for _, capability := range capabilities {
-		compose = compose || capability == domain.HostingBuildTaskType || capability == domain.RunTypeComposeDeploy || capability == domain.RunTypeImageDeploy || capability == domain.RunTypeProxyApply
+		compose = compose || capability == domain.RunTypeLocalBuildDeploy || capability == domain.HostingBuildTaskType || capability == domain.RunTypeComposeDeploy || capability == domain.RunTypeImageDeploy || capability == domain.RunTypeProxyApply
 		shell = shell || capability == domain.RunTypeShell
 	}
 	return compose && shell
@@ -433,8 +433,8 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 		if _, err := s.RunnerProxyPlan(ctx, a); err != nil {
 			return domain.ClaimedRun{}, err
 		}
-	} else if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
-		if err := domain.ValidateImageDeploymentTask(claim.Run); err != nil {
+	} else if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+		if err := validateClaimedHostingDeployment(claim.Run); err != nil {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}
 		a := domain.HostingAuthority{OperationID: claim.Run.RunSpec.HostingOperationID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
@@ -598,4 +598,11 @@ func (s *Service) AuthorizeSecretAccess(ctx context.Context, input SecretAccessI
 		return domain.SecretAccessGrant{}, InvalidInput(err)
 	}
 	return s.runners.AuthorizeSecretAccess(ctx, request)
+}
+
+func validateClaimedHostingDeployment(run domain.TaskRun) error {
+	if run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+		return domain.ValidateLocalBuildDeploymentTask(run)
+	}
+	return domain.ValidateImageDeploymentTask(run)
 }

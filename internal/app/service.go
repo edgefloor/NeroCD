@@ -359,7 +359,7 @@ func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) 
 	if runType == "" {
 		return domain.RunSpec{}, InvalidInput(errors.New("run_spec.type is required"))
 	}
-	if runType == domain.HostingBuildTaskType || runSpec.HostingBuildID != "" || runType == domain.RunTypeImageDeploy || runType == domain.RunTypeProxyApply || runSpec.HostingOperationID != "" || runSpec.HostingMode != "" || runSpec.ProxyOperationID != "" || runSpec.ProxyMode != "" {
+	if runType == domain.RunTypeLocalBuildDeploy || runType == domain.HostingBuildTaskType || runSpec.HostingBuildID != "" || runType == domain.RunTypeImageDeploy || runType == domain.RunTypeProxyApply || runSpec.HostingOperationID != "" || runSpec.HostingMode != "" || runSpec.ProxyOperationID != "" || runSpec.ProxyMode != "" {
 		return domain.RunSpec{}, InvalidInput(errors.New("hosting execution tasks are internal-only"))
 	}
 	if !s.registry.Supports(runType) {
