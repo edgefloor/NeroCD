@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"regexp"
+	"strings"
 
 	"nerocd/internal/domain"
 )
@@ -16,35 +16,24 @@ type proxyIdentityResponse struct {
 	Capabilities []string `json:"capabilities"`
 }
 
-var proxyIdentityID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
-var proxyCapabilityName = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
-
 func (r *proxyIdentityResponse) decodeResponse(body io.Reader) error {
-	raw, err := io.ReadAll(io.LimitReader(body, (64<<10)+1))
+	raw, err := io.ReadAll(io.LimitReader(body, maxIdentityResponseBytes+1))
 	if err != nil {
 		return err
 	}
-	if len(raw) > 64<<10 {
+	if len(raw) > maxIdentityResponseBytes {
 		return errors.New("proxy identity response exceeds limit")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if err = decoder.Decode(r); err != nil {
+	var result proxyIdentityResponse
+	if err = decoder.Decode(&result); err != nil {
 		return err
 	}
 	var extra any
 	if err = decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return errors.New("proxy identity requires one JSON document")
 	}
-	if !proxyIdentityID.MatchString(r.RunnerID) || len(r.Capabilities) > 128 {
-		return errors.New("invalid proxy runner identity")
-	}
-	seen := make(map[string]bool)
-	for _, capability := range r.Capabilities {
-		if !proxyCapabilityName.MatchString(capability) || seen[capability] {
-			return errors.New("invalid proxy runner capabilities")
-		}
-		seen[capability] = true
-	}
+	*r = result
 	return nil
 }
 
@@ -60,6 +49,12 @@ func (c Client) RuntimeIdentity(ctx context.Context, proxyConfigured bool) (stri
 	var result proxyIdentityResponse
 	if err := c.get(ctx, "/api/v1/runners/identity", &result); err != nil {
 		return "", err
+	}
+	// Preserve Identity's established ID contract and registration's opaque
+	// capability names. Only the exact persisted proxy_apply value grants the
+	// additional local execution capability; duplicates do not add authority.
+	if result.RunnerID == "" || strings.TrimSpace(result.RunnerID) != result.RunnerID {
+		return "", errors.New("runner identity response did not include a valid runner_id")
 	}
 	capable := false
 	for _, capability := range result.Capabilities {

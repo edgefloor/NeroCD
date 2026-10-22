@@ -59,6 +59,14 @@ cannot execute proxy tasks. A configured agent with only placement and proxy
 capabilities cannot claim image or shell tasks. An already enrolled `proxy_apply`
 agent refuses to start without the explicit local proxy configuration.
 
+Ordinary runner IDs keep the existing nonempty, trim-stable identity contract;
+punctuation and Unicode are not rewritten. Capability names remain opaque, including
+custom names and duplicates. Only exact lowercase `proxy_apply` presence selects the
+proxy guard, and duplicates add no authority. An older identity response without
+capabilities remains compatible with an ordinary agent. Identity responses must contain
+one complete JSON document within the existing 1 MiB bound; malformed typed fields
+or an unauthenticated response fail before journal startup or heartbeat.
+
 Engine placement and route identities have an 80-byte limit. Normal server-generated
 identities fit this limit. Longer imported identities fail preparation before engine
 effects, even though the public backend accepts identities up to 128 bytes.
