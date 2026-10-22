@@ -128,14 +128,16 @@ func (e *imageEngine) createWithRuntimeEnvironment(ctx context.Context, daemonID
 	configureProvenanceProcess(command)
 	command.WaitDelay = 2 * time.Second
 	err = command.Run()
-	if ctx.Err() != nil {
-		killProvenanceProcess(command)
-	}
 	if err != nil || ctx.Err() != nil {
+		// WaitDelay can expire after the parent exits while a descendant keeps
+		// an inherited pipe open. The context can still be live, so every
+		// uncertain exit must terminate the owned group, not just cancellation.
+		killProvenanceProcess(command)
 		return "", failed
 	}
 	id := strings.TrimSuffix(output.String(), "\n")
 	if !dockerObjectID.MatchString(id) {
+		killProvenanceProcess(command)
 		return "", failed
 	}
 	return id, nil

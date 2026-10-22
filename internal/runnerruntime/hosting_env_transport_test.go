@@ -42,6 +42,34 @@ func hostingEnvironmentHelper() int {
 			mode = os.Args[i+1]
 		}
 	}
+	if strings.HasPrefix(mode, "early-parent-") {
+		child := exec.Command(os.Args[0], "descendant", "descendant.pid")
+		if mode == "early-parent-exit" {
+			child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		}
+		if child.Start() != nil {
+			return 2
+		}
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			if _, err := os.Stat("descendant.pid"); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				return 2
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		switch mode {
+		case "early-parent-failure":
+			return 1
+		case "early-parent-invalid":
+			fmt.Fprintln(os.Stdout, "invalid")
+		default:
+			fmt.Fprintln(os.Stdout, strings.Repeat("a", 64))
+		}
+		return 0
+	}
 	if mode == "blocked" {
 		signal.Ignore(syscall.SIGTERM)
 		child := exec.Command(os.Args[0], "descendant", "descendant.pid")
@@ -289,4 +317,41 @@ func TestHostingEnvTransportCancellationKillsBlockedGroup(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("descendant survived process group cancellation")
+}
+
+func TestHostingEnvTransportEarlyParentExitKillsOwnedDescendant(t *testing.T) {
+	for _, mode := range []string{"early-parent-exit", "early-parent-failure", "early-parent-invalid"} {
+		t.Run(mode, func(t *testing.T) {
+			e := hostingEnvironmentTestEngine(t)
+			var pid int
+			defer func() {
+				if pid > 0 {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			}()
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			id, err := e.createWithRuntimeEnvironment(ctx, "qualified-daemon", []string{"--name", mode}, "sha256:"+strings.Repeat("b", 64), nil)
+			raw, readErr := os.ReadFile(filepath.Join(e.configDir, "descendant.pid"))
+			if readErr != nil {
+				t.Fatal("owned descendant handshake missing")
+			}
+			pid, _ = strconv.Atoi(string(raw))
+			if pid < 1 {
+				t.Fatal("invalid owned descendant identity")
+			}
+			if id != "" || err == nil || err.Error() != "hosting runtime environment container create failed" || ctx.Err() != nil {
+				t.Fatal("early parent exit did not return fixed uncertainty with live context")
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				state, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+				if syscall.Kill(pid, 0) == syscall.ESRCH || bytes.Contains(state, []byte(") Z ")) {
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			t.Fatal("owned descendant survived uncertain parent exit")
+		})
+	}
 }
