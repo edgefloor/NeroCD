@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,7 +12,133 @@ import (
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/store"
 )
+
+type proxyAuthorityAPIStore struct {
+	*store.MemoryStore
+	store.HostingProxyRepository
+	expected domain.HostingAuthority
+	calls    int
+}
+
+func (s *proxyAuthorityAPIStore) check(runner string, authority domain.HostingAuthority) (domain.HostingProxyOperation, error) {
+	s.calls++
+	if runner != "runner_proxy_auth" || authority != s.expected {
+		return domain.HostingProxyOperation{}, store.ErrConflict
+	}
+	return domain.HostingProxyOperation{ID: authority.OperationID}, nil
+}
+func (s *proxyAuthorityAPIStore) RunnerProxyPlan(_ context.Context, runner string, in domain.HostingAuthority) (domain.HostingProxyOperation, error) {
+	return s.check(runner, in)
+}
+func (s *proxyAuthorityAPIStore) RunnerProxyPrepared(_ context.Context, runner string, in domain.HostingProxyPreparedRequest) (domain.HostingProxyOperation, error) {
+	return s.check(runner, in.HostingAuthority)
+}
+func (s *proxyAuthorityAPIStore) RunnerProxyApplyBegin(_ context.Context, runner string, in domain.HostingAuthority) (domain.HostingProxyOperation, error) {
+	return s.check(runner, in)
+}
+func (s *proxyAuthorityAPIStore) RunnerProxyComplete(_ context.Context, runner string, in domain.HostingProxyCompleteRequest) (domain.HostingProxyOperation, error) {
+	return s.check(runner, in.HostingAuthority)
+}
+func (s *proxyAuthorityAPIStore) RunnerProxyStatus(_ context.Context, runner string, in domain.HostingAuthority) (domain.HostingProxyOperation, error) {
+	return s.check(runner, in)
+}
+
+func TestHostingProxyRunnerHandlersPreserveFullAuthority(t *testing.T) {
+	server, mem := newTestServer()
+	repository := &proxyAuthorityAPIStore{MemoryStore: mem, expected: domain.HostingAuthority{OperationID: "pop_one", RunID: "proxy_pop_one", LeaseID: "lease_one", Attempt: 2, Fence: "fence_one"}}
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repository, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.app = service
+	token := "proxy-authority-fixture-token"
+	hash := sha256.Sum256([]byte(token))
+	if _, err = mem.RegisterRunner(t.Context(), domain.Runner{ID: "runner_proxy_auth", Name: "proxy authority", TokenHash: hex.EncodeToString(hash[:]), Status: domain.RunnerActive, Capabilities: []string{domain.RunTypeProxyApply}}); err != nil {
+		t.Fatal(err)
+	}
+	valid := `{"operation_id":"pop_one","run_id":"proxy_pop_one","lease_id":"lease_one","attempt":2,"fence":"fence_one"}`
+	for _, endpoint := range []string{"plan", "prepared", "apply-begin", "complete", "status"} {
+		for _, body := range []string{valid, strings.Replace(valid, `"fence_one"`, `"foreign_fence"`, 1), strings.Replace(valid, `"lease_one"`, `"foreign_lease"`, 1), strings.Replace(valid, `"attempt":2`, `"attempt":1`, 1)} {
+			want := http.StatusConflict
+			if body == valid {
+				want = http.StatusOK
+			}
+			rec := runnerEnvelopeRequest(t, server, token, http.MethodPost, "/api/v1/runners/proxy/"+endpoint, body)
+			if rec.Code != want {
+				t.Fatalf("%s authority status=%d want=%d body=%s", endpoint, rec.Code, want, rec.Body.String())
+			}
+		}
+	}
+	if repository.calls != 20 {
+		t.Fatalf("authority repository calls=%d want=20", repository.calls)
+	}
+}
+
+func TestHostingProxyRunnerEndpointsRequireRunnerCredentials(t *testing.T) {
+	server, mem := newTestServer()
+	actor := createTestSession(t, server)
+	token := "proxy-api-fixture-runner-token"
+	hash := sha256.Sum256([]byte(token))
+	if _, err := mem.RegisterRunner(t.Context(), domain.Runner{ID: "runner_proxy_auth", Name: "proxy auth", TokenHash: hex.EncodeToString(hash[:]), Status: domain.RunnerActive, Capabilities: []string{domain.RunTypeProxyApply}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, endpoint := range []string{"plan", "prepared", "apply-begin", "complete", "status"} {
+		t.Run(endpoint, func(t *testing.T) {
+			for _, credential := range []struct {
+				name, token string
+				status      int
+			}{
+				{"missing", "", http.StatusUnauthorized},
+				{"wrong", "invalid-runner-token", http.StatusUnauthorized},
+				{"actor", actor, http.StatusUnauthorized},
+				{"runner-memory-unavailable", token, http.StatusServiceUnavailable},
+			} {
+				t.Run(credential.name, func(t *testing.T) {
+					req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/proxy/"+endpoint, strings.NewReader(`{}`))
+					req.Header.Set("Content-Type", "application/json")
+					if credential.token != "" {
+						req.Header.Set("Authorization", "Bearer "+credential.token)
+					}
+					rec := httptest.NewRecorder()
+					server.ServeHTTP(rec, req)
+					if rec.Code != credential.status {
+						t.Fatalf("status=%d want=%d body=%s", rec.Code, credential.status, rec.Body.String())
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestHostingProxyAPIMemoryFailsClosed(t *testing.T) {
+	server, _ := newTestServer()
+	admin := createTestSession(t, server)
+	viewer := createTestSessionFor(t, server, "viewer@example.local", "viewer")
+	for _, test := range []struct {
+		method, path, token, body string
+		status                    int
+	}{
+		{http.MethodGet, "/api/v1/servers/srv_proxy/proxy", "", "", 401},
+		{http.MethodGet, "/api/v1/servers/srv_proxy/proxy", viewer, "", 403},
+		{http.MethodGet, "/api/v1/servers/srv_proxy/proxy", admin, "", 503},
+		{http.MethodPost, "/api/v1/servers/srv_proxy/proxy", admin, `{"control_project_id":"proj_platform","idempotency_key":"enable","configuration":{"email":"operator@nerocd.invalid","ca":"letsencrypt-staging","management_port":19080}}`, 503},
+		{http.MethodPost, "/api/v1/resources/res_proxy/routes", admin, `{"hostname":"web.nerocd.invalid","path_prefix":"/","idempotency_key":"route","expected_healthy_operation_id":"hop_healthy","host_port":18080}`, 400},
+		{http.MethodPost, "/api/v1/resources/res_proxy/routes", admin, `{"hostname":"web.nerocd.invalid","path_prefix":"/","idempotency_key":"route","expected_healthy_operation_id":"hop_healthy","upstream_url":"http://foreign:8080"}`, 400},
+	} {
+		req := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+		req.Header.Set("Content-Type", "application/json")
+		if test.token != "" {
+			req.Header.Set("Authorization", "Bearer "+test.token)
+		}
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != test.status {
+			t.Fatalf("%s %s status=%d want=%d body=%s", test.method, test.path, rec.Code, test.status, rec.Body.String())
+		}
+	}
+}
 
 func TestHostingRetainedReleaseAPIMemoryFailsClosed(t *testing.T) {
 	server, mem := newTestServer()

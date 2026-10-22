@@ -3,6 +3,24 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/servers/{id}/proxy"},
+	{Method: http.MethodPost, Path: "/api/v1/servers/{id}/proxy"},
+	{Method: http.MethodPost, Path: "/api/v1/servers/{id}/proxy/disable"},
+	{Method: http.MethodGet, Path: "/api/v1/servers/{id}/proxy/hostname-grants"},
+	{Method: http.MethodPost, Path: "/api/v1/servers/{id}/proxy/hostname-grants"},
+	{Method: http.MethodPost, Path: "/api/v1/servers/{id}/proxy/hostname-grants/{grant_id}/revoke"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/routes"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/routes"},
+	{Method: http.MethodGet, Path: "/api/v1/routes/{id}"},
+	{Method: http.MethodPatch, Path: "/api/v1/routes/{id}"},
+	{Method: http.MethodDelete, Path: "/api/v1/routes/{id}"},
+	{Method: http.MethodGet, Path: "/api/v1/proxy-operations/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/proxy-operations/{id}/cancel"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/proxy/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/proxy/prepared"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/proxy/apply-begin"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/proxy/complete"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/proxy/status"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/retained-releases"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/retained-releases/{operation_id}/cleanup"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/deployments"},
@@ -143,6 +161,32 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/servers/{id}/proxy":
+		return s.hostingProxy
+	case "/api/v1/servers/{id}/proxy/disable":
+		return s.hostingProxyDisable
+	case "/api/v1/servers/{id}/proxy/hostname-grants":
+		return s.hostingHostnameGrants
+	case "/api/v1/servers/{id}/proxy/hostname-grants/{grant_id}/revoke":
+		return s.hostingHostnameRevoke
+	case "/api/v1/resources/{id}/routes":
+		return s.hostingRoutes
+	case "/api/v1/routes/{id}":
+		return s.hostingRoute
+	case "/api/v1/proxy-operations/{id}":
+		return s.proxyOperation
+	case "/api/v1/proxy-operations/{id}/cancel":
+		return s.proxyOperationCancel
+	case "/api/v1/runners/proxy/plan":
+		return s.runnerProxyPlan
+	case "/api/v1/runners/proxy/prepared":
+		return s.runnerProxyPrepared
+	case "/api/v1/runners/proxy/apply-begin":
+		return s.runnerProxyApplyBegin
+	case "/api/v1/runners/proxy/complete":
+		return s.runnerProxyComplete
+	case "/api/v1/runners/proxy/status":
+		return s.runnerProxyStatus
 	case "/api/v1/resources/{id}/retained-releases":
 		return s.hostingRetainedReleases
 	case "/api/v1/resources/{id}/retained-releases/{operation_id}/cleanup":

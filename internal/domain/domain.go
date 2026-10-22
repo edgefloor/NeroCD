@@ -123,6 +123,8 @@ type TaskTemplate struct {
 
 // RunSpec defines the runner primitives requested by a task.
 type RunSpec struct {
+	ProxyMode          string          `json:"proxy_mode,omitempty"`
+	ProxyOperationID   string          `json:"proxy_operation_id,omitempty"`
 	HostingMode        string          `json:"hosting_mode,omitempty"`
 	HostingOperationID string          `json:"hosting_operation_id,omitempty"`
 	Type               string          `json:"type"`

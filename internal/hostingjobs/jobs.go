@@ -80,6 +80,7 @@ type Config struct {
 
 // Client owns a private River client. Construction neither migrates nor starts it.
 type Client struct {
+	hasProxy               bool
 	river                  *river.Client[pgx.Tx]
 	pool                   *pgxpool.Pool
 	schema, host, database string
@@ -118,12 +119,16 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 	cfg.Schema = schema
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &prepareWorker{handler: handler})
+	proxyHandler, hasProxy := handler.(ProxyHandler)
+	if hasProxy {
+		river.AddWorker(workers, &prepareProxyWorker{handler: proxyHandler})
+	}
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema, Workers: workers, Queues: map[string]river.QueueConfig{Queue: {MaxWorkers: cfg.MaxWorkers}}, JobTimeout: cfg.JobTimeout, SoftStopTimeout: cfg.DrainTimeout, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), FetchCooldown: 10 * time.Millisecond, FetchPollInterval: 100 * time.Millisecond})
 	if err != nil {
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout}, nil
+	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.
@@ -132,6 +137,10 @@ func (c *Client) EnqueueTx(ctx context.Context, tx pgx.Tx, args PrepareDeploymen
 	if tx == nil || !operationIDPattern.MatchString(args.OperationID) {
 		return 0, ErrInvalidOperation
 	}
+	return c.enqueueTx(ctx, tx, args)
+}
+
+func (c *Client) enqueueTx(ctx context.Context, tx pgx.Tx, args river.JobArgs) (int64, error) {
 	connection := tx.Conn().Config()
 	if connection.Host != c.host || connection.Port != c.port || connection.Database != c.database {
 		return 0, ErrInvalidConfiguration

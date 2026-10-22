@@ -32,7 +32,7 @@ const (
 // workflow pointer once, without recursive traversal of untrusted graph depth.
 func ContainsHostingExecution(spec RunSpec, workflow Workflow) bool {
 	internal := func(spec RunSpec) bool {
-		return strings.TrimSpace(spec.Type) == RunTypeImageDeploy || spec.HostingOperationID != "" || spec.HostingMode != ""
+		return strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
 	}
 	if internal(spec) {
 		return true
