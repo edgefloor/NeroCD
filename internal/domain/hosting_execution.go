@@ -13,6 +13,7 @@ import (
 	"github.com/distribution/reference"
 )
 
+// Image hosting protocol and policy identifiers are versioned independently.
 const (
 	RunTypeImageDeploy     = "image_deploy"
 	HostingCompilerVersion = "image-hosting.v1"
@@ -119,6 +120,7 @@ type HostingOperation struct {
 	PreparedReceipt       *HostingReceipt   `json:"prepared_receipt,omitempty"`
 	CompleteReceipt       *HostingReceipt   `json:"complete_receipt,omitempty"`
 	Result                *HostingResult    `json:"result,omitempty"`
+	RestoreOwnershipHeld  bool              `json:"restore_ownership_held"`
 	MutationHold          bool              `json:"mutation_hold"`
 	ReconcileRequested    bool              `json:"reconcile_requested"`
 	CreatedBy             string            `json:"created_by"`
@@ -135,12 +137,14 @@ type HostingAuthority struct {
 	Fence       string `json:"fence"`
 }
 
+// HostingPreparedRequest binds a stable release receipt to exact lease authority.
 type HostingPreparedRequest struct {
 	HostingAuthority
 	ReceiptID string         `json:"receipt_id"`
 	Release   HostingRelease `json:"release"`
 }
 
+// HostingCompleteRequest binds a durable result receipt to exact lease authority.
 type HostingCompleteRequest struct {
 	HostingAuthority
 	ReceiptID string        `json:"receipt_id"`
@@ -161,6 +165,7 @@ type HostingObservation struct {
 	Ready       bool   `json:"ready"`
 }
 
+// ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
 	if in.ExpectedGeneration < 1 || len(in.IdempotencyKey) < 1 || len(in.IdempotencyKey) > 128 || strings.ContainsFunc(in.IdempotencyKey, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
 		return errors.New("expected_generation and a bounded idempotency_key are required")
@@ -191,6 +196,7 @@ func NormalizeHostingImage(value string) (string, error) {
 	return named.String(), nil
 }
 
+// ValidateHostingRelease checks canonical digest, platform and local daemon evidence.
 func ValidateHostingRelease(release HostingRelease) error {
 	named, err := reference.ParseNormalizedNamed(release.CanonicalImage)
 	if err != nil {
@@ -219,6 +225,7 @@ func HostingDocumentHash(value any) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// CompileHostingPlan hashes the immutable release, target and prior healthy pointer.
 func CompileHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy) (HostingApplyPlan, error) {
 	if err := ValidateHostingRelease(release); err != nil {
 		return HostingApplyPlan{}, err

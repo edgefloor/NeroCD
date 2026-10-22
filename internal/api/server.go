@@ -597,6 +597,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
 		code = "not_found"
+	case errors.Is(err, store.ErrHostingRestoreHold):
+		status = http.StatusConflict
+		code = "hosting_restore_held"
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrLastAdministrator):
 		status = http.StatusConflict
 		code = "conflict"
@@ -605,16 +608,17 @@ func writeError(w http.ResponseWriter, err error) {
 		code = "bad_request"
 	}
 	message := map[string]string{
-		"unauthenticated":     "authentication is required",
-		"forbidden":           "access is denied",
-		"rate_limited":        "request rate is limited",
-		"invalid_credentials": "invalid credentials",
-		"not_found":           "resource not found",
-		"conflict":            "request conflicts with current state",
-		"bad_request":         "invalid request",
-		"internal_error":      "internal server error",
-		"unavailable":         "managed secrets are unavailable",
-		"hosting_unavailable": "hosting execution requires PostgreSQL and a migrated River consumer",
+		"hosting_restore_held": "restored hosting ownership remains held; trusted local journal and process recovery proof is not yet supported",
+		"unauthenticated":      "authentication is required",
+		"forbidden":            "access is denied",
+		"rate_limited":         "request rate is limited",
+		"invalid_credentials":  "invalid credentials",
+		"not_found":            "resource not found",
+		"conflict":             "request conflicts with current state",
+		"bad_request":          "invalid request",
+		"internal_error":       "internal server error",
+		"unavailable":          "managed secrets are unavailable",
+		"hosting_unavailable":  "hosting execution requires PostgreSQL and a migrated River consumer",
 	}[code]
 	writeErrorEnvelope(w, status, code, message)
 }

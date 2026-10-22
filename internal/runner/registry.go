@@ -25,6 +25,7 @@ type Registry struct {
 // NewRegistry returns the built-in runner adapter registry.
 func NewRegistry() Registry {
 	adapters := []Adapter{
+		{Type: domain.RunTypeImageDeploy, Name: "Image deployment", Status: "implemented", Description: "Fenced immutable public-image preparation and loopback HTTP deployment."},
 		{Type: "shell", Name: "Shell", Status: "implemented", Description: "Builds a local process plan from shell command input and shared runner primitives.", BuildPlan: buildShellPlan},
 		{Type: "ansible", Name: "Ansible", Status: "planned", Description: "Thin adapter over git checkout, process execution, artifacts, and secrets."},
 		{Type: "opentofu", Name: "OpenTofu", Status: "planned", Description: "Thin adapter over git checkout, process execution, artifacts, and secrets."},

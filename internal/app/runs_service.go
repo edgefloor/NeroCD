@@ -287,6 +287,9 @@ func (s *Service) RequestRun(ctx context.Context, templateID string) (domain.Tas
 	if err := s.requireProjectRole(ctx, principal, template.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
+	if template.RunSpec.Type == domain.RunTypeImageDeploy {
+		return domain.TaskRun{}, InvalidInput(errors.New("image_deploy requires a resource deployment operation"))
+	}
 	status := domain.RunQueued
 	if template.RequiresAck {
 		status = domain.RunWaitingApproval

@@ -174,6 +174,11 @@ type HostingApplyPlan struct {
 	BodyHash    string          `json:"body_hash"`
 }
 
+type HostingBindingRestoreHold struct {
+	BindingID string    `json:"binding_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type HostingBindingState struct {
 	BindingID       string  `json:"binding_id"`
 	DestinationID   string  `json:"destination_id"`

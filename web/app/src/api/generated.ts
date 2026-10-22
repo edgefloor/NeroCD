@@ -11,7 +11,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List persisted resource deployment operations
+         * @description Requires viewer access to the persisted resource project. Stable descending created_at and ID pagination; responses never include runner lease authority.
+         */
+        get: operations["listResourceHostingDeployments"];
         put?: never;
         /**
          * Request an immutable public image deployment
@@ -1730,6 +1734,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingOperationList: {
+            items: components["schemas"]["HostingOperation"][];
+            count: number;
+            limit: number;
+            offset: number;
+            total: number;
+        };
         HostingReadiness: {
             /** @description Origin-relative HTTP path without authority, scheme, fragment or controls; redirects are not followed. */
             path: string;
@@ -1867,6 +1878,8 @@ export interface components {
             prepared_receipt?: components["schemas"]["HostingReceipt"];
             complete_receipt?: components["schemas"]["HostingReceipt"];
             result?: components["schemas"]["HostingResult"];
+            /** @description Restored ownership remains blocked until trusted local journal and process recovery proof is supported. Read-only target observation cannot lift this hold. */
+            restore_ownership_held: boolean;
             mutation_hold: boolean;
             reconcile_requested: boolean;
             /** Format: date-time */
@@ -3146,6 +3159,37 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listResourceHostingDeployments: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resource deployment operations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperationList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     requestImageDeployment: {
         parameters: {
             query?: never;

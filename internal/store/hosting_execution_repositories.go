@@ -11,6 +11,7 @@ import (
 // PostgreSQL implementation enqueues real River work in the request transaction.
 // Memory mode deliberately does not simulate external deployment authority.
 type HostingExecutionRepository interface {
+	ListHostingOperations(context.Context, string, Page) (PageResult[domain.HostingOperation], error)
 	ClaimHostingObservation(context.Context, string, domain.HostingAuthority, time.Duration) (domain.HostingOperation, error)
 	RequestHostingDeployment(context.Context, string, string, string, domain.HostingDeploymentInput, domain.AuditEvent) (domain.HostingOperation, error)
 	GetHostingOperation(context.Context, string) (domain.HostingOperation, error)

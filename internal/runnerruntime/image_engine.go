@@ -57,6 +57,8 @@ func newImageEngine(endpoint string) (*imageEngine, error) {
 	}
 	return &imageEngine{endpoint: endpoint, configDir: dir, command: osProvenanceCommand{}}, nil
 }
+
+// Close removes the isolated empty registry configuration.
 func (e *imageEngine) Close() error { return os.RemoveAll(e.configDir) }
 func (e *imageEngine) docker(ctx context.Context, args ...string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -76,7 +78,7 @@ func (e *imageEngine) daemonID(ctx context.Context) (string, error) {
 	}
 	var id string
 	if err = json.Unmarshal(body, &id); err != nil || id == "" || len(id) > 128 {
-		return "", errors.New("Docker daemon identity missing")
+		return "", errors.New("docker daemon identity missing")
 	}
 	return id, nil
 }
@@ -86,7 +88,7 @@ func (e *imageEngine) verifyDaemon(ctx context.Context, expected string) error {
 		return err
 	}
 	if got != expected {
-		return errors.New("Docker daemon identity changed")
+		return errors.New("docker daemon identity changed")
 	}
 	return nil
 }
@@ -151,7 +153,7 @@ func (e *imageEngine) Prepare(ctx context.Context, snapshot domain.HostingSnapsh
 		}
 	}
 	if !found {
-		return domain.HostingRelease{}, errors.New("Docker image lacks the pulled repository digest")
+		return domain.HostingRelease{}, errors.New("docker image lacks the pulled repository digest")
 	}
 	if err = e.verifyDaemon(ctx, daemon); err != nil {
 		return domain.HostingRelease{}, err
@@ -238,7 +240,7 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 // Apply permits fixed-port interruption. A failed pull never reaches this
 // method. Unknown command outcomes are retained for reconciliation; only a
 // known readiness failure enters bounded restoration of the prior workload.
-func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain.HostingApplyPlan) domain.HostingResult {
+func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain.HostingApplyPlan, verifying ...func() error) domain.HostingResult {
 	result := domain.HostingResult{Outcome: "failed", DaemonID: plan.Release.DaemonID, PlanHash: plan.Hash, ImageID: plan.Release.ImageID}
 	if verifyImagePlan(plan) != nil || e.verifyLocalRelease(ctx, plan.Release) != nil {
 		return result
@@ -290,6 +292,12 @@ func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain
 	if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "start", result.ContainerID); err != nil {
 		result.Uncertain = true
 		return result
+	}
+	if len(verifying) > 0 {
+		if err = verifying[0](); err != nil {
+			result.Uncertain = true
+			return result
+		}
 	}
 	if err = e.readiness(ctx, plan, operationID, result.ContainerID); err == nil {
 		result.Outcome = "succeeded"
@@ -371,6 +379,7 @@ func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPla
 	}
 }
 
+// Observe inspects only the persisted target and never changes workloads.
 func (e *imageEngine) Observe(ctx context.Context, operation domain.HostingOperation) (domain.HostingObservation, error) {
 	observation := domain.HostingObservation{BindingID: operation.BindingID}
 	daemon, err := e.daemonID(ctx)
@@ -409,4 +418,19 @@ func (e *imageEngine) Observe(ctx context.Context, operation domain.HostingOpera
 	observation.ReleaseHash = expected.Release.Hash
 	observation.Ready = true
 	return observation, nil
+}
+
+// EnsurePreparedRelease restores a collected cache only by the committed digest.
+// It never resolves the original tag again.
+func (e *imageEngine) EnsurePreparedRelease(ctx context.Context, release domain.HostingRelease) error {
+	if err := e.verifyDaemon(ctx, release.DaemonID); err != nil {
+		return err
+	}
+	if err := e.verifyLocalRelease(ctx, release); err == nil {
+		return nil
+	}
+	if _, err := e.docker(ctx, "image", "pull", release.CanonicalImage); err != nil {
+		return err
+	}
+	return e.verifyLocalRelease(ctx, release)
 }

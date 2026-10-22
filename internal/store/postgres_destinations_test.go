@@ -80,6 +80,11 @@ func TestPostgresDestinationCapabilityUpgradeFrom0043(t *testing.T) {
 	if err := applyEmbeddedMigrations(ctx, database, "0043_legacy_api_token_principals.sql", "0044_destination_capability_compatibility.sql"); err != nil {
 		t.Fatal(err)
 	}
+	// Preserve the historical 0043 rejection and 0044 upgrade above, then
+	// install additive current migrations before opening today's store.
+	if err := applyEmbeddedMigrations(ctx, database, "0044_destination_capability_compatibility.sql", ""); err != nil {
+		t.Fatal(err)
+	}
 	upgraded, err := store.OpenPostgres(ctx, upgradeURL)
 	if err != nil {
 		t.Fatal(err)
@@ -167,6 +172,11 @@ func TestPostgresDestinationMissingMigrationBlocksStartup(t *testing.T) {
 	ctx := t.Context()
 	pg, db := openPostgresIntegrationStore(t, ctx, "dest_missing")
 	t.Cleanup(func() { closePostgresStore(t, pg) })
+	// Remove the additive hosting execution dependencies before reproducing
+	// an absent 0042 schema, then restore both migration layers below.
+	if _, err := db.Exec(ctx, `DROP TABLE hosting_binding_restore_holds,hosting_reconciliation_receipts,hosting_apply_admissions,hosting_binding_state,hosting_receipts,hosting_dispatch_receipts,hosting_task_targets,hosting_apply_plans,hosting_releases,hosting_snapshots,hosting_operations; DROP FUNCTION nerocd_hosting_execution_schema_compatible(); DROP FUNCTION nerocd_hosting_binding_identity(); DROP FUNCTION nerocd_hosting_operation_identity(); DROP FUNCTION nerocd_hosting_execution_immutable()`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `DROP TABLE resource_bindings,destination_project_grants,destinations,servers; DROP FUNCTION nerocd_destinations_schema_compatible(); DROP FUNCTION nerocd_destination_capability_schema_compatible(); DROP FUNCTION nerocd_hosting_target_immutable(); DROP FUNCTION nerocd_destination_grant_identity(); DROP FUNCTION nerocd_server_runner_admission(); DROP FUNCTION nerocd_resource_binding_admission()`); err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +191,9 @@ func TestPostgresDestinationMissingMigrationBlocksStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := applyEmbeddedMigrations(ctx, db, "0043_legacy_api_token_principals.sql", "0044_destination_capability_compatibility.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyEmbeddedMigrations(ctx, db, "0044_destination_capability_compatibility.sql", ""); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {

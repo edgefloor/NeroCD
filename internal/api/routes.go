@@ -3,6 +3,7 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/deployments"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/deployments"},
 	{Method: http.MethodGet, Path: "/api/v1/hosting-operations/{id}"},
 	{Method: http.MethodPost, Path: "/api/v1/hosting-operations/{id}/cancel"},

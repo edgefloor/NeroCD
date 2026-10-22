@@ -61,21 +61,7 @@ func (s *PostgresStore) recoverHostingDispatch(ctx context.Context) error {
 		return err
 	}
 	defer rollbackTransaction(ctx, tx)
-	rows, err := tx.Query(ctx, `SELECT id FROM hosting_operations WHERE state='queued' AND run_id IS NULL ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED`)
-	if err != nil {
-		return err
-	}
-	ids := make([]string, 0, 100)
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
+	ids, err := sqlcgen.New(tx).RecoverQueuedHostingOperations(ctx)
 	if err != nil {
 		return err
 	}
@@ -83,32 +69,48 @@ func (s *PostgresStore) recoverHostingDispatch(ctx context.Context) error {
 		if _, err = s.hostingJobs.EnqueueTx(ctx, tx, hostingjobs.PrepareDeploymentArgs{OperationID: id}); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET updated_at=clock_timestamp() WHERE id=$1`, id); err != nil {
+		if _, err = sqlcgen.New(tx).TouchHostingOperation(ctx, id); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-var errHostingRestoreHold = errors.New("hosting admission requires restored target ownership reconciliation")
+// ErrHostingRestoreHold blocks restored targets until trusted local recovery proof exists.
+var ErrHostingRestoreHold = fmt.Errorf("%w: restored hosting ownership requires trusted local journal and process recovery proof", ErrConflict)
 
-const hostingOperationSelect = `SELECT o.id,o.project_id,o.resource_id,o.binding_id,coalesce(o.run_id,''),coalesce(o.reconciliation_run_id,''),o.state,o.reconcile_requested,o.created_by,o.created_at,o.updated_at,
- sn.body,rel.body,plan.body,
- (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_receipts WHERE operation_id=o.id AND phase='prepared'),
- (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_receipts WHERE operation_id=o.id AND phase='complete'),
- (SELECT body FROM hosting_receipts WHERE operation_id=o.id AND phase='complete'),
- EXISTS(SELECT 1 FROM hosting_binding_state bs WHERE bs.hold_operation_id=o.id)
- FROM hosting_operations o JOIN hosting_snapshots sn ON sn.operation_id=o.id
- LEFT JOIN hosting_releases rel ON rel.operation_id=o.id LEFT JOIN hosting_apply_plans plan ON plan.operation_id=o.id WHERE o.id=$1`
-
-type hostingRowQuerier interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-func hostingOperation(ctx context.Context, q hostingRowQuerier, id string) (domain.HostingOperation, error) {
+func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.HostingOperation, error) {
 	var op domain.HostingOperation
 	var snapshot, release, plan, prepared, complete, result []byte
-	err := q.QueryRow(ctx, hostingOperationSelect, id).Scan(&op.ID, &op.ProjectID, &op.ResourceID, &op.BindingID, &op.RunID, &op.ReconciliationRunID, &op.State, &op.ReconcileRequested, &op.CreatedBy, &op.CreatedAt, &op.UpdatedAt, &snapshot, &release, &plan, &prepared, &complete, &result, &op.MutationHold)
+	err := func() error {
+		row, queryErr := sqlcgen.New(q).GetHostingOperationSnapshot(ctx, id)
+		if queryErr != nil {
+			return queryErr
+		}
+		op.ID = row.ID
+		op.ProjectID = row.ProjectID
+		op.ResourceID = row.ResourceID
+		op.BindingID = row.BindingID
+		op.RunID = row.RunID
+		op.ReconciliationRunID = row.ReconciliationRunID
+		op.State = row.State
+		op.ReconcileRequested = row.ReconcileRequested
+		op.CreatedBy = row.CreatedBy
+		op.CreatedAt = row.CreatedAt
+		op.UpdatedAt = row.UpdatedAt
+		snapshot = row.Snapshot
+		release = row.Release
+		plan = row.Plan
+		prepared = row.PreparedReceipt
+		complete = row.CompleteReceipt
+		result = row.Result
+		op.MutationHold = row.MutationHold
+		if row.RestoreOwnershipHeld == nil {
+			return ErrConflict
+		}
+		op.RestoreOwnershipHeld = *row.RestoreOwnershipHeld
+		return nil
+	}()
 	if err != nil {
 		return op, hostingError(err)
 	}
@@ -125,6 +127,7 @@ func hostingOperation(ctx context.Context, q hostingRowQuerier, id string) (doma
 	return op, nil
 }
 
+// GetHostingOperation loads immutable evidence without exposing lease authority.
 func (s *PostgresStore) GetHostingOperation(ctx context.Context, id string) (domain.HostingOperation, error) {
 	return hostingOperation(ctx, s.pool, id)
 }
@@ -146,14 +149,34 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	var snap domain.HostingSnapshot
 	var projectID string
 	var source []byte
-	err = tx.QueryRow(ctx, `SELECT r.project_id,r.generation,r.source,b.id,b.destination_id,b.runtime_namespace,d.server_id,s.runner_id
- FROM resources r JOIN resource_bindings b ON b.resource_id=r.id JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id
- WHERE r.id=$1 FOR UPDATE OF r`, resourceID).Scan(&projectID, &snap.ResourceGeneration, &source, &snap.BindingID, &snap.DestinationID, &snap.RuntimeNamespace, &snap.ServerID, &snap.RunnerID)
+	err = func() error {
+		row, queryErr := sqlcgen.New(tx).LockHostingResourceTarget(ctx, resourceID)
+		if queryErr != nil {
+			return queryErr
+		}
+		projectID = row.ProjectID
+		snap.ResourceGeneration = row.Generation
+		source = row.Source
+		snap.BindingID = row.BindingID
+		snap.DestinationID = row.DestinationID
+		snap.RuntimeNamespace = row.RuntimeNamespace
+		snap.ServerID = row.ServerID
+		snap.RunnerID = row.RunnerID
+		return nil
+	}()
 	if err != nil {
 		return domain.HostingOperation{}, hostingError(err)
 	}
 	var existingID, requestHash string
-	err = tx.QueryRow(ctx, `SELECT id,request_hash FROM hosting_operations WHERE resource_id=$1 AND idempotency_key=$2`, resourceID, in.IdempotencyKey).Scan(&existingID, &requestHash)
+	err = func() error {
+		row, queryErr := sqlcgen.New(tx).GetHostingIdempotency(ctx, sqlcgen.GetHostingIdempotencyParams{ResourceID: resourceID, IdempotencyKey: in.IdempotencyKey})
+		if queryErr != nil {
+			return queryErr
+		}
+		existingID = row.ID
+		requestHash = row.RequestHash
+		return nil
+	}()
 	if err == nil {
 		if requestHash != domain.HostingDocumentHash(in) {
 			return domain.HostingOperation{}, ErrConflict
@@ -182,27 +205,43 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err = hostingTargetGate(ctx, tx, projectID, snap, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO hosting_binding_state(binding_id,destination_id,host_port) VALUES($1,$2,$3) ON CONFLICT(binding_id) DO NOTHING`, snap.BindingID, snap.DestinationID, snap.HostPort)
+	_, err = sqlcgen.New(tx).CreateHostingPortReservation(ctx, sqlcgen.CreateHostingPortReservationParams{BindingID: snap.BindingID, DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort)})
 	if err != nil {
 		return domain.HostingOperation{}, hostingError(err)
 	}
 	var reserved int
 	var admitted bool
 	var hold *string
-	if err = tx.QueryRow(ctx, `SELECT host_port,restore_admitted,hold_operation_id FROM hosting_binding_state WHERE binding_id=$1 FOR UPDATE`, snap.BindingID).Scan(&reserved, &admitted, &hold); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).LockHostingPortReservation(ctx, snap.BindingID)
+		if queryErr != nil {
+			return queryErr
+		}
+		reserved = int(row.HostPort)
+		admitted = row.RestoreAdmitted
+		hold = row.HoldOperationID
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if reserved != snap.HostPort || !admitted || hold != nil {
 		return domain.HostingOperation{}, ErrConflict
 	}
 	var busy bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_operations WHERE binding_id=$1 AND state NOT IN ('succeeded','failed','canceled'))`, snap.BindingID).Scan(&busy); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).HostingBindingBusy(ctx, snap.BindingID)
+		if queryErr != nil {
+			return queryErr
+		}
+		busy = row
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if busy {
 		return domain.HostingOperation{}, ErrConflict
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,state,created_by) VALUES($1,$2,$3,$4,$5,$6,'queued',$7)`, id, projectID, resourceID, snap.BindingID, in.IdempotencyKey, domain.HostingDocumentHash(in), actorID)
+	_, err = sqlcgen.New(tx).CreateHostingOperation(ctx, sqlcgen.CreateHostingOperationParams{ID: id, ProjectID: projectID, ResourceID: resourceID, BindingID: snap.BindingID, IdempotencyKey: in.IdempotencyKey, RequestHash: domain.HostingDocumentHash(in), CreatedBy: actorID})
 	if err != nil {
 		return domain.HostingOperation{}, hostingError(err)
 	}
@@ -210,7 +249,7 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO hosting_snapshots VALUES($1,$2,$3)`, id, contents, domain.HostingDocumentHash(snap)); err != nil {
+	if _, err = sqlcgen.New(tx).CreateHostingSnapshot(ctx, sqlcgen.CreateHostingSnapshotParams{OperationID: id, Body: contents, BodyHash: domain.HostingDocumentHash(snap)}); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
@@ -236,27 +275,56 @@ func hostingTargetGate(ctx context.Context, tx pgx.Tx, projectID string, snap do
 }
 func hostingTargetGateMode(ctx context.Context, tx pgx.Tx, projectID string, snap domain.HostingSnapshot, allowMissingState, observe bool) error {
 	var revoked *time.Time
-	if err := tx.QueryRow(ctx, `SELECT revoked_at FROM destination_project_grants WHERE destination_id=$1 AND project_id=$2 FOR UPDATE`, snap.DestinationID, projectID).Scan(&revoked); err != nil {
+	if err := func() error {
+		row, queryErr := sqlcgen.New(tx).LockHostingProjectGrant(ctx, sqlcgen.LockHostingProjectGrantParams{DestinationID: snap.DestinationID, ProjectID: projectID})
+		if queryErr != nil {
+			return queryErr
+		}
+		revoked = row
+		return nil
+	}(); err != nil {
 		return hostingError(err)
 	}
 	if revoked != nil {
 		return ErrConflict
 	}
+	var restored bool
+	if err := func() error {
+		row, queryErr := sqlcgen.New(tx).HostingBindingRestoreHeld(ctx, snap.BindingID)
+		if queryErr != nil {
+			return queryErr
+		}
+		restored = row
+		return nil
+	}(); err != nil {
+		return err
+	}
+	if restored && !observe {
+		return ErrHostingRestoreHold
+	}
 	var admitted bool
-	var hold *string
-	err := tx.QueryRow(ctx, `SELECT restore_admitted,hold_operation_id FROM hosting_binding_state WHERE binding_id=$1 FOR UPDATE`, snap.BindingID).Scan(&admitted, &hold)
-	if err != nil && !(allowMissingState && errors.Is(err, pgx.ErrNoRows)) {
+	err := func() error {
+		row, queryErr := sqlcgen.New(tx).LockHostingAdmissionState(ctx, snap.BindingID)
+		if queryErr != nil {
+			return queryErr
+		}
+		admitted = row.RestoreAdmitted
+		return nil
+	}()
+	if err != nil && (!allowMissingState || !errors.Is(err, pgx.ErrNoRows)) {
 		return hostingError(err)
 	}
 	if err == nil && !admitted && !observe {
-		return errHostingRestoreHold
+		return ErrHostingRestoreHold
 	}
-	var runnerID string
-	err = tx.QueryRow(ctx, `SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN resource_bindings b ON b.destination_id=d.id JOIN resources res ON res.id=b.resource_id JOIN projects p ON p.id=res.project_id
- WHERE b.id=$1 AND b.resource_id=$2 AND d.id=$3 AND s.id=$4 AND r.id=$5 AND res.project_id=$6 AND p.archived_at IS NULL
- AND r.status='active' AND r.token_hash<>'' AND 'image_deploy'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities))
- AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash)
- FOR SHARE OF r`, snap.BindingID, snap.ResourceID, snap.DestinationID, snap.ServerID, snap.RunnerID, projectID).Scan(&runnerID)
+	err = func() error {
+		row, queryErr := sqlcgen.New(tx).LockHostingExactRunner(ctx, sqlcgen.LockHostingExactRunnerParams{ID: snap.BindingID, ResourceID: snap.ResourceID, ID_2: snap.DestinationID, ID_3: snap.ServerID, ID_4: snap.RunnerID, ProjectID: projectID})
+		if queryErr != nil {
+			return queryErr
+		}
+		_ = row
+		return nil
+	}()
 	if err != nil {
 		return hostingError(err)
 	}
@@ -279,11 +347,11 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 		return nil
 	}
 	if err = hostingTargetGate(ctx, tx, op.ProjectID, op.Snapshot, false); err != nil {
-		if errors.Is(err, errHostingRestoreHold) {
+		if errors.Is(err, ErrHostingRestoreHold) {
 			return nil
 		}
 		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
-			if _, updateErr := tx.Exec(ctx, `UPDATE hosting_operations SET state='failed',updated_at=clock_timestamp() WHERE id=$1 AND state='queued'`, id); updateErr != nil {
+			if _, updateErr := sqlcgen.New(tx).FailQueuedHostingOperation(ctx, id); updateErr != nil {
 				return updateErr
 			}
 			if auditErr := hostingPhaseAudit(ctx, tx, s.queries, op, op.CreatedBy, "preflight_failed"); auditErr != nil {
@@ -294,7 +362,14 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 		return err
 	}
 	var state string
-	if err = tx.QueryRow(ctx, `SELECT state FROM hosting_operations WHERE id=$1 FOR UPDATE`, id).Scan(&state); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).LockHostingOperationState(ctx, id)
+		if queryErr != nil {
+			return queryErr
+		}
+		state = row
+		return nil
+	}(); err != nil {
 		return err
 	}
 	if state != "queued" {
@@ -306,17 +381,17 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO task_runs(id,project_id,run_spec,workflow,workflow_state,runner_tags,status,requested_by,started_at,created_at,claim_order_at) VALUES($1,$2,$3,'{}','{}','{}','queued',$4,clock_timestamp(),clock_timestamp(),clock_timestamp())`, runID, op.ProjectID, body, op.CreatedBy)
+	_, err = sqlcgen.New(tx).CreateHostingTask(ctx, sqlcgen.CreateHostingTaskParams{ID: runID, ProjectID: op.ProjectID, RunSpec: body, RequestedBy: op.CreatedBy})
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO hosting_task_targets(run_id,operation_id,binding_id,runner_id,mode) VALUES($1,$2,$3,$4,'deploy')`, runID, id, op.BindingID, op.Snapshot.RunnerID); err != nil {
+	if _, err = sqlcgen.New(tx).CreateHostingDeploymentTarget(ctx, sqlcgen.CreateHostingDeploymentTargetParams{RunID: runID, OperationID: id, BindingID: op.BindingID, RunnerID: op.Snapshot.RunnerID}); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO hosting_dispatch_receipts(operation_id,run_id) VALUES($1,$2)`, id, runID); err != nil {
+	if _, err = sqlcgen.New(tx).CreateHostingDispatchReceipt(ctx, sqlcgen.CreateHostingDispatchReceiptParams{OperationID: id, RunID: runID}); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET state='dispatched',run_id=$2,updated_at=clock_timestamp() WHERE id=$1`, id, runID); err != nil {
+	if _, err = sqlcgen.New(tx).DispatchHostingOperation(ctx, sqlcgen.DispatchHostingOperationParams{ID: id, RunID: hostingStringPointer(runID)}); err != nil {
 		return err
 	}
 	audit := domain.AuditEvent{ID: "aud_dispatch_" + id, ActorID: op.CreatedBy, Action: "hosting.dispatched", TargetID: id, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"run_id": runID, "runner_id": op.Snapshot.RunnerID}}
@@ -327,21 +402,23 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 }
 
 func hostingAuthorityExists(ctx context.Context, tx pgx.Tx, runnerID string, a domain.HostingAuthority, live bool) error {
-	if _, err := tx.Exec(ctx, `SELECT id FROM task_runs WHERE id=$1 FOR UPDATE`, a.RunID); err != nil {
+	if _, err := sqlcgen.New(tx).LockHostingTaskForAuthority(ctx, a.RunID); err != nil {
 		return err
 	}
-	var id string
-	query := `SELECT l.id FROM run_leases l JOIN hosting_task_targets t ON t.run_id=l.run_id WHERE l.id=$1 AND l.run_id=$2 AND l.runner_id=$3 AND l.attempt=$4 AND l.fence=$5 AND t.operation_id=$6 AND t.runner_id=$3`
-	if live {
-		query += ` AND l.status='active' AND l.expires_at>clock_timestamp()`
-	}
-	query += ` FOR UPDATE OF l`
-	if err := tx.QueryRow(ctx, query, a.LeaseID, a.RunID, runnerID, a.Attempt, a.Fence, a.OperationID).Scan(&id); err != nil {
+	if err := func() error {
+		row, queryErr := sqlcgen.New(tx).CheckHostingAuthority(ctx, sqlcgen.CheckHostingAuthorityParams{ID: a.LeaseID, RunID: a.RunID, RunnerID: runnerID, Attempt: int32(a.Attempt), Fence: a.Fence, OperationID: a.OperationID, Column7: live})
+		if queryErr != nil {
+			return queryErr
+		}
+		_ = row
+		return nil
+	}(); err != nil {
 		return hostingError(err)
 	}
 	return nil
 }
 
+// HostingRunnerPlan checks current exact-target lease authority before returning a plan.
 func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, a domain.HostingAuthority) (domain.HostingOperation, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -356,7 +433,14 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 		return op, err
 	}
 	var mode string
-	if err = tx.QueryRow(ctx, `SELECT mode FROM hosting_task_targets WHERE run_id=$1`, a.RunID).Scan(&mode); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).GetHostingTaskMode(ctx, a.RunID)
+		if queryErr != nil {
+			return queryErr
+		}
+		mode = row
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	op.TaskMode = mode
@@ -368,7 +452,14 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 			return domain.HostingOperation{}, err
 		}
 		var raw []byte
-		if err = tx.QueryRow(ctx, `SELECT healthy FROM hosting_binding_state WHERE binding_id=$1`, op.BindingID).Scan(&raw); err != nil {
+		if err = func() error {
+			row, queryErr := sqlcgen.New(tx).GetHostingHealthy(ctx, op.BindingID)
+			if queryErr != nil {
+				return queryErr
+			}
+			raw = row
+			return nil
+		}(); err != nil {
 			return domain.HostingOperation{}, err
 		}
 		if len(raw) > 0 {
@@ -387,13 +478,14 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 	if op.MutationHold {
 		return domain.HostingOperation{}, ErrConflict
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET state=CASE WHEN state='dispatched' THEN 'preparing' ELSE state END,updated_at=clock_timestamp() WHERE id=$1`, op.ID); err != nil {
+	if _, err = sqlcgen.New(tx).BeginHostingPreparation(ctx, op.ID); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	op, err = hostingOperation(ctx, tx, op.ID)
 	if err != nil {
 		return op, err
 	}
+	op.TaskMode = mode
 	return op, tx.Commit(ctx)
 }
 
@@ -401,7 +493,16 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 func replayHostingReceipt(ctx context.Context, tx pgx.Tx, a domain.HostingAuthority, phase, id, hash string) (bool, error) {
 	var storedID, storedHash string
 	var authority []byte
-	err := tx.QueryRow(ctx, `SELECT receipt_id,body_hash,authority FROM hosting_receipts WHERE operation_id=$1 AND phase=$2`, a.OperationID, phase).Scan(&storedID, &storedHash, &authority)
+	err := func() error {
+		row, queryErr := sqlcgen.New(tx).GetHostingReceipt(ctx, sqlcgen.GetHostingReceiptParams{OperationID: a.OperationID, Phase: phase})
+		if queryErr != nil {
+			return queryErr
+		}
+		storedID = row.ReceiptID
+		storedHash = row.BodyHash
+		authority = row.Authority
+		return nil
+	}()
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -427,10 +528,11 @@ func insertHostingReceipt(ctx context.Context, tx pgx.Tx, a domain.HostingAuthor
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO hosting_receipts(operation_id,phase,receipt_id,authority,body,body_hash) VALUES($1,$2,$3,$4,$5,$6)`, a.OperationID, phase, id, authority, raw, domain.HostingDocumentHash(body))
+	_, err = sqlcgen.New(tx).CreateHostingReceipt(ctx, sqlcgen.CreateHostingReceiptParams{OperationID: a.OperationID, Phase: phase, ReceiptID: id, Authority: authority, Body: raw, BodyHash: domain.HostingDocumentHash(body)})
 	return hostingError(err)
 }
 
+// HostingPrepared atomically commits immutable preparation evidence or replays its receipt.
 func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in domain.HostingPreparedRequest) (domain.HostingOperation, error) {
 	if in.ReceiptID == "" || len(in.ReceiptID) > 128 || domain.ValidateHostingRelease(in.Release) != nil {
 		return domain.HostingOperation{}, ErrConflict
@@ -483,7 +585,16 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 	var daemon *string
 	var previousRaw []byte
 	var hold *string
-	if err = tx.QueryRow(ctx, `SELECT daemon_id,healthy,hold_operation_id FROM hosting_binding_state WHERE binding_id=$1`, op.BindingID).Scan(&daemon, &previousRaw, &hold); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).GetHostingPreparedBinding(ctx, op.BindingID)
+		if queryErr != nil {
+			return queryErr
+		}
+		daemon = row.DaemonID
+		previousRaw = row.Healthy
+		hold = row.HoldOperationID
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if hold != nil || (daemon != nil && *daemon != in.Release.DaemonID) {
@@ -507,13 +618,13 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_binding_state SET daemon_id=coalesce(daemon_id,$2) WHERE binding_id=$1`, op.BindingID, in.Release.DaemonID); err != nil {
+	if _, err = sqlcgen.New(tx).ObserveHostingDaemon(ctx, sqlcgen.ObserveHostingDaemonParams{BindingID: op.BindingID, DaemonID: hostingStringPointer(in.Release.DaemonID)}); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO hosting_releases VALUES($1,$2,$3)`, op.ID, releaseRaw, in.Release.Hash); err != nil {
+	if _, err = sqlcgen.New(tx).CreateHostingRelease(ctx, sqlcgen.CreateHostingReleaseParams{OperationID: op.ID, Body: releaseRaw, BodyHash: in.Release.Hash}); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO hosting_apply_plans VALUES($1,$2,$3)`, op.ID, planRaw, plan.Hash); err != nil {
+	if _, err = sqlcgen.New(tx).CreateHostingApplyPlan(ctx, sqlcgen.CreateHostingApplyPlanParams{OperationID: op.ID, Body: planRaw, BodyHash: plan.Hash}); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if err = insertHostingReceipt(ctx, tx, in.HostingAuthority, "prepared", in.ReceiptID, in.Release); err != nil {
@@ -522,7 +633,7 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 	if err = hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "prepared"); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET state='prepared',updated_at=clock_timestamp() WHERE id=$1`, op.ID); err != nil {
+	if _, err = sqlcgen.New(tx).FinishHostingPreparation(ctx, op.ID); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	op, err = hostingOperation(ctx, tx, op.ID)
@@ -548,6 +659,7 @@ func hostingReleaseMatchesSource(source, canonical string) bool {
 	return true
 }
 
+// HostingApplyBegin atomically admits mutation after rechecking the target and live lease.
 func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, a domain.HostingAuthority) (domain.HostingOperation, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -578,21 +690,21 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	if op.State != "prepared" || op.MutationHold {
 		return domain.HostingOperation{}, ErrConflict
 	}
-	tag, err := tx.Exec(ctx, `UPDATE hosting_binding_state SET hold_operation_id=$2 WHERE binding_id=$1 AND hold_operation_id IS NULL AND restore_admitted AND daemon_id=$3`, op.BindingID, op.ID, op.Release.DaemonID)
+	tag, err := sqlcgen.New(tx).AdmitHostingMutation(ctx, sqlcgen.AdmitHostingMutationParams{BindingID: op.BindingID, HoldOperationID: hostingStringPointer(op.ID), DaemonID: hostingStringPointer(op.Release.DaemonID)})
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return domain.HostingOperation{}, ErrConflict
 	}
 	authorityRaw, marshalErr := json.Marshal(a)
 	if marshalErr != nil {
 		return domain.HostingOperation{}, marshalErr
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO hosting_apply_admissions(operation_id,run_id,lease_id,authority,plan_hash) VALUES($1,$2,$3,$4,$5)`, op.ID, a.RunID, a.LeaseID, authorityRaw, op.Plan.Hash); err != nil {
+	if _, err = sqlcgen.New(tx).CreateHostingApplyAdmission(ctx, sqlcgen.CreateHostingApplyAdmissionParams{OperationID: op.ID, RunID: a.RunID, LeaseID: a.LeaseID, Authority: authorityRaw, PlanHash: op.Plan.Hash}); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET state='applying',updated_at=clock_timestamp() WHERE id=$1`, op.ID); err != nil {
+	if _, err = sqlcgen.New(tx).BeginHostingApply(ctx, op.ID); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if err = hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "apply_admitted"); err != nil {
@@ -609,6 +721,7 @@ func hostingPhaseAudit(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, op do
 	return createAuditWithQueries(ctx, q.WithTx(tx), domain.AuditEvent{ID: "aud_hosting_" + phase + "_" + op.ID, ActorID: actor, Action: "hosting." + phase, TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"run_id": op.RunID, "binding_id": op.BindingID}})
 }
 
+// HostingComplete atomically records result evidence and settles only a safe owned hold.
 func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in domain.HostingCompleteRequest) (domain.HostingOperation, error) {
 	if in.ReceiptID == "" || len(in.ReceiptID) > 128 || (in.Result.Outcome != "succeeded" && in.Result.Outcome != "failed") {
 		return domain.HostingOperation{}, ErrConflict
@@ -639,7 +752,17 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 		return domain.HostingOperation{}, ErrConflict
 	}
 	var live bool
-	if err = tx.QueryRow(ctx, `SELECT status='active' AND expires_at>clock_timestamp() FROM run_leases WHERE id=$1`, in.LeaseID).Scan(&live); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).HostingLeaseLive(ctx, in.LeaseID)
+		if queryErr != nil {
+			return queryErr
+		}
+		if row == nil {
+			return ErrConflict
+		}
+		live = *row
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	// Pre-apply failure may finish only under live authority and cannot assert
@@ -665,13 +788,13 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if uncertain {
 		state = "reconciliation_required"
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET state=$2,updated_at=clock_timestamp() WHERE id=$1`, op.ID, state); err != nil {
+	if _, err = sqlcgen.New(tx).SetHostingOperationState(ctx, sqlcgen.SetHostingOperationStateParams{ID: op.ID, State: state}); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE run_leases SET status=$2,completed_at=clock_timestamp(),completion_key=$3 WHERE id=$1`, in.LeaseID, in.Result.Outcome, in.ReceiptID); err != nil {
+	if _, err = sqlcgen.New(tx).CompleteHostingLease(ctx, sqlcgen.CompleteHostingLeaseParams{ID: in.LeaseID, Status: in.Result.Outcome, CompletionKey: hostingStringPointer(in.ReceiptID)}); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE task_runs SET status=$2,finished_at=clock_timestamp() WHERE id=$1`, op.RunID, in.Result.Outcome); err != nil {
+	if _, err = sqlcgen.New(tx).CompleteHostingTask(ctx, sqlcgen.CompleteHostingTaskParams{ID: op.RunID, Status: in.Result.Outcome}); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if op.MutationHold && !uncertain {
@@ -681,11 +804,11 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 			if err != nil {
 				return domain.HostingOperation{}, err
 			}
-			if _, err = tx.Exec(ctx, `UPDATE hosting_binding_state SET healthy=$2 WHERE binding_id=$1 AND hold_operation_id=$3`, op.BindingID, raw, op.ID); err != nil {
+			if _, err = sqlcgen.New(tx).SetHostingHealthy(ctx, sqlcgen.SetHostingHealthyParams{BindingID: op.BindingID, Healthy: raw, HoldOperationID: hostingStringPointer(op.ID)}); err != nil {
 				return domain.HostingOperation{}, err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE hosting_binding_state SET hold_operation_id=NULL WHERE binding_id=$1 AND hold_operation_id=$2`, op.BindingID, op.ID); err != nil {
+		if _, err = sqlcgen.New(tx).ClearHostingMutationHold(ctx, sqlcgen.ClearHostingMutationHoldParams{BindingID: op.BindingID, HoldOperationID: hostingStringPointer(op.ID)}); err != nil {
 			return domain.HostingOperation{}, err
 		}
 	}
@@ -699,9 +822,12 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	return op, tx.Commit(ctx)
 }
 
+// CancelHostingOperation cancels execution while preserving admitted uncertainty.
 func (s *PostgresStore) CancelHostingOperation(ctx context.Context, id string, audit domain.AuditEvent) (domain.HostingOperation, error) {
 	return s.hostingControlMutation(ctx, id, audit, false)
 }
+
+// RequestHostingReconciliation deduplicates owner-requested exact-target observation work.
 func (s *PostgresStore) RequestHostingReconciliation(ctx context.Context, id string, audit domain.AuditEvent) (domain.HostingOperation, error) {
 	return s.hostingControlMutation(ctx, id, audit, true)
 }
@@ -719,11 +845,24 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 		return domain.HostingOperation{}, err
 	}
 	var hold *string
-	if err = tx.QueryRow(ctx, `SELECT hold_operation_id FROM hosting_binding_state WHERE binding_id=$1 FOR UPDATE`, before.BindingID).Scan(&hold); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).LockHostingMutationHold(ctx, before.BindingID)
+		if queryErr != nil {
+			return queryErr
+		}
+		hold = row
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	var locked string
-	if err = tx.QueryRow(ctx, `SELECT id FROM hosting_operations WHERE id=$1 FOR UPDATE`, id).Scan(&locked); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).LockHostingOperation(ctx, id)
+		if queryErr != nil {
+			return queryErr
+		}
+		_ = row
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	op, err := hostingOperation(ctx, tx, id)
@@ -748,18 +887,18 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 			if marshalErr != nil {
 				return domain.HostingOperation{}, marshalErr
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO task_runs(id,project_id,run_spec,workflow,workflow_state,runner_tags,status,requested_by,started_at,created_at,claim_order_at) VALUES($1,$2,$3,'{}','{}','{}','queued',$4,clock_timestamp(),clock_timestamp(),clock_timestamp())`, observationRun, op.ProjectID, raw, audit.ActorID); err != nil {
+			if _, err = sqlcgen.New(tx).CreateHostingTask(ctx, sqlcgen.CreateHostingTaskParams{ID: observationRun, ProjectID: op.ProjectID, RunSpec: raw, RequestedBy: audit.ActorID}); err != nil {
 				return domain.HostingOperation{}, err
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO hosting_task_targets(run_id,operation_id,binding_id,runner_id,mode) VALUES($1,$2,$3,$4,'observe')`, observationRun, id, op.BindingID, op.Snapshot.RunnerID); err != nil {
+			if _, err = sqlcgen.New(tx).CreateHostingObservationTarget(ctx, sqlcgen.CreateHostingObservationTargetParams{RunID: observationRun, OperationID: id, BindingID: op.BindingID, RunnerID: op.Snapshot.RunnerID}); err != nil {
 				return domain.HostingOperation{}, err
 			}
 		} else {
-			if _, err = tx.Exec(ctx, `UPDATE task_runs SET status='queued',runner_id=NULL,finished_at=NULL,claim_order_at=clock_timestamp() WHERE id=$1`, observationRun); err != nil {
+			if _, err = sqlcgen.New(tx).RequeueHostingObservation(ctx, observationRun); err != nil {
 				return domain.HostingOperation{}, err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET reconcile_requested=true,reconciliation_run_id=$2,updated_at=clock_timestamp() WHERE id=$1`, id, observationRun); err != nil {
+		if _, err = sqlcgen.New(tx).RequestHostingObservation(ctx, sqlcgen.RequestHostingObservationParams{ID: id, ReconciliationRunID: hostingStringPointer(observationRun)}); err != nil {
 			return domain.HostingOperation{}, err
 		}
 	} else {
@@ -770,15 +909,15 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 		if hold != nil && *hold == id {
 			state = "cancel_requested"
 		}
-		if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET state=$2,reconcile_requested=false,updated_at=clock_timestamp() WHERE id=$1`, id, state); err != nil {
+		if _, err = sqlcgen.New(tx).CancelHostingOperationState(ctx, sqlcgen.CancelHostingOperationStateParams{ID: id, State: state}); err != nil {
 			return domain.HostingOperation{}, err
 		}
 		for _, runID := range []string{op.RunID, op.ReconciliationRunID} {
 			if runID != "" {
-				if _, err = tx.Exec(ctx, `UPDATE run_leases SET status='canceled',completed_at=clock_timestamp() WHERE run_id=$1 AND status='active'`, runID); err != nil {
+				if _, err = sqlcgen.New(tx).CancelHostingLeases(ctx, runID); err != nil {
 					return domain.HostingOperation{}, err
 				}
-				if _, err = tx.Exec(ctx, `UPDATE task_runs SET status='canceled',finished_at=clock_timestamp() WHERE id=$1`, runID); err != nil {
+				if _, err = sqlcgen.New(tx).CancelHostingTask(ctx, runID); err != nil {
 					return domain.HostingOperation{}, err
 				}
 			}
@@ -796,8 +935,14 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 func hostingLockOperationRuns(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) error {
 	for _, id := range []string{op.RunID, op.ReconciliationRunID} {
 		if id != "" {
-			var locked string
-			if err := tx.QueryRow(ctx, `SELECT id FROM task_runs WHERE id=$1 FOR UPDATE`, id).Scan(&locked); err != nil {
+			if err := func() error {
+				row, queryErr := sqlcgen.New(tx).LockHostingTask(ctx, id)
+				if queryErr != nil {
+					return queryErr
+				}
+				_ = row
+				return nil
+			}(); err != nil {
 				return hostingError(err)
 			}
 		}
@@ -805,6 +950,7 @@ func hostingLockOperationRuns(ctx context.Context, tx pgx.Tx, op domain.HostingO
 	return nil
 }
 
+// HostingReconciliation settles only evidence-backed uncertainty under observation authority.
 func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID string, in domain.HostingObservation) (domain.HostingOperation, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -825,7 +971,14 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 		return domain.HostingOperation{}, err
 	}
 	var committedHash string
-	err = tx.QueryRow(ctx, `SELECT body_hash FROM hosting_reconciliation_receipts WHERE lease_id=$1 AND operation_id=$2`, in.LeaseID, in.OperationID).Scan(&committedHash)
+	err = func() error {
+		row, queryErr := sqlcgen.New(tx).GetHostingReconciliationReceipt(ctx, sqlcgen.GetHostingReconciliationReceiptParams{LeaseID: in.LeaseID, OperationID: in.OperationID})
+		if queryErr != nil {
+			return queryErr
+		}
+		committedHash = row
+		return nil
+	}()
 	if err == nil {
 		if committedHash != domain.HostingDocumentHash(in) {
 			return domain.HostingOperation{}, ErrConflict
@@ -850,14 +1003,38 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 	}
 	var daemon *string
 	var healthyRaw []byte
-	if err = tx.QueryRow(ctx, `SELECT daemon_id,healthy FROM hosting_binding_state WHERE binding_id=$1`, op.BindingID).Scan(&daemon, &healthyRaw); err != nil {
+	var restoreAdmitted bool
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).GetHostingObservationBinding(ctx, op.BindingID)
+		if queryErr != nil {
+			return queryErr
+		}
+		daemon = row.DaemonID
+		healthyRaw = row.Healthy
+		restoreAdmitted = row.RestoreAdmitted
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
+	}
+	// A restored database may predate an admission and a still-running external
+	// command. Neither an absent row nor an empty point-in-time observation can
+	// establish that all pre-restore processes have stopped. Until trusted local
+	// recovery evidence is supported, observation cannot lift this hold.
+	if !restoreAdmitted || op.RestoreOwnershipHeld {
+		return domain.HostingOperation{}, ErrConflict
 	}
 	if in.DaemonID == "" || len(in.DaemonID) > 128 || (daemon != nil && *daemon != in.DaemonID) {
 		return domain.HostingOperation{}, ErrConflict
 	}
 	var admission bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_apply_admissions WHERE operation_id=$1)`, op.ID).Scan(&admission); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).HostingAdmissionExists(ctx, op.ID)
+		if queryErr != nil {
+			return queryErr
+		}
+		admission = row
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	var expected *domain.HostingHealthy
@@ -866,7 +1043,14 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 			return domain.HostingOperation{}, ErrConflict
 		}
 		var liveDeployment bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM run_leases WHERE run_id=$1 AND status='active' AND expires_at>clock_timestamp())`, op.RunID).Scan(&liveDeployment); err != nil {
+		if err = func() error {
+			row, queryErr := sqlcgen.New(tx).HostingDeploymentLeaseLive(ctx, op.RunID)
+			if queryErr != nil {
+				return queryErr
+			}
+			liveDeployment = row
+			return nil
+		}(); err != nil {
 			return domain.HostingOperation{}, err
 		}
 		if liveDeployment {
@@ -880,8 +1064,8 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 			expected = op.Plan.PreviousHealthy
 		}
 	} else {
-		// No admission receipt plus no hold is durable proof that this operation
-		// never acquired mutation permission. A listing alone is not that proof.
+		// On a database that has not been restored, absence of admission plus
+		// absence of a hold proves this operation never acquired permission.
 		if admission && op.CompleteReceipt == nil {
 			return domain.HostingOperation{}, ErrConflict
 		}
@@ -905,30 +1089,30 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 		if marshalErr != nil {
 			return domain.HostingOperation{}, marshalErr
 		}
-		if _, err = tx.Exec(ctx, `UPDATE hosting_binding_state SET healthy=$2,hold_operation_id=NULL WHERE binding_id=$1 AND hold_operation_id=$3`, op.BindingID, raw, op.ID); err != nil {
+		if _, err = sqlcgen.New(tx).SettleHostingObservedHealthy(ctx, sqlcgen.SettleHostingObservedHealthyParams{BindingID: op.BindingID, Healthy: raw, HoldOperationID: hostingStringPointer(op.ID)}); err != nil {
 			return domain.HostingOperation{}, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET state=$2,updated_at=clock_timestamp() WHERE id=$1`, op.ID, op.Result.Outcome); err != nil {
+		if _, err = sqlcgen.New(tx).SetHostingOperationState(ctx, sqlcgen.SetHostingOperationStateParams{ID: op.ID, State: op.Result.Outcome}); err != nil {
 			return domain.HostingOperation{}, err
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_binding_state SET restore_admitted=true,daemon_id=coalesce(daemon_id,$2) WHERE binding_id=$1`, op.BindingID, in.DaemonID); err != nil {
+	if _, err = sqlcgen.New(tx).ObserveHostingDaemon(ctx, sqlcgen.ObserveHostingDaemonParams{BindingID: op.BindingID, DaemonID: hostingStringPointer(in.DaemonID)}); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET reconcile_requested=false,updated_at=clock_timestamp() WHERE id=$1`, op.ID); err != nil {
+	if _, err = sqlcgen.New(tx).ClearHostingObservationRequest(ctx, op.ID); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	raw, marshalErr := json.Marshal(in)
 	if marshalErr != nil {
 		return domain.HostingOperation{}, marshalErr
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO hosting_reconciliation_receipts(lease_id,operation_id,body,body_hash) VALUES($1,$2,$3,$4)`, in.LeaseID, op.ID, raw, domain.HostingDocumentHash(in)); err != nil {
+	if _, err = sqlcgen.New(tx).CreateHostingReconciliationReceipt(ctx, sqlcgen.CreateHostingReconciliationReceiptParams{LeaseID: in.LeaseID, OperationID: op.ID, Body: raw, BodyHash: domain.HostingDocumentHash(in)}); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE run_leases SET status='succeeded',completed_at=clock_timestamp(),completion_key=$2 WHERE id=$1`, in.LeaseID, "observed_"+in.LeaseID); err != nil {
+	if _, err = sqlcgen.New(tx).CompleteHostingObservationLease(ctx, sqlcgen.CompleteHostingObservationLeaseParams{ID: in.LeaseID, CompletionKey: hostingStringPointer("observed_" + in.LeaseID)}); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE task_runs SET status='succeeded',finished_at=clock_timestamp() WHERE id=$1`, in.RunID); err != nil {
+	if _, err = sqlcgen.New(tx).CompleteHostingObservationTask(ctx, in.RunID); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	audit := domain.AuditEvent{ID: "aud_observed_" + in.LeaseID, ActorID: runnerID, Action: "hosting.target_observed", TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"runner_id": runnerID, "destination_id": op.Snapshot.DestinationID, "binding_id": op.BindingID, "task_mode": "observe"}}
@@ -947,7 +1131,15 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 		return true, nil
 	}
 	var operationID, mode string
-	err := tx.QueryRow(ctx, `SELECT operation_id,mode FROM hosting_task_targets WHERE run_id=$1 AND runner_id=$2`, run.ID, runnerID).Scan(&operationID, &mode)
+	err := func() error {
+		row, queryErr := sqlcgen.New(tx).GetHostingTargetMode(ctx, sqlcgen.GetHostingTargetModeParams{RunID: run.ID, RunnerID: runnerID})
+		if queryErr != nil {
+			return queryErr
+		}
+		operationID = row.OperationID
+		mode = row.Mode
+		return nil
+	}()
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -971,7 +1163,7 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 		}
 	}
 	err = hostingTargetGateMode(ctx, tx, op.ProjectID, op.Snapshot, false, mode == "observe")
-	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, errHostingRestoreHold) {
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrHostingRestoreHold) {
 		return false, nil
 	}
 	return err == nil, err
@@ -990,7 +1182,14 @@ func rejectGenericHostingRun(ctx context.Context, q *sqlcgen.Queries, runID stri
 
 func hostingRequireMode(ctx context.Context, tx pgx.Tx, a domain.HostingAuthority, expected string) error {
 	var mode string
-	if err := tx.QueryRow(ctx, `SELECT mode FROM hosting_task_targets WHERE run_id=$1 AND operation_id=$2`, a.RunID, a.OperationID).Scan(&mode); err != nil {
+	if err := func() error {
+		row, queryErr := sqlcgen.New(tx).CheckHostingTaskMode(ctx, sqlcgen.CheckHostingTaskModeParams{RunID: a.RunID, OperationID: a.OperationID})
+		if queryErr != nil {
+			return queryErr
+		}
+		mode = row
+		return nil
+	}(); err != nil {
 		return hostingError(err)
 	}
 	if mode != expected {
@@ -999,6 +1198,7 @@ func hostingRequireMode(ctx context.Context, tx pgx.Tx, a domain.HostingAuthorit
 	return nil
 }
 
+// HostingStatus returns status for an exact persisted attempt.
 func (s *PostgresStore) HostingStatus(ctx context.Context, runnerID string, in domain.HostingStatusRequest) (domain.HostingOperation, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -1013,7 +1213,14 @@ func (s *PostgresStore) HostingStatus(ctx context.Context, runnerID string, in d
 		return op, err
 	}
 	var mode string
-	if err = tx.QueryRow(ctx, `SELECT mode FROM hosting_task_targets WHERE run_id=$1`, in.RunID).Scan(&mode); err != nil {
+	if err = func() error {
+		row, queryErr := sqlcgen.New(tx).GetHostingTaskMode(ctx, in.RunID)
+		if queryErr != nil {
+			return queryErr
+		}
+		mode = row
+		return nil
+	}(); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	op.TaskMode = mode
@@ -1023,7 +1230,7 @@ func (s *PostgresStore) HostingStatus(ctx context.Context, runnerID string, in d
 	if in.Phase != "verifying" || mode != "deploy" || !op.MutationHold || (op.State != "applying" && op.State != "verifying") {
 		return domain.HostingOperation{}, ErrConflict
 	}
-	if _, err = tx.Exec(ctx, `UPDATE hosting_operations SET state='verifying',updated_at=clock_timestamp() WHERE id=$1`, op.ID); err != nil {
+	if _, err = sqlcgen.New(tx).BeginHostingVerification(ctx, op.ID); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	op.State = "verifying"
@@ -1079,10 +1286,10 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE run_leases SET status='expired',completed_at=clock_timestamp() WHERE run_id=$1 AND status='active' AND expires_at<=clock_timestamp()`, op.ReconciliationRunID); err != nil {
+	if _, err = sqlcgen.New(tx).ExpireHostingObservationLease(ctx, op.ReconciliationRunID); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE task_runs SET status='queued',runner_id=NULL,finished_at=NULL WHERE id=$1`, op.ReconciliationRunID); err != nil {
+	if _, err = sqlcgen.New(tx).ResetHostingObservation(ctx, op.ReconciliationRunID); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	attempt, err := q.ClaimQueuedRun(ctx, sqlcgen.ClaimQueuedRunParams{RunID: op.ReconciliationRunID, RunnerID: &runnerID})
@@ -1110,3 +1317,34 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 	}
 	return op, tx.Commit(ctx)
 }
+
+// ListHostingOperations returns bounded resource history in stable newest-first order.
+func (s *PostgresStore) ListHostingOperations(ctx context.Context, resourceID string, page Page) (PageResult[domain.HostingOperation], error) {
+	var total int
+	if err := func() error {
+		row, queryErr := sqlcgen.New(s.pool).CountHostingOperations(ctx, resourceID)
+		if queryErr != nil {
+			return queryErr
+		}
+		total = int(row)
+		return nil
+	}(); err != nil {
+		return PageResult[domain.HostingOperation]{}, err
+	}
+	page = hostingPage(page, total)
+	ids, err := sqlcgen.New(s.pool).ListHostingOperationIDs(ctx, sqlcgen.ListHostingOperationIDsParams{ResourceID: resourceID, Limit: int32(page.Limit), Offset: int32(page.Offset)})
+	if err != nil {
+		return PageResult[domain.HostingOperation]{}, err
+	}
+	result := PageResult[domain.HostingOperation]{Items: make([]domain.HostingOperation, 0, len(ids)), Limit: page.Limit, Offset: page.Offset, Total: total}
+	for _, id := range ids {
+		op, err := hostingOperation(ctx, s.pool, id)
+		if err != nil {
+			return PageResult[domain.HostingOperation]{}, err
+		}
+		result.Items = append(result.Items, op)
+	}
+	return result, nil
+}
+
+func hostingStringPointer(value string) *string { return &value }

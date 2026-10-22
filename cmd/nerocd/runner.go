@@ -47,6 +47,7 @@ func runRunner(args []string) error {
 	workDir := fs.String("work-dir", os.TempDir(), "runner workspace root for checkouts")
 	journalDir := fs.String("journal-dir", os.Getenv("NEROCD_RUNNER_JOURNAL_DIR"), "owner-only durable runner event/completion journal directory")
 	secretRoot := fs.String("secret-root", os.Getenv("NEROCD_RUNNER_SECRET_ROOT"), "owner-only mode-0700 root for logical runner_file secrets")
+	imageDockerEndpoint := fs.String("image-docker-endpoint", "unix:///var/run/docker.sock", "explicit local Docker Unix socket for image hosting")
 	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
 	if err := fs.Parse(args); err != nil {
@@ -137,7 +138,7 @@ func runRunner(args []string) error {
 	if idSpecified && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	return runnerruntime.Run(runnerruntime.Config{
+	return runnerruntime.Run(runnerruntime.Config{ImageDockerEndpoint: *imageDockerEndpoint,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,

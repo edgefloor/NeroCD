@@ -7,6 +7,15 @@ import (
 )
 
 func (s *Server) hostingDeploymentRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		result, err := s.app.ListHostingDeployments(r.Context(), r.PathValue("id"), pageFromRequest(r))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, paginatedResult(result))
+		return
+	}
 	var in domain.HostingDeploymentInput
 	if !decodeBody(w, r, &in) {
 		return

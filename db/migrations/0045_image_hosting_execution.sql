@@ -80,11 +80,18 @@ CREATE TABLE hosting_binding_state (
  UNIQUE(destination_id,host_port)
 );
 
+-- Separate from the port reservation: a backup can predate the first operation.
+CREATE TABLE hosting_binding_restore_holds (
+ binding_id text PRIMARY KEY REFERENCES resource_bindings(id) ON DELETE RESTRICT,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE FUNCTION nerocd_hosting_execution_immutable() RETURNS trigger LANGUAGE plpgsql AS $function$
 BEGIN
  RAISE EXCEPTION 'hosting evidence is immutable';
 END;
 $function$;
+CREATE TRIGGER hosting_binding_restore_holds_immutable BEFORE UPDATE OR DELETE ON hosting_binding_restore_holds FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_execution_immutable();
 CREATE TRIGGER hosting_apply_admissions_immutable BEFORE UPDATE OR DELETE ON hosting_apply_admissions FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_execution_immutable();
 CREATE TRIGGER hosting_reconciliation_receipts_immutable BEFORE UPDATE OR DELETE ON hosting_reconciliation_receipts FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_execution_immutable();
 CREATE TRIGGER hosting_snapshots_immutable BEFORE UPDATE OR DELETE ON hosting_snapshots FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_execution_immutable();
@@ -119,10 +126,10 @@ CREATE TRIGGER hosting_binding_identity BEFORE UPDATE ON hosting_binding_state F
 
 CREATE FUNCTION nerocd_hosting_execution_schema_compatible() RETURNS boolean LANGUAGE sql STABLE AS $function$
 SELECT NOT EXISTS (
- SELECT 1 FROM (VALUES ('hosting_operations'),('hosting_snapshots'),('hosting_releases'),('hosting_apply_plans'),('hosting_task_targets'),('hosting_dispatch_receipts'),('hosting_receipts'),('hosting_binding_state'),('hosting_apply_admissions'),('hosting_reconciliation_receipts')) t(name)
+ SELECT 1 FROM (VALUES ('hosting_operations'),('hosting_snapshots'),('hosting_releases'),('hosting_apply_plans'),('hosting_task_targets'),('hosting_dispatch_receipts'),('hosting_receipts'),('hosting_binding_state'),('hosting_apply_admissions'),('hosting_reconciliation_receipts'),('hosting_binding_restore_holds')) t(name)
  WHERE to_regclass(current_schema()||'.'||t.name) IS NULL
 ) AND NOT EXISTS (
- SELECT 1 FROM (VALUES ('hosting_snapshots'),('hosting_releases'),('hosting_apply_plans'),('hosting_task_targets'),('hosting_dispatch_receipts'),('hosting_receipts'),('hosting_apply_admissions'),('hosting_reconciliation_receipts')) t(name)
+ SELECT 1 FROM (VALUES ('hosting_snapshots'),('hosting_releases'),('hosting_apply_plans'),('hosting_task_targets'),('hosting_dispatch_receipts'),('hosting_receipts'),('hosting_apply_admissions'),('hosting_reconciliation_receipts'),('hosting_binding_restore_holds')) t(name)
  WHERE NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(current_schema()||'.'||t.name) AND tgname=t.name||'_immutable' AND tgenabled<>'D')
 ) AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='hosting_binding_state'::regclass AND tgname='hosting_binding_identity' AND tgenabled<>'D')
 AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='hosting_operations'::regclass AND tgname='hosting_operation_identity' AND tgenabled<>'D');

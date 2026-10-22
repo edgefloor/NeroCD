@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,7 +22,16 @@ func hostingExecutionFixture(t *testing.T, stopOut ...*func(context.Context) err
 	pg, database := openPostgresIntegrationStore(t, ctx, "image_execution")
 	t.Cleanup(func() { closePostgresStore(t, pg) })
 	resource := createDestinationResource(t, pg, "image_web", "proj_platform")
-	runner := enrollDestinationRunner(t, pg, "runner_image_host", []string{"compose_deploy", domain.RunTypeImageDeploy})
+	now := time.Now().UTC()
+	credential := fmt.Sprintf("%x", sha256.Sum256([]byte("image-hosting-fixture-token")))
+	enrollment, err := pg.CreateRunnerEnrollment(ctx, domain.RunnerEnrollment{ID: "enroll_runner_image_host", TokenHash: "enrollhash_runner_image_host", RunnerID: "runner_image_host", RunnerName: "runner_image_host", Tags: []string{"shared-tag"}, Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy}, CreatedBy: "usr_bootstrap", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}, destinationEvent("enroll_runner_image_host"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := pg.ConsumeRunnerEnrollment(ctx, domain.RunnerEnrollmentConsume{TokenHash: enrollment.TokenHash, RequestID: "consume_runner_image_host", CredentialHash: credential}, destinationEvent("consume_runner_image_host"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	event := destinationEvent("image_server")
 	server, destination, err := pg.CreateServerWithDestination(ctx, domain.Server{ID: "server_image_host", RunnerID: runner.ID, Name: "image-host", CreatedBy: event.ActorID, CreatedAt: event.CreatedAt}, domain.Destination{ID: "dest_image_host", ServerID: "server_image_host", Name: "default", RuntimeKind: "docker_compose", CreatedAt: event.CreatedAt}, event)
 	if err != nil {
@@ -285,18 +295,249 @@ func TestPostgresHostingRestoreObservationModeCannotApply(t *testing.T) {
 	if _, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "forged_complete", Result: domain.HostingResult{Outcome: "succeeded", Ready: true}}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("observation published deployment success: %v", err)
 	}
-	observed, err := pg.HostingReconciliation(ctx, server.RunnerID, domain.HostingObservation{HostingAuthority: a, BindingID: op.BindingID, DaemonID: "daemon_restored", NoOwnedContainers: true})
-	if err != nil {
-		t.Fatal(err)
+	// Model a backup taken before a later admission: the restored database has
+	// no receipt or hold, while an old external command can still be in flight.
+	// A transient empty Docker listing from even the correct agent cannot prove
+	// that the command will not create a container after this observation.
+	_, err = pg.HostingReconciliation(ctx, server.RunnerID, domain.HostingObservation{HostingAuthority: a, BindingID: op.BindingID, DaemonID: "daemon_restored", NoOwnedContainers: true})
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("restored absence proof lifted ownership hold: %v", err)
 	}
-	if observed.State != "queued" || observed.Release != nil || observed.RunID != "" || observed.MutationHold {
-		t.Fatalf("observation fabricated deployment: %+v", observed)
+	var admitted bool
+	if err = database.QueryRow(ctx, `SELECT restore_admitted FROM hosting_binding_state WHERE binding_id=$1`, op.BindingID).Scan(&admitted); err != nil || admitted {
+		t.Fatalf("restore admission changed: admitted=%v err=%v", admitted, err)
 	}
 	if err = pg.PrepareDeployment(ctx, op.ID); err != nil {
 		t.Fatal(err)
 	}
 	dispatched, err := pg.GetHostingOperation(ctx, op.ID)
-	if err != nil || dispatched.RunID == "" || dispatched.State != "dispatched" {
-		t.Fatalf("reconciled queue did not dispatch: %+v %v", dispatched, err)
+	if err != nil || dispatched.RunID != "" || dispatched.State != "queued" {
+		t.Fatalf("restored queue dispatched without trusted recovery proof: %+v %v", dispatched, err)
+	}
+}
+
+func TestPostgresHostingPreAdmissionExpiryReusesCommittedRelease(t *testing.T) {
+	pg, database, resource, server, _ := hostingExecutionFixture(t)
+	ctx := t.Context()
+	op, err := pg.RequestHostingDeployment(ctx, "hop_preexpiry", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("preexpiry"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	op = awaitHostingDispatch(t, pg, op.ID)
+	a, prepared := prepareHostingAttempt(t, pg, op, server.RunnerID)
+	if _, err = database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if err = pg.ExpireLeases(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Run.ID != a.RunID || claim.Lease.Attempt != a.Attempt+1 || claim.Lease.Fence == a.Fence {
+		t.Fatal("retry changed target or reused authority")
+	}
+	next := domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	plan, err := pg.HostingRunnerPlan(ctx, server.RunnerID, next)
+	if err != nil || plan.Release == nil || *plan.Release != prepared.Release || plan.Plan == nil || plan.TaskMode != "deploy" {
+		t.Fatalf("retry re-resolved release: %+v %v", plan, err)
+	}
+	if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("stale attempt admitted: %v", err)
+	}
+	if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, next); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresHostingCancellationBeforeAndAfterAdmission(t *testing.T) {
+	for _, admitted := range []bool{false, true} {
+		t.Run(fmt.Sprint(admitted), func(t *testing.T) {
+			pg, _, resource, server, _ := hostingExecutionFixture(t)
+			ctx := t.Context()
+			op, err := pg.RequestHostingDeployment(ctx, "hop_cancel", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("cancel_request"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			op = awaitHostingDispatch(t, pg, op.ID)
+			a, _ := prepareHostingAttempt(t, pg, op, server.RunnerID)
+			if admitted {
+				if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); err != nil {
+					t.Fatal(err)
+				}
+			}
+			canceled, err := pg.CancelHostingOperation(ctx, op.ID, destinationEvent("cancel_operation"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "canceled"
+			if admitted {
+				want = "cancel_requested"
+			}
+			if canceled.State != want || canceled.MutationHold != admitted {
+				t.Fatalf("cancel erased admission boundary: %+v", canceled)
+			}
+			if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); err == nil {
+				t.Fatal("canceled lease admitted")
+			}
+			if _, err = pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("canceled task reclaimed: %v", err)
+			}
+		})
+	}
+}
+
+func TestPostgresHostingRevokedGrantDeniesClaimAndApply(t *testing.T) {
+	for _, claimed := range []bool{false, true} {
+		t.Run(fmt.Sprint(claimed), func(t *testing.T) {
+			pg, _, resource, server, destination := hostingExecutionFixture(t)
+			ctx := t.Context()
+			op, err := pg.RequestHostingDeployment(ctx, "hop_grant", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("grant_request"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			op = awaitHostingDispatch(t, pg, op.ID)
+			var a domain.HostingAuthority
+			if claimed {
+				a, _ = prepareHostingAttempt(t, pg, op, server.RunnerID)
+			}
+			if _, err = pg.RevokeDestinationProject(ctx, destination.ID, resource.ProjectID, destinationEvent("grant_revoke")); err != nil {
+				t.Fatal(err)
+			}
+			if claimed {
+				if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); !errors.Is(err, store.ErrConflict) {
+					t.Fatalf("revoked grant admitted apply: %v", err)
+				}
+			} else if _, err = pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("revoked grant claimed: %v", err)
+			}
+			state, err := pg.GetHostingOperation(ctx, op.ID)
+			if err != nil || state.MutationHold {
+				t.Fatalf("denied grant acquired hold: %+v %v", state, err)
+			}
+		})
+	}
+}
+
+func TestPostgresHostingRecoveryFindsAcceptedOperationAfterRiverCleanup(t *testing.T) {
+	var stop func(context.Context) error
+	pg, database, resource, _, _ := hostingExecutionFixture(t, &stop)
+	ctx := t.Context()
+	if err := stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	op, err := pg.RequestHostingDeployment(ctx, "hop_orphaned", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("orphaned_request"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model a final failed attempt followed by retention cleanup, while the
+	// independently durable accepted operation still has no dispatch receipt.
+	if _, err = database.Exec(ctx, `DELETE FROM river_job`); err != nil {
+		t.Fatal(err)
+	}
+	restartedStop, err := pg.StartHostingExecution(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := restartedStop(stopCtx); err != nil {
+			t.Error(err)
+		}
+	}()
+	op = awaitHostingDispatch(t, pg, op.ID)
+	if err = pg.PrepareDeployment(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	var receipts int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM hosting_dispatch_receipts WHERE operation_id=$1`, op.ID).Scan(&receipts); err != nil || receipts != 1 {
+		t.Fatalf("recovery duplicated dispatch: %d %v", receipts, err)
+	}
+}
+
+func TestPostgresHostingRestoreHoldBlocksBindingBeforeFirstOperation(t *testing.T) {
+	pg, database, resource, _, _ := hostingExecutionFixture(t)
+	ctx := t.Context()
+	if _, err := database.Exec(ctx, `INSERT INTO hosting_binding_restore_holds(binding_id) SELECT id FROM resource_bindings`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.RequestHostingDeployment(ctx, "hop_postbackup", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("postbackup")); !errors.Is(err, store.ErrHostingRestoreHold) {
+		t.Fatalf("restored binding admitted first operation: %v", err)
+	}
+	var operations, states int
+	if err := database.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_operations),(SELECT count(*) FROM hosting_binding_state)`).Scan(&operations, &states); err != nil || operations != 0 || states != 0 {
+		t.Fatalf("denied restore created intent: operations=%d states=%d err=%v", operations, states, err)
+	}
+	if _, err := database.Exec(ctx, `DELETE FROM hosting_binding_restore_holds`); err == nil {
+		t.Fatal("restore holds can be silently removed")
+	}
+}
+
+func TestPostgresHostingRestoreHoldBlocksExistingClaimAndApply(t *testing.T) {
+	for _, claimed := range []bool{false, true} {
+		t.Run(fmt.Sprint(claimed), func(t *testing.T) {
+			pg, database, resource, server, _ := hostingExecutionFixture(t)
+			ctx := t.Context()
+			op, err := pg.RequestHostingDeployment(ctx, "hop_restore_existing", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("restore_existing"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			op = awaitHostingDispatch(t, pg, op.ID)
+			var a domain.HostingAuthority
+			if claimed {
+				a, _ = prepareHostingAttempt(t, pg, op, server.RunnerID)
+			}
+			if _, err = database.Exec(ctx, `INSERT INTO hosting_binding_restore_holds(binding_id) SELECT id FROM resource_bindings`); err != nil {
+				t.Fatal(err)
+			}
+			if claimed {
+				if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); !errors.Is(err, store.ErrHostingRestoreHold) {
+					t.Fatalf("restored admission applied: %v", err)
+				}
+			} else if _, err = pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("restored target claimed: %v", err)
+			}
+			status, err := pg.GetHostingOperation(ctx, op.ID)
+			if err != nil || !status.RestoreOwnershipHeld || status.MutationHold {
+				t.Fatalf("public restore status: %+v %v", status, err)
+			}
+		})
+	}
+}
+
+func TestPostgresHostingNonRestoredNeverDispatchedObservationRetainsQueuedIntent(t *testing.T) {
+	var stop func(context.Context) error
+	pg, _, resource, server, _ := hostingExecutionFixture(t, &stop)
+	ctx := t.Context()
+	if err := stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	op, err := pg.RequestHostingDeployment(ctx, "hop_never_dispatched", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("never_dispatched"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.RunID != "" {
+		t.Fatal("stopped consumer dispatched")
+	}
+	if _, err = pg.RequestHostingReconciliation(ctx, op.ID, destinationEvent("observe_normal")); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	observed, err := pg.HostingReconciliation(ctx, server.RunnerID, domain.HostingObservation{HostingAuthority: a, BindingID: op.BindingID, DaemonID: "daemon_unrestored", NoOwnedContainers: true})
+	if err != nil || observed.State != "queued" || observed.RunID != "" || observed.Release != nil || observed.MutationHold || observed.RestoreOwnershipHeld {
+		t.Fatalf("normal observation fabricated or blocked deployment: %+v %v", observed, err)
+	}
+	if err = pg.PrepareDeployment(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	after, err := pg.GetHostingOperation(ctx, op.ID)
+	if err != nil || after.State != "dispatched" || after.RunID == "" {
+		t.Fatalf("normal queued operation did not dispatch: %+v %v", after, err)
 	}
 }

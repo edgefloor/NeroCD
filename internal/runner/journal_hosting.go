@@ -23,6 +23,7 @@ type JournalHosting struct {
 	CreatedAt   time.Time                      `json:"created_at"`
 }
 
+// AppendHosting durably records nonsecret hosting evidence before external mutation or delivery.
 func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, error) {
 	if err := validateJournalHosting(entry); err != nil {
 		return JournalHosting{}, err
