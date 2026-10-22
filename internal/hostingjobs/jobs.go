@@ -81,6 +81,7 @@ type Config struct {
 // Client owns a private River client. Construction neither migrates nor starts it.
 type Client struct {
 	hasProxy               bool
+	hasBuild               bool
 	river                  *river.Client[pgx.Tx]
 	pool                   *pgxpool.Pool
 	schema, host, database string
@@ -123,12 +124,16 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 	if hasProxy {
 		river.AddWorker(workers, &prepareProxyWorker{handler: proxyHandler})
 	}
+	buildHandler, hasBuild := handler.(BuildHandler)
+	if hasBuild {
+		river.AddWorker(workers, &prepareBuildWorker{handler: buildHandler})
+	}
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema, Workers: workers, Queues: map[string]river.QueueConfig{Queue: {MaxWorkers: cfg.MaxWorkers}}, JobTimeout: cfg.JobTimeout, SoftStopTimeout: cfg.DrainTimeout, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), FetchCooldown: 10 * time.Millisecond, FetchPollInterval: 100 * time.Millisecond})
 	if err != nil {
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy}, nil
+	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.
