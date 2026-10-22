@@ -44,22 +44,23 @@ type buildOutputAdapter struct {
 	failed    bool
 }
 
-func newBuildOutputAdapter(e *BuildExecutor, a domain.HostingBuildAuthority, at runner.AttemptIdentity) (*buildOutputAdapter, error) {
+func newBuildOutputAdapter(e *BuildExecutor, a domain.HostingBuildAuthority, at runner.AttemptIdentity, attemptSecrets ...runner.SecretMaterial) (*buildOutputAdapter, error) {
 	if _, ok := e.client.(buildLogClient); !ok {
 		return nil, errors.New("typed build log client required")
 	}
 	if _, ok := e.engine.(buildOutputEngine); !ok {
 		return nil, errors.New("observed build engine required")
 	}
-	if len(e.logSecrets) > 16 {
+	secrets := append(append([]runner.SecretMaterial(nil), e.logSecrets...), attemptSecrets...)
+	if len(secrets) > 16 {
 		return nil, errors.New("too many build log secrets")
 	}
-	for _, secret := range e.logSecrets {
+	for _, secret := range secrets {
 		if len(secret.Value) > 4096 || len(secret.Encodings) > 3 {
 			return nil, errors.New("build log secret exceeds bound")
 		}
 	}
-	return &buildOutputAdapter{executor: e, attempt: at, authority: a, redactor: runner.NewRedactor(e.logSecrets), tails: map[string]string{}}, nil
+	return &buildOutputAdapter{executor: e, attempt: at, authority: a, redactor: runner.NewRedactor(secrets), tails: map[string]string{}}, nil
 }
 
 func validBuildOutput(component, stream string) bool {
