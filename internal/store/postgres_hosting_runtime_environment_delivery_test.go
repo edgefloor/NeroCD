@@ -3,6 +3,7 @@ package store_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -18,6 +19,277 @@ import (
 	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store"
 )
+
+func runtimeCredentialApp(t *testing.T, pg *store.PostgresStore) *app.Service {
+	t.Helper()
+	s, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, SecretKeyring: managedRing(t), Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func runtimeCredentialEnrollment(t *testing.T, f runtimeAdmissionFixture, hash string) {
+	t.Helper()
+	// A current replacement enrollment must not make the original bearer current.
+	// Fixture-only replacement satisfies the unique runner_id constraint without
+	// claiming that the production enrollment API re-enrolls an existing runner.
+	tx, err := f.db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err = tx.Exec(t.Context(), `DELETE FROM runner_enrollments WHERE runner_id=$1`, f.runner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), `INSERT INTO runner_enrollments(id,token_hash,runner_id,runner_name,tags,capabilities,created_by,created_at,expires_at,used_at,consume_request_id,credential_hash)
+ SELECT 'runtime_replacement_enrollment','runtime_replacement_enrollment_hash',id,name,tags,capabilities,'usr_bootstrap',clock_timestamp(),clock_timestamp()+interval '1 hour',clock_timestamp(),'runtime_replacement_request',$2 FROM runners WHERE id=$1`, f.runner, hash); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runtimeCredentialWait(t *testing.T, ctx context.Context, f runtimeAdmissionFixture, fragment string) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err := f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid))>0 AND query LIKE '%'||$1||'%')`, fragment).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func TestPostgresRuntimeDeliveryCredentialRotationBeforeRunnerLock(t *testing.T) {
+	f, _, in := runtimeDeliveryFixture(t, false)
+	s := runtimeCredentialApp(t, f.pg)
+	oldToken := "image-hosting-fixture-token"
+	principal, err := s.AuthenticateRunnerToken(t.Context(), oldToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(auth.WithPrincipal(t.Context(), principal), 10*time.Second)
+	defer cancel()
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err = blocker.Exec(ctx, `SELECT id FROM resources WHERE id=$1 FOR UPDATE`, f.resource); err != nil {
+		t.Fatal(err)
+	}
+	component, err := app.NewHostingRuntimeEnvironmentDelivery(auth.ContextProvider{}, s, f.pg, managedRing(t), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	var group sync.WaitGroup
+	group.Go(func() {
+		out, e := component.Deliver(ctx, in, oldToken)
+		if out != nil {
+			out.Close()
+			done <- fmt.Errorf("rotated credential returned environment")
+			return
+		}
+		done <- e
+	})
+	defer func() { cancel(); _ = blocker.Rollback(context.Background()); group.Wait() }()
+	runtimeCredentialWait(t, ctx, f, "SELECT id,project_id,kind,source,generation FROM resources")
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte("replacement-runtime-bearer")))
+	if _, err = f.pg.UpdateRunnerToken(ctx, f.runner, hash, domain.RunnerActive, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	runtimeCredentialEnrollment(t, f, hash)
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != app.ErrHostingRuntimeEnvironmentUnavailable {
+		t.Fatal("old credential authorized after placement wait", err)
+	}
+	var count int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='hosting.runtime_environment_authorized'`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("rotated credential committed authorization", count, err)
+	}
+}
+
+func TestPostgresRuntimeDeliveryCredentialRotationDuringAudit(t *testing.T) {
+	f, _, in := runtimeDeliveryFixture(t, false)
+	s := runtimeCredentialApp(t, f.pg)
+	oldToken := "image-hosting-fixture-token"
+	principal, err := s.AuthenticateRunnerToken(t.Context(), oldToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(auth.WithPrincipal(t.Context(), principal), 10*time.Second)
+	defer cancel()
+	if _, err = f.db.Exec(ctx, `CREATE FUNCTION runtime_credential_audit_wait() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hosting.runtime_environment_authorized' THEN PERFORM pg_advisory_xact_lock(982759); END IF;RETURN NEW;END $$;CREATE TRIGGER runtime_credential_audit_wait BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION runtime_credential_audit_wait()`); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(982759)`); err != nil {
+		t.Fatal(err)
+	}
+	pause := &runtimeCredentialPause{repository: f.pg, committed: make(chan struct{}), resume: make(chan struct{})}
+	component, err := app.NewHostingRuntimeEnvironmentDelivery(auth.ContextProvider{}, s, pause, managedRing(t), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	rotated := make(chan error, 1)
+	var group sync.WaitGroup
+	group.Go(func() {
+		out, e := component.Deliver(ctx, in, oldToken)
+		if out != nil {
+			out.Close()
+			done <- fmt.Errorf("rotated credential returned environment")
+			return
+		}
+		done <- e
+	})
+	defer func() {
+		cancel()
+		_ = blocker.Rollback(context.Background())
+		select {
+		case <-pause.resume:
+		default:
+			close(pause.resume)
+		}
+		group.Wait()
+	}()
+	runtimeCredentialWait(t, ctx, f, "INSERT INTO audit_events")
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte("replacement-runtime-bearer")))
+	group.Go(func() {
+		_, e := f.pg.UpdateRunnerToken(ctx, f.runner, hash, domain.RunnerActive, time.Now())
+		rotated <- e
+	})
+	runtimeCredentialWait(t, ctx, f, "UPDATE runners SET token_hash")
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-pause.committed:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err = <-rotated; err != nil {
+		t.Fatal(err)
+	}
+	close(pause.resume)
+	if err = <-done; err != app.ErrHostingRuntimeEnvironmentUnavailable {
+		t.Fatal("queued rotation failed to deny original credential", err)
+	}
+}
+
+type runtimeCredentialPause struct {
+	repository store.HostingRuntimeEnvironmentRepository
+	committed  chan struct{}
+	resume     chan struct{}
+}
+
+func (p *runtimeCredentialPause) AuthorizeHostingRuntimeEnvironment(ctx context.Context, runner, credentialHash string, in domain.HostingRuntimeEnvironmentRequest) (store.HostingRuntimeEnvironmentAuthorization, error) {
+	a, err := p.repository.AuthorizeHostingRuntimeEnvironment(ctx, runner, credentialHash, in)
+	if err != nil {
+		return a, err
+	}
+	close(p.committed)
+	select {
+	case <-p.resume:
+		return a, nil
+	case <-ctx.Done():
+		a.Close()
+		return store.HostingRuntimeEnvironmentAuthorization{}, ctx.Err()
+	}
+}
+
+func TestPostgresRuntimeDeliveryCredentialRotationAfterCommit(t *testing.T) {
+	for _, enroll := range []bool{false, true} {
+		t.Run(fmt.Sprint(enroll), func(t *testing.T) {
+			f, _, in := runtimeDeliveryFixture(t, false)
+			s := runtimeCredentialApp(t, f.pg)
+			oldToken := "image-hosting-fixture-token"
+			principal, err := s.AuthenticateRunnerToken(t.Context(), oldToken)
+			if err != nil || principal.ID != f.runner {
+				t.Fatal("original authentication failed", err)
+			}
+			ctx, cancel := context.WithTimeout(auth.WithPrincipal(t.Context(), principal), 10*time.Second)
+			defer cancel()
+			pause := &runtimeCredentialPause{repository: f.pg, committed: make(chan struct{}), resume: make(chan struct{})}
+			component, err := app.NewHostingRuntimeEnvironmentDelivery(auth.ContextProvider{}, s, pause, managedRing(t), time.Now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			var group sync.WaitGroup
+			group.Go(func() {
+				out, e := component.Deliver(ctx, in, "image-hosting-fixture-token")
+				if out != nil {
+					out.Close()
+					done <- fmt.Errorf("original request returned environment after rotation")
+					return
+				}
+				done <- e
+			})
+			defer func() {
+				cancel()
+				select {
+				case <-pause.resume:
+				default:
+					close(pause.resume)
+				}
+				group.Wait()
+			}()
+			select {
+			case <-pause.committed:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			var count int
+			if err = f.db.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE id=$1`, "aud_runtime_delivery_"+in.DeliveryID).Scan(&count); err != nil || count != 1 {
+				t.Fatal("authorization did not commit", count, err)
+			}
+			var metadata []byte
+			if err = f.db.QueryRow(ctx, `SELECT metadata::text FROM audit_events WHERE id=$1`, "aud_runtime_delivery_"+in.DeliveryID).Scan(&metadata); err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(metadata, []byte(oldToken)) || bytes.Contains(metadata, []byte(runtimeDeliveryCredential(f))) {
+				t.Fatal("credential binding entered audit metadata")
+			}
+			newToken := "replacement-runtime-bearer"
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(newToken)))
+			if _, err = f.pg.UpdateRunnerToken(ctx, f.runner, hash, domain.RunnerActive, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if enroll {
+				runtimeCredentialEnrollment(t, f, hash)
+			}
+			if _, err = s.AuthenticateRunnerToken(ctx, oldToken); err == nil {
+				t.Fatal("old fresh authentication succeeded")
+			}
+			if p, e := s.AuthenticateRunnerToken(ctx, newToken); e != nil || p.ID != f.runner {
+				t.Fatal("replacement fresh authentication failed", e)
+			}
+			close(pause.resume)
+			if err = <-done; err != app.ErrHostingRuntimeEnvironmentUnavailable {
+				t.Fatal("rotation did not deny original in-flight request", err)
+			}
+		})
+	}
+}
 
 func runtimeDeliveryFixture(t *testing.T, local bool) (runtimeAdmissionFixture, domain.HostingOperation, domain.HostingRuntimeEnvironmentRequest) {
 	t.Helper()
@@ -45,7 +317,7 @@ func runtimeDeliveryFixture(t *testing.T, local bool) (runtimeAdmissionFixture, 
 
 func denyRuntimeDelivery(t *testing.T, f runtimeAdmissionFixture, in domain.HostingRuntimeEnvironmentRequest) {
 	t.Helper()
-	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, in)
+	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, runtimeDeliveryCredential(f), in)
 	if err == nil || got.ProjectID != "" || len(got.Records) > 0 || !got.Window.UseUntil.IsZero() {
 		got.Close()
 		t.Fatal("denied request returned authorization", err)
@@ -72,7 +344,7 @@ func TestPostgresRuntimeDeliveryRejectsAttemptOverflow(t *testing.T) {
 				t.Fatal(err)
 			}
 			ctx := auth.WithPrincipal(t.Context(), auth.Principal{ID: f.runner, Provider: domain.PrincipalRunner})
-			out, err := component.Deliver(ctx, invalid)
+			out, err := component.Deliver(ctx, invalid, "image-hosting-fixture-token")
 			if out != nil {
 				out.Close()
 			}
@@ -85,7 +357,7 @@ func TestPostgresRuntimeDeliveryRejectsAttemptOverflow(t *testing.T) {
 		})
 	}
 	// Invalid requests must not claim the delivery ID or prevent valid authority.
-	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, in)
+	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, runtimeDeliveryCredential(f), in)
 	if err != nil {
 		t.Fatal("valid attempt rejected", err)
 	}
@@ -104,7 +376,7 @@ func TestPostgresRuntimeDeliveryOriginalWindowAndAudit(t *testing.T) {
 			errs := make(chan error, 4)
 			for range 4 {
 				group.Go(func() {
-					v, e := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, in)
+					v, e := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, runtimeDeliveryCredential(f), in)
 					results <- v
 					errs <- e
 				})
@@ -130,7 +402,7 @@ func TestPostgresRuntimeDeliveryOriginalWindowAndAudit(t *testing.T) {
 			if _, err := f.db.Exec(t.Context(), `UPDATE run_leases SET expires_at=clock_timestamp()+interval '2 hours' WHERE id=$1`, in.Authority.LeaseID); err != nil {
 				t.Fatal(err)
 			}
-			again, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, in)
+			again, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, runtimeDeliveryCredential(f), in)
 			if err != nil || again.Window != window {
 				t.Fatal("renewal changed window", err)
 			}
@@ -225,6 +497,21 @@ func TestPostgresRuntimeDeliveryDenials(t *testing.T) {
 
 type runtimeDeliveryRunner string
 
+func (r runtimeDeliveryRunner) AuthenticateRunnerToken(_ context.Context, token string) (auth.Principal, error) {
+	if token != "image-hosting-fixture-token" {
+		return auth.Principal{}, auth.ErrUnauthenticated
+	}
+	return auth.Principal{ID: string(r), Provider: domain.PrincipalRunner}, nil
+}
+
+func runtimeDeliveryCredential(f runtimeAdmissionFixture) string {
+	token := "image-hosting-fixture-token"
+	if f.build != nil {
+		token = "build-fixture-token"
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
+}
+
 func (r runtimeDeliveryRunner) CurrentRunnerIdentity(context.Context) (app.RunnerIdentity, error) {
 	return app.RunnerIdentity{RunnerID: string(r), Capabilities: []string{domain.HostingRuntimeEnvironmentCapability}}, nil
 }
@@ -242,7 +529,7 @@ func TestPostgresRuntimeDeliveryDecryptOnlyAfterCommittedAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := auth.WithPrincipal(t.Context(), auth.Principal{ID: f.runner, Provider: domain.PrincipalRunner})
-	if got, e := component.Deliver(ctx, in); e == nil || got != nil {
+	if got, e := component.Deliver(ctx, in, "image-hosting-fixture-token"); e == nil || got != nil {
 		t.Fatal("missing key delivered values")
 	}
 	var count int
@@ -253,7 +540,7 @@ func TestPostgresRuntimeDeliveryDecryptOnlyAfterCommittedAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := component.Deliver(ctx, in)
+	out, err := component.Deliver(ctx, in, "image-hosting-fixture-token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +571,7 @@ func TestPostgresRuntimeDeliveryAuditAndCommitFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			ctx := auth.WithPrincipal(t.Context(), auth.Principal{ID: f.runner, Provider: domain.PrincipalRunner})
-			got, err := component.Deliver(ctx, in)
+			got, err := component.Deliver(ctx, in, "image-hosting-fixture-token")
 			if got != nil {
 				got.Close()
 			}
@@ -313,7 +600,7 @@ func TestPostgresRuntimeDeliveryCrossProjectReferenceDenied(t *testing.T) {
 		t.Fatal("cross-project selection saved")
 	}
 	// The failed selection cannot alter the currently authorized delivery.
-	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, in)
+	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, runtimeDeliveryCredential(f), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +637,7 @@ func TestPostgresRuntimeDeliveryAuditWaitExpiryRollback(t *testing.T) {
 	done := make(chan error, 1)
 	var group sync.WaitGroup
 	group.Go(func() {
-		got, e := f.pg.AuthorizeHostingRuntimeEnvironment(ctx, f.runner, in)
+		got, e := f.pg.AuthorizeHostingRuntimeEnvironment(ctx, f.runner, runtimeDeliveryCredential(f), in)
 		if len(got.Records) != 0 {
 			done <- fmt.Errorf("returned envelope after expiry")
 			return
@@ -401,7 +688,7 @@ func TestPostgresRuntimeDeliveryExpiredWindowAfterRenewal(t *testing.T) {
 	if _, err := f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1`, in.Authority.LeaseID); err != nil {
 		t.Fatal(err)
 	}
-	first, err := f.pg.AuthorizeHostingRuntimeEnvironment(ctx, f.runner, in)
+	first, err := f.pg.AuthorizeHostingRuntimeEnvironment(ctx, f.runner, runtimeDeliveryCredential(f), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,14 +711,14 @@ func TestPostgresRuntimeDeliveryExpiredWindowAfterRenewal(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(ctx, f.runner, in)
+	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(ctx, f.runner, runtimeDeliveryCredential(f), in)
 	if err == nil || len(got.Records) != 0 {
 		got.Close()
 		t.Fatal("expired window returned authorization")
 	}
 	fresh := in
 	fresh.DeliveryID = strings.Repeat("f", 32)
-	if _, err = f.pg.AuthorizeHostingRuntimeEnvironment(ctx, f.runner, fresh); err != nil {
+	if _, err = f.pg.AuthorizeHostingRuntimeEnvironment(ctx, f.runner, runtimeDeliveryCredential(f), fresh); err != nil {
 		t.Fatal("fresh ID could not open a new live window", err)
 	}
 }

@@ -11,6 +11,23 @@ import (
 	"time"
 )
 
+const checkHostingRuntimeEnvironmentCredential = `-- name: CheckHostingRuntimeEnvironmentCredential :one
+SELECT id FROM runners WHERE id=$1 AND token_hash=$2
+ AND token_hash<>'' AND status='active' FOR SHARE
+`
+
+type CheckHostingRuntimeEnvironmentCredentialParams struct {
+	RunnerID       string `json:"runner_id"`
+	CredentialHash string `json:"credential_hash"`
+}
+
+func (q *Queries) CheckHostingRuntimeEnvironmentCredential(ctx context.Context, arg CheckHostingRuntimeEnvironmentCredentialParams) (string, error) {
+	row := q.db.QueryRow(ctx, checkHostingRuntimeEnvironmentCredential, arg.RunnerID, arg.CredentialHash)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getHostingRuntimeEnvironmentDeliveryAudit = `-- name: GetHostingRuntimeEnvironmentDeliveryAudit :one
 SELECT action,target_id,actor_id,metadata FROM audit_events WHERE id=$1
 `

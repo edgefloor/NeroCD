@@ -19,24 +19,74 @@ type runtimeIdentity struct {
 	current RunnerIdentity
 	calls   int
 	after   func()
+	token   string
+	afterAt int
+}
+
+func (r *runtimeIdentity) AuthenticateRunnerToken(_ context.Context, token string) (auth.Principal, error) {
+	if token == "" || token != r.token {
+		return auth.Principal{}, auth.ErrUnauthenticated
+	}
+	return auth.Principal{ID: r.current.RunnerID, Provider: domain.PrincipalRunner}, nil
 }
 
 func (r *runtimeIdentity) CurrentRunnerIdentity(context.Context) (RunnerIdentity, error) {
 	r.calls++
-	if r.calls == 2 && r.after != nil {
+	afterAt := r.afterAt
+	if afterAt == 0 {
+		afterAt = 2
+	}
+	if r.calls == afterAt && r.after != nil {
 		r.after()
 	}
 	return r.current, nil
 }
 
-type runtimeDeliveryRepository struct {
-	value     store.HostingRuntimeEnvironmentAuthorization
-	err       error
-	calls     int
-	committed bool
+func TestRuntimeEnvironmentDeliveryOriginalBearerRequired(t *testing.T) {
+	for _, name := range []string{"missing", "incorrect", "rotation_before_decrypt", "rotation_before_return", "revocation_before_return"} {
+		t.Run(name, func(t *testing.T) {
+			s, repo, identity, ctx, in := runtimeAppFixture(t)
+			token := "runtime-delivery-bearer"
+			switch name {
+			case "missing":
+				token = ""
+			case "incorrect":
+				token = "incorrect-bearer"
+			case "rotation_before_decrypt":
+				identity.after = func() { identity.token = "replacement" }
+			case "rotation_before_return":
+				identity.afterAt = 3
+				identity.after = func() { identity.token = "replacement" }
+			case "revocation_before_return":
+				identity.afterAt = 3
+				identity.after = func() { identity.token = "" }
+			}
+			out, err := s.Deliver(ctx, in, token)
+			if out != nil {
+				out.Close()
+			}
+			if err != ErrHostingRuntimeEnvironmentUnavailable || out != nil {
+				t.Fatal("original bearer no longer authorizes delivery", err)
+			}
+			if (name == "missing" || name == "incorrect") && repo.calls != 0 {
+				t.Fatal("invalid bearer reached repository")
+			}
+			if strings.Contains(name, "before_return") && identity.calls != 3 {
+				t.Fatal("final credential boundary not reached")
+			}
+		})
+	}
 }
 
-func (r *runtimeDeliveryRepository) AuthorizeHostingRuntimeEnvironment(context.Context, string, domain.HostingRuntimeEnvironmentRequest) (store.HostingRuntimeEnvironmentAuthorization, error) {
+type runtimeDeliveryRepository struct {
+	value       store.HostingRuntimeEnvironmentAuthorization
+	err         error
+	calls       int
+	committed   bool
+	afterCommit func()
+}
+
+func (r *runtimeDeliveryRepository) AuthorizeHostingRuntimeEnvironment(context.Context, string, string, domain.HostingRuntimeEnvironmentRequest) (store.HostingRuntimeEnvironmentAuthorization, error) {
 	r.calls++
 	if r.err != nil {
 		return store.HostingRuntimeEnvironmentAuthorization{}, r.err
@@ -47,6 +97,9 @@ func (r *runtimeDeliveryRepository) AuthorizeHostingRuntimeEnvironment(context.C
 	for ref, record := range r.value.Records {
 		record.Envelope.Data = bytes.Clone(record.Envelope.Data)
 		v.Records[ref] = record
+	}
+	if r.afterCommit != nil {
+		r.afterCommit()
 	}
 	return v, nil
 }
@@ -66,7 +119,7 @@ func runtimeAppFixture(t *testing.T) (*HostingRuntimeEnvironmentDelivery, *runti
 		t.Fatal(err)
 	}
 	repo := &runtimeDeliveryRepository{value: store.HostingRuntimeEnvironmentAuthorization{ProjectID: "project", Document: doc, Window: domain.HostingRuntimeEnvironmentWindow{DeliveryID: in.DeliveryID, RequestHash: hostingruntimeprotocol.RuntimeEnvironmentRequestHash("runner", in), UseUntil: time.Now().Add(time.Minute)}, Records: map[domain.HostingRuntimeSecretReference]store.ManagedSecretRecord{ref: {Metadata: domain.ManagedSecretVersion{SecretID: ref.SecretID, Version: 1}, Envelope: envelope}}}}
-	identity := &runtimeIdentity{current: RunnerIdentity{RunnerID: "runner", Capabilities: []string{domain.HostingRuntimeEnvironmentCapability}}}
+	identity := &runtimeIdentity{current: RunnerIdentity{RunnerID: "runner", Capabilities: []string{domain.HostingRuntimeEnvironmentCapability}}, token: "runtime-delivery-bearer"}
 	s, err := NewHostingRuntimeEnvironmentDelivery(auth.ContextProvider{}, identity, repo, keys, time.Now)
 	if err != nil {
 		t.Fatal(err)
@@ -75,9 +128,34 @@ func runtimeAppFixture(t *testing.T) (*HostingRuntimeEnvironmentDelivery, *runti
 	return s, repo, identity, ctx, in
 }
 
+func TestRuntimeEnvironmentDeliveryRejectsRotatedCredentialAfterCommit(t *testing.T) {
+	s, repo, identity, ctx, in := runtimeAppFixture(t)
+	oldToken := identity.token
+	if _, err := identity.AuthenticateRunnerToken(ctx, oldToken); err != nil {
+		t.Fatal(err)
+	}
+	repo.afterCommit = func() { identity.token = "replacement-bearer" }
+	out, err := s.Deliver(ctx, in, "runtime-delivery-bearer")
+	if out != nil {
+		out.Close()
+	}
+	if err == nil || out != nil {
+		t.Fatal("original credential delivered values after replacement")
+	}
+	if !repo.committed {
+		t.Fatal("test did not cross the committed authorization boundary")
+	}
+	if _, err = identity.AuthenticateRunnerToken(ctx, oldToken); err == nil {
+		t.Fatal("old fresh authentication succeeded")
+	}
+	if _, err = identity.AuthenticateRunnerToken(ctx, identity.token); err != nil {
+		t.Fatal("replacement authentication failed", err)
+	}
+}
+
 func TestRuntimeEnvironmentDeliveryAuditBoundaryAndLiteral(t *testing.T) {
 	s, repo, _, ctx, in := runtimeAppFixture(t)
-	out, err := s.Deliver(ctx, in)
+	out, err := s.Deliver(ctx, in, "runtime-delivery-bearer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +214,7 @@ func TestRuntimeEnvironmentDeliveryDenials(t *testing.T) {
 			case "missing_keys":
 				s.keys = nil
 			}
-			got, err := s.Deliver(ctx, in)
+			got, err := s.Deliver(ctx, in, "runtime-delivery-bearer")
 			if got != nil {
 				got.Close()
 			}

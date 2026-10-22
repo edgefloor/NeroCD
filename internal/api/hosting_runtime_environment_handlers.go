@@ -24,7 +24,12 @@ func (s *Server) runnerHostingRuntimeEnvironment(w http.ResponseWriter, r *http.
 		writeError(w, app.ErrHostingRuntimeEnvironmentUnavailable)
 		return
 	}
-	out, err := s.app.RunnerHostingRuntimeEnvironment(r.Context(), in)
+	token, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		writeError(w, app.ErrHostingRuntimeEnvironmentUnavailable)
+		return
+	}
+	out, err := s.app.RunnerHostingRuntimeEnvironment(r.Context(), in, token)
 	if err != nil {
 		writeError(w, err)
 		return

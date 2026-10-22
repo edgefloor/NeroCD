@@ -1,17 +1,130 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"nerocd/internal/app"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingruntimeprotocol"
+	"nerocd/internal/store"
 )
+
+type runtimeCredentialHTTPRepository struct {
+	*store.MemoryStore
+	document domain.HostingRuntimeDocument
+	window   domain.HostingRuntimeEnvironmentWindow
+	hash     string
+	after    func()
+}
+
+func (r *runtimeCredentialHTTPRepository) AuthorizeHostingRuntimeEnvironment(_ context.Context, runner, hash string, in domain.HostingRuntimeEnvironmentRequest) (store.HostingRuntimeEnvironmentAuthorization, error) {
+	r.hash = hash
+	if r.after != nil {
+		r.after()
+	}
+	return store.HostingRuntimeEnvironmentAuthorization{ProjectID: "project", Document: r.document, Window: r.window, Records: map[domain.HostingRuntimeSecretReference]store.ManagedSecretRecord{}}, nil
+}
+
+func TestRuntimeEnvironmentHTTPOriginalBearerBinding(t *testing.T) {
+	mem := newSeededTestStore()
+	old := "original-http-bearer"
+	oldHash := fmtRuntimeCredentialHash(old)
+	if _, err := mem.RegisterRunner(t.Context(), domain.Runner{ID: "runtime_http", Name: "runtime_http", TokenHash: oldHash, Status: domain.RunnerActive, Capabilities: []string{domain.HostingRuntimeEnvironmentCapability}}); err != nil {
+		t.Fatal(err)
+	}
+	value := "literal-value"
+	doc, _, err := domain.CanonicalHostingRuntimeDocument([]domain.HostingRuntimeEntry{{Name: "APP", Kind: "literal", Value: &value}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := domain.HostingRuntimeEnvironmentRequest{Authority: domain.HostingAuthority{OperationID: "hop", RunID: "run_hop", LeaseID: "lease", Attempt: 1, Fence: "fence"}, DeliveryID: strings.Repeat("a", 32), PlanHash: "sha256:" + strings.Repeat("b", 64), RuntimeConfiguration: domain.HostingRuntimeConfigurationRef{Generation: 1, Hash: domain.HostingDocumentHash(doc)}}
+	repo := &runtimeCredentialHTTPRepository{MemoryStore: mem, document: doc, window: domain.HostingRuntimeEnvironmentWindow{DeliveryID: in.DeliveryID, RequestHash: hostingruntimeprotocol.RuntimeEnvironmentRequestHash("runtime_http", in), UseUntil: time.Now().Add(time.Minute)}}
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	body, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "https://127.0.0.1/api/v1/runners/hosting/runtime-environment", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		if rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("cache header missing")
+		}
+		return rec
+	}
+	for _, token := range []string{"", "incorrect-http-bearer"} {
+		if rec := request(token); rec.Code != http.StatusUnauthorized {
+			t.Fatal("invalid bearer accepted", rec.Code)
+		}
+	}
+	publicBody := body
+	body = []byte(strings.TrimSuffix(string(body), "}") + `,"credential_hash":"` + oldHash + `"}`)
+	if rec := request(old); rec.Code != http.StatusBadRequest || repo.hash != "" {
+		t.Fatal("caller supplied hash reached delivery", rec.Code)
+	}
+	body = publicBody
+	for range 2 {
+		rec := request(old)
+		if rec.Code != http.StatusOK || repo.hash != oldHash {
+			t.Fatal("original bearer was not privately bound", rec.Code)
+		}
+		responseBody := rec.Body.String()
+		owned, e := hostingruntimeprotocol.ReadEnvironment(strings.NewReader(responseBody))
+		if e != nil {
+			t.Fatal(e)
+		}
+		metadata, e := owned.Metadata()
+		owned.Close()
+		if e != nil || !metadata.UseUntil.Equal(repo.window.UseUntil) {
+			t.Fatal("same ID retry changed window", e)
+		}
+		if strings.Contains(responseBody, old) || strings.Contains(responseBody, oldHash) {
+			t.Fatal("credential entered response")
+		}
+	}
+	newToken := "replacement-http-bearer"
+	repo.after = func() {
+		if _, e := mem.UpdateRunnerToken(t.Context(), "runtime_http", fmtRuntimeCredentialHash(newToken), domain.RunnerActive, time.Now()); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if rec := request(old); rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "entries") {
+		t.Fatal("rotated credential returned environment", rec.Code)
+	}
+	repo.after = nil
+	if rec := request(old); rec.Code != http.StatusUnauthorized {
+		t.Fatal("old fresh bearer accepted", rec.Code)
+	}
+	if rec := request(newToken); rec.Code != http.StatusOK || repo.hash != fmtRuntimeCredentialHash(newToken) {
+		t.Fatal("replacement bearer failed", rec.Code)
+	}
+}
+
+func fmtRuntimeCredentialHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
 
 func TestRuntimeEnvironmentNoStoreAcrossFailures(t *testing.T) {
 	for _, test := range []struct {
