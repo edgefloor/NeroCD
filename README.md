@@ -1,96 +1,77 @@
 # NeroCD
 
-NeroCD is becoming a self-hosted application platform in Go, with the complete
-Coolify replacement scope recorded in the [product specification](docs/product-spec.md).
-The target journey is to connect a server, choose a repository, configure an
-application, deploy it, and open its HTTPS URL. Stateful hosting, previews,
-recovery, operations and migration are part of the same product.
+NeroCD is building a shared workspace where people and AI agents build, test,
+review and deploy software on machines they control. The target is a durable
+Task with retained changes, checks and a working environment that a teammate
+can review and continue after the submitting laptop goes offline.
 
-The current implementation is an automation control plane for projects,
-repositories, templates, runs, approvals, runners, logs and audit events. The
-Go API, CLI and runner share the codebase with an embedded React/TypeScript
-web application. The [implementation plan](docs/plan.md) and
-[compatibility ledger](docs/compatibility.md) distinguish the target from
-validated capabilities. Repository-to-HTTPS is the first hosting milestone;
-it is not a complete Coolify parity claim.
+The [revision 3 product specification](docs/product-spec.md) defines the complete
+target. The first demonstration is task-to-reviewed-deployment, ordered through
+D0–D3 in the [implementation plan](docs/plan.md). Durable Tasks, Workspaces,
+agent adapters, qualified VM isolation, reservations, shared remote cache and
+private task previews are planned. They are not current support claims.
+
+Direct application hosting remains a separate user journey. Applications,
+databases, Compose, persistent storage, routing, recovery and the complete
+Coolify compatibility target remain in scope. Users will not need a coding
+task or AI agent to host an application. The [workspace capability ledger](docs/workspace-capabilities.md)
+and [hosting compatibility ledger](docs/compatibility.md) track these outcomes separately.
 
 ## Available now
 
-- PostgreSQL-backed state, migrations, bootstrap administration, local-password
-  sessions, and one explicitly configured OIDC provider.
-- Project-scoped resources, audit events, API tokens, runner enrollment,
-  fenced leases, sequential shell and Docker Compose execution, and artifact
-  records.
-- Shared project environments and image-application configuration in the API
-  and WebUI. Saving an image reference records desired configuration.
-- Project-managed encrypted secret versions with create, rotate, owner reveal,
-  revoke and protected WebUI controls. Managed-secret execution delivery remains
-  planned. See [secret storage and key configuration](docs/secrets.md).
-- [Hosting servers and destinations](docs/hosting-destinations.md), explicit
-  project grants and immutable desired resource placement. Manual enrollment
-  uses the runner CLI; these controls do not validate Docker or deploy resources.
-- [Transactional hosting job infrastructure](docs/hosting-jobs.md) using River
-  OSS v0.44.1, with checked migrations and backup schema identity. PostgreSQL
-  mode starts image/proxy consumers and the production BuildID handler when
-  trusted operator build policy enables admission.
-- [Public image deployment](docs/hosting-execution.md) through the API, River,
-  agent and Docker, with frozen image identity, ordinary HTTP readiness and
-  per-release loopback port allocation or explicit fixed ports. The
-  [deployment WebUI](docs/hosting-image-deployments.md) provides role-aware
-  requests, history, exact-request recovery and fenced cleanup of selected
-  retained containers. Port allocation does not switch public traffic.
-- [Public Git application configuration](docs/hosting-git-resources.md) through
-  the API and WebUI, with atomic immutable source versions and explicit conflict
-  review. Public HTTPS defaults to `github.com` under an operator allowlist.
-  PostgreSQL is required. Saving configuration does not fetch or build, private
-  source configuration is unsupported. Separate public build controls provide
-  request/history/cancel through the enabled controller; artifact deployment
-  remains unavailable.
-- A [controlled Git checkout adapter](docs/hosting-source-checkout.md) with
-  pinned transport policy and source receipts, plus an internal
-  [source/build persistence contract](docs/hosting-build-control.md) for
-  immutable settings, purpose-specific grants, fenced receipts and artifacts.
-  The [private credential delivery component](docs/hosting-build-credentials.md)
-  authorizes exact live sourcing attempts. Its endpoint and controller wiring
-  remain absent for private sources. Public HTTPS builds use the configured
-  production controller and explicitly enabled agent runtime.
-- Nonsecret [build protocol](docs/hosting-build-protocol.md), additive
-  [v5 journal records](docs/hosting-build-journal.md) and
-  [typed client methods](docs/hosting-build-client.md) are available as
-  used by the production controller and enrolled build executor. Execution is
-  disabled by default and requires strict owned local configuration, matching
-  persisted capability and exact server policy.
-- The [public Git build runtime](docs/hosting-build-runtime.md) connects the
-  API, PostgreSQL, River and normal compiled agent to controlled checkout and
-  the local engine. Accepted real-Docker coverage builds Dockerfile, Railpack
-  and prepared static output into immutable local artifacts. A successful build
-  is not a running application and cannot yet be deployed from these controls.
-- A [standalone local build engine](docs/hosting-build-engine.md) for Dockerfile,
-  Railpack and prebuilt static assets on a fixed Linux Docker host. Confined
-  context/Dockerfile/target and publish-directory/SPA settings are supported.
-  Private credential HTTP/runtime delivery, artifact deployment handoff and
-  build-output/runtime-log streaming remain separate work.
-- A [standalone Traefik engine](docs/hosting-proxy-engine.md) with routing,
-  HTTP-01 TLS and persistent state. The [proxy backend](docs/hosting-proxy-control.md)
-  persists authorized route generations and dispatches exact-target tasks.
-  Explicitly enrolled proxy-capable Linux agents execute fenced routing work.
-  The [managed routing WebUI](docs/hosting-proxy-ui.md) provides configuration,
-  grants, settled-image routes, withdrawal and recorded HTTP/HTTPS status.
-  Real browser fixtures use isolated DNS and a trusted test CA; they do not
-  validate public DNS or production ACME.
-- A React/Vite/TanStack web application embedded from `web/dist`, plus the
-  versioned `/api/v1` contract in [openapi.yaml](openapi.yaml).
-- Offset-paginated list APIs. Use `limit` and `offset`; do not assume cursors.
+Current accepted assessment: `852f8e6b8d5624a95865c276dcea4a239d1f8fea`,
+2026-10-22. Existing Go API/application services, PostgreSQL, River execution,
+authorization, audit and the embedded React/TypeScript UI are the starting system.
 
-NeroCD does not currently provide SAML, LDAP, SCIM, claim or group mapping,
-automatic OIDC signup, multiple issuers, general workflow parallelism,
-managed-secret runner delivery or Vault lookup. SSH-assisted onboarding, the
-repository-to-build-to-deploy path, public DNS/production ACME verification, continuous
-runtime monitoring and trusted restore resumption remain required. Image
-deployment uses loopback HTTP; same-port replacement can interrupt service.
-Restored ownership stays blocked; there is no unlock action in this slice.
-See the [dated progress assessment](docs/compatibility.md#accepted-foundations-and-evidence)
-and [plan](docs/plan.md).
+- PostgreSQL state, checked migrations through 0051, bootstrap administration,
+  local-password sessions and one configured OIDC issuer.
+- Projects, operational templates and execution runs, approvals, service
+  accounts, API tokens, enrolled runners, fenced leases, replay and audit.
+  Existing execution runs are distinct from the proposed durable collaboration Task.
+- Shared project environments, typed hosting resources and explicit server,
+  destination and project-grant bindings through API and UI. Stable placement
+  does not imply host virtualization or broad machine qualification.
+- Encrypted project-secret versions with create, rotate, protected owner reveal
+  and revoke. [Managed execution delivery and broader scopes](docs/secrets.md)
+  remain planned; existing runner-file bindings have their own contract.
+- [Public registry-image deployment](docs/hosting-execution.md) through the
+  API, transactional River dispatch and explicitly enabled agent. It records
+  exact image/platform/daemon identity, ordinary HTTP readiness, per-release
+  loopback ports and selected retained cleanup.
+- [Public HTTPS Git configuration and builds](docs/hosting-git-resources.md)
+  under trusted operator policy. The normal compiled agent builds Dockerfile,
+  pinned Railpack and prepared static/SPA assets into immutable local artifacts.
+  Private Git configuration/provider delivery and compiled-static product
+  coverage remain separate work.
+- [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
+  [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
+  An explicitly enabled agent deploys the recorded artifact on the same daemon
+  without rebuilding or pulling. Deployment and route selection are separate actions.
+- [Durable typed build output](docs/hosting-build-log-delivery.md) with
+  redaction, version 7 journal cursors, exact acknowledgment and response-loss
+  replay before completion. The [opt-in build output viewer](docs/hosting-build-logs.md#resource-build-output-viewer)
+  follows retained sequence pages, reports gaps and bounds local plaintext.
+  This is build output, not general application-runtime logging.
+- [Managed Traefik routing](docs/hosting-proxy-ui.md) with authorized
+  generations and explicitly capable Linux agents. Real isolated fixtures
+  verify HTTP and HTTPS using a trusted test CA, including local build
+  artifacts. Public DNS and production ACME qualification remain separate.
+- An embedded React/Vite/TanStack application and a versioned
+  [API contract](openapi.yaml). Most list APIs use bounded offset pagination;
+  the typed build log API uses its documented sequence cursor.
+
+Required work includes durable Tasks/Workspaces and checkpoints, task grants,
+qualified Linux VM execution, machine reservations and budgets, remote artifact
+publication and cache sharing, agent/model adapters, private multi-resource
+previews and human production-plan authorization. Mac, Windows, NAS, GPU and
+cloud-provider qualification have separate planned tracks. A machine pool does
+not combine hosts into shared memory or keep an offline application host running.
+
+Hosting gaps include private sources, managed runtime-secret delivery,
+continuous observations and runtime logs, terminals, databases and data
+lifecycle, broader Compose, schedules, notifications, migration and complete
+recovery. Existing same-port replacement can interrupt service. No D0–D3 or
+full Coolify parity milestone is declared complete.
 
 ## Quick start
 

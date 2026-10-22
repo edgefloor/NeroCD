@@ -1,188 +1,289 @@
-# Product specification
+# NeroCD product specification: shared workspaces on machines you control
 
-Adopted on 2026-10-22. This is the full supplied product contract, formatted for repository use. All R01–R68 requirements and A01–A37 acceptance scenarios remain in scope. Formatting and baseline clarification do not narrow the requirements.
+Revision: 3
+Status: Adopted target specification; implementation status is recorded separately
+Date: 22 October 2026
+Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-The [implementation plan](plan.md) orders delivery. The [compatibility ledger](compatibility.md) tracks capability claims and fixture gaps. Proposed features below are target behavior, not evidence of current runtime support. The dated planning baseline is `a763a90b3896257b784c9498d01650ccdad2427a`. The supplied specification's earlier unnamed NeroCD baseline remains unknown.
+Current accepted assessment: `852f8e6b8d5624a95865c276dcea4a239d1f8fea`, reviewed on 2026-10-22. Native migrations extend through 0051. This assessment supersedes stale current-state claims in the supplied baseline.
+Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
+Repository path: `docs/product-spec.md`
 
-Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with official documentation reviewed on the date above
+The [workspace capability ledger](workspace-capabilities.md), [hosting compatibility ledger](compatibility.md), [implementation plan](plan.md), and [domain glossary](../CONTEXT.md) separate the complete target from accepted support.
 
 ## 1. Product objective
 
-Build a self-hosted application platform in Go that replaces Coolify’s core user workflows. Use NeroCD’s existing Go control plane, PostgreSQL persistence, authorization, runner protocol, audit records and React/TypeScript application as the starting implementation.
+NeroCD is proposed as a shared workspace where remote teams and AI agents build, test, review and deploy software using machines the team controls. The same machine, environment and application-management capabilities should support a personal cloud operated by one person.
 
-The platform must let a user connect servers, deploy applications from source or images, run databases and Compose stacks, attach persistent storage, configure domains and HTTPS, automate releases, and operate those resources through a web interface and API.
+> Give your team and AI agents a place to work that stays running when you go offline, powered by machines you control.
 
-The default user journey is:
+The central collaboration object is a task with a working environment attached. A task carries its goal, source revision and changes, human and agent activity, workspace checkpoints, preview, verification evidence and deployment history. A teammate should be able to inspect the result and continue supported work without reconstructing another person's laptop.
 
-> Connect a server, select a repository, configure the application, deploy it, and open its HTTPS URL.
+The Coolify rewrite remains the hosting foundation and a separately measured compatibility target. Applications, databases, Compose, volumes, routes, TLS, logs, backups and recovery remain required. This revision expands the product beyond hosting and changes the first demonstration and primary collaboration view. It does not claim that the broader product already exists.
 
-The complete product also includes databases, generated credentials, backups and restores, service templates, preview environments, runtime logs, terminals, monitoring, scheduled tasks, notifications and migration from existing installations.
+The first complete demonstration is:
 
-This revision replaces the previous specification’s narrow product scope. Builds, routing, TLS, databases, volumes and previews are required implementation work. NeroCD’s current restrictions do not define the destination product. Controlled deployment, provenance and audit support the hosting experience.
+> Assign a repository task to an agent on a team-owned machine, retain its progress while the initiating laptop is offline, build with shared cache, publish an isolated preview, and let a teammate review and approve the same artifact for deployment.
 
-### 1.1 Meaning of “rewrite in Go”
+Remote execution requires an available execution machine. A durable task record can survive a worker failure, but continuation on another machine requires a supported checkpoint and compatible capacity. A public gateway does not keep an offline application host running.
 
-Go implements the platform API, orchestration, controllers, job workers, host agents, lifecycle rules and command-line interface. The existing React/TypeScript frontend remains appropriate.
+### 1.1 Meaning of "rewrite in Go"
 
-Use Docker, Compose, BuildKit, automatic builders and an established reverse proxy as dependencies. Rewriting the control plane does not require implementing a new container runtime, image builder, reverse proxy or certificate authority.
+Go implements the platform API, orchestration, controllers, workers, host agents, lifecycle rules and CLI. Retain the React/TypeScript application. Platform-specific helpers, including a potential native Mac virtualization helper, can use the host's supported language and API while keeping the product control plane in Go.
 
-The target is a functional replacement for Coolify’s self-hosted product. Track three compatibility dimensions separately:
+Use established runtimes, BuildKit, Docker/Compose, registries, object storage and reverse proxies through versioned adapters. A Go rewrite does not require replacing these systems. Keep the initial implementation modular inside the existing application and PostgreSQL authority.
+
+Track three hosting compatibility dimensions separately:
 
 1. Feature compatibility: users can complete the declared hosting and operations workflows.
 2. Migration compatibility: supported existing resources and data can move to the new platform.
-3. Client compatibility: existing Coolify API clients, CLI scripts and integrations work unchanged where an explicit compatibility adapter is supplied.
+3. Client compatibility: existing Coolify API clients, CLI scripts and integrations work unchanged where an explicit adapter is supplied.
 
-Do not claim drop-in API or database compatibility merely because feature workflows exist.
+Task collaboration, machine pooling and agent execution are additional product capabilities. Neither their existence nor a repository-to-HTTPS demo establishes complete Coolify compatibility.
 
 ### 1.2 Intended users and success
 
-The initial users are developers, self-hosters and small platform teams operating their own servers. This is a product assumption, not a conclusion from customer research.
+The primary proposed audience is a remote development team that wants asynchronous work, reproducible review and useful capacity from hardware it controls. Self-hosters use the same primitives with one owner and fewer collaboration steps. These are product hypotheses, not conclusions from customer research.
 
-A successful platform lets them:
+A successful product lets users:
 
-- deploy an ordinary application without writing deployment scripts or supplying a prebuilt image digest;
-- run third-party applications without adding NeroCD-specific instrumentation;
-- connect an application to a database without manually creating secret files on a server;
-- change application versions without losing persistent data;
-- inspect what is running, what failed and what action is available;
-- recover application data and platform configuration through documented workflows;
-- retain running workloads and routes during a control-plane restart.
+- assign builds, tests and agent work to an authorized compatible machine with an explicit budget;
+- leave accepted work running after the submitting browser or laptop disconnects;
+- review a retained change, required checks and a working application in one task;
+- continue work through a supported handoff and promote the reviewed artifact without rebuilding it;
+- run ordinary applications, databases and Compose stacks with clear data ownership;
+- recover supported applications through tested backup, restore, upgrade and migration procedures;
+- understand unavailable capacity, stale observations, partial results and recovery limits.
 
-Coolify’s documented product includes these hosting categories and distinct source/build paths. Its current implementation and documentation are the reference, not an instruction to reproduce every internal PHP class or UI detail. C1, C2
+Direct application hosting remains a complete journey. Users need not create a coding task or run an AI agent to install an application. Coolify's hosting categories and source/build paths remain the reference for that part of the product. C1, C2
+
+### 1.3 Decisions introduced by this revision
+
+This document proposes task-centered collaboration, distinct task/run/workspace/environment lifecycles, capability-aware placement, VM isolation for untrusted work, and separate cache, artifact and verification reuse. It proposes one supported Linux architecture and one qualified VM backend for the first demonstration. Mac, Windows, NAS, GPU and additional runtime support remain explicit capability tracks.
+
+Requirements are targets. The pinned source inspection establishes reusable foundations and current limitations. The implementation sequence is a recommendation without asserted delivery dates, effort estimates or measured performance claims.
 
 ## 2. Scope and parity ledger
 
-Every reference capability must have a ledger entry recording the upstream reference, NeroCD implementation status, supported limits, acceptance fixture and any deliberate difference. Suggested states are planned, implemented, validated, partial and intentionally different.
+Maintain two linked ledgers: the proposed workspace product and the Coolify hosting baseline. Every reference capability must have a ledger entry recording the upstream reference, NeroCD implementation status, supported limits, acceptance fixture and any deliberate difference. Suggested states are planned, implemented, validated, partial and intentionally different.
 
 A delivery phase is an implementation sequence. It does not remove later capabilities from the target product.
 
-|Product area          |Required target                                                                                                     |Initial slice and completion path                                                                                            |
-|----------------------|--------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
-|Server management     |Add local and remote servers, validate capabilities, manage destinations, build roles and proxies                   |Local enrollment and SSH-assisted remote onboarding first                                                                    |
-|Resource organization |Teams, projects, shared environments, applications, databases and Compose stacks                                    |Introduce the correct domain model before exposing hosting workflows                                                         |
-|Git sources           |Public and private repositories, branch/commit selection, deploy keys and provider integrations                     |GitHub first, then GitLab, Gitea, Bitbucket and generic Git/webhooks                                                         |
-|Build strategies      |Dockerfile, automatic builders, static files, compiled static sites and Compose builds                              |Dockerfile plus an automatic builder in the first application path; complete Nixpacks/Railpack compatibility through adapters|
-|Inputs without Git    |Registry images, stored Dockerfiles, pasted Compose and catalog templates                                           |Do not require artificial repository records                                                                                 |
-|Build placement       |Builds on application hosts or dedicated build servers, with image delivery and cache controls                      |Same-host builds first; registry-backed remote builds are a required later slice                                             |
-|Domains and HTTPS     |Custom and generated domains, target ports, paths, redirects, certificate issuance and renewal                      |Managed Traefik first; Caddy and custom proxy modes tracked explicitly                                                       |
-|Deployment automation |Manual deploy, deploy on push, deploy webhooks, redeploy and retained releases                                      |Automatic trusted-source deployment is a normal workflow                                                                     |
-|Preview deployments   |PR/MR previews, isolated configuration and storage, domains, status reporting and cleanup                           |Required for core replacement completion                                                                                     |
-|Persistent storage    |Named volumes, directory mounts, managed files and existing host-file mounts                                        |Ownership and retention must exist before general stateful hosting                                                           |
-|Databases             |Engine-specific creation, credentials, networking, storage, health, configuration and supported recovery            |PostgreSQL and Redis first; complete the engine matrix below                                                                 |
-|Service catalog       |One-click installation, generated values, component controls and versioned upgrades                                 |Start with a useful tested catalog, then expand compatibility and breadth                                                    |
-|Variables and secrets |Managed encrypted credentials, build/runtime scopes, shared values and external secret sources                      |Managed secrets are a foundation dependency                                                                                  |
-|Ongoing operations    |Runtime status, logs, health, limits, start/stop/restart, terminals and diagnostics                                 |Basic operations ship with each resource type                                                                                |
-|Recovery              |Platform backup, database backup, storage backup, restore and image/configuration rollback                          |Implement separate contracts and interfaces                                                                                  |
-|Automation            |Resource-bound schedules, notification channels, retries and execution history                                      |Required for core replacement completion                                                                                     |
-|Programmatic access   |Versioned REST API, CLI and MCP access to supported operations                                                      |One authorized application layer behind every interface                                                                      |
-|Migration             |NeroCD upgrade path and supported Coolify resource/data migration                                                   |Compatibility report and staged cutover before automatic adoption                                                            |
-|Broader infrastructure|Additional proxy modes, multi-server application deployment, Swarm, provider provisioning and GitHub Actions runners|Explicit extended-parity backlog with separate capability tests                                                              |
+|Product area          |Required target                                                                                                     |Initial slice and completion path                                                                                               |
+|----------------------|--------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+|Server management     |Add local and remote servers, validate capabilities, manage destinations, build roles and proxies                   |Local enrollment and SSH-assisted remote onboarding first                                                                       |
+|Resource organization |Teams, projects, shared environments, applications, databases and Compose stacks                                    |Introduce the correct domain model before exposing hosting workflows                                                            |
+|Git sources           |Public and private repositories, branch/commit selection, deploy keys and provider integrations                     |GitHub first, then GitLab, Gitea, Bitbucket and generic Git/webhooks                                                            |
+|Build strategies      |Dockerfile, automatic builders, static files, compiled static sites and Compose builds                              |Dockerfile in the first task demonstration; add automatic builders and complete Nixpacks/Railpack compatibility through adapters|
+|Inputs without Git    |Registry images, stored Dockerfiles, pasted Compose and catalog templates                                           |Do not require artificial repository records                                                                                    |
+|Build placement       |Builds on application hosts or dedicated build servers, with image delivery and cache controls                      |Remote build, registry delivery and shared cache are part of the first task demonstration                                       |
+|Domains and HTTPS     |Custom and generated domains, target ports, paths, redirects, certificate issuance and renewal                      |Managed Traefik first; Caddy and custom proxy modes tracked explicitly                                                          |
+|Deployment automation |Manual deploy, deploy on push, deploy webhooks, redeploy and retained releases                                      |Automatic trusted-source deployment is a normal workflow                                                                        |
+|Preview deployments   |PR/MR and task previews, isolated configuration and storage, domains, status reporting and cleanup                  |A private multi-resource preview is part of the first task demonstration                                                        |
+|Persistent storage    |Named volumes, directory mounts, managed files and existing host-file mounts                                        |Ownership and retention must exist before general stateful hosting                                                              |
+|Databases             |Engine-specific creation, credentials, networking, storage, health, configuration and supported recovery            |PostgreSQL and Redis first; complete the engine matrix below                                                                    |
+|Service catalog       |One-click installation, generated values, component controls and versioned upgrades                                 |Start with a useful tested catalog, then expand compatibility and breadth                                                       |
+|Variables and secrets |Managed encrypted credentials, build/runtime scopes, shared values and external secret sources                      |Managed secrets are a foundation dependency                                                                                     |
+|Ongoing operations    |Runtime status, logs, health, limits, start/stop/restart, terminals and diagnostics                                 |Basic operations ship with each resource type                                                                                   |
+|Recovery              |Platform backup, database backup, storage backup, restore and image/configuration rollback                          |Implement separate contracts and interfaces                                                                                     |
+|Automation            |Resource-bound schedules, notification channels, retries and execution history                                      |Required for core replacement completion                                                                                        |
+|Programmatic access   |Versioned REST API, CLI and MCP access to supported operations                                                      |One authorized application layer behind every interface                                                                         |
+|Migration             |NeroCD upgrade path and supported Coolify resource/data migration                                                   |Compatibility report and staged cutover before automatic adoption                                                               |
+|Broader infrastructure|Additional proxy modes, multi-server application deployment, Swarm, provider provisioning and GitHub Actions runners|Explicit extended-parity backlog with separate capability tests                                                                 |
 
 References for the baseline categories: build paths C2, Compose C3, server/build roles C4, routing C5, previews C6, databases C7, templates C8, operations C9, teams C10, and the reference repository C1.
 
-### 2.1 Boundaries that remain valid
+### 2.1 Workspace capability ledger
+
+|Product area            |Proposed target                                                                                        |First demonstration and follow-through                                                                                    |
+|------------------------|-------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+|Machine pool            |Stable machine identities, roles, capabilities, architecture, availability, trust and bounded resources|Qualified Linux hosts first, with explicit host adapter qualification for other systems                                   |
+|Durable tasks           |Goal, repository lineage, runs, activity, workspace, evidence and review history                       |One task survives client disconnect and records an agent attempt                                                          |
+|Agent workspaces        |Isolated checkout and tool environment, scoped grants, checkpoints and human takeover                  |One agent adapter and a supported portable source checkpoint                                                              |
+|Shared builds           |Remote BuildKit, authorized cache sharing, immutable artifacts and reuse decisions                     |Demonstrate imported cache on a second compatible builder and image delivery to another host                              |
+|Review and promotion    |Private preview, trusted checks, immutable candidate and target-specific approval                      |Another teammate reviews and approves the same artifact for production                                                    |
+|Model endpoints         |Team-owned inference services with endpoint grants, quotas and availability                            |An existing authenticated endpoint may be connected early; model lifecycle and GPU placement need their own support matrix|
+|Owned and cloud capacity|Placement across authorized machines, with explicit cloud fallback policy                              |Manual addition of compatible cloud capacity first; provider provisioning follows                                         |
+|Personal cloud          |Compute, storage and public-ingress roles across supported machines                                    |One always-on application host and a VPS gateway, with clear availability and data-location rules                         |
+|Application care        |Supported updates, recovery, guided migration and restore tests                                        |Reuse the hosting lifecycle, then add application/version-specific support contracts                                      |
+|Later operations        |Database-aware planning, progressive delivery, drift review and vendor packages                        |Each requires explicit eligibility, authority and failure/recovery behavior                                               |
+
+### 2.2 Boundaries that remain valid
 
 The self-hosted platform does not inherently provide a managed-cloud availability SLA, cross-host database replication, universal zero-downtime updates or isolation between hostile workloads sharing one Docker host.
 
-Kubernetes, a replacement container runtime and a separate hosted billing business are not dependencies of this rewrite. Docker Swarm and other documented Coolify infrastructure features remain visible parity items rather than being silently conflated with Kubernetes.
+Kubernetes, a replacement container runtime and a separate hosted billing business are not dependencies of the first workspace demonstration. Docker Swarm and other documented Coolify infrastructure features remain visible parity items rather than being silently conflated with Kubernetes.
+
+A machine pool places separate jobs. It does not combine arbitrary machines into one shared-memory computer or imply distributed GPU inference. Cross-host data movement, live migration and host failure recovery need distinct support contracts.
 
 Functional parity is measured against the pinned reference and its recorded capability ledger. Do not call the first repository-to-HTTPS implementation complete Coolify parity.
 
 ## 3. Starting codebase: reuse, extend and replace
 
-The following baseline is retained from the supplied specification's static inspection. Its original NeroCD commit was not named. The accepted planning inspection used NeroCD `a763a90b3896257b784c9498d01650ccdad2427a` on 2026-10-22. It does not assert runtime validation of every path.
+The current baseline is accepted NeroCD `852f8e6b8d5624a95865c276dcea4a239d1f8fea`. Static inspection and retained revision-specific runtime reports support the bounded status below. They do not validate the proposed workspace product. The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains historical context.
 
-|Existing area                                    |Decision              |Work required                                                                            |
-|-------------------------------------------------|----------------------|-----------------------------------------------------------------------------------------|
-|Go API and application services                  |Reuse                 |Add hosting operations through existing authorization and transaction boundaries         |
-|PostgreSQL, migrations and durable queue         |Reuse and extend      |Add typed build, hosting, proxy, backup, schedule and notification work                  |
-|Runner enrollment, leases, fences and replay     |Reuse and extend      |Evolve into host agents and build workers with explicit server/destination identity      |
-|Local/OIDC login and project authorization       |Reuse                 |Add team ownership and resource/server permission rules                                  |
-|Managed service accounts                         |Reuse                 |Preserve project scope, expiry, rotation, revocation and offboarding behavior            |
-|React/Vite/TanStack frontend and generated client|Reuse infrastructure  |Replace the task-first product navigation with hosting workflows                         |
-|Service/environment/revision model               |Generalize and migrate|Support multiple resource kinds inside a shared project environment                      |
-|Compose execution primitives                     |Reuse selectively     |Replace prebuilt-only input restrictions, mount bans and mandatory revision-header health|
-|Provenance and linked rollback                   |Extend                |Separate build outputs, releases, target-specific application and data recovery          |
-|File-backed secrets and access audit             |Preserve as an option |Integrate managed encrypted secrets early                                                |
-|Artifact and encryption helpers                  |Reuse selectively     |Complete the specific consumers, access rules and recovery procedures                    |
-|Operational templates and runs                   |Preserve              |Expose as advanced automation and internal execution evidence                            |
-|Production, backup and release tooling           |Reuse                 |Extend coverage to agents, proxy configuration, secrets and hosted workloads             |
+|Existing area                                    |Decision              |Work required                                                                                                                 |
+|-------------------------------------------------|----------------------|------------------------------------------------------------------------------------------------------------------------------|
+|Go API and application services                  |Reuse                 |Add workspace and hosting operations through existing authorization and transaction boundaries                                |
+|PostgreSQL, migrations and durable queue         |Reuse and extend      |Add durable task relationships, bounded reservations and typed workspace, build and hosting work                              |
+|Runner enrollment, leases, fences and replay     |Reuse and extend      |Evolve into host agents and build workers with explicit server/destination identity                                           |
+|Local/OIDC login and project authorization       |Reuse                 |Add team ownership and resource/server permission rules                                                                       |
+|Managed service accounts                         |Reuse and extend      |Preserve principal lifecycle and add short-lived task grants with enforceable operation and resource scopes                   |
+|React/Vite/TanStack frontend and generated client|Reuse infrastructure  |Make the durable task the main collaboration view and keep environment, application and machine operations directly accessible|
+|Service/environment/revision model               |Extend accepted hosting|Shared project environments and typed resources already exist; add remaining kinds and legacy migration mappings              |
+|Compose execution primitives                     |Reuse selectively     |Keep legacy restrictions explicit; extend managed Compose/storage without regressing ordinary hosting HTTP readiness           |
+|Provenance and linked rollback                   |Extend                |Separate build outputs, releases, target-specific application and data recovery                                               |
+|File-backed secrets and access audit             |Preserve and extend   |Reuse accepted encrypted managed-secret storage and protected reveal; complete scoped execution delivery and recovery            |
+|Artifact and encryption helpers                  |Reuse selectively     |Complete the specific consumers, access rules and recovery procedures                                                         |
+|Operational templates and runs                   |Preserve and extend   |Keep execution instances distinct from a durable user task, mutable workspace and preview environment                         |
+|Production, backup and release tooling           |Reuse                 |Extend coverage to agents, proxy configuration, secrets and hosted workloads                                                  |
 
 Sources: architecture N1, domain model N2, deployment service N3, runtime N4, service accounts N5, secrets N6, and storage/encryption foundations N7.
 
-### 3.1 Existing assumptions that must change
+### 3.1 Historical assumptions and accepted changes
 
-Environment cardinality. An existing NeroCD environment belongs to one service. A Coolify-style project environment contains several applications, databases and stacks. Merely changing the label in the UI would retain the wrong model. N2
+The legacy service/Compose contract remains supported. Its restrictions do not describe every accepted hosting path.
 
-Source requirements. Current services require repository and Compose information. Registry images, databases and pasted stacks must work without a Git repository. N2, N3
+- **Environment cardinality.** Legacy `Environment` belongs to a service. Accepted `ProjectEnvironment` and typed `Resource` records provide shared project grouping. Remaining work includes the broader resource kinds, legacy mappings and complete concurrency acceptance. N2, N14
+- **Source requirements.** Legacy services retain repository/Compose requirements. Accepted hosting supports registry-image input without a fake repository and versioned public HTTPS Git configuration. Private configuration, stored Dockerfiles, pasted Compose and catalog inputs remain planned. N3, N14
+- **Build and deployment input.** The legacy provenance resolver still rejects unsupported Compose builds and mounts. Separately enabled public Git builds execute Dockerfile, pinned Railpack and prepared-static paths. Same-host local artifact deployment is accepted and applies the exact recorded ImageID without rebuilding or pulling. Remote registry publication and shared-cache/reuse guarantees remain planned. N4, N15
+- **Health.** The legacy Compose check uses `X-NeroCD-Revision`; accepted image/local-artifact hosting uses ordinary HTTP readiness. Broader component/TCP/database health and continuous observation remain targets. N8, N15
+- **Mutation ownership.** Accepted hosting uses resource-binding holds, exact destinations, leases and fenced receipts. Unresolved effects and restored ownership holds remain blocked. A shared environment does not authorize relocation or clearing a hold. N9, N14
+- **Secrets and logs.** Project-managed encrypted secret versions and authorized reveal are accepted. Typed build output has durable receipt/cursor storage, runner delivery, redaction and an opt-in bounded WebUI. Managed-secret execution delivery, general runtime logs, terminals and continuous resource monitoring remain planned. Build logs are not runtime logs. N6, N16
 
-Input restrictions. The current Compose path rejects builds, service volume mounts and image references that are not already digest-pinned. The rewrite must accept convenient inputs and record immutable resolved outputs internally. N4
+These accepted features preserve the direct hosting journey. They do not supply the Task, Workspace, reservation, task-grant, checkpoint or VM contracts introduced below.
 
-Health requirements. The existing HTTP check requires an X-NeroCD-Revision header. Generic application hosting must support ordinary health checks. Platform-owned labels, image identities and deployment evidence provide attribution without requiring application changes. N8
+### 3.2 Workspace gaps in the accepted implementation
 
-Deployment serialization. The existing active-root exclusion protects a service-specific environment. After introducing shared environments, preserve that protection at the resource deployment binding, not across every application in the shared environment. N9
+At the accepted baseline, `TaskRun` describes an execution instance and there is no durable user Task or Workspace entity. Add a separate long-lived Task for the user goal, collaborators, several attempts, review and environment links. Existing enrollment, leases and fences are useful execution foundations, but tags and primitive capabilities do not establish resource reservations, isolation suitability or data-location authorization. N12, N13
 
-Managed secrets and monitoring. UI-managed credentials and continuous resource observations are core hosting requirements. File-backed secrets and occasional manual inspection cannot be the only product paths.
+Existing managed service accounts have project roles and lifecycle controls. They are not already narrowly scoped task credentials. The local content-addressed artifact helper explicitly leaves authorization to its consumers. Complete access control, transport, retention and remote publication before calling it a shared artifact service. N5, N7
+
+A database lease alone cannot stop an old process from writing a workspace or making an external request. Carry authority generations into the host/guest helper and credential broker, and reconcile uncertain effects before handing mutable work to another writer. This is an implementation requirement derived from the proposed handoff and recovery behavior.
 
 ## 4. Target architecture
 
-Keep a modular Go application and the existing PostgreSQL authority. Separate responsibilities in code and job types before considering independently deployed services.
+Keep a modular Go application and the existing PostgreSQL authority. Separate responsibilities in code and job types before considering independently deployed services. Humans, agents, CLI and integrations use one authorized application layer.
 
 ```mermaid
 flowchart TB
-    UI["React and TypeScript UI"] --> API["Go control plane"]
-    Clients["CLI and integrations"] --> API
-    API <--> DB["PostgreSQL"]
-    API --> Build["Go build agent"]
-    API --> Host["Go host agent"]
-    Build --> Registry["OCI registry"]
-    Registry --> Runtime["Docker workloads"]
-    Host --> Runtime
-    Host --> Proxy["Managed reverse proxy"]
-    Visitors["Application users"] --> Proxy
-    Proxy --> Runtime
-    Runtime --- Storage["Persistent storage"]
+    Clients["Humans and agent integrations"] --> Control["Go control plane and PostgreSQL"]
+    Control --> Work["Task and workspace execution"]
+    Control --> Env["Environment lifecycle"]
+    Work --> Machines["Authorized machines and VM adapters"]
+    Work --> Evidence["Checkpoints, checks and artifacts"]
+    Evidence --> Env
+    Env --> Guests["Applications, workers and databases"]
+    Gateway["Public or private ingress"] --> Guests
+    Guests --- Volumes["Explicit persistent data"]
 ```
 
-The registry is required when the chosen build and deployment hosts do not share an image store. A documented single-server mode may use local images. It must still record their resolved identities and retention.
+The control plane records intent, policy and observations. Machines execute bounded work through local supervisors. OCI registries hold deployable images and supported BuildKit cache exports. Artifact storage holds checkpoints and evidence through a separate authorization and retention contract. A supported S3-compatible backend can be self-hosted, including a qualified Garage deployment. Backend choice does not establish backup, availability or registry compatibility by itself.
 
-Application traffic flows through the server’s proxy to containers. It must not depend on the Go control plane handling each request.
+Application traffic flows through an ingress/proxy path independent of control-plane request handling. For a host behind NAT, an outbound authenticated tunnel can connect explicitly published services to a gateway. Do not grant the gateway or a preview blanket access to the owner's LAN. An ingress endpoint is not automatically a CDN or an edge execution location.
 
 ### 4.1 Execution mechanisms
 
-Use the existing runner protocol as the basis for a managed Go agent. Provide an SSH-assisted installation path so users can add a server with the convenience expected from Coolify. Manual enrollment remains supported.
+Extend the existing runner protocol into a managed Go host agent. Support manual enrollment and SSH-assisted installation on supported Linux hosts. Keep stable machine identity separate from the identity of one agent process.
 
-This is an intentional implementation difference: Coolify currently uses SSH for deployments and does not require a persistent deployment agent. A Go agent is justified here by the starting codebase and the desired ownership, replay and observation model. C11
+Coolify currently describes SSH-based management without requiring a persistent deployment agent. A Go agent is an intentional implementation difference suited to the existing runner model and proposed long-lived work. C11
 
-Build jobs and resource mutation jobs use the same durable execution foundations but have separate capabilities, credentials, scheduling rules and records. A build can be retried on a compatible build host. A database or volume cannot move to another server merely because it has matching tags.
+Use a small privileged backend helper where virtualization or host networking requires it, and a guest-side supervisor for work inside an isolated Linux environment. Version and authenticate the interfaces. Keep host administration, guest execution and user task credentials separate.
 
-Use established build and Compose tooling through versioned adapters. The maintained Go Compose model is a candidate for parsing and normalization. Compatibility decisions must be tested against actual Docker Compose behavior rather than inferred from a YAML parser. T1
+For the first qualified untrusted-work backend, use Linux with working KVM and Firecracker, with Docker/Compose or BuildKit inside supported guests. Firecracker requires a Linux host and runs guests matching the host architecture. Native Mac execution needs a different adapter, for example Apple Virtualization.framework. These are backend-specific implementations of one lifecycle contract. W1, W2
+
+A task workspace, a preview environment and a production environment have separate lifecycle and authority boundaries. A supported preview can contain an application, worker and isolated database within one environment boundary. Persist its data only through declared volume bindings. Shared tenant Docker daemons are an explicitly trusted mode, not the default boundary for untrusted agent tasks.
+
+Builds, agent sessions and application mutations use the same durable execution foundations but distinct credentials, scheduling rules and records. A database cannot move because another machine has matching tags. A build retry does not automatically resume an interrupted agent session.
+
+Use versioned adapters for agents, models, VM backends, build tools and Compose. The Go Compose model remains a candidate dependency. Test actual runtime behavior rather than inferring compatibility from parsing alone. T1
 
 ### 4.2 Domain model
 
-|Entity                     |Responsibility                                                                            |
-|---------------------------|------------------------------------------------------------------------------------------|
-|Team                       |Ownership of projects, server access, source connections and shared settings              |
-|Project                    |Application grouping and project authorization                                            |
-|Project environment        |A shared grouping such as production, staging or a preview environment                    |
-|Resource                   |An application, standalone database or Compose stack inside an environment                |
-|Resource deployment binding|Runtime destination, effective configuration, policy and mutation ownership for a resource|
-|Server                     |Enrolled machine identity, architecture, capabilities and operational state               |
-|Destination                |Docker runtime and network placement on a server                                          |
-|Source connection          |Git or registry access and credential references                                          |
-|Build                      |Source resolution, build input snapshot, builder identity, output images and logs         |
-|Release                    |Immutable resolved image set and effective deployable configuration references            |
-|Deployment                 |An attempt to apply a release to a resource binding                                       |
-|Route                      |Hostname/path/port ownership and certificate/routing status                               |
-|Storage binding            |Persistent volume or host-path ownership and attachment                                   |
-|Secret version             |Protected value or external reference with scope and lifecycle                            |
-|Preview                    |Derived resource set tied to a PR/MR or manual preview identifier                         |
-|Backup execution           |Recovery artifact, consistency method, locations and verification                         |
-|Runtime observation        |Timestamped evidence about the server and hosted resources                                |
+|Entity                                  |Responsibility and lifecycle                                                                                                                   |
+|----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+|Team and project                        |Ownership, membership, policy, source connections and machine access                                                                           |
+|Task                                    |Durable goal, owner, collaborators, source/issue/PR lineage, activity, review state and links to workspaces and environments                   |
+|Run and attempt                         |Bounded execution with actor, worker, reservation, lease, fence, deadline and result; extend existing `TaskRun` internally                     |
+|Workspace                               |Mutable checkout and tool state, current writer generation, storage location and checkpoint policy                                             |
+|Checkpoint                              |Immutable source snapshot or patch, environment recipe and adapter-supported resume state, with a declared recovery limit                      |
+|Project environment                     |Related running resources such as preview, staging or production, with an independent lifetime                                                 |
+|Resource and deployment binding         |Application, database or stack, plus its destination, configuration, policy and mutation ownership                                             |
+|Machine                                 |Stable physical/virtual host identity, architecture, roles, capabilities, trust, availability and observations; preserve legacy Server mappings|
+|Destination                             |A specific runtime/guest boundary, networks and persistent-data placement on a machine                                                         |
+|Reservation                             |Accounted CPU, memory, disk, GPU and concurrency allocation, including expiry and reconciliation state                                         |
+|Task grant                              |Short-lived, enforceable authorization for a run or attachment, independent of the agent's stable identity                                     |
+|Source connection                       |Git or registry access and credential references                                                                                               |
+|Build input manifest and attempt        |Frozen effective inputs, eligibility for reuse, builder identity, logs and outcome                                                             |
+|Artifact                                |Immutable content identity, platform, storage locations, original production evidence and retention references                                 |
+|Verification run                        |Required-check definition and version, artifact/source subject, execution context, freshness and measured result                               |
+|Release                                 |Immutable deployable artifact set and source/build evidence; a candidate is a release under review, not a mutable branch                       |
+|Deployment plan                         |Release plus named target, effective runtime configuration, secret versions, verification evidence and data/migration preconditions            |
+|Approval and deployment                 |Authorized decision over a specific plan, then a separately recorded attempt to apply it                                                       |
+|Route and ingress binding               |Hostname/path/port ownership, certificate status, preview access policy and any authorized tunnel endpoint                                     |
+|Storage binding and secret version      |Explicit data ownership/location and protected values or external references with lifecycle                                                    |
+|Preview                                 |Task/PR-derived resource set, current release, visibility, expiry and independent runtime/data policy                                          |
+|Backup execution and runtime observation|Recovery artifact/consistency/verification, and timestamped evidence about machine or resource state                                           |
+|Model endpoint                          |Authenticated service, model/version identity where available, data policy, quota and availability, separate from an arbitrary host shell      |
 
-The UI should expose the resource users work with. It does not need to expose every internal definition or binding table.
+Not every entity needs a separate page. The task view should show the current candidate, work and preview status, last checkpoint, required checks, budget and next available action. Keep application operations accessible without a task.
 
-A resource may have a reusable source definition. Do not force staging and production to share mutable runtime configuration merely because they share a repository.
+Staging and production may use different configuration and data. Promotion preserves the artifact identity while producing a target-specific plan. Further workspace changes create a new candidate and never silently modify the one a teammate reviewed.
+
+### 4.3 Machine roles and qualification
+
+The following is a proposed qualification matrix, not an implemented support claim.
+
+|Machine                          |Useful roles                                                                                                   |Conditions and limits                                                                                                                                                                            |
+|---------------------------------|---------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|Linux gaming PC or workstation   |Builds, tests, agent work, optionally a trusted model endpoint                                                 |Qualified KVM backend for VM-isolated work, bounded allocations, local availability policy and native target architecture                                                                        |
+|Linux mini PC or dedicated server|Persistent applications, previews, builds and control services                                                 |Reserve capacity for persistent workloads and define disk ownership, backups and maintenance behavior                                                                                            |
+|Apple Silicon Mac                |Native ARM64 build/workspace guests, supported persistent Linux guests, native model serving                   |Separate Virtualization.framework adapter and qualification; native Metal model service exposed through a constrained endpoint; no assumption of Firecracker support                             |
+|Windows gaming PC                |Work inside a separately managed Linux VM; trusted work in WSL2; optionally a separately managed model endpoint|Use a qualified restricted VM boundary for untrusted work. A WSL distribution and its settings do not satisfy that boundary by themselves. Any nested VM backend requires separate qualification.|
+|NAS                              |Backup/object storage and, where qualified, limited compute                                                    |Qualify OS, architecture, virtualization, memory and disk behavior; storage eligibility does not imply compute eligibility                                                                       |
+|VPS                              |Public ingress, control plane, registry or eligible applications                                               |VM-isolated execution requires actual KVM access or an explicitly qualified alternative; inexpensive VPS capacity must not be assumed to expose it                                               |
+|Additional cloud machine         |Authorized overflow for compatible jobs or environments                                                        |Explicit provider, location, trust, credentials, spend limit and data-transfer policy before fallback                                                                                            |
+
+A machine's capability report describes eligibility. Authorization decides whether a project may use it. Placement first filters by authorization, trust, allowed location, architecture, isolation backend and hard capacity requirements, then ranks eligible hosts by queue, cache/data locality, availability and declared preferences.
+
+Reserve resources on claim, enforce local limits, and reconcile reservations after uncertain failures. Do not infer GPU availability from a machine label. Record device identity, supported access mode and exclusive or shared ownership. GPU passthrough, native model serving and API access to a model are different capabilities.
+
+Mac and Windows integration must be qualified against real host exposure. Apple's documented container machine mode, for example, shares the user's home directory and SSH agent by default, while WSL has host-drive and interoperability settings. NeroCD must configure an explicit isolation profile rather than inherit convenience defaults. Disabling WSL drive mounts and interoperability reduces exposure but does not turn WSL into an untrusted-code sandbox. W3, W4, W13
+
+### 4.4 Durability and handoff contract
+
+|Event                               |Required behavior                                                                                                                |
+|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+|Submitting client disconnects       |Accepted remote work continues under a supervisor independent of the browser, laptop connection or interactive BuildKit session  |
+|Control plane restarts              |Persisted tasks remain, agents follow the documented lease/reconnect policy, and existing application traffic continues          |
+|Worker becomes unreachable          |Mark observations stale and work uncertain/interrupted; retain known evidence and reconcile before granting conflicting authority|
+|Worker returns                      |Reconnect to the recorded attempt where valid, or reject stale authority and reconcile its effects                               |
+|Another machine takes over          |Restore the latest supported checkpoint to a compatible environment; describe lost uncheckpointed work and any restarted steps   |
+|Human takes over a workspace        |Pause/revoke the previous writer, confirm quiescence or clone a checkpoint into a new workspace, then issue a new grant          |
+|Agent run completes                 |Retain the candidate and evidence; keep the preview according to its independent policy                                          |
+|Machine with persistent data is lost|Use the supported data recovery/migration path; scheduling another process alone cannot recover that data                        |
+
+A checkpoint may contain source, a patch, uncommitted files, tool metadata and an agent adapter's documented continuation state. Exclude credentials and unrelated home-directory content. Process-memory snapshots are optional backend-specific optimizations, not the portable handoff format. Report whether recovery resumes a supported session, restarts from a checkpoint, or retains evidence only.
+
+### 4.5 Build identity, cache and promotion
+
+Expose three different decisions: reuse cached build steps, reuse a complete artifact, and reuse verification evidence. Each has a different correctness and trust contract.
+
+A frozen build input manifest must cover the effective build context, Dockerfile and named contexts, target, platform, resolved base/frontend identities, builder/toolchain versions, generated configuration, relevant non-secret arguments, dependency inputs and output-affecting secret version identifiers. A Git commit alone cannot identify all these inputs. Snapshot a mutable agent checkout before building.
+
+Whole-artifact reuse is eligible only when the recorded inputs and declared refresh policy support it. Unresolved mutable network inputs or untracked dependencies must disable that guarantee or use an explicit bounded refresh policy. Reuse under a freshness window satisfies that policy but does not prove unresolved external inputs remained unchanged. Reusing the original artifact preserves its original provenance and records the new task's reuse decision. It does not fabricate a new build.
+
+Use registry-backed BuildKit exports for the initial shared layer-cache path, with isolated trust scopes and controlled publication of shared references. BuildKit's registry cache can be separate from the final image. Its RUN --mount=type=cache directories remain builder-local and are not exported by --cache-to; portable compiler/package caches require an additional supported mechanism. W5, W6
+
+Build-secret contents do not participate automatically in BuildKit's cache checksum. Track an opaque version or generation for output-affecting secret changes and apply the supported invalidation mechanism without storing secret values or guessable hashes in build identity. W7
+
+A self-hosted registry may use a qualified object-store backend. Do not make direct BuildKit-to-Garage S3 cache export the first interoperability guarantee: Docker's backend overview labels S3 unreleased, while its S3 page labels it experimental. Pin and test the actual combination if adopting it. W8, W9
+
+Required runtime checks must identify the exact artifact they executed. Source-level tests, tests of a separate build stage and runtime verification have distinct subjects. Keep required check definitions under trusted policy so agent changes cannot replace mandatory verification. Reuse checks only when their recorded source or artifact subjects, check-definition and policy versions, relevant execution context, fixtures and freshness policy still match.
+
+For multi-platform artifacts, retain the OCI index and selected platform-manifest digests and their verification coverage. Success on ARM64 does not establish native AMD64 runtime behavior. Emulated results must be labeled. Freeze any attestations included in the index before sealing that index digest, or attach later evidence through immutable external references. W10, W11
+
+An approval binds the immutable release, required evidence and the destination-specific plan. It does not authorize future branch contents. Runtime configuration and data can differ between preview and production while the promoted application artifact remains identical.
 
 ## 5. Required user journeys
 
@@ -216,75 +317,72 @@ The operator inspects resource health after deployments finish, restarts a conta
 
 A control-plane restart leaves hosted resources running. A restored control plane reconciles ownership before resuming mutation.
 
+### 5.6 Task to reviewed deployment: first complete demonstration
+
+Use one supported Linux architecture and two physical machines with three logical roles: an always-on control/gateway role, a team-owned agent/build worker, and an always-on preview/deployment target. The control/gateway and target may share a machine with bounded allocations. Use a real registry transfer between build and deployment hosts.
+
+1. A human creates a repository task against a concrete starting revision, a trusted check policy and a preview recipe containing an application and isolated seeded PostgreSQL. Add a worker component if the application needs one.
+2. Placement selects an authorized compatible machine, records a reservation and creates an isolated workspace. One supported agent receives only the repository, model, build and preview grants required for the task.
+3. The agent works in its checkout. NeroCD retains activity, source checkpoints and failures. The initiating human disconnects and work continues remotely.
+4. An immutable source checkpoint and build input manifest freeze the inputs. BuildKit builds with authorized shared cache and publishes the artifacts. Successful publication creates the immutable candidate release. Required source checks identify their source subjects. Required runtime checks execute the final published candidate artifacts and record their digests.
+5. The preview target pulls the artifact by digest and exposes a private URL with its own application data. It remains available after the agent run ends and the build machine is drained.
+6. A teammate opens the task in another session, reviews changes, evidence and the live application, and can take over through a supported workspace handoff.
+7. An authorized human approves the production plan. Deployment applies the reviewed artifact without rebuilding and records the destination, configuration and data preconditions. The observed platform-manifest digest must match the approved artifact for that platform.
+8. A later source or relevant plan change requires a new decision. Preview expiry removes only owned disposable resources and retains task evidence and pinned releases.
+
+The demonstration must also run a compatible build on a second builder and show imported cache use, elapsed time and transferred bytes. A warm cache on the original builder alone does not prove shared cache. Keep this small fixture isolated from persistent workloads.
+
+This demonstrates one supported path. It does not assert universal agent resume, cross-architecture execution, application migration or full Coolify parity.
+
+### 5.7 Personal cloud and owned model endpoint
+
+A single owner enrolls a build-capable gaming PC, an always-on application host and a public VPS gateway. The platform shows which host executes work, which stores persistent data, and which publishes each endpoint. A NAS may be a configured backup target without joining the compute pool. A sleeping build host delays new jobs or triggers an explicitly configured fallback, while the independent application host continues serving.
+
+The owner or team can register a model service running on suitable hardware. Tasks receive scoped endpoint access and usage limits, not arbitrary access to the model host. A failed or unavailable model endpoint appears as a dependency failure with a declared retry policy. First-class model installation, GPU allocation and model upgrades require separately qualified lifecycle support.
+
+### 5.8 Reproduce, upgrade and recover
+
+A failed deployment can open a reproduction task containing its exact release, available configuration references, selected diagnostics and an isolated environment recipe. Show missing data and unavailable external dependencies. Production data copies require authorization, an appropriate sanitization policy and blocked external side effects by default.
+
+A supported application update declares its version path, preflight, backup, migration, verification and recovery procedure. Guided moves between machines transfer data explicitly, coordinate writers and switch traffic only after verification. Scheduled restore tests create disposable environments and verify application behavior, rather than merely confirming that an archive can be unpacked.
+
 ## 6. Functional requirements
 
 All requirements below describe the target rewrite. Milestones in section 10 determine implementation order. Current limitations are recorded in the parity ledger, not used to remove these requirements.
 
 ### 6.1 Organization and server management
 
-<a id="r01"></a>
-
 R01. Shared environments. A project environment MUST contain independently operated applications, databases and stacks. Two unrelated resources in one environment MUST be able to deploy concurrently.
-
-<a id="r02"></a>
 
 R02. Team and project authorization. Reuse existing identity and service-account behavior. Add explicit team ownership and server-access rules. Preserve current project permissions during migration. A viewer MUST not gain deploy, terminal, secret-reveal or data-deletion rights through a new UI or API.
 
-<a id="r03"></a>
-
-R03. Server onboarding. Support local installation, manual agent enrollment and SSH-assisted remote enrollment. Show supported operating system, architecture, Docker/Compose/Buildx availability, disk capacity, connectivity and proxy-port readiness. Validate SSH host identity and make any Docker installation or service restart part of the reviewed onboarding action.
-
-<a id="r04"></a>
+R03. Machine onboarding. Support local installation, manual agent enrollment and SSH-assisted remote enrollment where the host adapter supports them. Probe operating system, architecture, virtualization/runtime availability, disk capacity, connectivity and relevant ingress readiness. Display qualified roles and unmet prerequisites. Validate SSH host identity and include installations or service restarts in the reviewed onboarding operation. Do not advertise VM isolation based only on a CPU flag or machine label.
 
 R04. Credential separation. Bootstrap SSH credentials, enrolled-agent credentials, Git credentials and registry credentials MUST have separate scopes and lifecycles. State whether bootstrap credentials are retained for recovery. The browser MUST not receive permanent agent or host credentials.
 
-<a id="r05"></a>
+R05. Stable destinations. Machine and destination identity MUST survive agent process replacement. Every deploy, rollback, volume operation, backup, route change and scheduled command MUST identify its intended runtime boundary and data location. Matching tags do not authorize relocation. Preserve legacy Server identifiers through migration mappings.
 
-R05. Stable destinations. Server and Docker destination identity MUST survive runner process replacement. Every deploy, rollback, volume operation, backup, route change and scheduled command MUST identify the intended destination. Matching tags do not authorize relocation.
+R06. Machine roles and lifecycle. Support declared build, agent, test, application, storage, ingress and model roles where qualified, including combined roles with bounded allocations. Provide drain, reconnect, credential rotation, maintenance and removal. Removal MUST not implicitly destroy workloads or data. Old agents MUST not claim unsupported operations. Show the impact of a role or availability change on persistent workloads and queued tasks.
 
-<a id="r06"></a>
-
-R06. Server roles and lifecycle. Support build-only, deployment-only and combined roles. Provide drain, reconnect, credential rotation, maintenance and removal workflows. Removing a server record MUST not implicitly destroy workloads or data. Old agents MUST not claim operations whose required protocol they do not support.
-
-<a id="r07"></a>
-
-R07. Execution trust. A Docker host is an execution trust boundary. Team isolation in the database does not sandbox mutually hostile containers or Dockerfiles on one host. Support separate server/build pools where that isolation is required. Privileged host access and terminal access need explicit capabilities.
+R07. Execution trust. Untrusted agent tasks and untrusted build inputs MUST use a qualified isolation profile under R81 and R82. A shared host Docker daemon remains an explicitly trusted deployment mode. Database-level team separation does not sandbox hostile workloads. A machine administrator remains trusted with guest data and secrets placed on that machine. Capability matching never grants access to a machine, dataset or private network.
 
 ### 6.2 Sources and builds
 
-<a id="r08"></a>
-
 R08. Source choices. Support public/private Git, selected branches and commits, registry image tags or digests, stored Dockerfiles, Git Compose, pasted Compose and catalog templates. Preserve the source of truth for each. A no-Git input MUST not require a repository placeholder.
-
-<a id="r09"></a>
 
 R09. Git integrations. Provide repository and branch selection, scoped credentials, connection tests and webhook setup. Implement GitHub first, then the provider matrix in section 2. Generic Git and signed manual deploy webhooks remain supported paths.
 
-<a id="r10"></a>
-
 R10. Trigger integrity. Authenticate provider events, record delivery identity, deduplicate retries and bind a deployment to the intended source revision. Define how superseded queued changes are handled. A delayed older event MUST not silently replace a newer active release. Replaying a webhook MUST not create unbounded duplicate builds.
-
-<a id="r11"></a>
 
 R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12
 
-<a id="r12"></a>
-
 R12. Static sites. Distinguish serving already-built files from compiling frontend source. Support publish directory, SPA fallback and configurable static-server behavior. A configuration baked into an image requires a rebuild rather than a misleading restart action. C13
 
-<a id="r13"></a>
+R13. Build records and outputs. Record resolved source or workspace checkpoint, frozen build input manifest, platform, builder identity, logs, cache outcome and immutable output identities. Accept image tags as convenient inputs and record selected digests. Keep original build provenance when an artifact is reused. A deployment retry MUST not silently rebuild different contents. R87–R92 define input, trust and verification rules.
 
-R13. Build records and outputs. A build MUST record resolved source, input configuration generation, target architecture, builder identity, logs, cache outcome and output image identities. Accept image tags as convenient input, then record the digest actually selected. A deployment retry MUST not silently rebuild different contents.
+R14. Placement and image delivery. Support documented local builds and dedicated build workers. Remote builds MUST publish to an authorized registry or another qualified transfer mechanism. Verify target platform, artifact availability and pull access before mutation. A local image on one daemon is not available elsewhere by implication. The supervising build session MUST be owned by a remote service or worker so a submitting laptop disconnect does not cancel accepted work. Buildx provides a remote BuildKit driver, but product supervision and authorization remain NeroCD responsibilities. W12
 
-<a id="r14"></a>
-
-R14. Placement and image delivery. Support documented local builds and dedicated build servers. Remote builds MUST publish to an authorized registry or another explicitly supported image-transfer mechanism. Verify destination architecture and pull access before mutation. A local image on one daemon must not be assumed present elsewhere.
-
-<a id="r15"></a>
-
-R15. Cache and retention. Cache identity MUST account for source, build settings, builder version, architecture and relevant dependency inputs. Changed build-secret references must invalidate reuse where their values cannot be proven unchanged. Provide force rebuild, cache controls and cleanup. Protect images referenced by active deployments and retained rollback releases.
-
-<a id="r16"></a>
+R15. Cache and retention. Expose layer-cache reuse, complete-artifact reuse and verification reuse as separate outcomes. Scope cache access by project/team and trust policy. Track output-affecting secret versions and dependency refresh rules. Provide independent controls for disabling cache, rebuilding an artifact, refreshing mutable inputs and rerunning checks. Protect artifacts referenced by active deployments, retained releases and evidence roots. R87–R92 define the detailed contract.
 
 R16. Build credentials and limits. Separate build-time credentials from runtime secrets. Scope source and registry access to the operation. Apply time, CPU, memory, disk and concurrency limits. A failed or canceled build MUST not modify the active resource or route. Untrusted preview code MUST not receive production credentials.
 
@@ -292,55 +390,31 @@ Build and deployment are separate product records even when they execute on one 
 
 ### 6.3 Releases and deployment behavior
 
-<a id="r17"></a>
+R17. Automatic and protected deployments. Trusted push-triggered deployment remains a normal hosting workflow under an explicit resource/environment policy. Every deployment resolves a concrete release and target plan. Task work produced through an agent MUST pass independent human production authorization under R85. Agent access to a repository, branch or workflow MUST NOT become an indirect bypass of this rule through automatic deployment. New agent-workspace projects default production targets to protected.
 
-R17. Automatic and protected deployments. Trusted push-triggered deployment MUST work without mandatory human preparation and confirmation steps. Approval is an optional resource/environment policy. Internally, every deployment still resolves a concrete release and effective configuration.
+R18. Frozen release and plan identity. A release MUST identify immutable artifacts, source/build evidence and the deployable recipe version. A deployment plan freezes the selected release, destination, effective workload configuration, secret references/versions, relevant variable generations, required verification and data preconditions. Durable records MUST retain secret references and version identifiers instead of expanded values. Resolve secrets only into protected execution material. Secret-expanded Compose output MUST NOT enter ordinary release exports, audit payloads or artifacts. Hash normalized configuration with secret identities rather than publishing hashes derived from low-entropy values. Distinguish immutable secret-provider versions from mutable references.
 
-<a id="r18"></a>
-
-R18. Frozen release identity. A release MUST record source evidence when applicable, built or selected image identities, normalized workload configuration, secret references, relevant variable generations and target-specific plan evidence. Durable configuration MUST retain secret references and version identifiers instead of expanded secret values. Resolve secrets only into protected execution material when needed. Secret-expanded Compose output MUST NOT enter release records, downloadable manifests, audit payloads or ordinary artifacts. Hash normalized configuration with secret identities rather than publishing hashes derived from low-entropy secret values. Distinguish immutable provider versions from mutable external references.
-
-<a id="r19"></a>
-
-R19. Optional approval. When approval is required, review the resolved release after image preparation and before workload mutation. Bind the decision to the release, destination and applicable configuration. A moving branch does not change an approved release. New selected content or relevant configuration changes require a new decision under policy. State whether self-approval is permitted.
-
-<a id="r20"></a>
+R19. Plan approval. Where approval is required, review the concrete plan after image preparation and required verification, before workload mutation. Bind the decision to release, target, effective configuration/secret generations and evidence. New selected contents, material evidence-policy changes, expiry or relevant plan changes require a new decision. Current authorization and revocation still apply at execution. State human self-approval policy separately from the prohibition on an agent approving its own production work.
 
 R20. Admission and concurrency. Preserve durable idempotency and linked attempts. Scope active deployment exclusion to the resource binding. Extend current revision-level intent matching to release and plan identity. Coordinate shared proxy, network and storage mutations with their own ownership constraints.
 
-<a id="r21"></a>
-
 R21. Deployment strategies. Provide separate strategies for a single-image application, a Compose stack and a stateful database. Eligible stateless applications should start a replacement, verify readiness, switch traffic and drain the old container. Fixed host ports, exclusive mounts or application constraints may require replacement with interruption. Show the selected strategy before deployment.
-
-<a id="r22"></a>
 
 R22. Generic health. Support container health, HTTP, TCP and engine-specific readiness. Treat platform revision headers as optional extra evidence. Track expected components, images and container state through platform-owned metadata. Successful one-shot initialization jobs and optional components require different status rules from long-running services.
 
-<a id="r23"></a>
-
 R23. Cancellation and uncertainty. Cancel queued/build/pre-mutation work where safe. Once mutation may have occurred, record cancellation intent and reconcile effects before retry, rollback or termination. Preserve attempt fencing, durable replay and target ownership. A terminal intervention or failed rollback MUST not unlock unresolved runtime effects for a competing deployment.
-
-<a id="r24"></a>
 
 R24. Rollback and application data. Offer retained release selection, show the configuration and data-compatibility implications, and restore the selected supported release on the same destination. State whether the action uses the retained configuration or explicitly selected current overrides. Current authorization and secret revocation still apply. Never describe image rollback as reversal of database migrations or uploaded-file changes.
 
-Coolify’s own replacement strategies differ between single-image applications and Compose, and its documented image rollback uses current runtime configuration. This rewrite may provide a stronger retained-configuration option, but must label it as a deliberate improvement. C14, C15
+Coolify's own replacement strategies differ between single-image applications and Compose, and its documented image rollback uses current runtime configuration. This rewrite may provide a stronger retained-configuration option, but must label it as a deliberate improvement. C14, C15
 
 ### 6.4 Routing and certificates
 
-<a id="r25"></a>
-
 R25. Managed routing. Provide an integrated Traefik path first. Store route ownership, hostname, path, target component and internal port. Support multiple domains and public components, redirects, WebSockets and appropriate forwarding headers. Do not confuse an internal target port with a public host-port mapping.
-
-<a id="r26"></a>
 
 R26. Domain setup. Support custom domains and generated subdomains under a configured wildcard domain. Report DNS, ownership, reachability and route conflicts with actionable errors. Testing domains must be identified as such. Do not silently assume ownership of a domain or a working DNS record.
 
-<a id="r27"></a>
-
 R27. Certificate lifecycle. Manage ACME issuance, renewal, status and failure reporting. Support ordinary HTTP validation and a separately configured DNS-validation path for wildcard certificates. Protect DNS-provider credentials. Use bounded retries and retain a valid certificate when a renewal attempt fails. Custom certificates need an explicit storage and rotation path.
-
-<a id="r28"></a>
 
 R28. Proxy changes and availability. Validate new generated configuration and preserve the last working configuration on failure. Serialize shared proxy changes without blocking unrelated builds. Existing routes and workloads MUST continue serving during a control-plane restart. Track Caddy, custom-proxy operation and proxy migration in the parity ledger.
 
@@ -348,53 +422,29 @@ Current Coolify provides managed Traefik, Caddy and custom proxy choices. The re
 
 ### 6.5 Variables, secrets and credentials
 
-<a id="r29"></a>
-
 R29. Managed secret storage. Integrate encrypted secrets in the first application-hosting path. Cover Git, registry, SSH bootstrap, application, database, S3, webhook, DNS and notification credentials. Reuse existing cryptographic and lease-bound access foundations where suitable. Complete persistence, authorization, versioning, key provisioning, rotation and recovery before claiming support.
-
-<a id="r30"></a>
 
 R30. Value scopes. Separate build-time, runtime and preview variables. Support shared references at team, project, environment and resource scopes with a documented override rule. Show the origin of each effective value and whether a change requires a rebuild, redeploy or restart. Shared secrets MUST not be injected into every resource merely because they exist at a parent scope.
 
-<a id="r31"></a>
-
 R31. Disclosure and delivery. Mask secrets in ordinary views. Allow reveal or connection-string copy only through an explicit authorized operation with appropriate audit. Preserve one-time disclosure for credentials whose contract requires it. Deliver runtime/build secrets only to authorized execution. Redact supported output representations and keep plaintext out of stored job metadata and notification payloads.
 
-<a id="r32"></a>
-
 R32. Rotation and provider behavior. Define rotation, revocation and unavailable-version behavior. A runner_file label does not by itself freeze file bytes. For database accounts, rotate the engine credential and dependent bindings through a recoverable operation. For external secret sources, state resolution time, cache policy, missing-key behavior and build-cache consequences.
-
-<a id="r33"></a>
 
 R33. Key recovery and external sources. Preserve required encryption-key material through an explicit recovery process separate from ordinary database backups. Wrong or missing keys MUST fail closed. Retain runner_file as an operator option. Track Doppler, Infisical and Vault integration as parity work with provider-specific contracts. C16
 
 ### 6.6 Compose and persistent storage
 
-<a id="r34"></a>
-
 R34. Compose compatibility. Support service images and builds, variables, commands, profiles, networks, health checks, dependencies, resource settings, named volumes and supported bind/file mounts. Publish a tested compatibility matrix covering managed and raw deployment modes. Replace the current blanket prohibitions with capability and ownership rules. Unsupported fields must produce a precise preflight error.
-
-<a id="r35"></a>
 
 R35. Compose ownership. Git-owned Compose remains repository-owned. Pasted or template-derived Compose remains stored resource configuration. Generated routing, credentials and overrides must be reviewable and must not create a second conflicting source of truth. Preserve required/optional variable semantics and existing configured values when reloading definitions. Track raw Compose as an explicit parity mode that preserves operator-owned labels and networking and identifies which managed features are disabled. Raw mode MUST preserve authorization, destination ownership and data-retention rules. State its resolution and reproducibility limits for external inputs. Reject a protected-deployment policy during preflight if the raw definition cannot satisfy its required release guarantees without alteration.
 
-<a id="r36"></a>
-
 R36. Multi-component execution. Resolve or build each required image and record the selected set before application. Interpret long-running services, initialization jobs and optional components explicitly. Show component-level status, endpoints, logs and controls. A healthy web endpoint alone is insufficient when a required database or worker failed.
 
-<a id="r37"></a>
+R37. Advanced host access. Support administrator-authorized advanced Compose needs through explicit capabilities where qualified. Distinguish paths/devices inside a guest from physical-host access. Do not silently discard unsupported fields or grant physical-host access through a convenience setting. Host mounts, privileged execution or devices that weaken an isolation profile require a different explicit trust profile and may make a destination ineligible for untrusted work.
 
-R37. Advanced host access. Support administrator-authorized advanced Compose needs through explicit capabilities, including controlled host mounts or devices where supported. Do not silently discard requested fields. Do not grant a project user arbitrary host access through an unreviewed convenience setting.
-
-<a id="r38"></a>
-
-R38. Storage identity. Record each binding’s destination, Docker volume identity or canonical host path, mount destination, mode, ownership and resource references. Keep identity stable across rename, redeploy and agent replacement. Distinguish managed files, managed directories and pre-existing host files. Classify each storage object as platform-managed or externally owned. Importing or mounting an external object does not transfer ownership; any supported ownership transfer MUST be separate, authorized and auditable.
-
-<a id="r39"></a>
+R38. Storage identity. Record each binding's destination, Docker volume identity or canonical host path, mount destination, mode, ownership and resource references. Keep identity stable across rename, redeploy and agent replacement. Distinguish managed files, managed directories and pre-existing host files. Classify each storage object as platform-managed or externally owned. Importing or mounting an external object does not transfer ownership; any supported ownership transfer MUST be separate, authorized and auditable.
 
 R39. Data retention and deletion. Stop, redeploy, remove resource and delete data MUST be separate operations. Retain persistent data by default when removing a resource. Resource deletion and automated cleanup MUST preserve externally owned volumes, files and directories, including when deletion of managed data was explicitly selected. A destructive action must name the exact data objects and affected resources. Cleanup must protect retained data, active work, shared references and required recovery points.
-
-<a id="r40"></a>
 
 R40. Cross-host state. A local volume remains bound to its destination. Moving a resource with data requires explicit transfer, restore or a supported replication/storage model. Matching server tags or a new container name cannot create continuity of data.
 
@@ -402,21 +452,13 @@ Current Coolify supports both Git and pasted Compose, as well as several storage
 
 ### 6.7 Database resources
 
-<a id="r41"></a>
-
 R41. Database creation. Provide engine/version selection, target/network, stable persistent storage, generated credentials, resource limits, readiness and connection details through the UI and API. Default to private networking. Public exposure requires an explicit operation with endpoint and access implications shown.
-
-<a id="r42"></a>
 
 R42. Application bindings. Let users bind a database to an application through credential references and valid network information. Show unreachable cross-server bindings rather than inventing a shared Docker network. Redeployment must preserve credentials and data unless an explicit change is requested.
 
-<a id="r43"></a>
-
 R43. Engine-specific lifecycle. Implement configuration, readiness, start/stop/restart, credential rotation and supported backup/restore per engine. Major-version upgrades must validate data layout and compatibility and show a recovery procedure. Changing an image tag must not be advertised as a universal database upgrade.
 
-<a id="r44"></a>
-
-R44. Engine coverage. Maintain the matrix below in implementation and documentation. PostgreSQL and Redis may ship first, but the remaining documented engine coverage stays in the product plan. “Managed” describes supported lifecycle operations, not automatic replication or a database availability SLA.
+R44. Engine coverage. Maintain the matrix below in implementation and documentation. PostgreSQL and Redis may ship first, but the remaining documented engine coverage stays in the product plan. "Managed" describes supported lifecycle operations, not automatic replication or a database availability SLA.
 
 |Engine    |Reference scheduled backup|Reference dashboard restore|Rewrite requirement                                             |
 |----------|--------------------------|---------------------------|----------------------------------------------------------------|
@@ -434,23 +476,13 @@ The reference matrix is documented by Coolify. Similar-looking database controls
 
 ### 6.8 Backups and restores
 
-<a id="r45"></a>
-
 R45. Separate recovery types. Expose platform backups, database backups and storage backups as distinct workflows. A platform database backup does not contain hosted application data. A storage archive does not prove transactional consistency for a running database. Application rollback remains a fourth, separate operation.
-
-<a id="r46"></a>
 
 R46. Backup execution. Support immediate and scheduled backups with target, format, consistency method, timeout, retention, concurrency policy and execution history. Record resource identity, engine/version, size, digest and available locations. Use local staging and S3-compatible remote storage where configured. A storage backup MUST state whether writers remain active or are quiesced. For a stop-during-backup policy, record which containers were running, stop the required writers, create the archive, and attempt to resume those containers after success, failure or timeout. Do not start containers that were already stopped. Reconcile incomplete resume attempts and preserve their failure evidence. A live file archive MUST NOT be labeled an application-consistent database backup.
 
-<a id="r47"></a>
-
 R47. Partial outcomes and retention. Distinguish dump/archive success from remote-upload success. Preserve the local recovery artifact after failed upload. Keep local and remote retention independent. Replaying a retention request after response loss must return its receipt without deleting another batch. Preserve audit and receipt atomicity.
 
-<a id="r48"></a>
-
 R48. Restore workflow. Prefer restore into a new database or volume for validation. In-place restore must identify its target, replacement behavior, compatibility, writer coordination and recovery point. Restore ownership and permissions where relevant. Verify an application can read and write restored data before marking the recovery test passed.
-
-<a id="r49"></a>
 
 R49. Platform recovery. Preserve the existing compatible-image/schema restore discipline and invalidation of restored sessions and active leases. Recover required secret keys and configuration. Enter a recovery mode that observes existing hosts and confirms ownership before resuming mutation. Do not recreate or delete healthy workloads merely because the control-plane database was restored.
 
@@ -458,19 +490,11 @@ Coolify documents separate instance, database and storage backup paths with diff
 
 ### 6.9 Service catalog and upgrades
 
-<a id="r50"></a>
-
 R50. Versioned templates. Store template identifier, source version, original definition, user changes, generated values, component identities and resolved images. Generate passwords and stable identifiers once. Redeployment and catalog refresh MUST not regenerate credentials.
-
-<a id="r51"></a>
 
 R51. Installation experience. Search and filter catalog entries, show required variables, domains, storage, architecture, resource needs and component roles, then install through the same resource engine as pasted Compose. Templates must not bypass authorization or storage rules.
 
-<a id="r52"></a>
-
 R52. Update semantics. Distinguish pulling newer images under saved tags, changing application configuration and upgrading the catalog definition. Show a change preview for images, variables, mounts, networks, health and migrations. Catalog updates MUST not silently rewrite installed resources. Block or explain rollback when data compatibility prevents it.
-
-<a id="r53"></a>
 
 R53. Catalog compatibility. Support a useful initial tested catalog and expand through a published fixture matrix. Import compatible reference templates with recorded origin/version and required attribution. An imported YAML file is not validated support until installation, persistence and update behavior pass.
 
@@ -478,19 +502,11 @@ Coolify installs a copied resource definition from a template, and later catalog
 
 ### 6.10 Previews and delivery automation
 
-<a id="r54"></a>
+R54. Preview identity. Represent a preview as a task-, PR/MR- or manually derived resource set with separate routes, configuration, networks and data. Support single-image and declared Compose paths, including application, workers and isolated databases. Its lifecycle MUST be independent of the agent run and mutable workspace. Record the current immutable release and its verification coverage.
 
-R54. Preview identity. Represent a preview as a derived resource or resource set tied to a provider request or manual identifier. Allocate separate route, configuration, network and storage identities. Support both single-image and declared Compose preview paths.
+R55. Preview trust and credentials. Default automatic previews to trusted repository actors and authenticated viewers. Public-fork execution requires an explicit policy and qualified isolation. Production secrets, database bindings and writable volumes MUST NOT be copied by default. Use isolated seed data unless a separate data-copy operation is authorized. Preview access, source editing and deployment permissions are distinct. Limits account for build and runtime capacity.
 
-<a id="r55"></a>
-
-R55. Preview trust and credentials. Default automatic previews to trusted repository actors. Public-fork execution requires an explicit policy and appropriate isolated execution. Do not reuse production runtime secrets, database bindings or writable volumes by default. Preview limits must account for build and runtime capacity.
-
-<a id="r56"></a>
-
-R56. Preview lifecycle. Update a preview from its intended revision, report provider status and URL, and clean it up on close/merge or configured expiry. Define retry, failed-build and retained-data behavior. A delayed close event or retried cleanup MUST not remove the production resource or a newer unrelated preview.
-
-<a id="r57"></a>
+R56. Preview lifecycle. Update a preview from its intended candidate, report provider/task status and URL, and expire it under a recorded policy. Define failed-update, retry, data retention and extension behavior. Ending an agent run MUST NOT remove a retained preview. A delayed close event or repeated cleanup MUST NOT delete production, external data or a newer unrelated preview. Closing the creator's client does not alter the preview lifetime.
 
 R57. Delivery policy. Expose auto-deploy branch selection, path filters where supported, manual deploy, deploy webhooks, optional approval and rollback policy. Keep ordinary push deployment simple. Advanced operational templates must not become mandatory configuration for a normal application.
 
@@ -498,31 +514,17 @@ Reference preview behavior includes provider events, separate variables/domains 
 
 ### 6.11 Ongoing operations, schedules and notifications
 
-<a id="r58"></a>
-
 R58. Continuous observation. Collect server reachability, container state, readiness, disk usage and bounded CPU/memory samples independently of deployment jobs. Combine event-driven updates with periodic reconciliation. Document collection and stale-state thresholds. An unreachable agent means current state is unknown, not that every workload stopped.
-
-<a id="r59"></a>
 
 R59. Distinct logs. Provide build, deployment and runtime log views with clear source, time, component, ordering and retention. Runtime logs continue after a deployment ends. Live follow must reconnect and indicate gaps or truncation. Keep audit records separate. External log drains and metrics export are part of the operations plan.
 
-<a id="r60"></a>
-
 R60. Resource actions. Support start, stop, restart, redeploy, inspect, force rebuild and supported rollback with resource-specific behavior. Display desired state, last operation result and latest observed state separately. Expose diagnostics and resource limits without requiring generic run IDs as the primary navigation.
-
-<a id="r61"></a>
 
 R61. Terminals. Provide container and server terminals through short-lived grants bound to actor, destination and resource. Container access and host access require different permissions. Support server-level disablement, revocation and session termination. Audit session metadata without placing permanent credentials in the browser.
 
-<a id="r62"></a>
-
 R62. Scheduled commands. Bind a schedule to a resource and component, then resolve its current container on the correct target at execution. Record occurrence identity, schedule version and actual target. Define timezone, DST, timeout, overlap and missed-run policy. The default should skip missed runs and forbid overlap rather than create an uncontrolled catch-up burst.
 
-<a id="r63"></a>
-
 R63. Durable notifications. Start with email and generic webhooks, then complete the declared channel matrix. Users select events per channel. Include deployments, backup/upload failures, schedules, resource state, server reachability and disk pressure. Persist delivery attempts, bounded retries and deduplication keys. Test delivery must be distinct from exercising an actual event.
-
-<a id="r64"></a>
 
 R64. Maintenance. Provide owned-image/cache cleanup, disk-pressure reporting, agent/proxy version visibility and supported upgrade procedures. Never prune all host resources indiscriminately. Platform and agent updates must preserve running applications, retain a recoverable control-plane state and explain compatibility limits.
 
@@ -530,25 +532,95 @@ Reference operations include continuous status collection, runtime metrics, term
 
 ### 6.12 UI, API and compatibility
 
-<a id="r65"></a>
-
-R65. Resource-first interface. Main navigation must make Projects, Environments, Applications, Databases, Services, Servers, Sources and Settings understandable. Resource pages expose configuration, deployments, runtime logs, domains, storage and relevant operations. Generic runs remain available as execution details or advanced automation.
-
-<a id="r66"></a>
+R65. Task-centered collaboration and direct operations. The main collaboration view is a durable Task showing its goal, source changes, agent/human activity, workspace status, checkpoint, required checks, candidate, preview, budget and deployment history. Provide direct navigation to projects, environments, applications, databases/stacks, machines, sources and settings. Users can host or operate an application without an agent task. Existing generic runs remain execution details and advanced automation, not a substitute for the new Task.
 
 R66. Complete UI workflows. After documented platform installation, every supported resource can be created and operated without seeded fixtures, SQL or ad hoc API calls. Preserve non-secret form input after validation failure. Show missing prerequisites and direct actions. Verify keyboard access, responsive views and authorization failures.
 
-<a id="r67"></a>
-
 R67. One application contract. UI, API, CLI, webhooks and MCP MUST call the same authorized application operations. Regenerate the TypeScript client from the versioned contract. Preserve legacy NeroCD routes during the supported migration window. Do not expose a shortcut that bypasses target, secret, approval or data-ownership rules.
-
-<a id="r68"></a>
 
 R68. Evidence and releases. A capability is complete when schema, API, permissions, audit, UI, operational behavior and tests agree. Publish supported OS, architecture, Docker/tool versions and measured limits. Use candidate-specific checks and runtime evidence. Do not claim performance gains from choosing Go without measurement.
 
+### 6.13 Durable tasks and workspaces
+
+R69. Task identity and activity. Create a durable Task with owner, collaborators, goal, project, source lineage and linked environments. Support human, integration and agent actors, several runs, candidates and review decisions. An execution retry MUST NOT create a different user task or erase prior evidence. Activity must distinguish requested action, observed outcome and agent narrative.
+
+R70. Durable admission and attempt authority. Acknowledge accepted work only after its task/source references and queued intent are durable. Atomically record a claimed attempt, its resource reservation and lease authority. Bound retries by the task's original deadline and aggregate budget. Reject stale state changes, credential requests and artifact/candidate publication. Reconcile possible external effects before conflicting mutations or releasing uncertain reservations. Do not claim exactly-once execution.
+
+R71. Workspace lifecycle. Create an isolated checkout and declared tool environment per workspace, with a named base revision, branch or content snapshot and owned disk allocation. Separate writable work from immutable candidates. Use one writer by default. Permit concurrent experiments through separate workspaces or an explicit coordination protocol. Workspace cleanup MUST retain required checkpoints and never delete unrelated repositories or data.
+
+R72. Checkpoints and continuation. Publish immutable checkpoints containing the declared source changes, selected uncommitted files, environment recipe and supported agent continuation metadata. Encrypt and authorize sensitive content, exclude credentials and report excluded files. Identify the latest durable checkpoint and possible lost work after interruption. Publish an adapter-specific distinction between session resume, restart from source/checkpoint and evidence-only recovery. No universal process-memory or cross-architecture migration guarantee is implied.
+
+R73. Human attachment and handoff. A teammate can inspect the diff, logs, checks and preview and attach to supported workspace tools under a short-lived grant. Before writable takeover, revoke or pause the old writer and confirm quiescence. If the old host cannot be fenced, create a separate workspace from a checkpoint rather than granting a second writer to the same data. Preserve ownership generations and the handoff event. The first release can use terminal/editor attachment integrations without implementing a new IDE.
+
+R74. Evidence persistence and disclosure. Retain task activity, checkpoints, diffs, command/check results and artifact references independently of temporary worker disks. Enforce project/task permissions on every download and stream. Indicate missing, truncated, stale and partially uploaded evidence. Apply separate retention to task history, logs, checkpoints, previews, caches and releases. Record deletion and preserve required references without exposing removed secrets.
+
+R75. Source handoff. Allow a supported agent to submit a patch, commit or review branch tied to the task and candidate. Preserve the distinction between a source checkpoint, provider commit, pull request and deployed artifact. Repository write operations use the same explicit task authority. Branch restriction claims MUST be enforced by the provider or by a broker that holds broader credentials outside the guest. A repository-wide token handed to an agent cannot be described as branch-scoped merely because its task metadata names one branch.
+
+### 6.14 Placement, availability and budgets
+
+R76. Typed capabilities. Record machine OS/architecture, qualified execution backends, resource capacity, device capabilities, tool versions and observation freshness. Separate native target support from emulation and from cross-compilation. A successful capability probe is evidence of a tested prerequisite, not proof that every workload is supported. Revalidate material host changes and reject unsupported operation/backend combinations before execution.
+
+R77. Placement and reservations. Filter by authorization, trust, data location, required isolation, architecture and hard resource constraints before applying scheduling preferences. Account for CPU, memory, disk, GPU/VRAM where supported and concurrency, with local enforcement and bounded overcommit policy. Reserve persistent application capacity separately from opportunistic jobs. Prefer cache locality only among eligible destinations. A tag match MUST NOT override stable destination or volume ownership.
+
+R78. Budgets and expiry. Apply task/project limits for elapsed time, aggregate resource consumption, concurrency, workspace and preview storage, network usage where metered, and configured model/cloud spending. Show measurement gaps instead of invented precision. Budget is shared across retries and subtasks. Enforce stop/reject behavior at a documented boundary, with safe cleanup and retained evidence. Preview expiry must include a reviewable extension policy.
+
+R79. Availability policy. Let owners declare always-on or opportunistic capacity, schedules and drain behavior. Show queued work blocked by unavailable eligible capacity. A submitting-client disconnect must not end accepted remote work. Sleep or loss of an executing host causes explicit interruption/uncertainty and supported recovery. Do not automatically move stateful applications or claim continuity of uncheckpointed work. Rejoining hosts must reconcile old authority before accepting conflicting work.
+
+R80. Cloud fallback. Support adding compatible cloud machines through the same enrollment and policy model. Automated provisioning or fallback requires configured provider credentials, locations, allowed data, spending limits and cleanup ownership. Never silently upload private source, checkpoints, models or datasets to a different trust/location domain. When fallback is disallowed or exhausted, preserve the task and explain the blocked condition. Provider provisioning is separate from the first manual-capacity workflow.
+
+### 6.15 Agents, isolation and models
+
+R81. Qualified isolation profiles. Run untrusted code in a supported VM boundary, with an explicit host/kernel/backend/guest-image support matrix, patch/update policy and resource controls. Distinguish task, preview and production boundaries. Use disposable guest disks for ephemeral work and explicit bindings for retained data. Never claim that VM isolation makes arbitrary malicious code harmless. Native Mac, Windows and Linux implementations require their own tests. A WSL distribution alone is not a qualifying VM isolation boundary. GPU/host-device access needs a separate qualified profile. W13
+
+R82. Filesystem and network grants. Deny access to personal home directories, host management interfaces, host Docker sockets, personal SSH agents and private networks unless explicitly granted for the task. Enforce network policy outside the untrusted guest, including IPv4/IPv6, host/private/metadata ranges, proxy paths and address revalidation after DNS resolution. Grant specific destinations, ports and data mounts with modes and lifetimes. An ingress tunnel only exposes authorized services and must not become a general LAN route. Revocation behavior must be exercised.
+
+R83. Task-scoped authority. Associate a stable agent/service principal with short-lived run grants for task/project, repository operations, environment/destination, artifact/cache namespace, secrets, model endpoints and expiry. Enforce restrictions in the actual provider, broker or runtime, not just in a signed claim that a downstream service ignores. Prefer brokered access where narrow downstream credentials do not exist. Do not place production credentials in ordinary agent workspaces. Apply revocation to active sessions and outstanding operations as supported and report residual uncertainty. Grants do not promise to erase data already legitimately read.
+
+R84. Agent adapter contract. Version an adapter for starting, observing, interrupting and collecting one supported coding agent. Declare its authentication, model requirements, tool access, checkpoint/resume semantics, costs where available and cancellation behavior. Preserve prompts, tool events and results according to project retention/disclosure policy. Agents use ordinary authorized build, preview and task APIs. Adapter availability must not depend on the initiating laptop staying online.
+
+R85. Human production authorization. Agent-produced changes require an authorized human decision over the concrete production plan after required checks. Enforce this at the application boundary for UI, CLI, MCP, repository automation and webhooks. Agents cannot change protected deployment policy or replace trusted checks to authorize themselves. A reviewed merge may satisfy the human decision only under an explicit policy that binds the accepted source/artifact, required evidence and final target plan; an unrelated historical PR approval is insufficient. Content or target changes require a new decision.
+
+R86. Model services. Register an authenticated model endpoint with allowed projects/tasks, model identity where available, context/request limits, concurrency, usage budget and availability. Record the selected model/service in task evidence and expose unavailable or unsupported behavior clearly. Access to the endpoint does not grant a shell, GPU device or model-host files. Separately qualify native Mac/GPU serving, model installation, storage, licensing constraints, upgrades and device ownership before claiming managed model-hosting support.
+
+### 6.16 Shared results and verification
+
+R87. Effective build inputs. Freeze a canonical build input manifest including effective context bytes after ignore rules, relevant named contexts, Dockerfile/frontend, target, platform, resolved base identities, builder/toolchain version, effective build settings, dependency material and output-affecting secret generations. Include submodule/LFS material where used. Retain source lineage separately from content equivalence. A live mutable checkout MUST NOT change while its candidate input is being captured without detection and retry.
+
+R88. Conservative artifact reuse. Reuse an existing authorized artifact only when the manifest and refresh policy establish eligibility, the artifact is available with its expected identity, and current policy permits it. Unknown mutable external inputs require a declared freshness bound or disable complete-artifact reuse. Freshness-based reuse does not prove those external inputs remained unchanged. A matching Git SHA is insufficient. Record why reuse was accepted or refused and retain original provenance. Force rebuild, mutable-input refresh and check rerun are separate operations.
+
+R89. Cache trust and transport. Qualify registry-backed build-result caching first. Scope read and write permissions separately by team/project/trust class. Untrusted contributions MUST NOT overwrite a protected cache reference or supply authoritative check results. Prefer immutable per-run exports and controlled shared-reference updates. Warn that caches can contain private build material and apply the same disclosure boundary as source. Distinguish shared layer results from builder-local compiler/package cache mounts. Cache eviction MUST NOT delete pinned releases or backups. W5, W6
+
+R90. Required checks and reuse. Every check result records its exact source/artifact subject, definition version, execution environment/platform, time, outcome and retained evidence. Trusted policy chooses mandatory checks. Agent-edited tests can be useful additional evidence but cannot silently redefine the deployment gate. Runtime checks must execute the release artifact. Reuse of successful checks requires matching source/artifact subjects, check-definition and trusted-policy versions, fixtures, relevant environment and freshness criteria. Security or policy changes may require re-verification without rebuilding.
+
+R91. Platform and attestation identity. Record target OS/architecture/variant, native or emulated execution and image index/platform-manifest identities. Display verification coverage per supported platform. Do not infer native correctness on one platform from a result on another. Seal index-embedded attestations before approval of that index, or retain later evidence by immutable references without mutating the approved identity. Deployment selects the approved eligible platform digest and records it. W10, W11
+
+R92. Artifact availability and retention. Publish through authorized, bounded transfers with digest verification and explicit completion state. Candidate publication and deployment MUST NOT claim an artifact exists when required uploads failed. Protect artifacts referenced by retained releases, active deployments and required evidence, with separate cache and checkpoint policies. Reconcile registry/object-store retention and garbage collection. Report unavailable/corrupt artifacts and require a new build/approval where recovery changes their identity. Qualify any self-hosted storage/registry combination before advertising its guarantees.
+
+### 6.17 Application care and deeper capabilities
+
+R93. Reviewable environments. A task preview must show the candidate it serves, health of required components, access policy, data origin, expiry and source of verification. Default access is authenticated and project-scoped. Optional share links need explicit audience, expiry and revocation. A reviewer can inspect without receiving source-edit, terminal or production rights. A retained preview remains available only while its declared runtime dependencies remain available.
+
+R94. Failure reproduction. Create a reproduction environment from an exact retained release, supported environment recipe and authorized diagnostic/configuration data. Show missing inputs and external dependencies. Production data copying is a distinct authorized operation with sanitization and retention rules. Block outbound email, payments, webhooks and other external side effects unless granted. Reproduction means a documented reconstruction attempt, not a claim of exact historical system state.
+
+R95. Supported application updates. Maintain an application/version-path contract describing preflight, compatibility, backup/consistency method, migration, verification, expected interruption and tested recovery. Verify recovery prerequisites before mutation. Preserve reports for partial failure and unresolved writer state. An available newer image or VM snapshot does not establish a safe upgrade or database rollback. Unsupported update paths must be labeled manual/unsupported.
+
+R96. Guided migration between machines. Plan destination capability/resource checks, image compatibility, secrets, data transfer, writer coordination, verification and route cutover. Name each data object and recovery point. Prevent both installations from concurrently performing exclusive schedules or consuming external events during cutover. Account for post-cutover writes in recovery. Cross-architecture migrations require supported images and application/data-format compatibility, not just successful file copy.
+
+R97. Restore testing. Restore a selected backup into an owned disposable environment, verify application startup and meaningful data reads/writes, retain the result and then clean up by ownership. Record engine/application versions, recovery artifact identity, elapsed time and missing dependencies. Keep restored credentials, production data and outbound integrations under explicit policy. A successful archive extraction alone MUST NOT mark the application recovery test passed.
+
+R98. Database-aware deployment planning. Describe migration direction, supported version pairs, backward/forward compatibility, writer coordination and the effect on image rollback. Use declared application support and executed checks. Do not infer semantic safety from SQL syntax alone. A plan must explain when rollback needs data restoration, a forward fix or interruption, and revalidate preconditions before applying it.
+
+R99. Progressive delivery. Offer gradual exposure only for eligible workloads with a supported routing strategy, defined health metrics, sufficient observation criteria and abort/recovery behavior. Persist the rollout state and decisions. Do not automatically roll back an incompatible schema change merely because a metric crossed a threshold. Show unsupported stateful/shared-session cases explicitly.
+
+R100. Drift detection and reconciliation. Compare observed platform-owned configuration with intended state, attribute known manual changes and show a reviewable reconciliation plan. Mark unknown/stale observations. Observe external resources without claiming ownership or deleting them. Apply plans through normal authorization, concurrency and data-retention rules.
+
+R101. Vendor-managed application packages. Define versioned packages with verifiable publisher identity, artifact identities, supported platforms, configuration/data requirements, update checks and recovery contract. Customers approve installation/update policy and retain local control. Publisher authority to release a package does not grant remote administration of customer machines. Revocation, compromised updates and pinned versions need explicit behavior before this capability is declared supported.
+
+R102. Evidence-based AI assistance. AI investigation and optimization proposals must link the failing observation or measured baseline, proposed change, actual checks/benchmarks and resulting measurements. Label untested hypotheses and measurement uncertainty. An agent's narrative cannot substitute for executed verification, approve production or author authoritative evidence without the corresponding trusted execution record.
+
 ## 7. Migration design
 
-### 7.1 Migrate NeroCD’s existing domain
+### 7.1 Migrate NeroCD's existing domain
 
 Do not discard the existing code or history. Introduce the new domain alongside the old contract, then move workflows in bounded steps.
 
@@ -562,6 +634,10 @@ Do not discard the existing code or history. Introduce the new domain alongside 
 8. Preserve historical approvals as approvals under their original contract. Do not relabel them as approvals of newly introduced immutable plans.
 9. Drain or explicitly reconcile in-flight work during the upgrade. Old agents cannot execute new operation types without the required capabilities.
 10. Keep applied migration checksums unchanged and rehearse upgrade/restore with representative prior data.
+
+Add Tasks and Workspaces without relabeling every historical TaskRun as an existing collaborative workspace. Historical runs can be linked to a new task through an explicit mapping. Preserve unknown checkpoint, artifact, platform and verification fields as unknown rather than inventing evidence.
+
+Map existing enrolled runners to stable machine identities only after destination ownership is established. Re-probe capabilities and require an explicit trust/isolation profile before assigning untrusted agent work. Preserve legacy trusted Docker operation where declared. Existing service-account roles remain valid but do not automatically become narrow task grants or authorize cloud data movement.
 
 The current service-specific environment can remain an internal binding during the transition. The UI can create the necessary rows together so users do not need to understand legacy storage structure.
 
@@ -585,7 +661,7 @@ The supported first migration path is:
 10. Enable the intended destination triggers, schedules and external-event consumers only after ownership and cutover are explicit.
 11. Retain a recovery window with an explicit statement about writes made after cutover.
 
-Current Coolify’s own instance-migration documentation describes reconstruction and state transfer rather than a universal application import/export operation. The rewrite should not assume a complete export format exists. C23
+Current Coolify's own instance-migration documentation describes reconstruction and state transfer rather than a universal application import/export operation. The rewrite should not assume a complete export format exists. C23
 
 Existing-container adoption is a separate mode. It requires explicit transfer of mutation ownership, preservation of real volume/network identities, and protection against both controllers managing the same resource. Reading Docker labels is insufficient evidence of a completed handoff.
 
@@ -601,45 +677,81 @@ These scenarios define the corrected product outcome. They are proposed tests, n
 
 |ID |Scenario                                        |Required result                                                                                                                                                                                                                                                                      |
 |---|------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-|<a id="a01"></a>A01|New installation and remote server              |UI-assisted enrollment produces a ready server/destination without hand-editing database rows                                                                                                                                                                                        |
-|<a id="a02"></a>A02|Public repository with Dockerfile               |Build and deploy through the UI, then open a valid HTTPS endpoint                                                                                                                                                                                                                    |
-|<a id="a03"></a>A03|Private repository with automatic builder       |Scoped credentials work, source resolves, image builds and secrets do not leak into normal logs                                                                                                                                                                                      |
-|<a id="a04"></a>A04|Static files and compiled SPA                   |Both paths serve assets and deep links using their declared build/output settings                                                                                                                                                                                                    |
-|<a id="a05"></a>A05|Registry image supplied by tag                  |Platform records the selected digest and runs an ordinary third-party image without a revision header                                                                                                                                                                                |
-|<a id="a06"></a>A06|Failed source build                             |Existing containers and routes continue serving the previous release                                                                                                                                                                                                                 |
-|<a id="a07"></a>A07|Remote build server                             |Image reaches the deployment host through the declared registry path with architecture and pull checks                                                                                                                                                                               |
-|<a id="a08"></a>A08|Two apps in one production environment          |They deploy independently while each resource prevents conflicting active mutation                                                                                                                                                                                                   |
-|<a id="a09"></a>A09|Duplicate or delayed Git webhook                |Retries deduplicate and an older event does not silently replace newer desired state                                                                                                                                                                                                 |
-|<a id="a10"></a>A10|Protected deployment                            |Approval identifies a resolved release and target; branch movement cannot substitute content                                                                                                                                                                                         |
-|<a id="a11"></a>A11|Eligible stateless replacement                  |New version passes readiness before traffic moves; failed readiness retains the old working version                                                                                                                                                                                  |
-|<a id="a12"></a>A12|Fixed host port or exclusive state              |Platform selects and explains an appropriate replacement strategy without promising universal zero downtime                                                                                                                                                                          |
-|<a id="a13"></a>A13|Two hosts with identical tags                   |Deployment, rollback, backup and volume operations remain on their authorized destination                                                                                                                                                                                            |
-|<a id="a14"></a>A14|Lost lease after possible Docker mutation       |Recovery observes actual effects and blocks conflicting work until ownership is resolved                                                                                                                                                                                             |
-|<a id="a15"></a>A15|Git and pasted Compose                          |Both support mixed builds/images, variables, profiles, networks, volumes and component-level status; secret interpolation reaches the authorized workload while stored release evidence and ordinary exports retain references                                                       |
-|<a id="a16"></a>A16|Stack with one-shot init, web and database      |Successful initialization is not reported as failed solely because its container exited                                                                                                                                                                                              |
-|<a id="a17"></a>A17|PostgreSQL plus application                     |Generated credentials and binding work; data remains after application and database redeploy                                                                                                                                                                                         |
-|<a id="a18"></a>A18|Credential rotation                             |Engine credentials and dependent bindings change through a recoverable operation                                                                                                                                                                                                     |
-|<a id="a19"></a>A19|Rename and remove a stateful resource           |Rename preserves volume identity; removal retains managed data unless explicitly deleted and always preserves externally owned volumes and host paths                                                                                                                                |
-|<a id="a20"></a>A20|Multiple routes and certificate renewal         |Correct components receive traffic; route conflicts and failed renewal retain useful status and working configuration                                                                                                                                                                |
-|<a id="a21"></a>A21|Template install and redeploy                   |Generated passwords stay stable; component data survives                                                                                                                                                                                                                             |
-|<a id="a22"></a>A22|Catalog update                                  |Installed definitions remain unchanged until an explicit upgrade, whose changes are reviewable                                                                                                                                                                                       |
-|<a id="a23"></a>A23|PR preview and close                            |Preview has isolated route/configuration/storage; cleanup does not affect production                                                                                                                                                                                                 |
-|<a id="a24"></a>A24|Untrusted fork preview                          |Default policy blocks execution or uses explicitly authorized isolation without production credentials                                                                                                                                                                               |
-|<a id="a25"></a>A25|Backup dump succeeds, remote upload fails       |Local recovery data remains and the partial outcome generates an actionable notification                                                                                                                                                                                             |
-|<a id="a26"></a>A26|Database and volume restore                     |Restore into new resources and verify application data, writes and file permissions                                                                                                                                                                                                  |
-|<a id="a27"></a>A27|Platform restart and restore                    |Existing workloads/routes continue; restored control plane invalidates stale authority and reconciles before mutation                                                                                                                                                                |
-|<a id="a28"></a>A28|Agent unreachable                               |Dashboard marks observations stale/unknown and reports reachability without inventing healthy or stopped state                                                                                                                                                                       |
-|<a id="a29"></a>A29|Runtime logs after deployment completion        |Live container logs remain accessible with reconnect behavior and clear retention                                                                                                                                                                                                    |
-|<a id="a30"></a>A30|Container replacement before scheduled execution|Task runs in the current intended component on the correct target with recorded occurrence identity                                                                                                                                                                                  |
-|<a id="a31"></a>A31|Scheduler outage, overlap and DST               |Documented missed-run and overlap behavior holds without duplicate unintended executions                                                                                                                                                                                             |
-|<a id="a32"></a>A32|Terminal permission revoked                     |New grants are denied and existing sessions terminate according to policy without leaking permanent credentials                                                                                                                                                                      |
-|<a id="a33"></a>A33|Coolify migration with DB and uploads           |Configuration and both data types verify before cutover; source mutating automation is disabled before final synchronization, destination automation stays disabled until handoff, no scheduled side effect runs from both controllers, and recovery accounts for post-cutover writes|
-|<a id="a34"></a>A34|Existing NeroCD upgrade                         |IDs/history remain accessible, environment grouping is explicit and old runners cannot execute incompatible work                                                                                                                                                                     |
-|<a id="a35"></a>A35|Unauthorized direct API requests                |Cross-project reads and unauthorized mutations, terminal sessions, secret reveals and destructive data actions are denied                                                                                                                                                            |
-|<a id="a36"></a>A36|Release claims core replacement                 |All declared core workflows pass for the same candidate; partial and extended-parity items remain visible                                                                                                                                                                            |
-|<a id="a37"></a>A37|Storage backup fails after quiescing writers    |Previously running containers are resumed or an unresolved recovery failure is reported; previously stopped containers remain stopped and backup failure evidence is retained                                                                                                        |
+|A01|New installation and remote server              |UI-assisted enrollment produces a ready server/destination without hand-editing database rows                                                                                                                                                                                        |
+|A02|Public repository with Dockerfile               |Build and deploy through the UI, then open a valid HTTPS endpoint                                                                                                                                                                                                                    |
+|A03|Private repository with automatic builder       |Scoped credentials work, source resolves, image builds and secrets do not leak into normal logs                                                                                                                                                                                      |
+|A04|Static files and compiled SPA                   |Both paths serve assets and deep links using their declared build/output settings                                                                                                                                                                                                    |
+|A05|Registry image supplied by tag                  |Platform records the selected digest and runs an ordinary third-party image without a revision header                                                                                                                                                                                |
+|A06|Failed source build                             |Existing containers and routes continue serving the previous release                                                                                                                                                                                                                 |
+|A07|Remote build server                             |Image reaches the deployment host through the declared registry path with architecture and pull checks                                                                                                                                                                               |
+|A08|Two apps in one production environment          |They deploy independently while each resource prevents conflicting active mutation                                                                                                                                                                                                   |
+|A09|Duplicate or delayed Git webhook                |Retries deduplicate and an older event does not silently replace newer desired state                                                                                                                                                                                                 |
+|A10|Protected deployment                            |Approval identifies a resolved release and target; branch movement cannot substitute content                                                                                                                                                                                         |
+|A11|Eligible stateless replacement                  |New version passes readiness before traffic moves; failed readiness retains the old working version                                                                                                                                                                                  |
+|A12|Fixed host port or exclusive state              |Platform selects and explains an appropriate replacement strategy without promising universal zero downtime                                                                                                                                                                          |
+|A13|Two hosts with identical tags                   |Deployment, rollback, backup and volume operations remain on their authorized destination                                                                                                                                                                                            |
+|A14|Lost lease after possible Docker mutation       |Recovery observes actual effects and blocks conflicting work until ownership is resolved                                                                                                                                                                                             |
+|A15|Git and pasted Compose                          |Both support mixed builds/images, variables, profiles, networks, volumes and component-level status; secret interpolation reaches the authorized workload while stored release evidence and ordinary exports retain references                                                       |
+|A16|Stack with one-shot init, web and database      |Successful initialization is not reported as failed solely because its container exited                                                                                                                                                                                              |
+|A17|PostgreSQL plus application                     |Generated credentials and binding work; data remains after application and database redeploy                                                                                                                                                                                         |
+|A18|Credential rotation                             |Engine credentials and dependent bindings change through a recoverable operation                                                                                                                                                                                                     |
+|A19|Rename and remove a stateful resource           |Rename preserves volume identity; removal retains managed data unless explicitly deleted and always preserves externally owned volumes and host paths                                                                                                                                |
+|A20|Multiple routes and certificate renewal         |Correct components receive traffic; route conflicts and failed renewal retain useful status and working configuration                                                                                                                                                                |
+|A21|Template install and redeploy                   |Generated passwords stay stable; component data survives                                                                                                                                                                                                                             |
+|A22|Catalog update                                  |Installed definitions remain unchanged until an explicit upgrade, whose changes are reviewable                                                                                                                                                                                       |
+|A23|PR preview and close                            |Preview has isolated route/configuration/storage; cleanup does not affect production                                                                                                                                                                                                 |
+|A24|Untrusted fork preview                          |Default policy blocks execution or uses explicitly authorized isolation without production credentials                                                                                                                                                                               |
+|A25|Backup dump succeeds, remote upload fails       |Local recovery data remains and the partial outcome generates an actionable notification                                                                                                                                                                                             |
+|A26|Database and volume restore                     |Restore into new resources and verify application data, writes and file permissions                                                                                                                                                                                                  |
+|A27|Platform restart and restore                    |Existing workloads/routes continue; restored control plane invalidates stale authority and reconciles before mutation                                                                                                                                                                |
+|A28|Agent unreachable                               |Dashboard marks observations stale/unknown and reports reachability without inventing healthy or stopped state                                                                                                                                                                       |
+|A29|Runtime logs after deployment completion        |Live container logs remain accessible with reconnect behavior and clear retention                                                                                                                                                                                                    |
+|A30|Container replacement before scheduled execution|Task runs in the current intended component on the correct target with recorded occurrence identity                                                                                                                                                                                  |
+|A31|Scheduler outage, overlap and DST               |Documented missed-run and overlap behavior holds without duplicate unintended executions                                                                                                                                                                                             |
+|A32|Terminal permission revoked                     |New grants are denied and existing sessions terminate according to policy without leaking permanent credentials                                                                                                                                                                      |
+|A33|Coolify migration with DB and uploads           |Configuration and both data types verify before cutover; source mutating automation is disabled before final synchronization, destination automation stays disabled until handoff, no scheduled side effect runs from both controllers, and recovery accounts for post-cutover writes|
+|A34|Existing NeroCD upgrade                         |IDs/history remain accessible, environment grouping is explicit and old runners cannot execute incompatible work                                                                                                                                                                     |
+|A35|Unauthorized direct API requests                |Cross-project reads and unauthorized mutations, terminal sessions, secret reveals and destructive data actions are denied                                                                                                                                                            |
+|A36|Release claims core replacement                 |All declared core workflows pass for the same candidate; partial and extended-parity items remain visible                                                                                                                                                                            |
+|A37|Storage backup fails after quiescing writers    |Previously running containers are resumed or an unresolved recovery failure is reported; previously stopped containers remain stopped and backup failure evidence is retained                                                                                                        |
 
-Additional fixture matrices must cover builder strategies, CPU architectures, database engines, Compose fields, provider events, proxy adapters and imported template versions.
+### 8.1 Workspace and owned-machine acceptance
+
+The first full task demonstration must pass the applicable workspace cases together with its hosting dependencies. Later capability rows are acceptance targets for those tracks, not claims of first-release support.
+
+|ID |Scenario                                                            |Required result                                                                                                                                                                       |
+|---|--------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|A38|Task accepted, submitting laptop disconnects                        |Remote work continues under its supervisor; reconnect shows the same task, attempts, checkpoint and evidence                                                                          |
+|A39|Worker disappears and later returns                                 |State becomes stale/uncertain; retry follows the supported checkpoint contract; the old fence cannot publish or mutate the new candidate and possible effects are reconciled          |
+|A40|Human takes over while an agent is writing                          |Old write authority is quiesced or a separate checkpoint-derived workspace is created; no two uncoordinated writers own the same workspace                                            |
+|A41|Checkpoint restore on a compatible host                             |Declared source changes and supported continuation state restore; excluded secrets and lost uncheckpointed work are explicit                                                          |
+|A42|Concurrent reservations and repeated retries                        |Capacity and aggregate budget are enforced; retries do not reset limits and uncertain allocations are reconciled before reuse                                                         |
+|A43|Wrong architecture, absent KVM or incompatible backend              |Placement explains ineligibility before execution and does not silently weaken isolation or treat emulation as native validation                                                      |
+|A44|Task attempts host/LAN access                                       |Personal files, Docker socket, SSH agent, management and metadata endpoints and private networks remain denied under the declared profile, including IPv6 and DNS/address-change cases|
+|A45|Restricted repository write and revoked grant                       |The actual provider/broker blocks unauthorized refs and actions; active sessions follow revocation policy and no broad credential is mislabeled as narrowly scoped                    |
+|A46|Agent changes tests or pushes to auto-deploy branch                 |Trusted mandatory checks and human production authorization cannot be bypassed; source tests and final-artifact runtime tests retain distinct subjects                                |
+|A47|Code, target or relevant configuration changes after approval       |The previous decision cannot authorize the changed plan; unchanged approved artifact identity is observed at deployment                                                               |
+|A48|Compatible build on a second worker                                 |Authorized registry cache is imported with step-level evidence and measured time/bytes; builder-local cache mounts are reported separately                                            |
+|A49|Same Git SHA with changed build inputs                              |Base/config/toolchain/context/dependency changes affect eligibility; complete-artifact reuse follows the manifest and refresh rule and retains original provenance                    |
+|A50|Output-affecting build secret rotates                               |The required cache/reuse invalidation occurs through opaque version/generation without exposing the value or a guessable public hash                                                  |
+|A51|Untrusted task exports cache or check metadata                      |It cannot overwrite trusted shared cache references or publish a passing mandatory-check record; private cache reads remain authorized                                                |
+|A52|Reuse checks after fixture/policy/freshness change                  |Invalid evidence is rerun or rejected while unchanged artifact reuse remains a separate decision                                                                                      |
+|A53|Multi-platform candidate and later attestation                      |Coverage and native/emulated status are platform-specific; selected child digest matches the approved index/plan and late evidence does not mutate approved identity                  |
+|A54|Agent completes and builder drains                                  |Independent preview stays healthy on its declared available target; review does not depend on the build worker or creator session                                                     |
+|A55|Viewer opens a private preview or share link expires                |Authorized preview access works without source-edit/deploy rights; revoked/expired sharing stops according to documented policy                                                       |
+|A56|Preview expiry, repeated cleanup and partial storage failure        |Only owned disposable objects are removed; production, external data, retained checkpoints and pinned releases remain protected; failures are visible                                 |
+|A57|Model endpoint unavailable or GPU capacity occupied                 |Explicit dependency/capacity status, scoped access and usage policy apply; the task does not gain host-shell/device access or silently switch data locations                          |
+|A58|Reproduce a failed release using copied production data             |Exact available artifact/configuration evidence is recorded; missing historical inputs are shown, data-copy authority holds and external side effects are blocked                     |
+|A59|Move an application with uploads and a database                     |Destination and data verify, writers and automation are coordinated, cutover is recorded and recovery handles post-cutover writes                                                     |
+|A60|Supported application upgrade fails after migration                 |The version-path contract governs recovery; incompatible image rollback is not advertised as safe and partial state remains actionable                                                |
+|A61|Restore test opens application and exercises data                   |Result identifies backup and versions, verifies meaningful reads/writes, retains evidence and cleans only its owned isolated environment                                              |
+|A62|Progressive rollout encounters health failure or incompatible schema|Eligibility, observation and recovery rules are enforced; no unsafe generic rollback is inferred from a failed metric                                                                 |
+|A63|Manual configuration drift or vendor package update                 |Reconciliation/update plans show changes and retain local approval, identity checks and external-data ownership                                                                       |
+|A64|Owned hosts unavailable and fallback disabled or capped             |Task remains durably blocked with a reason; no unauthorized cloud upload/provisioning or budget reset occurs                                                                          |
+|A65|Artifact upload fails, cache is pruned or image disappears          |Partial publication is not a valid release; cache pruning preserves pinned artifacts and unavailable content produces explicit recovery or new approval                               |
+|A66|AI proposes a build optimization or failure fix                     |Report links baseline, change and actually executed verification/measurements, and distinguishes untested conclusions                                                                 |
+
+Additional fixture matrices must cover host/VM adapters, agent adapters and resume modes, network policy, native and emulated CPU architectures, cache and verification reuse, model endpoint types, builder strategies, database engines, Compose fields, provider events, proxy adapters and imported template versions.
 
 ## 9. Operational and implementation standards
 
@@ -648,53 +760,98 @@ Preserve useful existing guarantees while changing the product model:
 - PostgreSQL remains authoritative for accepted work, leases, operation history and audit.
 - A side effect is not exactly-once merely because a job has an idempotency key. Record intent and observed results and reconcile uncertainty.
 - Background observation is distinct from active deployment ownership.
-- OCI images, build cache, runtime logs, downloadable artifacts and backups have separate storage and retention policies.
+- OCI images, build cache, task checkpoints, verification evidence, runtime logs and backups have separate storage and retention policies.
 - Secret-management key loss and backup restoration must be exercised, not handled only in documentation.
 - Generic operational templates remain supported, but a user must not author one to create a normal application or database.
 - Start with bounded job concurrency and measured quotas. Publish scale claims only after representative load testing.
 - Use existing PostgreSQL, fencing, spool, secrets, enrollment, provenance, Compose, web, production, restore and release gates where applicable. Extend them for hosting workflows instead of replacing them with a parallel acceptance framework. N11
 
-A suggested code organization is to retain the current API/application/store layers and add hosting-focused modules for resources, builds, releases, destinations, routes, storage, databases, previews and backups. These are module boundaries, not a requirement to deploy separate microservices.
+Retain the current API/application/store layers. Suggested additional modules cover tasks, workspaces, machine capabilities and reservations, grants, artifacts/verification, resources, builds, releases/plans, destinations, routes, storage, databases, previews and backups. These are code boundaries, not a requirement for separate services. Prefer the smallest extension of the existing durable queue and reconciliation mechanisms that satisfies the next complete journey.
+
+### 9.1 Product and resource measurements
+
+Measure time from task submission to eligible placement, retained candidate, healthy preview and human review. Show queue reasons, interruption recovery outcomes, checkpoint age and preview availability. For builds, distinguish cache-hit steps, downloaded/uploaded bytes, wall time, complete-artifact reuse and reused versus rerun checks. A cache percentage alone does not prove saved time.
+
+Track resource allocation and observed consumption for persistent applications, previews, builds, agent sessions and model services separately. Record the capacity reserved for always-on work and how much opportunistic capacity is actually available. Do not claim a fixed number of customers from host RAM alone.
+
+Owned hardware has power, maintenance, connectivity, storage and replacement costs. Hosted-service planning must additionally account for control-plane operations, ingress/relay traffic, retained artifacts/checkpoints, backup capacity, cloud overflow and any model-provider usage. The earlier hosted application cost model does not price this expanded agent/GPU workload without new workload assumptions. This revision sets measurement requirements and makes no new pricing claim.
 
 ## 10. Delivery plan
 
-The first visible milestone must demonstrate hosting. Foundation work should be scoped to the next complete user journey.
+Sequence by a complete user outcome and dependency gates. The first public demonstration should complete the task-to-reviewed-deployment journey in section 5.6. Do not wait for every host adapter or complete Coolify compatibility before demonstrating that journey, and do not drop the hosting requirements needed to make its preview useful.
 
-|Milestone                        |Deliverable                                                                                                                                                                                                                                          |Exit conditions                                                                            |
-|---------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
-|M0: Adapt the foundation         |Shared environment/resource model, target ownership, source kinds, managed secrets and migration adapters                                                                                                                                            |Existing data maps correctly; new resource authorization and target rules work             |
-|M1: Repository to HTTPS          |Server onboarding, Git/image inputs, Dockerfile plus an automatic builder, variables, managed proxy/TLS, bounded continuous observation, runtime logs, auto-deploy and basic optional approval                                                       |A01–A06, A08–A10 and the applicable routing/authorization cases pass                       |
-|M2: Useful stateful hosting      |Persistent storage, PostgreSQL/Redis, application bindings, broader Compose, initial catalog, backup scheduling, backup-failure notifications and tested recovery                                                                                    |A15–A22, A25–A27 and A37 pass for declared engines and mounts                              |
-|M3: Core Coolify replacement     |Previews, dedicated builders, additional Git/build/database coverage, shared variables, broader deployment policy controls, general scheduled commands, notification-channel coverage, terminals, richer monitoring and native API/CLI/MCP operations|All declared core workflows and failure cases pass; API and UI agree                       |
-|M4: Migration and extended parity|Supported Coolify migration, catalog breadth, raw Compose, external secret sources, extra proxy modes and remaining infrastructure integrations                                                                                                      |A33 and the corresponding compatibility matrices pass; outstanding differences are explicit|
+### 10.1 First demonstration
 
-M0 is not a separate product destination. M1 is an application-hosting milestone. M2 is the first useful stateful-hosting release. M3 is a core replacement claim against the declared ledger. M4 completes further compatibility and integration coverage.
+|Gate                                |Deliverable                                                                                                                                                                   |Exit conditions                                                                                                                               |
+|------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+|D0: Machine and authority foundation|Shared environment/resource model, Task/run distinction, stable machines, one qualified Linux VM backend, capability checks, reservations, managed secrets and task grants    |A bounded remote task survives client disconnect; unauthorized/stale work is rejected; legacy data and destination ownership remain valid     |
+|D1: Retained work and shared builds |One coding-agent adapter, isolated checkout, source checkpoints, BuildKit on remote workers, registry cache, authorized artifact publication and explicit build identity      |Task produces a retained candidate; a second compatible builder imports cache; interruption and budget behavior are demonstrated              |
+|D2: Working environment and handoff |App plus seeded isolated PostgreSQL preview, private ingress/TLS, runtime observations/logs, trusted checks against the final artifact, teammate review and supported takeover|Another user opens the task and working application after the agent run ends; evidence and permissions agree; cleanup preserves data ownership|
+|D3: Reviewed deployment             |Target-specific plan, human production approval, same-artifact promotion, mutation fencing and supported failure recovery                                                     |The full journey passes together, including changed-source/plan, lost-worker, revoked-grant, missing-artifact and expiry cases                |
 
-The following remain visible ledger entries until implemented and tested: raw Compose, additional proxy adapters, full provider/template breadth, multi-server application deployment, Swarm, cloud provisioning, GitHub Actions runner hosting, external log integrations and any requested Coolify API adapters. Do not describe them as complete merely because the underlying queue can execute shell commands.
+D0 is enabling work. D1 proves retained execution and shared output. D2 proves useful collaboration. D3 completes the first product demonstration. One supported architecture and one backend are sufficient for this milestone, provided limits are explicit.
 
-No delivery dates or effort estimates are asserted. Sequence work by dependencies and demonstrated acceptance.
+Implement conservative complete-artifact reuse and verification reuse after input/evidence recording is dependable. The initial demonstration may rebuild through shared layer cache and rerun checks. Its schema and UI must already distinguish these outcomes so later reuse does not require misleading history.
+
+### 10.2 Subsequent capability tracks
+
+These tracks are separate acceptance claims and may advance in parallel when their prerequisites are satisfied.
+
+|Track                            |Deliverable                                                                                                                                                               |Completion evidence                                                                                                 |
+|---------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+|H: Core hosting and compatibility|Direct source/image/Compose hosting, automatic builders, broader databases/catalog, storage, operations, schedules, notifications and Coolify migration                   |Original hosting cases A01–A37 and declared parity matrices pass for the release candidate                          |
+|P: Broader owned-machine pool    |Native Mac adapter, qualified Windows VM and trusted WSL paths, qualified NAS roles, additional architectures, power/availability policies and explicit cloud provisioning|Backend-specific isolation, placement, recovery, networking and capacity fixtures pass                              |
+|M: Owned model services          |Endpoint integration, supported model lifecycle, native/GPU execution profiles, model storage and quotas                                                                  |Model/driver/device matrix, authorization and interruption/upgrade behavior pass; measured resource use is available|
+|R: Reuse and larger workloads    |Conservative full-artifact/check reuse, additional cache transports where justified, retention/garbage collection and measured concurrency                                |Reuse invalidation, trust, source/fixture identity, artifact availability and resource accounting cases pass        |
+|O: Application care              |Version-specific upgrades, guided data migration, tested restores, database-aware plans, eligible progressive delivery and drift reconciliation                           |Application/version-path fixtures and failure/recovery cases pass                                                   |
+|V: Vendor packages               |Verified package identity, customer-controlled installation/update policy, compatibility and recovery metadata                                                            |Publisher/customer authority, revocation, version pinning and compromised-update scenarios are defined and tested   |
+
+An existing authenticated model endpoint can be connected before managed GPU/model lifecycle is ready. A manually enrolled cloud machine can add capacity before provider provisioning is ready. Neither shortcut should be presented as completion of the broader track.
+
+Additional proxy modes, raw Compose, provider/template breadth, multi-server application deployment, Swarm, GitHub Actions runner hosting, external secret/log integrations and requested Coolify API adapters remain visible compatibility entries. A generic shell job does not establish support for these workflows.
+
+Self-hosted object storage, Wasm execution and a geographically distributed hosted edge remain compatible directions from the earlier hosting discussion. They are not prerequisites of the first task demonstration. Each needs explicit storage/runtime/region qualification and economics before being included in a supported offering. An ordinary VM image or uploaded Wasm module does not by itself establish a global edge product.
+
+No delivery dates, staffing estimates or performance improvements are asserted. Order work by dependencies and demonstrated acceptance, then update the ledger with implementation evidence.
 
 ## 11. Documentation changes
 
-Adopt this document as the product specification. Make the repository documentation reflect the corrected objective:
+Adopt this as the proposed revision of the product specification. Repository documentation should distinguish implemented behavior, planned workspace capabilities and the hosting compatibility target.
 
-- README.md: describe the Go self-hosted application platform and distinguish implemented features from planned parity.
-- docs/plan.md: link the ordered hosting milestones, implementation issues and evidence.
-- docs/architecture.md: document shared environments, typed resources, build/release/deployment separation, host agents and independent workload traffic.
-- Source/build guides: cover repository, Dockerfile, automatic builder, static, image and Compose workflows.
-- Hosting guides: cover domains, certificates, variables, databases, storage and templates.
-- Operations guides: cover monitoring, logs, terminals, schedules, notifications, backups, restores and migration.
-- Compatibility ledger: list the pinned reference, supported fixtures, partial features and deliberate differences.
+- README.md: explain the task/environment promise, owned-machine roles and direct hosting workflow, with explicit current support.
+- docs/plan.md: link the first complete demonstration, dependency gates, capability tracks and acceptance evidence.
+- docs/architecture.md: document task/run/workspace/environment lifecycles, stable machine identity, reservations, grants, build/artifact/verification/release/plan separation and independent workload traffic.
+- Task and agent guides: describe submission, checkpoints, cancellation, budgets, human takeover, review, adapter resume limits and production authority.
+- Machine guides: publish backend/OS/architecture qualification, trust profiles, model roles, availability policy, private ingress and cloud data-placement rules.
+- Build and source guides: document all source/build paths, shared layer cache versus local cache mounts, whole-artifact reuse, verification reuse and explicit refresh controls.
+- Hosting and operations guides: retain domains, certificates, variables, databases, storage, templates, logs, terminals, schedules, notifications, backups, restores and migration.
+- Application support matrix: describe supported version transitions, recovery, migration and restore-test procedures per application/engine.
+- Compatibility and capability ledgers: identify pinned references, tested versions, acceptance fixtures, partial support and deliberate differences.
 
-The prior specification’s “prebuilt-only controlled deployment” scope is superseded. Its useful findings about destination identity, approval integrity, replay and recovery are retained within this broader hosting product.
+Revision 2's decision to make hosting replace task-first navigation is superseded. The new durable Task is richer than the existing generic execution view. Hosting remains directly accessible and supplies the environments attached to tasks. The earlier narrow prebuilt-only scope also remains superseded.
 
 ## 12. Evidence and review limits
 
-This is a product and architecture revision. The supplied revision did not identify its original NeroCD inspection commit. The accepted planning inspection used NeroCD `a763a90b3896257b784c9498d01650ccdad2427a` on 2026-10-22. Coolify’s repository and official documentation were used to establish the target capability surface.
+This adoption uses accepted NeroCD `852f8e6b8d5624a95865c276dcea4a239d1f8fea`, not the supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c`. Both are repository commits and the supplied baseline is an ancestor. The maximum native migration is 0051. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
-All numbered requirements, proposed domain changes, implementation sequences and acceptance scenarios are design recommendations. They are not statements that those features already exist in NeroCD.
+The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
-The supplied revision changed no application code or running infrastructure. This documentation adoption records that revision and the accepted plan in the repository. No runtime tests of the proposed features were performed. Existing CI evidence does not validate features that have not been implemented.
+| Accepted work | Revision and evidence | What it establishes |
+| --- | --- | --- |
+| Same-host build artifact runtime | `61b77e75f2d95f3f015b0275a15ce2e376d82330`; [runtime guide](hosting-local-build-runtime.md), [real controller/local-deploy fixture](../internal/runnerruntime/local_build_deployment_integration_test.go) | Explicit local deployment capability, exact artifact/daemon/platform checks, ordinary HTTP and separately selected managed routing; no cross-host transfer |
+| Artifact deployment WebUI | `08b9ff21f8def396d13f9464a197469e4d59adba`; [workflow and real browser gate](hosting-build-deployments.md#deploy-through-the-resource-ui) | Real API/PostgreSQL/River/compiled CLI build and deployment with authenticated UI, retries, viewer denial and responsive layouts |
+| Typed output persistence and API | `28fc384bdb8fb641558cd6d20224d207c7095f77`; earlier migration replay check `1938a2fb5b41223d5b01303b88807d09b8933e4e`; [log contract](hosting-build-logs.md) | Full-authority receipts, canonical hashes, ordered allocation, retention watermarks and explicit old-history gaps |
+| Log pagination boundary | `3ea2f815f844ff60008ecf22891bec5b370fb07f`; [API boundary tests](../internal/api/hosting_build_log_pagination_test.go) | Typed build log limit 200 reaches the endpoint while legacy pagination limits remain intact |
+| Runner output delivery | Candidate `65dc15c1462485d84c9d6d524577f26a20048677`, accepted integration `5c0a1329c89f4a784a254aac6679591db3d6b0b0`; [delivery contract](hosting-build-log-delivery.md), [real controller gate](../acceptance/runtime-hosting-build-controller/gate.sh) | Actual Dockerfile/Railpack/static output, response-loss recovery, log delivery before completion, lease renewal, retention cursor, SIGTERM/cancellation and owned cleanup; journal format 7 |
+| Build output WebUI | Candidate `07ce38d8230a84d5d1ef469bc8f604c5230afde4`, accepted `852f8e6b8d5624a95865c276dcea4a239d1f8fea`; [bounded viewer contract](hosting-build-logs.md#resource-build-output-viewer), [browser scenario](../web/app/tests/browser/local-build-deployments.spec.ts) | Opt-in typed build output reads with sequence/gap/retention handling, bounded local plaintext, access revalidation and responsive behavior |
+
+These are retained reports and source fixtures for their exact revisions. This documentation change does not rerun those application/runtime gates or turn their separate results into a complete current release assertion. Test-only isolated DNS and a trusted CA do not establish public DNS or production ACME.
+
+Revision 3 targets remain unimplemented unless the ledgers identify narrower accepted behavior. In particular, no durable Task/Workspace product, qualified KVM/Firecracker backend, Mac/Windows/NAS/GPU adapter, reservation/budget system, remote shared cache, whole-artifact/check reuse, task preview, agent adapter or handoff is claimed. D0–D3 and A38–A66 require future implementation and combined qualification. Partial hosting evidence does not establish all of A01–A37 or complete Coolify parity.
+
+The pinned Coolify reference stays `b12d1386f3d458618b4c579babcd1e339c6c40b3`; its revision 2 evidence is retained. W1–W13 were reviewed against primary documentation on 2026-10-22. They describe dependency behavior, not NeroCD integration qualification. Docker's overview still labels S3 cache unreleased, while its S3 page labels it experimental. Adoption must pin and test the chosen driver/backend combination.
+
+Only documentation changes in this candidate. No new workspace runtime, schema, API, configuration or migration is implemented by adopting this target.
 
 ## 13. Sources
 
@@ -706,11 +863,17 @@ NeroCD baseline
 - N4: [Provenance resolver and current Compose restrictions.](../internal/runnerruntime/provenance_resolver.go)
 - N5: [Service-account lifecycle.](../internal/app/service_accounts_service.go)
 - N6: [Secrets guide, runner secret handling, lease-bound access.](secrets.md)
-- N7: [Artifact store, secret encryption helper.](../internal/secretcrypto/secretcrypto.go)
+- N7: [Local artifact store](../internal/artifactfs/store.go) and [secret encryption helper](../internal/secretcrypto/secretcrypto.go).
 - N8: [Compose health and reconciliation.](../internal/runnerruntime/compose_engine.go)
 - N9: [Linked rollback and active-deployment constraints, deployment persistence.](../internal/store/postgres_deployments.go)
 - N10: [Production operations, restore authority invalidation.](production.md)
 - N11: [Validation and release gates.](../Makefile)
+
+- N12: [TaskRun, template, runner and lease domain](../internal/domain/domain.go). These are execution foundations, not a durable collaboration Task.
+- N13: [Runner enrollment, claim and lease persistence](../internal/store/postgres_runners.go).
+- N14: [Accepted hosting resource domain and placement](../internal/domain/hosting.go), [hosting services](../internal/app/hosting_service.go).
+- N15: [Same-host artifact deployment](hosting-local-build-runtime.md), [resource deployment UI](hosting-build-deployments.md).
+- N16: [Typed build output](hosting-build-logs.md), [durable runner delivery](hosting-build-log-delivery.md).
 
 Coolify capability reference
 
@@ -741,3 +904,21 @@ Coolify capability reference
 Implementation reference
 
 - T1: [Compose Go library](https://github.com/compose-spec/compose-go). This is a candidate dependency, not a claim that NeroCD already uses it.
+
+### Workspace implementation references
+
+Reviewed on 2026-10-22. These primary sources qualify design assumptions only; NeroCD host/backend integration and dependency-version qualification remain planned.
+
+- W1: [Firecracker FAQ](https://github.com/firecracker-microvm/firecracker/blob/main/FAQ.md), Linux/KVM host and matching guest architecture.
+- W2: [Apple Virtualization Linux VM guide](https://developer.apple.com/documentation/virtualization/creating-and-running-a-linux-virtual-machine), native Mac VM configuration and lifecycle.
+- W3: [Apple container machine guide](https://github.com/apple/container/blob/main/docs/container-machine.md), home-directory and SSH-agent sharing defaults for this specific mode.
+- W4: [Microsoft WSL advanced configuration](https://learn.microsoft.com/en-us/windows/wsl/wsl-config), host mounts, interoperability and VM settings.
+- W5: [Docker registry cache](https://docs.docker.com/build/cache/backends/registry/), external build-result cache separate from the image.
+- W6: [Dockerfile RUN cache mounts](https://docs.docker.com/reference/dockerfile/#run---mounttypecache), builder-local cache mounts are absent from cache-to exports.
+- W7: [Docker cache invalidation](https://docs.docker.com/build/cache/invalidation/), build secrets do not automatically invalidate cache.
+- W8: [Docker cache storage backends](https://docs.docker.com/build/cache/backends/), scoped exports and S3 still listed as unreleased.
+- W9: [Docker Amazon S3 cache](https://docs.docker.com/build/cache/backends/s3/), experimental availability and a non-default driver requirement.
+- W10: [OCI image index specification](https://github.com/opencontainers/image-spec/blob/main/image-index.md), platform descriptors and referenced manifests.
+- W11: [Docker image attestation storage](https://docs.docker.com/build/metadata/attestations/attestation-storage/), attestation manifests within image indexes.
+- W12: [Docker Buildx remote driver](https://docs.docker.com/build/builders/drivers/remote/), connections to externally managed BuildKit.
+- W13: [Microsoft WSL security model](https://wsl.dev/technical-documentation/security/), distributions and integration settings do not create an untrusted-code sandbox.

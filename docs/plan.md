@@ -1,335 +1,168 @@
-# Hosting implementation plan
+# Workspace and hosting implementation plan
 
-Accepted planning basis: one-time Astra architectural plan, dated 2026-10-22. This plan adopts the complete [product specification](product-spec.md), including every R01–R68 requirement and A01–A37 scenario. Package and milestone sequencing does not defer any declared feature out of the target product. At adoption, P00 documented the contract and P01–P18 were planned. The current accepted assessment below records subsequent bounded foundations; no full hosting milestone is declared complete.
+Revision 3 adopts every R01–R102 requirement and A01–A66 scenario in the
+[product specification](product-spec.md). Current accepted baseline:
+`852f8e6b8d5624a95865c276dcea4a239d1f8fea`, assessed on 2026-10-22.
+The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
+No delivery dates or performance improvements are asserted.
 
-Use the [compatibility ledger](compatibility.md) for limits and fixture status and [architecture](architecture.md) for the original current/target design distinction. Accepted implementation commits and test paths are linked in the ledger. Add issue and runtime-evidence links as each remaining package starts and completes. Do not treat an uncreated issue or planned fixture as passing evidence.
+The first complete demonstration is the [task-to-reviewed-deployment journey](product-spec.md#56-task-to-reviewed-deployment-first-complete-demonstration).
+D0–D3 are the primary delivery gates. Direct hosting remains independently
+accessible and the complete Coolify target stays in track H. Earlier P00–P18
+package names and M0–M4 hosting milestones are historical sequencing vocabulary,
+not a substitute for the new first demonstration. Track P means the owned-machine
+pool; a label such as P05 below identifies an earlier hosting work package.
 
-The accepted planning review examined the complete supplied specification, including R01–R68 and A01–A37, against NeroCD `a763a90b3896257b784c9498d01650ccdad2427a`. The review verified that the pinned Coolify commit exists and inspected relevant source at `b12d1386f3d458618b4c579babcd1e339c6c40b3`. Current official documentation was reviewed separately on 2026-10-22. This was bounded architectural discovery, not an exhaustive audit of either repository.
+## Accepted starting point
 
-## Accepted progress on 2026-10-22
-
-The current assessment is `df515f3c5819627c1ee6877b2d22e1f79895f46b`.
-The earlier `a763a90` inspection remains planning history. The complete target,
-P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
-
-| Package | Accepted foundation | Remaining package boundary |
+| Foundation | Accepted bounded behavior | Work still needed for the workspace demonstration |
 | --- | --- | --- |
-| P00 | Full specification, ordered plan and compatibility ledger adopted | Keep support claims and evidence current |
-| P01 | Shared project environments and image-application desired configuration, authorized API and WebUI; public-image operation admission has binding mutation holds | Team model, additional resource kinds, legacy mappings and broader shared-resource concurrency |
-| P02 | Enrolled server admission, stable default destinations, project grants and immutable bindings through API/WebUI; authoritative runner identity and exact-target image execution | SSH-assisted onboarding, onboarding-time host capability/readiness validation, full server lifecycle and trusted recovery of uncertain effects |
-| P03 | Encrypted immutable project-secret versions, create/rotate/reveal/revoke, strict keyring file and protected WebUI | Execution delivery, broader value scopes, grants, key recovery workflows and external providers |
-| P04/P05 | Public HTTPS Git configuration and separate build request/history/cancel UI/API; production River controller and explicitly configured CLI execute source-to-engine work into immutable local artifacts | Artifact-to-deployment handoff, private configuration/provider workflows, private credential HTTP/runtime bridge, build-output logs and remote image delivery |
-| P05 engine | Dockerfile/Railpack/prebuilt-static engine integrated with public Git checkout and the normal enrolled CLI; confined settings, immutable receipts and owned cleanup | Log streaming, private dependency credentials, compiled-static product coverage and remote image delivery |
-| P06 | Live River image consumer, public-tag freeze, fenced agent/Docker apply, ordinary HTTP readiness, per-release autoports, explicit fixed ports, cancellation/replay, holds and selected retained-container cleanup | Verified public traffic switch, broader release strategies, optional hosting approval, managed variables/secrets, private registries and safe restored-ownership resumption |
-| P07 | Authorized route/grant/generation API, fenced explicitly capable Linux agent runtime, journal/replay, Traefik HTTP-01 and managed routing UI; real isolated HTTP/trusted-test-CA HTTPS and outage/renewal fixtures | Public DNS/production ACME verification, DNS-01/wildcard/custom certificates, Caddy and trusted restore resumption; image-only enrollment does not gain proxy authority |
-| P14 infrastructure | River OSS v0.44.1 image/proxy dispatch and production BuildID handler sharing transactional queue/lifecycle contracts | General schedules, notifications and their lifecycle contracts |
-| P16 | Image, public Git configuration/build request/history/cancel and managed routing UI; exact retries and CAS review retain intent | Artifact deployment/private-source/log workflows, remaining R65 coverage and complete hosting CLI/MCP operations |
-
-See [bounded evidence and exact commits](compatibility.md#accepted-foundations-and-evidence),
-the [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
-[job infrastructure guide](hosting-jobs.md). The [image execution guide](hosting-execution.md)
-and [deployment WebUI guide](hosting-image-deployments.md) define the accepted
-runtime path. The [build](hosting-build-engine.md),
-[source acquisition](hosting-source-checkout.md) and
-[source/build store](hosting-build-control.md) components are not yet a runnable
-Git deployment workflow. The [public build runtime](hosting-build-runtime.md)
-now wires source acquisition and engine execution through the configured
-controller and normal enrolled CLI. The [proxy backend](hosting-proxy-control.md) dispatches
-authorized snapshots to explicitly enrolled `proxy_apply` agents. The
-[managed routing UI](hosting-proxy-ui.md) has accepted real-backend HTTP and
-trusted-test-CA HTTPS coverage. The [runtime guide](hosting-proxy-control.md)
-records agent journal, capability, outage and renewal boundaries. These isolated
-fixtures do not establish public DNS or production ACME. Saving configuration
-or placement does
-not itself deploy. A successful operation records past readiness rather than
-continuous health.
-No result here completes A01, A05, A08 or A27, and results from different
-revisions cannot be combined into the A36 release assertion.
-
-M1 still requires private Git configuration and provider integration,
-the private credential endpoint/runtime bridge, artifact-to-deployment handoff,
-build-output logs and managed-secret
-execution delivery, public DNS/production ACME verification, continuous
-observations/runtime logs, trusted automatic triggers and optional hosting
-approval. Restore holds prevent mutation after recovery; trusted local process
-and journal proof for resumption is not implemented. No A01–A37 scenario or
-M0–M4 milestone is declared complete by this assessment.
-
-Public Git configuration is accepted at `904834bb41df350405776ec983529250f86f1e91`.
-The nonsecret protocol, v5 journal and typed client are accepted infrastructure at
-`ca5f48956087fe21a3aff6c511af45f4148651a2`,
-`18c45e820974563ec75af842713b7d9c97e78ce0` and
-`08c1aaf0b6622648fd373a7e65c053bfc8a151eb`. Production controller
-`4c1ebeaf05d6e02003bae78e3f9a6ffde56e3e0a`, build UI
-`63b6f21b41a095e64dfcb5e26b4be033988aa9d0` and runtime integration
-`a907703572e7e1eb7fb3858998a0cef862645198` are now accepted through the
-`df515f3c5819627c1ee6877b2d22e1f79895f46b` runtime fixture checkpoint.
-Admission and execution require trusted server policy and explicit compatible
-agent configuration; the capability is not enabled by default. The runtime gate
-proves build-to-artifact behavior, not artifact deployment or repository-to-HTTPS.
-Pending artifact-deployment work is outside this assessment. M0/M1 and the
-complete Git journey remain incomplete.
-
-## The architectural decision
-
-Keep the existing modular Go application, PostgreSQL authority, authorization, durable execution and React frontend. Build hosting capabilities around those components. Do not translate Coolify’s PHP classes directly or create a second orchestration system.
-
-The original planning inspection identified the following constraints at
-`a763a90`. The accepted-progress table above records the bounded changes
-since that inspection; these historical rows do not describe all current APIs.
-
-| Existing evidence | Consequence for the port |
-|---|---|
-| [Service and environment types](../internal/domain/domain.go) require repository-backed services and place environments beneath services. | Add shared project environments and typed resources. Keep legacy environments as mapped deployment bindings during migration. |
-| [CreateService](../internal/app/deployments_service.go) requires repository and Compose fields. | Introduce explicit source variants. Images, databases, stored Dockerfiles and pasted Compose must not need fake repositories. |
-| [Compose validation](../internal/runnerruntime/provenance_resolver.go) rejects builds, service volumes and many host capabilities. | Replace the blanket restrictions with compilation, capability admission and storage ownership. Simply deleting the rejection list would leave essential behavior undefined. |
-| [Compose apply](../internal/runnerruntime/compose_engine.go) uses force recreation; [HTTP health](../internal/runnerruntime/compose_engine.go) requires the revision header. | Add separate single-image, Compose and database strategies, plus generic readiness. |
-| [Active-root exclusion](../db/migrations/0027_linked_rollback_lifecycle.sql) is scoped to environment and excludes `manual_intervention`. | Move exclusion to the resource binding and introduce a durable unresolved-mutation hold that survives terminal operation states. |
-| [Secret encryption](../internal/secretcrypto/secretcrypto.go) is an encryption helper, not a managed secret service, and authenticates project-scoped identities. | Build persistence, access, delivery, recovery and rotation. Team-owned credentials need authenticated ownership semantics, not a fake project ID. |
-| [Platform restore](../cmd/nerocd/backup_restore.go) checks schema compatibility and revokes restored sessions and leases. | Preserve that discipline and add host ownership reconciliation before restored state can mutate workloads. |
-| [Application dependencies](../internal/app/service.go) and [repository interfaces](../internal/store/repositories.go) already separate authorized operations from persistence. | Extend these boundaries with focused hosting modules and transaction-level methods. Avoid routing new clients around them. |
-
-The pinned upstream confirms the breadth we need to implement: shared environments contain applications, database types and services; application deployment handles Dockerfile, image, Compose, Nixpacks and Railpack paths; database and volume backups have separate jobs. These are behavioral references, not proposed Go package boundaries. See the pinned [environment model](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Environment.php), [deployment job](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php), [database backup job](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/DatabaseBackupJob.php) and [volume backup job](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/VolumeBackupJob.php).
-
-## Freeze these interfaces before parallel implementation
-
-The freeze should establish field meanings, ownership, lifecycle transitions and failure behavior. Individual package internals remain free to evolve.
-
-| Contract | Required meaning |
-|---|---|
-| Organization | `Team → Project → ProjectEnvironment → Resource`. A resource has a declared kind and independently versioned configuration. Existing project permissions remain effective during migration. |
-| Placement | `ResourceBinding` identifies a resource, stable destination and runtime identity. `Server`, `Destination` and the current agent process have distinct identities. Tags select eligible build capacity; they never relocate stateful runtime ownership. |
-| Source | A discriminated source definition covers Git, image, stored Dockerfile, stored Compose and catalog installation. Each variant declares its source of truth, credentials and version semantics. |
-| Build | A build snapshots source identity, configuration generation, builder/version, architecture and secret references. It produces an image set and evidence. Retrying deployment uses that output without rebuilding it. |
-| Release | An immutable release contains resolved images and normalized configuration with secret identities and versions. A destination-specific plan binds that release to placement, storage, networking and policy. Neither contains expanded secret values. |
-| Approval | Approval binds release, plan, destination and policy generation. Relevant changes invalidate it. Unprotected trusted deployments proceed automatically. |
-| Execution | Typed operation payloads retain the current full run/lease/attempt/fence authority and add required protocol capabilities, destination identity and expected generation. Persist mutation intent, reconciliation evidence and receipts. |
-| Ownership | Resource mutations acquire a binding hold. Proxy, network and shared storage changes use their own ownership constraints. Uncertainty survives a failed or canceled operation until reconciliation resolves it. |
-| Secrets | `SecretRef` records owner scope, stable identity, version or declared mutable-provider behavior, and permitted use. Build, runtime, preview and bootstrap access remain separate. Reveal and execution delivery are explicit authorized operations. |
-| Observation | Desired state, last operation result and timestamped observed state are independent. Missing observations become stale or unknown. They do not become invented stopped or healthy states. |
-| Recovery | Backups record consistency method, engine/tool version, resource identity, artifacts and location-specific outcomes. Restore has an explicit destination and recovery policy. Image rollback is separate. |
-| Events | Transactional event/outbox records drive notifications and provider status. Scheduled occurrences and webhook deliveries have durable identities and bounded retries. |
-| Clients | UI, REST, CLI, webhook handlers and MCP call the same application operations. Legacy NeroCD routes remain adapters for a declared support window. |
-
-Keep domain contracts separate from Docker, proxy, builder and provider implementations. The dependency direction should be application operations toward narrow repository and execution interfaces, with concrete wiring in the command entrypoints.
-
-For Compose, adopt a pinned `compose-go` adapter after compatibility fixtures validate it. It supplies a maintained parsing model, but does not establish runtime compatibility by itself. Use controlled interpolation inputs rather than inheriting ambient process environment. The upstream project describes its role as parsing and loading the Compose specification. [Compose Go reference library](https://github.com/compose-spec/compose-go)
-
-The execution design also needs one explicit limitation: database fencing does not make Docker side effects exactly once. Preserve process cancellation and journal replay, add target-specific reconciliation, and block conflicting mutation when the old process or effects remain uncertain.
-
-## Dependency-ordered work packages
-
-These packages are planning boundaries. Each becomes several narrow commits and worker briefs, not a single giant commit. Every package includes its applicable API, permission, audit and UI behavior before its capability can be declared complete.
-
-| Package | Work and primary ownership | Dependencies | Requirements and primary acceptance |
-|---|---|---|---|
-| P00. Product contract and compatibility ledger | Add `docs/product-spec.md`, ordered plan and pinned compatibility ledger; align README and architecture. Record source links, supported limits, fixture IDs and deliberate differences. | None | R68; trace all R/A IDs |
-| P01. Organization and resources | New domain files, additive schema, application/store operations, resource authorization and legacy mappings. Shared environments, typed resources, per-binding concurrency. | P00 | R01–R02, R08, R20; A08, A34, A35 |
-| P02. Servers, destinations and execution | Stable host/destination records, capability negotiation, manual and SSH-assisted enrollment, roles, drain/reconnect/rotation, mutation holds and host reconciliation. Extend runner foundations. | P00; P01 identity contract; P03 for bootstrap credentials | R03–R07, R20, R23, R64; A01, A13, A14, A27 |
-| P03. Managed secrets and variables | Versioned encrypted storage, explicit grants, protected delivery, reveal audit, scope precedence, rotation and key recovery. Preserve `runner_file`. | P00 ownership contract | R04, R29–R33; A03, A18, A35 |
-| P04. Sources and triggers | Public/private Git and no-Git inputs; GitHub integration first; signed delivery receipts, source resolution, deduplication, ordering and supersession. | P01–P03 | R08–R10, R57; A09 |
-| P05. Builds and image delivery | Dockerfile, automatic builders, static packaging and compiled SPA, Compose builds; bounded execution, cache keys, retention, registry publishing and architecture checks. | P02–P04 | R11–R16; A02–A07 |
-| P06. Releases and deployments | Frozen release/plan records, optional approval, binding admission, single-image replacement, Compose replacement and database strategies; generic health, cancellation and retained-release rollback. | P01–P05; P07 traffic switch contract | R17–R24; A08, A10–A14 |
-| P07. Routes, proxy and TLS | Route reservations, Traefik configuration and rollback, DNS diagnostics, generated domains, ACME lifecycle, DNS challenge and custom certificate handling. | P02–P03; P06 runtime identities | R25–R28; A20 |
-| P08. Compose and storage | Controlled normalization, managed/raw distinction, mixed image/build components, initialization jobs, capabilities, stable mounts, external ownership and explicit deletion. | P01–P03, P05–P07 | R34–R40; A15, A16, A19 |
-| P09. Database resources | Engine adapters, generated credentials, private networking, application bindings, readiness, rotation, version compatibility and engine-specific operations. | P03, P06, P08 | R41–R44; A17, A18 |
-| P10. Backup and recovery | Distinct platform, database and storage workflows; staging/upload outcomes, retention receipts, new-resource restore, writer coordination and recovery mode. | P02–P03, P08–P09; P14 schedule/event contracts | R45–R49; A25–A27, A37 |
-| P11. Catalog | Versioned imported definitions, stable generated values, component identities, installation validation and explicit upgrade previews. | P03, P08–P10 | R50–R53; A21, A22 |
-| P12. Previews | Provider-linked derived resource sets, isolated secrets/routes/storage, quota and trust policies, status reporting and generation-safe cleanup. | P04–P08; P13 observations | R54–R56; A23, A24 |
-| P13. Continuous operations | Host/container observations, periodic reconciliation, runtime log streams, retention, component actions, diagnostics, limits and owned cleanup. | P02, P06–P08 | R58–R60, R64; A28, A29 |
-| P14. Schedules and notifications | Resource-bound occurrences, current-container resolution, DST/missed-run/overlap policies, durable delivery and channel adapters. | P01–P03; P13 target lookup | R62–R63; A25, A30, A31 |
-| P15. Terminals | Short-lived actor/target/resource grants, separate host/container permissions, session revocation and termination, metadata audit. | P02–P03, P13 | R61; A32, A35 |
-| P16. Complete product interfaces | Resource-first navigation, generated REST client, CLI and MCP operations, validation recovery, keyboard/mobile workflows and legacy API adapters. | Starts with P01; follows each capability | R65–R68; A35, A36 |
-| P17. Migration | NeroCD upgrade rehearsal; Coolify discovery/report, intermediate manifest, staged configuration/data copy, automation handoff, cutover and recovery window. | P01 from M0; complete import requires P04–P15 | R67 and specification §7; A33, A34 |
-| P18. Remaining compatibility adapters | Additional Git providers, both automatic builders, all engines, raw Compose, Caddy/custom proxy, external secrets, catalog breadth, log drains, multi-server, Swarm, provisioning, GitHub Actions runners and justified Coolify API adapters. | Corresponding core package | R09, R11, R28, R33, R35, R44, R53, R63; fixture matrices |
-
-The working dependency graph is:
-
-```mermaid
-flowchart TD
-    P00["Product contract and interface freeze"] --> Foundation["Resources • destinations • secrets"]
-    Foundation --> Sources["Sources and triggers"]
-    Sources --> Builds["Builds and immutable image outputs"]
-    Foundation --> Routes["Routes and proxy"]
-    Builds --> Release["Releases and deployment strategies"]
-    Routes --> Hosting["Repository-to-HTTPS"]
-    Release --> Hosting
-    Hosting --> State["Compose • storage • databases"]
-    State --> Recovery["Backup and restore"]
-    State --> Catalog["Versioned catalog"]
-    Hosting --> Preview["Preview environments"]
-    Foundation --> Operations["Observation • logs • actions"]
-    Operations --> Automation["Schedules • notifications • terminals"]
-    Recovery --> Migration["Migration and cutover"]
-    Catalog --> Migration
-    Preview --> Core["Core replacement gate"]
-    Automation --> Core
-    Recovery --> Core
-    Core --> Extended["Remaining adapters and extended parity"]
-    Migration --> Extended
-```
-
-UI and client delivery accompany these paths. They are not a final workstream that starts after backend completion.
-
-## Milestones and acceptance
-
-| Milestone | Concrete outcome | Required acceptance coverage |
-|---|---|---|
-| M0 | Shared resources, stable destinations, secret foundation and migration mappings. Existing behavior remains available through its original contract. | A08, A13, A14, A34, A35, plus secret key recovery and legacy permission fixtures |
-| M1 | Install, enroll a server, connect Git or choose an image, build, deploy and open HTTPS. Include static/SPA paths, automatic trusted deployment, optional approval, runtime logs and basic observations. | A01–A06, A08–A10, A20, A27–A29, A35 for this scope |
-| M2 | PostgreSQL and Redis, persistent files, Git/pasted Compose, a tested initial catalog, backup scheduling and useful notifications, plus application-verified restore. | A15–A22, A25–A27, A37; retain all M1 gates |
-| M3 | Dedicated builders, remaining core provider/build/database coverage, previews, deployment strategies, general schedules, channel coverage, terminals and complete native UI/API/CLI/MCP. | All core scenarios A01–A32 and A34–A37, with complete declared fixture matrices |
-| M4 | Supported Coolify migration and remaining compatibility/infrastructure adapters. | A33 and adapter-specific matrices; retained core gates |
-
-A36 is a release assertion: the declared core workflows must pass on the same release candidate. It cannot be satisfied by collecting successful results from incompatible branches.
-
-For database coverage, maintain separate adapter rows for PostgreSQL, Redis, MySQL, MariaDB, MongoDB, ClickHouse, Dragonfly, KeyDB and experimental SQLite. Do not infer restore or upgrade support from a shared container lifecycle. Keep the supplied backup/restore distinctions visible.
-
-For automatic builders, implement Dockerfile first and choose Railpack for the first automatic-builder path, with a pinned tool version and explicit status. Add Nixpacks as a separately tested compatibility adapter during M3. Current Coolify documentation calls Railpack Beta and distinguishes its Buildx path from Nixpacks; that supports separate fixtures and labels. [Railpack documentation](https://coolify.io/docs/applications/build-packs/railpack)
-
-For notification coverage, the pinned source identifies email, Discord, Slack, Telegram, Pushover and webhook settings. Start with email and generic webhooks in M2, then complete those remaining channels in M3. [Pinned team notification integration](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Team.php)
-
-## Implementation details that should be settled now
-
-1. **Source events update desired generations.** Store provider delivery identity and intended revision. Before admitting a release, compare its generation with current desired state. A delayed webhook cannot win simply because it arrived last. Define cancellation of superseded queued work separately from already-running builds.
-
-2. **Approval follows preparation.** Complete source resolution and image preparation before approval. Freeze relevant configuration and destination evidence. Changed secret references, policy, mounts or selected images require reevaluation; revocation remains effective even for an approved release.
-
-3. **Storage identities do not follow names.** Use stable managed volume identities and canonical host paths. Resource deletion retains data by default. External storage is always protected from resource cleanup. Ownership transfer is a separate audited operation.
-
-4. **Host identity survives agent replacement.** An agent credential identifies an enrolled process authority, while server and Docker destination records identify runtime placement. Re-enrollment must verify the existing target identity before restoring mutation rights.
-
-5. **Build and runtime credentials are different grants.** Private Git credentials go to source retrieval, registry push credentials to publishing, and runtime secrets only to the selected workload. Do not pass a general project secret collection into an arbitrary build.
-
-6. **Secret substitution has two representations.** Persist a reference-bearing workload definition and materialize protected execution files only at the authorized execution boundary. Secret-expanded Compose output is not an ordinary artifact, release manifest or provenance payload. Test required/default interpolation behavior without hashing low-entropy plaintext into published identities.
-
-7. **Proxy updates have their own reconciliation.** Use route ownership and configuration generations. Validate generated configuration before activation, preserve the last accepted configuration and reconcile response loss. Application traffic stays on the host proxy while the control plane is unavailable. Coolify’s documentation confirms this separation and its Traefik/Caddy modes. [Networking model](https://coolify.io/docs/core/networking-in-coolify), [Traefik overview](https://coolify.io/docs/core/networking/proxy/traefik/overview), [Caddy overview](https://coolify.io/docs/core/networking/proxy/caddy/overview)
-
-8. **Backups are recoverable operations.** Persist the original running set before quiescing writers. Resume exactly that set after success, failure or timeout. Keep unsuccessful resume reconciliation visible. Separate artifact creation from upload and retention results.
-
-9. **Preview trust is enforceable placement policy.** Default to trusted actors. An ordinary container on a shared Docker host does not provide isolation for hostile Dockerfiles. Public-fork execution requires an explicitly isolated build/runtime pool and no production secret or writable-volume inheritance.
-
-10. **Restored control planes start in recovery mode.** Invalidate restored execution authority, inventory actual hosts and reconcile ownership before issuing mutation. A stale database must not cause a healthy running deployment to be overwritten.
-
-## Migration must begin in M0
-
-For existing NeroCD installations:
-
-- Add tables and compatibility mappings without editing applied migrations.
-- Preserve old service, environment, revision and deployment IDs.
-- Map every old service-specific environment to its own resource binding.
-- Do not merge same-name environments automatically.
-- Preserve effective project membership and service-account permissions. Any new team grouping must not broaden access.
-- Treat ambiguous runner-to-server mappings as unresolved. Tags are insufficient evidence to authorize a destination.
-- Convert available source evidence into release records without inventing missing provenance.
-- Preserve historical approvals under their original meaning.
-- Drain or reconcile in-flight work before changing its execution contract. Capability negotiation prevents older agents from claiming new work.
-- Rehearse upgrade, failed upgrade and restore using representative historical data.
-
-For Coolify migration, build a versioned intermediate manifest and a read-only compatibility report first. Prefer supported API/export inputs. Report inaccessible secrets as missing rather than empty.
-
-The first supported cutover sequence is temporary destination domains, isolated dependencies, initial data transfer, source automation suspension, writer coordination, final synchronization, read/write verification, explicit route or DNS handoff, then destination automation activation. Record which controller owns every mutation throughout. A post-cutover rollback must account for writes made on the new destination.
-
-Existing-container adoption remains a separate capability. Labels can help discovery; they do not prove that the previous controller surrendered ownership.
-
-## The first execution wave
-
-The original first-wave sequence is retained below. P00 and bounded resource,
-secret and destination foundations have since been accepted as recorded above.
-Remaining M0 migration and recovery work and the complete M1 runtime journey
-still require implementation and evidence.
-
-1. A documentation worker saves the supplied specification with its requirement IDs intact, adds the evidence-linked ledger, and updates README, architecture and plan. Use the inspected NeroCD SHA as the explicitly dated planning baseline, without claiming it was the earlier specification’s unnamed baseline.
-
-2. A contract worker introduces the agreed ownership/source/operation types and narrow repository interfaces in focused new files. Shared constructor wiring, API registration and generated contract changes are serialized through this owner. Review this candidate before starting dependent writers.
-
-3. From that accepted base, use three disjoint Sol 6.1 worktrees:
-
-| Worker | Initial bounded ownership | First demonstrable result |
-|---|---|---|
-| Resources worker | New resource domain/application/store files, allocated resource migrations, legacy mappings and focused tests | Two resources share a project environment; access remains project-scoped; binding conflicts are independent |
-| Secrets worker | `internal/secretcrypto` only if an authenticated scope extension is required; new managed-secret files, allocated secret migrations and tests | Versioned create/rotate/revoke, audited authorized delivery, cross-scope denial and wrong-key failure |
-| Destination worker | New server/destination files, allocated destination migrations, capability contracts and focused agent tests | Stable destination survives agent replacement; same-tag hosts cannot substitute for one another |
-
-Allocate migration numbers before dispatch. If another accepted change has already used the next number, allocate from that new base rather than renaming an applied migration.
-
-These workers must not concurrently edit central files such as `internal/app/service.go`, `internal/store/repositories.go`, `internal/api/routes.go`, `openapi.yaml`, generated clients or the UI route tree. A designated worker prepares the required shared wiring in a separate reviewed candidate. The integrator combines approved commits; it does not invent missing feature glue.
-
-Each first-wave package should use coherent boundaries such as additive schema and storage contract, then authorized operations and migration behavior, then interface exposure. Required tests and generated files stay with the behavior they validate.
-
-After foundation integration, the next wave produces one real vertical journey: manual enrollment, registry-tag application, ordinary health, managed route and HTTPS. Then add public/private Git, Dockerfile, automatic builder and static/SPA paths to satisfy the complete M1 gate.
-
-## Execution and review protocol
-
-Use the repository’s native protocol for the implementation campaign:
-
-- The Leader stays read-only and owns interface freezes, routing, review gates and acceptance.
-- Use Sol 6.1 roles at their configured effort. This Astra assignment is a one-time planning exception.
-- Keep at most three child threads open, including reviewers. Children do not spawn children.
-- Every worker receives the seven-part brief with exact worktree, named branch, full base SHA, owned paths, frozen contracts, authorization, checks and handoff evidence.
-- Every initial or resumed child turn performs the current-turn `HOLD`/verified `GO` gate.
-- Writers start in clean named worktrees and run the native start check.
-- Each candidate is committed and checked with the full base/candidate SHA and exact allowlist.
-- Independently review `code_hygiene` and `specification` at that SHA.
-- Add `critical_security` for authorization, secrets, host execution, persistence, networking, lifecycle and similar critical boundaries. Add `cryptographic_correctness` when authenticated encryption, key handling or cryptographic binding changes.
-- Repairs create new candidates and invalidate reviews of the old candidate.
-- Integrate approved candidates serially. Conflicts or missing integration behavior return to a bounded worker and review, rather than becoming unreviewed integrator edits.
-- Use native messages for coordination. Do not create coordination files.
-
-The three-child limit means implementation, review and integration alternate. It does not allow three writers plus an additional reviewer or integrator.
-
-## Validation should follow the behavior
-
-Preserve and extend the existing gates in [Makefile](../Makefile), the [runner lifecycle skill](../.agents/skills/nerocd-runner-lifecycle/SKILL.md) and the [UI artifact verification skill](../.agents/skills/nerocd-ui-artifact-verification/SKILL.md).
-
-| Changed behavior | Required evidence |
-|---|---|
-| Schema, admission, permissions | Real PostgreSQL migration and transaction tests, cross-project denial, duplicate requests, concurrent claims, rollback/receipt atomicity |
-| Runner/agent lifecycle | Focused race/lifecycle tests and runtime failure injection for lease loss, process interruption, append-before-send, replay and unresolved mutation |
-| Builds | Actual pinned toolchain fixtures for source types, architectures, secrets, cache invalidation, cancellation and registry delivery |
-| Deployment and routing | Old version stays available after build/readiness failure; component identity checks; route conflicts; invalid proxy config; control-plane restart |
-| Compose/storage | Differential fixtures against supported Docker Compose versions; initialization jobs; stable mounts; external ownership; deletion and transfer rules |
-| Secrets | Cross-scope denial, output redaction, revocation, absent/wrong key, key rotation and recovery; authorized reveal separately tested |
-| Databases/recovery | Engine-specific data fixtures and application reads/writes after restore; upload failure; writer-resume failure; version incompatibility |
-| Schedules/previews | Duplicate/delayed events, generation-safe cleanup, DST, overlap, missed runs and container replacement |
-| UI/API/CLI/MCP | Same authorization and lifecycle outcomes; complete UI workflows; contract generation; keyboard/mobile checks |
-| Release | Current frontend build, deterministic `web/dist` manifest, Go embedding built afterward, required integration/runtime/release gates on the candidate |
-
-Run narrow checks during implementation, then the affected integration gates at package boundaries. Run the complete required release checks at milestone/release boundaries. A required check reported `failed` or `not_run` blocks acceptance.
-
-The largest risks are ownership migration, secret material escaping through normalized Compose, uncertainty after Docker mutation, data lifecycle mistakes, and mismatches between generated UI assets and the shipped binary. The proposed order addresses those before broad catalog or provider expansion. It leaves no declared feature silently removed from the campaign, and it makes each release claim depend on demonstrated workflows rather than the amount of code written.
-
-## River, image and persistence status
-
-The PostgreSQL server validates native and River schema evidence before starting
-the live image/proxy dispatch consumers. Deployment admission commits operation, immutable
-snapshot, audit and queue insertion together. Dispatch records one typed
-`image_deploy` task for the exact bound runner. Queue completion and workload
-completion remain separate. Native migration 0044 owns destination capability
-compatibility; 0045 owns image operation and execution evidence.
-
-The accepted schema also contains proxy control and source/build persistence.
-Additive 0048 binds the build functions introduced by immutable 0047 to their
-owning schema, including schema-qualified lease and restore behavior. The
-accepted integration is `836a3a92b0ff32242bba94bf8cf0800dc638d96e`;
-the earlier persistence merge alone is not evidence of combined acceptance.
-Historical migration checksums remain unchanged.
-
-Internal source/build requests have immutable snapshots, idempotency, grants,
-fenced receipts and artifact admission, but require trusted DB-only queue/task
-callbacks. The production controller now supplies transactional queue/task
-wiring and phase endpoints; the enabled agent executes public-source builds.
-The private credential endpoint/runtime bridge and artifact deployment handoff
-remain absent. See [build runtime](hosting-build-runtime.md) for exact operator
-policy, enrollment, journal and cleanup requirements. See [source/build persistence](hosting-build-control.md).
-
-Preparation freezes the selected public-image identity; apply uses live lease authority.
-Unknown effects retain mutation holds; exact committed receipts can replay.
-Restored bindings retain a separate ownership hold that read-only reconciliation
-cannot clear. The [execution](hosting-execution.md) and
-[job](hosting-jobs.md) guides state these boundaries. General scheduling,
-notifications and trusted restored-ownership resumption remain planned.
-
-Before adding further schema, inspect the accepted schema and allocate the next
-available native migration. Preserve historical migrations and do not treat
-reservations in unaccepted worktrees as accepted schema.
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0051, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | New durable Task/Workspace model, stable Machine mapping, team access, capacity/trust qualification and reservations |
+| Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Short-lived task/provider grants, managed execution delivery, network/data boundaries and key recovery |
+| Builds | Operator-enabled public HTTPS Git, Dockerfile, Railpack and prepared-static builds into recorded local artifacts | Mutable workspace snapshots, remote publication, shared cache, complete build-input manifest and reuse eligibility |
+| Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Remote image delivery, independent private previews, target-specific plans and protected human production decisions |
+| Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | General task activity, durable checkpoints, command/check evidence and runtime application logs |
+| Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Private preview access/tunnels, broader certificate modes, public DNS/production ACME qualification and continuous observations |
+
+The [hosting ledger](compatibility.md#accepted-foundations-and-evidence) and
+[workspace ledger](workspace-capabilities.md) carry exact revisions and limits.
+Actual local builds, deployment, route selection and output delivery are
+accepted. They are not a qualified VM sandbox, a shared artifact service or a
+complete workspace product.
+
+## Next implementation slice
+
+The next frozen backend slice is in progress and unaccepted. It adds durable
+Task metadata and activity. The accompanying Task UI is planned. This makes the
+new collaboration object visible without pretending that a generic run is a
+Workspace or that an agent already executes remotely.
+
+1. Freeze the Task/run distinction and same-project link rules before shared
+   schema/API/UI edits. Preserve existing `TaskRun`, template and hosting
+   execution contracts and their identifiers.
+2. Add a project-scoped Task with immutable owner, title, goal, status
+   (`open`, `closed`, `archived`) and revision. Server activity is distinct
+   from user comments. Create/comment receipts provide idempotency; edits use
+   compare-and-swap. Collaborator management, source lineage and review are
+   later parts of the full R69 target.
+3. Link authorized existing runs and project environments using stable
+   identities and project consistency. A link is a relationship, not authority
+   to claim work, mutate a deployment or access a terminal.
+4. Enforce current project viewer reads and maintainer writes through the
+   existing application layer, including same-project run/environment links.
+   Task status changes never mutate execution or resources. Add the planned
+   Task UI only after the accepted backend contract, with the same access rules.
+5. Validate real PostgreSQL persistence and migration, cross-project denial,
+   retries/concurrency, audit/activity behavior, API/client agreement and
+   responsive keyboard-accessible UI. No workspace execution, VM, agent,
+   reservation, task-grant or preview claim belongs to this slice.
+
+This is a partial R69/R74 slice, not completion of either requirement, D0 or
+the first demonstration. Migration 0052 is allocated to this unaccepted slice;
+it is not part of the accepted schema yet. Migration 0051 is already applied
+and must not be edited. Inspect accepted state before allocating later schema.
+
+## Dependency order after Task metadata
+
+| Slice | Required boundary before expansion | Product evidence |
+| --- | --- | --- |
+| Machine identity and reservations | Preserve Server/destination IDs and data ownership; qualify one Linux architecture/KVM backend; atomically couple capacity to attempt authority | R03–R07, R70, R76–R79; A39, A42–A44 |
+| Task grants and isolation | Enforce restrictions at host/helper/network/provider boundaries, not only metadata; separate task, preview and production authority | R75, R81–R85; A44–A47 |
+| Workspace and agent | One adapter, one writer, bounded disk, cancellation, durable source checkpoint and explicit continuation limits | R69–R74, R84; A38–A41 |
+| Remote build and artifacts | Frozen effective inputs, authorized bounded publication, registry-backed cache and independent artifact/check reuse records | R13–R16, R87–R92; A48–A53, A65 |
+| Independent review environment | Application plus isolated seeded PostgreSQL, optional worker, private ingress, observations/runtime logs and trusted final-artifact checks | R54–R56, R58–R59, R90, R93; A54–A56 |
+| Review and production plan | Human decision binds the exact artifact, target configuration, required checks and data preconditions; all interfaces enforce it | R17–R24, R85; A46–A47 |
+| Combined demonstration | Exercise disconnect, disappearance, revocation, expiry, missing artifacts and cleanup on the same candidate | D0–D3; applicable A01–A37 and A38–A56, A64–A66 |
+
+Model endpoint integration can start independently when its access/usage contract
+is explicit. Managed model installation or GPU access cannot inherit that result.
+
+## First complete demonstration and later tracks
+
+### D0–D3
+
+|Gate                                |Deliverable                                                                                                                                                                   |Exit conditions                                                                                                                               |
+|------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+|D0: Machine and authority foundation|Shared environment/resource model, Task/run distinction, stable machines, one qualified Linux VM backend, capability checks, reservations, managed secrets and task grants    |A bounded remote task survives client disconnect; unauthorized/stale work is rejected; legacy data and destination ownership remain valid     |
+|D1: Retained work and shared builds |One coding-agent adapter, isolated checkout, source checkpoints, BuildKit on remote workers, registry cache, authorized artifact publication and explicit build identity      |Task produces a retained candidate; a second compatible builder imports cache; interruption and budget behavior are demonstrated              |
+|D2: Working environment and handoff |App plus seeded isolated PostgreSQL preview, private ingress/TLS, runtime observations/logs, trusted checks against the final artifact, teammate review and supported takeover|Another user opens the task and working application after the agent run ends; evidence and permissions agree; cleanup preserves data ownership|
+|D3: Reviewed deployment             |Target-specific plan, human production approval, same-artifact promotion, mutation fencing and supported failure recovery                                                     |The full journey passes together, including changed-source/plan, lost-worker, revoked-grant, missing-artifact and expiry cases                |
+
+D0 is enabling work. D1 proves retained execution and shared output. D2 proves useful collaboration. D3 completes the first product demonstration. One supported architecture and one backend are sufficient for this milestone, provided limits are explicit.
+
+Implement conservative complete-artifact reuse and verification reuse after input/evidence recording is dependable. The initial demonstration may rebuild through shared layer cache and rerun checks. Its schema and UI must already distinguish these outcomes so later reuse does not require misleading history.
+
+### H, P, M, R, O and V
+
+These tracks are separate acceptance claims and may advance in parallel when their prerequisites are satisfied.
+
+|Track                            |Deliverable                                                                                                                                                               |Completion evidence                                                                                                 |
+|---------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+|H: Core hosting and compatibility|Direct source/image/Compose hosting, automatic builders, broader databases/catalog, storage, operations, schedules, notifications and Coolify migration                   |Original hosting cases A01–A37 and declared parity matrices pass for the release candidate                          |
+|P: Broader owned-machine pool    |Native Mac adapter, qualified Windows VM and trusted WSL paths, qualified NAS roles, additional architectures, power/availability policies and explicit cloud provisioning|Backend-specific isolation, placement, recovery, networking and capacity fixtures pass                              |
+|M: Owned model services          |Endpoint integration, supported model lifecycle, native/GPU execution profiles, model storage and quotas                                                                  |Model/driver/device matrix, authorization and interruption/upgrade behavior pass; measured resource use is available|
+|R: Reuse and larger workloads    |Conservative full-artifact/check reuse, additional cache transports where justified, retention/garbage collection and measured concurrency                                |Reuse invalidation, trust, source/fixture identity, artifact availability and resource accounting cases pass        |
+|O: Application care              |Version-specific upgrades, guided data migration, tested restores, database-aware plans, eligible progressive delivery and drift reconciliation                           |Application/version-path fixtures and failure/recovery cases pass                                                   |
+|V: Vendor packages               |Verified package identity, customer-controlled installation/update policy, compatibility and recovery metadata                                                            |Publisher/customer authority, revocation, version pinning and compromised-update scenarios are defined and tested   |
+
+An existing authenticated model endpoint can be connected before managed GPU/model lifecycle is ready. A manually enrolled cloud machine can add capacity before provider provisioning is ready. Neither shortcut should be presented as completion of the broader track.
+
+Additional proxy modes, raw Compose, provider/template breadth, multi-server application deployment, Swarm, GitHub Actions runner hosting, external secret/log integrations and requested Coolify API adapters remain visible compatibility entries. A generic shell job does not establish support for these workflows.
+
+Self-hosted object storage, Wasm execution and a geographically distributed hosted edge remain compatible directions from the earlier hosting discussion. They are not prerequisites of the first task demonstration. Each needs explicit storage/runtime/region qualification and economics before being included in a supported offering. An ordinary VM image or uploaded Wasm module does not by itself establish a global edge product.
+
+No delivery dates, staffing estimates or performance improvements are asserted. Order work by dependencies and demonstrated acceptance, then update the ledger with implementation evidence.
+
+
+## Hosting scope remains complete
+
+Earlier hosting packages remain a useful allocation map within H:
+
+| Packages | Retained scope |
+| --- | --- |
+| P00–P03 | Product contract, project/resource migration, destinations and secrets |
+| P04–P05 | Public/private sources, provider events, Dockerfile, automatic builders, static/compiled output, remote builders and cache |
+| P06–P07 | Releases, deployment strategy, readiness, rollback, routing and certificate lifecycle |
+| P08–P10 | Compose/storage ownership, all declared database engines, backup/restore and platform recovery |
+| P11–P12 | Versioned catalog, upgrades and PR/MR previews |
+| P13–P15 | Continuous operations, runtime logs/actions, schedules, notification channels and terminals |
+| P16–P18 | Full authorized UI/API/CLI/MCP, migration and remaining provider/proxy/infrastructure adapters |
+
+Retain PostgreSQL, Redis, MySQL, MariaDB, MongoDB, ClickHouse, Dragonfly, KeyDB
+and experimental SQLite with their distinct recovery limits. Nixpacks and
+Railpack remain separate adapters. Additional Git providers, raw Compose,
+Caddy/custom proxy, external secret sources/log drains, multi-server deployment,
+Swarm, provisioning and GitHub Actions runners remain visible backlog entries.
+The [hosting matrices](compatibility.md) carry their individual fixtures.
+A partial D gate cannot remove these obligations.
+
+## Execution and validation
+
+Use the existing Go application layer, PostgreSQL transactions, River lifecycle,
+runner fences and journals. Queue dispatch completion is distinct from workload
+completion. The controller must never interpret an agent narrative as trusted
+check evidence or a database fence as proof that a host process stopped.
+
+The Leader freezes interfaces and seven-part briefs, uses the current native
+HOLD/GO gates, assigns bounded disjoint ownership and integrates approved
+candidates serially. Children do not spawn children. Independently review
+code hygiene and specification fit at each exact candidate; add security or
+cryptographic review for the relevant critical boundaries. A repair requires
+new reviews and affected checks. Required missing/failed checks block acceptance.
+
+| Boundary | Required evidence |
+| --- | --- |
+| Task/schema/links | Actual PostgreSQL migrations, authorized cross-project reads/writes, retries, audit and immutable activity, old-ID compatibility |
+| Host and VM | Real qualified backend/architecture, denied host/LAN access, local limits, disconnect, process fencing and uncertain-reservation recovery |
+| Agents/checkpoints | Adapter start/observe/interrupt, excluded credentials, lost work, compatible restore and human takeover |
+| Shared builds | Cache import on a second compatible builder, trust scopes, secret-generation invalidation, publication failure and platform identities |
+| Checks/approval | Trusted check definitions, exact subjects, native/emulated labels, changed-policy invalidation and human production-plan authorization |
+| Preview and data | Independent lifetime, private access/revocation, seeded data, all required components, repeated expiry cleanup and protected persistent data |
+| Direct hosting | Existing runtime/browser gates plus engine-specific data, backup/restore, provider and proxy matrices as those features are added |
+| Release | Current generated client and frontend artifacts, Go embedding and required combined/runtime/release checks on one candidate |
+
+Retained evidence is labeled with its original revision and scope. New Task,
+VM, remote cache, agent, preview and promotion targets need new real execution
+evidence; old hosting CI does not prove them. No D0–D3, full hosting parity or
+multi-OS/GPU qualification is declared complete at this baseline.
