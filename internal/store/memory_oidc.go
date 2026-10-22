@@ -66,7 +66,7 @@ func (s *MemoryStore) ProvisionOIDCUser(ctx context.Context, user domain.User, i
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.auditIDAvailableLocked(audit.ID) {
+	if !s.auditIDAvailableLocked(audit.ID) || s.hostingPrincipalExistsLocked(user.ID) {
 		return ErrConflict
 	}
 	for _, existing := range s.users {

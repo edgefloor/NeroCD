@@ -26,6 +26,11 @@ func (s *MemoryStore) hostingPrincipalExistsLocked(id string) bool {
 			return true
 		}
 	}
+	for _, token := range s.apiTokens {
+		if token.ID == id && token.ServiceAccountID == nil {
+			return true
+		}
+	}
 	return false
 }
 func (s *MemoryStore) hostingAuditAvailableLocked(audit *domain.AuditEvent) bool {

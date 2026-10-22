@@ -36,7 +36,7 @@ func (s *MemoryStore) UpdatePasswordHash(_ context.Context, userID, previousHash
 func (s *MemoryStore) BootstrapAdmin(_ context.Context, user domain.User, audit domain.AuditEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.users) != 0 {
+	if len(s.users) != 0 || s.hostingPrincipalExistsLocked(user.ID) {
 		s.auditEvents = append([]domain.AuditEvent{{ID: audit.ID + "-denied", ActorID: "system", Action: "identity.bootstrap_admin.denied", TargetID: "bootstrap-admin", Metadata: map[string]any{"reason": "already_completed"}, CreatedAt: audit.CreatedAt}}, s.auditEvents...)
 		return ErrConflict
 	}
@@ -185,16 +185,19 @@ func (s *MemoryStore) CreateAPIToken(_ context.Context, token domain.APIToken, o
 	if audit != nil && !s.auditIDAvailableLocked(audit.ID) {
 		return domain.APIToken{}, ErrConflict
 	}
+	if token.ServiceAccountID == nil && s.hostingPrincipalExistsLocked(token.ID) {
+		return domain.APIToken{}, ErrConflict
+	}
 	for _, existing := range s.apiTokens {
 		if existing.ID == token.ID || existing.TokenHash == token.TokenHash {
 			return domain.APIToken{}, ErrConflict
 		}
 	}
-	s.apiTokens = append(s.apiTokens, token)
+	s.apiTokens = append(s.apiTokens, cloneAPIToken(token))
 	if audit != nil {
 		s.auditEvents = append([]domain.AuditEvent{*audit}, s.auditEvents...)
 	}
-	return token, nil
+	return cloneAPIToken(token), nil
 }
 
 // GetAPITokenByHash implements the corresponding repository operation.
