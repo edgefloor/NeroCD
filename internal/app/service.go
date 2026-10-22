@@ -39,6 +39,7 @@ type Service struct {
 	serviceAccounts      store.ServiceAccountRepository
 	projects             store.ProjectRepository
 	hosting              store.HostingRepository
+	destinations         store.DestinationRepository
 	managedSecrets       store.ManagedSecretRepository
 	secretKeyring        *secretcrypto.Keyring
 	members              store.ProjectMemberRepository
@@ -75,6 +76,7 @@ type Dependencies struct {
 	OIDC              store.OIDCRepository
 	Projects          store.ProjectRepository
 	Hosting           store.HostingRepository
+	Destinations      store.DestinationRepository
 	ManagedSecrets    store.ManagedSecretRepository
 	SecretKeyring     *secretcrypto.Keyring
 	Members           store.ProjectMemberRepository
@@ -115,6 +117,9 @@ func NewService(deps Dependencies) (*Service, error) {
 	}
 	if deps.ManagedSecrets == nil {
 		missing = append(missing, "ManagedSecrets")
+	}
+	if deps.Destinations == nil {
+		missing = append(missing, "Destinations")
 	}
 	if deps.Hosting == nil {
 		missing = append(missing, "Hosting")
@@ -169,6 +174,7 @@ func NewService(deps Dependencies) (*Service, error) {
 		serviceAccounts:      deps.ServiceAccounts,
 		projects:             deps.Projects,
 		hosting:              deps.Hosting,
+		destinations:         deps.Destinations,
 		managedSecrets:       deps.ManagedSecrets,
 		secretKeyring:        deps.SecretKeyring,
 		members:              deps.Members,

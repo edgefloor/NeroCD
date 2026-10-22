@@ -241,7 +241,7 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		return err
 	}
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, SecretKeyring: ring, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, SecretKeyring: ring, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		return err
 	}
@@ -296,6 +296,17 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodPost, path: "/api/v1/resources", body: `{"project_id":"proj_platform","project_environment_id":"penv_contract","name":"api-created","kind":"application","source":{"kind":"image","image":{"reference":"nginx:1.27"}}}`, auth: true, shape: "resource"},
 		{method: http.MethodGet, path: "/api/v1/resources/res_contract", auth: true, shape: "resource"},
 		{method: http.MethodPatch, path: "/api/v1/resources/res_contract", body: `{"name":"renamed","expected_generation":1}`, auth: true, shape: "resource"},
+		{method: http.MethodGet, path: "/api/v1/servers?limit=1", auth: true, shape: "list"},
+		{method: http.MethodPost, path: "/api/v1/servers", body: `{"name":"Contract new host","runner_id":"runner_dest_contract_new"}`, auth: true, shape: "server-detail"},
+		{method: http.MethodGet, path: "/api/v1/servers/server_contract", auth: true, shape: "server-detail"},
+		{method: http.MethodGet, path: "/api/v1/destinations?server_id=server_contract", auth: true, shape: "list"},
+		{method: http.MethodPost, path: "/api/v1/destinations/dest_contract/project-grants", body: `{"project_id":"proj_platform"}`, auth: true, shape: "destination-grant"},
+		{method: http.MethodGet, path: "/api/v1/destinations/dest_contract/project-grants", auth: true, shape: "list"},
+		{method: http.MethodGet, path: "/api/v1/destinations?project_id=proj_platform", auth: true, shape: "list"},
+		{method: http.MethodPost, path: "/api/v1/resources/res_contract/binding", body: `{"destination_id":"dest_contract"}`, auth: true, shape: "resource-binding"},
+		{method: http.MethodGet, path: "/api/v1/resources/res_contract/binding", auth: true, shape: "resource-binding"},
+		{method: http.MethodPost, path: "/api/v1/destinations/dest_contract/project-grants/revoke", body: `{"project_id":"proj_platform"}`, auth: true, shape: "destination-grant"},
+		{method: http.MethodGet, path: "/api/v1/resources/res_contract/binding", auth: true, shape: "resource-binding"},
 		{method: http.MethodGet, path: "/api/v1/project-members", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/project-members", body: `{"project_id":"proj_platform","email":"{{contract_email}}","role":"maintainer"}`, auth: true, shape: "project-member"},
 		{method: http.MethodGet, path: "/api/v1/project-role?project_id=proj_platform", auth: true, shape: "project-role"},
@@ -472,6 +483,22 @@ func seedContractMemory(ctx context.Context, mem *store.MemoryStore) error {
 	if _, err := mem.CreateResource(ctx, domain.Resource{ID: "res_contract", ProjectID: "proj_platform", ProjectEnvironmentID: "penv_contract", Name: "web", Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: "localhost:5000/acme/web:v1"}}, CreatedBy: users.Items[0].ID, CreatedAt: now, UpdatedAt: now}); err != nil {
 		return err
 	}
+	actor := users.Items[0].ID
+	audit := func(id, action, target string) domain.AuditEvent {
+		return domain.AuditEvent{ID: id, ActorID: actor, Action: action, TargetID: target, CreatedAt: now}
+	}
+	for _, id := range []string{"runner_dest_contract_existing", "runner_dest_contract_new"} {
+		enrollment, err := mem.CreateRunnerEnrollment(ctx, domain.RunnerEnrollment{ID: "enroll_" + id, TokenHash: "enrollment_hash_" + id, RunnerID: id, RunnerName: id, Capabilities: []string{"compose_deploy"}, CreatedBy: actor, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}, audit("aud_enroll_"+id, "runner.enrollment.create", id))
+		if err != nil {
+			return err
+		}
+		if _, err = mem.ConsumeRunnerEnrollment(ctx, domain.RunnerEnrollmentConsume{TokenHash: enrollment.TokenHash, RequestID: "consume_" + id, CredentialHash: "credential_hash_" + id}, audit("aud_consume_"+id, "runner.enrollment.consume", id)); err != nil {
+			return err
+		}
+	}
+	if _, _, err := mem.CreateServerWithDestination(ctx, domain.Server{ID: "server_contract", Name: "Contract existing host", RunnerID: "runner_dest_contract_existing", CreatedBy: actor, CreatedAt: now}, domain.Destination{ID: "dest_contract", ServerID: "server_contract", Name: "default", RuntimeKind: "docker_compose", CreatedAt: now}, audit("aud_server_contract", "server.created", "server_contract")); err != nil {
+		return err
+	}
 	if _, err := mem.CreateRepository(ctx, domain.Repository{ID: "repo_platform_runbooks", ProjectID: "proj_platform", Name: "Contract Repository", URL: "https://example.invalid/contract.git", Provider: domain.ProviderGit, DefaultRef: "main", CreatedAt: now}); err != nil {
 		return err
 	}
@@ -540,6 +567,49 @@ func validatePayloadShape(key string, shape string, payload map[string]any) erro
 			if err := requireString(field); err != nil {
 				return err
 			}
+		}
+	case "server-detail":
+		server, ok := payload["server"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s missing server", key)
+		}
+		destination, ok := payload["destination"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s missing destination", key)
+		}
+		if err := validatePayloadShape(key, "hosting-server", server); err != nil {
+			return err
+		}
+		return validatePayloadShape(key, "hosting-destination", destination)
+	case "hosting-server":
+		for _, field := range []string{"id", "name", "runner_id", "created_by", "created_at"} {
+			if err := requireString(field); err != nil {
+				return err
+			}
+		}
+	case "hosting-destination":
+		for _, field := range []string{"id", "server_id", "name", "runtime_kind", "created_at"} {
+			if err := requireString(field); err != nil {
+				return err
+			}
+		}
+		if payload["runtime_kind"] != "docker_compose" {
+			return fmt.Errorf("%s invalid runtime kind", key)
+		}
+	case "destination-grant":
+		for _, field := range []string{"destination_id", "project_id", "granted_by", "created_at"} {
+			if err := requireString(field); err != nil {
+				return err
+			}
+		}
+	case "resource-binding":
+		for _, field := range []string{"id", "resource_id", "destination_id", "runtime_namespace", "created_by", "created_at"} {
+			if err := requireString(field); err != nil {
+				return err
+			}
+		}
+		if namespace, _ := payload["runtime_namespace"].(string); !strings.HasPrefix(namespace, "ncd_") {
+			return fmt.Errorf("%s invalid runtime namespace", key)
 		}
 	case "project-environment":
 		for _, field := range []string{"id", "project_id", "name", "created_at"} {

@@ -32,6 +32,138 @@ paths:
         "200": {description: Authoritative runner identity, content: {application/json: {schema: {$ref: "#/components/schemas/RunnerIdentity"}}}}
         "401": {$ref: "#/components/responses/Error"}
         "403": {$ref: "#/components/responses/Error"}
+  /api/v1/servers:
+    get:
+      summary: List stable servers as a global runner administrator
+      operationId: listHostingServers
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/HostingServerList"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    post:
+      summary: Admit an enrolled Compose runner and default destination
+      operationId: createHostingServer
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/HostingServerInput"}}}}
+      responses:
+        "201": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/HostingServerDetail"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/servers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/HostingIdentifier"}
+    get:
+      summary: Read a stable server and default destination
+      operationId: getHostingServer
+      responses:
+        "200": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/HostingServerDetail"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/v1/destinations:
+    get:
+      summary: List active project grants or administrative server destinations
+      operationId: listHostingDestinations
+      parameters:
+        - name: project_id
+          in: query
+          description: Project viewer access is required. Supply exactly one of project_id or server_id.
+          schema: {$ref: "#/components/schemas/HostingIdentifier"}
+        - name: server_id
+          in: query
+          description: Global runner administration is required. Supply exactly one of project_id or server_id.
+          schema: {$ref: "#/components/schemas/HostingIdentifier"}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/HostingDestinationList"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/v1/destinations/{id}/project-grants:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/HostingIdentifier"}
+    get:
+      summary: List active and revoked destination project grants as a global administrator
+      operationId: listDestinationProjectGrants
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/DestinationProjectGrantList"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    post:
+      summary: Grant an active project permission to create bindings
+      operationId: grantDestinationProject
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DestinationProjectInput"}}}}
+      responses:
+        "201": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/DestinationProjectGrant"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/destinations/{id}/project-grants/revoke:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/HostingIdentifier"}
+    post:
+      summary: Revoke permission while retaining existing bindings and workloads
+      operationId: revokeDestinationProject
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DestinationProjectInput"}}}}
+      responses:
+        "200": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/DestinationProjectGrant"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/v1/resources/{id}/binding:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/HostingIdentifier"}
+    get:
+      summary: Read immutable desired resource placement with project viewer access
+      operationId: getResourceBinding
+      responses:
+        "200": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/ResourceBinding"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    post:
+      summary: Create immutable desired placement with project maintainer access
+      operationId: bindResourceDestination
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/ResourceBindingInput"}}}}
+      responses:
+        "201": {description: Successful result, content: {application/json: {schema: {$ref: "#/components/schemas/ResourceBinding"}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   /api/v1/managed-secrets:
     get:
       summary: listManagedSecrets
@@ -2028,6 +2160,106 @@ components:
       required: [runner_id]
       properties:
         runner_id: {type: string, minLength: 1}
+    HostingIdentifier:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9_-]{1,128}$'
+    HostingServerInput:
+      type: object
+      additionalProperties: false
+      required: [name, runner_id]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        runner_id: {$ref: "#/components/schemas/HostingIdentifier"}
+    HostingServer:
+      type: object
+      additionalProperties: false
+      required: [id, name, runner_id, created_by, created_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        runner_id: {type: string}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+    HostingDestination:
+      type: object
+      additionalProperties: false
+      required: [id, server_id, name, runtime_kind, created_at]
+      properties:
+        id: {type: string}
+        server_id: {type: string}
+        name: {type: string}
+        runtime_kind: {type: string, enum: [docker_compose]}
+        created_at: {type: string, format: date-time}
+    HostingServerDetail:
+      type: object
+      additionalProperties: false
+      required: [server, destination]
+      properties:
+        server: {$ref: "#/components/schemas/HostingServer"}
+        destination: {$ref: "#/components/schemas/HostingDestination"}
+    DestinationProjectInput:
+      type: object
+      additionalProperties: false
+      required: [project_id]
+      properties:
+        project_id: {$ref: "#/components/schemas/HostingIdentifier"}
+    DestinationProjectGrant:
+      type: object
+      additionalProperties: false
+      required: [destination_id, project_id, granted_by, created_at]
+      properties:
+        destination_id: {type: string}
+        project_id: {type: string}
+        granted_by: {type: string}
+        created_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    ResourceBindingInput:
+      type: object
+      additionalProperties: false
+      required: [destination_id]
+      properties:
+        destination_id: {$ref: "#/components/schemas/HostingIdentifier"}
+    ResourceBinding:
+      type: object
+      additionalProperties: false
+      description: Immutable desired placement with a platform-generated namespace. This is not an execution grant and does not deploy the resource.
+      required: [id, resource_id, destination_id, runtime_namespace, created_by, created_at]
+      properties:
+        id: {type: string}
+        resource_id: {type: string}
+        destination_id: {type: string}
+        runtime_namespace: {type: string}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+    HostingServerList:
+      type: object
+      required: [items, limit, offset, count, total]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/HostingServer"}}
+        limit: {type: integer, minimum: 0}
+        offset: {type: integer, minimum: 0}
+        count: {type: integer, minimum: 0}
+        total: {type: integer, minimum: 0}
+    HostingDestinationList:
+      type: object
+      required: [items, limit, offset, count, total]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/HostingDestination"}}
+        limit: {type: integer, minimum: 0}
+        offset: {type: integer, minimum: 0}
+        count: {type: integer, minimum: 0}
+        total: {type: integer, minimum: 0}
+    DestinationProjectGrantList:
+      type: object
+      required: [items, limit, offset, count, total]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/DestinationProjectGrant"}}
+        limit: {type: integer, minimum: 0}
+        offset: {type: integer, minimum: 0}
+        count: {type: integer, minimum: 0}
+        total: {type: integer, minimum: 0}
     ManagedSecret:
       type: object
       additionalProperties: false
