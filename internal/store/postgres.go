@@ -12,13 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store/sqlcgen"
 )
 
 // PostgresStore is a PostgreSQL-backed implementation of the store repositories.
 type PostgresStore struct {
-	pool    *pgxpool.Pool
-	queries *sqlcgen.Queries
+	hostingJobs *hostingjobs.Client
+	pool        *pgxpool.Pool
+	queries     *sqlcgen.Queries
 }
 
 // rollbackTransaction performs best-effort failure-path cleanup. It ignores all

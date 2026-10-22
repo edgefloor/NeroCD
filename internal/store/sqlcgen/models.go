@@ -159,6 +159,91 @@ type Environment struct {
 	CreatedAt                time.Time       `json:"created_at"`
 }
 
+type HostingApplyAdmission struct {
+	OperationID string          `json:"operation_id"`
+	RunID       string          `json:"run_id"`
+	LeaseID     string          `json:"lease_id"`
+	Authority   json.RawMessage `json:"authority"`
+	PlanHash    string          `json:"plan_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingApplyPlan struct {
+	OperationID string          `json:"operation_id"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+}
+
+type HostingBindingState struct {
+	BindingID       string  `json:"binding_id"`
+	DestinationID   string  `json:"destination_id"`
+	HostPort        int32   `json:"host_port"`
+	DaemonID        *string `json:"daemon_id"`
+	Healthy         []byte  `json:"healthy"`
+	HoldOperationID *string `json:"hold_operation_id"`
+	RestoreAdmitted bool    `json:"restore_admitted"`
+}
+
+type HostingDispatchReceipt struct {
+	OperationID string    `json:"operation_id"`
+	RunID       string    `json:"run_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type HostingOperation struct {
+	ID                  string    `json:"id"`
+	ProjectID           string    `json:"project_id"`
+	ResourceID          string    `json:"resource_id"`
+	BindingID           string    `json:"binding_id"`
+	IdempotencyKey      string    `json:"idempotency_key"`
+	RequestHash         string    `json:"request_hash"`
+	State               string    `json:"state"`
+	RunID               *string   `json:"run_id"`
+	ReconciliationRunID *string   `json:"reconciliation_run_id"`
+	ReconcileRequested  bool      `json:"reconcile_requested"`
+	CreatedBy           string    `json:"created_by"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type HostingReceipt struct {
+	OperationID string          `json:"operation_id"`
+	Phase       string          `json:"phase"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingReconciliationReceipt struct {
+	LeaseID     string          `json:"lease_id"`
+	OperationID string          `json:"operation_id"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingRelease struct {
+	OperationID string          `json:"operation_id"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+}
+
+type HostingSnapshot struct {
+	OperationID string          `json:"operation_id"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+}
+
+type HostingTaskTarget struct {
+	RunID       string `json:"run_id"`
+	OperationID string `json:"operation_id"`
+	Mode        string `json:"mode"`
+	BindingID   string `json:"binding_id"`
+	RunnerID    string `json:"runner_id"`
+}
+
 type IdentityBootstrapState struct {
 	Singleton   bool       `json:"singleton"`
 	CompletedBy *string    `json:"completed_by"`

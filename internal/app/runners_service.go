@@ -299,7 +299,7 @@ func (s *Service) RegisterRunner(ctx context.Context, input RunnerInput) (Regist
 func composeRunnerHasGenericShell(capabilities []string) bool {
 	compose, shell := false, false
 	for _, capability := range capabilities {
-		compose = compose || capability == domain.RunTypeComposeDeploy
+		compose = compose || capability == domain.RunTypeComposeDeploy || capability == domain.RunTypeImageDeploy
 		shell = shell || capability == domain.RunTypeShell
 	}
 	return compose && shell
@@ -476,7 +476,7 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 	if err != nil {
 		return domain.RunLease{}, err
 	}
-	if run.RunSpec.Type == domain.RunTypeComposeDeploy {
+	if run.RunSpec.Type == domain.RunTypeComposeDeploy || run.RunSpec.Type == domain.RunTypeImageDeploy {
 		return domain.RunLease{}, store.ErrConflict
 	}
 	if lease.CompletionKey != "" {

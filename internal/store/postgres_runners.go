@@ -315,7 +315,11 @@ func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.
 			if err != nil {
 				return domain.ClaimedRun{}, err
 			}
-			if covers(runner.Tags, run.RunnerTags) && contains(runner.Capabilities, claimRunType(run)) {
+			allowed, gateErr := s.hostingClaimAllowed(ctx, tx, run, runner.ID)
+			if gateErr != nil {
+				return domain.ClaimedRun{}, gateErr
+			}
+			if allowed && covers(runner.Tags, run.RunnerTags) && contains(runner.Capabilities, claimRunType(run)) {
 				claimedRun = &run
 				break
 			}
@@ -469,6 +473,9 @@ func (s *PostgresStore) CompleteLeaseRequest(ctx context.Context, leaseID string
 	}
 	if err := queries.AcquireRunLogLock(ctx, runID); err != nil {
 		return domain.RunLease{}, fmt.Errorf("acquire run log lock query: %w", err)
+	}
+	if err := rejectGenericHostingRun(ctx, queries, runID); err != nil {
+		return domain.RunLease{}, err
 	}
 	if deploymentRun, deploymentErr := queries.IsDeploymentRun(ctx, runID); deploymentErr != nil {
 		return domain.RunLease{}, fmt.Errorf("is deployment run query: %w", deploymentErr)
@@ -624,6 +631,9 @@ func (s *PostgresStore) CancelRunRequest(ctx context.Context, runID string, canc
 		return domain.TaskRun{}, ErrNotFound
 	} else if err != nil {
 		return domain.TaskRun{}, fmt.Errorf("lock cancellable run status query: %w", err)
+	}
+	if err := rejectGenericHostingRun(ctx, queries, runID); err != nil {
+		return domain.TaskRun{}, err
 	}
 	if err := rejectGenericDeploymentRun(ctx, queries, runID); err != nil {
 		return domain.TaskRun{}, fmt.Errorf("reject generic deployment run: %w", err)

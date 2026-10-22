@@ -157,6 +157,9 @@ func (s *MemoryStore) ListArtifactsPageForScope(_ context.Context, scope RunAuth
 
 // CreateRun implements the corresponding repository operation.
 func (s *MemoryStore) CreateRun(_ context.Context, run domain.TaskRun) (domain.TaskRun, error) {
+	if run.RunSpec.Type == domain.RunTypeImageDeploy {
+		return domain.TaskRun{}, ErrConflict
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.claimOrderByRun == nil {
@@ -169,6 +172,9 @@ func (s *MemoryStore) CreateRun(_ context.Context, run domain.TaskRun) (domain.T
 
 // CreateRunRequest implements the corresponding repository operation.
 func (s *MemoryStore) CreateRunRequest(_ context.Context, run domain.TaskRun, log domain.RunLog, approval *domain.Approval, audit domain.AuditEvent) (domain.TaskRun, error) {
+	if run.RunSpec.Type == domain.RunTypeImageDeploy {
+		return domain.TaskRun{}, ErrConflict
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.claimOrderByRun == nil {
@@ -188,7 +194,7 @@ func (s *MemoryStore) CreateRunRequest(_ context.Context, run domain.TaskRun, lo
 func (s *MemoryStore) UpdateRunStatus(_ context.Context, id string, status string, finishedAt *time.Time) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.deploymentBackedRunLocked(id) {
+	if s.hostingRunLocked(id) || s.deploymentBackedRunLocked(id) {
 		return domain.TaskRun{}, ErrConflict
 	}
 	for i, run := range s.runs {

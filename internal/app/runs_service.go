@@ -329,6 +329,9 @@ type RunRequestInput struct {
 
 // RequestRunWithSpec requests an authorized run with spec.
 func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput) (domain.TaskRun, error) {
+	if input.RunSpec.Type == domain.RunTypeImageDeploy {
+		return domain.TaskRun{}, InvalidInput(errors.New("image deployment requires the resource deployment API"))
+	}
 	if strings.TrimSpace(input.TemplateID) != "" {
 		return s.RequestRun(ctx, input.TemplateID)
 	}
@@ -447,7 +450,7 @@ func (s *Service) CancelRun(ctx context.Context, runID string) (domain.TaskRun, 
 	if err := s.requireProjectRole(ctx, principal, targetRun.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
-	if domain.IsTerminalRunStatus(targetRun.Status) {
+	if targetRun.RunSpec.Type == domain.RunTypeImageDeploy || domain.IsTerminalRunStatus(targetRun.Status) {
 		return domain.TaskRun{}, store.ErrConflict
 	}
 	now := time.Now().UTC()
