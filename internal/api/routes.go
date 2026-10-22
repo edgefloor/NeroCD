@@ -4,6 +4,15 @@ import "net/http"
 
 var publicRoutes = []PublicRoute{
 	{Method: http.MethodGet, Path: "/api/v1/runners/identity"},
+	{Method: http.MethodGet, Path: "/api/v1/servers"},
+	{Method: http.MethodPost, Path: "/api/v1/servers"},
+	{Method: http.MethodGet, Path: "/api/v1/servers/{id}"},
+	{Method: http.MethodGet, Path: "/api/v1/destinations"},
+	{Method: http.MethodGet, Path: "/api/v1/destinations/{id}/project-grants"},
+	{Method: http.MethodPost, Path: "/api/v1/destinations/{id}/project-grants"},
+	{Method: http.MethodPost, Path: "/api/v1/destinations/{id}/project-grants/revoke"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/binding"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/binding"},
 	{Method: http.MethodGet, Path: "/api/v1/managed-secrets"},
 	{Method: http.MethodPost, Path: "/api/v1/managed-secrets"},
 	{Method: http.MethodGet, Path: "/api/v1/managed-secrets/{id}"},
@@ -122,6 +131,18 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
 	case "/api/v1/runners/identity":
 		return s.runnerIdentity
+	case "/api/v1/servers":
+		return s.hostingServers
+	case "/api/v1/servers/{id}":
+		return s.hostingServerByID
+	case "/api/v1/destinations":
+		return s.hostingDestinations
+	case "/api/v1/destinations/{id}/project-grants":
+		return s.destinationProjectGrants
+	case "/api/v1/destinations/{id}/project-grants/revoke":
+		return s.revokeDestinationProjectGrant
+	case "/api/v1/resources/{id}/binding":
+		return s.resourceBinding
 	case "/api/v1/managed-secrets":
 		return s.managedSecretsHandler
 	case "/api/v1/managed-secrets/{id}":

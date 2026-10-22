@@ -24,7 +24,8 @@ AND nerocd_retention_schema_compatible()
 AND nerocd_service_account_schema_compatible()
 AND nerocd_hosting_schema_compatible()
 AND nerocd_managed_secrets_schema_compatible()
-AND nerocd_destinations_schema_compatible() AS compatible
+AND nerocd_destinations_schema_compatible()
+AND nerocd_legacy_api_token_schema_compatible() AS compatible
 `
 
 func (q *Queries) SchedulerSchemaCompatible(ctx context.Context) (*bool, error) {

@@ -222,6 +222,9 @@ func (s *MemoryStore) activeServiceAccountLocked(accountID string) (domain.Servi
 }
 
 func (s *MemoryStore) serviceAccountOrTokenExistsLocked(accountID, tokenID, tokenHash string) bool {
+	if accountID != "" && s.hostingPrincipalExistsLocked(accountID) {
+		return true
+	}
 	for _, account := range s.serviceAccounts {
 		if accountID != "" && account.ID == accountID {
 			return true

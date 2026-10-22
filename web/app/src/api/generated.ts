@@ -24,6 +24,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List stable servers as a global runner administrator */
+        get: operations["listHostingServers"];
+        put?: never;
+        /** Admit an enrolled Compose runner and default destination */
+        post: operations["createHostingServer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        /** Read a stable server and default destination */
+        get: operations["getHostingServer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List active project grants or administrative server destinations */
+        get: operations["listHostingDestinations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/destinations/{id}/project-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        /** List active and revoked destination project grants as a global administrator */
+        get: operations["listDestinationProjectGrants"];
+        put?: never;
+        /** Grant an active project permission to create bindings */
+        post: operations["grantDestinationProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/destinations/{id}/project-grants/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke permission while retaining existing bindings and workloads */
+        post: operations["revokeDestinationProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        /** Read immutable desired resource placement with project viewer access */
+        get: operations["getResourceBinding"];
+        put?: never;
+        /** Create immutable desired placement with project maintainer access */
+        post: operations["bindResourceDestination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/managed-secrets": {
         parameters: {
             query?: never;
@@ -1420,6 +1533,78 @@ export interface components {
         RunnerIdentity: {
             runner_id: string;
         };
+        HostingIdentifier: string;
+        HostingServerInput: {
+            name: string;
+            runner_id: components["schemas"]["HostingIdentifier"];
+        };
+        HostingServer: {
+            id: string;
+            name: string;
+            runner_id: string;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        HostingDestination: {
+            id: string;
+            server_id: string;
+            name: string;
+            /** @enum {string} */
+            runtime_kind: "docker_compose";
+            /** Format: date-time */
+            created_at: string;
+        };
+        HostingServerDetail: {
+            server: components["schemas"]["HostingServer"];
+            destination: components["schemas"]["HostingDestination"];
+        };
+        DestinationProjectInput: {
+            project_id: components["schemas"]["HostingIdentifier"];
+        };
+        DestinationProjectGrant: {
+            destination_id: string;
+            project_id: string;
+            granted_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            revoked_at?: string;
+        };
+        ResourceBindingInput: {
+            destination_id: components["schemas"]["HostingIdentifier"];
+        };
+        /** @description Immutable desired placement with a platform-generated namespace. This is not an execution grant and does not deploy the resource. */
+        ResourceBinding: {
+            id: string;
+            resource_id: string;
+            destination_id: string;
+            runtime_namespace: string;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        HostingServerList: {
+            items: components["schemas"]["HostingServer"][];
+            limit: number;
+            offset: number;
+            count: number;
+            total: number;
+        };
+        HostingDestinationList: {
+            items: components["schemas"]["HostingDestination"][];
+            limit: number;
+            offset: number;
+            count: number;
+            total: number;
+        };
+        DestinationProjectGrantList: {
+            items: components["schemas"]["DestinationProjectGrant"][];
+            limit: number;
+            offset: number;
+            count: number;
+            total: number;
+        };
         ManagedSecret: {
             id: string;
             project_id: string;
@@ -2633,6 +2818,273 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    listHostingServers: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingServerList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createHostingServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingServerInput"];
+            };
+        };
+        responses: {
+            /** @description Successful result */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingServerDetail"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    getHostingServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingServerDetail"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listHostingDestinations: {
+        parameters: {
+            query?: {
+                /** @description Project viewer access is required. Supply exactly one of project_id or server_id. */
+                project_id?: components["schemas"]["HostingIdentifier"];
+                /** @description Global runner administration is required. Supply exactly one of project_id or server_id. */
+                server_id?: components["schemas"]["HostingIdentifier"];
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDestinationList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listDestinationProjectGrants: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationProjectGrantList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    grantDestinationProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DestinationProjectInput"];
+            };
+        };
+        responses: {
+            /** @description Successful result */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationProjectGrant"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    revokeDestinationProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DestinationProjectInput"];
+            };
+        };
+        responses: {
+            /** @description Successful result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationProjectGrant"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    getResourceBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceBinding"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    bindResourceDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceBindingInput"];
+            };
+        };
+        responses: {
+            /** @description Successful result */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceBinding"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     listManagedSecrets: {

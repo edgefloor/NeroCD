@@ -82,7 +82,7 @@ func TestPostgresDestinationMissingMigrationBlocksStartup(t *testing.T) {
 		_ = opened.Close()
 		t.Fatal("missing0042 startup accepted")
 	}
-	if err := applyEmbeddedMigrations(ctx, db, "0041_project_managed_secrets.sql", ""); err != nil {
+	if err := applyEmbeddedMigrations(ctx, db, "0041_project_managed_secrets.sql", "0042_servers_destinations.sql"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {
