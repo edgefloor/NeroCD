@@ -23,6 +23,7 @@ import (
 
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
+	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store"
 )
 
@@ -386,7 +387,7 @@ func requiresAuth(path string) bool {
 
 func requiresRunnerAuth(path string) bool {
 	switch path {
-	case "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete", "/api/v1/runners/deployments/transition", "/api/v1/runners/deployments/plan", "/api/v1/runners/deployments/status", "/api/v1/runners/deployments/provenance", "/api/v1/runners/deployments/fail-and-rollback":
+	case "/api/v1/runners/hosting/plan", "/api/v1/runners/hosting/prepared", "/api/v1/runners/hosting/apply-begin", "/api/v1/runners/hosting/complete", "/api/v1/runners/hosting/status", "/api/v1/runners/hosting/reconciliation", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete", "/api/v1/runners/deployments/transition", "/api/v1/runners/deployments/plan", "/api/v1/runners/deployments/status", "/api/v1/runners/deployments/provenance", "/api/v1/runners/deployments/fail-and-rollback":
 		return true
 	default:
 		return false
@@ -575,6 +576,9 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
+	case errors.Is(err, hostingjobs.ErrUnavailable):
+		status = http.StatusServiceUnavailable
+		code = "hosting_unavailable"
 	case errors.Is(err, app.ErrManagedSecretsUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "unavailable"
@@ -610,6 +614,7 @@ func writeError(w http.ResponseWriter, err error) {
 		"bad_request":         "invalid request",
 		"internal_error":      "internal server error",
 		"unavailable":         "managed secrets are unavailable",
+		"hosting_unavailable": "hosting execution requires PostgreSQL and a migrated River consumer",
 	}[code]
 	writeErrorEnvelope(w, status, code, message)
 }

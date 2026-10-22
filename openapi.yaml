@@ -21,6 +21,370 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  /api/v1/resources/{id}/deployments:
+    post:
+      summary: Request an immutable public image deployment
+      operationId: requestImageDeployment
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement.
+      responses:
+        '202':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/HostingIdentifier'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingDeploymentInput'
+  /api/v1/hosting-operations/{id}:
+    get:
+      summary: Read an authorized hosting operation
+      operationId: getHostingOperation
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/HostingIdentifier'
+  /api/v1/hosting-operations/{id}/cancel:
+    post:
+      summary: Cancel before apply or retain post-admission uncertainty
+      operationId: cancelHostingOperation
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/HostingIdentifier'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/hosting-operations/{id}/reconcile:
+    post:
+      summary: Request an owner-authorized read-only target observation
+      operationId: reconcileHostingOperation
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement.
+      responses:
+        '202':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/HostingIdentifier'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/runners/hosting/plan:
+    post:
+      summary: Fenced image hosting plan
+      operationId: runnerHostingPlan
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner
+        credential is accepted; the complete operation/run/lease/attempt/fence tuple is required.
+        Observation task mode cannot prepare, admit apply, or publish deployment success.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingAuthority'
+  /api/v1/runners/hosting/prepared:
+    post:
+      summary: Fenced image hosting prepared
+      operationId: runnerHostingPrepared
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner
+        credential is accepted; the complete operation/run/lease/attempt/fence tuple is required.
+        Observation task mode cannot prepare, admit apply, or publish deployment success.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingPreparedRequest'
+  /api/v1/runners/hosting/apply-begin:
+    post:
+      summary: Fenced image hosting apply-begin
+      operationId: runnerHostingApplyBegin
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner
+        credential is accepted; the complete operation/run/lease/attempt/fence tuple is required.
+        Observation task mode cannot prepare, admit apply, or publish deployment success.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingAuthority'
+  /api/v1/runners/hosting/complete:
+    post:
+      summary: Fenced image hosting complete
+      operationId: runnerHostingComplete
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner
+        credential is accepted; the complete operation/run/lease/attempt/fence tuple is required.
+        Observation task mode cannot prepare, admit apply, or publish deployment success.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingCompleteRequest'
+  /api/v1/runners/hosting/status:
+    post:
+      summary: Fenced image hosting status
+      operationId: runnerHostingStatus
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner
+        credential is accepted; the complete operation/run/lease/attempt/fence tuple is required.
+        Observation task mode cannot prepare, admit apply, or publish deployment success.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingStatusRequest'
+  /api/v1/runners/hosting/reconciliation:
+    post:
+      summary: Fenced image hosting reconciliation
+      operationId: runnerHostingReconciliation
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner
+        credential is accepted; the complete operation/run/lease/attempt/fence tuple is required.
+        Observation task mode cannot prepare, admit apply, or publish deployment success.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingObservation'
   /api/v1/runners/identity:
     get:
       summary: Read the authenticated runner identity without heartbeat
@@ -2154,6 +2518,455 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    HostingReadiness:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - timeout_seconds
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: >-
+            Origin-relative HTTP path without authority, scheme, fragment or controls; redirects are not
+            followed.
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 120
+    HostingDeploymentInput:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_generation
+        - idempotency_key
+        - container_port
+        - host_port
+        - readiness
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 1
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 128
+        container_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        host_port:
+          type: integer
+          minimum: 1024
+          maximum: 65535
+        readiness:
+          $ref: '#/components/schemas/HostingReadiness'
+    HostingSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_id
+        - image_reference
+        - binding_id
+        - destination_id
+        - server_id
+        - runner_id
+        - runtime_namespace
+        - resource_generation
+        - container_port
+        - host_port
+        - readiness
+        - policy_version
+      properties:
+        resource_id:
+          type: string
+        image_reference:
+          type: string
+        binding_id:
+          type: string
+        destination_id:
+          type: string
+        server_id:
+          type: string
+        runner_id:
+          type: string
+        runtime_namespace:
+          type: string
+        resource_generation:
+          type: integer
+          format: int64
+        container_port:
+          type: integer
+        host_port:
+          type: integer
+        readiness:
+          $ref: '#/components/schemas/HostingReadiness'
+        policy_version:
+          type: string
+          enum:
+            - public-image.loopback.v1
+    HostingRelease:
+      type: object
+      additionalProperties: false
+      required:
+        - canonical_image
+        - image_id
+        - os
+        - architecture
+        - daemon_id
+        - hash
+      properties:
+        canonical_image:
+          type: string
+        image_id:
+          type: string
+        os:
+          type: string
+          enum:
+            - linux
+        architecture:
+          type: string
+        variant:
+          type: string
+        daemon_id:
+          type: string
+        hash:
+          type: string
+    HostingHealthy:
+      type: object
+      additionalProperties: false
+      required:
+        - snapshot
+        - operation_id
+        - container_id
+        - release
+        - plan_hash
+      properties:
+        snapshot:
+          $ref: '#/components/schemas/HostingSnapshot'
+        operation_id:
+          type: string
+        container_id:
+          type: string
+        release:
+          $ref: '#/components/schemas/HostingRelease'
+        plan_hash:
+          type: string
+    HostingApplyPlan:
+      type: object
+      additionalProperties: false
+      required:
+        - snapshot
+        - release
+        - compiler_version
+        - hash
+      properties:
+        snapshot:
+          $ref: '#/components/schemas/HostingSnapshot'
+        release:
+          $ref: '#/components/schemas/HostingRelease'
+        previous_healthy:
+          $ref: '#/components/schemas/HostingHealthy'
+        compiler_version:
+          type: string
+          enum:
+            - image-hosting.v1
+        hash:
+          type: string
+    HostingReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - body_hash
+        - created_at
+      properties:
+        id:
+          type: string
+        body_hash:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    HostingResult:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+        - ready
+        - restored
+        - uncertain
+      properties:
+        outcome:
+          type: string
+          enum:
+            - succeeded
+            - failed
+        container_id:
+          type: string
+        previous_container_id:
+          type: string
+        image_id:
+          type: string
+        daemon_id:
+          type: string
+        plan_hash:
+          type: string
+        ready:
+          type: boolean
+        restored:
+          type: boolean
+        uncertain:
+          type: boolean
+    HostingAuthority:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - run_id
+        - lease_id
+        - fence
+        - attempt
+      properties:
+        operation_id:
+          type: string
+          minLength: 1
+        run_id:
+          type: string
+          minLength: 1
+        lease_id:
+          type: string
+          minLength: 1
+        fence:
+          type: string
+          minLength: 1
+        attempt:
+          type: integer
+          minimum: 1
+    HostingPreparedRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - run_id
+        - lease_id
+        - fence
+        - attempt
+        - receipt_id
+        - release
+      properties:
+        operation_id:
+          type: string
+          minLength: 1
+        run_id:
+          type: string
+          minLength: 1
+        lease_id:
+          type: string
+          minLength: 1
+        fence:
+          type: string
+          minLength: 1
+        attempt:
+          type: integer
+          minimum: 1
+        receipt_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        release:
+          $ref: '#/components/schemas/HostingRelease'
+    HostingCompleteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - run_id
+        - lease_id
+        - fence
+        - attempt
+        - receipt_id
+        - result
+      properties:
+        operation_id:
+          type: string
+          minLength: 1
+        run_id:
+          type: string
+          minLength: 1
+        lease_id:
+          type: string
+          minLength: 1
+        fence:
+          type: string
+          minLength: 1
+        attempt:
+          type: integer
+          minimum: 1
+        receipt_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        result:
+          $ref: '#/components/schemas/HostingResult'
+    HostingStatusRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - run_id
+        - lease_id
+        - fence
+        - attempt
+      properties:
+        operation_id:
+          type: string
+          minLength: 1
+        run_id:
+          type: string
+          minLength: 1
+        lease_id:
+          type: string
+          minLength: 1
+        fence:
+          type: string
+          minLength: 1
+        attempt:
+          type: integer
+          minimum: 1
+        phase:
+          type: string
+          enum:
+            - ''
+            - verifying
+            - claim_observation
+    HostingObservation:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - run_id
+        - lease_id
+        - fence
+        - attempt
+        - daemon_id
+        - container_id
+        - image_id
+        - binding_id
+        - plan_hash
+        - release_hash
+        - ready
+        - no_owned_containers
+      properties:
+        operation_id:
+          type: string
+          minLength: 1
+        run_id:
+          type: string
+          minLength: 1
+        lease_id:
+          type: string
+          minLength: 1
+        fence:
+          type: string
+          minLength: 1
+        attempt:
+          type: integer
+          minimum: 1
+        daemon_id:
+          type: string
+        container_id:
+          type: string
+        image_id:
+          type: string
+        binding_id:
+          type: string
+        plan_hash:
+          type: string
+        release_hash:
+          type: string
+        ready:
+          type: boolean
+        no_owned_containers:
+          type: boolean
+    HostingOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - project_id
+        - resource_id
+        - binding_id
+        - created_by
+        - state
+        - snapshot
+        - mutation_hold
+        - reconcile_requested
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        resource_id:
+          type: string
+        binding_id:
+          type: string
+        run_id:
+          type: string
+        reconciliation_run_id:
+          type: string
+        created_by:
+          type: string
+        state:
+          type: string
+          enum:
+            - queued
+            - dispatched
+            - preparing
+            - prepared
+            - applying
+            - verifying
+            - succeeded
+            - failed
+            - canceled
+            - cancel_requested
+            - reconciliation_required
+        snapshot:
+          $ref: '#/components/schemas/HostingSnapshot'
+        release:
+          $ref: '#/components/schemas/HostingRelease'
+        plan:
+          $ref: '#/components/schemas/HostingApplyPlan'
+        prepared_receipt:
+          $ref: '#/components/schemas/HostingReceipt'
+        complete_receipt:
+          $ref: '#/components/schemas/HostingReceipt'
+        result:
+          $ref: '#/components/schemas/HostingResult'
+        mutation_hold:
+          type: boolean
+        reconcile_requested:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        task_mode:
+          type: string
+          enum:
+            - deploy
+            - observe
+        observation_lease:
+          $ref: '#/components/schemas/RunLease'
+        reconciliation_healthy:
+          $ref: '#/components/schemas/HostingHealthy'
     RunnerIdentity:
       type: object
       additionalProperties: false

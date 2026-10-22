@@ -222,7 +222,20 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 			_ = pg.Close()
 			return nil, nil, err
 		}
-		return service, func() { _ = pg.Close() }, nil
+		stopHosting, err := pg.StartHostingExecution(ctx)
+		if err != nil {
+			_ = pg.Close()
+			return nil, nil, err
+		}
+		return service, func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			if stopErr := stopHosting(stopCtx); stopErr != nil {
+				slog.Error("hosting worker shutdown did not finish; pool remains owned by worker")
+				return
+			}
+			_ = pg.Close()
+		}, nil
 	}
 
 	if !cfg.developmentMemory {

@@ -4,6 +4,206 @@
  */
 
 export interface paths {
+    "/api/v1/resources/{id}/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request an immutable public image deployment
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement.
+         */
+        post: operations["requestImageDeployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting-operations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read an authorized hosting operation
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement.
+         */
+        get: operations["getHostingOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting-operations/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel before apply or retain post-admission uncertainty
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement.
+         */
+        post: operations["cancelHostingOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting-operations/{id}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request an owner-authorized read-only target observation
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement.
+         */
+        post: operations["reconcileHostingOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced image hosting plan
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner credential is accepted; the complete operation/run/lease/attempt/fence tuple is required. Observation task mode cannot prepare, admit apply, or publish deployment success.
+         */
+        post: operations["runnerHostingPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/prepared": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced image hosting prepared
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner credential is accepted; the complete operation/run/lease/attempt/fence tuple is required. Observation task mode cannot prepare, admit apply, or publish deployment success.
+         */
+        post: operations["runnerHostingPrepared"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/apply-begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced image hosting apply-begin
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner credential is accepted; the complete operation/run/lease/attempt/fence tuple is required. Observation task mode cannot prepare, admit apply, or publish deployment success.
+         */
+        post: operations["runnerHostingApplyBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced image hosting complete
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner credential is accepted; the complete operation/run/lease/attempt/fence tuple is required. Observation task mode cannot prepare, admit apply, or publish deployment success.
+         */
+        post: operations["runnerHostingComplete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced image hosting status
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner credential is accepted; the complete operation/run/lease/attempt/fence tuple is required. Observation task mode cannot prepare, admit apply, or publish deployment success.
+         */
+        post: operations["runnerHostingStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced image hosting reconciliation
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner credential is accepted; the complete operation/run/lease/attempt/fence tuple is required. Observation task mode cannot prepare, admit apply, or publish deployment success.
+         */
+        post: operations["runnerHostingReconciliation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/identity": {
         parameters: {
             query?: never;
@@ -1530,6 +1730,154 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingReadiness: {
+            /** @description Origin-relative HTTP path without authority, scheme, fragment or controls; redirects are not followed. */
+            path: string;
+            timeout_seconds: number;
+        };
+        HostingDeploymentInput: {
+            /** Format: int64 */
+            expected_generation: number;
+            idempotency_key: string;
+            container_port: number;
+            host_port: number;
+            readiness: components["schemas"]["HostingReadiness"];
+        };
+        HostingSnapshot: {
+            resource_id: string;
+            image_reference: string;
+            binding_id: string;
+            destination_id: string;
+            server_id: string;
+            runner_id: string;
+            runtime_namespace: string;
+            /** Format: int64 */
+            resource_generation: number;
+            container_port: number;
+            host_port: number;
+            readiness: components["schemas"]["HostingReadiness"];
+            /** @enum {string} */
+            policy_version: "public-image.loopback.v1";
+        };
+        HostingRelease: {
+            canonical_image: string;
+            image_id: string;
+            /** @enum {string} */
+            os: "linux";
+            architecture: string;
+            variant?: string;
+            daemon_id: string;
+            hash: string;
+        };
+        HostingHealthy: {
+            snapshot: components["schemas"]["HostingSnapshot"];
+            operation_id: string;
+            container_id: string;
+            release: components["schemas"]["HostingRelease"];
+            plan_hash: string;
+        };
+        HostingApplyPlan: {
+            snapshot: components["schemas"]["HostingSnapshot"];
+            release: components["schemas"]["HostingRelease"];
+            previous_healthy?: components["schemas"]["HostingHealthy"];
+            /** @enum {string} */
+            compiler_version: "image-hosting.v1";
+            hash: string;
+        };
+        HostingReceipt: {
+            id: string;
+            body_hash: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        HostingResult: {
+            /** @enum {string} */
+            outcome: "succeeded" | "failed";
+            container_id?: string;
+            previous_container_id?: string;
+            image_id?: string;
+            daemon_id?: string;
+            plan_hash?: string;
+            ready: boolean;
+            restored: boolean;
+            uncertain: boolean;
+        };
+        HostingAuthority: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+        };
+        HostingPreparedRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            release: components["schemas"]["HostingRelease"];
+        };
+        HostingCompleteRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            result: components["schemas"]["HostingResult"];
+        };
+        HostingStatusRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            /** @enum {string} */
+            phase?: "" | "verifying" | "claim_observation";
+        };
+        HostingObservation: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            daemon_id: string;
+            container_id: string;
+            image_id: string;
+            binding_id: string;
+            plan_hash: string;
+            release_hash: string;
+            ready: boolean;
+            no_owned_containers: boolean;
+        };
+        HostingOperation: {
+            id: string;
+            project_id: string;
+            resource_id: string;
+            binding_id: string;
+            run_id?: string;
+            reconciliation_run_id?: string;
+            created_by: string;
+            /** @enum {string} */
+            state: "queued" | "dispatched" | "preparing" | "prepared" | "applying" | "verifying" | "succeeded" | "failed" | "canceled" | "cancel_requested" | "reconciliation_required";
+            snapshot: components["schemas"]["HostingSnapshot"];
+            release?: components["schemas"]["HostingRelease"];
+            plan?: components["schemas"]["HostingApplyPlan"];
+            prepared_receipt?: components["schemas"]["HostingReceipt"];
+            complete_receipt?: components["schemas"]["HostingReceipt"];
+            result?: components["schemas"]["HostingResult"];
+            mutation_hold: boolean;
+            reconcile_requested: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @enum {string} */
+            task_mode?: "deploy" | "observe";
+            observation_lease?: components["schemas"]["RunLease"];
+            reconciliation_healthy?: components["schemas"]["HostingHealthy"];
+        };
         RunnerIdentity: {
             runner_id: string;
         };
@@ -2798,6 +3146,310 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    requestImageDeployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDeploymentInput"];
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    cancelHostingOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    reconcileHostingOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingPrepared: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingPreparedRequest"];
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingApplyBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingComplete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingReconciliation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingObservation"];
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     getRunnerIdentity: {
         parameters: {
             query?: never;
