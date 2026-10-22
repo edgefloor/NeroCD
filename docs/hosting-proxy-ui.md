@@ -1,8 +1,36 @@
 # Configure managed proxy routing in the WebUI
 
-This UI uses the accepted proxy control API. This checkpoint queues proxy work;
+This UI uses the accepted proxy control API. Saving configuration queues proxy work;
 it does not enable proxy execution on agents. A queued operation does not prove
 that routing is loaded, DNS resolves, or trusted HTTPS is ready.
+
+## Prepare a proxy-capable runner
+
+On the Linux server, configure persistent owner-only work, journal, and proxy
+state directories. In **Runners**, create an enrollment with the capabilities
+that this agent actually supports. For combined image hosting and proxy routing,
+use `compose-deploy,image_deploy,image_release_ports_v1,proxy_apply`. This is an
+explicit enrollment choice; the image preset does not silently grant proxy work.
+Save the one-time enrollment token to an owner-only file, then run the supported
+agent with an actual reachable control-plane address and local Docker paths:
+
+```sh
+nerocd runner --server https://control.example.test \
+  --enrollment-file /secure/nerocd-runner-enrollment.token \
+  --credential-file /secure/nerocd-runner.credential \
+  --work-dir /var/lib/nerocd/work --journal-dir /var/lib/nerocd/journal \
+  --proxy-state-root /var/lib/nerocd/proxy \
+  --proxy-docker-binary /usr/bin/docker \
+  --proxy-docker-socket /var/run/docker.sock \
+  --proxy-protocol managed-traefik.file.v1 --execute
+```
+
+Verify that the Docker executable and socket paths match the server. Keep the
+credential and enrollment files mode `0600`, and their directories mode `0700`.
+After enrollment is consumed, omit `--enrollment-file` on restart and retain the
+same credential, journal, work, and proxy state paths. Production agents use the
+closed supported CA choices; the disposable browser fixture's test CA is not a
+production configuration option.
 
 ## Configure a server
 
@@ -82,14 +110,18 @@ or retry action that could authorize a new runtime mutation.
 
 ## Verification boundary
 
-The checkpoint browser fixture verifies admission refusal for an image-only
-runner and explicit prerequisite guidance at mobile and desktop widths. The
-positive configure/grant/route journey is present but skipped until supported
-proxy runtime integration is accepted. It is not a completed browser validation
-of those positive workflows.
+The browser fixture uses disposable PostgreSQL/River and supported human account
+flows. An ordinary image-only runner verifies the configuration prerequisite
+refusal. A separately configured Linux proxy-capable agent consumes real UI
+enrollment and executes the accepted durable runner loop against an isolated
+Docker daemon. Its temporary build-tagged harness uses the same local Pebble CA
+factory as the accepted combined runtime fixture. Production trust configuration
+and runner capability presets are unchanged.
 
-The browser fixture uses disposable PostgreSQL/River, supported human account
-flows, actual UI enrollment and an actual image runner/container. It verifies the
-image over loopback HTTP before requesting routes. Proxy operations intentionally
-remain queued without `proxy_apply`; screenshots and assertions do not claim live
-proxy execution or HTTPS. No enrollment secret is included in screenshots or traces.
+The positive journey creates configuration, grants hostname authority, deploys an
+actual image, requests and changes routes, and withdraws routes and proxy routing.
+It checks actual HTTP and certificate-verified HTTPS against loopback-published
+fixture ports. HTTP, HTTPS, and certificate fields remain recorded observations;
+this does not add continuous proxy monitoring. No enrollment secret is included
+in screenshots or traces. Cleanup verifies captured container ownership before
+removing only fixture-owned resources.
