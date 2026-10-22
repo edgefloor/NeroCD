@@ -24,10 +24,10 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`66b58845dab1fdee6f8b12809f0434a2a94326ac`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`b55bbcf7b2313e32391a4390dcbb8562de2617b5`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
-- PostgreSQL state, checked migrations through 0053, bootstrap administration,
+- PostgreSQL state, checked migrations through 0054, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -46,7 +46,13 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   configuration and secret versions, then audits metadata before decryption.
   Retries retain the original bounded delivery window.
   Journal format 8 stores only nonsecret references and delivery identity.
-  Runtime consumption, CLI opt-in, live container application and UI are not shipped.
+  Explicitly enabled CLI/API execution applies literals and exact managed-secret
+  versions to Docker through protected stdin, with fixed delivery/replay deadlines.
+  Original runner credential rechecks prevent disclosure after credential rotation.
+  Docker administrators can inspect container environment values.
+- Bounded runtime status challenge/report controls and viewer freshness reads,
+  through migration 0054. A collector, status UI and disk/CPU metrics are pending.
+  Configuration UI still needs actual browser proof before acceptance.
 - [Public registry-image deployment](docs/hosting-execution.md) through the
   API, transactional River dispatch and explicitly enabled agent. It records
   exact image/platform/daemon identity, ordinary HTTP readiness, per-release
@@ -78,8 +84,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. The next H1 work is runtime wiring and actual Docker/API/UI proof, followed by
-runtime logs and continuous status. Other gaps include onboarding,
+and extended compatibility. The next H1 work is collector implementation and actual browser proof for runtime
+configuration, followed by runtime logs and continuous status qualification. Other gaps include onboarding,
 broader credentials, trusted triggers, deployment policy, production TLS
 qualification, broader Compose/storage, databases, backups,
 restores, previews, terminals, schedules and notifications.
