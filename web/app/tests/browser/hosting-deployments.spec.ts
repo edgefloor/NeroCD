@@ -129,6 +129,12 @@ test("manual onboarding deploys a real image through River and the runner, prese
     await deployments.getByLabel("Container port", { exact: true }).fill("8080");
     await expect(deployments.getByLabel("Host port allocation", { exact: true })).toHaveValue("automatic");
     await deployments.getByLabel("Host port allocation", { exact: true }).selectOption("fixed");
+    await expect(deployments.getByRole("note")).toContainText("stops the current container before replacement readiness is verified, interrupting service");
+    await expect(deployments.getByLabel(/I understand that/)).not.toBeChecked();
+    await deployments.getByLabel(/I understand that/).check();
+    await deployments.getByLabel("Runner-local host port", { exact: true }).fill("9090");
+    await expect(deployments.getByLabel(/I understand that/)).not.toBeChecked();
+    await expect(deployments.getByRole("button", { name: "Request image deployment", exact: true })).toBeDisabled();
     await expect(deployments.getByLabel("Runner-local host port", { exact: true })).toBeVisible();
     await deployments.getByLabel("Host port allocation", { exact: true }).selectOption("automatic");
     await expect(deployments.getByLabel("Runner-local host port", { exact: true })).toHaveCount(0);

@@ -28,14 +28,18 @@ command arguments.
 2. Enter the container port, from 1 through 65535. Keep **Automatic per-release
    port** to allocate an available loopback port from the configured server
    range. The operation shows the allocated port. **Advanced: explicit fixed
-   port** accepts 1024 through 65535, but rejects ports reserved by a current,
-   retained, or route-protected release.
+   port** accepts 1024 through 65535. It can reuse the current release’s
+   unprotected port on the same binding: the engine stops the current container
+   before verifying replacement readiness, interrupting service. Ports reserved
+   by retained releases, other bindings, or proxy protection are rejected.
 3. Enter an origin-relative HTTP readiness path, such as `/health`, and a timeout
    from 1 through 120 seconds. The check does not require revision-specific
    response headers.
 4. Acknowledge the selected port policy. Automatic allocation retains previous
-   containers until explicit cleanup; an explicit port must be available. This
-   control does not promise an automatic traffic switch or zero downtime.
+   containers until explicit cleanup. For an explicit fixed port, acknowledge
+   that same-port replacement interrupts service before readiness is verified.
+   Changing settings requires a new acknowledgment. This control does not promise
+   an automatic traffic switch or zero downtime.
 5. Select **Request image deployment**. A project maintainer or owner can submit
    the request. The server also permits a system administrator.
 

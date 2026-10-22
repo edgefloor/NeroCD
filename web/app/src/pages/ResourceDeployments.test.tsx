@@ -312,3 +312,23 @@ test.each(["permission", "principal"])("late cleanup response cannot restore int
   fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
   expect(screen.getByLabelText<HTMLInputElement>(/I confirm cleanup/).checked).toBe(false);
 });
+
+
+test("fixed-port mode requires explicit interruption acknowledgment and resets it when settings change", async () => {
+  backend(); setup("maintainer", [], true);
+  expect(screen.queryByRole("note")).toBeNull();
+  acknowledge();
+  fireEvent.change(screen.getByLabelText("Host port allocation"), { target: { value: "fixed" } });
+  expect(screen.getByRole("note").textContent).toMatch(/stops the current container before replacement readiness is verified, interrupting service/);
+  expect(screen.getByLabelText(/I understand that reusing.*interrupts service/)).toBeTruthy();
+  for (const [label, value] of [["Runner-local host port", "9090"], ["Container port", "8080"], ["Readiness path", "/health"], ["Readiness timeout in seconds", "45"]]) {
+    expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
+    acknowledge();
+    fireEvent.change(screen.getByLabelText(label!), { target: { value } });
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request image deployment" }).disabled).toBe(true);
+  }
+  acknowledge();
+  fireEvent.change(screen.getByLabelText("Host port allocation"), { target: { value: "automatic" } });
+  expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
+  expect(screen.queryByRole("note")).toBeNull();
+});
