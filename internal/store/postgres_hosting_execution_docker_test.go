@@ -27,6 +27,12 @@ import (
 )
 
 func TestPostgresHostingDockerAgentAndRiver(t *testing.T) {
+	for _, interruption := range []string{"lease_loss", "cancel"} {
+		t.Run(interruption, func(t *testing.T) { testHostingDockerAgentAndRiver(t, interruption) })
+	}
+}
+
+func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 	tag, versionA, versionB := os.Getenv("NEROCD_IMAGE_TEST_TAG"), os.Getenv("NEROCD_IMAGE_TEST_A"), os.Getenv("NEROCD_IMAGE_TEST_B")
 	if tag == "" || versionA == "" || versionB == "" {
 		t.Skip("run acceptance/image-hosting/gate.sh with NEROCD_TEST_DATABASE_URL")
@@ -83,13 +89,21 @@ func TestPostgresHostingDockerAgentAndRiver(t *testing.T) {
 			if status.Phase == "verifying" && loseLeaseOnVerifying.CompareAndSwap(true, false) {
 				// Docker has started the owned container. Lose lease authority
 				// before verifying it, while retaining the independent hold.
-				if _, err := database.Exec(r.Context(), `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, status.LeaseID); err != nil {
-					t.Error(err)
-					return
-				}
-				if err := pg.ExpireLeases(r.Context(), time.Now().UTC()); err != nil {
-					t.Error(err)
-					return
+				if interruption == "cancel" {
+					admin := auth.WithPrincipal(r.Context(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+					if _, err := service.CancelHostingOperation(admin, status.OperationID); err != nil {
+						t.Error(err)
+						return
+					}
+				} else {
+					if _, err := database.Exec(r.Context(), `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, status.LeaseID); err != nil {
+						t.Error(err)
+						return
+					}
+					if err := pg.ExpireLeases(r.Context(), time.Now().UTC()); err != nil {
+						t.Error(err)
+						return
+					}
 				}
 			}
 		}
@@ -191,6 +205,34 @@ func TestPostgresHostingDockerAgentAndRiver(t *testing.T) {
 		}
 		t.Logf("River/API/agent operation=%s state=%s release=%s ordinary HTTP=%s", completed.ID, completed.State, completed.Release.CanonicalImage, strings.TrimSpace(string(body)))
 	}
+	preCanceled := requestDeployment("actual-agent-cancel-before-admission")
+	cancelRequest, err := http.NewRequestWithContext(ctx, "POST", httpServer.URL+"/api/v1/hosting-operations/"+preCanceled.ID+"/cancel", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelRequest.Header.Set("Authorization", "Bearer "+session.Token)
+	cancelRequest.Header.Set("Content-Type", "application/json")
+	cancelResponse, err := http.DefaultClient.Do(cancelRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canceled domain.HostingOperation
+	err = json.NewDecoder(cancelResponse.Body).Decode(&canceled)
+	_ = cancelResponse.Body.Close()
+	if err != nil || cancelResponse.StatusCode != 200 || canceled.State != "canceled" || canceled.MutationHold {
+		t.Fatalf("pre-admission cancellation: %+v %v", canceled, err)
+	}
+	runAgent()
+	stillLive, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stillBody, err := io.ReadAll(io.LimitReader(stillLive.Body, 1024))
+	_ = stillLive.Body.Close()
+	if err != nil || stillLive.StatusCode != 200 || strings.TrimSpace(string(stillBody)) != "B" {
+		t.Fatalf("pre-admission cancel changed Docker workload: %q %v", stillBody, err)
+	}
+	t.Log("public pre-admission cancellation preserved ordinary HTTP B without acquiring mutation hold")
 	if preparedCalls.Load() < 3 {
 		t.Fatal("lost prepared response was not replayed")
 	}
@@ -270,5 +312,5 @@ func TestPostgresHostingDockerAgentAndRiver(t *testing.T) {
 	if heartbeatCalls.Load() != beforeRestart {
 		t.Fatal("restart heartbeat preceded journal reconciliation")
 	}
-	t.Logf("lease lost after Docker start: operation=%s independent hold retained; same-workdir restart blocked before heartbeat", uncertain.ID)
+	t.Logf("%s after Docker start: operation=%s independent hold retained; same-workdir restart blocked before heartbeat", interruption, uncertain.ID)
 }
