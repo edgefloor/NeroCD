@@ -217,7 +217,7 @@ func requiresContractAuth(method string, path string) bool {
 
 func requiresContractRunnerAuth(path string) bool {
 	switch path {
-	case "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
+	case "/api/v1/runners/hosting/plan", "/api/v1/runners/hosting/prepared", "/api/v1/runners/hosting/apply-begin", "/api/v1/runners/hosting/complete", "/api/v1/runners/hosting/status", "/api/v1/runners/hosting/reconciliation", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
 		return true
 	default:
 		return false
@@ -276,12 +276,13 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 	}
 
 	cases := []struct {
-		method      string
-		path        string
-		body        string
-		auth        bool
-		shape       string
-		useAPIToken bool
+		method         string
+		path           string
+		body           string
+		auth           bool
+		shape          string
+		useAPIToken    bool
+		expectedStatus int
 	}{
 		{method: http.MethodGet, path: "/api/v1/health", shape: "health"},
 		{method: http.MethodGet, path: "/api/v1/ready", shape: "ready"},
@@ -296,6 +297,11 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodPost, path: "/api/v1/resources", body: `{"project_id":"proj_platform","project_environment_id":"penv_contract","name":"api-created","kind":"application","source":{"kind":"image","image":{"reference":"nginx:1.27"}}}`, auth: true, shape: "resource"},
 		{method: http.MethodGet, path: "/api/v1/resources/res_contract", auth: true, shape: "resource"},
 		{method: http.MethodPatch, path: "/api/v1/resources/res_contract", body: `{"name":"renamed","expected_generation":1}`, auth: true, shape: "resource"},
+		{method: http.MethodGet, path: "/api/v1/resources/res_contract/deployments?limit=1", auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/resources/res_contract/deployments", body: `{"expected_generation":2,"idempotency_key":"contract-image","container_port":80,"host_port":18080,"readiness":{"path":"/","timeout_seconds":5}}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodGet, path: "/api/v1/hosting-operations/hop_contract", body: ``, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/hosting-operations/hop_contract/cancel", body: `{}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/hosting-operations/hop_contract/reconcile", body: `{}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
 		{method: http.MethodGet, path: "/api/v1/servers?limit=1", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/servers", body: `{"name":"Contract new host","runner_id":"runner_dest_contract_new"}`, auth: true, shape: "server-detail"},
 		{method: http.MethodGet, path: "/api/v1/servers/server_contract", auth: true, shape: "server-detail"},
@@ -327,6 +333,12 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodPost, path: "/api/v1/runners/register", body: `{"id":"runner_contract","name":"Contract Runner","tags":["local"],"capabilities":["shell"]}`, auth: true, shape: "registered-runner", useAPIToken: true},
 		{method: http.MethodPost, path: "/api/v1/runners/rotate-token", body: `{"runner_id":"runner_contract"}`, auth: true, shape: "registered-runner"},
 		{method: http.MethodGet, path: "/api/v1/runners/identity", auth: true, shape: "runner-identity"},
+		{method: http.MethodPost, path: "/api/v1/runners/hosting/plan", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/hosting/prepared", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract","receipt_id":"prepared_contract","release":{}}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/hosting/apply-begin", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/hosting/complete", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract","receipt_id":"complete_contract","result":{"outcome":"failed","ready":false,"restored":false,"uncertain":false}}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/hosting/status", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract"}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
+		{method: http.MethodPost, path: "/api/v1/runners/hosting/reconciliation", body: `{"operation_id":"hop_contract","run_id":"run_contract","lease_id":"lease_contract","attempt":1,"fence":"fence_contract","daemon_id":"daemon_contract","container_id":"","image_id":"","binding_id":"binding_contract","plan_hash":"","release_hash":"","ready":false,"no_owned_containers":true}`, auth: true, shape: "hosting-unavailable", expectedStatus: 503},
 		{method: http.MethodPost, path: "/api/v1/runners/heartbeat", body: `{}`, auth: true, shape: "runner"},
 		{method: http.MethodPost, path: "/api/v1/runners/claim", body: `{}`, auth: true, shape: "claim"},
 		{method: http.MethodPost, path: "/api/v1/runners/logs", body: `{"run_id":"{{run_id}}","lease_id":"{{lease_id}}","attempt":{{attempt}},"fence":"{{fence}}","event_key":"contract-event-one","sequence":4,"stream":"stdout","message":"ok"}`, auth: true, shape: "run-log"},
@@ -383,7 +395,7 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		body = strings.ReplaceAll(body, "{{cancel_run_id}}", cancelRunID)
 		body = strings.ReplaceAll(body, "{{api_token_id}}", apiTokenID)
 		body = strings.ReplaceAll(body, "{{contract_email}}", email)
-		payload, err := contractRequest(server, tc.method, tc.path, body, tokenValue)
+		payload, err := contractRequest(server, tc.method, tc.path, body, tokenValue, tc.expectedStatus)
 		if err != nil {
 			return err
 		}
@@ -509,7 +521,7 @@ func seedContractMemory(ctx context.Context, mem *store.MemoryStore) error {
 	return err
 }
 
-func contractRequest(server http.Handler, method string, path string, body string, token string) (map[string]any, error) {
+func contractRequest(server http.Handler, method string, path string, body string, token string, expectedStatus ...int) (map[string]any, error) {
 	var reader io.Reader
 	if body != "" {
 		reader = strings.NewReader(body)
@@ -523,7 +535,7 @@ func contractRequest(server http.Handler, method string, path string, body strin
 	}
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
-	if rec.Code < 200 || rec.Code >= 300 {
+	if (len(expectedStatus) > 0 && expectedStatus[0] > 0 && rec.Code != expectedStatus[0]) || ((len(expectedStatus) == 0 || expectedStatus[0] == 0) && (rec.Code < 200 || rec.Code >= 300)) {
 		return nil, fmt.Errorf("%s %s returned %d during contract response validation: %s", method, path, rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 	var payload map[string]any
@@ -541,6 +553,11 @@ func validatePayloadShape(key string, shape string, payload map[string]any) erro
 		return nil
 	}
 	switch shape {
+	case "hosting-unavailable":
+		value, ok := payload["error"].(string)
+		if !ok || value == "" || payload["code"] != "hosting_unavailable" {
+			return fmt.Errorf("%s did not fail explicitly unavailable", key)
+		}
 	case "health":
 		if payload["status"] != "ok" {
 			return fmt.Errorf("%s response status = %v, want ok", key, payload["status"])

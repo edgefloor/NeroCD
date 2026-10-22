@@ -107,3 +107,7 @@ WHERE deployment_attempt.run_id=$1 AND deployment_attempt.status='active'
   AND deployment_attempt.lease_id IN (
     SELECT lease.id FROM run_leases AS lease WHERE lease.run_id=$1 AND lease.status='expired'
   );
+
+-- name: IsHostingRun :one
+SELECT EXISTS(SELECT 1 FROM hosting_task_targets WHERE run_id=$1)
+ OR EXISTS(SELECT 1 FROM task_runs WHERE id=$1 AND run_spec->>'type'='image_deploy');

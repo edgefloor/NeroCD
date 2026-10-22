@@ -28,6 +28,7 @@ const allowedWebRuntimeDependencies = new Set([
 const allowedWebDevDependencies = new Set(["@playwright/test", "@tailwindcss/vite", "@tanstack/router-plugin", "@testing-library/react", "@testing-library/user-event", "@types/node", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "jsdom", "openapi-typescript", "tailwindcss", "typescript", "vite", "vitest"]);
 const allowedGoDirectDependencies = new Set([
   "github.com/coreos/go-oidc/v3",
+  "github.com/distribution/reference",
   "github.com/getkin/kin-openapi",
   "github.com/jackc/pgx/v5",
   "github.com/riverqueue/river",

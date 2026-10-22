@@ -287,6 +287,9 @@ func (s *Service) RequestRun(ctx context.Context, templateID string) (domain.Tas
 	if err := s.requireProjectRole(ctx, principal, template.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
+	if domain.ContainsHostingExecution(template.RunSpec, template.Workflow) {
+		return domain.TaskRun{}, InvalidInput(errors.New("image_deploy requires a resource deployment operation"))
+	}
 	status := domain.RunQueued
 	if template.RequiresAck {
 		status = domain.RunWaitingApproval
@@ -329,6 +332,9 @@ type RunRequestInput struct {
 
 // RequestRunWithSpec requests an authorized run with spec.
 func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput) (domain.TaskRun, error) {
+	if domain.ContainsHostingExecution(input.RunSpec, input.Workflow) {
+		return domain.TaskRun{}, InvalidInput(errors.New("image deployment requires the resource deployment API"))
+	}
 	if strings.TrimSpace(input.TemplateID) != "" {
 		return s.RequestRun(ctx, input.TemplateID)
 	}
@@ -447,7 +453,7 @@ func (s *Service) CancelRun(ctx context.Context, runID string) (domain.TaskRun, 
 	if err := s.requireProjectRole(ctx, principal, targetRun.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
-	if domain.IsTerminalRunStatus(targetRun.Status) {
+	if targetRun.RunSpec.Type == domain.RunTypeImageDeploy || domain.IsTerminalRunStatus(targetRun.Status) {
 		return domain.TaskRun{}, store.ErrConflict
 	}
 	now := time.Now().UTC()
@@ -474,6 +480,9 @@ func (s *Service) RunnerPrimitivePlan(ctx context.Context, runID string) (domain
 	}
 	if err := s.requireProjectRole(ctx, principal, run.ProjectID, domain.RoleViewer); err != nil {
 		return domain.RunnerPrimitivePlan{}, err
+	}
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+		return domain.RunnerPrimitivePlan{}, store.ErrConflict
 	}
 	return s.registry.BuildPlan(run)
 }

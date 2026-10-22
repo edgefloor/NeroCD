@@ -79,6 +79,9 @@ func (s *PostgresStore) ListRunsPageForScope(ctx context.Context, scope RunAutho
 
 // CreateRun implements the corresponding repository operation.
 func (s *PostgresStore) CreateRun(ctx context.Context, run domain.TaskRun) (domain.TaskRun, error) {
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+		return domain.TaskRun{}, ErrConflict
+	}
 	runSpec, workflow, state, err := runJSON(run)
 	if err != nil {
 		return domain.TaskRun{}, fmt.Errorf("encode run: %w", err)
@@ -92,6 +95,9 @@ func (s *PostgresStore) CreateRun(ctx context.Context, run domain.TaskRun) (doma
 
 // CreateRunRequest implements the corresponding repository operation.
 func (s *PostgresStore) CreateRunRequest(ctx context.Context, run domain.TaskRun, log domain.RunLog, approval *domain.Approval, audit domain.AuditEvent) (domain.TaskRun, error) {
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+		return domain.TaskRun{}, ErrConflict
+	}
 	runSpec, workflow, state, err := runJSON(run)
 	if err != nil {
 		return domain.TaskRun{}, fmt.Errorf("encode run: %w", err)
@@ -133,6 +139,9 @@ func (s *PostgresStore) CreateRunRequest(ctx context.Context, run domain.TaskRun
 
 // UpdateRunStatus implements the corresponding repository operation.
 func (s *PostgresStore) UpdateRunStatus(ctx context.Context, id string, status string, finishedAt *time.Time) (domain.TaskRun, error) {
+	if err := rejectGenericHostingRun(ctx, s.queries, id); err != nil {
+		return domain.TaskRun{}, err
+	}
 	if err := rejectGenericDeploymentRun(ctx, s.queries, id); err != nil {
 		return domain.TaskRun{}, fmt.Errorf("reject generic deployment run: %w", err)
 	}

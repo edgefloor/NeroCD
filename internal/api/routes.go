@@ -3,6 +3,18 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/deployments"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/deployments"},
+	{Method: http.MethodGet, Path: "/api/v1/hosting-operations/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/hosting-operations/{id}/cancel"},
+	{Method: http.MethodPost, Path: "/api/v1/hosting-operations/{id}/reconcile"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/prepared"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/apply-begin"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/complete"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/status"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/reconciliation"},
+
 	{Method: http.MethodGet, Path: "/api/v1/runners/identity"},
 	{Method: http.MethodGet, Path: "/api/v1/servers"},
 	{Method: http.MethodPost, Path: "/api/v1/servers"},
@@ -129,6 +141,27 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/resources/{id}/deployments":
+		return s.hostingDeploymentRequest
+	case "/api/v1/hosting-operations/{id}":
+		return s.hostingOperation
+	case "/api/v1/hosting-operations/{id}/cancel":
+		return s.hostingOperationCancel
+	case "/api/v1/hosting-operations/{id}/reconcile":
+		return s.hostingOperationReconcile
+	case "/api/v1/runners/hosting/plan":
+		return s.runnerHostingPlan
+	case "/api/v1/runners/hosting/prepared":
+		return s.runnerHostingPrepared
+	case "/api/v1/runners/hosting/apply-begin":
+		return s.runnerHostingApplyBegin
+	case "/api/v1/runners/hosting/complete":
+		return s.runnerHostingComplete
+	case "/api/v1/runners/hosting/status":
+		return s.runnerHostingStatus
+	case "/api/v1/runners/hosting/reconciliation":
+		return s.runnerHostingReconciliation
+
 	case "/api/v1/runners/identity":
 		return s.runnerIdentity
 	case "/api/v1/servers":

@@ -228,7 +228,7 @@ func (s *MemoryStore) ClaimRun(_ context.Context, runnerID string, now time.Time
 	for _, runIndex := range candidateIndexes[:examineCount] {
 		run := s.runs[runIndex]
 		cursor := memoryClaimCursor{claimOrderAt: s.claimOrderByRun[run.ID], runID: run.ID}
-		if !covers(runner.Tags, run.RunnerTags) || !contains(runner.Capabilities, claimRunType(run)) {
+		if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) || !covers(runner.Tags, run.RunnerTags) || !contains(runner.Capabilities, claimRunType(run)) {
 			storedCursor = cursor
 			continue
 		}
@@ -347,6 +347,9 @@ func (s *MemoryStore) CompleteLeaseRequest(_ context.Context, leaseID string, ru
 		if lease.ID != leaseID || lease.RunnerID != runnerID || lease.Attempt != attempt || lease.Fence != fence {
 			continue
 		}
+		if s.hostingRunLocked(lease.RunID) {
+			return domain.RunLease{}, ErrConflict
+		}
 		for _, deployment := range s.deployments {
 			if deployment.TaskRunID != nil && *deployment.TaskRunID == lease.RunID {
 				return domain.RunLease{}, ErrConflict
@@ -396,7 +399,7 @@ func (s *MemoryStore) CompleteLeaseRequest(_ context.Context, leaseID string, ru
 func (s *MemoryStore) CancelRunRequest(_ context.Context, runID string, canceledAt time.Time, log domain.RunLog, audit domain.AuditEvent) (domain.TaskRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.deploymentBackedRunLocked(runID) {
+	if s.hostingRunLocked(runID) || s.deploymentBackedRunLocked(runID) {
 		return domain.TaskRun{}, ErrConflict
 	}
 	for i, run := range s.runs {

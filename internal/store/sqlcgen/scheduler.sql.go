@@ -273,15 +273,22 @@ func (q *Queries) QueueApprovedRun(ctx context.Context, id string) (string, erro
 }
 
 const requeueExpiredRun = `-- name: RequeueExpiredRun :exec
-UPDATE task_runs
-SET status = 'queued', runner_id = NULL, finished_at = NULL,
-    claim_order_at = clock_timestamp()
-WHERE id = $1
-  AND status = 'running'
+WITH updated_operations AS (
+ UPDATE hosting_operations o SET state=CASE
+ WHEN EXISTS(SELECT 1 FROM hosting_binding_state bs WHERE bs.hold_operation_id=o.id) THEN 'reconciliation_required'
+ WHEN EXISTS(SELECT 1 FROM hosting_releases rel WHERE rel.operation_id=o.id) THEN 'prepared' ELSE 'dispatched' END,
+ updated_at=clock_timestamp()
+ FROM hosting_task_targets target WHERE target.operation_id=o.id AND target.run_id=$1 AND target.mode='deploy'
+ RETURNING o.id
+)
+UPDATE task_runs SET status=CASE
+ WHEN EXISTS(SELECT 1 FROM hosting_task_targets target JOIN hosting_binding_state bs ON bs.hold_operation_id=target.operation_id WHERE target.run_id=$1 AND target.mode='deploy') THEN 'failed' ELSE 'queued' END,
+ runner_id=NULL,finished_at=NULL,claim_order_at=clock_timestamp()
+WHERE id=$1 AND status='running'
 `
 
-func (q *Queries) RequeueExpiredRun(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, requeueExpiredRun, id)
+func (q *Queries) RequeueExpiredRun(ctx context.Context, runID string) error {
+	_, err := q.db.Exec(ctx, requeueExpiredRun, runID)
 	return err
 }
 
