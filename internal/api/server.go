@@ -387,7 +387,7 @@ func requiresAuth(path string) bool {
 
 func requiresRunnerAuth(path string) bool {
 	switch path {
-	case "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
+	case "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
 		return true
 	case "/api/v1/runners/proxy/plan", "/api/v1/runners/proxy/prepared", "/api/v1/runners/proxy/apply-begin", "/api/v1/runners/proxy/complete", "/api/v1/runners/proxy/status":
 		return true
