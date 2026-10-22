@@ -5,6 +5,7 @@ import { apiSnapshot } from "@/api/compat";
 import { useProjectActions } from "@/api/mutations";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { ProjectsView } from "@/pages/ProjectsView";
+import { ProjectHosting } from "@/pages/ProjectHosting";
 import { canMaintainProject } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { validateSearch } from "@/router/search";
@@ -42,5 +43,6 @@ function ProjectsRoute() {
       loading={queries.some((query) => query.isPending)}
     /> : null}
     <PageNavigation page={projects.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="projects" loading={projects.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
+    <ProjectHosting projects={allProjects.data ?? []} unavailable={failed.length > 0} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} />
   </div>;
 }
