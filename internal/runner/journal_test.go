@@ -77,7 +77,7 @@ func FuzzAttemptJournalRecovery(f *testing.F) {
 	}
 	invalidSeeds := [][]byte{
 		[]byte(`{"version":`),
-		[]byte(`{"version":6}`),
+		[]byte(`{"version":7}`),
 		invalidTimestamp,
 		duplicateID,
 	}
