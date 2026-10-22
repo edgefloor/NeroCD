@@ -55,6 +55,7 @@ func runRunner(args []string) error {
 	proxySocket := fs.String("proxy-docker-socket", "", "absolute managed proxy Docker Unix socket path")
 	proxyProtocol := fs.String("proxy-protocol", "", "explicit managed proxy protocol managed-traefik.file.v1")
 	buildConfigFile := fs.String("build-config-file", "", "explicit owned mode0600 JSON build execution configuration; disabled when absent")
+	hostingObservation := fs.Bool("hosting-observation", false, "enable independent read-only hosting status collection over HTTPS")
 	hostingRuntimeEnv := fs.Bool("hosting-runtime-env", false, "explicitly enable protected hosting runtime environment delivery over HTTPS")
 	localBuildDeploy := fs.Bool("local-build-deploy", false, "explicitly enable same-host local build artifact deployment")
 	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
@@ -118,6 +119,17 @@ func runRunner(args []string) error {
 	if *hostingRuntimeEnv {
 		runtimeEnvironment = &runnerruntime.RuntimeEnvironmentConfig{}
 		if err := runnerclient.ValidateRuntimeEnvironmentServer(*server, runnerclient.RuntimeEnvironmentTransport{}); err != nil {
+			return err
+		}
+	}
+	registrationCapabilities, err = runnerObservationCapabilities(*hostingObservation, *execute, *once, *completeStatus, capabilitiesSpecified, registrationCapabilities)
+	if err != nil {
+		return err
+	}
+	var observation *runnerruntime.HostingObservationConfig
+	if *hostingObservation {
+		observation = &runnerruntime.HostingObservationConfig{}
+		if err := runnerclient.ValidateObservationServer(*server, runnerclient.ObservationTransport{}); err != nil {
 			return err
 		}
 	}
@@ -205,17 +217,26 @@ func runRunner(args []string) error {
 	}
 	// Resolve credential authority before runtime can select, open, or replay
 	// a journal. Enrollment IDs and local defaults do not replace this read.
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(context.Background(), runnerclient.RuntimeExecutionOptions{Proxy: proxyConfig.Enabled(), Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv})
+	identityContext := context.Background()
+	if *hostingObservation {
+		var stop context.CancelFunc
+		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+	}
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{Proxy: proxyConfig.Enabled(), Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}
 	if (idSpecified || buildConfig != nil) && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	runtimeConfig := runnerruntime.Config{RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
+	runtimeConfig := runnerruntime.Config{HostingObservation: observation, RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,
+	}
+	if *hostingObservation {
+		return runnerruntime.RunContext(identityContext, runtimeConfig)
 	}
 	if buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -166,6 +166,7 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
+	HostingObservation  *HostingObservationConfig
 	RuntimeEnvironment  *RuntimeEnvironmentConfig
 	LocalBuildDeploy    bool
 	Build               *BuildConfig
@@ -194,6 +195,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if err := validateHostingObservationConfig(config); err != nil {
+		return err
+	}
 	if err := validateRuntimeEnvironmentConfig(config); err != nil {
 		return err
 	}
@@ -209,7 +213,7 @@ func RunContext(ctx context.Context, config Config) error {
 	if config.Proxy.Enabled() && !config.Execute {
 		return errors.New("configured managed proxy requires execution")
 	}
-	if config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil {
+	if config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil || config.HostingObservation != nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -248,10 +252,17 @@ func RunContext(ctx context.Context, config Config) error {
 	}
 	// Preserve legacy uncertain-journal reconciliation before ordinary lifecycle
 	// reads. Configured build/proxy runners authenticate before their replay.
-	if !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil {
+	if !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil && config.HostingObservation == nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
+	}
+	if config.HostingObservation != nil {
+		stop, err := startHostingObservation(ctx, config)
+		if err != nil {
+			return err
+		}
+		defer stop()
 	}
 	for {
 		if _, err := runnerclient.New(config.Server, config.Token).Heartbeat(ctx); err != nil {
