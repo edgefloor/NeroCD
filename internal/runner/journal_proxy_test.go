@@ -97,7 +97,7 @@ func TestProxyJournalRejectsChangedAuthorityOrPlan(t *testing.T) {
 			t.Fatalf("invalid journal accepted: %+v", changed)
 		}
 	}
-	for _, version := range []int{1, 2, 3, 7} {
+	for _, version := range []int{1, 2, 3, 8} {
 		if validateJournalState(journalState{Version: version, Proxy: []JournalProxy{entry}}) == nil {
 			t.Fatalf("proxy evidence accepted in unsupported version %d", version)
 		}

@@ -68,22 +68,26 @@ type JournalProvenance struct {
 
 // JournalSnapshot is a copy of pending durable attempt mutations.
 type JournalSnapshot struct {
-	Build       []JournalBuild      `json:"build,omitempty"`
-	Proxy       []JournalProxy      `json:"proxy,omitempty"`
-	Hosting     []JournalHosting    `json:"hosting,omitempty"`
-	Events      []JournalEvent      `json:"events"`
-	Completions []JournalCompletion `json:"completions"`
-	Provenance  []JournalProvenance `json:"provenance"`
+	BuildLogs       []JournalBuildLog       `json:"build_logs,omitempty"`
+	BuildLogCursors []JournalBuildLogCursor `json:"build_log_cursors,omitempty"`
+	Build           []JournalBuild          `json:"build,omitempty"`
+	Proxy           []JournalProxy          `json:"proxy,omitempty"`
+	Hosting         []JournalHosting        `json:"hosting,omitempty"`
+	Events          []JournalEvent          `json:"events"`
+	Completions     []JournalCompletion     `json:"completions"`
+	Provenance      []JournalProvenance     `json:"provenance"`
 }
 
 type journalState struct {
-	Build       []JournalBuild      `json:"build,omitempty"`
-	Proxy       []JournalProxy      `json:"proxy,omitempty"`
-	Hosting     []JournalHosting    `json:"hosting,omitempty"`
-	Version     int                 `json:"version"`
-	Events      []JournalEvent      `json:"events"`
-	Completions []JournalCompletion `json:"completions"`
-	Provenance  []JournalProvenance `json:"provenance"`
+	BuildLogs       []JournalBuildLog       `json:"build_logs,omitempty"`
+	BuildLogCursors []JournalBuildLogCursor `json:"build_log_cursors,omitempty"`
+	Build           []JournalBuild          `json:"build,omitempty"`
+	Proxy           []JournalProxy          `json:"proxy,omitempty"`
+	Hosting         []JournalHosting        `json:"hosting,omitempty"`
+	Version         int                     `json:"version"`
+	Events          []JournalEvent          `json:"events"`
+	Completions     []JournalCompletion     `json:"completions"`
+	Provenance      []JournalProvenance     `json:"provenance"`
 }
 
 // AttemptJournal is an append-before-send, atomic-rewrite journal. The secure
@@ -278,6 +282,11 @@ func (j *AttemptJournal) AckProvenance(id string) error {
 func (j *AttemptJournal) DiscardAttempt(authority AttemptIdentity) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	for _, cursor := range j.state.BuildLogCursors {
+		if cursor.Authority.RunID == authority.RunID && cursor.Authority.LeaseID == authority.LeaseID && cursor.Authority.Attempt == authority.Attempt && cursor.Authority.Fence == authority.Fence {
+			return errors.New("build log evidence requires explicit reconciliation")
+		}
+	}
 	for _, entry := range j.state.Build {
 		if sameAttemptAuthority(entry.Attempt, authority) {
 			return errors.New("build mutation evidence requires explicit reconciliation")
@@ -333,12 +342,14 @@ func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return JournalSnapshot{
-		Build:       cloneBuildEntries(j.state.Build),
-		Proxy:       cloneProxyEntries(j.state.Proxy),
-		Hosting:     cloneHostingEntries(j.state.Hosting),
-		Events:      append([]JournalEvent(nil), j.state.Events...),
-		Completions: append([]JournalCompletion(nil), j.state.Completions...),
-		Provenance:  append([]JournalProvenance(nil), j.state.Provenance...),
+		BuildLogs:       cloneBuildLogs(j.state.BuildLogs),
+		BuildLogCursors: append([]JournalBuildLogCursor(nil), j.state.BuildLogCursors...),
+		Build:           cloneBuildEntries(j.state.Build),
+		Proxy:           cloneProxyEntries(j.state.Proxy),
+		Hosting:         cloneHostingEntries(j.state.Hosting),
+		Events:          append([]JournalEvent(nil), j.state.Events...),
+		Completions:     append([]JournalCompletion(nil), j.state.Completions...),
+		Provenance:      append([]JournalProvenance(nil), j.state.Provenance...),
 	}
 }
 
@@ -359,10 +370,13 @@ func NewJournalID(prefix string) (string, error) {
 }
 
 func (j *AttemptJournal) entryCountLocked() int {
-	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build)
+	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build) + len(j.state.BuildLogs) + len(j.state.BuildLogCursors)
 }
 
 func (j *AttemptJournal) persistLocked() error {
+	if err := validateJournalBuildLogs(j.state); err != nil {
+		return err
+	}
 	if err := validateJournalBuildEntries(j.state); err != nil {
 		return err
 	}
@@ -377,10 +391,10 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
-	if state.Version != journalFormatVersion && state.Version != 2 && state.Version != 3 && state.Version != 4 && state.Version != 5 && state.Version != 6 {
+	if state.Version < journalFormatVersion || state.Version > 7 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
-	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build) > journalMaxEntries {
+	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
 	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))
@@ -442,7 +456,10 @@ func validateJournalState(state journalState) error {
 		ids[entry.ID] = struct{}{}
 	}
 
-	return validateJournalBuildEntries(state)
+	if err := validateJournalBuildEntries(state); err != nil {
+		return err
+	}
+	return validateJournalBuildLogs(state)
 }
 
 func validateJournalProvenance(p JournalProvenance) error {
