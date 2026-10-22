@@ -27,6 +27,8 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   useQueryClient: vi.fn(),
 }));
 
+vi.mock("@/pages/HostingServers", () => ({ HostingServers: ({ canAdmin, blocked }: { canAdmin: boolean; blocked: boolean }) => <div data-testid="hosting-controls" data-admin={String(canAdmin)} data-blocked={String(blocked)} /> }));
+
 vi.mock("@/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/api")>(),
   createRunnerEnrollment: vi.fn(),
@@ -72,7 +74,7 @@ afterEach(() => {
 
 test("runner_admin can enroll and revoke runners", async () => {
   vi.mocked(createRunnerEnrollment).mockResolvedValue({
-    enrollment: { runner_id: runner.id },
+    enrollment: { expires_at: new Date(Date.now() + 600_000).toISOString(), runner_id: runner.id },
     token: "one-time-token",
   } as never);
   vi.mocked(revokeRunnerToken).mockResolvedValue({ ...runner, status: "revoked" } as never);
@@ -243,7 +245,7 @@ test("pending enrollment locks the submitted draft and restores it after failure
   expect((screen.getByLabelText("Runner name") as HTMLInputElement).value).toBe("Pending runner");
   expect((screen.getByLabelText("Runner ID") as HTMLInputElement).disabled).toBe(false);
   expect(screen.getByRole("alert").textContent).toContain("Enrollment could not be created");
-  vi.mocked(createRunnerEnrollment).mockResolvedValueOnce({ enrollment: { runner_id: "runner_pending" }, token: "retry-token" } as never);
+  vi.mocked(createRunnerEnrollment).mockResolvedValueOnce({ enrollment: { expires_at: new Date(Date.now() + 600_000).toISOString(), runner_id: "runner_pending" }, token: "retry-token" } as never);
   await act(async () => { fireEvent.submit(form); });
   expect(createRunnerEnrollment).toHaveBeenCalledTimes(2);
   expect(screen.getByRole("dialog", { name: "One-time runner enrollment secret" })).toBeTruthy();
@@ -296,7 +298,7 @@ test.each(["", "not-a-date"])("runner details do not report invalid heartbeat %j
 });
 
 test("enrollment validates tag arrays and preserves their boundaries", async () => {
-  vi.mocked(createRunnerEnrollment).mockResolvedValue({ enrollment: { runner_id: "runner_tags" }, token: "one-time-token" } as never);
+  vi.mocked(createRunnerEnrollment).mockResolvedValue({ enrollment: { expires_at: new Date(Date.now() + 600_000).toISOString(), runner_id: "runner_tags" }, token: "one-time-token" } as never);
   queryData(["runner_admin"]);
   const Component = RunnersRoute.options.component!;
   render(<Component />);
@@ -322,7 +324,7 @@ test("successful enrollment reveals its secret without waiting for inventory ref
     const key = (options as { queryKey?: readonly string[] }).queryKey?.[0];
     return { data: key === "runners" ? { items: [runner] } : { roles: ["runner_admin"] }, isError: false, isPending: false, refetch } as never;
   });
-  vi.mocked(createRunnerEnrollment).mockResolvedValueOnce({ enrollment: { runner_id: "runner_ready" }, token: "one-time-token" } as never);
+  vi.mocked(createRunnerEnrollment).mockResolvedValueOnce({ enrollment: { expires_at: new Date(Date.now() + 600_000).toISOString(), runner_id: "runner_ready" }, token: "one-time-token" } as never);
   const Component = RunnersRoute.options.component!;
   render(<Component />);
   fireEvent.change(screen.getByLabelText("Runner ID"), { target: { value: "runner_ready" } });

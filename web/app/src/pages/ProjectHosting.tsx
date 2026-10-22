@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { maximumPageOffset } from "@/router/search";
+import { ResourceDestination } from "./ResourceDestination";
 
 const pageSize = 20;
 const selectClass = "h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm";
@@ -123,6 +124,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <h4 className="break-words font-medium [overflow-wrap:anywhere]">{resource.name}</h4>
       <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{resource.source.image.reference}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
+      <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {canWrite && editing?.id !== resource.id ? <Button type="button" variant="outline" disabled={busy || Boolean(editing)} onClick={() => { setEditing(resource); setNotice(""); }}>Edit configuration</Button> : null}
       {editing?.id === resource.id ? <ApplicationEditor key={resource.id} resource={editing} writable={canWrite} onClose={() => setEditing(undefined)} onSaved={async () => { await refresh(); setNotice("Application configuration updated. It has not been deployed."); }} /> : null}
     </article>)}</div>
@@ -183,7 +185,7 @@ export function ProjectHosting({ projects, canOperateProject, unavailable = fals
     <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save image application configuration in shared project environments. These settings do not deploy applications or report runtime health.</p></CardHeader>
     <CardContent className="min-w-0 space-y-5">
       <div className="max-w-xl space-y-1.5"><label htmlFor={`${id}-project`}>Hosting project</label><select id={`${id}-project`} className={selectClass} value={project?.id ?? ""} onChange={(event) => setProjectID(event.target.value)}><option value="">Select a project</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
-      {project ? <ProjectEnvironments key={project.id} projectID={project.id} writable={canOperateProject(project.id)} blocked={unavailable} /> : <p className="text-sm text-muted-foreground">Choose a project to manage or view saved configuration.</p>}
+      {project ? <><p className="break-all text-xs text-muted-foreground">Project ID for destination grants: {project.id}</p><ProjectEnvironments key={project.id} projectID={project.id} writable={canOperateProject(project.id)} blocked={unavailable} /></> : <p className="text-sm text-muted-foreground">Choose a project to manage or view saved configuration.</p>}
     </CardContent>
   </Card>;
 }

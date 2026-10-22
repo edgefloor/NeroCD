@@ -5,6 +5,8 @@ import { ApiError } from "@/api";
 import * as api from "@/api/hosting";
 import { ProjectHosting } from "./ProjectHosting";
 
+vi.mock("./ResourceDestination", () => ({ ResourceDestination: ({ resource }: { resource: { name: string } }) => <div>Desired destination for {resource.name}</div> }));
+
 vi.mock("@/api/hosting", () => ({ listProjectEnvironments: vi.fn(), listResources: vi.fn(), createProjectEnvironment: vi.fn(), createResource: vi.fn(), getResource: vi.fn(), updateResource: vi.fn() }));
 const projects = ["one", "two"].map((id) => ({ id, name: `Project ${id}`, description: "", created_at: "2026-01-01T00:00:00Z" }));
 const environment = { id: "env", project_id: "one", name: "Production", created_at: "2026-01-01T00:00:00Z" };

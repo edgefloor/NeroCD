@@ -30,19 +30,42 @@ export function RunnersView({ runners, q, canAdmin, controlsDisabled = false, on
   const [busy, setBusy] = useState(false);
   const enrolling = useRef(false);
   const secretRef = useRef<string | undefined>(undefined);
-  useEffect(() => () => { secretRef.current = undefined; }, []);
+  const active = useRef(true);
+  const request = useRef(0);
+  const adminRef = useRef(canAdmin);
+  adminRef.current = canAdmin;
+  useEffect(() => { active.current = true; return () => { active.current = false; request.current++; secretRef.current = undefined; }; }, []);
+  useEffect(() => { if (!canAdmin) clearEnrollment(false); }, [canAdmin]);
+  useEffect(() => {
+    if (!enrollment) return;
+    const remaining = Date.parse(enrollment.enrollment.expires_at) - Date.now();
+    if (!Number.isFinite(remaining) || remaining <= 0) { expireEnrollment(); return; }
+    const timer = window.setTimeout(expireEnrollment, remaining);
+    return () => window.clearTimeout(timer);
+  }, [enrollment]);
   const visible = runners.filter((runner) => matchesQuery(q, runner.id, runner.name, runner.status, ...(runner.tags ?? []), ...(runner.capabilities ?? [])));
   async function enroll(input: { runner_id: string; runner_name: string; tags: string[]; capabilities: string[]; ttl_seconds: number }) {
     if (enrolling.current || !canAdmin || controlsDisabled) return;
     enrolling.current = true;
+    const current = ++request.current;
     setBusy(true); setError(""); setCopyStatus("idle");
-    try { const created = await onEnroll(input); secretRef.current = created.token; setEnrollment(created); }
-    catch { setError("Enrollment could not be created. Verify the identity and try again."); }
-    finally { enrolling.current = false; setBusy(false); }
+    try {
+      const created = await onEnroll(input);
+      if (!active.current || request.current !== current || !adminRef.current) return;
+      if (!Number.isFinite(Date.parse(created.enrollment.expires_at)) || Date.parse(created.enrollment.expires_at) <= Date.now()) { expireEnrollment(); return; }
+      secretRef.current = created.token; setEnrollment(created);
+    }
+    catch { if (active.current && request.current === current) setError("Enrollment could not be created. Verify the identity and try again."); }
+    finally { enrolling.current = false; if (active.current) setBusy(false); }
   }
-  function clearEnrollment(open: boolean) { if (!open) { secretRef.current = undefined; setEnrollment(undefined); setCopyStatus("idle"); } }
+  function clearEnrollment(open: boolean) { if (!open) { request.current++; secretRef.current = undefined; setEnrollment(undefined); setCopyStatus("idle"); } }
+  function expireEnrollment() { clearEnrollment(false); setError("Enrollment expired. Create a new enrollment before continuing."); }
+  function currentSecret() {
+    if (!adminRef.current || !enrollment || Date.parse(enrollment.enrollment.expires_at) <= Date.now()) { expireEnrollment(); return undefined; }
+    return secretRef.current;
+  }
   async function copySecret() {
-    const secret = secretRef.current;
+    const secret = currentSecret();
     if (!secret || copyStatus === "copying") return;
     setCopyStatus("copying");
     try {
@@ -53,8 +76,9 @@ export function RunnersView({ runners, q, canAdmin, controlsDisabled = false, on
     }
   }
   function downloadSecret() {
-    if (!secretRef.current) return;
-    const blob = new Blob([secretRef.current + "\n"], { type: "text/plain" });
+    const secret = currentSecret();
+    if (!secret) return;
+    const blob = new Blob([secret + "\n"], { type: "text/plain" });
     const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
     anchor.href = url; anchor.download = "nerocd-runner-enrollment.token"; anchor.click();
     URL.revokeObjectURL(url);
@@ -112,7 +136,12 @@ function EnrollmentForm({ busy, disabled, error, onSubmit }: { busy: boolean; di
 }
 
 function EnrollmentSecret({ enrollment, token, copyStatus, onOpenChange, onCopy, onDownload }: { copyStatus: CopyStatus; enrollment?: CreatedRunnerEnrollment; token?: string; onOpenChange: (open: boolean) => void; onCopy: () => void; onDownload: () => void }) {
-  return <Dialog open={Boolean(enrollment && token)} onOpenChange={onOpenChange}><DialogContent className="max-h-[calc(100dvh-2rem)] min-w-0 grid-cols-1 overflow-y-auto"><DialogHeader className="min-w-0 pr-6"><DialogTitle>One-time runner enrollment secret</DialogTitle><DialogDescription>Save it now: it will disappear when this dialog closes and cannot be retrieved again.</DialogDescription></DialogHeader><code className="break-all rounded border p-3 text-xs" aria-label="Enrollment secret">{token}</code><p className="min-w-0 break-words text-xs text-muted-foreground">Runner: {enrollment?.enrollment.runner_id}. Use the downloaded file with the runner enrollment command.</p>{copyStatus === "failed" ? <p role="alert" className="text-sm text-destructive">Unable to copy. Download the secret instead, or try again.</p> : copyStatus === "copied" ? <p role="status" className="text-sm text-muted-foreground">Copied to clipboard.</p> : null}<DialogFooter><Button variant="outline" disabled={copyStatus === "copying"} onClick={onCopy}><Copy className="mr-1 h-4 w-4" />{copyStatus === "copying" ? "Copying..." : "Copy"}</Button><Button onClick={onDownload}><Download className="mr-1 h-4 w-4" />Download once</Button></DialogFooter></DialogContent></Dialog>;
+  const id = useId();
+  const [serverURL, setServerURL] = useState(() => typeof window === "undefined" ? "" : window.location.origin);
+  let origin = "";
+  try { const url = new URL(serverURL); if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash && ["", "/"].includes(url.pathname)) origin = url.origin; } catch { /* invalid input keeps the command unavailable */ }
+  const command = origin ? `${origin.startsWith("http:") ? "NEROCD_MODE=development " : ""}nerocd runner --server '${origin.replaceAll("'", "'\\''")}' --enrollment-file /secure/nerocd-runner-enrollment.token --credential-file /secure/nerocd-runner.credential --work-dir /var/lib/nerocd/work --journal-dir /var/lib/nerocd/journal --compose-image-policy pull --execute` : "";
+  return <Dialog open={Boolean(enrollment && token)} onOpenChange={onOpenChange}><DialogContent className="max-h-[calc(100dvh-2rem)] min-w-0 grid-cols-1 overflow-y-auto"><DialogHeader className="min-w-0 pr-6"><DialogTitle>One-time runner enrollment secret</DialogTitle><DialogDescription>Save it now: it will disappear when this dialog closes or expires and cannot be retrieved again.</DialogDescription></DialogHeader><code className="break-all rounded border p-3 text-xs" aria-label="Enrollment secret">{token}</code><p className="min-w-0 break-words text-xs text-muted-foreground">Runner ID: {enrollment?.enrollment.runner_id}. Expires {enrollment ? formatDate(enrollment.enrollment.expires_at) : ""}.</p><label htmlFor={`${id}-origin`}>Runner-reachable server URL</label><Input id={`${id}-origin`} value={serverURL} onChange={(event) => setServerURL(event.target.value)} /><p className="text-xs text-muted-foreground">Use the actual origin reachable from the intended host. Production requires HTTPS; the HTTP example explicitly enables development mode for local testing.</p>{command ? <pre aria-label="Manual runner command" className="min-w-0 overflow-auto whitespace-pre-wrap break-all rounded border p-3 text-xs">{command}</pre> : <p role="alert">Enter an HTTP or HTTPS origin without credentials, a path, query, or fragment.</p>}<p className="text-xs text-muted-foreground">Install NeroCD, Docker Engine, and Docker Compose on the intended host first. Save the downloaded token at the enrollment-file path, owned by the runner user with mode 0600. Create the dedicated work and journal directories, owned by that user with mode 0700. The command consumes this one-time enrollment and writes a permanent credential to the credential-file path. Keep that file private and persist those directories. After the agent enrolls, close this dialog and refresh eligible runners below. This page does not perform SSH setup or verify Docker.</p>{copyStatus === "failed" ? <p role="alert" className="text-sm text-destructive">Unable to copy. Download the secret instead, or try again.</p> : copyStatus === "copied" ? <p role="status" className="text-sm text-muted-foreground">Copied to clipboard.</p> : null}<DialogFooter><Button variant="outline" disabled={copyStatus === "copying"} onClick={onCopy}><Copy className="mr-1 h-4 w-4" />{copyStatus === "copying" ? "Copying..." : "Copy"}</Button><Button onClick={onDownload}><Download className="mr-1 h-4 w-4" />Download once</Button></DialogFooter></DialogContent></Dialog>;
 }
 
 export function RunnerDetailView({ runner, canAdmin, controlsDisabled = false, onRevoke }: { runner?: RunnerDetail; canAdmin: boolean; controlsDisabled?: boolean; onRevoke: () => Promise<void> }): ReactNode {

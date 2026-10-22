@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { createRunnerEnrollment, principalQuery, runnersQuery } from "@/api";
 import { RunnersView } from "@/pages/RunnersView";
+import { HostingServers } from "@/pages/HostingServers";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { validateSearch } from "@/router/search";
 import { Button } from "@/components/ui/button";
@@ -47,5 +48,6 @@ function RunnersRoute() {
       onEnroll={createRunnerEnrollment}
     />
     <PageNavigation page={runners.data} label="runners" loading={runners.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
+    <HostingServers canAdmin={canAdmin} blocked={failedQueries.length > 0} />
   </>;
 }
