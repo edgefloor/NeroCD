@@ -617,41 +617,9 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 		defer cleanup()
 		gitEnvironment = sshEnvironment
 	}
-	// Detached init/fetch avoids remote tracking refs and leaves no branch name
-	// that could move after the policy-checked fetch.
-	gitBase := []string{"-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", "-c", "credential.helper=", "-c", "http.followRedirects=false"}
-	provenanceDiagnostic("git_init", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "init", "--quiet", workspace), "", gitEnvironment); err != nil {
-		return resolvedProvenance{}, commandFailure("git init", err)
-	}
-	provenanceDiagnostic("git_remote", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "remote", "add", "origin", repositoryURL.String()), workspace, gitEnvironment); err != nil {
-		return resolvedProvenance{}, commandFailure("git remote add", err)
-	}
-	fetchArgs := append(append([]string{}, gitBase...), "fetch", "--no-tags", "--depth=1", "origin", plan.RequestedRef)
-	if repositoryURL.Scheme != "ssh" {
-		resolveOption, err := gitCurlResolveOption(repositoryURL, pinnedIP)
-		if err != nil {
-			return resolvedProvenance{}, err
-		}
-		fetchArgs = append(append([]string{}, gitBase...), "-c", "http.curloptResolve="+resolveOption, "fetch", "--no-tags", "--depth=1", "origin", plan.RequestedRef)
-	}
-	provenanceDiagnostic("git_fetch", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", fetchArgs, workspace, gitEnvironment); err != nil {
-		return resolvedProvenance{}, commandFailure("git fetch", err)
-	}
-	provenanceDiagnostic("git_checkout", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "checkout", "--detach", "--quiet", "FETCH_HEAD"), workspace, gitEnvironment); err != nil {
-		return resolvedProvenance{}, commandFailure("git checkout", err)
-	}
-	provenanceDiagnostic("git_rev_parse", "start")
-	head, err := runProvenanceCommand(command, ctx, "git", []string{"rev-parse", "--verify", "HEAD^{commit}"}, workspace, gitEnvironment)
+	commit, err := controlledGitCheckout(ctx, command, workspace, repositoryURL, pinnedIP, plan.RequestedRef, gitEnvironment)
 	if err != nil {
-		return resolvedProvenance{}, commandFailure("git rev-parse", err)
-	}
-	commit := strings.TrimSpace(string(head))
-	if !isHexCommit(commit) {
-		return resolvedProvenance{}, errors.New("checkout did not produce a full immutable commit")
+		return resolvedProvenance{}, err
 	}
 	composePath := filepath.Clean(plan.ComposePath)
 	if filepath.IsAbs(composePath) || composePath == "." || strings.HasPrefix(composePath, ".."+string(os.PathSeparator)) {
@@ -714,6 +682,48 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 		}
 	}
 	return resolved, nil
+}
+
+// controlledGitCheckout is the single Git acquisition path for Compose and hosting.
+// Transport credentials and policy-approved DNS pins are prepared by the caller.
+func controlledGitCheckout(ctx context.Context, command provenanceCommand, workspace string, repositoryURL *url.URL, pinnedIP netip.Addr, requestedRef string, gitEnvironment []string) (string, error) {
+	// Detached init/fetch avoids remote tracking refs and leaves no branch name
+	// that could move after the policy-checked fetch.
+	gitBase := []string{"-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", "-c", "credential.helper=", "-c", "http.followRedirects=false"}
+	provenanceDiagnostic("git_init", "start")
+	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "init", "--quiet", workspace), "", gitEnvironment); err != nil {
+		return "", commandFailure("git init", err)
+	}
+	provenanceDiagnostic("git_remote", "start")
+	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "remote", "add", "origin", repositoryURL.String()), workspace, gitEnvironment); err != nil {
+		return "", commandFailure("git remote add", err)
+	}
+	fetchArgs := append(append([]string{}, gitBase...), "fetch", "--no-tags", "--depth=1", "origin", requestedRef)
+	if repositoryURL.Scheme != "ssh" {
+		resolveOption, err := gitCurlResolveOption(repositoryURL, pinnedIP)
+		if err != nil {
+			return "", err
+		}
+		fetchArgs = append(append([]string{}, gitBase...), "-c", "http.curloptResolve="+resolveOption, "fetch", "--no-tags", "--depth=1", "origin", requestedRef)
+	}
+	provenanceDiagnostic("git_fetch", "start")
+	if _, err := runProvenanceCommand(command, ctx, "git", fetchArgs, workspace, gitEnvironment); err != nil {
+		return "", commandFailure("git fetch", err)
+	}
+	provenanceDiagnostic("git_checkout", "start")
+	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "checkout", "--detach", "--quiet", "FETCH_HEAD"), workspace, gitEnvironment); err != nil {
+		return "", commandFailure("git checkout", err)
+	}
+	provenanceDiagnostic("git_rev_parse", "start")
+	head, err := runProvenanceCommand(command, ctx, "git", []string{"rev-parse", "--verify", "HEAD^{commit}"}, workspace, gitEnvironment)
+	if err != nil {
+		return "", commandFailure("git rev-parse", err)
+	}
+	commit := strings.TrimSpace(string(head))
+	if !isHexCommit(commit) {
+		return "", errors.New("checkout did not produce a full immutable commit")
+	}
+	return commit, nil
 }
 
 func netIPAddrs(values []netip.Addr) []net.IPAddr {
@@ -818,20 +828,30 @@ func prepareSSHTransport(ctx context.Context, command provenanceCommand, workspa
 		_ = os.Remove(keyPath)
 		return nil, nil, err
 	}
+	cleanup := func() { _ = os.Remove(keyPath); _ = os.Remove(knownHostsPath) }
+	environment, err := sshTransportEnvironment(repositoryURL, pinnedIP, keyPath, knownHostsPath, "")
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return environment, cleanup, nil
+}
+
+func sshTransportEnvironment(repositoryURL *url.URL, pinnedIP netip.Addr, keyPath, knownHostsPath, username string) ([]string, error) {
 	port := 22
 	if raw := repositoryURL.Port(); raw != "" {
 		parsed, parseErr := strconv.Atoi(raw)
 		if parseErr != nil || parsed < 1 || parsed > 65535 {
-			_ = os.Remove(keyPath)
-			_ = os.Remove(knownHostsPath)
-			return nil, nil, errors.New("repository port is invalid")
+			return nil, errors.New("repository port is invalid")
 		}
 		port = parsed
 	}
 	host := strings.ToLower(strings.TrimSuffix(repositoryURL.Hostname(), "."))
 	sshCommand := "ssh -F /dev/null -o BatchMode=yes -o PreferredAuthentications=publickey -o PubkeyAuthentication=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ChallengeResponseAuthentication=no -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=yes -o UserKnownHostsFile=" + shellQuote(knownHostsPath) + " -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias=" + shellQuote(host) + " -o HostName=" + shellQuote(pinnedIP.String()) + " -o Port=" + strconv.Itoa(port) + " -i " + shellQuote(keyPath)
-	cleanup := func() { _ = os.Remove(keyPath); _ = os.Remove(knownHostsPath) }
-	return []string{"GIT_SSH_COMMAND=" + sshCommand}, cleanup, nil
+	if username != "" {
+		sshCommand += " -l " + shellQuote(username)
+	}
+	return []string{"GIT_SSH_COMMAND=" + sshCommand}, nil
 }
 
 func pinnedKnownHosts(ctx context.Context, command provenanceCommand, repositoryURL *url.URL, address netip.Addr, fingerprints []string) ([]byte, error) {

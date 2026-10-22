@@ -785,3 +785,47 @@ func TestPinnedKnownHostsAcceptsECDSAAndRejectsLegacyOrUnknownAlgorithms(t *test
 		}
 	}
 }
+
+func TestComposeSharedCheckoutRetainsExplicitInternalHTTPAndCallback(t *testing.T) {
+	previous := lookupRepositoryIP
+	lookupRepositoryIP = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	}
+	defer func() { lookupRepositoryIP = previous }()
+	command := &fakeProvenanceCommand{compose: `{"services":{"api":{"image":"example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`}
+	plan := resolverDiagnosticTestPlan()
+	plan.RepositoryURL = "http://git.example/repo"
+	plan.RepositoryPolicy.Mode = "internal"
+	plan.RepositoryPolicy.AllowedSchemes = []string{"http"}
+	plan.RepositoryPolicy.AllowInternal = true
+	plan.RepositoryPolicy.AllowedCIDRs = []string{"127.0.0.0/8"}
+	workspace := ""
+	called := false
+	receipt, err := resolveDeploymentProvenanceWithCredentialWorkspace(context.Background(), plan, t.TempDir(), command, "", nil, nil, func(value resolvedProvenance, path, override string) error {
+		called = true
+		workspace = path
+		if override != "" || value.GitCommit != strings.Repeat("a", 40) {
+			t.Fatal("Compose callback contract changed")
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal("workspace removed before callback")
+		}
+		return nil
+	})
+	if err != nil || !called || receipt.ComposeHash == "" {
+		t.Fatalf("legacy internal HTTP: %v", err)
+	}
+	if _, err = os.Stat(workspace); !os.IsNotExist(err) {
+		t.Fatal("Compose workspace retained")
+	}
+	found := false
+	for _, call := range command.calls {
+		line := strings.Join(call, " ")
+		if strings.Contains(line, " fetch ") {
+			found = strings.Contains(line, "http.curloptResolve=git.example:80:127.0.0.1") && strings.Contains(line, "http.followRedirects=false")
+		}
+	}
+	if !found {
+		t.Fatal("internal HTTP lost controlled pinning")
+	}
+}
