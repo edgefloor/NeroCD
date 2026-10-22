@@ -17,6 +17,7 @@ import (
 
 	"github.com/distribution/reference"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingruntimeprotocol"
 )
 
 const defaultImageDockerEndpoint = "unix:///var/run/docker.sock"
@@ -238,12 +239,12 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 		if plan.Snapshot.PolicyVersion != domain.HostingPolicyVersion || plan.RetainPrevious || len(plan.RetainedReleases) != 0 {
 			return errors.New("retained release fields require versioned image protocol")
 		}
-	case domain.HostingReleaseCompilerVersion:
+	case domain.HostingReleaseCompilerVersion, domain.HostingRuntimeCompilerVersion:
 		expected, err := domain.CompileRetainedHostingPlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, plan.RetainedReleases)
 		if err != nil || expected.Hash != hash {
 			return errors.New("invalid retained image apply plan")
 		}
-	case domain.HostingLocalBuildCompilerVersion:
+	case domain.HostingLocalBuildCompilerVersion, domain.HostingLocalBuildRuntimeCompilerVersion:
 		expected, err := domain.CompileLocalBuildHostingPlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, plan.RetainedReleases)
 		if err != nil || expected.Hash != hash {
 			return errors.New("invalid local build apply plan")
@@ -265,7 +266,26 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 // method. Unknown command outcomes are retained for reconciliation; only a
 // known readiness failure enters bounded restoration of the prior workload.
 func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain.HostingApplyPlan, verifying ...func() error) domain.HostingResult {
+	return e.apply(ctx, operationID, plan, nil, time.Time{}, verifying...)
+}
+
+// ApplyWithRuntimeEnvironment borrows protected bytes only during container creation.
+func (e *imageEngine) ApplyWithRuntimeEnvironment(ctx context.Context, operationID string, plan domain.HostingApplyPlan, environment *hostingruntimeprotocol.Environment, localDeadline time.Time, verifying ...func() error) domain.HostingResult {
+	return e.apply(ctx, operationID, plan, environment, localDeadline, verifying...)
+}
+func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain.HostingApplyPlan, environment *hostingruntimeprotocol.Environment, localDeadline time.Time, verifying ...func() error) domain.HostingResult {
 	result := domain.HostingResult{Outcome: "failed", DaemonID: plan.Release.DaemonID, PlanHash: plan.Hash, ImageID: plan.Release.ImageID}
+	currentEnvironment := plan.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{})
+	var metadata hostingruntimeprotocol.Metadata
+	if currentEnvironment {
+		var err error
+		metadata, err = environment.Metadata()
+		if err != nil || metadata.Authority.OperationID != operationID || metadata.PlanHash != plan.Hash || metadata.RuntimeConfiguration != plan.Snapshot.RuntimeConfiguration || environment.WithValues(hostingruntimeprotocol.ValidateEntries) != nil {
+			return result
+		}
+	} else if environment != nil {
+		return result
+	}
 	if verifyImagePlan(plan) != nil || e.verifyLocalRelease(ctx, plan.Release) != nil {
 		return result
 	}
@@ -315,8 +335,22 @@ func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain
 		result.Uncertain = true
 		return result
 	}
+	// Read-only verification can take time. Recheck the original delivery window
+	// immediately before the first mutation, while the attempt context is live.
+	if ctx.Err() != nil || currentEnvironment && (!time.Now().Before(metadata.UseUntil) || !localDeadline.IsZero() && !time.Now().Before(localDeadline)) {
+		return result
+	}
 	if plan.PreviousHealthy != nil && !plan.RetainPrevious {
-		if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "stop", "--time", "10", plan.PreviousHealthy.ContainerID); err != nil {
+		if currentEnvironment {
+			deadline := metadata.UseUntil
+			if !localDeadline.IsZero() && localDeadline.Before(deadline) {
+				deadline = localDeadline
+			}
+			_, err = e.mutateBeforeRuntimeDeadline(ctx, plan.Release.DaemonID, deadline, "container", "stop", "--time", "10", plan.PreviousHealthy.ContainerID)
+		} else {
+			_, err = e.mutate(ctx, plan.Release.DaemonID, "container", "stop", "--time", "10", plan.PreviousHealthy.ContainerID)
+		}
+		if err != nil {
 			result.Uncertain = true
 			return result
 		}
@@ -328,7 +362,31 @@ func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain
 		args = append(args, "--pull=never")
 	}
 	args = append(args, hostingReleaseImage(plan.Release))
-	raw, err = e.mutate(ctx, plan.Release.DaemonID, args...)
+	if currentEnvironment {
+		var id string
+		createCtx := ctx
+		if plan.PreviousHealthy == nil || plan.RetainPrevious {
+			deadline := metadata.UseUntil
+			if !localDeadline.IsZero() && localDeadline.Before(deadline) {
+				deadline = localDeadline
+			}
+			var cancel context.CancelFunc
+			createCtx, cancel = context.WithDeadline(ctx, deadline)
+			defer cancel()
+		}
+		err = environment.WithValues(func(entries []hostingruntimeprotocol.Entry) error {
+			values := make(map[string][]byte, len(entries))
+			for _, entry := range entries {
+				values[entry.Name] = entry.Value
+			}
+			var createErr error
+			id, createErr = e.createWithRuntimeEnvironment(createCtx, plan.Release.DaemonID, args[2:len(args)-1], hostingReleaseImage(plan.Release), values)
+			return createErr
+		})
+		raw = []byte(id)
+	} else {
+		raw, err = e.mutate(ctx, plan.Release.DaemonID, args...)
+	}
 	if err != nil {
 		result.Uncertain = true
 		return result

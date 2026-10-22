@@ -104,7 +104,7 @@ func executeBuildClaim(parent context.Context, server, token string, claim domai
 func validateRuntimeIdentity(parent context.Context, c Config) error {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
-	identity, err := runnerclient.New(c.Server, c.Token).RuntimeExecutionIdentity(ctx, c.Proxy.Enabled(), c.Build != nil, false, c.Build != nil && c.Build.PrivateGit != nil)
+	identity, err := runtimeEnvironmentIdentity(ctx, c)
 	if err != nil || identity != c.RunnerID {
 		return errors.New("authenticated runner capabilities do not match explicit runtime configuration")
 	}

@@ -166,6 +166,7 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
+	RuntimeEnvironment  *RuntimeEnvironmentConfig
 	LocalBuildDeploy    bool
 	Build               *BuildConfig
 	Proxy               ProxyConfig
@@ -193,6 +194,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if err := validateRuntimeEnvironmentConfig(config); err != nil {
+		return err
+	}
 	if config.LocalBuildDeploy && (!config.Execute || config.CompleteStatus != "") {
 		return errors.New("local build deployment requires execution and forbids generic completion")
 	}
@@ -205,7 +209,7 @@ func RunContext(ctx context.Context, config Config) error {
 	if config.Proxy.Enabled() && !config.Execute {
 		return errors.New("configured managed proxy requires execution")
 	}
-	if config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy {
+	if config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -244,7 +248,7 @@ func RunContext(ctx context.Context, config Config) error {
 	}
 	// Preserve legacy uncertain-journal reconciliation before ordinary lifecycle
 	// reads. Configured build/proxy runners authenticate before their replay.
-	if !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy {
+	if !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -290,7 +294,7 @@ func RunContext(ctx context.Context, config Config) error {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy}); err != nil {
+			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, runtimeEnvironment: config.RuntimeEnvironment}); err != nil {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
@@ -353,10 +357,11 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 }
 
 type claimExecutionOptions struct {
-	localBuild    bool
-	imageEndpoint string
-	proxy         ProxyConfig
-	build         *BuildExecutor
+	runtimeEnvironment *RuntimeEnvironmentConfig
+	localBuild         bool
+	imageEndpoint      string
+	proxy              ProxyConfig
+	build              *BuildExecutor
 }
 
 func executeClaimWithOptions(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, options claimExecutionOptions) error {
@@ -461,7 +466,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return executeProxyClaim(supervisor, journal, reporter, server, token, claim, options.proxy)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
-		return executeImageClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.localBuild)
+		return executeImageClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment)
 	}
 	if claim.PrimitivePlan.Process == nil {
 		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {

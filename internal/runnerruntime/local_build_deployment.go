@@ -7,7 +7,6 @@ import (
 
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
-	"nerocd/internal/runnerclient"
 )
 
 func hostingOperationUsesLocalBuild(op domain.HostingOperation) bool {
@@ -62,7 +61,7 @@ func validateLocalBuildRuntimeIdentity(parent context.Context, config Config) er
 	}
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
-	id, err := runnerclient.New(config.Server, config.Token).RuntimeExecutionIdentity(ctx, config.Proxy.Enabled(), config.Build != nil, true, config.Build != nil && config.Build.PrivateGit != nil)
+	id, err := runtimeEnvironmentIdentity(ctx, config)
 	if err != nil || id != config.RunnerID {
 		return errors.New("authenticated execution capabilities do not match explicit local configuration")
 	}
