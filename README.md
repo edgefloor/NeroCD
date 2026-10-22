@@ -22,9 +22,9 @@ are different outcomes.
 
 ## Available now
 
-Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
-Accepted application/source assessment remains
-`852f8e6b8d5624a95865c276dcea4a239d1f8fea`, 2026-10-22. Existing Go API/application services, PostgreSQL, River execution,
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
+Accepted application/source assessment:
+`edf8f14c8262c896e4c886088f8058878d77e965`, 2026-10-22. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - PostgreSQL state, checked migrations through 0051, bootstrap administration,
@@ -45,8 +45,10 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 - [Public HTTPS Git configuration and builds](docs/hosting-git-resources.md)
   under trusted operator policy. The normal compiled agent builds Dockerfile,
   pinned Railpack and prepared static/SPA assets into immutable local artifacts.
-  Private Git configuration/provider delivery and compiled-static product
-  coverage remain separate work.
+  The private HTTPS control plane now supports configuration, scoped source
+  grants and typed credential transport. The compiled runtime refuses the private
+  capability; private checkout, UI wiring, provider integrations, compiled-static
+  product coverage and complete A03 remain separate work. See the [accepted limits](docs/compatibility.md#accepted-foundations-and-evidence).
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
@@ -66,8 +68,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Current gaps include onboarding, private Git and
-managed secret delivery, trusted triggers, deployment policy, production TLS
+and extended compatibility. Current gaps include onboarding, private Git runtime/UI and
+managed build/runtime secret delivery, trusted triggers, deployment policy, production TLS
 qualification, runtime logs/status, broader Compose/storage, databases, backups,
 restores, previews, terminals, schedules and notifications.
 

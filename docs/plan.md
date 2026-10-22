@@ -6,9 +6,9 @@ The [specification](product-spec.md) retains all R01–R102 and A01–A66.
 Prioritize R01–R68, A01–A37 and the declared hosting matrices. The broader
 revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
-Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
-It changed docs only. Accepted application/source assessment remains
-`852f8e6b8d5624a95865c276dcea4a239d1f8fea`, 2026-10-22, through migration 0051.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
+Accepted application/source assessment:
+`edf8f14c8262c896e4c886088f8058878d77e965`, 2026-10-22, through migration 0051.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -32,7 +32,7 @@ remain distinct acceptance claims.
 | Application and persistence | Go API/application/store layers, PostgreSQL through migration 0051, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding and host readiness, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Scoped managed build/runtime delivery, broader variable scopes, provider credentials and key recovery |
-| Builds | Operator-enabled public HTTPS Git, Dockerfile, Railpack and prepared-static builds into recorded local artifacts | Private Git/configuration/provider credentials, compiled static, remote publication and hosting cache |
+| Builds | Public HTTPS Git runtime, Dockerfile/Railpack/prepared-static artifacts; private HTTPS configuration, source grants and typed credential endpoint/client | Private runtime checkout and UI, provider integrations, compiled static, remote publication and hosting cache |
 | Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
 | Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Runtime application logs, continuous status, resource actions and terminals |
 | Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Public DNS/production ACME qualification, broader certificate modes, continuous observations and hosting preview access |
@@ -41,7 +41,7 @@ remain distinct acceptance claims.
 The [hosting ledger](compatibility.md#accepted-foundations-and-evidence)
 contains exact revisions and limits. Public Git builds, same-host artifact
 deployment, explicit route selection and typed build output are accepted.
-Private Git configuration/runtime delivery, production TLS qualification,
+Private Git runtime/UI, production TLS qualification,
 runtime logs/status and the broader hosting workflows remain incomplete.
 Test-only DNS and a trusted CA do not establish public production ACME.
 
@@ -61,27 +61,28 @@ A practical deployment demo alone does not complete Coolify parity.
 
 ## Next hosting slice
 
-The next proposed H1 slice is private HTTPS Git using the existing managed-secret
-versions, source-grant authorization/decryption component and controlled checkout
-credential window. Current configuration and enabled runtime are public-only;
-the private credential API/client/runtime/UI bridge is missing. This directly
-serves R08–R09, R16, R29 and R31/A03 without a collaboration Task or new generic
-grant platform.
+The private HTTPS control plane is accepted at
+`edf8f14c8262c896e4c886088f8058878d77e965`: configuration, owner source-grant
+creation/revocation, gated build admission and typed credential endpoint/client.
+The current compiled CLI deliberately refuses the private transport capability.
+Private checkout execution and the UI workflow remain the next H1 work, serving
+R08–R09, R16, R29 and R31/A03 without a Task or general grant platform.
 
-Bound the first contract to explicitly allowed public-DNS HTTPS hosts and scoped
-Basic/PAT credentials. Preserve exact source/resource/project/policy/secret-version
-binding, current authorization and revocation, and clear transport credentials
-before build use. SSH, provider installation integrations, webhooks and internal-LAN
-sources remain separate slices. The Leader must freeze the concrete API/client,
-secret-byte ownership/redaction and UI contracts before writers begin.
+Reuse these accepted contracts and the controlled checkout credential window.
+Freeze runtime credential consumption, retained delivery identity/replay,
+secret-byte ownership/redaction and UI contracts before implementation. Preserve
+exact source/resource/project/policy/secret-version binding and revocation;
+clear transport credentials before build use. Keep the initial private HTTPS
+Basic/PAT scope and operator host restrictions. SSH, provider installations,
+webhooks and internal-LAN sources remain separate slices.
 
 Acceptance must demonstrate authorized private checkout through the production
 API and enrolled CLI, no credential leakage, expired/revoked/wrong-scope denial,
-response-loss recovery and confirmed credential cleanup. Combine the accepted
-Dockerfile/Railpack build, same-host artifact deployment and HTTPS route path
-within that named fixture; retain the test-CA versus production-TLS distinction.
-The eventual A03 claim also depends on its complete declared UI workflow.
-This slice is planned, not implemented or accepted by this documentation change.
+response-loss recovery and confirmed credential cleanup. Combine Dockerfile/
+Railpack, same-host artifact deployment and HTTPS routing in the named fixture;
+retain the test-CA versus production-TLS distinction. Complete A03 also requires
+its declared UI workflow. Reviewed control-plane tests and the integrated public
+build-to-HTTPS regression do not establish private execution or complete A03.
 
 ## Hosting-dependency test
 

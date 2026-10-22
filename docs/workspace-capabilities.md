@@ -1,7 +1,7 @@
 # Workspace capability ledger
 
-Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
-Application/source assessment remains `852f8e6b8d5624a95865c276dcea4a239d1f8fea`,
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
+Accepted application/source assessment: `edf8f14c8262c896e4c886088f8058878d77e965`,
 2026-10-22. This ledger covers revision 3's workspace product. The
 [hosting ledger](compatibility.md) retains full Coolify scope at
 `b12d1386f3d458618b4c579babcd1e339c6c40b3`.
@@ -90,8 +90,11 @@ No deletion, reversion or history rewriting is required.
 
 Only a bounded part that passes the [hosting-dependency test](plan.md#hosting-dependency-test)
 can restart. The active [next hosting slice](plan.md#next-hosting-slice) concerns
-private HTTPS Git and existing credential delivery foundations, not a new
-collaboration Task or general grant system.
+private HTTPS runtime checkout and UI on the accepted control-plane bridge,
+not a new collaboration Task or general grant system. Configuration, scoped
+source grants and typed credential endpoint/client are accepted; the current
+compiled runtime refuses private capability. Neither private execution nor A03
+is complete. See the [hosting evidence](compatibility.md#accepted-foundations-and-evidence).
 
 ## Retained accepted foundations
 
