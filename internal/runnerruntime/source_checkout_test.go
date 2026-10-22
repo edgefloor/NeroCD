@@ -493,3 +493,136 @@ func TestSourceCredentialLeaseStopsActiveFetch(t *testing.T) {
 		t.Fatal("expired checkout retained")
 	}
 }
+
+func TestSourceCheckoutPrivateUseOutlivesCredentialWindow(t *testing.T) {
+	req, commit, _ := checkoutTLSFixture(t, true)
+	req.Policy.CredentialReferenceID = "opaque"
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	secret := []byte("fixture-password")
+	var useUntil time.Time
+	accepted, used := false, false
+	receipt, err := WithSourceCheckout(ctx, req, func(context.Context) (SourceCredential, error) {
+		useUntil = time.Now().Add(2 * time.Second)
+		return SourceCredential{Kind: "https_basic", Username: "fixture", Bytes: secret, UseUntil: useUntil}, nil
+	}, func(_ context.Context, r SourceReceipt) error {
+		if !time.Now().Before(useUntil) || r.Commit != commit {
+			t.Fatal("private fetch/receipt missed credential window")
+		}
+		accepted = true
+		return nil
+	}, func(operation context.Context, path string, r SourceReceipt) error {
+		used = true
+		if !accepted || r.Commit != commit {
+			t.Fatal("use preceded accepted immutable receipt")
+		}
+		for _, b := range secret {
+			if b != 0 {
+				t.Fatal("credential bytes remain before use")
+			}
+		}
+		entries, err := os.ReadDir(filepath.Dir(path))
+		if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+			t.Fatal("transport files remain before use", err)
+		}
+		if _, err = os.Stat(filepath.Join(path, ".git")); !os.IsNotExist(err) {
+			t.Fatal("Git metadata remains before use")
+		}
+		timer := time.NewTimer(time.Until(useUntil) + 10*time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-operation.Done():
+			t.Fatal("operation ended before credential window elapsed")
+		}
+		if operation.Err() != nil || time.Now().Before(useUntil) {
+			t.Fatal("use did not outlive credential window under valid operation")
+		}
+		return nil
+	})
+	if err != nil || !used || receipt.Commit != commit {
+		t.Fatalf("completed use rejected after cleared credential expired: used=%v error=%v", used, err)
+	}
+	entries, cleanupErr := os.ReadDir(filepath.Dir(req.CheckoutPath))
+	if cleanupErr != nil || len(entries) != 0 {
+		t.Fatal("checkout or transport retained", cleanupErr)
+	}
+}
+
+func TestSourceCheckoutCredentialExpiresDuringReceiptPreventsUse(t *testing.T) {
+	req, _, _ := checkoutTLSFixture(t, true)
+	req.Policy.CredentialReferenceID = "opaque"
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	secret := []byte("fixture-password")
+	var useUntil time.Time
+	accepted, used := false, false
+	_, err := WithSourceCheckout(ctx, req, func(context.Context) (SourceCredential, error) {
+		useUntil = time.Now().Add(2 * time.Second)
+		return SourceCredential{Kind: "https_basic", Username: "fixture", Bytes: secret, UseUntil: useUntil}, nil
+	}, func(operation context.Context, _ SourceReceipt) error {
+		if !time.Now().Before(useUntil) {
+			t.Fatal("fetch missed credential window")
+		}
+		accepted = true
+		timer := time.NewTimer(time.Until(useUntil) + 10*time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-operation.Done():
+			return operation.Err()
+		}
+	}, func(context.Context, string, SourceReceipt) error { used = true; return nil })
+	var sourceErr *SourceCheckoutError
+	if !errors.As(err, &sourceErr) || sourceErr.Code != "credential_expired" || !accepted || used {
+		t.Fatalf("expired receipt window exposed source: accepted=%v used=%v error=%v", accepted, used, err)
+	}
+	for _, b := range secret {
+		if b != 0 {
+			t.Fatal("expired credential bytes retained")
+		}
+	}
+	entries, cleanupErr := os.ReadDir(filepath.Dir(req.CheckoutPath))
+	if cleanupErr != nil || len(entries) != 0 {
+		t.Fatal("expired source or transport retained", cleanupErr)
+	}
+}
+
+func TestSourceCheckoutParentCancellationDuringUse(t *testing.T) {
+	for _, mode := range []string{"cancel", "deadline"} {
+		t.Run(mode, func(t *testing.T) {
+			req, _, _ := checkoutTLSFixture(t, true)
+			req.Policy.CredentialReferenceID = "opaque"
+			timeout := 10 * time.Second
+			if mode == "deadline" {
+				timeout = 2 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
+			defer cancel()
+			used := false
+			_, err := WithSourceCheckout(ctx, req, func(context.Context) (SourceCredential, error) {
+				return SourceCredential{Kind: "https_basic", Username: "fixture", Bytes: []byte("fixture-password"), UseUntil: time.Now().Add(time.Minute)}, nil
+			}, func(context.Context, SourceReceipt) error { return nil }, func(operation context.Context, _ string, _ SourceReceipt) error {
+				used = true
+				if mode == "cancel" {
+					cancel()
+				}
+				<-operation.Done()
+				// A callback returning nil after cancellation still cannot report success.
+				return nil
+			})
+			var sourceErr *SourceCheckoutError
+			if !used || !errors.As(err, &sourceErr) || sourceErr.Code != "canceled" {
+				t.Fatalf("parent %s during use succeeded: used=%v error=%v", mode, used, err)
+			}
+			if mode == "deadline" && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatal("parent deadline did not expire")
+			}
+			entries, cleanupErr := os.ReadDir(filepath.Dir(req.CheckoutPath))
+			if cleanupErr != nil || len(entries) != 0 {
+				t.Fatal("canceled source or transport retained", cleanupErr)
+			}
+		})
+	}
+}
