@@ -2602,6 +2602,7 @@ export interface components {
             after_session_id: string;
             limit: number;
         };
+        /** @description Batch sequence increases for every accepted batch, including empty batches, independently of event sequence; it survives epoch replacement. Exact latest retries retain their original acknowledgment. Counter exhaustion fails closed. */
         HostingRuntimeLogClaim: {
             session_id: string;
             instance_id: string;
@@ -2612,6 +2613,7 @@ export interface components {
             demand_expires_at: string;
             target: components["schemas"]["HostingRuntimeLogTarget"];
             next_sequence: number;
+            next_batch_sequence: number;
         };
         HostingRuntimeLogClaims: {
             targets: components["schemas"]["HostingRuntimeLogClaim"][];
@@ -2629,6 +2631,7 @@ export interface components {
             source_timestamp?: string;
             message_truncated?: boolean;
         };
+        /** @description Batch sequence increases for every accepted batch, including empty batches, independently of event sequence; it survives epoch replacement. Exact latest retries retain their original acknowledgment. Counter exhaustion fails closed. */
         HostingRuntimeLogBatch: {
             session_id: string;
             instance_id: string;
@@ -2638,7 +2641,9 @@ export interface components {
             events: components["schemas"]["HostingRuntimeLogEvent"][];
             /** @enum {string} */
             state: "following" | "disconnected" | "unsupported_driver";
+            batch_sequence: number;
         };
+        /** @description Batch sequence increases for every accepted batch, including empty batches, independently of event sequence; it survives epoch replacement. Exact latest retries retain their original acknowledgment. Counter exhaustion fails closed. */
         HostingRuntimeLogAck: {
             session_id: string;
             instance_id: string;
@@ -2649,6 +2654,7 @@ export interface components {
             last_sequence: number;
             /** Format: date-time */
             received_at: string;
+            batch_sequence: number;
         };
         HostingRuntimeLogItem: {
             sequence: number;

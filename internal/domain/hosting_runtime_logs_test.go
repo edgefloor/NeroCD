@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ func TestHostingRuntimeLogClosedBoundedInput(t *testing.T) {
 	if _, err := open.Canonical(); err != nil {
 		t.Fatal(err)
 	}
-	batch := HostingRuntimeLogBatch{SessionID: "rls_test", InstanceID: strings.Repeat("b", 32), CollectionEpoch: strings.Repeat("c", 32), BatchID: strings.Repeat("d", 32), State: "following", Events: []HostingRuntimeLogEvent{{Component: "application", Stream: "stdout", Message: "hello"}}}
+	batch := HostingRuntimeLogBatch{BatchSequence: 1, SessionID: "rls_test", InstanceID: strings.Repeat("b", 32), CollectionEpoch: strings.Repeat("c", 32), BatchID: strings.Repeat("d", 32), State: "following", Events: []HostingRuntimeLogEvent{{Component: "application", Stream: "stdout", Message: "hello"}}}
 	if _, err := batch.Canonical(); err != nil {
 		t.Fatal(err)
 	}
@@ -52,5 +53,40 @@ func TestHostingRuntimeLogClosedBoundedInput(t *testing.T) {
 	}
 	if DecodeHostingRuntimeLogsJSON([]byte(bad), &decoded) == nil {
 		t.Fatal("duplicate nested key accepted")
+	}
+}
+
+func TestHostingRuntimeLogBatchSequenceBoundaryAndHash(t *testing.T) {
+	batch := HostingRuntimeLogBatch{SessionID: "rls_test", InstanceID: strings.Repeat("a", 32), CollectionEpoch: strings.Repeat("b", 32), BatchID: strings.Repeat("c", 32), BatchSequence: 1, State: "following", Events: []HostingRuntimeLogEvent{}}
+	first, err := batch.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch.BatchSequence = 2
+	second, err := batch.Canonical()
+	if err != nil || HostingDocumentHash(first) == HostingDocumentHash(second) {
+		t.Fatal("counter excluded from canonical hash", err)
+	}
+	batch.BatchSequence = math.MaxInt32
+	if _, err = batch.Canonical(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"missing", "null", "0", "-1", "2147483648", "1.5", `"1"`} {
+		body := strings.Replace(string(raw), `"batch_sequence":1`, `"batch_sequence":`+value, 1)
+		if value == "missing" {
+			body = strings.Replace(string(raw), `"batch_sequence":1,`, "", 1)
+		}
+		var in HostingRuntimeLogBatch
+		err := DecodeHostingRuntimeLogsJSON([]byte(body), &in)
+		if err == nil {
+			_, err = in.Canonical()
+		}
+		if err == nil {
+			t.Fatal("invalid batch_sequence accepted", value)
+		}
 	}
 }

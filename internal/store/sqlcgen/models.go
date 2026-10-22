@@ -524,6 +524,7 @@ type HostingRuntimeLogSession struct {
 	InstanceID             string          `json:"instance_id"`
 	CollectionEpoch        string          `json:"collection_epoch"`
 	EpochExpiresAt         *time.Time      `json:"epoch_expires_at"`
+	LastBatchSequence      int32           `json:"last_batch_sequence"`
 	LastSequence           int32           `json:"last_sequence"`
 	DeletedThroughSequence int32           `json:"deleted_through_sequence"`
 	SourceGap              bool            `json:"source_gap"`

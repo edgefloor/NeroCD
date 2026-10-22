@@ -12,7 +12,7 @@ import (
 )
 
 const acceptRuntimeLogBatch = `-- name: AcceptRuntimeLogBatch :one
-UPDATE hosting_runtime_log_sessions SET last_sequence=$2,deleted_through_sequence=$3,retained_rows=$4,retained_bytes=$5,receipt=$6,state=$7 WHERE id=$1 RETURNING id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt
+UPDATE hosting_runtime_log_sessions SET last_sequence=$2,deleted_through_sequence=$3,retained_rows=$4,retained_bytes=$5,receipt=$6,state=$7,last_batch_sequence=$8 WHERE id=$1 RETURNING id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_batch_sequence, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt
 `
 
 type AcceptRuntimeLogBatchParams struct {
@@ -23,6 +23,7 @@ type AcceptRuntimeLogBatchParams struct {
 	RetainedBytes          int32  `json:"retained_bytes"`
 	Receipt                []byte `json:"receipt"`
 	State                  string `json:"state"`
+	LastBatchSequence      int32  `json:"last_batch_sequence"`
 }
 
 func (q *Queries) AcceptRuntimeLogBatch(ctx context.Context, arg AcceptRuntimeLogBatchParams) (HostingRuntimeLogSession, error) {
@@ -34,6 +35,7 @@ func (q *Queries) AcceptRuntimeLogBatch(ctx context.Context, arg AcceptRuntimeLo
 		arg.RetainedBytes,
 		arg.Receipt,
 		arg.State,
+		arg.LastBatchSequence,
 	)
 	var i HostingRuntimeLogSession
 	err := row.Scan(
@@ -56,6 +58,7 @@ func (q *Queries) AcceptRuntimeLogBatch(ctx context.Context, arg AcceptRuntimeLo
 		&i.InstanceID,
 		&i.CollectionEpoch,
 		&i.EpochExpiresAt,
+		&i.LastBatchSequence,
 		&i.LastSequence,
 		&i.DeletedThroughSequence,
 		&i.SourceGap,
@@ -69,7 +72,7 @@ func (q *Queries) AcceptRuntimeLogBatch(ctx context.Context, arg AcceptRuntimeLo
 const createRuntimeLogSession = `-- name: CreateRuntimeLogSession :one
 WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS now)
 INSERT INTO hosting_runtime_log_sessions(id,actor_id,resource_id,project_id,runner_id,request_id,request_hash,request_expires_at,target,authority_hash,credential_hash,demand_expires_at,purge_after)
-SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,stamp.now+interval '30 seconds',stamp.now+interval '330 seconds' FROM stamp RETURNING id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt
+SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,stamp.now+interval '30 seconds',stamp.now+interval '330 seconds' FROM stamp RETURNING id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_batch_sequence, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt
 `
 
 type CreateRuntimeLogSessionParams struct {
@@ -121,6 +124,7 @@ func (q *Queries) CreateRuntimeLogSession(ctx context.Context, arg CreateRuntime
 		&i.InstanceID,
 		&i.CollectionEpoch,
 		&i.EpochExpiresAt,
+		&i.LastBatchSequence,
 		&i.LastSequence,
 		&i.DeletedThroughSequence,
 		&i.SourceGap,
@@ -147,7 +151,7 @@ func (q *Queries) DeleteRuntimeLogPrefix(ctx context.Context, arg DeleteRuntimeL
 
 const endRuntimeLogSession = `-- name: EndRuntimeLogSession :one
 WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS now)
-UPDATE hosting_runtime_log_sessions SET state=$2,ended_at=COALESCE(ended_at,stamp.now),demand_expires_at=LEAST(demand_expires_at,stamp.now),epoch_expires_at=NULL,purge_after=LEAST(purge_after,COALESCE(ended_at,stamp.now)+interval '5 minutes') FROM stamp WHERE id=$1 RETURNING hosting_runtime_log_sessions.id, hosting_runtime_log_sessions.actor_id, hosting_runtime_log_sessions.resource_id, hosting_runtime_log_sessions.project_id, hosting_runtime_log_sessions.runner_id, hosting_runtime_log_sessions.request_id, hosting_runtime_log_sessions.request_hash, hosting_runtime_log_sessions.request_expires_at, hosting_runtime_log_sessions.target, hosting_runtime_log_sessions.authority_hash, hosting_runtime_log_sessions.credential_hash, hosting_runtime_log_sessions.state, hosting_runtime_log_sessions.created_at, hosting_runtime_log_sessions.demand_expires_at, hosting_runtime_log_sessions.ended_at, hosting_runtime_log_sessions.purge_after, hosting_runtime_log_sessions.instance_id, hosting_runtime_log_sessions.collection_epoch, hosting_runtime_log_sessions.epoch_expires_at, hosting_runtime_log_sessions.last_sequence, hosting_runtime_log_sessions.deleted_through_sequence, hosting_runtime_log_sessions.source_gap, hosting_runtime_log_sessions.retained_bytes, hosting_runtime_log_sessions.retained_rows, hosting_runtime_log_sessions.receipt
+UPDATE hosting_runtime_log_sessions SET state=$2,ended_at=COALESCE(ended_at,stamp.now),demand_expires_at=LEAST(demand_expires_at,stamp.now),epoch_expires_at=NULL,purge_after=LEAST(purge_after,COALESCE(ended_at,stamp.now)+interval '5 minutes') FROM stamp WHERE id=$1 RETURNING hosting_runtime_log_sessions.id, hosting_runtime_log_sessions.actor_id, hosting_runtime_log_sessions.resource_id, hosting_runtime_log_sessions.project_id, hosting_runtime_log_sessions.runner_id, hosting_runtime_log_sessions.request_id, hosting_runtime_log_sessions.request_hash, hosting_runtime_log_sessions.request_expires_at, hosting_runtime_log_sessions.target, hosting_runtime_log_sessions.authority_hash, hosting_runtime_log_sessions.credential_hash, hosting_runtime_log_sessions.state, hosting_runtime_log_sessions.created_at, hosting_runtime_log_sessions.demand_expires_at, hosting_runtime_log_sessions.ended_at, hosting_runtime_log_sessions.purge_after, hosting_runtime_log_sessions.instance_id, hosting_runtime_log_sessions.collection_epoch, hosting_runtime_log_sessions.epoch_expires_at, hosting_runtime_log_sessions.last_batch_sequence, hosting_runtime_log_sessions.last_sequence, hosting_runtime_log_sessions.deleted_through_sequence, hosting_runtime_log_sessions.source_gap, hosting_runtime_log_sessions.retained_bytes, hosting_runtime_log_sessions.retained_rows, hosting_runtime_log_sessions.receipt
 `
 
 type EndRuntimeLogSessionParams struct {
@@ -178,6 +182,7 @@ func (q *Queries) EndRuntimeLogSession(ctx context.Context, arg EndRuntimeLogSes
 		&i.InstanceID,
 		&i.CollectionEpoch,
 		&i.EpochExpiresAt,
+		&i.LastBatchSequence,
 		&i.LastSequence,
 		&i.DeletedThroughSequence,
 		&i.SourceGap,
@@ -343,7 +348,7 @@ func (q *Queries) LockRuntimeLogQuota(ctx context.Context) error {
 }
 
 const lockRuntimeLogSession = `-- name: LockRuntimeLogSession :one
-SELECT id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt FROM hosting_runtime_log_sessions WHERE id=$1 FOR UPDATE
+SELECT id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_batch_sequence, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt FROM hosting_runtime_log_sessions WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockRuntimeLogSession(ctx context.Context, id string) (HostingRuntimeLogSession, error) {
@@ -369,6 +374,7 @@ func (q *Queries) LockRuntimeLogSession(ctx context.Context, id string) (Hosting
 		&i.InstanceID,
 		&i.CollectionEpoch,
 		&i.EpochExpiresAt,
+		&i.LastBatchSequence,
 		&i.LastSequence,
 		&i.DeletedThroughSequence,
 		&i.SourceGap,
@@ -415,7 +421,7 @@ func (q *Queries) PurgeRuntimeLogSessions(ctx context.Context) ([]string, error)
 }
 
 const readRuntimeLogOpenReceipt = `-- name: ReadRuntimeLogOpenReceipt :one
-SELECT id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt FROM hosting_runtime_log_sessions WHERE actor_id=$1 AND resource_id=$2 AND request_id=$3
+SELECT id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_batch_sequence, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt FROM hosting_runtime_log_sessions WHERE actor_id=$1 AND resource_id=$2 AND request_id=$3
 `
 
 type ReadRuntimeLogOpenReceiptParams struct {
@@ -447,6 +453,7 @@ func (q *Queries) ReadRuntimeLogOpenReceipt(ctx context.Context, arg ReadRuntime
 		&i.InstanceID,
 		&i.CollectionEpoch,
 		&i.EpochExpiresAt,
+		&i.LastBatchSequence,
 		&i.LastSequence,
 		&i.DeletedThroughSequence,
 		&i.SourceGap,
@@ -458,7 +465,7 @@ func (q *Queries) ReadRuntimeLogOpenReceipt(ctx context.Context, arg ReadRuntime
 }
 
 const readRuntimeLogSession = `-- name: ReadRuntimeLogSession :one
-SELECT id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt FROM hosting_runtime_log_sessions WHERE id=$1
+SELECT id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_batch_sequence, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt FROM hosting_runtime_log_sessions WHERE id=$1
 `
 
 func (q *Queries) ReadRuntimeLogSession(ctx context.Context, id string) (HostingRuntimeLogSession, error) {
@@ -484,6 +491,7 @@ func (q *Queries) ReadRuntimeLogSession(ctx context.Context, id string) (Hosting
 		&i.InstanceID,
 		&i.CollectionEpoch,
 		&i.EpochExpiresAt,
+		&i.LastBatchSequence,
 		&i.LastSequence,
 		&i.DeletedThroughSequence,
 		&i.SourceGap,
@@ -497,7 +505,7 @@ func (q *Queries) ReadRuntimeLogSession(ctx context.Context, id string) (Hosting
 const renewRuntimeLogDemand = `-- name: RenewRuntimeLogDemand :one
 WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS now)
 UPDATE hosting_runtime_log_sessions SET demand_expires_at=stamp.now+interval '30 seconds',purge_after=stamp.now+interval '330 seconds' FROM stamp
-WHERE id=$1 AND ended_at IS NULL AND demand_expires_at>clock_timestamp() RETURNING hosting_runtime_log_sessions.id, hosting_runtime_log_sessions.actor_id, hosting_runtime_log_sessions.resource_id, hosting_runtime_log_sessions.project_id, hosting_runtime_log_sessions.runner_id, hosting_runtime_log_sessions.request_id, hosting_runtime_log_sessions.request_hash, hosting_runtime_log_sessions.request_expires_at, hosting_runtime_log_sessions.target, hosting_runtime_log_sessions.authority_hash, hosting_runtime_log_sessions.credential_hash, hosting_runtime_log_sessions.state, hosting_runtime_log_sessions.created_at, hosting_runtime_log_sessions.demand_expires_at, hosting_runtime_log_sessions.ended_at, hosting_runtime_log_sessions.purge_after, hosting_runtime_log_sessions.instance_id, hosting_runtime_log_sessions.collection_epoch, hosting_runtime_log_sessions.epoch_expires_at, hosting_runtime_log_sessions.last_sequence, hosting_runtime_log_sessions.deleted_through_sequence, hosting_runtime_log_sessions.source_gap, hosting_runtime_log_sessions.retained_bytes, hosting_runtime_log_sessions.retained_rows, hosting_runtime_log_sessions.receipt
+WHERE id=$1 AND ended_at IS NULL AND demand_expires_at>clock_timestamp() RETURNING hosting_runtime_log_sessions.id, hosting_runtime_log_sessions.actor_id, hosting_runtime_log_sessions.resource_id, hosting_runtime_log_sessions.project_id, hosting_runtime_log_sessions.runner_id, hosting_runtime_log_sessions.request_id, hosting_runtime_log_sessions.request_hash, hosting_runtime_log_sessions.request_expires_at, hosting_runtime_log_sessions.target, hosting_runtime_log_sessions.authority_hash, hosting_runtime_log_sessions.credential_hash, hosting_runtime_log_sessions.state, hosting_runtime_log_sessions.created_at, hosting_runtime_log_sessions.demand_expires_at, hosting_runtime_log_sessions.ended_at, hosting_runtime_log_sessions.purge_after, hosting_runtime_log_sessions.instance_id, hosting_runtime_log_sessions.collection_epoch, hosting_runtime_log_sessions.epoch_expires_at, hosting_runtime_log_sessions.last_batch_sequence, hosting_runtime_log_sessions.last_sequence, hosting_runtime_log_sessions.deleted_through_sequence, hosting_runtime_log_sessions.source_gap, hosting_runtime_log_sessions.retained_bytes, hosting_runtime_log_sessions.retained_rows, hosting_runtime_log_sessions.receipt
 `
 
 func (q *Queries) RenewRuntimeLogDemand(ctx context.Context, id string) (HostingRuntimeLogSession, error) {
@@ -523,6 +531,7 @@ func (q *Queries) RenewRuntimeLogDemand(ctx context.Context, id string) (Hosting
 		&i.InstanceID,
 		&i.CollectionEpoch,
 		&i.EpochExpiresAt,
+		&i.LastBatchSequence,
 		&i.LastSequence,
 		&i.DeletedThroughSequence,
 		&i.SourceGap,
@@ -616,7 +625,7 @@ func (q *Queries) RuntimeLogSessionScope(ctx context.Context, arg RuntimeLogSess
 }
 
 const setRuntimeLogEpoch = `-- name: SetRuntimeLogEpoch :one
-UPDATE hosting_runtime_log_sessions SET instance_id=$2,collection_epoch=$3,epoch_expires_at=LEAST(clock_timestamp()+interval '10 seconds',demand_expires_at),state='following',source_gap=source_gap OR (collection_epoch<>'' AND collection_epoch<>$3),receipt=CASE WHEN collection_epoch=$3 THEN receipt ELSE NULL END WHERE id=$1 RETURNING id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt
+UPDATE hosting_runtime_log_sessions SET instance_id=$2,collection_epoch=$3,epoch_expires_at=LEAST(clock_timestamp()+interval '10 seconds',demand_expires_at),state='following',source_gap=source_gap OR (collection_epoch<>'' AND collection_epoch<>$3),receipt=CASE WHEN collection_epoch=$3 THEN receipt ELSE NULL END WHERE id=$1 RETURNING id, actor_id, resource_id, project_id, runner_id, request_id, request_hash, request_expires_at, target, authority_hash, credential_hash, state, created_at, demand_expires_at, ended_at, purge_after, instance_id, collection_epoch, epoch_expires_at, last_batch_sequence, last_sequence, deleted_through_sequence, source_gap, retained_bytes, retained_rows, receipt
 `
 
 type SetRuntimeLogEpochParams struct {
@@ -648,6 +657,7 @@ func (q *Queries) SetRuntimeLogEpoch(ctx context.Context, arg SetRuntimeLogEpoch
 		&i.InstanceID,
 		&i.CollectionEpoch,
 		&i.EpochExpiresAt,
+		&i.LastBatchSequence,
 		&i.LastSequence,
 		&i.DeletedThroughSequence,
 		&i.SourceGap,

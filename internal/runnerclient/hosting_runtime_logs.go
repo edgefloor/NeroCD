@@ -3,6 +3,7 @@ package runnerclient
 import (
 	"context"
 	"errors"
+	"math"
 	"nerocd/internal/domain"
 )
 
@@ -20,7 +21,7 @@ func (c Client) ClaimRuntimeLogSessions(ctx context.Context, in domain.HostingRu
 		return domain.HostingRuntimeLogClaims{}, errors.New("runtime log claim exceeds limit")
 	}
 	for _, target := range response.value.Targets {
-		if target.InstanceID != in.InstanceID || target.SessionID == "" || target.CollectionEpoch == "" || target.EpochExpiresAt.IsZero() || target.NextSequence < 1 || target.Target.Validate() != nil || target.EpochExpiresAt.After(target.DemandExpiresAt) {
+		if target.InstanceID != in.InstanceID || target.SessionID == "" || target.CollectionEpoch == "" || target.EpochExpiresAt.IsZero() || target.NextSequence < 1 || target.NextBatchSequence < 1 || target.NextBatchSequence > math.MaxInt32 || target.Target.Validate() != nil || target.EpochExpiresAt.After(target.DemandExpiresAt) {
 			return domain.HostingRuntimeLogClaims{}, errors.New("runtime log claim identity mismatch")
 		}
 	}
@@ -42,7 +43,7 @@ func (c Client) AppendRuntimeLogs(ctx context.Context, in domain.HostingRuntimeL
 	if len(in.Events) > 0 {
 		first = in.ExpectedSequence + 1
 	}
-	if ack.SessionID != in.SessionID || ack.InstanceID != in.InstanceID || ack.CollectionEpoch != in.CollectionEpoch || ack.BatchID != in.BatchID || ack.BodyHash != domain.HostingDocumentHash(in) || ack.FirstSequence != first || ack.LastSequence != in.ExpectedSequence+len(in.Events) || ack.ReceivedAt.IsZero() {
+	if ack.SessionID != in.SessionID || ack.InstanceID != in.InstanceID || ack.CollectionEpoch != in.CollectionEpoch || ack.BatchID != in.BatchID || ack.BatchSequence != in.BatchSequence || ack.BodyHash != domain.HostingDocumentHash(in) || ack.FirstSequence != first || ack.LastSequence != in.ExpectedSequence+len(in.Events) || ack.ReceivedAt.IsZero() {
 		return domain.HostingRuntimeLogAck{}, errors.New("runtime log acknowledgment mismatch")
 	}
 	return ack, nil

@@ -448,7 +448,7 @@ func (s *PostgresStore) claimRuntimeLog(ctx context.Context, runner, credential,
 		if row.EndedAt != nil || !row.DemandExpiresAt.After(now) || row.State == "unsupported_driver" {
 			return out, ErrConflict
 		}
-		if row.LastSequence == math.MaxInt32 {
+		if row.LastSequence == math.MaxInt32 || row.LastBatchSequence == math.MaxInt32 {
 			return out, ErrConflict
 		}
 		live := row.EpochExpiresAt != nil && row.EpochExpiresAt.After(now)
@@ -490,7 +490,7 @@ func (s *PostgresStore) claimRuntimeLog(ctx context.Context, runner, credential,
 		if json.Unmarshal(row.Target, &target) != nil {
 			return out, ErrConflict
 		}
-		out.value = domain.HostingRuntimeLogClaim{SessionID: id, InstanceID: instance, CollectionEpoch: epoch, EpochExpiresAt: *row.EpochExpiresAt, DemandExpiresAt: row.DemandExpiresAt, Target: target, NextSequence: int(row.LastSequence) + 1}
+		out.value = domain.HostingRuntimeLogClaim{SessionID: id, InstanceID: instance, CollectionEpoch: epoch, EpochExpiresAt: *row.EpochExpiresAt, DemandExpiresAt: row.DemandExpiresAt, Target: target, NextSequence: int(row.LastSequence) + 1, NextBatchSequence: int(row.LastBatchSequence) + 1}
 		return out, nil
 	})
 }
@@ -582,7 +582,7 @@ func (s *PostgresStore) AppendRuntimeLogs(ctx context.Context, runner, credentia
 			out.value = old
 			return out, nil
 		}
-		if int(row.LastSequence) != in.ExpectedSequence || row.State == "unsupported_driver" {
+		if row.LastBatchSequence == math.MaxInt32 || in.BatchSequence != int(row.LastBatchSequence)+1 || int(row.LastSequence) != in.ExpectedSequence || row.State == "unsupported_driver" {
 			if err = q.MarkRuntimeLogGap(ctx, row.ID); err != nil {
 				return out, err
 			}
@@ -632,12 +632,12 @@ func (s *PostgresStore) AppendRuntimeLogs(ctx context.Context, runner, credentia
 		if len(in.Events) > 0 {
 			first = int(row.LastSequence) + 1
 		}
-		ack := domain.HostingRuntimeLogAck{SessionID: row.ID, InstanceID: in.InstanceID, CollectionEpoch: in.CollectionEpoch, BatchID: in.BatchID, BodyHash: bodyHash, FirstSequence: first, LastSequence: int(next), ReceivedAt: now}
+		ack := domain.HostingRuntimeLogAck{SessionID: row.ID, InstanceID: in.InstanceID, CollectionEpoch: in.CollectionEpoch, BatchID: in.BatchID, BodyHash: bodyHash, BatchSequence: in.BatchSequence, FirstSequence: first, LastSequence: int(next), ReceivedAt: now}
 		raw, err := json.Marshal(ack)
 		if err != nil {
 			return out, err
 		}
-		if _, err = q.AcceptRuntimeLogBatch(ctx, sqlcgen.AcceptRuntimeLogBatchParams{ID: row.ID, LastSequence: next, DeletedThroughSequence: watermark, RetainedRows: int32(count), RetainedBytes: int32(bytes), Receipt: raw, State: in.State}); err != nil {
+		if _, err = q.AcceptRuntimeLogBatch(ctx, sqlcgen.AcceptRuntimeLogBatchParams{ID: row.ID, LastSequence: next, DeletedThroughSequence: watermark, RetainedRows: int32(count), RetainedBytes: int32(bytes), Receipt: raw, State: in.State, LastBatchSequence: int32(in.BatchSequence)}); err != nil {
 			return out, err
 		}
 		if _, err = runtimeLogPublicationDeadline(ctx, tx, row); err != nil {

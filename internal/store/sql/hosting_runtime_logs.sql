@@ -41,7 +41,7 @@ SELECT sequence,octet_length(message)::integer AS bytes FROM hosting_runtime_log
 -- name: DeleteRuntimeLogPrefix :exec
 DELETE FROM hosting_runtime_log_events WHERE session_id=$1 AND sequence<=$2;
 -- name: AcceptRuntimeLogBatch :one
-UPDATE hosting_runtime_log_sessions SET last_sequence=$2,deleted_through_sequence=$3,retained_rows=$4,retained_bytes=$5,receipt=$6,state=$7 WHERE id=$1 RETURNING *;
+UPDATE hosting_runtime_log_sessions SET last_sequence=$2,deleted_through_sequence=$3,retained_rows=$4,retained_bytes=$5,receipt=$6,state=$7,last_batch_sequence=$8 WHERE id=$1 RETURNING *;
 -- name: ListRuntimeLogEvents :many
 SELECT * FROM hosting_runtime_log_events WHERE session_id=$1 AND sequence>$2 ORDER BY sequence LIMIT $3;
 -- name: TryRuntimeLogJanitor :one

@@ -65,12 +65,19 @@ func TestHostingRuntimeLogRegisteredHTTPStrictAuthAndCookieRevocation(t *testing
 	}
 	call("POST", openPath, token, strings.Repeat(" ", 8193)+string(raw), 413)
 	claim := `{"instance_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after_session_id":"","limit":4}`
-	events := `{"session_id":"rls_test","instance_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","collection_epoch":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","batch_id":"cccccccccccccccccccccccccccccccc","expected_sequence":0,"events":[],"state":"following"}`
+	events := `{"session_id":"rls_test","instance_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","collection_epoch":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","batch_id":"cccccccccccccccccccccccccccccccc","expected_sequence":0,"batch_sequence":1,"events":[],"state":"following"}`
 	for _, endpoint := range []struct{ path, body string }{{"/api/v1/runners/runtime-log-sessions/claim", claim}, {"/api/v1/runners/runtime-log-sessions/events", events}} {
 		call("POST", endpoint.path, token, endpoint.body, 401)
 		call("POST", endpoint.path, "", endpoint.body, 401)
 		call("POST", endpoint.path, runnerToken, endpoint.body, 503)
 		call("POST", endpoint.path, runnerToken, `{"unknown":true}`, 400)
+	}
+	for _, value := range []string{"missing", "null", "0", "-1", "2147483648", "1.5", `"1"`} {
+		body := strings.Replace(events, `"batch_sequence":1`, `"batch_sequence":`+value, 1)
+		if value == "missing" {
+			body = strings.Replace(events, `"batch_sequence":1,`, "", 1)
+		}
+		call("POST", "/api/v1/runners/runtime-log-sessions/events", runnerToken, body, 400)
 	}
 	call("POST", "/api/v1/runtime-log-sessions/rls_test/renew", token, `{}`, 503)
 	call("DELETE", "/api/v1/runtime-log-sessions/rls_test", token, "", 503)
@@ -228,7 +235,7 @@ func TestHostingRuntimeLogPostgresRegisteredRoundTrip(t *testing.T) {
 	if claim.SessionID != session.ID || claim.Target.ContainerID != "log_api_container" {
 		t.Fatal(claim)
 	}
-	batch := domain.HostingRuntimeLogBatch{SessionID: session.ID, InstanceID: claim.InstanceID, CollectionEpoch: claim.CollectionEpoch, BatchID: strings.Repeat("e", 32), ExpectedSequence: 0, State: "following", Events: []domain.HostingRuntimeLogEvent{{Component: "application", Stream: "stdout", Message: "sensitive " + runnerToken}}}
+	batch := domain.HostingRuntimeLogBatch{BatchSequence: 1, SessionID: session.ID, InstanceID: claim.InstanceID, CollectionEpoch: claim.CollectionEpoch, BatchID: strings.Repeat("e", 32), ExpectedSequence: 0, State: "following", Events: []domain.HostingRuntimeLogEvent{{Component: "application", Stream: "stdout", Message: "sensitive " + runnerToken}}}
 	if _, err = client.AppendRuntimeLogs(ctx, batch); err != nil {
 		t.Fatal(err)
 	}

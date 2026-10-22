@@ -19,6 +19,7 @@ CREATE TABLE hosting_runtime_log_sessions (
  instance_id text NOT NULL DEFAULT '' CHECK(instance_id='' OR instance_id ~ '^[0-9a-f]{32}$'),
  collection_epoch text NOT NULL DEFAULT '' CHECK(collection_epoch='' OR collection_epoch ~ '^[0-9a-f]{32}$'),
  epoch_expires_at timestamptz,
+ last_batch_sequence integer NOT NULL DEFAULT 0 CHECK(last_batch_sequence>=0),
  last_sequence integer NOT NULL DEFAULT 0 CHECK(last_sequence>=0),
  deleted_through_sequence integer NOT NULL DEFAULT 0 CHECK(deleted_through_sequence>=0 AND deleted_through_sequence<=last_sequence),
  source_gap boolean NOT NULL DEFAULT false,
@@ -46,7 +47,7 @@ CREATE FUNCTION nerocd_runtime_log_identity() RETURNS trigger LANGUAGE plpgsql A
 BEGIN
  IF (NEW.id,NEW.actor_id,NEW.resource_id,NEW.project_id,NEW.runner_id,NEW.request_id,NEW.request_hash,NEW.request_expires_at,NEW.target,NEW.authority_hash,NEW.credential_hash,NEW.created_at)
  IS DISTINCT FROM (OLD.id,OLD.actor_id,OLD.resource_id,OLD.project_id,OLD.runner_id,OLD.request_id,OLD.request_hash,OLD.request_expires_at,OLD.target,OLD.authority_hash,OLD.credential_hash,OLD.created_at)
- OR NEW.last_sequence<OLD.last_sequence OR NEW.deleted_through_sequence<OLD.deleted_through_sequence
+ OR NEW.last_batch_sequence<OLD.last_batch_sequence OR NEW.last_sequence<OLD.last_sequence OR NEW.deleted_through_sequence<OLD.deleted_through_sequence
  OR (OLD.ended_at IS NOT NULL AND (NEW.ended_at IS DISTINCT FROM OLD.ended_at OR NEW.demand_expires_at>OLD.demand_expires_at)) THEN
   RAISE EXCEPTION 'runtime log identity or terminal state changed' USING ERRCODE='23514';
  END IF;

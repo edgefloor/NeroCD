@@ -107,13 +107,14 @@ func (in HostingRuntimeLogClaimInput) Validate() error {
 
 // HostingRuntimeLogClaim grants only a bounded lease on an already demanded target.
 type HostingRuntimeLogClaim struct {
-	SessionID       string                  `json:"session_id"`
-	InstanceID      string                  `json:"instance_id"`
-	CollectionEpoch string                  `json:"collection_epoch"`
-	EpochExpiresAt  time.Time               `json:"epoch_expires_at"`
-	DemandExpiresAt time.Time               `json:"demand_expires_at"`
-	Target          HostingRuntimeLogTarget `json:"target"`
-	NextSequence    int                     `json:"next_sequence"`
+	SessionID         string                  `json:"session_id"`
+	InstanceID        string                  `json:"instance_id"`
+	CollectionEpoch   string                  `json:"collection_epoch"`
+	EpochExpiresAt    time.Time               `json:"epoch_expires_at"`
+	DemandExpiresAt   time.Time               `json:"demand_expires_at"`
+	Target            HostingRuntimeLogTarget `json:"target"`
+	NextSequence      int                     `json:"next_sequence"`
+	NextBatchSequence int                     `json:"next_batch_sequence"`
 }
 
 // HostingRuntimeLogClaims is a bounded server-selected sweep.
@@ -139,13 +140,14 @@ type HostingRuntimeLogBatch struct {
 	CollectionEpoch  string                   `json:"collection_epoch"`
 	BatchID          string                   `json:"batch_id"`
 	ExpectedSequence int                      `json:"expected_sequence"`
+	BatchSequence    int                      `json:"batch_sequence"`
 	Events           []HostingRuntimeLogEvent `json:"events"`
 	State            string                   `json:"state"`
 }
 
 // Canonical validates bounded closed event metadata and normalizes source timestamps.
 func (in HostingRuntimeLogBatch) Canonical() (HostingRuntimeLogBatch, error) {
-	if !observationID(in.SessionID, false) || !runtimeLogRandomID.MatchString(in.InstanceID) || !runtimeLogRandomID.MatchString(in.CollectionEpoch) || !runtimeLogRandomID.MatchString(in.BatchID) || in.ExpectedSequence < 0 || in.ExpectedSequence > math.MaxInt32-HostingRuntimeLogBatchLimit || in.Events == nil || len(in.Events) > HostingRuntimeLogBatchLimit {
+	if !observationID(in.SessionID, false) || !runtimeLogRandomID.MatchString(in.InstanceID) || !runtimeLogRandomID.MatchString(in.CollectionEpoch) || !runtimeLogRandomID.MatchString(in.BatchID) || in.BatchSequence < 1 || in.BatchSequence > math.MaxInt32 || in.ExpectedSequence < 0 || in.ExpectedSequence > math.MaxInt32-HostingRuntimeLogBatchLimit || in.Events == nil || len(in.Events) > HostingRuntimeLogBatchLimit {
 		return HostingRuntimeLogBatch{}, errors.New("invalid runtime log batch identity")
 	}
 	if in.State != "following" && in.State != "disconnected" && in.State != "unsupported_driver" {
@@ -179,6 +181,7 @@ type HostingRuntimeLogAck struct {
 	CollectionEpoch string    `json:"collection_epoch"`
 	BatchID         string    `json:"batch_id"`
 	BodyHash        string    `json:"body_hash"`
+	BatchSequence   int       `json:"batch_sequence"`
 	FirstSequence   int       `json:"first_sequence"`
 	LastSequence    int       `json:"last_sequence"`
 	ReceivedAt      time.Time `json:"received_at"`

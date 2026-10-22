@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -80,7 +81,7 @@ func (f runtimeLogFixture) claim(t *testing.T, instance string) domain.HostingRu
 	return v.Targets[0]
 }
 func runtimeLogBatch(c domain.HostingRuntimeLogClaim, n, expected int, message string) domain.HostingRuntimeLogBatch {
-	return domain.HostingRuntimeLogBatch{SessionID: c.SessionID, InstanceID: c.InstanceID, CollectionEpoch: c.CollectionEpoch, BatchID: fmt.Sprintf("%032x", n), ExpectedSequence: expected, State: "following", Events: []domain.HostingRuntimeLogEvent{{Component: "application", Stream: "stdout", Message: message}}}
+	return domain.HostingRuntimeLogBatch{SessionID: c.SessionID, InstanceID: c.InstanceID, CollectionEpoch: c.CollectionEpoch, BatchID: fmt.Sprintf("%032x", n), BatchSequence: expected + 1, ExpectedSequence: expected, State: "following", Events: []domain.HostingRuntimeLogEvent{{Component: "application", Stream: "stdout", Message: message}}}
 }
 func (f runtimeLogFixture) append(t *testing.T, b domain.HostingRuntimeLogBatch) domain.HostingRuntimeLogAck {
 	t.Helper()
@@ -378,6 +379,7 @@ func TestPostgresHostingRuntimeLogPrefixEvictionAndPageBound(t *testing.T) {
 	next := 0
 	for i := 1; i <= 18; i++ {
 		body := runtimeLogBatch(claim, i, next, "")
+		body.BatchSequence = i
 		body.Events = []domain.HostingRuntimeLogEvent{}
 		for range 64 {
 			body.Events = append(body.Events, domain.HostingRuntimeLogEvent{Component: "application", Stream: "combined", Message: strings.Repeat("x", 1500)})
@@ -670,5 +672,98 @@ func TestPostgresHostingRuntimeLogSchemaGuard(t *testing.T) {
 	if pg, err := store.OpenPostgres(t.Context(), f.db.Config().ConnConfig.ConnString()); err == nil {
 		_ = pg.Close()
 		t.Fatal("missing log schema accepted")
+	}
+}
+
+func TestPostgresHostingRuntimeLogEvictedEmptyBatchReplay(t *testing.T) {
+	f := newRuntimeLogFixture(t)
+	session := f.open(t, 1)
+	claim := f.claim(t, strings.Repeat("a", 32))
+	if claim.NextBatchSequence != 1 {
+		t.Fatal(claim)
+	}
+	a := runtimeLogBatch(claim, 1, 0, "")
+	a.Events = []domain.HostingRuntimeLogEvent{}
+	first := f.append(t, a)
+	b := a
+	b.BatchID = fmt.Sprintf("%032x", 2)
+	b.BatchSequence = 2
+	second := f.append(t, b)
+	if first.BatchSequence != 1 || second.BatchSequence != 2 || first.LastSequence != 0 || second.LastSequence != 0 {
+		t.Fatal(first, second)
+	}
+	if ack := f.append(t, b); ack != second {
+		t.Fatal("latest empty retry refreshed ack", ack, second)
+	}
+	changed := b
+	changed.State = "disconnected"
+	if _, err := f.pg.AppendRuntimeLogs(t.Context(), f.server.RunnerID, f.hash, f.bearer, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("changed latest body accepted", err)
+	}
+	if ack, err := f.pg.AppendRuntimeLogs(t.Context(), f.server.RunnerID, f.hash, f.bearer, a); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("evicted empty replay accepted: %+v %v", ack, err)
+	}
+	if page := f.page(t, session.ID); !page.Gap || len(page.Items) != 0 {
+		t.Fatal("replay gap was not committed", page)
+	}
+	skipped := b
+	skipped.BatchID = fmt.Sprintf("%032x", 3)
+	skipped.BatchSequence = 4
+	if _, err := f.pg.AppendRuntimeLogs(t.Context(), f.server.RunnerID, f.hash, f.bearer, skipped); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("out of order accepted", err)
+	}
+	if ack := f.append(t, b); ack != second {
+		t.Fatal("rejection changed latest receipt", ack)
+	}
+	nonempty := runtimeLogBatch(claim, 3, 0, "event after empty batches")
+	nonempty.BatchSequence = 3
+	ack := f.append(t, nonempty)
+	if ack.BatchSequence != 3 || ack.FirstSequence != 1 || ack.LastSequence != 1 {
+		t.Fatal(ack)
+	}
+	f.exec(t, `UPDATE hosting_runtime_log_sessions SET epoch_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, session.ID)
+	next := f.claim(t, strings.Repeat("b", 32))
+	if next.CollectionEpoch == claim.CollectionEpoch || next.NextBatchSequence != 4 || next.NextSequence != 2 {
+		t.Fatal("epoch reset counter", next)
+	}
+	old := b
+	old.BatchSequence = 4
+	old.ExpectedSequence = 1
+	if _, err := f.pg.AppendRuntimeLogs(t.Context(), f.server.RunnerID, f.hash, f.bearer, old); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("old epoch accepted", err)
+	}
+	current := runtimeLogBatch(next, 4, 1, "")
+	current.BatchSequence = 4
+	current.Events = []domain.HostingRuntimeLogEvent{}
+	f.append(t, current)
+	var batchCount, eventCount int
+	if err := f.db.QueryRow(t.Context(), `SELECT last_batch_sequence,last_sequence FROM hosting_runtime_log_sessions WHERE id=$1`, session.ID).Scan(&batchCount, &eventCount); err != nil || batchCount != 4 || eventCount != 1 {
+		t.Fatal(batchCount, eventCount, err)
+	}
+	f.exec(t, `UPDATE hosting_runtime_log_sessions SET last_batch_sequence=$2 WHERE id=$1`, session.ID, math.MaxInt32-1)
+	boundary := f.claim(t, next.InstanceID)
+	if boundary.NextBatchSequence != math.MaxInt32 {
+		t.Fatal(boundary)
+	}
+	last := runtimeLogBatch(boundary, 5, 1, "")
+	last.BatchSequence = math.MaxInt32
+	last.Events = []domain.HostingRuntimeLogEvent{}
+	final := f.append(t, last)
+	if repeat := f.append(t, last); repeat != final {
+		t.Fatal("exhausted latest retry changed", repeat, final)
+	}
+	last.BatchID = fmt.Sprintf("%032x", 6)
+	if _, err := f.pg.AppendRuntimeLogs(t.Context(), f.server.RunnerID, f.hash, f.bearer, last); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("exhausted counter accepted", err)
+	}
+	claims, err := f.pg.ClaimRuntimeLogSessions(t.Context(), f.server.RunnerID, f.hash, domain.HostingRuntimeLogClaimInput{InstanceID: next.InstanceID, Limit: 4})
+	if err != nil || len(claims.Targets) != 0 {
+		t.Fatal("exhausted counter claimed", claims, err)
+	}
+	if err := f.db.QueryRow(t.Context(), `SELECT last_batch_sequence,last_sequence FROM hosting_runtime_log_sessions WHERE id=$1`, session.ID).Scan(&batchCount, &eventCount); err != nil || batchCount != math.MaxInt32 || eventCount != 1 {
+		t.Fatal("counter overflow/reset", batchCount, eventCount, err)
+	}
+	if _, err = f.db.Exec(t.Context(), `UPDATE hosting_runtime_log_sessions SET last_batch_sequence=0 WHERE id=$1`, session.ID); err == nil {
+		t.Fatal("counter regression allowed")
 	}
 }
