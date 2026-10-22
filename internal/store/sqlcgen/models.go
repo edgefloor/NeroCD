@@ -189,6 +189,65 @@ type HostingBindingState struct {
 	RestoreAdmitted bool    `json:"restore_admitted"`
 }
 
+type HostingBuild struct {
+	ID               string          `json:"id"`
+	ResourceID       string          `json:"resource_id"`
+	ProjectID        string          `json:"project_id"`
+	SourceID         string          `json:"source_id"`
+	SourceGeneration int64           `json:"source_generation"`
+	IdempotencyKey   string          `json:"idempotency_key"`
+	RequestHash      string          `json:"request_hash"`
+	Snapshot         json.RawMessage `json:"snapshot"`
+	SnapshotHash     string          `json:"snapshot_hash"`
+	State            string          `json:"state"`
+	Revision         int64           `json:"revision"`
+	RunID            *string         `json:"run_id"`
+	DaemonID         string          `json:"daemon_id"`
+	FailureCode      string          `json:"failure_code"`
+	CreatedBy        string          `json:"created_by"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+type HostingBuildArtifact struct {
+	BuildID   string          `json:"build_id"`
+	Body      json.RawMessage `json:"body"`
+	BodyHash  string          `json:"body_hash"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+type HostingBuildReceipt struct {
+	BuildID   string          `json:"build_id"`
+	Phase     string          `json:"phase"`
+	ReceiptID string          `json:"receipt_id"`
+	Authority json.RawMessage `json:"authority"`
+	Body      json.RawMessage `json:"body"`
+	BodyHash  string          `json:"body_hash"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+type HostingBuildSource struct {
+	ID         string `json:"id"`
+	ResourceID string `json:"resource_id"`
+	ProjectID  string `json:"project_id"`
+	Generation int64  `json:"generation"`
+}
+
+type HostingBuildSourceVersion struct {
+	SourceID   string          `json:"source_id"`
+	Generation int64           `json:"generation"`
+	Body       json.RawMessage `json:"body"`
+	BodyHash   string          `json:"body_hash"`
+	CreatedBy  string          `json:"created_by"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+type HostingBuildTask struct {
+	BuildID  string `json:"build_id"`
+	RunID    string `json:"run_id"`
+	RunnerID string `json:"runner_id"`
+}
+
 type HostingCleanupTarget struct {
 	OperationID       string          `json:"operation_id"`
 	TargetOperationID string          `json:"target_operation_id"`
@@ -378,6 +437,22 @@ type HostingSnapshot struct {
 	OperationID string          `json:"operation_id"`
 	Body        json.RawMessage `json:"body"`
 	BodyHash    string          `json:"body_hash"`
+}
+
+type HostingSourceGrant struct {
+	ID            string     `json:"id"`
+	Version       int64      `json:"version"`
+	SourceID      string     `json:"source_id"`
+	ResourceID    string     `json:"resource_id"`
+	ProjectID     string     `json:"project_id"`
+	SecretID      string     `json:"secret_id"`
+	SecretVersion int64      `json:"secret_version"`
+	Kind          string     `json:"kind"`
+	RepositoryUrl string     `json:"repository_url"`
+	PolicyHash    string     `json:"policy_hash"`
+	CreatedBy     string     `json:"created_by"`
+	CreatedAt     time.Time  `json:"created_at"`
+	RevokedAt     *time.Time `json:"revoked_at"`
 }
 
 type HostingTaskTarget struct {
