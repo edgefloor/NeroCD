@@ -3,6 +3,7 @@ package runnerclient
 import (
 	"encoding/json"
 	"fmt"
+	"nerocd/internal/domain"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -229,5 +230,18 @@ func TestRuntimeCapabilitiesIdentityKeepsLegacyWrappersFailClosed(t *testing.T) 
 	}
 	if _, err := client.RuntimeCapabilitiesIdentity(t.Context(), true, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRuntimeBuildIdentityRejectsPersistedShell(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/runners/identity" {
+			t.Error("capability validation made nonidentity request")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_build", "capabilities": []string{"shell", domain.HostingBuildTaskType}})
+	}))
+	defer server.Close()
+	if _, err := New(server.URL, "fixture").RuntimeCapabilitiesIdentity(t.Context(), false, true); err == nil {
+		t.Fatal("persisted shell+build identity accepted")
 	}
 }
