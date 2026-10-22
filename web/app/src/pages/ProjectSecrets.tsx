@@ -74,6 +74,9 @@ function SecretDetail({ initial, writable, owner, blocked, onChanged, onClose }:
   const [offset, setOffset] = useState(0);
   const [expected, setExpected] = useState(initial.current_version);
   const [value, setValue] = useState("");
+  // Each explicit clear ends the entry's pending reads, even if already empty.
+  const [entryGeneration, setEntryGeneration] = useState(0);
+  function clearValue() { setValue(""); setEntryGeneration((generation) => generation + 1); }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -101,13 +104,13 @@ function SecretDetail({ initial, writable, owner, blocked, onChanged, onClose }:
     setBusy(true); setError(""); setNotice(""); setRevealVersion(undefined);
     try {
       const result = kind === "rotate" ? await rotateManagedSecret(secret.id, { expected_version: expected, value }) : await revokeManagedSecret(secret.id, { expected_version: expected });
-      setExpected(result.current_version); setValue(""); setConfirmed(false);
+      setExpected(result.current_version); clearValue(); setConfirmed(false);
       setNotice(kind === "rotate" ? "Secret rotated. The new value is hidden." : "Secret revoked. Its metadata and version history are retained.");
       await Promise.all([client.invalidateQueries({ queryKey: detailKey(secret.id) }), client.invalidateQueries({ queryKey: versionsKey(secret.id) }), onChanged()]);
     } catch (cause) {
       setError(secretError(cause));
       if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await loadCurrent(); }
-    } finally { setValue(""); setBusy(false); }
+    } finally { clearValue(); setBusy(false); }
   }
   return <section className="min-w-0 space-y-4 rounded-xl border p-4" aria-label={`Secret ${secret.name}`}>
     <div className="flex flex-wrap items-start justify-between gap-2"><h3 className="min-w-0 flex-1 break-words font-semibold [overflow-wrap:anywhere]">{secret.name}</h3><Button type="button" variant="outline" onClick={onClose}>Close secret</Button></div>
@@ -122,14 +125,14 @@ function SecretDetail({ initial, writable, owner, blocked, onChanged, onClose }:
       <Button type="button" variant="outline" disabled={busy || metadata.isFetching} onClick={() => void loadCurrent()}>Refresh current secret</Button>
     </section> : null}
     {writable && active ? <form aria-label="Rotate secret" autoComplete="off" onSubmit={(event) => void update("rotate", event)} className="space-y-3 border-t pt-3">
-      <ProtectedSecretValue id={`${id}-value`} label="New secret value" value={value} onChange={setValue} disabled={busy || unavailable} />
+      <ProtectedSecretValue key={entryGeneration} id={`${id}-value`} label="New secret value" value={value} onChange={setValue} disabled={busy || unavailable} />
       <p className="text-xs text-muted-foreground">Creates an immutable version. The value stays hidden and is cleared after this request.</p>
       <Button type="submit" disabled={busy || !canWrite || conflict || !value}>{busy ? "Updating secret..." : "Rotate secret"}</Button>
     </form> : null}
     <section className="space-y-2" aria-label="Secret version history"><h4 className="font-medium">Version history</h4>
       {versions.isError ? <div className="space-y-2"><p role="alert">Unable to load version metadata.</p><Button type="button" variant="outline" onClick={() => void versions.refetch()}>Retry secret versions</Button></div> : null}
       {versions.isPending ? <p role="status">Loading versions...</p> : null}
-      {versions.data?.items.map((version) => <div key={version.version} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2"><p className="text-sm">Version {version.version}</p>{canReveal ? <Button type="button" size="sm" variant="outline" onClick={() => { setValue(""); setRevealVersion(version.version); }}>Select version {version.version} to reveal</Button> : null}</div>)}
+      {versions.data?.items.map((version) => <div key={version.version} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2"><p className="text-sm">Version {version.version}</p>{canReveal ? <Button type="button" size="sm" variant="outline" onClick={() => { clearValue(); setRevealVersion(version.version); }}>Select version {version.version} to reveal</Button> : null}</div>)}
       <PageNavigation label="secret versions" page={versions.data} loading={versions.isFetching} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - pageSize))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + pageSize))} />
     </section>
     {canReveal && revealVersion !== undefined ? <SecretReveal key={`${secret.id}:${revealVersion}`} secretID={secret.id} version={revealVersion} onClose={() => setRevealVersion(undefined)} /> : null}
@@ -147,6 +150,9 @@ function ProjectSecretList({ projectID, writable, owner, blocked }: { projectID:
   const [offset, setOffset] = useState(0);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
+  // Each explicit clear ends the entry's pending reads, even if already empty.
+  const [entryGeneration, setEntryGeneration] = useState(0);
+  function clearValue() { setValue(""); setEntryGeneration((generation) => generation + 1); }
   const [selected, setSelected] = useState<ManagedSecret>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -160,7 +166,7 @@ function ProjectSecretList({ projectID, writable, owner, blocked }: { projectID:
     setBusy(true); setError(""); setNotice("");
     try {
       const created = await createManagedSecret({ project_id: projectID, name, value });
-      setName(""); setValue(""); setSelected(created); setOffset(0); setNotice("Secret created. Its value is hidden.");
+      setName(""); clearValue(); setSelected(created); setOffset(0); setNotice("Secret created. Its value is hidden.");
       await refresh();
     } catch (cause) {
       setError(secretError(cause));
@@ -169,19 +175,19 @@ function ProjectSecretList({ projectID, writable, owner, blocked }: { projectID:
         setError("The name is already reserved or the project changed. Review the refreshed metadata before creating another secret.");
       }
     }
-    finally { setValue(""); setBusy(false); }
+    finally { clearValue(); setBusy(false); }
   }
   return <div className="grid min-w-0 items-start gap-4 lg:grid-cols-2">
     <section className="min-w-0 space-y-3" aria-label="Managed secret metadata">
       {secrets.isPending ? <p role="status">Loading secret metadata...</p> : null}
       {secrets.isError ? <div className="space-y-2"><p role="alert">Unable to load secret metadata. {secretError(secrets.error)}</p><Button type="button" variant="outline" onClick={() => void secrets.refetch()}>Retry managed secrets</Button></div> : null}
       {secrets.data?.items.length === 0 ? <p>No managed secrets in this project.</p> : null}
-      {secrets.data?.items.map((secret) => <article className="min-w-0 space-y-2 rounded-xl border p-3" key={secret.id}><h3 className="break-words font-medium [overflow-wrap:anywhere]">{secret.name}</h3><p className="text-sm">{secret.status === "revoked" ? "Revoked" : "Active"} · Version {secret.current_version} · Value hidden</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" onClick={() => { setValue(""); setSelected(secret); setNotice(""); }}><span className="min-w-0 break-all">Manage {secret.name}</span></Button></article>)}
+      {secrets.data?.items.map((secret) => <article className="min-w-0 space-y-2 rounded-xl border p-3" key={secret.id}><h3 className="break-words font-medium [overflow-wrap:anywhere]">{secret.name}</h3><p className="text-sm">{secret.status === "revoked" ? "Revoked" : "Active"} · Version {secret.current_version} · Value hidden</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" onClick={() => { clearValue(); setSelected(secret); setNotice(""); }}><span className="min-w-0 break-all">Manage {secret.name}</span></Button></article>)}
       <PageNavigation label="managed secrets" page={secrets.data} loading={secrets.isFetching || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - pageSize))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + pageSize))} />
       {writable ? <form autoComplete="off" aria-label="Create managed secret" onSubmit={(event) => void create(event)} className="space-y-3 border-t pt-3">
         <h3 className="font-medium">Create managed secret</h3>
         <label htmlFor={`${id}-name`}>Secret name</label><Input id={`${id}-name`} value={name} onChange={(event) => setName(event.target.value)} required disabled={busy} />
-        <ProtectedSecretValue id={`${id}-value`} label="Secret value" value={value} onChange={setValue} disabled={busy} />
+        <ProtectedSecretValue key={entryGeneration} id={`${id}-value`} label="Secret value" value={value} onChange={setValue} disabled={busy} />
         <p className="text-xs text-muted-foreground">Stored encrypted. Values stay hidden and are cleared after each request. Use 1 to 65536 UTF-8 bytes; whitespace is preserved.</p>
         <Button type="submit" disabled={busy || unavailable || !value}>{busy ? "Creating secret..." : "Create secret"}</Button>
         {error ? <p role="alert">{error} Your name is preserved. Re-enter the value to retry.</p> : null}

@@ -52,7 +52,7 @@ test("create uses masked input, clears it on success, and never reveals or cache
   fireEvent.submit(screen.getByRole("form", { name: "Create managed secret" }));
   await screen.findByText("Secret created. Its value is hidden.");
   expect(api.createManagedSecret).toHaveBeenCalledWith({ project_id: "one", name: "Database", value: "  test-only-value  " });
-  expect(value.value).toBe("");
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Secret value").value).toBe("");
   expect(api.revealManagedSecret).not.toHaveBeenCalled();
   expect(JSON.stringify(client.getQueryCache().getAll().map((query) => query.state.data))).not.toContain("test-only-value");
 });
@@ -141,6 +141,32 @@ test("opening secret details and changing reveal version clear unrelated sensiti
   fireEvent.click(within(region).getByRole("button", { name: "Select version 1 to reveal" }));
   expect(screen.getByLabelText<HTMLInputElement>("New secret value").value).toBe("");
   expect(api.revealManagedSecret).not.toHaveBeenCalled();
+});
+
+test.each(["create", "rotate"] as const)("%s file read cannot restore a draft after its real parent clear action", async (kind) => {
+  setup(); await screen.findByRole("button", { name: "Manage Database" });
+  if (kind === "rotate") await detail();
+  const label = kind === "create" ? "Secret value" : "New secret value";
+  let resolve!: (value: ArrayBuffer) => void;
+  const pending = new Promise<ArrayBuffer>((done) => { resolve = done; });
+  const file = new File(["test-only"], "deferred-test-only.pem");
+  Object.defineProperty(file, "arrayBuffer", { value: () => pending });
+  fireEvent.change(screen.getByLabelText(`Load ${label.toLowerCase()} from UTF-8 file`), { target: { files: [file] } });
+  await screen.findByText("Reading secret file...");
+  // loadFile already cleared the parent value. These actions must invalidate
+  // that read even though setting the string to empty again changes nothing.
+  if (kind === "create") fireEvent.click(screen.getByRole("button", { name: "Manage Database" }));
+  else fireEvent.click(screen.getByRole("button", { name: "Select version 1 to reveal" }));
+  await act(async () => resolve(new TextEncoder().encode("late-parent-clear-test-value\r\n").buffer));
+  const group = screen.getByRole("group", { name: `${label} entry` });
+  expect(within(group).getByLabelText<HTMLTextAreaElement>(label).value).toBe("");
+  expect(within(group).getByLabelText<HTMLTextAreaElement>(label).readOnly).toBe(true);
+  expect(within(group).getByRole<HTMLButtonElement>("button", { name: "Show value to edit" }).disabled).toBe(false);
+  expect(within(group).queryByText("Reading secret file...")).toBeNull();
+  expect(within(group).getByLabelText<HTMLInputElement>(`Load ${label.toLowerCase()} from UTF-8 file`).value).toBe("");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: kind === "create" ? "Create secret" : "Rotate secret" }).disabled).toBe(true);
+  expect(api.createManagedSecret).not.toHaveBeenCalled(); expect(api.rotateManagedSecret).not.toHaveBeenCalled();
+  expect(screen.queryByText("late-parent-clear-test-value")).toBeNull();
 });
 
 test("rotation conflict refetches metadata and requires explicit current-version review and re-entry", async () => {

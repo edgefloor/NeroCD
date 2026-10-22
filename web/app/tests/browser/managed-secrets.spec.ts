@@ -32,6 +32,46 @@ async function projectFor(page: Page, role: "owner" | "maintainer" | "viewer", s
   return project;
 }
 
+test("managed secret parent actions discard deferred file reads even for already empty drafts", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.addInitScript(() => {
+    const original = File.prototype.arrayBuffer;
+    let complete: (() => Promise<void>) | undefined;
+    File.prototype.arrayBuffer = function () {
+      if (this.name !== "deferred-parent-clear.pem") return original.call(this);
+      const file = this;
+      return new Promise<ArrayBuffer>((resolve) => { complete = async () => { resolve(await original.call(file)); }; });
+    };
+    Object.defineProperty(window, "completeDeferredSecretFile", { value: async () => {
+      if (!complete) throw new Error("deferred file fixture unavailable");
+      await complete();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    } });
+  });
+  await signInAdmin(page);
+  const project = await post<{ id: string }>(page, "/api/v1/projects", { name: `Deferred secret files ${Date.now()}` });
+  await post(page, "/api/v1/managed-secrets", { project_id: project.id, name: "DEFERRED_SECRET", value: "test-only-stored-value" });
+  await page.goto("/projects");
+  const section = page.getByRole("region", { name: "Project managed secrets", exact: true });
+  await section.getByLabel("Secrets project", { exact: true }).selectOption(project.id);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const kind of ["create", "rotate"]) {
+      const label = kind === "create" ? "Secret value" : "New secret value";
+      const entry = section.getByRole("group", { name: `${label} entry`, exact: true });
+      await entry.getByLabel(`Load ${label.toLowerCase()} from UTF-8 file`, { exact: true }).setInputFiles({ name: "deferred-parent-clear.pem", mimeType: "text/plain", buffer: Buffer.from("test-only-late-file\r\n") });
+      await expect(entry.getByText("Reading secret file...", { exact: true })).toBeVisible();
+      if (kind === "create") await section.getByRole("button", { name: "Manage DEFERRED_SECRET", exact: true }).click();
+      else await section.getByRole("button", { name: "Select version 1 to reveal", exact: true }).click();
+      await page.evaluate(async () => { await (window as unknown as { completeDeferredSecretFile: () => Promise<void> }).completeDeferredSecretFile(); });
+      await expect(entry.getByLabel(label, { exact: true })).toHaveValue("");
+      await expect(entry.getByRole("button", { name: "Show value to edit", exact: true })).toBeEnabled();
+      await expect(entry.getByText("Reading secret file...", { exact: true })).toHaveCount(0);
+      await expect(section.getByRole("button", { name: kind === "create" ? "Create secret" : "Rotate secret", exact: true })).toBeDisabled();
+    }
+  }
+});
+
 test("managed secret multiline entry round trips LF CRLF BOM and large UTF-8 files exactly", async ({ page, context }, testInfo) => {
   test.setTimeout(120_000);
   await signInAdmin(page);
