@@ -11,8 +11,8 @@ async function signIn(page: Page, viewer = false) {
 test("owner creates a private source grant, selects it for an actual build and deploys the artifact over HTTPS", async ({ page, browser }) => {
  test.skip(!process.env.NEROCD_PRIVATE_GIT_BROWSER_META, "requires NEROCD_PRIVATE_GIT_BROWSER=1 acceptance fixture"); test.setTimeout(480_000);
  const meta = JSON.parse(process.env.NEROCD_PRIVATE_GIT_BROWSER_META!) as { origin: string; project_id: string; resource_id: string; environment: string; complete_path: string; secret_id: string; secret_version: number; source_repository_url: string };
- const forbiddenReads: string[] = [];
- page.on("request", (request) => { if (/\/reveal(?:\?|$)/.test(request.url()) || (new URL(request.url()).pathname === "/api/v1/run-logs" || /\/runs\/[^/]+\/(logs|events)/.test(new URL(request.url()).pathname))) forbiddenReads.push(request.url()); });
+ const secretRevealReads: string[] = [], legacyLogReads: string[] = [];
+ page.on("request", (request) => { if (/\/reveal(?:\?|$)/.test(request.url())) secretRevealReads.push(request.url()); });
  await signIn(page); await page.setViewportSize({ width: 320, height: 1000 });
  async function openResource(target: Page) {
   await target.goto("/projects"); const region = target.getByRole("region", { name: "Project hosting", exact: true });
@@ -48,6 +48,8 @@ test("owner creates a private source grant, selects it for an actual build and d
  const admission = await buildResponse; expect(admission.status()).toBe(202); expect(admission.request().postDataJSON().grant_id).toBe(createdGrant.id);
  const build = (await admission.json() as { build: { id: string; snapshot: { source: { credential_kind: string } } } }).build; expect(build.snapshot.source.credential_kind).toBe("https_basic");
  const detail = article.getByRole("region", { name: "Build operation detail", exact: true }); await expect(detail.getByText("Succeeded", { exact: true })).toBeVisible({ timeout: 180_000 });
+ // Observe legacy log reads for the typed-output journey; sign-in dashboard reads precede this subject.
+ page.on("request", (request) => { const path = new URL(request.url()).pathname; if (path === "/api/v1/run-logs" || /\/runs\/[^/]+\/(logs|events)/.test(path)) legacyLogReads.push(request.url()); });
  const outputResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/hosting-builds/${build.id}/logs`);
  await detail.getByRole("button", { name: "Show build output", exact: true }).focus(); await page.keyboard.press("Enter"); const output = await outputResponse; expect(output.status()).toBe(200);
  const persisted = await output.json() as { items: { sequence: number; message: string }[] }; expect(persisted.items.length).toBeGreaterThan(0);
@@ -63,6 +65,7 @@ test("owner creates a private source grant, selects it for an actual build and d
  for (const width of [320, 390, 430, 1440]) { await page.setViewportSize({ width, height: 1000 }); await expect(rows).toBeVisible(); await expect(route.getByText("local.example.test/", { exact: true })).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await operationDetail.getByRole("button", { name: "Refresh operation", exact: true }).focus(); await page.keyboard.press("Enter"); }
  const context = await browser.newContext({ baseURL: meta.origin, viewport: { width: 390, height: 1000 } });
  try { const viewer = await context.newPage(); await signIn(viewer, true); const read = await openResource(viewer); await read.getByRole("button", { name: `View build ${build.id}`, exact: true }).click(); await expect(read.getByRole("button", { name: "Create source grant", exact: true })).toHaveCount(0); await expect(read.getByRole("button", { name: "Request private Git build", exact: true })).toHaveCount(0); await expect(read.getByRole("button", { name: "Deploy selected build", exact: true })).toHaveCount(0); const denied = await viewer.request.post(grantPath, { headers: { Origin: meta.origin, "X-NeroCD-CSRF": "1" }, data: frozenGrantBody }); expect(denied.status()).toBe(403); } finally { await context.close(); }
- expect(forbiddenReads).toEqual([]); await detail.getByRole("button", { name: "Close build output", exact: true }).focus(); await page.keyboard.press("Enter");
+ await detail.getByRole("button", { name: "Close build output", exact: true }).focus(); await page.keyboard.press("Enter");
+ expect(legacyLogReads).toEqual([]); expect(secretRevealReads).toEqual([]);
  expect((await page.request.post(meta.complete_path, { headers: { Origin: meta.origin } })).status()).toBe(204);
 });
