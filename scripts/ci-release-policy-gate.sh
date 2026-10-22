@@ -185,10 +185,10 @@ runtime_line=$(printf '%s\n' "$accepted_gates" | rg -F '$(MAKE) --jobs=1 runtime
 for gate in ci-release-policy-gate test race web-test build browser-smoke web-policy contract check-generated docker-build identity-artifact-gate production-profile-gate; do
   [[ " $core_line " == *" $gate "* ]] || fail "serial accepted core inventory is missing $gate"
 done
-[[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }' <<<"$core_line") -eq 1 ]] || fail 'serial accepted core inventory must contain ci-release-policy-gate exactly once'
+[[ $(printf '%s\n' "$core_line" | awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }') -eq 1 ]] || fail 'serial accepted core inventory must contain ci-release-policy-gate exactly once'
 for gate in runtime-fencing-gate runtime-spool-gate runtime-secrets-gate runtime-enrollment-gate runtime-provenance-gate runtime-compose-gate runtime-web-operator-gate backup-restore-gate observability-gate; do
   [[ " $runtime_line " == *" $gate "* ]] || fail "serial accepted runtime inventory is missing $gate"
-  [[ $(awk -v gate="$gate" '{ for (field = 1; field <= NF; field++) if ($field == gate) count++ } END { print count + 0 }' <<<"$runtime_line") -eq 1 ]] || fail "serial accepted runtime inventory must contain $gate exactly once"
+  [[ $(printf '%s\n' "$runtime_line" | awk -v gate="$gate" '{ for (field = 1; field <= NF; field++) if ($field == gate) count++ } END { print count + 0 }') -eq 1 ]] || fail "serial accepted runtime inventory must contain $gate exactly once"
 done
 rg -q '^observability-gate: runtime-compose-gate backup-restore-gate$' "$makefile" || fail 'observability gate must depend on Compose and backup evidence producers'
 ! rg -q '^[[:space:]]*bash (acceptance/runtime-compose/gate\.sh|scripts/backup-restore-gate\.sh)' "$observability_gate" || fail 'observability gate must reuse prerequisite evidence instead of rerunning runtime gates'
@@ -205,6 +205,6 @@ policy_target=$(sed -n '/^ci-release-policy-gate:/,/^contract:/p' "$makefile")
 [[ $(printf '%s\n' "$policy_target" | rg -Fc 'bash scripts/release-runtime-scheduling-test.sh') -eq 1 ]] || fail 'CI release policy target must run the runtime scheduling test exactly once'
 [[ $(printf '%s\n' "$policy_target" | rg -Fc 'python3 -B scripts/release-candidate-test.py') -eq 1 ]] || fail 'CI release policy target must test publication boundaries exactly once'
 check_target=$(sed -n '/^check:/,/^clean:/p' "$makefile")
-[[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }' <<<"$check_target") -eq 1 ]] || fail 'ordinary make check must run ci-release-policy-gate exactly once'
-[[ $(awk '{ for (field = 1; field <= NF; field++) if ($field == "race") count++ } END { print count + 0 }' <<<"$check_target") -eq 1 ]] || fail 'ordinary make check must run the race gate exactly once'
+[[ $(printf '%s\n' "$check_target" | awk '{ for (field = 1; field <= NF; field++) if ($field == "ci-release-policy-gate") count++ } END { print count + 0 }') -eq 1 ]] || fail 'ordinary make check must run ci-release-policy-gate exactly once'
+[[ $(printf '%s\n' "$check_target" | awk '{ for (field = 1; field <= NF; field++) if ($field == "race") count++ } END { print count + 0 }') -eq 1 ]] || fail 'ordinary make check must run the race gate exactly once'
 printf 'ci-release-policy PASS workflows=%s\n' "$workflows"
