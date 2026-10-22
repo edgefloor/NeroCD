@@ -139,6 +139,29 @@ func (s *PostgresStore) ExecuteRunLogRetention(ctx context.Context, requestID, b
 		if len(active) != 0 {
 			continue
 		}
+		// Typed builds delete only an eligible sequence prefix. The durable
+		// watermark and message deletion share this transaction and audit receipt.
+		state, stateErr := q.GetHostingBuildLogStateForRun(ctx, runID)
+		if stateErr == nil {
+			prefix, e := q.ListHostingBuildLogRetentionPrefix(ctx, sqlcgen.ListHostingBuildLogRetentionPrefixParams{RunID: runID, CreatedAt: cutoff, Limit: int32(policy.BatchSize - len(logIDs))})
+			if e != nil {
+				return domain.RunLogRetentionExecution{}, e
+			}
+			watermark := state.DeletedThroughSequence
+			for _, row := range prefix {
+				logIDs = append(logIDs, row.ID)
+				if row.Sequence > watermark {
+					watermark = row.Sequence
+				}
+			}
+			if e = q.AdvanceHostingBuildLogWatermark(ctx, sqlcgen.AdvanceHostingBuildLogWatermarkParams{RunID: runID, DeletedThroughSequence: watermark}); e != nil {
+				return domain.RunLogRetentionExecution{}, e
+			}
+			continue
+		}
+		if !errors.Is(stateErr, pgx.ErrNoRows) {
+			return domain.RunLogRetentionExecution{}, stateErr
+		}
 		rows, err := q.ListRunLogRetentionCandidatesForRun(ctx, sqlcgen.ListRunLogRetentionCandidatesForRunParams{RunID: runID, Cutoff: cutoff, CandidateLimit: int32(policy.BatchSize - len(logIDs))})
 		if err != nil {
 			return domain.RunLogRetentionExecution{}, fmt.Errorf("list run log retention candidates for run query: %w", err)

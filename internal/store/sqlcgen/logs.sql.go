@@ -40,7 +40,7 @@ func (q *Queries) CountRunLogsForScope(ctx context.Context, arg CountRunLogsForS
 }
 
 const getRunnerEventByKey = `-- name: GetRunnerEventByKey :one
-SELECT id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence FROM run_logs
+SELECT id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence, component, source_timestamp FROM run_logs
 WHERE run_id=$1 AND event_key=$2
 `
 
@@ -63,13 +63,15 @@ func (q *Queries) GetRunnerEventByKey(ctx context.Context, arg GetRunnerEventByK
 		&i.LeaseID,
 		&i.Attempt,
 		&i.RequestedSequence,
+		&i.Component,
+		&i.SourceTimestamp,
 	)
 	return i, err
 }
 
 const insertRunLog = `-- name: InsertRunLog :one
 INSERT INTO run_logs (id,run_id,sequence,stream,message,created_at)
-VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence
+VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence, component, source_timestamp
 `
 
 type InsertRunLogParams struct {
@@ -102,6 +104,8 @@ func (q *Queries) InsertRunLog(ctx context.Context, arg InsertRunLogParams) (Run
 		&i.LeaseID,
 		&i.Attempt,
 		&i.RequestedSequence,
+		&i.Component,
+		&i.SourceTimestamp,
 	)
 	return i, err
 }
@@ -109,7 +113,7 @@ func (q *Queries) InsertRunLog(ctx context.Context, arg InsertRunLogParams) (Run
 const insertRunLogWithSequence = `-- name: InsertRunLogWithSequence :one
 INSERT INTO run_logs (id,run_id,sequence,stream,message,created_at)
 VALUES ($1,$2,COALESCE((SELECT MAX(run_logs.sequence)+1 FROM run_logs WHERE run_logs.run_id=$2 AND run_logs.sequence >= $3),$3),$4,$5,$6)
-RETURNING id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence
+RETURNING id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence, component, source_timestamp
 `
 
 type InsertRunLogWithSequenceParams struct {
@@ -142,6 +146,8 @@ func (q *Queries) InsertRunLogWithSequence(ctx context.Context, arg InsertRunLog
 		&i.LeaseID,
 		&i.Attempt,
 		&i.RequestedSequence,
+		&i.Component,
+		&i.SourceTimestamp,
 	)
 	return i, err
 }
@@ -153,7 +159,7 @@ VALUES (
   COALESCE((SELECT MAX(run_logs.sequence)+1 FROM run_logs WHERE run_logs.run_id=$2 AND run_logs.sequence >= $3),$3),
   $4,$5,$6,$7,$8,$9,$10
 )
-RETURNING id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence
+RETURNING id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence, component, source_timestamp
 `
 
 type InsertRunnerEventWithSequenceParams struct {
@@ -194,12 +200,14 @@ func (q *Queries) InsertRunnerEventWithSequence(ctx context.Context, arg InsertR
 		&i.LeaseID,
 		&i.Attempt,
 		&i.RequestedSequence,
+		&i.Component,
+		&i.SourceTimestamp,
 	)
 	return i, err
 }
 
 const listRunLogsPage = `-- name: ListRunLogsPage :many
-SELECT id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence FROM run_logs WHERE ($1::text='' OR run_id=$1)
+SELECT id, run_id, sequence, stream, message, created_at, event_key, lease_id, attempt, requested_sequence, component, source_timestamp FROM run_logs WHERE ($1::text='' OR run_id=$1)
 ORDER BY run_id, sequence LIMIT $3 OFFSET $2
 `
 
@@ -229,6 +237,8 @@ func (q *Queries) ListRunLogsPage(ctx context.Context, arg ListRunLogsPageParams
 			&i.LeaseID,
 			&i.Attempt,
 			&i.RequestedSequence,
+			&i.Component,
+			&i.SourceTimestamp,
 		); err != nil {
 			return nil, err
 		}
@@ -241,7 +251,7 @@ func (q *Queries) ListRunLogsPage(ctx context.Context, arg ListRunLogsPageParams
 }
 
 const listRunLogsPageForScope = `-- name: ListRunLogsPageForScope :many
-SELECT log.id, log.run_id, log.sequence, log.stream, log.message, log.created_at, log.event_key, log.lease_id, log.attempt, log.requested_sequence FROM run_logs AS log
+SELECT log.id, log.run_id, log.sequence, log.stream, log.message, log.created_at, log.event_key, log.lease_id, log.attempt, log.requested_sequence, log.component, log.source_timestamp FROM run_logs AS log
 JOIN task_runs AS run ON run.id=log.run_id
 WHERE $1::boolean OR run.project_id=ANY($2::text[])
 ORDER BY log.run_id, log.sequence LIMIT $4 OFFSET $3
@@ -279,6 +289,8 @@ func (q *Queries) ListRunLogsPageForScope(ctx context.Context, arg ListRunLogsPa
 			&i.LeaseID,
 			&i.Attempt,
 			&i.RequestedSequence,
+			&i.Component,
+			&i.SourceTimestamp,
 		); err != nil {
 			return nil, err
 		}

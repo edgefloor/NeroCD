@@ -185,6 +185,9 @@ func (s *PostgresStore) CreateRunLog(ctx context.Context, log domain.RunLog) err
 	if err := rejectGenericDeploymentRun(ctx, queries, log.RunID); err != nil {
 		return fmt.Errorf("reject generic deployment run: %w", err)
 	}
+	if err := lockGenericLogTask(ctx, queries, log.RunID); err != nil {
+		return err
+	}
 	if err := queries.AcquireRunLogLock(ctx, log.RunID); err != nil {
 		return fmt.Errorf("acquire run log lock query: %w", err)
 	}
@@ -210,6 +213,9 @@ func (s *PostgresStore) CreateRunLogForLease(ctx context.Context, log domain.Run
 	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
 	// Serialize all log allocation for a run, including controller and runner events.
+	if err := lockGenericLogTask(ctx, queries, log.RunID); err != nil {
+		return domain.RunLog{}, err
+	}
 	if err := queries.AcquireRunLogLock(ctx, log.RunID); err != nil {
 		return domain.RunLog{}, fmt.Errorf("acquire run log lock query: %w", err)
 	}
@@ -244,6 +250,9 @@ func (s *PostgresStore) CreateRunLogsForLease(ctx context.Context, logs []domain
 	}
 	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
+	if err := lockGenericLogTask(ctx, queries, runID); err != nil {
+		return nil, err
+	}
 	if err := queries.AcquireRunLogLock(ctx, runID); err != nil {
 		return nil, fmt.Errorf("acquire run log lock query: %w", err)
 	}

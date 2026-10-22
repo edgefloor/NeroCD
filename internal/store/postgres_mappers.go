@@ -126,7 +126,7 @@ func runLeaseFromSQLC(row sqlcgen.RunLease) domain.RunLease {
 }
 
 func runLogFromSQLC(row sqlcgen.RunLog) domain.RunLog {
-	log := domain.RunLog{ID: row.ID, RunID: row.RunID, Sequence: int(row.Sequence), Stream: row.Stream, Message: row.Message, CreatedAt: row.CreatedAt}
+	log := domain.RunLog{ID: row.ID, RunID: row.RunID, Sequence: int(row.Sequence), Stream: row.Stream, Message: row.Message, CreatedAt: row.CreatedAt, Component: row.Component, SourceTimestamp: row.SourceTimestamp}
 	if row.EventKey != nil {
 		log.EventKey = *row.EventKey
 	}

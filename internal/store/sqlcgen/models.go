@@ -216,6 +216,24 @@ type HostingBuildArtifact struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
+type HostingBuildLogReceipt struct {
+	BuildID           string          `json:"build_id"`
+	RunID             string          `json:"run_id"`
+	EventKey          string          `json:"event_key"`
+	Authority         json.RawMessage `json:"authority"`
+	RequestedSequence int32           `json:"requested_sequence"`
+	Sequence          int32           `json:"sequence"`
+	BodyHash          string          `json:"body_hash"`
+}
+
+type HostingBuildLogState struct {
+	BuildID                string `json:"build_id"`
+	RunID                  string `json:"run_id"`
+	LastSequence           int32  `json:"last_sequence"`
+	DeletedThroughSequence int32  `json:"deleted_through_sequence"`
+	HistoryComplete        bool   `json:"history_complete"`
+}
+
 type HostingBuildReceipt struct {
 	BuildID   string          `json:"build_id"`
 	Phase     string          `json:"phase"`
@@ -658,16 +676,18 @@ type RunLease struct {
 }
 
 type RunLog struct {
-	ID                string    `json:"id"`
-	RunID             string    `json:"run_id"`
-	Sequence          int32     `json:"sequence"`
-	Stream            string    `json:"stream"`
-	Message           string    `json:"message"`
-	CreatedAt         time.Time `json:"created_at"`
-	EventKey          *string   `json:"event_key"`
-	LeaseID           *string   `json:"lease_id"`
-	Attempt           *int32    `json:"attempt"`
-	RequestedSequence *int32    `json:"requested_sequence"`
+	ID                string     `json:"id"`
+	RunID             string     `json:"run_id"`
+	Sequence          int32      `json:"sequence"`
+	Stream            string     `json:"stream"`
+	Message           string     `json:"message"`
+	CreatedAt         time.Time  `json:"created_at"`
+	EventKey          *string    `json:"event_key"`
+	LeaseID           *string    `json:"lease_id"`
+	Attempt           *int32     `json:"attempt"`
+	RequestedSequence *int32     `json:"requested_sequence"`
+	Component         string     `json:"component"`
+	SourceTimestamp   *time.Time `json:"source_timestamp"`
 }
 
 type RunLogRetentionPolicy struct {

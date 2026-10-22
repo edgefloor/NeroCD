@@ -271,6 +271,9 @@ func (s *MemoryStore) GetLeaseForCompletion(_ context.Context, leaseID, runnerID
 func (s *MemoryStore) CreateRunLog(_ context.Context, log domain.RunLog) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.buildLogRunLocked(log.RunID) {
+		return ErrConflict
+	}
 	if s.deploymentBackedRunLocked(log.RunID) {
 		return ErrConflict
 	}
@@ -317,6 +320,9 @@ func (s *MemoryStore) CreateRunLogForLease(_ context.Context, log domain.RunLog,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.buildLogRunLocked(log.RunID) {
+		return domain.RunLog{}, ErrConflict
+	}
 	for _, lease := range s.leases {
 		if lease.ID == leaseID && lease.RunID == log.RunID && lease.RunnerID == runnerID && lease.Attempt == attempt && lease.Fence == fence && lease.Status == domain.LeaseActive && lease.ExpiresAt.After(now) {
 			s.createRunLogLocked(log)
@@ -330,6 +336,9 @@ func (s *MemoryStore) CreateRunLogForLease(_ context.Context, log domain.RunLog,
 func (s *MemoryStore) CreateRunLogsForLease(_ context.Context, logs []domain.RunLog, runID, runnerID, leaseID string, attempt int, fence string, now time.Time) ([]domain.RunLog, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.buildLogRunLocked(runID) {
+		return nil, ErrConflict
+	}
 	identityMatches := false
 	for _, lease := range s.leases {
 		if lease.ID == leaseID && lease.RunID == runID && lease.RunnerID == runnerID && lease.Attempt == attempt && lease.Fence == fence {
