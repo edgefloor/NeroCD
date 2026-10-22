@@ -111,6 +111,30 @@ func (q *Queries) CreateResource(ctx context.Context, arg CreateResourceParams) 
 	return i, err
 }
 
+const getExactResourceGitSource = `-- name: GetExactResourceGitSource :one
+SELECT v.body FROM hosting_build_source_versions v JOIN hosting_build_sources h ON h.id=v.source_id
+WHERE v.source_id=$1 AND v.generation=$2 AND h.resource_id=$3 AND h.project_id=$4
+`
+
+type GetExactResourceGitSourceParams struct {
+	SourceID   string `json:"source_id"`
+	Generation int64  `json:"generation"`
+	ResourceID string `json:"resource_id"`
+	ProjectID  string `json:"project_id"`
+}
+
+func (q *Queries) GetExactResourceGitSource(ctx context.Context, arg GetExactResourceGitSourceParams) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, getExactResourceGitSource,
+		arg.SourceID,
+		arg.Generation,
+		arg.ResourceID,
+		arg.ProjectID,
+	)
+	var body json.RawMessage
+	err := row.Scan(&body)
+	return body, err
+}
+
 const getProjectEnvironment = `-- name: GetProjectEnvironment :one
 SELECT id, project_id, name, created_at FROM project_environments WHERE id=$1
 `
@@ -229,6 +253,28 @@ func (q *Queries) ListResources(ctx context.Context, arg ListResourcesParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockResourceConfiguration = `-- name: LockResourceConfiguration :one
+SELECT id, project_id, project_environment_id, name, kind, source, generation, created_by, created_at, updated_at FROM resources WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockResourceConfiguration(ctx context.Context, id string) (Resource, error) {
+	row := q.db.QueryRow(ctx, lockResourceConfiguration, id)
+	var i Resource
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ProjectEnvironmentID,
+		&i.Name,
+		&i.Kind,
+		&i.Source,
+		&i.Generation,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateResource = `-- name: UpdateResource :one

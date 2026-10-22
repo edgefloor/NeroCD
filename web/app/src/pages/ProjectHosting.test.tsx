@@ -172,3 +172,66 @@ test("late environment responses cannot leak the previous project's form or sele
   fireEvent.click(screen.getByRole("button", { name: "Second environment" }));
   await waitFor(() => expect(api.listResources).toHaveBeenCalledWith({ project_id: "two", project_environment_id: "two-env", limit: 20, offset: 0 }, expect.anything()));
 });
+
+const gitResource: api.Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 2, repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
+test("Git creation sends public configuration without source identity and preserves rejected drafts", async () => {
+ setup(); await selectEnvironment();
+ const form = screen.getByRole("form", { name: "Create application" });
+ fireEvent.change(within(form).getByLabelText("Application source"), { target: { value: "git" } });
+ expect(within(form).queryByLabelText("Image reference")).toBeNull();
+ fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "Git web" } });
+ fireEvent.change(within(form).getByLabelText("Git repository URL"), { target: { value: "https://github.com/acme/web" } });
+ fireEvent.change(within(form).getByLabelText("Build strategy"), { target: { value: "static" } });
+ fireEvent.change(within(form).getByLabelText("Publish directory"), { target: { value: "public" } });
+ fireEvent.click(within(form).getByLabelText("SPA fallback"));
+ vi.mocked(api.createResource).mockRejectedValue(new ApiError(503, "unavailable", "git-request"));
+ fireEvent.submit(form); await screen.findByRole("alert");
+ expect(api.createResource).toHaveBeenCalledWith({ project_id: "one", project_environment_id: "env", name: "Git web", kind: "application", source: { kind: "git", git: { repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "static", publish_dir: "public", spa_fallback: true } } } });
+ expect(within(form).getByLabelText<HTMLInputElement>("Git repository URL").value).toBe("https://github.com/acme/web");
+});
+test("Git conflict exposes changed saved build settings while retaining the original draft until explicit save", async () => {
+ const original: api.Resource = { ...gitResource, source: { kind: "git", git: { source_id: "source", generation: 2, repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile", context_dir: "old-context", dockerfile_path: "docker/Oldfile", build_target: "old-target" } } } };
+ const current: api.Resource = { ...original, generation: 2, source: { kind: "git", git: { source_id: "source", generation: 3, repository_url: "https://github.com/acme/new-web", requested_ref: "new-ref", credential_kind: "public", settings: { strategy: "static", context_dir: "new-context", publish_dir: "new-public", spa_fallback: true } } } };
+ vi.mocked(api.listResources).mockResolvedValue(page([original]));
+ setup(); const form = await edit();
+ fireEvent.change(within(form).getByLabelText("Git branch, tag, or commit"), { target: { value: "draft" } });
+ vi.mocked(api.updateResource).mockRejectedValueOnce(new ApiError(409, "stale", null)).mockResolvedValueOnce({ ...original, generation: 3 });
+ vi.mocked(api.getResource).mockResolvedValue(current);
+ fireEvent.submit(form); await screen.findByRole("button", { name: "Keep my draft with generation 2" });
+ const review = within(form).getByLabelText("Current Git configuration");
+ for (const [label, value] of [["Current repository URL", "https://github.com/acme/new-web"], ["Current requested ref", "new-ref"], ["Current credential kind", "public"], ["Current source ID", "source"], ["Current source generation", "3"], ["Current build strategy", "static"], ["Current context directory", "new-context"], ["Current Dockerfile path", "Not applicable"], ["Current build target", "Not applicable"], ["Current publish directory", "new-public"], ["Current SPA fallback", "Enabled"]]) {
+  expect(within(review).getByText(label!, { exact: true }).nextElementSibling?.textContent).toBe(value);
+ }
+ expect(within(form).getByLabelText<HTMLInputElement>("Git branch, tag, or commit").value).toBe("draft");
+ expect(within(form).getByLabelText<HTMLSelectElement>("Build strategy").value).toBe("dockerfile");
+ expect(within(form).getByLabelText<HTMLInputElement>("Context directory").value).toBe("old-context");
+ expect(within(form).getByLabelText<HTMLInputElement>("Dockerfile path").value).toBe("docker/Oldfile");
+ expect(within(form).getByLabelText<HTMLInputElement>("Build target").value).toBe("old-target");
+ expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Save configuration" }).disabled).toBe(true);
+ expect(api.updateResource).toHaveBeenCalledTimes(1);
+ fireEvent.click(screen.getByRole("button", { name: "Keep my draft with generation 2" }));
+ expect(api.updateResource).toHaveBeenCalledTimes(1);
+ expect(within(form).getByLabelText<HTMLSelectElement>("Build strategy").value).toBe("dockerfile");
+ expect(within(form).getByLabelText<HTMLInputElement>("Context directory").value).toBe("old-context");
+ fireEvent.submit(form); await screen.findByText("Application configuration updated. Deployment is a separate request.");
+ expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 2, source: { kind: "git", git: { repository_url: "https://github.com/acme/web", requested_ref: "draft", credential_kind: "public", settings: { strategy: "dockerfile", context_dir: "old-context", dockerfile_path: "docker/Oldfile", build_target: "old-target" } } } });
+});
+test.each(["dockerfile", "railpack", "static"] as const)("Git conflict labels absent settings explicitly for %s", async (strategy) => {
+ vi.mocked(api.listResources).mockResolvedValue(page([gitResource]));
+ setup(); const form = await edit();
+ fireEvent.change(within(form).getByLabelText("Git branch, tag, or commit"), { target: { value: "draft" } });
+ vi.mocked(api.updateResource).mockRejectedValue(new ApiError(409, "stale", null));
+ vi.mocked(api.getResource).mockResolvedValue({ ...gitResource, generation: 2, source: { kind: "git", git: { source_id: "source", generation: 3, repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy } } } });
+ fireEvent.submit(form);
+ const review = await screen.findByLabelText("Current Git configuration");
+ for (const [label, value] of [["Current context directory", "Repository root (default)"], ["Current Dockerfile path", strategy === "dockerfile" ? "Dockerfile (default)" : "Not applicable"], ["Current build target", strategy === "dockerfile" ? "Final stage (default)" : "Not applicable"], ["Current publish directory", strategy === "static" ? "Selected context root (default)" : "Not applicable"], ["Current SPA fallback", "Disabled (default)"]]) {
+  expect(within(review).getByText(label!, { exact: true }).nextElementSibling?.textContent).toBe(value);
+ }
+});
+test("viewer reads Git generations without source mutation controls", async () => {
+ vi.mocked(api.listResources).mockResolvedValue(page([gitResource]));
+ setup(false); await selectEnvironment();
+ expect(screen.getByText(/Git source generation 2/)).toBeTruthy();
+ expect(screen.queryByRole("button", { name: "Edit configuration" })).toBeNull();
+ expect(screen.queryByRole("form", { name: "Create application" })).toBeNull();
+});

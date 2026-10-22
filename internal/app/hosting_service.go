@@ -3,6 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"nerocd/internal/hostingjobs"
+	"nerocd/internal/source"
+	"net"
+	"regexp"
+	"sort"
 	"strings"
 
 	"nerocd/internal/auth"
@@ -140,8 +146,10 @@ func (s *Service) CreateResource(ctx context.Context, in ResourceInput) (domain.
 	if in.Kind != "application" {
 		return domain.Resource{}, InvalidInput(errors.New("kind must be application"))
 	}
-	if err = domain.ValidateResourceSource(in.Source); err != nil {
-		return domain.Resource{}, InvalidInput(err)
+	if in.Source.Kind != "git" {
+		if err = domain.ValidateResourceSource(in.Source); err != nil {
+			return domain.Resource{}, InvalidInput(err)
+		}
 	}
 	if in.ProjectEnvironmentID == "" {
 		return domain.Resource{}, InvalidInput(errors.New("project_environment_id is required"))
@@ -159,7 +167,17 @@ func (s *Service) CreateResource(ctx context.Context, in ResourceInput) (domain.
 	if err != nil {
 		return domain.Resource{}, err
 	}
-	return s.hosting.CreateResource(ctx, item, store.WithAudit(audit))
+	opts := []store.MutationOption{store.WithAudit(audit)}
+	if item.Source.Kind == "git" {
+		src, sourceErr := s.publicGitSource(item, in.Source, "", 1)
+		if sourceErr != nil {
+			return domain.Resource{}, sourceErr
+		}
+		item.Source = publicGitResourceSource(src)
+		opts = append(opts, store.WithHostingGitSource(src))
+	}
+	out, err := s.hosting.CreateResource(ctx, item, opts...)
+	return out, gitResourceError(err)
 }
 
 // UpdateResource advances generation for every accepted change, including names.
@@ -184,10 +202,16 @@ func (s *Service) UpdateResource(ctx context.Context, id string, in ResourcePatc
 			return domain.Resource{}, InvalidInput(err)
 		}
 	}
+	originalSource := item.Source
 	if in.Source != nil {
+		if item.Source.Kind != in.Source.Kind {
+			return domain.Resource{}, InvalidInput(errors.New("image and Git source conversion is not supported"))
+		}
 		item.Source = *in.Source
-		if err = domain.ValidateResourceSource(item.Source); err != nil {
-			return domain.Resource{}, InvalidInput(err)
+		if item.Source.Kind != "git" {
+			if err = domain.ValidateResourceSource(item.Source); err != nil {
+				return domain.Resource{}, InvalidInput(err)
+			}
 		}
 	}
 	if item.Generation != in.ExpectedGeneration || item.Generation == 9223372036854775807 {
@@ -198,5 +222,86 @@ func (s *Service) UpdateResource(ctx context.Context, id string, in ResourcePatc
 	if err != nil {
 		return domain.Resource{}, err
 	}
-	return s.hosting.UpdateResource(ctx, item, in.ExpectedGeneration, store.WithAudit(audit))
+	opts := []store.MutationOption{store.WithAudit(audit)}
+	if in.Source != nil && item.Source.Kind == "git" {
+		src, sourceErr := s.publicGitSource(item, *in.Source, originalSource.Git.SourceID, originalSource.Git.Generation)
+		if sourceErr != nil {
+			return domain.Resource{}, sourceErr
+		}
+		item.Source = publicGitResourceSource(src)
+		opts = append(opts, store.WithHostingGitSource(src))
+	}
+	out, err := s.hosting.UpdateResource(ctx, item, in.ExpectedGeneration, opts...)
+	return out, gitResourceError(err)
+}
+
+// ConfigureHostingGitHosts sets the startup-only public HTTPS repository allowlist.
+func (s *Service) ConfigureHostingGitHosts(hosts []string) error {
+	policy, err := PublicHostingGitPolicy(hosts)
+	if err != nil {
+		return err
+	}
+	s.hostingGitPolicy = policy
+	return nil
+}
+
+// PublicHostingGitPolicy validates bounded exact public DNS hosts without network IO.
+func PublicHostingGitPolicy(hosts []string) (source.RepositoryPolicy, error) {
+	if len(hosts) == 0 {
+		hosts = []string{"github.com"}
+	}
+	if len(hosts) > 32 {
+		return source.RepositoryPolicy{}, errors.New("at most 32 Git repository hosts are allowed")
+	}
+	normalized := make([]string, 0, len(hosts))
+	seen := map[string]bool{}
+	label := regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+	for _, host := range hosts {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if len(host) > 253 || !strings.Contains(host, ".") || net.ParseIP(host) != nil || strings.HasSuffix(host, ".") {
+			return source.RepositoryPolicy{}, errors.New("git repository hosts must be exact public DNS names")
+		}
+		for _, part := range strings.Split(host, ".") {
+			if !label.MatchString(part) {
+				return source.RepositoryPolicy{}, errors.New("invalid Git repository host")
+			}
+		}
+		if !seen[host] {
+			normalized = append(normalized, host)
+			seen[host] = true
+		}
+	}
+	sort.Strings(normalized)
+	p := source.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https"}, AllowedHosts: normalized}
+	return p, p.ValidatePolicy()
+}
+func (s *Service) publicGitSource(item domain.Resource, input domain.ResourceSource, id string, generation int64) (domain.HostingGitSource, error) {
+	if input.Git == nil || input.Image.Reference != "" || input.Git.SourceID != "" || input.Git.Generation != 0 {
+		return domain.HostingGitSource{}, InvalidInput(errors.New("git input must contain configuration only"))
+	}
+	c := input.Git.GitResourceConfiguration
+	if c.CredentialKind != "public" {
+		return domain.HostingGitSource{}, InvalidInput(errors.New("private Git credentials and SSH are not supported by resource configuration yet"))
+	}
+	if id == "" {
+		var err error
+		id, err = prefixedID("hsrc")
+		if err != nil {
+			return domain.HostingGitSource{}, err
+		}
+	}
+	src := domain.HostingGitSource{ID: id, ResourceID: item.ID, ProjectID: item.ProjectID, Generation: generation, RepositoryURL: c.RepositoryURL, RequestedRef: c.RequestedRef, CredentialKind: c.CredentialKind, Settings: c.Settings, Policy: s.hostingGitPolicy}
+	if err := domain.ValidateHostingGitSource(src); err != nil {
+		return src, InvalidInput(err)
+	}
+	return src, nil
+}
+func publicGitResourceSource(src domain.HostingGitSource) domain.ResourceSource {
+	return domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, Settings: src.Settings}}}
+}
+func gitResourceError(err error) error {
+	if errors.Is(err, store.ErrGitResourceUnavailable) {
+		return fmt.Errorf("git resource configuration requires PostgreSQL: %w", hostingjobs.ErrUnavailable)
+	}
+	return err
 }

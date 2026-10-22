@@ -39,6 +39,7 @@ type Service struct {
 	serviceAccounts      store.ServiceAccountRepository
 	projects             store.ProjectRepository
 	hosting              store.HostingRepository
+	hostingGitPolicy     source.RepositoryPolicy
 	destinations         store.DestinationRepository
 	managedSecrets       store.ManagedSecretRepository
 	secretKeyring        *secretcrypto.Keyring
@@ -174,6 +175,7 @@ func NewService(deps Dependencies) (*Service, error) {
 		serviceAccounts:      deps.ServiceAccounts,
 		projects:             deps.Projects,
 		hosting:              deps.Hosting,
+		hostingGitPolicy:     source.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https"}, AllowedHosts: []string{"github.com"}},
 		destinations:         deps.Destinations,
 		managedSecrets:       deps.ManagedSecrets,
 		secretKeyring:        deps.SecretKeyring,

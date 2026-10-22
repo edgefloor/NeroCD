@@ -7,7 +7,8 @@ import "nerocd/internal/domain"
 type MutationOption func(*mutationOptions)
 
 type mutationOptions struct {
-	audit *domain.AuditEvent
+	audit     *domain.AuditEvent
+	gitSource *domain.HostingGitSource
 }
 
 // WithAudit records the event in the same transaction (PostgreSQL) or under
@@ -26,4 +27,19 @@ func resolveMutationOptions(opts []MutationOption) *domain.AuditEvent {
 		}
 	}
 	return options.audit
+}
+
+// WithHostingGitSource supplies trusted configuration to the atomic resource command.
+// It never authorizes an independent source write.
+func WithHostingGitSource(source domain.HostingGitSource) MutationOption {
+	return func(options *mutationOptions) { options.gitSource = &source }
+}
+func resourceMutationOptions(opts []MutationOption) mutationOptions {
+	var value mutationOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&value)
+		}
+	}
+	return value
 }

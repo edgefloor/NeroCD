@@ -83,3 +83,32 @@ func TestHostingAPI(t *testing.T) {
 	request("GET", "/api/v1/resources/missing", "", token, 404)
 	request("POST", "/api/v1/resources", strings.Replace(create, "localhost:5000/acme/web:v1", "nginx", 1), token, 400)
 }
+
+func TestGitResourceAPIStrictInputAndMemoryUnavailable(t *testing.T) {
+	server, _ := newTestServer()
+	token := createTestSession(t, server)
+	request := func(body string, want int) {
+		t.Helper()
+		req := httptest.NewRequest("POST", "/api/v1/resources", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Fatal(rec.Code, rec.Body.String())
+		}
+	}
+	req := httptest.NewRequest("POST", "/api/v1/project-environments", strings.NewReader(`{"project_id":"proj_platform","name":"git"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	var env domain.ProjectEnvironment
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || rec.Code != 201 {
+		t.Fatal(rec.Code, err)
+	}
+	for _, source := range []string{`null`, `{"kind":"git","git":null}`, `{"kind":"git","git":{"source_id":"caller"}}`, `{"kind":"git","git":{"repository_policy":{}}}`, `{"kind":"git","git":{"generation":1}}`, `{"kind":"image","image":{"reference":"nginx:1"},"git":{}}`} {
+		request(fmt.Sprintf(`{"project_id":"proj_platform","project_environment_id":%q,"name":"git","kind":"application","source":%s}`, env.ID, source), 400)
+	}
+	request(fmt.Sprintf(`{"project_id":"proj_platform","project_environment_id":%q,"name":"git","kind":"application","source":{"kind":"git","git":{"repository_url":"https://github.com/acme/web","requested_ref":"main","credential_kind":"public","settings":{"strategy":"dockerfile"}}}}`, env.ID), 503)
+}

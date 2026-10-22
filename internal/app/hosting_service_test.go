@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"nerocd/internal/hostingjobs"
 	"testing"
 
 	"nerocd/internal/auth"
@@ -158,3 +159,31 @@ func TestHostingServiceRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func hostingString(value string) *string { return &value }
+
+func TestGitResourcePublicPolicyAndMemoryUnavailable(t *testing.T) {
+	service, mem := newServiceAccountTestService(t)
+	ctx := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	env, err := service.CreateProjectEnvironment(ctx, ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ResourceInput{ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, Name: "Git web", Kind: "application", Source: domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: "https://github.com/acme/web", RequestedRef: "main", CredentialKind: "public", Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}}}}
+	if _, err = service.CreateResource(ctx, input); !errors.Is(err, hostingjobs.ErrUnavailable) {
+		t.Fatal("memory pretended durable save", err)
+	}
+	items, err := mem.ListResources(ctx, env.ProjectID, env.ID, store.Page{})
+	if err != nil || len(items.Items) != 0 {
+		t.Fatal("partial memory mutation", items, err)
+	}
+	for _, url := range []string{"https://gitlab.com/acme/web", "ssh://git@github.com/acme/web", "http://github.com/acme/web", "https://user:password@github.com/acme/web"} {
+		input.Source.Git.RepositoryURL = url
+		if _, err = service.CreateResource(ctx, input); err == nil || errors.Is(err, hostingjobs.ErrUnavailable) {
+			t.Fatal("invalid public source admitted", url, err)
+		}
+	}
+	input.Source.Git.RepositoryURL = "https://github.com/acme/web"
+	input.Source.Git.CredentialKind = "https_basic"
+	if _, err = service.CreateResource(ctx, input); err == nil || errors.Is(err, hostingjobs.ErrUnavailable) {
+		t.Fatal("unsupported credentials admitted", err)
+	}
+}

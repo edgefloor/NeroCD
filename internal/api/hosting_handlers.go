@@ -40,10 +40,17 @@ func (s *Server) resourcesHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, paginatedResult(result))
 		return
 	}
-	var in app.ResourceInput
-	if !decodeBody(w, r, &in) {
+	var req struct {
+		ProjectID            string                     `json:"project_id"`
+		ProjectEnvironmentID string                     `json:"project_environment_id"`
+		Name                 string                     `json:"name"`
+		Kind                 string                     `json:"kind"`
+		Source               domain.ResourceSourceInput `json:"source"`
+	}
+	if !decodeBody(w, r, &req) {
 		return
 	}
+	in := app.ResourceInput{ProjectID: req.ProjectID, ProjectEnvironmentID: req.ProjectEnvironmentID, Name: req.Name, Kind: req.Kind, Source: req.Source.Source()}
 	result, err := s.app.CreateResource(r.Context(), in)
 	if err != nil {
 		writeError(w, err)
@@ -81,12 +88,13 @@ func (s *Server) resourceByID(w http.ResponseWriter, r *http.Request) {
 		in.Name = &name
 	}
 	if len(req.Source) > 0 {
-		var source domain.ResourceSource
+		var source domain.ResourceSourceInput
 		if err := decodeJSONDocument(bytes.NewReader(req.Source), &source); err != nil {
 			writeErrorEnvelope(w, http.StatusBadRequest, "invalid_request", "invalid source")
 			return
 		}
-		in.Source = &source
+		value := source.Source()
+		in.Source = &value
 	}
 	result, err := s.app.UpdateResource(r.Context(), r.PathValue("id"), in)
 	if err != nil {

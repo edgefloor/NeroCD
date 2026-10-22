@@ -4226,13 +4226,62 @@ components:
           minLength: 1
           maxLength: 512
           description: Repository with an explicit tag or sha256 digest. Registry ports are supported. No registry resolution occurs.
-    ResourceSource:
+    ImageResourceSource:
       type: object
       additionalProperties: false
       required: [kind, image]
       properties:
         kind: {type: string, enum: [image]}
         image: {$ref: "#/components/schemas/ImageSource"}
+    HostingBuildSettings:
+      type: object
+      additionalProperties: false
+      required: [strategy]
+      properties:
+        strategy: {type: string, enum: [dockerfile, railpack, static]}
+        context_dir: {type: string, maxLength: 512}
+        dockerfile_path: {type: string, maxLength: 512}
+        build_target: {type: string, maxLength: 128}
+        publish_dir: {type: string, maxLength: 512}
+        spa_fallback: {type: boolean}
+    GitResourceInput:
+      type: object
+      additionalProperties: false
+      required: [repository_url, requested_ref, credential_kind, settings]
+      properties:
+        repository_url: {type: string, minLength: 1, maxLength: 8192, description: Public HTTPS URL allowed by the server operator. No credentials or query/fragment components.}
+        requested_ref: {type: string, minLength: 1, maxLength: 512}
+        credential_kind: {type: string, enum: [public]}
+        settings: {$ref: "#/components/schemas/HostingBuildSettings"}
+    GitResourceSource:
+      type: object
+      additionalProperties: false
+      required: [source_id, generation, repository_url, requested_ref, credential_kind, settings]
+      properties:
+        source_id: {type: string}
+        generation: {type: integer, format: int64, minimum: 1}
+        repository_url: {type: string}
+        requested_ref: {type: string}
+        credential_kind: {type: string, enum: [public, https_basic, ssh_private_key]}
+        settings: {$ref: "#/components/schemas/HostingBuildSettings"}
+    ResourceSourceInput:
+      oneOf:
+        - {$ref: "#/components/schemas/ImageResourceSource"}
+        - type: object
+          additionalProperties: false
+          required: [kind, git]
+          properties:
+            kind: {type: string, enum: [git]}
+            git: {$ref: "#/components/schemas/GitResourceInput"}
+    ResourceSource:
+      oneOf:
+        - {$ref: "#/components/schemas/ImageResourceSource"}
+        - type: object
+          additionalProperties: false
+          required: [kind, git]
+          properties:
+            kind: {type: string, enum: [git]}
+            git: {$ref: "#/components/schemas/GitResourceSource"}
     ProjectEnvironmentInput:
       type: object
       additionalProperties: false
@@ -4258,7 +4307,7 @@ components:
         project_environment_id: {type: string, minLength: 1}
         name: {type: string, minLength: 1, maxLength: 128}
         kind: {type: string, enum: [application]}
-        source: {$ref: "#/components/schemas/ResourceSource"}
+        source: {$ref: "#/components/schemas/ResourceSourceInput"}
     ResourcePatch:
       type: object
       additionalProperties: false
@@ -4268,7 +4317,7 @@ components:
         - required: [source]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
-        source: {$ref: "#/components/schemas/ResourceSource"}
+        source: {$ref: "#/components/schemas/ResourceSourceInput"}
         expected_generation: {type: integer, format: int64, minimum: 1}
     Resource:
       type: object

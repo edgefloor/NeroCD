@@ -332,3 +332,17 @@ test("fixed-port mode requires explicit interruption acknowledgment and resets i
   expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
   expect(screen.queryByRole("note")).toBeNull();
 });
+
+test("Git configuration keeps operation history visible without image admission controls", async () => {
+ const fetch = backend();
+ client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+ client.setQueryData(queryKeys.principal, { id: "user", roles: ["system_admin"], provider: "local" });
+ client.setQueryData(queryKeys.allProjectMembers, []);
+ const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 1, repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
+ render(<QueryClientProvider client={client}><ResourceDeployments resource={git} writable blocked={false} /></QueryClientProvider>);
+ await screen.findByText("No deployment operations recorded.");
+ expect(screen.getByText(/Git build and deployment are unavailable/)).toBeTruthy();
+ expect(screen.queryByRole("button", { name: "Request image deployment" })).toBeNull();
+ expect(screen.queryByLabelText("Container port")).toBeNull();
+ expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);
+});

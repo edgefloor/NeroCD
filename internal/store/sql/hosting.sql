@@ -18,3 +18,9 @@ VALUES ($1,$2,$3,$4,$5,$6,1,$7,$8,$9) RETURNING *;
 -- name: UpdateResource :one
 UPDATE resources SET name=$2,source=$3,generation=generation+1,updated_at=$4
 WHERE id=$1 AND generation=$5 AND project_id=$6 AND project_environment_id=$7 AND kind=$8 AND created_by=$9 AND created_at=$10 RETURNING *;
+
+-- name: LockResourceConfiguration :one
+SELECT * FROM resources WHERE id=$1 FOR UPDATE;
+-- name: GetExactResourceGitSource :one
+SELECT v.body FROM hosting_build_source_versions v JOIN hosting_build_sources h ON h.id=v.source_id
+WHERE v.source_id=$1 AND v.generation=$2 AND h.resource_id=$3 AND h.project_id=$4;

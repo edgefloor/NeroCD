@@ -206,6 +206,9 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err = json.Unmarshal(source, &desired); err != nil {
 		return domain.HostingOperation{}, err
 	}
+	if desired.Kind != "image" {
+		return domain.HostingOperation{}, ErrConflict
+	}
 	if _, err = domain.NormalizeHostingImage(desired.Image.Reference); err != nil {
 		return domain.HostingOperation{}, ErrConflict
 	}

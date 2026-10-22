@@ -95,20 +95,25 @@ func testHostingDockerAgentAndRiver(t *testing.T, interruption string) {
 				return
 			}
 			if status.Phase == "verifying" && loseLeaseOnVerifying.CompareAndSwap(true, false) {
+				// This injected control-plane event is independent of the runner
+				// request. The lease watcher may cancel that request as soon as
+				// expiry is visible, before the reaper transaction commits.
+				eventCtx, stopEvent := context.WithTimeout(t.Context(), 5*time.Second)
+				defer stopEvent()
 				// Docker has started the owned container. Lose lease authority
 				// before verifying it, while retaining the independent hold.
 				if interruption == "cancel" {
-					admin := auth.WithPrincipal(r.Context(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+					admin := auth.WithPrincipal(eventCtx, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
 					if _, err := service.CancelHostingOperation(admin, status.OperationID); err != nil {
 						t.Error(err)
 						return
 					}
 				} else {
-					if _, err := database.Exec(r.Context(), `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, status.LeaseID); err != nil {
+					if _, err := database.Exec(eventCtx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, status.LeaseID); err != nil {
 						t.Error(err)
 						return
 					}
-					if err := pg.ExpireLeases(r.Context(), time.Now().UTC()); err != nil {
+					if err := pg.ExpireLeases(eventCtx, time.Now().UTC()); err != nil {
 						t.Error(err)
 						return
 					}

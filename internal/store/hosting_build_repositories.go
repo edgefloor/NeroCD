@@ -30,7 +30,6 @@ type HostingBuildCompletion struct {
 // HostingBuildRepository is an inert persistence seam until controllers, public
 // authorization, typed runner admission, and executors are independently wired.
 type HostingBuildRepository interface {
-	ConfigureHostingBuildSource(context.Context, string, int64, domain.HostingGitSource, domain.AuditEvent) (domain.HostingGitSource, error)
 	GetHostingBuildSource(context.Context, string, string) (domain.HostingGitSource, error)
 	CreateHostingSourceGrant(context.Context, string, domain.HostingSourceGrant, domain.AuditEvent) (domain.HostingSourceGrant, error)
 	RevokeHostingSourceGrant(context.Context, string, string, domain.AuditEvent) error
