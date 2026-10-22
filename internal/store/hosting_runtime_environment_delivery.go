@@ -34,7 +34,7 @@ func (a *HostingRuntimeEnvironmentAuthorization) Close() {
 
 // HostingRuntimeEnvironmentRepository never decrypts or authorizes historical replay.
 type HostingRuntimeEnvironmentRepository interface {
-	AuthorizeHostingRuntimeEnvironment(context.Context, string, domain.HostingRuntimeEnvironmentRequest) (HostingRuntimeEnvironmentAuthorization, error)
+	AuthorizeHostingRuntimeEnvironment(context.Context, string, string, domain.HostingRuntimeEnvironmentRequest) (HostingRuntimeEnvironmentAuthorization, error)
 }
 
 var _ HostingRuntimeEnvironmentRepository = (*PostgresStore)(nil)

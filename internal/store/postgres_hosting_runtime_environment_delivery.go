@@ -28,8 +28,8 @@ type runtimeDeliveryAudit struct {
 }
 
 // AuthorizeHostingRuntimeEnvironment commits metadata audit before releasing encrypted records.
-func (s *PostgresStore) AuthorizeHostingRuntimeEnvironment(ctx context.Context, runner string, in domain.HostingRuntimeEnvironmentRequest) (result HostingRuntimeEnvironmentAuthorization, err error) {
-	if runner == "" || hostingruntimeprotocol.ValidateRequest(in) != nil {
+func (s *PostgresStore) AuthorizeHostingRuntimeEnvironment(ctx context.Context, runner, credentialHash string, in domain.HostingRuntimeEnvironmentRequest) (result HostingRuntimeEnvironmentAuthorization, err error) {
+	if runner == "" || credentialHash == "" || hostingruntimeprotocol.ValidateRequest(in) != nil {
 		return result, ErrConflict
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -69,6 +69,11 @@ func (s *PostgresStore) AuthorizeHostingRuntimeEnvironment(ctx context.Context, 
 	}
 	if err = hostingOperationTargetGate(ctx, tx, op, false); err != nil {
 		return result, err
+	}
+	// The target gate has acquired the runner SHARE lock in the established
+	// placement order. Bind the bearer authenticated by the delivery service.
+	if _, err = q.CheckHostingRuntimeEnvironmentCredential(ctx, sqlcgen.CheckHostingRuntimeEnvironmentCredentialParams{RunnerID: runner, CredentialHash: credentialHash}); err != nil {
+		return result, ErrConflict
 	}
 	row, err := q.GetHostingRuntimeVersion(ctx, sqlcgen.GetHostingRuntimeVersionParams{ResourceID: op.ResourceID, Generation: in.RuntimeConfiguration.Generation})
 	if err != nil {
@@ -137,6 +142,9 @@ func (s *PostgresStore) AuthorizeHostingRuntimeEnvironment(ctx context.Context, 
 	}
 	if err = finalHostingRuntimeAuthority(ctx, tx, runner, in.Authority, op); err != nil {
 		return result, err
+	}
+	if _, err = q.CheckHostingRuntimeEnvironmentCredential(ctx, sqlcgen.CheckHostingRuntimeEnvironmentCredentialParams{RunnerID: runner, CredentialHash: credentialHash}); err != nil {
+		return result, ErrConflict
 	}
 	now, err := q.HostingRuntimeEnvironmentDeliveryNow(ctx)
 	if err != nil {

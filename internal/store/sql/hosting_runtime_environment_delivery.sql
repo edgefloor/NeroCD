@@ -9,3 +9,7 @@ SELECT clock_timestamp()::timestamptz AS database_now,expires_at FROM run_leases
 
 -- name: HostingRuntimeEnvironmentDeliveryNow :one
 SELECT clock_timestamp()::timestamptz;
+
+-- name: CheckHostingRuntimeEnvironmentCredential :one
+SELECT id FROM runners WHERE id=sqlc.arg(runner_id) AND token_hash=sqlc.arg(credential_hash)
+ AND token_hash<>'' AND status='active' FOR SHARE;
