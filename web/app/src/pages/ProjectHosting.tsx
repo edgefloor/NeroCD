@@ -12,6 +12,7 @@ import { ResourceRoutes } from "./ResourceRoutes";
 import { GitApplicationFields, emptyGitDraft, type GitApplicationDraft } from "./GitApplicationFields";
 import { ResourceBuilds } from "./ResourceBuilds";
 import { ResourceDeployments } from "./ResourceDeployments";
+import { ResourceRuntimeConfiguration } from "./ResourceRuntimeConfiguration";
 
 const pageSize = 20;
 const selectClass = "h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm";
@@ -154,6 +155,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · {resource.source.git.credential_kind === "https_basic" ? "Private HTTPS" : "Public Git"} build operations available; artifact deployment is separate</p> : null}
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceBuilds resource={resource} writable={writable} blocked={blocked || resources.isError} />
+      <ResourceRuntimeConfiguration resource={resource} blocked={blocked || resources.isError || resources.isPending} />
       <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceRoutes resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {canWrite && editing?.id !== resource.id ? <Button type="button" variant="outline" disabled={busy || Boolean(editing)} onClick={() => { setEditing(resource); setNotice(""); }}>Edit configuration</Button> : null}
@@ -215,7 +217,7 @@ export function ProjectHosting({ projects, canOperateProject, unavailable = fals
   const [projectID, setProjectID] = useState("");
   const project = projects.find((item) => item.id === projectID);
   return <Card className="min-w-0" role="region" aria-label="Project hosting">
-    <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save image or public Git application configuration in shared project environments, choose placement, and request image deployment separately. Operation history records outcomes; it does not provide continuous runtime health.</p></CardHeader>
+    <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save image or Git application configuration in shared project environments, choose placement, and request image deployment separately. Operation history records outcomes; it does not provide continuous runtime health.</p></CardHeader>
     <CardContent className="min-w-0 space-y-5">
       <div className="max-w-xl space-y-1.5"><label htmlFor={`${id}-project`}>Hosting project</label><select id={`${id}-project`} className={selectClass} value={project?.id ?? ""} onChange={(event) => setProjectID(event.target.value)}><option value="">Select a project</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
       {project ? <><p className="break-all text-xs text-muted-foreground">Project ID for destination grants: {project.id}</p><ProjectEnvironments key={project.id} projectID={project.id} writable={canOperateProject(project.id)} blocked={unavailable} /></> : <p className="text-sm text-muted-foreground">Choose a project to manage or view saved configuration.</p>}

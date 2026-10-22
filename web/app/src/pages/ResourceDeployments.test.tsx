@@ -26,9 +26,12 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
   const fetch = vi.fn(async (url: string, options: RequestInit) => {
     const response = await handler?.(url, options);
     if (response) return response;
+    if (url.includes("/project-members")) return json({ items: client.getQueryData(queryKeys.allProjectMembers) ?? [], limit: 100, offset: 0, count: (client.getQueryData<unknown[]>(queryKeys.allProjectMembers) ?? []).length, total: (client.getQueryData<unknown[]>(queryKeys.allProjectMembers) ?? []).length });
+    if (url.endsWith("/me")) return json(client.getQueryData(queryKeys.principal));
+    if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: { resource_id: "resource", project_id: resource.project_id, resource_generation: 1, runtime_generation: 0, entries: [] } });
     if (url.endsWith("/binding")) return json(binding);
     if (url.includes("/retained-releases")) return json([]);
-    if (url.includes("/deployments")) return options.method === "POST" ? json(operation, 202) : json(page());
+    if (url.includes("/deployments")) return options.method === "POST" ? json({ ...operation, snapshot: { ...operation.snapshot, ...(JSON.parse(options.body as string).expected_runtime_configuration_generation ? { runtime_configuration: { generation: JSON.parse(options.body as string).expected_runtime_configuration_generation, hash: "reference-hash" } } : {}) } }, 202) : json(page());
     if (url.includes("/hosting-operations/")) return json(operation);
     if (url === "/api/v1/resources/resource") return json({ ...resource, generation: 2 });
     throw new Error(`Unexpected test endpoint ${url}`);
@@ -38,6 +41,7 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
 async function request() {
   await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request image deployment" }).disabled).toBe(false));
   fireEvent.submit(screen.getByRole("form", { name: "Deploy image for Web" }));
+  await act(async () => { await Promise.resolve(); });
 }
 function acknowledge() { fireEvent.click(screen.getByLabelText(/I understand that/)); }
 test("viewer reads persisted history and results without request, cancel, or reconcile controls", async () => {
@@ -84,7 +88,7 @@ test("rapid duplicate submissions cannot issue separate deployment intents", asy
   await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request image deployment" }).disabled).toBe(false));
   const form = screen.getByRole("form", { name: "Deploy image for Web" });
   fireEvent.submit(form); fireEvent.submit(form);
-  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1);
+  await waitFor(() => expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1));
   await act(async () => resolve(json(operation, 202)));
   await screen.findByRole("region", { name: "Deployment operation detail" });
 });
@@ -149,7 +153,7 @@ test("late mutation response cannot select an operation after switching project 
   await act(async () => resolve(json(operation, 202)));
   expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
   expect(screen.queryByText("hop_one")).toBeNull();
-  expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
+  expect(screen.queryByLabelText(/I understand that/)).toBeNull();
 });
 test("restore-held admission preserves input without a generation or retry flow", async () => {
   const fetch = backend((url, options) => url.includes("/deployments") && options.method === "POST" ? json({ code: "hosting_restore_held", error: "restored ownership is held" }, 409) : undefined);
@@ -280,7 +284,7 @@ test.each(["permission", "principal"])("cleanup intent and frozen retry end on %
     expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull();
     view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable blocked={false} /></QueryClientProvider>);
   } else {
-    await act(async () => { client.setQueryData(queryKeys.principal, { id: "another-maintainer", provider: "oidc", roles: [] }); });
+    await act(async () => { client.setQueryData(queryKeys.principal, { id: "another-maintainer", provider: "oidc", roles: [] }); client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "another-maintainer", role: "maintainer" }]); });
     await waitFor(() => expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull());
   }
   expect(screen.queryByRole("button", { name: "Retry identical cleanup request" })).toBeNull();
@@ -302,7 +306,7 @@ test.each(["permission", "principal"])("late cleanup response cannot restore int
     view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={false} blocked={false} /></QueryClientProvider>);
     view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable blocked={false} /></QueryClientProvider>);
   } else {
-    await act(async () => { client.setQueryData(queryKeys.principal, { id: "another-maintainer", provider: "oidc", roles: [] }); });
+    await act(async () => { client.setQueryData(queryKeys.principal, { id: "another-maintainer", provider: "oidc", roles: [] }); client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "another-maintainer", role: "maintainer" }]); });
     await waitFor(() => expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull());
   }
   await act(async () => { resolve(json(cleanupOperation, 202)); });
@@ -340,8 +344,41 @@ test("Git configuration keeps operation history visible without image admission 
  const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 1, repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
  render(<QueryClientProvider client={client}><ResourceDeployments resource={git} writable blocked={false} /></QueryClientProvider>);
  await screen.findByText("No deployment operations recorded.");
- expect(screen.getByText(/Use Public Git builds/)).toBeTruthy();
+ expect(screen.getByText(/Use Git builds/)).toBeTruthy();
  expect(screen.queryByRole("button", { name: "Request image deployment" })).toBeNull();
  expect(screen.queryByLabelText("Container port")).toBeNull();
  expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);
+});
+
+test("nonzero runtime generation is freshly captured once and frozen across lost-response retries", async () => {
+  let generation = 3, reads = 0, writes = 0;
+  const fetch = backend((url, options) => url.endsWith("/runtime-configuration") ? (reads++, json({ runtime_configuration: { resource_id: "resource", project_id: "project", runtime_generation: generation, resource_generation: 1, entries: [] } })) : url.endsWith("/deployments") && options.method === "POST" && ++writes === 1 ? Promise.reject(new TypeError("lost")) : undefined);
+  setup(); acknowledge(); await request(); await screen.findByText(/The connection ended without a confirmed response/);
+  generation = 5; fireEvent.submit(screen.getByRole("form", { name: "Deploy image for Web" })); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const bodies = fetch.mock.calls.filter(([, options]) => options.method === "POST"); expect(reads).toBe(1); expect(bodies[0]![1].body).toBe(bodies[1]![1].body); expect(JSON.parse(bodies[1]![1].body as string)).toMatchObject({ expected_runtime_configuration_generation: 3 });
+});
+test.each([503, 403])("runtime metadata HTTP %s cannot create a deployment request", async (status) => {
+  const fetch = backend((url) => url.endsWith("/runtime-configuration") ? json({}, status) : undefined); setup(); acknowledge(); await request(); await screen.findByText(status === 403 ? /Deployment permission is unavailable/ : /Unable to verify saved runtime configuration/); expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);
+});
+test("pending membership refresh aborts deployment and clears its frozen request", async () => {
+  let resolve!: (response: Response) => void;
+  const fetch = backend((url, options) => options.method === "POST" ? new Promise<Response>((done) => { resolve = done; }) : url.includes("/project-members") ? new Promise<Response>(() => {}) : undefined);
+  setup(); acknowledge(); await request(); await waitFor(() => expect(resolve).toBeTypeOf("function"));
+  const input = fetch.mock.calls.find(([, options]) => options.method === "POST")![1];
+  await act(async () => { void client.invalidateQueries({ queryKey: queryKeys.allProjectMembers }); });
+  await screen.findByText(/Deployment access is pending or unavailable/); expect(input.signal?.aborted).toBe(true);
+  await act(async () => resolve(json(operation, 202))); expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+});
+
+test("stale runtime generation requires explicit separate review and fresh capture under a new key", async () => {
+  let generation = 3, writes = 0;
+  const fetch = backend((url, options) => url.endsWith("/runtime-configuration") ? json({ runtime_configuration: { resource_id: "resource", project_id: "project", resource_generation: 1, runtime_generation: generation, entries: [] } }) : url.endsWith("/deployments") && options.method === "POST" && ++writes === 1 ? json({}, 409) : undefined);
+  setup(); acknowledge(); await request(); await screen.findByText(/Current saved configuration: generation 2/); generation = 4;
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1);
+  fireEvent.click(screen.getByLabelText(/I reviewed history/)); fireEvent.click(screen.getByRole("button", { name: "Use reviewed configuration for a new request" })); acknowledge(); await request(); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const inputs = fetch.mock.calls.filter(([, options]) => options.method === "POST").map(([, options]) => JSON.parse(options.body as string)); expect(inputs[0].expected_runtime_configuration_generation).toBe(3); expect(inputs[1].expected_runtime_configuration_generation).toBe(4); expect(inputs[1].idempotency_key).not.toBe(inputs[0].idempotency_key);
+});
+test("deployment response with another runtime generation cannot select an operation", async () => {
+  backend((url, options) => url.endsWith("/runtime-configuration") ? json({ runtime_configuration: { resource_id: "resource", project_id: "project", resource_generation: 1, runtime_generation: 3, entries: [] } }) : url.endsWith("/deployments") && options.method === "POST" ? json({ ...operation, snapshot: { ...operation.snapshot, runtime_configuration: { generation: 4, hash: "wrong" } } }, 202) : undefined);
+  setup(); acknowledge(); await request(); await screen.findByText(/The connection ended without a confirmed response/); expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull(); expect(screen.getByText(/resource\/runtime generations 1\/3/)).toBeTruthy();
 });

@@ -11,18 +11,22 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
@@ -497,6 +501,10 @@ func TestHostingRuntimeEnvironmentCompiledRunner(t *testing.T) {
 	if e = os.WriteFile(buildConfigFile, encoded, 0600); e != nil {
 		t.Fatal(e)
 	}
+	if os.Getenv("NEROCD_HOSTING_ENVIRONMENT_BROWSER") == "1" {
+		runHostingRuntimeEnvironmentBrowser(ctx, t, runtimeEnvironmentBrowserFixture{service: service, store: pg, database: database, environment: env, gitResource: gitResource, buildID: build.ID, destination: target.Destination.ID, image: image, imageID: imageID, secretID: secret.ID, secretValue: secretValue, controlled: controlled, run: run})
+		return
+	}
 	localConfiguration := save(gitResource.ID, 1, 0, entries)
 	localOp, e := service.RequestHostingBuildDeployment(admin, gitResource.ID, domain.HostingBuildDeploymentInput{BuildID: build.ID, ExpectedGeneration: localConfiguration.ResourceGeneration, ExpectedRuntimeConfigurationGeneration: localConfiguration.RuntimeGeneration, ExpectedSourceGeneration: 1, IdempotencyKey: "runtime-local-artifact", ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 2}})
 	if e != nil {
@@ -634,4 +642,302 @@ func TestHostingRuntimeEnvironmentCompiledRunner(t *testing.T) {
 		t.Fatal("audit contains selected secret")
 	}
 	t.Log("compiled Linux runner: TLS protected delivery, same-ID response-loss retry, literal/managed digest proof, readiness failure preserved previous container/environment, config changes, revocation and terminated authority rejected before admission; rotation retained pinned v1, restart evidence-only; controlled output/journal/audit/argv scans passed")
+}
+
+type runtimeEnvironmentBrowserFixture struct {
+	service     *app.Service
+	store       *store.PostgresStore
+	database    *pgxpool.Pool
+	environment domain.ProjectEnvironment
+	gitResource domain.Resource
+	buildID     string
+	destination string
+	image       string
+	imageID     string
+	secretID    string
+	secretValue string
+	controlled  *runtimeFixtureLog
+	run         func(...string) ([]byte, error)
+}
+
+// This extends the existing compiled-runner gate. Infrastructure, accounts and
+// trusted persisted artifact provenance are setup; runtime saves and deployment
+// admissions must traverse the actual browser session and API.
+func runHostingRuntimeEnvironmentBrowser(ctx context.Context, t *testing.T, fixture runtimeEnvironmentBrowserFixture) {
+	t.Helper()
+	origin := os.Getenv("NEROCD_HOSTING_ENVIRONMENT_BROWSER_ORIGIN")
+	parsed, err := url.Parse(origin)
+	port, portErr := strconv.Atoi(parsedPort(parsed))
+	if err != nil || portErr != nil || port < 1 || port > 65535 || parsed.Scheme != "http" || parsed.Host != "127.0.0.1:"+strconv.Itoa(port) || origin != "http://"+parsed.Host {
+		t.Fatal("browser fixture requires an exact loopback HTTP origin")
+	}
+	admin := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+	owner, err := fixture.service.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: "runtime-owner@example.local", Name: "Runtime Owner", Password: "runtime-browser-fixture-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range []app.ProjectMemberInput{{ProjectID: fixture.environment.ProjectID, Email: owner.Email, Role: "owner"}, {ProjectID: fixture.environment.ProjectID, Email: "viewer@example.local", Role: "viewer"}} {
+		if _, err = fixture.service.UpsertProjectMember(admin, member); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Exercise persisted owner membership, not a system-admin UI bypass.
+	if _, err = fixture.database.Exec(ctx, `UPDATE users SET global_role='user' WHERE id=$1`, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	imageResource, err := fixture.service.CreateResource(admin, app.ResourceInput{ProjectID: fixture.environment.ProjectID, ProjectEnvironmentID: fixture.environment.ID, Name: "Runtime browser image", Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: fixture.image}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = fixture.service.BindResourceDestination(admin, imageResource.ID, app.ResourceBindingInput{DestinationID: fixture.destination}); err != nil {
+		t.Fatal(err)
+	}
+	browserAPI := NewServerWithConfig(fixture.service, slog.New(slog.NewTextHandler(fixture.controlled, nil)), web.Static(), ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
+	browserCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	nonce := make([]byte, 16)
+	if _, err = rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	prefix := "/api/v1/fixture/runtime-environment/" + hex.EncodeToString(nonce)
+	done, workerDone := make(chan struct{}), make(chan struct{})
+	results := make(chan error, 1)
+	queue := make(chan string)
+	var finish sync.Once
+	var seen sync.Map
+	var mu sync.Mutex
+	operations := map[string]domain.HostingOperation{}
+	saveBodies := map[string][32]byte{}
+	var successfulSaves, saveReplays, deploymentReplays, conflicts, reveals int
+	proof := func(requestCtx context.Context, operation domain.HostingOperation) (map[string]string, error) {
+		if operation.Result == nil || operation.Result.ContainerID == "" {
+			return nil, fmt.Errorf("missing runtime container result")
+		}
+		request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/", operation.Snapshot.HostPort), nil)
+		if err != nil {
+			return nil, err
+		}
+		response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+		if err != nil {
+			return nil, fmt.Errorf("runtime digest endpoint unavailable")
+		}
+		defer func() { _ = response.Body.Close() }()
+		var digest map[string]string
+		if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 16<<10)).Decode(&digest) != nil || len(digest) != 2 {
+			return nil, fmt.Errorf("invalid runtime digest proof")
+		}
+		for name, value := range map[string]string{"APP_VISIBLE": "browser literal #=$ 東京  ", "APP_SECRET": fixture.secretValue} {
+			sum := sha256.Sum256([]byte(value))
+			if digest[name] != hex.EncodeToString(sum[:]) {
+				return nil, fmt.Errorf("runtime digest mismatch for %s", name)
+			}
+		}
+		return digest, nil
+	}
+	ownerOnly := browserAPI.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, err := fixture.service.CurrentPrincipal(r.Context())
+		if err != nil || principal.ID != owner.ID || (r.Method != http.MethodGet && r.Method != http.MethodPost) || r.Header.Get("Origin") != origin {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.URL.Path == prefix+"/complete" && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusNoContent)
+			finish.Do(func() { close(done) })
+			return
+		}
+		if id, ok := strings.CutPrefix(r.URL.Path, prefix+"/proof/"); ok && r.Method == http.MethodGet {
+			mu.Lock()
+			operation, exists := operations[id]
+			mu.Unlock()
+			if !exists || operation.State != "succeeded" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			digests, err := proof(r.Context(), operation)
+			if err != nil {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"digests": digests, "verified": true, "container_id": operation.Result.ContainerID, "image_id": operation.Result.ImageID})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	exposed := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, prefix+"/") {
+			ownerOnly.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/reveal") {
+			mu.Lock()
+			reveals++
+			mu.Unlock()
+		}
+		isSave := r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/runtime-configuration")
+		isDeployment := r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/deployments") || strings.HasSuffix(r.URL.Path, "/deployments/from-build"))
+		if !isSave && !isDeployment {
+			browserAPI.ServeHTTP(w, r)
+			return
+		}
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+		if err != nil || bytes.Contains(raw, []byte(fixture.secretValue)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		recorded := httptest.NewRecorder()
+		browserAPI.ServeHTTP(recorded, r)
+		for key, values := range recorded.Header() {
+			w.Header()[key] = values
+		}
+		w.WriteHeader(recorded.Code)
+		_, _ = w.Write(recorded.Body.Bytes())
+		if isSave && recorded.Code == http.StatusOK {
+			var input domain.HostingRuntimeConfigurationInput
+			if json.Unmarshal(raw, &input) != nil {
+				return
+			}
+			mu.Lock()
+			successfulSaves++
+			if old, exists := saveBodies[input.RequestID]; exists {
+				if old != sha256.Sum256(raw) {
+					t.Error("browser save retry changed exact body")
+				}
+				saveReplays++
+			}
+			saveBodies[input.RequestID] = sha256.Sum256(raw)
+			mu.Unlock()
+		}
+		if isDeployment && recorded.Code == http.StatusConflict {
+			mu.Lock()
+			conflicts++
+			mu.Unlock()
+		}
+		if !isDeployment || recorded.Code != http.StatusAccepted {
+			return
+		}
+		var operation domain.HostingOperation
+		if json.Unmarshal(recorded.Body.Bytes(), &operation) != nil {
+			return
+		}
+		if _, duplicate := seen.LoadOrStore(operation.ID, true); duplicate {
+			mu.Lock()
+			deploymentReplays++
+			mu.Unlock()
+			return
+		}
+		select {
+		case queue <- operation.ID:
+		case <-browserCtx.Done():
+		}
+	}))
+	listener, err := net.Listen("tcp", "0.0.0.0:18080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exposed.Listener = listener
+	exposed.Start()
+	t.Cleanup(exposed.Close)
+	go func() {
+		defer close(workerDone)
+		var previous *domain.HostingOperation
+		for {
+			select {
+			case <-browserCtx.Done():
+				return
+			case id := <-queue:
+				err := fixture.store.PrepareDeployment(browserCtx, id)
+				if err == nil {
+					_, err = fixture.run("--hosting-runtime-env")
+				}
+				operation, readErr := fixture.store.GetHostingOperation(browserCtx, id)
+				if readErr == nil && operation.State == "failed" && operation.Result != nil && operation.Result.Restored && previous != nil && operation.Result.PreviousContainerID == previous.Result.ContainerID {
+					_, err = proof(browserCtx, *previous)
+				} else if err == nil && readErr == nil && operation.State == "succeeded" && operation.Result != nil {
+					_, err = proof(browserCtx, operation)
+					if operation.Result.ImageID != fixture.imageID || (operation.ResourceID == fixture.gitResource.ID && (operation.Snapshot.LocalBuild.Artifact.BuildID != fixture.buildID)) {
+						err = fmt.Errorf("browser deployment changed persisted image or artifact identity")
+					}
+					if operation.ResourceID == imageResource.ID {
+						previous = &operation
+					}
+				} else if err == nil {
+					err = fmt.Errorf("browser deployment failed to settle")
+				}
+				if err != nil || readErr != nil {
+					select {
+					case results <- fmt.Errorf("browser compiled runner or digest verification failed"):
+					case <-browserCtx.Done():
+					}
+					return
+				}
+				mu.Lock()
+				operations[id] = operation
+				mu.Unlock()
+			}
+		}
+	}()
+	// Cleanup exact binding-owned containers, including failure paths. The outer
+	// gate also removes this fixture's entire identity-verified disposable daemon.
+	t.Cleanup(func() {
+		cancel()
+		<-workerDone
+		cleanup, stop := context.WithTimeout(context.Background(), 15*time.Second)
+		defer stop()
+		for _, resource := range []domain.Resource{imageResource, fixture.gitResource} {
+			binding, err := fixture.service.GetResourceBinding(auth.WithPrincipal(cleanup, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}}), resource.ID)
+			if err != nil {
+				t.Error("browser binding cleanup lookup failed")
+				continue
+			}
+			out, err := exec.CommandContext(cleanup, "docker", "ps", "-aq", "--no-trunc", "--filter", "label=io.nerocd.binding="+binding.ID).Output()
+			if err != nil {
+				t.Error("browser container cleanup listing failed")
+				continue
+			}
+			for _, id := range strings.Fields(string(out)) {
+				if exec.CommandContext(cleanup, "docker", "rm", "-f", id).Run() != nil {
+					t.Error("browser container cleanup failed")
+				}
+			}
+		}
+	})
+	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": fixture.environment.ProjectID, "environment": fixture.environment.Name, "image_resource_id": imageResource.ID, "git_resource_id": fixture.gitResource.ID, "build_id": fixture.buildID, "secret_id": fixture.secretID, "secret_version": 1, "complete_path": prefix + "/complete", "proof_path": prefix + "/proof/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("RUNTIME_ENVIRONMENT_BROWSER_READY %s\n", metadata)
+	select {
+	case <-browserCtx.Done():
+		t.Fatal("runtime browser fixture timed out")
+	case <-results:
+		t.Fatal("runtime browser fixture runner failed")
+	case <-done:
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var imageSucceeded, localSucceeded, restored int
+	for _, operation := range operations {
+		if operation.State == "succeeded" {
+			if operation.ResourceID == fixture.gitResource.ID {
+				localSucceeded++
+			} else {
+				imageSucceeded++
+			}
+		} else if operation.Result != nil && operation.Result.Restored {
+			restored++
+		}
+	}
+	if imageSucceeded != 1 || localSucceeded != 1 || restored != 1 || successfulSaves < 4 || saveReplays != 1 || deploymentReplays != 1 || conflicts != 1 || reveals != 0 || fixture.controlled.contains(fixture.secretValue) {
+		t.Fatal("browser journey missing exact save/deploy replay, digest, continuity, denial, or no-reveal evidence")
+	}
+	t.Log("real browser/API/compiled runner/Docker: literal and exact secret reference saves; same-receipt save/deployment retries; image and trusted persisted Git artifact digest proofs without rebuild; stale generation denied; readiness failure kept prior environment; viewer no write or reveal")
+}
+
+func parsedPort(value *url.URL) string {
+	if value == nil {
+		return ""
+	}
+	return value.Port()
 }

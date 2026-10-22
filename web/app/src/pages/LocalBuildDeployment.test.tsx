@@ -13,11 +13,11 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 let client: QueryClient;
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
 function backend(handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined) {
-  const fetch = vi.fn(async (url: string, options: RequestInit) => await handler?.(url, options) ?? (url.endsWith("/binding") ? json({ id: "binding", resource_id: "r", destination_id: "dest" }) : url.includes("/builds?") ? json({ items: [build], limit: 20, offset: 0, count: 1, total: 1 }) : url.includes("/hosting-builds/") ? json({ build }) : url.includes("/deployments?") ? json({ items: [], limit: 20, offset: 0, count: 0, total: 0 }) : json(operation, options.method === "POST" ? 202 : 200)));
+  const fetch = vi.fn(async (url: string, options: RequestInit) => await handler?.(url, options) ?? (url.endsWith("/runtime-configuration") ? json({ runtime_configuration: { resource_id: "r", project_id: "p", resource_generation: 2, runtime_generation: 0, entries: [] } }) : url.endsWith("/binding") ? json({ id: "binding", resource_id: "r", destination_id: "dest" }) : url.includes("/builds?") ? json({ items: [build], limit: 20, offset: 0, count: 1, total: 1 }) : url.includes("/hosting-builds/") ? json({ build }) : url.includes("/deployments?") ? json({ items: [], limit: 20, offset: 0, count: 0, total: 0 }) : json(options.method === "POST" && JSON.parse(options.body as string).expected_runtime_configuration_generation ? { ...operation, snapshot: { ...operation.snapshot, runtime_configuration: { generation: JSON.parse(options.body as string).expected_runtime_configuration_generation, hash: "reference-hash" } } } : operation, options.method === "POST" ? 202 : 200)));
   vi.stubGlobal("fetch", fetch); return fetch;
 }
 async function setup(writable = true, currentResource = resource) {
-  client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "u", provider: "oidc", roles: [] });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "u", provider: "oidc", roles: [] }); client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "p", user_id: "u", role: "maintainer" }]);
   const view = render(<QueryClientProvider client={client}><ResourceBuilds resource={currentResource} writable={writable} blocked={false} /></QueryClientProvider>);
   fireEvent.click(await screen.findByRole("button", { name: "View build b" })); await screen.findByRole("region", { name: "Deploy recorded local build" }); return view;
 }
@@ -25,6 +25,7 @@ async function submit() {
   fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/));
   await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(false));
   fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+  await act(async () => { await Promise.resolve(); });
 }
 test("successful exact build submits only server-selected artifact admission inputs and shares operation detail", async () => {
   const fetch = backend(); await setup(); await submit(); await screen.findByRole("region", { name: "Deployment operation detail" });
@@ -42,9 +43,10 @@ test.each(["lost", "503"])("%s freezes settings and retains identical body/key e
 });
 test.each([409, 403])("HTTP %s preserves intent and blocks further delivery without automatic refresh/reselection", async (status) => {
   const fetch = backend((url) => url.endsWith("/from-build") ? json({}, status) : undefined); await setup(); await submit();
-  await screen.findByText(status === 409 ? /Deployment conflicts with current/ : /Deployment permission denied/);
-  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" })); expect(fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"))).toHaveLength(1);
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical local build deployment" }).disabled).toBe(true);
+  await screen.findByText(status === 409 ? /Deployment conflicts with current/ : /Local deployment access is pending or unavailable/);
+  if (status === 409) { fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" })); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical local build deployment" }).disabled).toBe(true); }
+  else expect(screen.queryByRole("form", { name: "Deploy selected build" })).toBeNull();
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"))).toHaveLength(1);
 });
 test("restore hold cannot become a generation review/retry flow", async () => { const fetch = backend((url) => url.endsWith("/from-build") ? json({ code: "hosting_restore_held" }, 409) : undefined); await setup(); await submit(); await screen.findByText(/Deployment blocked after platform restore/); fireEvent.click(screen.getByRole("button", { name: "Refresh local deployment prerequisites" })); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical local build deployment" }).disabled).toBe(true); expect(fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"))).toHaveLength(1); });
 test.each(["actor", "permission", "resource"])("late response and request do not survive %s change", async (scope) => {
@@ -124,7 +126,7 @@ test("foreign or substituted artifact in an accepted response never becomes a se
 test("access denial while reviewing a separate intent also pauses the retained request", async () => {
  backend((url) => url.endsWith("/from-build") ? json({}, 503) : url === "/api/v1/resources/r" ? json({}, 403) : undefined);
  await setup(); await submit(); await screen.findByText(/Deployment delivery is unconfirmed/); fireEvent.click(screen.getByRole("button", { name: "Review this exact build for a separate request" }));
- await screen.findByText(/Deployment permission denied/); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical local build deployment" }).disabled).toBe(true);
+ await screen.findByText(/Local deployment access is pending or unavailable/); expect(screen.queryByRole("button", { name: "Retry identical local build deployment" })).toBeNull();
 });
 
 const privateResource: Resource = { ...resource, source: { kind: "git", git: { ...source!, credential_kind: "https_basic" } } };
@@ -132,3 +134,26 @@ const privateBuild: HostingBuild = { ...build, snapshot: { ...build.snapshot, so
 function privateBackend(snapshot = privateBuild) { return backend((url) => url.includes("/source-grants?") ? json({ items: [], limit: 20, offset: 0, count: 0, total: 0 }) : url.includes("/project-members?") ? json({ items: [{ project_id: "p", user_id: "u", role: "maintainer" }], count: 1, total: 1, offset: 0 }) : url.includes("/hosting-builds/") ? json({ build: snapshot }) : undefined); }
 test("a private HTTPS artifact with exact source identity and generations can be deployed", async () => { const fetch = privateBackend(); await setup(true, privateResource); await submit(); await screen.findByRole("region", { name: "Deployment operation detail" }); expect(JSON.parse(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body as string)).toMatchObject({ build_id: "b", expected_generation: 2, expected_source_generation: 3 }); });
 test.each(["credential", "resource", "source"])("private artifact %s mismatch requires a new build without deployment admission", async (mismatch) => { const snapshot = mismatch === "credential" ? build : mismatch === "resource" ? { ...privateBuild, snapshot: { ...privateBuild.snapshot, resource_generation: 1 } } : { ...privateBuild, snapshot: { ...privateBuild.snapshot, source: { ...privateBuild.snapshot.source, generation: 2 } } }; const fetch = privateBackend(snapshot); await setup(true, privateResource); fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/)); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true); expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false); });
+
+test("local deployment retains captured runtime generation and identical request after response loss", async () => {
+  let generation = 4, reads = 0, writes = 0;
+  const fetch = backend((url) => url.endsWith("/runtime-configuration") ? (reads++, json({ runtime_configuration: { resource_id: "r", project_id: "p", resource_generation: 2, runtime_generation: generation, entries: [] } })) : url.endsWith("/from-build") && ++writes === 1 ? Promise.reject(new TypeError("lost")) : undefined);
+  await setup(); await submit(); await screen.findByText(/Deployment delivery is unconfirmed/); generation = 6;
+  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" })); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const bodies = fetch.mock.calls.filter(([url]) => url.endsWith("/from-build")); expect(reads).toBe(1); expect(bodies[1]![1].body).toBe(bodies[0]![1].body); expect(JSON.parse(bodies[1]![1].body as string)).toMatchObject({ expected_runtime_configuration_generation: 4 });
+});
+test("failed runtime metadata lookup sends no local deployment request", async () => {
+  const fetch = backend((url) => url.endsWith("/runtime-configuration") ? json({}, 503) : undefined); await setup(); await submit(); await screen.findByText(/Unable to verify saved runtime configuration/); expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+test("membership downgrade aborts pending local deployment and clears its intent", async () => {
+  let resolve!: (response: Response) => void;
+  const fetch = backend((url) => url.endsWith("/from-build") ? new Promise<Response>((done) => { resolve = done; }) : undefined); await setup(); await submit(); await waitFor(() => expect(resolve).toBeTypeOf("function"));
+  const input = fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1];
+  await act(async () => { client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "p", user_id: "u", role: "viewer" }]); });
+  await screen.findByText("Project maintainer access is required to deploy this build."); expect(input.signal?.aborted).toBe(true);
+  await act(async () => resolve(json(operation, 202))); expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull(); expect(screen.queryByText(/Retained request key/)).toBeNull();
+});
+test("local deployment response with another runtime generation cannot select an operation", async () => {
+  backend((url) => url.endsWith("/runtime-configuration") ? json({ runtime_configuration: { resource_id: "r", project_id: "p", resource_generation: 2, runtime_generation: 3, entries: [] } }) : url.endsWith("/from-build") ? json({ ...operation, snapshot: { ...operation.snapshot, runtime_configuration: { generation: 4, hash: "wrong" } } }, 202) : undefined);
+  await setup(); await submit(); await screen.findByText(/Deployment delivery is unconfirmed/); expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+});

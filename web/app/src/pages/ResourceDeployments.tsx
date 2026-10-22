@@ -1,11 +1,13 @@
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
+import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
 import { getResource, type Resource } from "@/api/hosting";
 import { cancelHostingOperation, HostingDeploymentError, hostingBindingQuery, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, reconcileHostingOperation, requestHostingDeployment, requestHostingReleaseCleanup, type HostingCleanupInput, type HostingRetainedRelease, type HostingOperation, type HostingDeploymentInput } from "@/api/hosting-deployments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageNavigation } from "@/components/common/PageNavigation";
+import { canMaintainProject } from "@/lib/permissions";
 import { maximumPageOffset } from "@/router/search";
 
 const terminalStates = new Set(["succeeded", "failed", "canceled"]);
@@ -63,7 +65,8 @@ export function OperationDetail({ actor, projectID, resourceID, operationID, wri
       {operation.cleanup_plan ? <p>Retained release cleanup · target {operation.cleanup_plan.target.operation_id}</p> : null}
       <dl className="space-y-1 break-all text-sm">
         <dt>Operation ID</dt><dd>{operation.id}</dd><dt>Recorded update</dt><dd>{operation.updated_at}</dd>
-        <dt>{operation.snapshot.local_build ? "Local build / source generation" : "Requested image"}</dt><dd>{operation.snapshot.local_build ? `${operation.snapshot.local_build.artifact.build_id} / ${operation.snapshot.local_build.source_generation}` : operation.snapshot.image_reference}</dd>{operation.snapshot.local_build ? <><dt>Recorded artifact image ID</dt><dd>{operation.snapshot.local_build.artifact.image_id}</dd><dt>Source ID / artifact hash</dt><dd>{operation.snapshot.local_build.artifact.source_id} / {operation.snapshot.local_build.artifact_hash}</dd><dt>Manifest / config digest</dt><dd>{operation.snapshot.local_build.artifact.manifest_digest} / {operation.snapshot.local_build.artifact.config_digest}</dd></> : null}<dt>Configuration generation</dt><dd>{operation.snapshot.resource_generation}</dd>
+        <dt>{operation.snapshot.local_build ? "Local build / source generation" : "Requested image"}</dt><dd>{operation.snapshot.local_build ? `${operation.snapshot.local_build.artifact.build_id} / ${operation.snapshot.local_build.source_generation}` : operation.snapshot.image_reference}</dd>{operation.snapshot.local_build ? <><dt>Recorded artifact image ID</dt><dd>{operation.snapshot.local_build.artifact.image_id}</dd><dt>Source ID / artifact hash</dt><dd>{operation.snapshot.local_build.artifact.source_id} / {operation.snapshot.local_build.artifact_hash}</dd><dt>Manifest / config digest</dt><dd>{operation.snapshot.local_build.artifact.manifest_digest} / {operation.snapshot.local_build.artifact.config_digest}</dd></> : null}<dt>Resource configuration generation</dt><dd>{operation.snapshot.resource_generation}</dd>
+        {operation.snapshot.runtime_configuration ? <><dt>Captured runtime configuration generation</dt><dd>{operation.snapshot.runtime_configuration.generation}</dd><dt>Runtime configuration reference hash</dt><dd>{operation.snapshot.runtime_configuration.hash}</dd></> : null}
         <dt>Exact binding</dt><dd>{operation.binding_id}</dd><dt>Destination</dt><dd>{operation.snapshot.destination_id}</dd>
         <dt>Runner</dt><dd>{operation.snapshot.runner_id}</dd><dt>Runtime namespace</dt><dd>{operation.snapshot.runtime_namespace}</dd>
         <dt>Runner-local endpoint</dt><dd>127.0.0.1:{operation.snapshot.host_port} → container {operation.snapshot.container_port}</dd>
@@ -163,19 +166,26 @@ function RetainedReleases({ actor, resource, writable, blocked, mutationHeld, re
 }
 
 export function ResourceDeployments(props: { resource: Resource; writable: boolean; blocked: boolean }) {
+  const [deniedScope, setDeniedScope] = useState("");
   const identity = useQuery(principalQuery());
+  const members = useQuery({ ...allProjectMembersQuery(), staleTime: 10_000 });
+  if (props.blocked || identity.isFetching || identity.isError || members.isPending || members.isFetching || members.isError) return <p role={identity.isError || members.isError ? "alert" : "status"}>Deployment access is pending or unavailable. Drafts and retained requests are cleared.</p>;
   if (!identity.data) return <p role={identity.isError ? "alert" : "status"}>{identity.isError ? "Unable to load deployment identity. Reload to refresh access." : "Loading deployment identity..."}</p>;
   const actor = JSON.stringify([identity.data.provider, identity.data.id]);
-  return <Deployments key={JSON.stringify([actor, props.resource.project_id, props.resource.id, props.writable])} {...props} actor={actor} blocked={props.blocked || identity.isError} />;
+  const scope = JSON.stringify([actor, props.resource.project_id, props.resource.id]);
+  if (deniedScope === scope) return <p role="alert">Deployment permission is unavailable. Reload to verify current project access. Drafts and retained requests are cleared.</p>;
+  const writable = props.writable && canMaintainProject(identity.data, members.data ?? [], props.resource.project_id);
+  return <Deployments key={JSON.stringify([actor, props.resource.project_id, props.resource.id, writable])} {...props} writable={writable} actor={actor} onDenied={() => setDeniedScope(scope)} blocked={props.blocked || identity.isError} />;
 }
-function Deployments({ actor, resource, writable, blocked }: { actor: string; resource: Resource; writable: boolean; blocked: boolean }) {
+function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: string; resource: Resource; writable: boolean; blocked: boolean; onDenied: () => void }) {
   const id = useId();
   const client = useQueryClient();
   const active = useRef(true);
   const submitting = useRef(false);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); }; }, []);
   const principal = useQuery(principalQuery());
-  const members = useQuery(allProjectMembersQuery());
+  const members = useQuery({ ...allProjectMembersQuery(), staleTime: 10_000 });
   // Mirrors requireProjectRole: only system_admin bypasses persisted membership.
   const owner = Boolean(principal.data && (principal.data.roles.includes("system_admin") || members.data?.some((member) => member.project_id === resource.project_id && member.user_id === principal.data.id && member.role === "owner")));
   const [offset, setOffset] = useState(0);
@@ -221,23 +231,33 @@ function Deployments({ actor, resource, writable, blocked }: { actor: string; re
     event.preventDefault();
     if (resource.source.kind !== "image" || !canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
     submitting.current = true;
-    const input = attempt ?? { expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(portMode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
-    setAttempt(input); setBusy(true); setError("");
+    let input = attempt;
+    const controller = new AbortController(); request.current = controller;
+    setBusy(true); setError("");
     try {
-      const operation = await requestHostingDeployment(resource.id, input);
-      if (!active.current) return;
-      if (operation.project_id !== resource.project_id || operation.resource_id !== resource.id || operation.binding_id !== binding.data.id) throw new Error("Operation scope mismatch");
+      if (!input) {
+        const { runtime_configuration: runtime } = await getHostingRuntimeConfiguration(resource.id, { signal: controller.signal });
+        if (!active.current || controller.signal.aborted) return;
+        if (runtime.resource_id !== resource.id || runtime.project_id !== resource.project_id || !Number.isSafeInteger(runtime.runtime_generation) || runtime.runtime_generation < 0) throw new Error("Runtime configuration scope mismatch");
+        input = { ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}), expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(portMode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
+        setAttempt(input);
+      }
+      const operation = await requestHostingDeployment(resource.id, input, { signal: controller.signal });
+      if (!active.current || controller.signal.aborted) return;
+      if (operation.project_id !== resource.project_id || operation.resource_id !== resource.id || operation.binding_id !== binding.data.id || (input.expected_runtime_configuration_generation !== undefined && operation.snapshot.runtime_configuration?.generation !== input.expected_runtime_configuration_generation)) throw new Error("Operation scope mismatch");
       setSelected(operation.id); setAttempt(undefined); setAcknowledged(false); setDifferentIntent(false); setOffset(0);
       await refreshHistory();
     } catch (cause) {
-      if (!active.current) return;
+      if (!active.current || controller.signal.aborted) return;
+      if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { onDenied(); return; }
+      if (!input) { setError("Unable to verify saved runtime configuration. No new deployment request was sent. Refresh access and try again."); return; }
       if (cause instanceof HostingDeploymentError && cause.code === "hosting_restore_held") {
         setRestoreRejected(true); setError("");
       } else {
         setError(deploymentError(cause));
         if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await reviewCurrent(); }
       }
-    } finally { submitting.current = false; if (active.current) setBusy(false); }
+    } finally { submitting.current = false; if (request.current === controller) request.current = null; if (active.current) setBusy(false); }
   }
   function newIntent(next?: Resource) {
     if (next) setReviewed(next);
@@ -245,7 +265,7 @@ function Deployments({ actor, resource, writable, blocked }: { actor: string; re
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
     <h5 className="font-medium">{resource.source.kind === "image" ? "Image deployments" : "Deployment history"}</h5>
-    {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Use Public Git builds to request and review build operations. Select a successful build in Public Git builds to deploy its recorded local artifact. Review the resulting operation here, then configure the existing HTTPS route after the release settles healthy.</p> : null}
+    {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Use Git builds to request and review build operations. Select a successful build in Git builds to deploy its recorded local artifact. Review the resulting operation here, then configure the existing HTTPS route after the release settles healthy.</p> : null}
     {restoreHeld ? <p role="alert">Deployment admission blocked after platform restore. Recovery proof is pending; refreshing configuration, retrying, or requesting reconciliation cannot release restored ownership. Your settings are preserved.</p> : null}
     {mutationHeld ? <p role="status">New deployment requests are paused while a recorded mutation hold is retained. An exact retained request can still recover its existing operation. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
     {failed ? <div className="space-y-2"><p role="alert">Unable to refresh deployment information. Draft settings are preserved; actions are paused.</p><Button type="button" variant="outline" onClick={() => { void binding.refetch(); void history.refetch(); if (principal.isError) void principal.refetch(); if (members.isError) void members.refetch(); }}>Retry deployment information</Button></div> : null}
@@ -257,6 +277,7 @@ function Deployments({ actor, resource, writable, blocked }: { actor: string; re
     {selected ? <OperationDetail actor={actor} key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
     {binding.data ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
     {writable && resource.source.kind === "image" ? <form className="space-y-3 rounded-lg border p-3" aria-label={`Deploy image for ${resource.name}`} onSubmit={(event) => void submit(event)}>
+      <p className="text-sm">A new deployment captures the current saved runtime generation and requires a compatible runner. Saving variables does not update the serving release.</p>
       <p className="break-all text-sm">Deploy saved image {base.source.kind === "image" ? base.source.image.reference : "unavailable"} at generation {base.generation} to binding {binding.data?.id ?? "unavailable"}.</p>
       {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
@@ -270,7 +291,7 @@ function Deployments({ actor, resource, writable, blocked }: { actor: string; re
       {portMode === "fixed" ? <p role="note" className="text-sm">Reusing the current release’s unprotected port on this binding stops the current container before replacement readiness is verified, interrupting service. Retained-release, other-binding, and proxy-protected port conflicts are rejected.</p> : null}
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={(event) => setAcknowledged(event.target.checked)} /><span>I understand that {portMode === "fixed" ? "reusing the current release’s unprotected port stops it before replacement readiness is verified and interrupts service; retained-release, other-binding, and proxy-protected port conflicts are rejected" : "the server allocates a new release port and previous containers remain until explicit cleanup"}. No automatic traffic switch or zero-downtime behavior is promised.</span></label>
       <Button type="submit" className="h-auto whitespace-normal" disabled={!canWrite || newAdmissionHeld || busy || !binding.data || !acknowledged || conflict || restoreHeld}>{restoreHeld ? "Deployment blocked after restore" : newAdmissionHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
-      {attempt ? <p className="break-all text-xs">Request key: {attempt.idempotency_key}. Submitted settings and generation {attempt.expected_generation} are retained{restoreHeld ? ". Deployment admission remains blocked." : " for an identical retry."}</p> : null}
+      {attempt ? <p className="break-all text-xs">Request key: {attempt.idempotency_key}. Submitted settings and resource/runtime generations {attempt.expected_generation}/{attempt.expected_runtime_configuration_generation ?? 0} are retained{restoreHeld ? ". Deployment admission remains blocked." : " for an identical retry."}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {attempt && !restoreHeld ? <section className="space-y-2" aria-label="Review deployment request">
         <Button type="button" variant="outline" disabled={busy} onClick={() => void reviewCurrent()}>Refresh configuration and history</Button>
