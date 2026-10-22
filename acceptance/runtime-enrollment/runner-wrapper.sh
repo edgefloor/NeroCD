@@ -3,7 +3,7 @@ set -eu
 slot=${RUNNER_SLOT:?}
 rm -f "/state/runner-${slot}.exit"
 while [ ! -e /state/release-runners ]; do sleep 0.05; done
-set -- nerocd runner --server http://proxy:8081 --credential-file /identity/credential --journal-dir /journal --id runner_enrollment_runtime --tags enrollment-runtime --capabilities shell --poll-interval 1s --cancel-poll-interval 1s --work-dir /work
+set -- nerocd runner --server http://proxy:8081 --credential-file /identity/credential --journal-dir /journal --tags enrollment-runtime --capabilities shell --poll-interval 1s --cancel-poll-interval 1s --work-dir /work
 if [ -e /identity/enrollment ]; then
   set -- "$@" --enrollment-file /identity/enrollment
 fi

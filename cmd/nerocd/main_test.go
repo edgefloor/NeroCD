@@ -98,6 +98,8 @@ func TestRunnerCredentialFileSkipsRegistration(t *testing.T) {
 			registerRequests++
 			mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
+		case "/api/v1/runners/identity":
+			_ = json.NewEncoder(w).Encode(app.RunnerIdentity{RunnerID: "runner-dedicated"})
 		case "/api/v1/runners/heartbeat":
 			mu.Lock()
 			heartbeatRequests++
@@ -116,7 +118,7 @@ func TestRunnerCredentialFileSkipsRegistration(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	if err := runRunner([]string{"--server", server.URL, "--credential-file", credential, "--once"}); err != nil {
+	if err := runRunner([]string{"--server", server.URL, "--credential-file", credential, "--id", "runner-dedicated", "--work-dir", t.TempDir(), "--once"}); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()

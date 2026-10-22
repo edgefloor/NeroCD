@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"nerocd/internal/app"
 	"nerocd/internal/domain"
 )
 
@@ -36,6 +37,8 @@ func TestRunRunnerValidatesPollIntervalsBeforeNetworkRequests(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/runners/register":
 					_ = json.NewEncoder(w).Encode(runnerRegisterResponse{Token: "runner-token"})
+				case "/api/v1/runners/identity":
+					_ = json.NewEncoder(w).Encode(app.RunnerIdentity{RunnerID: "runner_local"})
 				case "/api/v1/runners/heartbeat":
 					_ = json.NewEncoder(w).Encode(domain.Runner{ID: "runner_local", Status: domain.RunnerActive})
 				case "/api/v1/runners/telemetry":

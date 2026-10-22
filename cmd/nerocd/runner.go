@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,6 +14,7 @@ import (
 
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
+	"nerocd/internal/runnerclient"
 	"nerocd/internal/runnerruntime"
 )
 
@@ -72,7 +74,12 @@ func runRunner(args []string) error {
 		return errors.New("runner --enrollment-file requires --credential-file")
 	}
 	var runnerToken string
-	effectiveRunnerID := strings.TrimSpace(*id)
+	idSpecified := false
+	fs.Visit(func(option *flag.Flag) {
+		if option.Name == "id" {
+			idSpecified = true
+		}
+	})
 	if enrollmentPath != "" {
 		enrollmentToken, credential, requestID, err := prepareRunnerEnrollmentFiles(enrollmentPath, credentialPath)
 		if err != nil {
@@ -101,7 +108,6 @@ func runRunner(args []string) error {
 			return fmt.Errorf("remove consumed enrollment file: %w", err)
 		}
 		runnerToken = credential
-		effectiveRunnerID = consumed.Runner.ID
 	} else if credentialPath != "" {
 		credential, err := readRunnerCredentialFile(credentialPath)
 		if err != nil {
@@ -121,6 +127,15 @@ func runRunner(args []string) error {
 		if runnerToken == "" {
 			return errors.New("runner registration did not return a runner token")
 		}
+	}
+	// Resolve credential authority before runtime can select, open, or replay
+	// a journal. Enrollment IDs and local defaults do not replace this read.
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).Identity(context.Background())
+	if err != nil {
+		return fmt.Errorf("resolve runner identity: %w", err)
+	}
+	if idSpecified && strings.TrimSpace(*id) != effectiveRunnerID {
+		return errors.New("runner --id does not match authenticated runner identity")
 	}
 	return runnerruntime.Run(runnerruntime.Config{
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
