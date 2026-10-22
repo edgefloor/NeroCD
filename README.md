@@ -31,7 +31,8 @@ it is not a complete Coolify parity claim.
   uses the runner CLI; these controls do not validate Docker or deploy resources.
 - [Transactional hosting job infrastructure](docs/hosting-jobs.md) using River
   OSS v0.44.1, with checked migrations and backup schema identity. PostgreSQL
-  mode starts image and proxy dispatch consumers. There is no build consumer.
+  mode starts image and proxy dispatch consumers. An optional BuildID adapter
+  is available, but no production build controller supplies its handler.
 - [Public image deployment](docs/hosting-execution.md) through the API, River,
   agent and Docker, with frozen image identity, ordinary HTTP readiness and
   per-release loopback port allocation or explicit fixed ports. The
@@ -42,17 +43,22 @@ it is not a complete Coolify parity claim.
   pinned transport policy and source receipts, plus an internal
   [source/build persistence contract](docs/hosting-build-control.md) for
   immutable settings, purpose-specific grants, fenced receipts and artifacts.
-  These components do not yet form a usable Git build API or execution flow.
+  The [private credential delivery component](docs/hosting-build-credentials.md)
+  authorizes exact live sourcing attempts. Its endpoint and controller wiring
+  remain absent, so these components do not form a usable Git build flow.
 - A [standalone local build engine](docs/hosting-build-engine.md) for Dockerfile,
   Railpack and prebuilt static assets on a fixed Linux Docker host. Confined
   context/Dockerfile/target and publish-directory/SPA settings are supported.
-  Build orchestration, managed Git credential delivery, deployment handoff and
-  log streaming remain separate work.
+  Build orchestration, the credential endpoint/runtime bridge, deployment handoff
+  and log streaming remain separate work.
 - A [standalone Traefik engine](docs/hosting-proxy-engine.md) with routing,
   HTTP-01 TLS and persistent state. The [proxy backend](docs/hosting-proxy-control.md)
   persists authorized route generations and dispatches exact-target tasks.
-  Accepted default agents do not advertise or execute `proxy_apply`; runtime
-  integration and a usable HTTPS WebUI flow remain required.
+  Explicitly enrolled proxy-capable Linux agents execute fenced routing work.
+  The [managed routing WebUI](docs/hosting-proxy-ui.md) provides configuration,
+  grants, settled-image routes, withdrawal and recorded HTTP/HTTPS status.
+  Real browser fixtures use isolated DNS and a trusted test CA; they do not
+  validate public DNS or production ACME.
 - A React/Vite/TanStack web application embedded from `web/dist`, plus the
   versioned `/api/v1` contract in [openapi.yaml](openapi.yaml).
 - Offset-paginated list APIs. Use `limit` and `offset`; do not assume cursors.
@@ -60,7 +66,7 @@ it is not a complete Coolify parity claim.
 NeroCD does not currently provide SAML, LDAP, SCIM, claim or group mapping,
 automatic OIDC signup, multiple issuers, general workflow parallelism,
 managed-secret runner delivery or Vault lookup. SSH-assisted onboarding, the
-repository-to-build-to-deploy path, integrated public routes/HTTPS, continuous
+repository-to-build-to-deploy path, public DNS/production ACME verification, continuous
 runtime monitoring and trusted restore resumption remain required. Image
 deployment uses loopback HTTP; same-port replacement can interrupt service.
 Restored ownership stays blocked; there is no unlock action in this slice.

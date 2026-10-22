@@ -8,7 +8,7 @@ The accepted planning review examined the complete supplied specification, inclu
 
 ## Accepted progress on 2026-10-22
 
-The current assessment is `836a3a92b0ff32242bba94bf8cf0800dc638d96e`.
+The current assessment is `eef72d3b182acdb66f81c24787f2df8bd82abb85`.
 The earlier `a763a90` inspection remains planning history. The complete target,
 P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
 
@@ -18,12 +18,12 @@ P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
 | P01 | Shared project environments and image-application desired configuration, authorized API and WebUI; public-image operation admission has binding mutation holds | Team model, additional resource kinds, legacy mappings and broader shared-resource concurrency |
 | P02 | Enrolled server admission, stable default destinations, project grants and immutable bindings through API/WebUI; authoritative runner identity and exact-target image execution | SSH-assisted onboarding, onboarding-time host capability/readiness validation, full server lifecycle and trusted recovery of uncertain effects |
 | P03 | Encrypted immutable project-secret versions, create/rotate/reveal/revoke, strict keyring file and protected WebUI | Execution delivery, broader value scopes, grants, key recovery workflows and external providers |
-| P04/P05 | Controlled Git checkout adapter; internal persisted source generations, purpose-specific secret-version grants, immutable build requests, fenced receipts and artifacts | Public source/build API and UI, operator policy admission, managed credential delivery, River build consumer, typed executor, source-to-engine bridge and artifact-to-deployment handoff |
+| P04/P05 | Controlled checkout, persisted source/grants/build receipts/artifacts, private credential delivery component and optional River BuildID adapter | Public Git configuration/build API and UI, operator policy admission, credential endpoint/runtime bridge, production build controller/handler, typed executor, source-to-engine and artifact-to-deployment handoff |
 | P05 engine | Standalone local Dockerfile/Railpack/prebuilt-static engine with confined context/Dockerfile/target, publish-directory/SPA settings, retained output and owned cleanup | Integrated build orchestration, log streaming, private dependency credentials, compiled-static product path and remote image delivery |
 | P06 | Live River image consumer, public-tag freeze, fenced agent/Docker apply, ordinary HTTP readiness, per-release autoports, explicit fixed ports, cancellation/replay, holds and selected retained-container cleanup | Verified public traffic switch, broader release strategies, optional hosting approval, managed variables/secrets, private registries and safe restored-ownership resumption |
-| P07 | Standalone Traefik TLS engine and bounded control-plane route/grant/generation APIs, exact-target River dispatch, proxy holds and persisted mutation authority | Compatible agent runtime integration and journal proof, HTTPS WebUI, DNS-01/custom certificates and proxy adapters; default accepted agents do not execute `proxy_apply` |
-| P14 infrastructure | River OSS v0.44.1 transactional image/proxy dispatch, checked migrations and backup identity | Build consumer, general schedules, notification delivery and their lifecycle contracts |
-| P16 | Image deployment/history/exact-request recovery and selected retained cleanup UI, with automatic or acknowledged explicit fixed-port policy | Source/build and HTTPS workflows, R65 completion, complete hosting CLI/MCP operations |
+| P07 | Authorized route/grant/generation API, fenced explicitly capable Linux agent runtime, journal/replay, Traefik HTTP-01 and managed routing UI; real isolated HTTP/trusted-test-CA HTTPS and outage/renewal fixtures | Public DNS/production ACME verification, DNS-01/wildcard/custom certificates, Caddy and trusted restore resumption; image-only enrollment does not gain proxy authority |
+| P14 infrastructure | River OSS v0.44.1 image/proxy dispatch and optional BuildID adapter sharing transactional queue/lifecycle contracts | Actual production build controller/handler wiring, general schedules, notifications and their lifecycle contracts |
+| P16 | Image and managed routing UI with role checks, CAS/conflict recovery, grants, withdrawal/disable and distinct recorded HTTP/trusted-HTTPS status | Source/build workflows, remaining R65 coverage and complete hosting CLI/MCP operations |
 
 See [bounded evidence and exact commits](compatibility.md#accepted-foundations-and-evidence),
 the [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
@@ -33,28 +33,31 @@ runtime path. The [build](hosting-build-engine.md),
 [source acquisition](hosting-source-checkout.md) and
 [source/build store](hosting-build-control.md) components are not yet a runnable
 Git build workflow. The [proxy backend](hosting-proxy-control.md) dispatches
-authorized snapshots but accepted default agents do not advertise or execute
-`proxy_apply`. Standalone TLS engine evidence does not establish integrated
-HTTPS. Saving configuration or placement does
+authorized snapshots to explicitly enrolled `proxy_apply` agents. The
+[managed routing UI](hosting-proxy-ui.md) has accepted real-backend HTTP and
+trusted-test-CA HTTPS coverage. The [runtime guide](hosting-proxy-control.md)
+records agent journal, capability, outage and renewal boundaries. These isolated
+fixtures do not establish public DNS or production ACME. Saving configuration
+or placement does
 not itself deploy. A successful operation records past readiness rather than
 continuous health.
 No result here completes A01, A05, A08 or A27, and results from different
 revisions cannot be combined into the A36 release assertion.
 
-M1 still requires source-choice interfaces and provider integration, managed Git
-credential delivery, a real build consumer/executor and authorized orchestration,
-source-to-engine receipt wiring, build-to-deployment handoff, managed-secret
-execution delivery, integrated route/TLS operations and UI, continuous
+M1 still requires accepted Git source-choice interfaces and provider integration,
+the credential endpoint/runtime bridge, a production build controller/handler and
+executor, authorized orchestration, source-to-engine receipt wiring,
+build-to-deployment handoff, managed-secret
+execution delivery, public DNS/production ACME verification, continuous
 observations/runtime logs, trusted automatic triggers and optional hosting
 approval. Restore holds prevent mutation after recovery; trusted local process
 and journal proof for resumption is not implemented. No A01–A37 scenario or
 M0–M4 milestone is declared complete by this assessment.
 
-Managed Git credential delivery, proxy agent runtime and proxy UI work outside
-this accepted base remain unaccepted. A runtime gate from another candidate is
-not compatibility acceptance, and negative browser checks do not establish a
-positive HTTPS workflow. Future integration needs reviewed compatible candidates
-and relevant combined evidence.
+Git resource configuration being implemented outside this accepted base remains
+unaccepted. The accepted credential and queue components do not install their
+endpoint, controller or runner bridge. Future integration needs reviewed
+candidates and combined source-to-build-to-deployment evidence.
 
 ## The architectural decision
 

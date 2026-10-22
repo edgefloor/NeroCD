@@ -2,7 +2,7 @@
 
 Planning baseline: `a763a90b3896257b784c9498d01650ccdad2427a`, inspected on
 2026-10-22. Current accepted assessment:
-`836a3a92b0ff32242bba94bf8cf0800dc638d96e`, also dated 2026-10-22.
+`eef72d3b182acdb66f81c24787f2df8bd82abb85`, also dated 2026-10-22.
 The [product specification](product-spec.md) defines the full Go
 hosting platform target. The [plan](plan.md) orders implementation and the
 [compatibility ledger](compatibility.md) records support limits. The current
@@ -21,7 +21,7 @@ runners, and retains operational evidence. It is not a general CI system.
 | `internal/store` | PostgreSQL persistence and explicit disposable memory development store. |
 | `internal/runner` | Enrollment, credentials, fenced leases, execution, logs, and replay data. |
 | `internal/runnerruntime` | Fenced image/Compose execution and the controlled Git checkout adapter. |
-| `internal/hostingjobs` | River OSS v0.44.1 transactional image/proxy dispatch; no build consumer. |
+| `internal/hostingjobs` | River OSS v0.44.1 image/proxy dispatch and optional BuildID adapter; no production build controller. |
 | `internal/hostingbuild` | Standalone bounded local builds with confined settings and retained output receipts. |
 | `internal/hostingproxy` | Standalone Linux Traefik configuration, TLS and state verification. |
 | `web/app` | React/Vite/TanStack application built into `web/dist` and embedded in Go. |
@@ -37,8 +37,8 @@ runners, and retains operational evidence. It is not a general CI system.
    an exact-target task for the enrolled agent's fenced image engine.
 4. The runner reports logs, artifacts, completion, and provenance. Lease and
    replay checks stop stale runners from completing newer work. Proxy backend
-   dispatch also creates fenced exact-target tasks, but accepted default agents
-   do not advertise or execute `proxy_apply`.
+   dispatch creates fenced exact-target tasks for explicitly enrolled
+   `proxy_apply` Linux agents. Image-only agents cannot claim proxy work.
 
 List APIs use bounded offset pagination (`limit`, `offset`, `count`, `total`).
 Treat IDs as opaque and use [openapi.yaml](../openapi.yaml) as the contract.
@@ -85,17 +85,31 @@ The [controlled checkout](hosting-source-checkout.md) and
 [local build engine](hosting-build-engine.md) are usable components with separate
 contracts. Internal [source/build persistence](hosting-build-control.md) stores
 source generations, credential grants, immutable requests, fenced receipts and
-local OCI artifact identities. It has no public build API, River consumer,
+local OCI artifact identities. It has no public build API, production build consumer,
 typed runner executor, source-to-engine bridge or deployment handoff.
-Managed Git credential delivery is not accepted at this assessment.
+The [private Git credential component](hosting-build-credentials.md) authorizes
+and decrypts the exact immutable secret version for a live sourcing attempt.
+Its audit-backed window and byte ownership do not install an endpoint or runtime
+bridge. The [optional River BuildID adapter](hosting-build-jobs.md) requires a
+real supplied handler; production build dispatch is not enabled.
 
 The [proxy backend](hosting-proxy-control.md) authorizes hostname grants and
 whole-proxy generations, derives settled binding targets, and dispatches typed
 work through River. It rechecks [persisted mutation authority](hosting-proxy-auth.md).
-Runtime settlement in backend tests uses typed fixture receipts. The standalone
-TLS engine's real Traefik/Pebble evidence is separate. Default agents do not
-advertise or execute the required `proxy_apply` capability, so no integrated HTTPS flow or positive proxy
-WebUI workflow is available in the accepted base.
+The explicitly enrolled Linux agent now executes through the Traefik engine,
+journaling preparation, intent and result before reporting. Exact committed
+receipts replay without repeating admitted effects. Real combined fixtures cover
+lost responses, retained holds, control-plane outage and autonomous TLS renewal.
+Image-only enrollment presets remain unchanged.
+
+The [managed routing UI](hosting-proxy-ui.md) configures proxies, hostname grants
+and routes against settled healthy image releases. Real browser coverage reaches
+HTTP and certificate-verified HTTPS with isolated fixture DNS and a trusted local
+CA. It also covers revocation, withdrawal, disable, role denial and conflict
+recovery. This is bounded image-to-routing evidence, not public DNS or production
+ACME verification. Desired and loaded state, HTTP readiness and trusted HTTPS
+observations stay separate and are not continuous monitoring. DNS-01, wildcard
+certificates, custom certificates and Caddy remain absent.
 
 Restore records independent holds for bindings and configured proxies. Read-only
 observation cannot prove that a pre-backup command stopped and cannot clear
@@ -211,7 +225,9 @@ The PostgreSQL server starts real image and proxy dispatch consumers after
 schema validation. Consumers resolve immutable snapshots and exact destinations
 into work for the existing fenced runner protocol. They do not execute Docker
 in the control-plane job worker. Queue completion is distinct from workload or
-proxy completion. There is no build consumer.
+proxy completion. The optional BuildID worker registers only when the supplied
+handler implements its build interface. No production source/build controller
+supplies that handler, and no build executor or deployment handoff is installed.
 
 The owner migration CLI applies River's pinned migration bundle under the same
 advisory lock as native migrations. Each River version and its adapter checksum
