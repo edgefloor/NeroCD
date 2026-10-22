@@ -118,7 +118,7 @@ func hostingJournalNeedsV3(entry JournalHosting) bool {
 // HostingJournalUsesRuntimeEnvironment detects nonsecret runtime authority at
 // every retained level. It does not authorize fetching values during replay.
 func HostingJournalUsesRuntimeEnvironment(entry JournalHosting) bool {
-	if entry.RuntimeEnvironment || entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || entry.DeliveryID != "" {
+	if entry.RuntimeEnvironment || entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || entry.DeliveryID != "" || hostingJournalHasRuntimeCompiler(entry) {
 		return true
 	}
 	for _, s := range hostingJournalSnapshots(entry) {
@@ -127,6 +127,10 @@ func HostingJournalUsesRuntimeEnvironment(entry JournalHosting) bool {
 		}
 	}
 	return false
+}
+
+func hostingJournalHasRuntimeCompiler(entry JournalHosting) bool {
+	return entry.Plan != nil && (entry.Plan.CompilerVersion == domain.HostingRuntimeCompilerVersion || entry.Plan.CompilerVersion == domain.HostingLocalBuildRuntimeCompilerVersion)
 }
 
 func hostingJournalSnapshots(entry JournalHosting) []domain.HostingSnapshot {
@@ -147,6 +151,9 @@ func hostingJournalSnapshots(entry JournalHosting) []domain.HostingSnapshot {
 }
 
 func validateHostingJournalRuntimeEnvironment(entry JournalHosting) error {
+	if hostingJournalHasRuntimeCompiler(entry) && (entry.Plan.Snapshot.RuntimeConfiguration == (domain.HostingRuntimeConfigurationRef{}) || !domain.HostingPlanFamilyMatches(entry.Plan.Snapshot, *entry.Plan)) {
+		return errors.New("journal runtime compiler requires matching current runtime snapshot")
+	}
 	snapshots := hostingJournalSnapshots(entry)
 	hasReference := false
 	for _, s := range snapshots {

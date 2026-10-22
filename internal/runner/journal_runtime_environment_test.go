@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -270,5 +271,43 @@ func TestRuntimeEnvironmentJournalLegacyEncodingAndMarkers(t *testing.T) {
 	entry.DeliveryID, entry.RuntimeEnvironment = "", true
 	if validateJournalHosting(entry) == nil {
 		t.Fatal("legacy snapshot accepted unsupported marker")
+	}
+}
+
+func TestRuntimeEnvironmentJournalCompilerMarker(t *testing.T) {
+	for _, compiler := range []string{domain.HostingRuntimeCompilerVersion, domain.HostingLocalBuildRuntimeCompilerVersion} {
+		for _, retainedEnvironment := range []bool{false, true} {
+			for version := 3; version <= 8; version++ {
+				t.Run(fmt.Sprintf("%s/retained=%t/version=%d", compiler, retainedEnvironment, version), func(t *testing.T) {
+					entry := runtimeJournalFixture(t)
+					if retainedEnvironment {
+						entry.Plan.RetainedReleases = []domain.HostingHealthy{{Snapshot: entry.Plan.Snapshot, Release: entry.Plan.Release, OperationID: "old", ContainerID: "old-container"}}
+					}
+					entry.Plan.Snapshot.RuntimeConfiguration = domain.HostingRuntimeConfigurationRef{}
+					entry.Plan.Snapshot.PolicyVersion = domain.HostingReleasePolicyVersion
+					entry.Plan.CompilerVersion = domain.HostingReleaseCompilerVersion
+					entry.RuntimeConfiguration, entry.DeliveryID = domain.HostingRuntimeConfigurationRef{}, ""
+					entry.RuntimeEnvironment = retainedEnvironment
+					entry.Plan.Hash = ""
+					entry.Plan.Hash = domain.HostingDocumentHash(*entry.Plan)
+					legacyVersion := version
+					if retainedEnvironment {
+						legacyVersion = 8
+					}
+					if err := validateJournalState(journalState{Version: legacyVersion, Hosting: []JournalHosting{entry}}); err != nil {
+						t.Fatalf("valid legacy family rejected: %v", err)
+					}
+					entry.Plan.CompilerVersion = compiler
+					entry.Plan.Hash = ""
+					entry.Plan.Hash = domain.HostingDocumentHash(*entry.Plan)
+					if !HostingJournalUsesRuntimeEnvironment(entry) {
+						t.Error("runtime compiler marker was not detected")
+					}
+					if err := validateJournalState(journalState{Version: version, Hosting: []JournalHosting{entry}}); err == nil {
+						t.Fatal("runtime compiler accepted without matching current runtime snapshot")
+					}
+				})
+			}
+		}
 	}
 }
