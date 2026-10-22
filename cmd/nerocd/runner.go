@@ -105,7 +105,7 @@ func runRunner(args []string) error {
 	if err != nil {
 		return err
 	}
-	registrationCapabilities, err = runnerLocalBuildCapabilities(*localBuildDeploy, buildConfig != nil, proxyConfig.Enabled(), capabilitiesSpecified, registrationCapabilities)
+	registrationCapabilities, err = runnerLocalBuildCapabilities(*localBuildDeploy, buildConfig != nil, proxyConfig.Enabled(), capabilitiesSpecified || buildConfig != nil && buildConfig.PrivateGit != nil, registrationCapabilities)
 	if err != nil {
 		return err
 	}

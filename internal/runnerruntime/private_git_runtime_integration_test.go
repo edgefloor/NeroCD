@@ -249,6 +249,7 @@ func testPrivateBuildProductionHTTPS(t *testing.T, strategy string) {
 		return hostingproxy.NewFixture(settings, "https://localhost:14000/dir", roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
 	}}
 	extra := []string{"--local-build-deploy", "--proxy-state-root", root, "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion}
+	privateRuntimeFreshRegistration(t, f, extra)
 	var cliOutput []byte
 	cli := func() error {
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
@@ -401,6 +402,86 @@ func TestPrivateBuildProductionHTTPS(t *testing.T) {
 	}
 }
 
+// Exercise the production CLI's default registration composition, rather than
+// hiding missing capabilities behind the fixture's pre-enrolled build identity.
+func privateRuntimeFreshRegistration(t *testing.T, f *controllerBuildFixture, extra []string) {
+	t.Helper()
+	before, err := f.pg.GetRunnerByID(t.Context(), f.config.Target.RunnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, 16)
+	if _, err = rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	id := "private_fresh_" + hex.EncodeToString(nonce)
+	raw, err := os.ReadFile(f.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if json.Unmarshal(raw, &document) != nil {
+		t.Fatal("invalid fixture configuration")
+	}
+	document["target"].(map[string]any)["runner_id"] = id
+	raw, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(f.work, "fresh-registration.json")
+	if err = os.WriteFile(config, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	command := f.agentCommand(ctx, extra...)
+	for i := 1; i < len(command.Args)-1; i++ {
+		switch command.Args[i] {
+		case "--credential-file":
+			command.Args[i] = "--token"
+			command.Args[i+1] = f.admin
+		case "--build-config-file":
+			command.Args[i+1] = config
+		case "--journal-dir":
+			command.Args[i+1] = filepath.Join(f.work, "fresh-registration-journal")
+		}
+	}
+	out, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fresh private runner registration: %v %.500s", err, out)
+	}
+	if !strings.Contains(string(out), "no matching queued run") {
+		t.Fatal("fresh registered runner did not finish empty claim")
+	}
+	registered, err := f.pg.GetRunnerByID(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]bool{domain.HostingBuildTaskType: true, domain.HostingPrivateGitCapability: true, domain.RunTypeLocalBuildDeploy: true, domain.RunTypeProxyApply: true}
+	if len(registered.Capabilities) != len(expected) {
+		t.Fatal("fresh registration capability count changed")
+	}
+	for _, capability := range registered.Capabilities {
+		if !expected[capability] {
+			t.Fatal("fresh registration capability changed")
+		}
+	}
+	after, err := f.pg.GetRunnerByID(t.Context(), before.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, _ := json.Marshal(before.Capabilities)
+	current, _ := json.Marshal(after.Capabilities)
+	if string(prior) != string(current) {
+		t.Fatal("registration mutated existing runner capabilities")
+	}
+	var leases int
+	if err = f.db.QueryRow(t.Context(), `SELECT count(*) FROM run_leases WHERE runner_id=$1`, id).Scan(&leases); err != nil || leases != 0 {
+		t.Fatal("fresh registration unexpectedly acquired work", err)
+	}
+	t.Log("fresh compiled CLI registration persisted exact private/build/proxy/local capabilities without shell or a claim")
+}
+
 func privateRuntimeSecret(t *testing.T, f *controllerBuildFixture, resource domain.Resource, username, password string) domain.ManagedSecret {
 	t.Helper()
 	value, err := json.Marshal(map[string]string{"username": username, "password": password})
@@ -536,7 +617,8 @@ func TestPrivateGitBrowser(t *testing.T) {
 		tick := time.NewTicker(100 * time.Millisecond)
 		defer tick.Stop()
 		for {
-			if kind == "build" {
+			switch kind {
+			case "build":
 				b, err := f.pg.GetHostingBuild(ctx, "usr_bootstrap", id)
 				if err != nil {
 					return err
@@ -544,7 +626,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 				if b.RunID != "" {
 					return nil
 				}
-			} else if kind == "deploy" {
+			case "deploy":
 				op, err := f.pg.GetHostingOperation(ctx, id)
 				if err != nil {
 					return err
@@ -552,7 +634,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 				if op.RunID != "" {
 					return nil
 				}
-			} else {
+			default:
 				if id == "" {
 					current, err := f.pg.GetHostingProxy(ctx, proxy.ID)
 					if err != nil {
@@ -608,7 +690,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 			finish.Do(func() { close(done) })
 			return
 		}
-		if r.Method != "POST" || !(strings.HasSuffix(r.URL.Path, "/builds") || strings.HasSuffix(r.URL.Path, "/deployments/from-build") || strings.HasSuffix(r.URL.Path, "/routes")) {
+		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/builds") && !strings.HasSuffix(r.URL.Path, "/deployments/from-build") && !strings.HasSuffix(r.URL.Path, "/routes") {
 			handler.ServeHTTP(w, r)
 			return
 		}
@@ -716,7 +798,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
 	if err != nil || response.StatusCode != 200 || string(body) != "local-A\n" {
 		t.Fatalf("browser HTTPS actual response %d %q err=%v", response.StatusCode, body, err)
