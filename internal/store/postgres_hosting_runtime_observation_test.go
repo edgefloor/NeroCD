@@ -99,7 +99,7 @@ func TestPostgresHostingObservationReceiptsFreshnessAndBoundedStorage(t *testing
 		t.Fatal("changed retry", e)
 	}
 	body.Readiness = "ready"
-	if v := f.status(t); v.Freshness != "fresh" || v.Readiness != "ready" || v.ObservedAt == nil || !v.ObservedAt.Equal(ack.ReceivedAt) {
+	if v := f.status(t); v.Freshness != "fresh" || v.Readiness != "ready" || v.ObservedAt == nil || !v.ObservedAt.Equal(ack.ReceivedAt) || v.CurrentContainerID != target.ContainerID {
 		t.Fatalf("fresh %+v", v)
 	}
 	f.exec(t, `UPDATE runners SET last_heartbeat_at=clock_timestamp()-interval '2 minutes' WHERE id=$1`, f.server.RunnerID)
@@ -200,7 +200,7 @@ func TestPostgresHostingObservationTargetChangeAndMutationIsolation(t *testing.T
 		t.Fatal("old target accepted", err)
 	}
 	v := f.status(t)
-	if v.Freshness != "unknown" || v.Reason != "target_changed" || v.Readiness != "unknown" || v.LastObservation == nil {
+	if v.Freshness != "unknown" || v.Reason != "target_changed" || v.Readiness != "unknown" || v.LastObservation == nil || v.CurrentContainerID != "replacement_container" || v.ObservedContainerID != target.ContainerID {
 		t.Fatal(v)
 	}
 	if f.target(t).ContainerID != "replacement_container" {
@@ -424,7 +424,7 @@ func TestPostgresHostingObservationSerializesWithSettlingReplacement(t *testing.
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if v := f.status(t); v.CurrentOperationID != op.ID || v.MutationHold {
+	if v := f.status(t); v.CurrentOperationID != op.ID || v.MutationHold || v.CurrentContainerID != "replacement_container" {
 		t.Fatal(v)
 	}
 }

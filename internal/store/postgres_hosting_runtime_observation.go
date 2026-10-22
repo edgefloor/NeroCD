@@ -324,6 +324,7 @@ func (s *PostgresStore) HostingRuntimeStatus(ctx context.Context, actor, resourc
 		}
 		if p.healthy != nil {
 			out.CurrentOperationID = p.healthy.OperationID
+			out.CurrentContainerID = p.healthy.ContainerID
 		}
 		if p.binding != "" {
 			row, e := q.LockHostingRuntimeObservation(ctx, p.binding)

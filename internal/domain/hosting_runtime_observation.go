@@ -135,6 +135,7 @@ type HostingRuntimeStatus struct {
 	ServerID              string                  `json:"server_id"`
 	RunnerID              string                  `json:"runner_id"`
 	CurrentOperationID    string                  `json:"current_operation_id"`
+	CurrentContainerID    string                  `json:"current_container_id"`
 	ObservedOperationID   string                  `json:"observed_operation_id"`
 	ObservedContainerID   string                  `json:"observed_container_id"`
 	ObservedAt            *time.Time              `json:"observed_at"`

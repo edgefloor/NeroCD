@@ -2524,6 +2524,7 @@ export interface components {
             mutation_hold: boolean;
             restore_ownership_held: boolean;
             last_observation: components["schemas"]["HostingLastObservation"] | null;
+            current_container_id: string;
         };
         HostingLastObservation: {
             operation_id: string;
