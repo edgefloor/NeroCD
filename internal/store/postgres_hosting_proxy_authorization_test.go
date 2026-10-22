@@ -2,12 +2,16 @@ package store_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
@@ -344,5 +348,337 @@ func TestPostgresProxyGrantRevocationSerializesAdmission(t *testing.T) {
 	}
 	if p.DesiredGeneration != op.Generation+1 {
 		t.Fatalf("withdrawal generation missing: %+v", p)
+	}
+}
+
+func proxyTokenApplication(t *testing.T, pg *store.PostgresStore) *app.Service {
+	t.Helper()
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
+func proxyLegacyToken(t *testing.T, pg *store.PostgresStore, service *app.Service, id string, roles []string) (auth.Principal, string) {
+	t.Helper()
+	plaintext := "local-fixture-" + id
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(plaintext)))
+	_, err := pg.CreateAPIToken(t.Context(), domain.APIToken{ID: id, Name: id, Kind: domain.TokenKindServiceAccount, TokenHash: hash, Roles: roles, Status: domain.TokenActive, CreatedBy: "usr_bootstrap", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := service.AuthenticateSessionToken(t.Context(), plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.ID != id || principal.Provider != domain.PrincipalAPIToken {
+		t.Fatalf("unexpected authenticated identity: %+v", principal)
+	}
+	return principal, plaintext
+}
+
+func TestPostgresProxyAuthenticatedLegacyAdminToken(t *testing.T) {
+	pg, database, resource, server, _, _ := proxyControlFixture(t)
+	service := proxyTokenApplication(t, pg)
+	principal, _ := proxyLegacyToken(t, pg, service, "tok_proxy_admin", []string{domain.RoleSystemAdmin})
+	ctx := auth.WithPrincipal(t.Context(), principal)
+	in := domain.HostingProxyInput{ControlProjectID: resource.ProjectID, Configuration: domain.HostingProxyConfiguration{Email: "operator@nerocd.invalid", CA: "letsencrypt-staging", ManagementPort: 19080}, IdempotencyKey: "legacy-admin-configure"}
+	if _, err := service.ConfigureHostingProxy(ctx, server.ID, in); err != nil {
+		t.Fatalf("authenticated legacy admin could not configure proxy: %v", err)
+	}
+	var audits int
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE actor_id=$1 AND action='hosting.proxy_generation_requested'`, principal.ID).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("legacy actor audit count=%d err=%v", audits, err)
+	}
+}
+
+func TestPostgresProxyLegacyTokenDoesNotInheritAuthority(t *testing.T) {
+	pg, database, resource, server, _, _ := proxyControlFixture(t)
+	service := proxyTokenApplication(t, pg)
+	for _, roles := range [][]string{{domain.RoleRunnerAdmin}, {domain.RoleOwner}, {domain.RoleMaintainer}, {domain.RoleViewer}} {
+		t.Run(strings.Join(roles, "_"), func(t *testing.T) {
+			principal, _ := proxyLegacyToken(t, pg, service, "tok_deny_"+roles[0], roles)
+			ctx := auth.WithPrincipal(t.Context(), principal)
+			_, err := service.ConfigureHostingProxy(ctx, server.ID, domain.HostingProxyInput{ControlProjectID: resource.ProjectID, Configuration: domain.HostingProxyConfiguration{Email: "operator@nerocd.invalid", CA: "letsencrypt-staging", ManagementPort: 19080}, IdempotencyKey: "deny-token"})
+			if !errors.Is(err, auth.ErrForbidden) {
+				t.Fatalf("token inherited issuer ownership: %v", err)
+			}
+			// The repository independently refuses role strings and issuer membership.
+			if _, err = pg.GrantHostingHostname(ctx, "proxy_fixture", "deny_grant", principal.ID, domain.HostingHostnameGrantInput{ProjectID: "proj_security", Hostname: "isolated.nerocd.invalid"}, destinationEvent("deny_grant")); !errors.Is(err, auth.ErrForbidden) {
+				t.Fatalf("repository granted cross-project authority: %v", err)
+			}
+		})
+	}
+	for _, loss := range []string{"expired", "revoked", "roles_removed"} {
+		t.Run(loss, func(t *testing.T) {
+			principal, plaintext := proxyLegacyToken(t, pg, service, "tok_"+loss, []string{domain.RoleSystemAdmin})
+			query := `UPDATE api_tokens SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`
+			if loss == "revoked" {
+				query = `UPDATE api_tokens SET status='revoked',revoked_at=clock_timestamp() WHERE id=$1`
+			}
+			if loss == "roles_removed" {
+				query = `UPDATE api_tokens SET roles=ARRAY['viewer']::text[] WHERE id=$1`
+			}
+			if _, err := database.Exec(t.Context(), query, principal.ID); err != nil {
+				t.Fatal(err)
+			}
+			if loss != "roles_removed" {
+				if _, err := service.AuthenticateSessionToken(t.Context(), plaintext); !errors.Is(err, auth.ErrUnauthenticated) {
+					t.Fatalf("lost credential authenticated: %v", err)
+				}
+			}
+			// A previously authenticated request cannot carry stale global authority.
+			if _, err := service.DisableHostingProxy(auth.WithPrincipal(t.Context(), principal), server.ID, domain.HostingProxyMutationInput{IdempotencyKey: loss}); !errors.Is(err, auth.ErrForbidden) {
+				t.Fatalf("stale token authorized mutation: %v", err)
+			}
+		})
+	}
+}
+
+func TestPostgresProxyManagedTokenKeepsScopedServiceAccountAuthority(t *testing.T) {
+	pg, database, resource, server, _, healthy := proxyControlFixture(t)
+	service := proxyTokenApplication(t, pg)
+	plaintext := "managed-proxy-test-credential"
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(plaintext)))
+	now, expiry := time.Now().UTC(), time.Now().UTC().Add(time.Hour)
+	account := domain.ServiceAccount{ID: "sa_proxy_scoped", ProjectID: resource.ProjectID, OwnerUserID: "usr_bootstrap", Name: "scoped", Role: domain.RoleMaintainer, Status: "active", CreatedAt: now, UpdatedAt: now}
+	if _, err := pg.CreateServiceAccount(t.Context(), account, domain.APIToken{ID: "tok_managed_proxy", Name: "managed", Kind: domain.TokenKindServiceAccount, TokenHash: hash, Roles: []string{}, Status: domain.TokenActive, CreatedBy: "usr_bootstrap", CreatedAt: now, ExpiresAt: &expiry}, destinationEvent("managed_proxy")); err != nil {
+		t.Fatal(err)
+	}
+	// Persisted managed credentials cannot acquire legacy global-role strings.
+	if _, err := database.Exec(t.Context(), `UPDATE api_tokens SET roles=ARRAY['system_admin']::text[] WHERE id='tok_managed_proxy'`); err == nil {
+		t.Fatal("managed scope constraint accepted global-role strings")
+	}
+	principal, err := service.AuthenticateSessionToken(t.Context(), plaintext)
+	if err != nil || principal.ID != account.ID || principal.Provider != domain.PrincipalServiceAccount || len(principal.Roles) != 0 {
+		t.Fatalf("managed identity changed: %+v %v", principal, err)
+	}
+	ctx := auth.WithPrincipal(t.Context(), principal)
+	if _, err = service.DisableHostingProxy(ctx, server.ID, domain.HostingProxyMutationInput{IdempotencyKey: "managed-admin"}); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("managed credential became server admin: %v", err)
+	}
+	if _, err = pg.SetHostingProxyEnabled(ctx, "proxy_fixture", "tok_managed_proxy", "managed-row", false, destinationEvent("managed_row")); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("managed token ID entered legacy branch: %v", err)
+	}
+	in := domain.HostingRouteInput{IdempotencyKey: "managed-route", Hostname: "managed.apps.nerocd.invalid", PathPrefix: "/", ExpectedHealthyOperationID: healthy.ID}
+	if _, err = service.RequestHostingRoute(ctx, resource.ID, in); err != nil {
+		t.Fatalf("scoped maintainer route denied: %v", err)
+	}
+	if _, err = database.Exec(ctx, `INSERT INTO service_accounts(id,project_id,owner_user_id,name,role,status) VALUES('sa_proxy_other','proj_security','usr_bootstrap','other','owner','active')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.RequestHostingRoute(ctx, resource.ID, "", "pop_cross_account", "sa_proxy_other", in, destinationEvent("cross_account")); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("scoped account crossed projects: %v", err)
+	}
+	if _, err = pg.SetHostingProxyEnabled(ctx, "proxy_fixture", server.RunnerID, "runner-admin", false, destinationEvent("runner_admin")); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("runner identity entered legacy branch: %v", err)
+	}
+	if _, err = database.Exec(t.Context(), `UPDATE users SET status='disabled' WHERE id='usr_bootstrap'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.RequestHostingRoute(ctx, resource.ID, "", "pop_disabled_owner", account.ID, in, destinationEvent("disabled_owner")); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("disabled owner retained scoped mutation: %v", err)
+	}
+}
+
+func proxyMutationCounts(t *testing.T, ctx context.Context, database *pgxpool.Pool) [5]int64 {
+	t.Helper()
+	var counts [5]int64
+	if err := database.QueryRow(ctx, `SELECT desired_generation,(SELECT count(*) FROM hosting_proxy_operations),(SELECT count(*) FROM audit_events),(SELECT count(*) FROM river_job),(SELECT count(*) FROM hosting_proxy_routes) FROM hosting_proxies WHERE id='proxy_fixture'`).Scan(&counts[0], &counts[1], &counts[2], &counts[3], &counts[4]); err != nil {
+		t.Fatal(err)
+	}
+	return counts
+}
+
+func TestPostgresProxyLegacyTokenExpiryRollsBackAfterWait(t *testing.T) {
+	for _, lock := range []string{"destination", "proxy", "resource", "audit", "replay"} {
+		t.Run(lock, func(t *testing.T) {
+			pg, database, resource, _, destination, healthy := proxyControlFixture(t)
+			service := proxyTokenApplication(t, pg)
+			principal, _ := proxyLegacyToken(t, pg, service, "tok_wait", []string{domain.RoleSystemAdmin})
+			ctx, cancel := context.WithTimeout(auth.WithPrincipal(t.Context(), principal), 10*time.Second)
+			defer cancel()
+			in := domain.HostingRouteInput{IdempotencyKey: "expiry-wait", Hostname: "wait-token.apps.nerocd.invalid", PathPrefix: "/", ExpectedHealthyOperationID: healthy.ID}
+			if lock == "replay" {
+				route, err := pg.RequestHostingRoute(ctx, resource.ID, "", "pop_token_wait", principal.ID, in, destinationEvent("token_wait"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				settleProxyGeneration(t, pg, route.OperationID, "runner_image_host", healthy.Release.DaemonID)
+			}
+			before := proxyMutationCounts(t, ctx, database)
+			blocker, err := database.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+				defer stop()
+				_ = blocker.Rollback(cleanup)
+			}()
+			var pid int
+			if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			switch lock {
+			case "destination":
+				_, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0))`, destination.ID)
+			case "proxy", "replay":
+				_, err = blocker.Exec(ctx, `SELECT id FROM hosting_proxies WHERE id='proxy_fixture' FOR UPDATE`)
+			case "resource":
+				_, err = blocker.Exec(ctx, `SELECT id FROM resources WHERE id=$1 FOR UPDATE`, resource.ID)
+			case "audit":
+				_, err = database.Exec(ctx, `CREATE FUNCTION token_audit_wait() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.actor_id='tok_wait' THEN PERFORM pg_advisory_xact_lock(982744); END IF;RETURN NEW;END $$;CREATE TRIGGER token_audit_wait BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION token_audit_wait()`)
+				if err == nil {
+					_, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(982744)`)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = database.Exec(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1`, principal.ID); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			var group sync.WaitGroup
+			group.Go(func() {
+				_, err := pg.RequestHostingRoute(ctx, resource.ID, "", "pop_token_wait", principal.ID, in, destinationEvent("token_wait"))
+				done <- err
+			})
+			defer func() {
+				cancel()
+				cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+				defer stop()
+				_ = blocker.Rollback(cleanup)
+				group.Wait()
+			}()
+			ticker := time.NewTicker(10 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				var waiting bool
+				if err = database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("mutation did not wait: %v", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-ticker.C:
+				}
+			}
+			for {
+				var expired bool
+				if err = database.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM api_tokens WHERE id=$1`, principal.ID).Scan(&expired); err != nil {
+					t.Fatal(err)
+				}
+				if expired {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-ticker.C:
+				}
+			}
+			if err = blocker.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err = <-done; !errors.Is(err, auth.ErrForbidden) {
+				t.Fatalf("expired mutation result: %v", err)
+			}
+			if after := proxyMutationCounts(t, ctx, database); after != before {
+				t.Fatalf("expired mutation committed generation/operation/audit/job/route: before=%v after=%v", before, after)
+			}
+		})
+	}
+}
+
+func TestPostgresProxyLegacyTokenRevocationSerializesMutation(t *testing.T) {
+	pg, database, resource, _, destination, healthy := proxyControlFixture(t)
+	service := proxyTokenApplication(t, pg)
+	principal, _ := proxyLegacyToken(t, pg, service, "tok_revoke_wait", []string{domain.RoleSystemAdmin})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	blocker, err := database.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stop()
+		_ = blocker.Rollback(cleanup)
+	}()
+	var pid int
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0))`, destination.ID); err != nil {
+		t.Fatal(err)
+	}
+	done, revoke := make(chan error, 1), make(chan error, 1)
+	var group sync.WaitGroup
+	group.Go(func() {
+		_, err := pg.RequestHostingRoute(ctx, resource.ID, "", "pop_revocation_wait", principal.ID, domain.HostingRouteInput{IdempotencyKey: "revoke-wait", Hostname: "revoke-token.apps.nerocd.invalid", PathPrefix: "/", ExpectedHealthyOperationID: healthy.ID}, destinationEvent("revoke_wait"))
+		done <- err
+	})
+	defer func() {
+		cancel()
+		cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stop()
+		_ = blocker.Rollback(cleanup)
+		group.Wait()
+	}()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err = database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("mutation did not wait: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	group.Go(func() { _, err := pg.RevokeAPIToken(ctx, principal.ID, time.Now().UTC()); revoke <- err })
+	// The mutation's SHARE lock must block the revocation writer until commit.
+	for {
+		var waiting bool
+		if err = database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE query LIKE '%UPDATE api_tokens SET status =%' AND cardinality(pg_blocking_pids(pid))>0)`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-revoke:
+			t.Fatalf("revocation bypassed authorization lock: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err = <-revoke; err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.SetHostingProxyEnabled(ctx, "proxy_fixture", principal.ID, "after-revoked", false, destinationEvent("after_revoked")); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("committed revocation did not fence later mutation: %v", err)
 	}
 }

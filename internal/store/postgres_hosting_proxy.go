@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -531,7 +532,7 @@ func (s *PostgresStore) CancelHostingProxyOperation(ctx context.Context, id, act
 		return domain.HostingProxyOperation{}, ErrConflict
 	}
 	if op.State == "canceled" || op.State == "cancel_requested" {
-		return op, nil
+		return op, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	if op.State != "queued" && op.State != "dispatched" && op.State != "prepared" && op.State != "applying" {
 		return domain.HostingProxyOperation{}, ErrConflict
@@ -567,7 +568,7 @@ func (s *PostgresStore) CancelHostingProxyOperation(ctx context.Context, id, act
 	if err != nil {
 		return op, err
 	}
-	return op, tx.Commit(ctx)
+	return op, proxyCommitMutation(ctx, tx, actor)
 }
 
 var _ HostingProxyRepository = (*PostgresStore)(nil)
@@ -620,6 +621,22 @@ func proxyAuthorize(ctx context.Context, tx pgx.Tx, actor, project, minimum stri
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
+	// Legacy tokens authenticate as their own durable identity and retain only
+	// their stored roles. Never inherit the issuer's project memberships, and
+	// never treat a managed service-account credential as a legacy token.
+	roles, tokenErr := q.ProxyLockLegacyToken(ctx, actor)
+	if tokenErr == nil {
+		if !slices.Contains(roles, domain.RoleSystemAdmin) {
+			return auth.ErrForbidden
+		}
+		if _, err = q.ProxyLockProject(ctx, project); err != nil {
+			return hostingError(err)
+		}
+		return proxyCheckLegacyToken(ctx, tx, actor)
+	}
+	if !errors.Is(tokenErr, pgx.ErrNoRows) {
+		return tokenErr
+	}
 	if admin {
 		return auth.ErrForbidden
 	}
@@ -632,6 +649,27 @@ func proxyAuthorize(ctx context.Context, tx pgx.Tx, actor, project, minimum stri
 	}
 	_, err = q.ProxyLockProject(ctx, project)
 	return hostingError(err)
+}
+
+// Token locks serialize revocation, but wall-clock expiry can pass while a
+// destination, proxy, resource, queue, or audit lock is awaited. Check the database
+// clock after all such work, immediately before publishing a commit or replay.
+func proxyCheckLegacyToken(ctx context.Context, tx pgx.Tx, actor string) error {
+	valid, err := sqlcgen.New(tx).ProxyLegacyTokenValid(ctx, actor)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return auth.ErrForbidden
+	}
+	return nil
+}
+
+func proxyCommitMutation(ctx context.Context, tx pgx.Tx, actor string) error {
+	if err := proxyCheckLegacyToken(ctx, tx, actor); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func proxyLoad(ctx context.Context, db sqlcgen.DBTX, id string) (domain.HostingProxy, error) {
@@ -859,7 +897,7 @@ func (s *PostgresStore) ConfigureHostingProxy(ctx context.Context, id, server, a
 	if replay, err := proxyReplay(ctx, tx, p.ID, key, hash); err != nil {
 		return p, err
 	} else if replay != "" {
-		return p, nil
+		return p, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	if _, err = q.ProxySetEnabled(ctx, sqlcgen.ProxySetEnabledParams{ID: p.ID, Enabled: true}); err != nil {
 		return p, err
@@ -872,7 +910,7 @@ func (s *PostgresStore) ConfigureHostingProxy(ctx context.Context, id, server, a
 	if err != nil {
 		return p, err
 	}
-	return p, tx.Commit(ctx)
+	return p, proxyCommitMutation(ctx, tx, actor)
 }
 
 // SetHostingProxyEnabled withdraws all routes on disable and queues a whole generation.
@@ -911,7 +949,7 @@ func (s *PostgresStore) SetHostingProxyEnabled(ctx context.Context, id, actor, k
 	if replay, err := proxyReplay(ctx, tx, id, requestKey, hash); err != nil {
 		return p, err
 	} else if replay != "" {
-		return p, nil
+		return p, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	if !enabled {
 		if _, err = q.ProxyWithdrawAllRoutes(ctx, id); err != nil {
@@ -929,7 +967,7 @@ func (s *PostgresStore) SetHostingProxyEnabled(ctx context.Context, id, actor, k
 	if err != nil {
 		return p, err
 	}
-	return p, tx.Commit(ctx)
+	return p, proxyCommitMutation(ctx, tx, actor)
 }
 
 // GrantHostingHostname serializes overlap checks with all proxy grant and route mutations.
@@ -980,7 +1018,7 @@ func (s *PostgresStore) GrantHostingHostname(ctx context.Context, id, grantID, a
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
 		return domain.HostingHostnameGrant{}, err
 	}
-	return proxyGrant(row), tx.Commit(ctx)
+	return proxyGrant(row), proxyCommitMutation(ctx, tx, actor)
 }
 
 // RevokeHostingHostname atomically withdraws affected desired routes and queues replacement.
@@ -1016,7 +1054,7 @@ func (s *PostgresStore) RevokeHostingHostname(ctx context.Context, id, grantID, 
 	if replay, err := proxyReplay(ctx, tx, id, requestKey, hash); err != nil {
 		return p, err
 	} else if replay != "" {
-		return p, nil
+		return p, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	grant, err := q.ProxyGetGrant(ctx, grantID)
 	if err != nil {
@@ -1038,7 +1076,7 @@ func (s *PostgresStore) RevokeHostingHostname(ctx context.Context, id, grantID, 
 	if err != nil {
 		return p, err
 	}
-	return p, tx.Commit(ctx)
+	return p, proxyCommitMutation(ctx, tx, actor)
 }
 
 func proxyHealthyTarget(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, row sqlcgen.HostingProxyRoute) (domain.HostingProxyRouteTarget, error) {
@@ -1181,7 +1219,10 @@ func (s *PostgresStore) RequestHostingRoute(ctx context.Context, resourceID, rou
 	} else if replay != "" {
 		record, err := s.hostingRouteTx(ctx, tx, routeID)
 		record.Route.OperationID = replay
-		return record.Route, err
+		if err != nil {
+			return domain.HostingRoute{}, err
+		}
+		return record.Route, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	if !p.Enabled || p.RestoreOwnershipHeld || in.ExpectedRouteVersion < 0 || in.ExpectedHealthyOperationID == "" {
 		return domain.HostingRoute{}, ErrConflict
@@ -1284,7 +1325,7 @@ func (s *PostgresStore) RequestHostingRoute(ctx context.Context, resourceID, rou
 		return domain.HostingRoute{}, err
 	}
 	record.Route.OperationID = op.ID
-	return record.Route, tx.Commit(ctx)
+	return record.Route, proxyCommitMutation(ctx, tx, actor)
 }
 
 func (s *PostgresStore) hostingRouteTx(ctx context.Context, tx pgx.Tx, id string) (HostingProxyRouteRecord, error) {
@@ -1334,7 +1375,10 @@ func (s *PostgresStore) DeleteHostingRoute(ctx context.Context, id, operationID,
 	} else if replay != "" {
 		record, err := s.hostingRouteTx(ctx, tx, id)
 		record.Route.OperationID = replay
-		return record.Route, err
+		if err != nil {
+			return domain.HostingRoute{}, err
+		}
+		return record.Route, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	if in.ExpectedRouteVersion < 1 {
 		return domain.HostingRoute{}, ErrConflict
@@ -1355,5 +1399,5 @@ func (s *PostgresStore) DeleteHostingRoute(ctx context.Context, id, operationID,
 		return domain.HostingRoute{}, err
 	}
 	record.Route.OperationID = op.ID
-	return record.Route, tx.Commit(ctx)
+	return record.Route, proxyCommitMutation(ctx, tx, actor)
 }
