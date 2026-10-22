@@ -2,7 +2,7 @@
 
 Planning baseline: `a763a90b3896257b784c9498d01650ccdad2427a`, inspected on
 2026-10-22. Current accepted assessment:
-`eef72d3b182acdb66f81c24787f2df8bd82abb85`, also dated 2026-10-22.
+`08c1aaf0b6622648fd373a7e65c053bfc8a151eb`, also dated 2026-10-22.
 The [product specification](product-spec.md) defines the full Go
 hosting platform target. The [plan](plan.md) orders implementation and the
 [compatibility ledger](compatibility.md) records support limits. The current
@@ -85,12 +85,23 @@ The [controlled checkout](hosting-source-checkout.md) and
 [local build engine](hosting-build-engine.md) are usable components with separate
 contracts. Internal [source/build persistence](hosting-build-control.md) stores
 source generations, credential grants, immutable requests, fenced receipts and
-local OCI artifact identities. It has no public build API, production build consumer,
+local OCI artifact identities. The accepted [Git configuration API/UI](hosting-git-resources.md)
+admits public HTTPS under an operator allowlist and stores atomic source/version
+references through migration 0049. Reads resolve the exact immutable version;
+CAS review exposes all current settings. PostgreSQL is required, and configuration
+performs no network fetch. Private Git configuration remains unsupported.
+There is no production build API/consumer,
 typed runner executor, source-to-engine bridge or deployment handoff.
 The [private Git credential component](hosting-build-credentials.md) authorizes
 and decrypts the exact immutable secret version for a live sourcing attempt.
 Its audit-backed window and byte ownership do not install an endpoint or runtime
-bridge. The [optional River BuildID adapter](hosting-build-jobs.md) requires a
+bridge. The [source checkout contract](hosting-source-checkout.md) keeps the
+credential window through fetch, tree validation, committed receipt and confirmed
+transport-file removal/byte clearing. Those credentials are cleared before the
+use/build callback; final checkout cleanup follows use. Once transport cleanup
+is confirmed, a build may outlast credential expiry, while the parent operation
+deadline, cancellation and budgets still govern use.
+The [optional River BuildID adapter](hosting-build-jobs.md) requires a
 real supplied handler; production build dispatch is not enabled.
 
 The [proxy backend](hosting-proxy-control.md) authorizes hostname grants and
@@ -228,6 +239,15 @@ in the control-plane job worker. Queue completion is distinct from workload or
 proxy completion. The optional BuildID worker registers only when the supplied
 handler implements its build interface. No production source/build controller
 supplies that handler, and no build executor or deployment handoff is installed.
+
+The accepted nonsecret [phase protocol](hosting-build-protocol.md),
+[v5 build journal](hosting-build-journal.md) and
+[HTTP client](hosting-build-client.md) provide exact messages, immutable local
+intent and acknowledgment validation. Historical receipts do not authorize new
+effects. The client does not retry automatically, and status proof must match
+retained intent before local acknowledgment. These components register no server
+endpoint or default build capability and do not connect the checkout/build engine
+to the normal runner loop.
 
 The owner migration CLI applies River's pinned migration bundle under the same
 advisory lock as native migrations. Each River version and its adapter checksum

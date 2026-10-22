@@ -39,6 +39,11 @@ it is not a complete Coolify parity claim.
   [deployment WebUI](docs/hosting-image-deployments.md) provides role-aware
   requests, history, exact-request recovery and fenced cleanup of selected
   retained containers. Port allocation does not switch public traffic.
+- [Public Git application configuration](docs/hosting-git-resources.md) through
+  the API and WebUI, with atomic immutable source versions and explicit conflict
+  review. Public HTTPS defaults to `github.com` under an operator allowlist.
+  PostgreSQL is required. Saving configuration does not fetch or build, private
+  source configuration is unsupported, and Git build/deploy controls remain unavailable.
 - A [controlled Git checkout adapter](docs/hosting-source-checkout.md) with
   pinned transport policy and source receipts, plus an internal
   [source/build persistence contract](docs/hosting-build-control.md) for
@@ -46,6 +51,10 @@ it is not a complete Coolify parity claim.
   The [private credential delivery component](docs/hosting-build-credentials.md)
   authorizes exact live sourcing attempts. Its endpoint and controller wiring
   remain absent, so these components do not form a usable Git build flow.
+- Nonsecret [build protocol](docs/hosting-build-protocol.md), additive
+  [v5 journal records](docs/hosting-build-journal.md) and
+  [typed client methods](docs/hosting-build-client.md) are available as
+  infrastructure. They register no build endpoint, default capability or executor.
 - A [standalone local build engine](docs/hosting-build-engine.md) for Dockerfile,
   Railpack and prebuilt static assets on a fixed Linux Docker host. Confined
   context/Dockerfile/target and publish-directory/SPA settings are supported.
