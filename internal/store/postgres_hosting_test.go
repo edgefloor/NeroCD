@@ -26,7 +26,7 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
 	if _, err := database.Exec(ctx, `ALTER TABLE resources ENABLE TRIGGER resources_immutable_identity`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(ctx, `DROP TABLE resources; DROP TABLE project_environments; DROP FUNCTION nerocd_hosting_resource_update(); DROP FUNCTION nerocd_hosting_schema_compatible()`); err != nil {
+	if _, err := database.Exec(ctx, `DROP TABLE resources CASCADE; DROP TABLE project_environments; DROP FUNCTION nerocd_hosting_resource_update(); DROP FUNCTION nerocd_hosting_schema_compatible()`); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); ok {
@@ -38,6 +38,14 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
 	}
 	if err := applyEmbeddedMigrations(ctx, database, "0039_service_accounts.sql", "0040_hosting_resources.sql"); err != nil {
 		t.Fatal(err)
+	}
+	// The intentional 0040 teardown removes this later migration's dependent FK.
+	if _, err := database.Exec(ctx, `ALTER TABLE resource_bindings ADD CONSTRAINT resource_bindings_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT`); err != nil {
+		t.Fatal(err)
+	}
+	var restored bool
+	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='resource_bindings'::regclass AND conname='resource_bindings_resource_id_fkey' AND contype='f' AND convalidated) AND NOT EXISTS(SELECT 1 FROM resource_bindings b LEFT JOIN resources r ON r.id=b.resource_id WHERE r.id IS NULL)`).Scan(&restored); err != nil || !restored {
+		t.Fatalf("restored binding FK: %v %v", restored, err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {
 		t.Fatalf("restored 0040 readiness: %v %v", ok, err)

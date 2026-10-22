@@ -313,7 +313,7 @@ func TestPostgresManagedSecretsMissingMigrationBlocksStartup(t *testing.T) {
 		_ = restored.Close()
 		t.Fatal("missing migration allowed startup")
 	}
-	if err := applyEmbeddedMigrations(ctx, db, "0040_hosting_resources.sql", ""); err != nil {
+	if err := applyEmbeddedMigrations(ctx, db, "0040_hosting_resources.sql", "0041_project_managed_secrets.sql"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {

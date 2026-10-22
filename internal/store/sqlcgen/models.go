@@ -128,6 +128,22 @@ type DeploymentTransition struct {
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
+type Destination struct {
+	ID          string    `json:"id"`
+	ServerID    string    `json:"server_id"`
+	Name        string    `json:"name"`
+	RuntimeKind string    `json:"runtime_kind"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type DestinationProjectGrant struct {
+	DestinationID string     `json:"destination_id"`
+	ProjectID     string     `json:"project_id"`
+	GrantedBy     string     `json:"granted_by"`
+	CreatedAt     time.Time  `json:"created_at"`
+	RevokedAt     *time.Time `json:"revoked_at"`
+}
+
 type Environment struct {
 	ID                       string          `json:"id"`
 	ServiceID                string          `json:"service_id"`
@@ -281,6 +297,15 @@ type Resource struct {
 	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
+type ResourceBinding struct {
+	ID               string    `json:"id"`
+	ResourceID       string    `json:"resource_id"`
+	DestinationID    string    `json:"destination_id"`
+	RuntimeNamespace string    `json:"runtime_namespace"`
+	CreatedBy        string    `json:"created_by"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
 type Revision struct {
 	ID                 string     `json:"id"`
 	ServiceID          string     `json:"service_id"`
@@ -400,6 +425,14 @@ type RunnerOperationalObservation struct {
 	JournalDepth  int32     `json:"journal_depth"`
 	RetryCount    int32     `json:"retry_count"`
 	RenewFailures int32     `json:"renew_failures"`
+}
+
+type Server struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	RunnerID  string    `json:"runner_id"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Service struct {

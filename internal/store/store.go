@@ -123,6 +123,10 @@ type MemoryStore struct {
 	projectEnvironments   []domain.ProjectEnvironment
 	resources             []domain.Resource
 	managedSecrets        []domain.ManagedSecret
+	servers               []domain.Server
+	destinations          []domain.Destination
+	destinationGrants     []domain.DestinationProjectGrant
+	resourceBindings      []domain.ResourceBinding
 	managedSecretVersions []ManagedSecretRecord
 	templates             []domain.TaskTemplate
 	repositories          []domain.Repository
