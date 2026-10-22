@@ -278,3 +278,32 @@ func TestRunnerCredentialFileRejectsBuildCapabilityWithoutConfiguration(t *testi
 		t.Fatal("credential-file build mismatch reached heartbeat/claim")
 	}
 }
+
+func TestRunnerCredentialFileRejectsLocalCapabilityMismatchBeforeEffects(t *testing.T) {
+	t.Setenv("NEROCD_MODE", "development")
+	t.Setenv("NEROCD_TOKEN", "")
+	root := t.TempDir()
+	file := filepath.Join(root, "credential")
+	if err := os.WriteFile(file, []byte("dedicated-local-fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{false, true} {
+		effects := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/runners/identity" {
+				effects++
+				w.WriteHeader(500)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_local", "capabilities": []string{domain.RunTypeLocalBuildDeploy, "shell"}})
+		}))
+		args := []string{"--server", server.URL, "--credential-file", file, "--work-dir", root, "--once"}
+		if enabled {
+			args = append(args, "--local-build-deploy")
+		}
+		if runRunner(args) == nil || effects != 0 {
+			t.Fatal("local credential mismatch reached heartbeat/claim")
+		}
+		server.Close()
+	}
+}

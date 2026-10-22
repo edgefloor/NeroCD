@@ -52,6 +52,12 @@ func (c Client) RuntimeIdentity(ctx context.Context, proxyConfigured bool) (stri
 // RuntimeCapabilitiesIdentity checks exact persisted proxy/build capabilities
 // against explicit local configuration. Legacy responses require both disabled.
 func (c Client) RuntimeCapabilitiesIdentity(ctx context.Context, proxyConfigured, buildConfigured bool) (string, error) {
+	return c.RuntimeExecutionIdentity(ctx, proxyConfigured, buildConfigured, false)
+}
+
+// RuntimeExecutionIdentity checks persisted execution capabilities against all
+// explicit local execution modes. Legacy wrappers require local builds disabled.
+func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, buildConfigured, localBuildConfigured bool) (string, error) {
 	var result proxyIdentityResponse
 	if err := c.get(ctx, "/api/v1/runners/identity", &result); err != nil {
 		return "", err
@@ -62,13 +68,14 @@ func (c Client) RuntimeCapabilitiesIdentity(ctx context.Context, proxyConfigured
 	if result.RunnerID == "" || strings.TrimSpace(result.RunnerID) != result.RunnerID {
 		return "", errors.New("runner identity response did not include a valid runner_id")
 	}
-	proxyCapable, buildCapable, shellCapable := false, false, false
+	proxyCapable, buildCapable, shellCapable, localBuildCapable := false, false, false, false
 	for _, capability := range result.Capabilities {
 		proxyCapable = proxyCapable || capability == domain.RunTypeProxyApply
 		buildCapable = buildCapable || capability == domain.HostingBuildTaskType
+		localBuildCapable = localBuildCapable || capability == domain.RunTypeLocalBuildDeploy
 		shellCapable = shellCapable || capability == "shell"
 	}
-	if buildConfigured && shellCapable {
+	if (buildConfigured || localBuildConfigured) && shellCapable {
 		return "", errors.New("authenticated shell capability cannot share configured build execution")
 	}
 	if proxyCapable != proxyConfigured {
@@ -76,6 +83,9 @@ func (c Client) RuntimeCapabilitiesIdentity(ctx context.Context, proxyConfigured
 	}
 	if buildCapable != buildConfigured {
 		return "", errors.New("authenticated hosting_build_v1 capability does not match explicit local build configuration")
+	}
+	if localBuildCapable != localBuildConfigured {
+		return "", errors.New("authenticated local_build_deploy_v1 capability does not match explicit local configuration")
 	}
 	return result.RunnerID, nil
 }

@@ -13,6 +13,7 @@ import (
 // JournalHosting is nonsecret immutable prepare, apply-intent, or result
 // evidence. Apply intent is never discarded merely because its lease is stale.
 type JournalHosting struct {
+	LocalBuild  bool                           `json:"local_build,omitempty"`
 	ID          string                         `json:"id"`
 	Attempt     AttemptIdentity                `json:"attempt_authority"`
 	OperationID string                         `json:"operation_id"`
@@ -26,6 +27,9 @@ type JournalHosting struct {
 
 // AppendHosting durably records nonsecret hosting evidence before external mutation or delivery.
 func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, error) {
+	if hostingJournalHasLocalArtifact(entry) {
+		entry.LocalBuild = true
+	}
 	if err := validateJournalHosting(entry); err != nil {
 		return JournalHosting{}, err
 	}
@@ -58,6 +62,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	if hostingJournalNeedsV3(entry) && j.state.Version < 3 {
 		j.state.Version = 3
 	} // Older binaries reject retained release and cleanup authority.
+	if HostingJournalUsesLocalBuild(entry) && j.state.Version < 6 {
+		j.state.Version = 6
+	}
 	j.state.Hosting = append(j.state.Hosting, entry)
 	if err = j.persistLocked(); err != nil {
 		j.state.Hosting = j.state.Hosting[:len(j.state.Hosting)-1]
@@ -65,6 +72,36 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 		return JournalHosting{}, err
 	}
 	return cloneJournalHosting(entry), nil
+}
+
+// HostingJournalUsesLocalBuild detects local evidence at every retained level.
+// The explicit marker protects result-only records; it grants no authority.
+func HostingJournalUsesLocalBuild(entry JournalHosting) bool {
+	return entry.LocalBuild || hostingJournalHasLocalArtifact(entry)
+}
+
+func hostingJournalHasLocalArtifact(entry JournalHosting) bool {
+	healthy := func(h domain.HostingHealthy) bool {
+		return h.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) || h.Release.LocalBuild != (domain.HostingBuildArtifact{})
+	}
+	if entry.Prepared != nil && entry.Prepared.Release.LocalBuild != (domain.HostingBuildArtifact{}) {
+		return true
+	}
+	if entry.CleanupPlan != nil && healthy(entry.CleanupPlan.Target) {
+		return true
+	}
+	if entry.Plan != nil {
+		p := entry.Plan
+		if p.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) || p.Release.LocalBuild != (domain.HostingBuildArtifact{}) || p.PreviousHealthy != nil && healthy(*p.PreviousHealthy) {
+			return true
+		}
+		for _, retained := range p.RetainedReleases {
+			if healthy(retained) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hostingJournalNeedsV3(entry JournalHosting) bool {
@@ -111,6 +148,24 @@ func cloneHostingEntries(entries []JournalHosting) []JournalHosting {
 	return copy
 }
 func validateJournalHosting(entry JournalHosting) error {
+	if entry.LocalBuild && entry.Phase != "result" && !hostingJournalHasLocalArtifact(entry) {
+		return errors.New("local journal marker conflicts with structured origin")
+	}
+	if hostingJournalHasLocalArtifact(entry) {
+		if p := entry.Plan; p != nil {
+			if domain.ValidateHostingSnapshotRelease(p.Snapshot, p.Release) != nil {
+				return errors.New("local journal plan origin mismatch")
+			}
+			if p.PreviousHealthy != nil && domain.ValidateHostingSnapshotRelease(p.PreviousHealthy.Snapshot, p.PreviousHealthy.Release) != nil {
+				return errors.New("local journal previous origin mismatch")
+			}
+			for _, retained := range p.RetainedReleases {
+				if domain.ValidateHostingSnapshotRelease(retained.Snapshot, retained.Release) != nil {
+					return errors.New("local journal retained origin mismatch")
+				}
+			}
+		}
+	}
 	if strings.TrimSpace(entry.ID) == "" || len(entry.ID) > 128 || entry.OperationID == "" || len(entry.OperationID) > 128 || entry.CreatedAt.IsZero() {
 		return errors.New("hosting journal requires stable identity and timestamp")
 	}

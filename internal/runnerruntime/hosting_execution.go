@@ -29,10 +29,13 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 			return errors.New("hosting plan does not match immutable snapshot")
 		}
 	}
+	if op.Release != nil && domain.ValidateHostingSnapshotRelease(op.Snapshot, *op.Release) != nil {
+		return errors.New("hosting release does not match immutable source")
+	}
 	return nil
 }
 
-func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string) error {
+func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string, localEnabled ...bool) error {
 	mode := claim.Run.RunSpec.HostingMode
 	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe" && mode != "cleanup") || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
 		return errors.New("invalid typed image task")
@@ -46,6 +49,10 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	if err := validateHostingPlanResponse(op, a, claim.Lease.RunnerID, mode); err != nil {
 		return err
 	}
+	local := hostingOperationUsesLocalBuild(op)
+	if local && (len(localEnabled) == 0 || !localEnabled[0]) || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy && !local {
+		return errors.New("local artifact operation requires exact configured capability and source")
+	}
 	engine, err := newImageEngine(endpoint)
 	if err != nil {
 		return err
@@ -57,14 +64,19 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	if mode == "observe" {
 		return executeHostingObservation(supervisor, client, engine, a, op)
 	}
-	if err = reporter.Emit("system", "Preparing public container image", 4); err != nil {
+	message := "Preparing public container image"
+	if local {
+		message = "Verifying exact local build image"
+	}
+	if err = reporter.Emit("system", message, 4); err != nil {
 		return err
 	}
 	failBeforeApply := func() error {
-		_, err := journalHostingResult(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, reporter.WaitEmpty)
+		_, err := journalHostingResult(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, reporter.WaitEmpty, local)
 		return err
 	}
 	if op.Release == nil {
+		initialSnapshot := op.Snapshot
 		release, prepareErr := engine.Prepare(supervisor.Context(), op.Snapshot)
 		if prepareErr != nil {
 			if supervisor.Context().Err() != nil {
@@ -90,6 +102,9 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		if op.PreparedReceipt == nil || op.PreparedReceipt.ID != request.ReceiptID || op.PreparedReceipt.BodyHash != domain.HostingDocumentHash(release) || op.Release == nil || *op.Release != release {
 			return errors.New("hosting preparation acknowledgement changed")
 		}
+		if validateHostingPreparedResponse(op, a, initialSnapshot, release) != nil {
+			return errors.New("hosting preparation snapshot changed")
+		}
 		if err = journal.AckHosting(entry.ID); err != nil {
 			return err
 		}
@@ -101,7 +116,13 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		if supervisor.Context().Err() != nil {
 			return err
 		}
-		return failBeforeApply()
+		if err = failBeforeApply(); err != nil {
+			return err
+		}
+		if local {
+			return errors.New("local build image unavailable; previous workload was not changed")
+		}
+		return nil
 	}
 	if err = reporter.Emit("system", "Prepared immutable image release", 5); err != nil {
 		return err
@@ -130,7 +151,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 			return err
 		})
 	})
-	finished, err := journalHostingResult(supervisor, journal, client, a, claim.Lease, result, reporter.WaitEmpty)
+	finished, err := journalHostingResult(supervisor, journal, client, a, claim.Lease, result, reporter.WaitEmpty, local)
 	if err != nil {
 		return err
 	}
@@ -146,9 +167,10 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	return nil
 }
 
-func journalHostingResult(supervisor *attemptSupervisor, journal *runner.AttemptJournal, client runnerclient.Client, a domain.HostingAuthority, lease domain.RunLease, result domain.HostingResult, drain func(context.Context) error) (domain.HostingOperation, error) {
+func journalHostingResult(supervisor *attemptSupervisor, journal *runner.AttemptJournal, client runnerclient.Client, a domain.HostingAuthority, lease domain.RunLease, result domain.HostingResult, drain func(context.Context) error, localBuild ...bool) (domain.HostingOperation, error) {
 	request := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_result", a.LeaseID, a.Attempt, "result"), Result: result}
 	entry := runner.JournalHosting{ID: request.ReceiptID, Attempt: journalAttemptIdentity(a.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "result", Result: &request, CreatedAt: time.Now().UTC()}
+	entry.LocalBuild = len(localBuild) > 0 && localBuild[0]
 	if _, err := journal.AppendHosting(entry); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -205,6 +227,13 @@ func executeHostingObservation(supervisor *attemptSupervisor, client runnerclien
 // It may obtain only the owner's exact read-only observation lease; unacknowledged
 // mutation intent is retained on every other stale or uncertain outcome.
 func reconcileHostingJournal(server, token string, journal *runner.AttemptJournal, endpoint string, parents ...context.Context) error {
+	return reconcileHostingJournalWithLocalBuild(server, token, journal, endpoint, false, parents...)
+}
+
+func reconcileHostingJournalWithLocalBuild(server, token string, journal *runner.AttemptJournal, endpoint string, localEnabled bool, parents ...context.Context) error {
+	if err := validateLocalBuildJournalConfiguration(journal, localEnabled); err != nil {
+		return err
+	}
 	parent := replayParent(parents)
 	if parent.Err() != nil {
 		return parent.Err()
@@ -228,8 +257,16 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 			if probeErr != nil || status.ID != entry.OperationID || status.PreparedReceipt != nil || status.MutationHold {
 				return errors.New("hosting preparation replay is unresolved")
 			}
-		} else if op.PreparedReceipt == nil || op.PreparedReceipt.ID != entry.Prepared.ReceiptID || op.PreparedReceipt.BodyHash != domain.HostingDocumentHash(entry.Prepared.Release) {
+			if err = validateLocalBuildReplayOperation(entry, status, localEnabled); err != nil {
+				return err
+			}
+		} else if op.PreparedReceipt == nil || op.PreparedReceipt.ID != entry.Prepared.ReceiptID || op.PreparedReceipt.BodyHash != domain.HostingDocumentHash(entry.Prepared.Release) || op.Release == nil || *op.Release != entry.Prepared.Release || domain.ValidateHostingSnapshotRelease(op.Snapshot, *op.Release) != nil {
 			return errors.New("hosting preparation replay receipt changed")
+		}
+		if err == nil && op.ID != "" {
+			if err = validateLocalBuildReplayOperation(entry, op, localEnabled); err != nil {
+				return err
+			}
 		}
 		if parent.Err() != nil {
 			return parent.Err()
@@ -250,6 +287,9 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 		cancel()
 		if err != nil {
 
+			return err
+		}
+		if err = validateLocalBuildReplayOperation(entry, op, localEnabled); err != nil {
 			return err
 		}
 		if op.CompleteReceipt == nil || op.CompleteReceipt.ID != entry.Result.ReceiptID || op.CompleteReceipt.BodyHash != domain.HostingDocumentHash(entry.Result.Result) {
@@ -431,7 +471,7 @@ func executeHostingCleanup(supervisor *attemptSupervisor, journal *runner.Attemp
 		return errors.New("cleanup admission changed")
 	}
 	result := engine.Cleanup(supervisor.Context(), expected)
-	finished, err := journalHostingResult(supervisor, journal, client, a, lease, result, reporter.WaitEmpty)
+	finished, err := journalHostingResult(supervisor, journal, client, a, lease, result, reporter.WaitEmpty, hostingOperationUsesLocalBuild(op))
 	if err != nil {
 		return err
 	}

@@ -10,6 +10,36 @@ import (
 	"testing"
 )
 
+func TestRuntimeExecutionIdentityRequiresExactLocalConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		caps                       []string
+		proxy, build, local, valid bool
+	}{
+		{[]string{domain.RunTypeLocalBuildDeploy}, false, false, true, true},
+		{[]string{domain.RunTypeLocalBuildDeploy, domain.RunTypeLocalBuildDeploy, "OPAQUE"}, false, false, true, true},
+		{[]string{domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.HostingBuildTaskType}, true, true, true, true},
+		{[]string{domain.RunTypeLocalBuildDeploy}, false, false, false, false},
+		{[]string{"LOCAL_BUILD_DEPLOY_V1"}, false, false, true, false},
+		{[]string{domain.RunTypeLocalBuildDeploy, "shell"}, false, false, true, false},
+		{nil, false, false, false, true},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": tc.caps})
+		}))
+		client := New(server.URL, "fixture")
+		_, err := client.RuntimeExecutionIdentity(t.Context(), tc.proxy, tc.build, tc.local)
+		if (err == nil) != tc.valid {
+			t.Fatal("local identity/config mismatch")
+		}
+		if tc.local && strings.Contains(strings.Join(tc.caps, ","), domain.RunTypeLocalBuildDeploy) {
+			if _, err = client.RuntimeCapabilitiesIdentity(t.Context(), tc.proxy, tc.build); err == nil {
+				t.Fatal("legacy wrapper accepted local capability")
+			}
+		}
+		server.Close()
+	}
+}
+
 func TestRuntimeIdentityPreservesOrdinaryIdentityContract(t *testing.T) {
 	for _, test := range []struct {
 		name, id     string
