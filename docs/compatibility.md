@@ -1,6 +1,6 @@
 # Compatibility ledger
 
-Originally recorded on 2026-10-22 against NeroCD `a763a90b3896257b784c9498d01650ccdad2427a` and [Coolify `b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3). Current accepted NeroCD assessment: `69735f6ca34e68147b00cae4afbfe135b2b5fa1b`, dated 2026-10-22. Official documentation is a separately dated capability reference. It can change independently of the pinned source.
+Originally recorded on 2026-10-22 against NeroCD `a763a90b3896257b784c9498d01650ccdad2427a` and [Coolify `b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3). Current accepted NeroCD assessment: `836a3a92b0ff32242bba94bf8cf0800dc638d96e`, dated 2026-10-22. Official documentation is a separately dated capability reference. It can change independently of the pinned source.
 
 The [full specification](product-spec.md) defines the target. The [plan](plan.md) assigns P00–P18 and M0–M4. This ledger distinguishes feature compatibility, migration compatibility, and unchanged-client compatibility. Success in one dimension does not prove another.
 
@@ -23,7 +23,7 @@ limits. Missing and failed required checks block acceptance.
 ## Accepted foundations and evidence
 
 This assessment covers accepted code through
-`69735f6ca34e68147b00cae4afbfe135b2b5fa1b`. The linked tests describe bounded
+`836a3a92b0ff32242bba94bf8cf0800dc638d96e`. The linked tests describe bounded
 coverage. They do not establish full product-area or milestone completion.
 The [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
 [job infrastructure guide](hosting-jobs.md) describe the operational contracts.
@@ -37,8 +37,38 @@ The [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
 | Transactional hosting job infrastructure | Foundation integration `037b621b2647bd9cb5dec234330239ed6373c0ae`, image-consumer integration `9822119a10d95c3108f4018bfaf8f516b0c88ca8`; [transaction/retry/lifecycle tests](../internal/hostingjobs/jobs_test.go), [migration checksum tests](../internal/hostingjobs/migrations_test.go), [consumer/agent fixture](../internal/store/postgres_hosting_execution_docker_test.go) | River OSS v0.44.1 with live image consumer, exact-target dispatch, schema readiness and backup identity; restored bindings remain held, with no trusted recovery proof or unlock API |
 | Public image execution | Integration `9822119a10d95c3108f4018bfaf8f516b0c88ca8`; [API tests](../internal/api/hosting_execution_handlers_test.go), [real PostgreSQL/River/API/agent/Docker fixture](../internal/store/postgres_hosting_execution_docker_test.go), [Docker image fixture](../internal/runnerruntime/image_engine_docker_test.go), [gate command](../Makefile) | Anonymous public tag/digest input, committed digest/image/platform/daemon identity, ordinary HTTP readiness, fixed loopback host port, fenced apply, cancellation and exact receipt replay; no public HTTPS, private registry credentials, managed variables/secrets or zero-downtime strategy |
 | Image deployment WebUI | Integration `69735f6ca34e68147b00cae4afbfe135b2b5fa1b`, retained-request repair `f3d11b82b09de27d97a47af5bf45fe6b33eec253`; [browser scenarios](../web/app/tests/browser/hosting-deployments.spec.ts), [real-backend fixture](../web/app/scripts/hosting-deployment-fixture.sh), [client tests](../web/app/src/api/hosting-deployments.test.ts) | Role-aware deployment/history, fixed-port interruption acknowledgement, exact retained-request recovery under a mutation hold, cancel and separate read-only reconciliation; completed-operation readiness is not continuous health, and no HTTPS route UI is provided |
-| Standalone local build engine | Accepted candidate `e72a504863c4001d5e9c0e192c40aca971f05f93`, integration `7bf3ed1a0362fd4b1fa9c5d0bf0af6e532be9d1b`; [runtime gate](../acceptance/runtime-build/gate.sh), [real build/HTTP/resource-limit fixtures](../internal/hostingbuild/runtime_test.go), [archive tests](../internal/hostingbuild/archive_test.go) | Dockerfile, Railpack and already-built static files on one trusted Linux/rootful Docker host; immutable caller-supplied checkout and retained local output. No Git client, API/build records, deployment handoff, registry publisher or log stream; monitored disk budgets are not a filesystem quota |
+| Standalone local build engine | Engine integration `7bf3ed1a0362fd4b1fa9c5d0bf0af6e532be9d1b`, settings candidate `e89179f6a554645dcbe587e33f6a3bbc90cc0149`, integration `02378fe56d44f2d37d5c64d1aa4051dbe8edc1aa`; [runtime gate](../acceptance/runtime-build/gate.sh), [real build/HTTP/resource-limit fixtures](../internal/hostingbuild/runtime_test.go), [archive tests](../internal/hostingbuild/archive_test.go) | Dockerfile/Railpack/prebuilt static on one trusted Linux/rootful Docker host, confined context/Dockerfile/target and publish-directory/SPA settings; retained local receipts. No orchestration, deployment handoff, registry publisher or log stream; disk budgets are monitored, not quotas |
 | Standalone Traefik engine | Accepted integration `ea8bdc547f1ecda4d95739697eeb33efbdea942d`; [runtime gate](../acceptance/runtime-proxy/gate.sh), [real Traefik/Pebble fixtures](../internal/hostingproxy/runtime_test.go), [plan tests](../internal/hostingproxy/plan_test.go) | Linux typed routes, HTTP-01 TLS issuance/renewal, verified config rollback and coordinated persistent-state backup/restore; no public route API, database authorization, agent commands, fenced controller proxy holds, binding selection or WebUI integration |
+| Per-release ports and retained cleanup | Backend `37189cad71c696ec19446423760f5fa590e347bd`, integration `4d65a72a04523f2333f826c1e313545be3a257ff`; UI `1582114b6330341153bdce03c7f44f7d2961c7ff`, integration `e1eaf13aaaf3749c460f2c7ccfb3ff5c033d4a01`; [store/Docker integration](../internal/store/postgres_hosting_execution_docker_test.go), [browser fixture](../web/app/tests/browser/hosting-deployments.spec.ts) | Automatic loopback ports retain earlier containers; explicit fixed ports require interruption acknowledgment. Exact retained cleanup protects serving references, live effects and restore holds; no automatic public traffic switch |
+| Controlled Git checkout | Accepted candidate `7466fe407a9bdc279ab5afe0fb4bd1df994e713a`, integration `d63108b5dc4882fd6471fa8867d7278a3ccced78`; [checkout tests](../internal/runnerruntime/source_checkout_test.go), [transport/DNS tests](../internal/runnerruntime/source_checkout_transport_test.go), [guide](hosting-source-checkout.md) | Immutable checkout component with public HTTPS, callback-supplied HTTPS basic or pinned-host SSH keys, bounded transport and receipt acknowledgment before use; no source API, managed credential delivery or build invocation |
+| Source/build persistence | Store candidate `273987babc404d163063419169e636a65230b93d`, accepted schema repair `5f6a2a0d3087f0bf531a65628009db68280e069d`, integration `836a3a92b0ff32242bba94bf8cf0800dc638d96e`; [PostgreSQL/fence/schema/restore tests](../internal/store/postgres_hosting_build_test.go), [domain tests](../internal/domain/hosting_build_test.go), [guide](hosting-build-control.md) | Persisted immutable sources/settings, purpose-specific secret-version grants, requests, fenced receipts and local artifacts via internal repository methods; no public Git/build API, River build consumer, typed runtime executor, receipt bridge or deployment handoff |
+| Proxy control-plane dispatch | Candidate `471d063f5062c4214f531b8ee9a41658e1c2c48c`, integration `ad82174f01da8ac964adb20cda57039484af8189`; authority repair `d7d65911be23658315596b0c392be481a9fec995`, integration `12bbbd4be048a418217cfaf1b69637307979fd98`; [API tests](../internal/api/hosting_proxy_handlers_test.go), [persisted authority tests](../internal/store/postgres_hosting_proxy_authorization_test.go), [guide](hosting-proxy-control.md) | Authorized grants/routes/generations, settled binding-derived targets, proxy/restore holds and exact-target River dispatch; backend tests use typed engine receipts. Default agents do not advertise or execute `proxy_apply`; runtime compatibility and positive HTTPS UI remain unaccepted |
+
+The current accepted integration report at
+`836a3a92b0ff32242bba94bf8cf0800dc638d96e` records passed PostgreSQL-backed
+race suites for store, domain, app, API, runner, runnerclient and hostingjobs,
+plus the real CLI dump/restore regression. It also records changed-code lint
+with zero findings, generation checks, vet, build and Go embedding of 145 routes.
+The [source/build schema tests](../internal/store/postgres_hosting_build_test.go)
+cover owning-schema functions and restore/replay; [proxy authority tests](../internal/store/postgres_hosting_proxy_authorization_test.go)
+cover persisted legacy-token authorization, revocation and expiry after waits.
+These are retained acceptance reports, not commands rerun for this documentation
+update or runtime throughput measurements.
+
+The persistence merge alone did not pass combined checks. Accepted evidence is
+the repaired `836a3a92` integration: additive 0048 binds 0047's functions to
+their owning schema and the regression fixtures account for build dependencies.
+Original migration SQL/checksums remain unchanged. Internal fixture queue/task
+callbacks are not a product build consumer.
+
+The accepted UI report at
+`1582114b6330341153bdce03c7f44f7d2961c7ff`, integrated as
+`e1eaf13aaaf3749c460f2c7ccfb3ff5c033d4a01`, records 567 unit tests in 58 files
+and actual backend Chromium coverage of automatic ports, acknowledged fixed
+ports and retained cleanup. UI source and built assets are unchanged since that
+integration; only generated API types changed under `web/`. The bounded UI
+report remains labeled with its original revision and does not establish a
+positive proxy/HTTPS browser workflow.
 
 The execution [guide](hosting-execution.md) documents the accepted
 `make image-hosting-gate` coverage at integration
@@ -64,7 +94,7 @@ The [proxy guide](hosting-proxy-engine.md) and runtime gate describe the accepte
 `ea8bdc547f1ecda4d95739697eeb33efbdea942d` evidence: real Traefik/Pebble
 HTTP-01 issuance, trusted TLS, renewal, generation/ownership failures, rollback
 and coordinated state restoration with the CA offline. This does not validate
-control-plane route admission or end-user HTTPS UI. DNS-01, wildcard and custom
+the separate control-plane checkpoint's runtime execution or end-user HTTPS UI. DNS-01, wildcard and custom
 certificate support remain outside this component.
 
 Retained validation reports supplied with the accepted handoffs are
@@ -83,11 +113,14 @@ River's pinned queue and migration contract is documented in the
 [hosting job guide](hosting-jobs.md). No evidence above completes A01, A05,
 A08 or A27. A36 requires the complete declared core workflows on one release
 candidate; results from different commits cannot be added together to satisfy it.
-The public-image path and standalone engines above are accepted only within
-their stated bounds. Source-adapter and per-release proxy-retention work outside
-this accepted base remain unaccepted. There is no A01–A37 or M0–M4 completion
-claim. Git/build orchestration, managed-secret
-execution delivery, route/TLS integration and UI, continuous observations/runtime
+The public-image path, adapters, internal persistence and proxy backend above
+are accepted only within their stated bounds. Managed Git credential delivery,
+proxy agent runtime and proxy UI candidates outside this base remain unaccepted.
+Default agents do not advertise or execute `proxy_apply`; negative browser
+checks and standalone TLS engine gates cannot establish a positive integrated
+HTTPS workflow. There is no A01–A37 or M0–M4 completion claim, and R65 remains
+ongoing. Git/build APIs and orchestration, managed-secret execution delivery,
+compatible route runtime/TLS integration and UI, continuous observations/runtime
 logs, automatic triggers, optional hosting approval and trusted restore
 resumption remain required for the full journey.
 
@@ -99,12 +132,12 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | --- | --- | --- | --- | --- |
 | Server management | C4, C11 | partial: enrolled server/default destination admission, project grants and immutable desired bindings through API/UI; SSH automation, actual host/runtime validation and full lifecycle planned | A01, A13, A14, A27; server-reenroll, host-key-mismatch, old-agent-capability | P02; persistent Go agent instead of upstream deployment over SSH |
 | Resource organization | C1, C10 | partial: shared project environments, image configuration and per-binding public-image mutation admission through API/UI; additional kinds, team ownership, legacy mappings and broader shared-resource concurrency planned | A08, A34, A35; legacy-membership-preservation | P01; preserve legacy IDs and explicit environment grouping |
-| Git sources | C2 | partial: repository inputs exist; provider installation and complete source choices planned | A03, A09; provider matrix below | P04, P18; no-Git inputs need no artificial repository |
-| Builds | C2, C12, C13 | partial: standalone local Dockerfile, Railpack and prebuilt-static engine; Git/API/build records, log streaming and deployment handoff planned | A02–A07; builder and architecture matrices below | P05; immutable local receipts do not establish an integrated build/release workflow |
+| Git sources | C2 | partial: controlled checkout adapter and internal immutable source/grant persistence; public source API/UI, managed credential delivery, provider installation and complete source choices planned | A03, A09; provider matrix below | P04, P18; no-Git inputs need no artificial repository |
+| Builds | C2, C12, C13 | partial: confined local build engine plus internal requests/receipts/artifacts; build API/controller/consumer/executor, log streaming and deployment handoff planned | A02–A07; builder and architecture matrices below | P05; immutable local receipts do not establish an integrated build/release workflow |
 | Inputs without Git | C2, C3, C8 | partial: public-image API/UI deployment freezes selected output without a repository; stored-Dockerfile product input, pasted Compose and catalog sources planned | A05, A15, A21; no-git-source | P04, P08, P11 |
 | Build placement | C4 | partial: standalone build on one fixed local daemon; scheduling, registry publication and dedicated-server image delivery planned | A07, A13; registry-push-pull, architecture-mismatch | P02, P05; tags never relocate stateful destinations |
-| Domains and HTTPS | C5 | partial: standalone Traefik route/TLS engine; control-plane authorization, fenced agent route operations, binding handoff and UI planned | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
-| Deployment automation | C2, C14, C15 | partial: manual public-image API/UI requests, immutable preparation, fenced fixed-port apply and exact request/receipt replay; push triggers and optional hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
+| Domains and HTTPS | C5 | partial: standalone Traefik TLS engine and authorized whole-generation backend/dispatch; compatible agent execution and positive HTTPS UI remain unaccepted | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
+| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup; public traffic switch, push triggers and optional hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | planned: managed volumes, directories, managed files and external host files | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
 | Databases | C7 | planned: engine-specific lifecycle; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
@@ -113,7 +146,7 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | Ongoing operations | C9 | partial: run logs and runner evidence; continuous runtime observation and resource actions planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
 | Recovery | C18–C20, C15 | partial: platform backup identity, image mutation/restore holds, bounded readiness-failure restoration and standalone proxy state recovery; trusted restored-ownership resumption and hosted data recovery planned | A25–A27, A37; resume-failure, new-resource-restore | P10; platform, database, storage and release rollback are distinct |
 | Automation | C21, C22 | planned: resource-bound schedules and durable notifications | A25, A30, A31; notification matrix below | P14; occurrence identity, DST, overlap and missed-run policies required |
-| Programmatic access | C1 | partial: native REST/CLI, generated client, hosting configuration/secret/placement and public-image deployment/history/cancel/reconcile API/UI; complete hosting CLI/MCP and HTTPS UI planned | A35, A36; interface-parity, keyboard-mobile | P16; every interface uses the same authorized application operations |
+| Programmatic access | C1 | partial: native REST/CLI, generated client, image/secret/placement/retained-cleanup UI and proxy backend API; source/build APIs, complete hosting CLI/MCP and HTTPS UI planned, R65 ongoing | A35, A36; interface-parity, keyboard-mobile | P16; every interface uses the same authorized application operations |
 | Migration | C23 | planned: NeroCD upgrade mappings and Coolify compatibility report/cutover | A33, A34; controller-handoff, post-cutover-writes | P17; existing-container adoption requires explicit ownership transfer |
 | Broader infrastructure | C1, C4, C5 | planned: multi-server deployment, Swarm, provisioning, Actions runners and log integrations | infra-multi-server, infra-swarm, infra-provisioning, infra-actions-runner, log-drain | P18; explicit extended parity, with no Kubernetes dependency |
 
@@ -143,7 +176,7 @@ Every supported engine/version pair also needs readiness, credential rotation, n
 | GitLab | C2, C6 | planned, M3/P18 | Provider-specific credentials, signatures, MR events and status; git-gitlab |
 | Gitea | C2 | planned, M3/P18 | Provider-specific authentication, webhook and preview events; git-gitea |
 | Bitbucket | C2 | planned, M3/P18 | Provider-specific authentication, webhook and preview events; git-bitbucket |
-| Generic Git and deploy keys | C2 | planned, P04 | Connection test, selected branch/commit, operation-scoped credential; git-generic, git-deploy-key |
+| Generic Git and deploy keys | C2 | partial component, P04 | Controlled public HTTPS, callback basic credentials or pinned-host SSH keys; immutable receipts and internal grants exist, but managed delivery/public source API/controller are absent; git-generic, git-deploy-key |
 | Signed manual deploy webhook | C2 | planned, P04 | Authentication, durable delivery identity, retries and supersession; deploy-webhook, A09 |
 | Registry image tag/digest | C2 | partial: public-image API/UI preparation and execution, P04/P05/P06 | Anonymous public pull records digest, local image, platform and daemon identity before apply; private credentials and public routing remain planned; image-tag-digest, A05 |
 | Stored Dockerfile | C2 | planned, P04/P05 | Versioned input and context without fake repository; dockerfile-stored |
@@ -164,10 +197,10 @@ integration is implemented or validated by this ledger.
 
 | Strategy | Reference | Status and planned slice | Limits and planned fixtures |
 | --- | --- | --- | --- |
-| Dockerfile | C2 | partial, standalone P05 engine | Caller supplies immutable checkout; pinned BuildKit/frontend and Buildx, no build arguments/secrets or API/Git/deploy handoff. Broader context/target/command product controls remain planned; build-dockerfile, A02, A06 |
+| Dockerfile | C2 | partial, standalone P05 engine | Caller supplies immutable checkout; confined relative context/Dockerfile and named target settings bind receipts. No build arguments/secrets or integrated API/Git/deploy handoff; build-dockerfile, A02, A06 |
 | Railpack | C12 | partial, standalone P05 engine | Pinned 0.40.1 planner/frontend with bounded helper and no secrets; upstream Beta label retained. Product source/settings/credential workflow and language matrix remain planned; build-railpack, A03 |
 | Nixpacks | C2 | planned, separate M3 adapter | Never infer support from Railpack; version/language fixtures; build-nixpacks |
-| Prebuilt static files | C13 | partial, standalone P05 engine | Already-built sanitized assets packaged with pinned nginx; no compilation. Product publish-directory/server/SPA controls and deployment handoff remain planned; build-static, A04 |
+| Prebuilt static files | C13 | partial, standalone P05 engine | Selected sanitized publish directory and opt-in SPA fallback packaged with pinned nginx, legacy receipt replay preserved; no compilation or integrated product/deployment handoff; build-static, A04 |
 | Compiled static/SPA | C13 | planned, M1 | Explicit build command and output directory; baked configuration requires rebuild; build-spa, A04 |
 | Compose build sections | C3 | planned, P05/P08 | Resolve all required images before mutation; initialization and optional-component semantics; build-compose, A15, A16 |
 | Dedicated builder | C4 | planned, M3 | Authorized registry delivery, cache identity, architecture/pull validation; build-remote, A07 |
@@ -189,7 +222,7 @@ Compose compatibility includes managed and raw modes, service fields, interpolat
 
 | Adapter | Reference | Status and planned slice | Limits and planned fixtures |
 | --- | --- | --- | --- |
-| Traefik | C5 | partial, standalone P07 engine | Typed host/path/loopback-port routes, verified config rollback, HTTP-01 issuance/renewal and state backup/restore. Control-plane route reservation, authorized agent dispatch, binding selection and UI remain planned; proxy-traefik, A20, A27 |
+| Traefik | C5 | partial engine and backend, P07 | Standalone real TLS/renewal/state recovery; control-plane grants, settled binding targets, generation holds and River dispatch accepted. Default agents lack `proxy_apply` execution; compatible runtime and positive UI remain unaccepted; proxy-traefik, A20, A27 |
 | Caddy | C5 | planned, P18 | Explicit configuration and migration adapter; proxy-caddy |
 | Custom proxy | C5 | planned, P18 | Declare operator/platform ownership and unavailable managed features; proxy-custom |
 | Proxy migration | C5 | planned, P18 | Validate ownership transfer, traffic continuity, certificate retention and recovery; proxy-migration |
@@ -197,8 +230,9 @@ Compose compatibility includes managed and raw modes, service fields, interpolat
 Standalone Traefik evidence covers real HTTP-01, trusted TLS renewal and
 coordinated state recovery at the accepted proxy candidate cited above.
 DNS-01/wildcards, custom certificate rotation and DNS credential protection
-remain planned. Integrated route authorization, generation/hold ownership,
-deployment handoff, UI and control-plane restart fixtures remain required.
+remain planned. Route authorization and generation/hold ownership have backend
+coverage using typed engine fixtures. Compatible agent execution, deployment
+handoff, positive UI and combined restart fixtures remain required.
 A server's existing external proxy network does not prove managed routing
 support, and the image-deployment UI's loopback HTTP result is not an HTTPS URL.
 

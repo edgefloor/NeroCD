@@ -8,7 +8,7 @@ The accepted planning review examined the complete supplied specification, inclu
 
 ## Accepted progress on 2026-10-22
 
-The current assessment is `69735f6ca34e68147b00cae4afbfe135b2b5fa1b`.
+The current assessment is `836a3a92b0ff32242bba94bf8cf0800dc638d96e`.
 The earlier `a763a90` inspection remains planning history. The complete target,
 P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
 
@@ -18,36 +18,43 @@ P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
 | P01 | Shared project environments and image-application desired configuration, authorized API and WebUI; public-image operation admission has binding mutation holds | Team model, additional resource kinds, legacy mappings and broader shared-resource concurrency |
 | P02 | Enrolled server admission, stable default destinations, project grants and immutable bindings through API/WebUI; authoritative runner identity and exact-target image execution | SSH-assisted onboarding, onboarding-time host capability/readiness validation, full server lifecycle and trusted recovery of uncertain effects |
 | P03 | Encrypted immutable project-secret versions, create/rotate/reveal/revoke, strict keyring file and protected WebUI | Execution delivery, broader value scopes, grants, key recovery workflows and external providers |
-| P05 | Standalone local Dockerfile, Railpack and prebuilt-static engine with retained output identity and owned cleanup | Git acquisition, build API/records, deployment handoff, log streaming, private credentials, compiled-static product path and remote image delivery |
-| P06 | Live River image consumer, public-tag freeze, fenced agent/Docker apply, generic HTTP readiness, fixed-port replacement, cancellation/replay and mutation holds | Broader release strategies, optional hosting approval, managed variables/secrets, private registries and safe restored-ownership resumption |
-| P07 | Standalone Traefik engine with typed routes, HTTP-01 TLS, real renewal and coordinated state backup/restore fixtures | Authorized route APIs, agent dispatch, binding-derived targets, fenced proxy ownership, WebUI, DNS-01/custom certificates and proxy adapters |
-| P14 infrastructure | River OSS v0.44.1 transactional enqueue and live image consumer, checked migrations, runtime schema readiness and backup identity | General schedules, notification delivery and their lifecycle contracts |
-| P16 | Configuration, secret, placement and public-image deployment controls; history, exact retained-request recovery, cancel and read-only reconcile | HTTPS workflow and complete hosting UI/API/CLI/MCP workflows |
+| P04/P05 | Controlled Git checkout adapter; internal persisted source generations, purpose-specific secret-version grants, immutable build requests, fenced receipts and artifacts | Public source/build API and UI, operator policy admission, managed credential delivery, River build consumer, typed executor, source-to-engine bridge and artifact-to-deployment handoff |
+| P05 engine | Standalone local Dockerfile/Railpack/prebuilt-static engine with confined context/Dockerfile/target, publish-directory/SPA settings, retained output and owned cleanup | Integrated build orchestration, log streaming, private dependency credentials, compiled-static product path and remote image delivery |
+| P06 | Live River image consumer, public-tag freeze, fenced agent/Docker apply, ordinary HTTP readiness, per-release autoports, explicit fixed ports, cancellation/replay, holds and selected retained-container cleanup | Verified public traffic switch, broader release strategies, optional hosting approval, managed variables/secrets, private registries and safe restored-ownership resumption |
+| P07 | Standalone Traefik TLS engine and bounded control-plane route/grant/generation APIs, exact-target River dispatch, proxy holds and persisted mutation authority | Compatible agent runtime integration and journal proof, HTTPS WebUI, DNS-01/custom certificates and proxy adapters; default accepted agents do not execute `proxy_apply` |
+| P14 infrastructure | River OSS v0.44.1 transactional image/proxy dispatch, checked migrations and backup identity | Build consumer, general schedules, notification delivery and their lifecycle contracts |
+| P16 | Image deployment/history/exact-request recovery and selected retained cleanup UI, with automatic or acknowledged explicit fixed-port policy | Source/build and HTTPS workflows, R65 completion, complete hosting CLI/MCP operations |
 
 See [bounded evidence and exact commits](compatibility.md#accepted-foundations-and-evidence),
 the [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
 [job infrastructure guide](hosting-jobs.md). The [image execution guide](hosting-execution.md)
 and [deployment WebUI guide](hosting-image-deployments.md) define the accepted
-runtime path. The [build](hosting-build-engine.md) and
-[proxy](hosting-proxy-engine.md) engines are standalone components, not an
-integrated repository-to-HTTPS journey. Saving configuration or placement does
+runtime path. The [build](hosting-build-engine.md),
+[source acquisition](hosting-source-checkout.md) and
+[source/build store](hosting-build-control.md) components are not yet a runnable
+Git build workflow. The [proxy backend](hosting-proxy-control.md) dispatches
+authorized snapshots but accepted default agents do not advertise or execute
+`proxy_apply`. Standalone TLS engine evidence does not establish integrated
+HTTPS. Saving configuration or placement does
 not itself deploy. A successful operation records past readiness rather than
 continuous health.
 No result here completes A01, A05, A08 or A27, and results from different
 revisions cannot be combined into the A36 release assertion.
 
-M1 still requires source acquisition and provider credentials, build records
-and authorized orchestration, build-to-deployment handoff, managed-secret
+M1 still requires source-choice interfaces and provider integration, managed Git
+credential delivery, a real build consumer/executor and authorized orchestration,
+source-to-engine receipt wiring, build-to-deployment handoff, managed-secret
 execution delivery, integrated route/TLS operations and UI, continuous
 observations/runtime logs, trusted automatic triggers and optional hosting
 approval. Restore holds prevent mutation after recovery; trusted local process
 and journal proof for resumption is not implemented. No A01–A37 scenario or
 M0–M4 milestone is declared complete by this assessment.
 
-Source-adapter and per-release proxy-retention work outside this accepted base
-remain unaccepted. Future integration must use newly reviewed candidates and
-fresh relevant evidence rather than treating those worktree interfaces as
-available product behavior.
+Managed Git credential delivery, proxy agent runtime and proxy UI work outside
+this accepted base remain unaccepted. A runtime gate from another candidate is
+not compatibility acceptance, and negative browser checks do not establish a
+positive HTTPS workflow. Future integration needs reviewed compatible candidates
+and relevant combined evidence.
 
 ## The architectural decision
 
@@ -278,14 +285,26 @@ Run narrow checks during implementation, then the affected integration gates at 
 
 The largest risks are ownership migration, secret material escaping through normalized Compose, uncertainty after Docker mutation, data lifecycle mistakes, and mismatches between generated UI assets and the shipped binary. The proposed order addresses those before broad catalog or provider expansion. It leaves no declared feature silently removed from the campaign, and it makes each release claim depend on demonstrated workflows rather than the amount of code written.
 
-## River and image execution status
+## River, image and persistence status
 
 The PostgreSQL server validates native and River schema evidence before starting
-the live image consumer. Deployment admission commits operation, immutable
+the live image/proxy dispatch consumers. Deployment admission commits operation, immutable
 snapshot, audit and queue insertion together. Dispatch records one typed
 `image_deploy` task for the exact bound runner. Queue completion and workload
 completion remain separate. Native migration 0044 owns destination capability
 compatibility; 0045 owns image operation and execution evidence.
+
+The accepted schema also contains proxy control and source/build persistence.
+Additive 0048 binds the build functions introduced by immutable 0047 to their
+owning schema, including schema-qualified lease and restore behavior. The
+accepted integration is `836a3a92b0ff32242bba94bf8cf0800dc638d96e`;
+the earlier persistence merge alone is not evidence of combined acceptance.
+Historical migration checksums remain unchanged.
+
+Internal source/build requests have immutable snapshots, idempotency, grants,
+fenced receipts and artifact admission, but require trusted DB-only queue/task
+callbacks. No public build API, River build consumer, runner executor or
+deployment handoff is installed. See [source/build persistence](hosting-build-control.md).
 
 Preparation freezes the selected public-image identity; apply uses live lease authority.
 Unknown effects retain mutation holds; exact committed receipts can replay.

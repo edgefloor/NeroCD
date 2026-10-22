@@ -1,7 +1,9 @@
 # Architecture
 
 Planning baseline: `a763a90b3896257b784c9498d01650ccdad2427a`, inspected on
-2026-10-22. The [product specification](product-spec.md) defines the full Go
+2026-10-22. Current accepted assessment:
+`836a3a92b0ff32242bba94bf8cf0800dc638d96e`, also dated 2026-10-22.
+The [product specification](product-spec.md) defines the full Go
 hosting platform target. The [plan](plan.md) orders implementation and the
 [compatibility ledger](compatibility.md) records support limits. The current
 implementation below and the target design are distinct.
@@ -18,6 +20,10 @@ runners, and retains operational evidence. It is not a general CI system.
 | `internal/app` | Authorization, business operations, audit writes, and transactions. |
 | `internal/store` | PostgreSQL persistence and explicit disposable memory development store. |
 | `internal/runner` | Enrollment, credentials, fenced leases, execution, logs, and replay data. |
+| `internal/runnerruntime` | Fenced image/Compose execution and the controlled Git checkout adapter. |
+| `internal/hostingjobs` | River OSS v0.44.1 transactional image/proxy dispatch; no build consumer. |
+| `internal/hostingbuild` | Standalone bounded local builds with confined settings and retained output receipts. |
+| `internal/hostingproxy` | Standalone Linux Traefik configuration, TLS and state verification. |
 | `web/app` | React/Vite/TanStack application built into `web/dist` and embedded in Go. |
 | `db/migrations` | Ordered PostgreSQL schema changes with checksum protection. |
 
@@ -26,10 +32,13 @@ runners, and retains operational evidence. It is not a general CI system.
 1. A local session or provisioned OIDC identity authenticates a user.
 2. The API applies global and project authorization, writes audit records, and
    stores work in PostgreSQL.
-3. A runner claims a fenced lease and executes an allowed shell or Docker
-   Compose plan sequentially.
+3. Legacy runners execute allowed sequential shell/Compose plans. Hosting image
+   requests persist a snapshot, audit and River job together; dispatch creates
+   an exact-target task for the enrolled agent's fenced image engine.
 4. The runner reports logs, artifacts, completion, and provenance. Lease and
-   replay checks stop stale runners from completing newer work.
+   replay checks stop stale runners from completing newer work. Proxy backend
+   dispatch also creates fenced exact-target tasks, but accepted default agents
+   do not advertise or execute `proxy_apply`.
 
 List APIs use bounded offset pagination (`limit`, `offset`, `count`, `total`).
 Treat IDs as opaque and use [openapi.yaml](../openapi.yaml) as the contract.
@@ -48,7 +57,9 @@ ordinary application process.
 Control-plane state is separate from runners. Runner credentials, repository
 access, and file-backed secrets remain at the runner boundary; secret values
 are excluded from API responses, run specifications, audit records, logs, and
-artifact metadata. Production uses separate owner and app database roles,
+artifact metadata. Project-managed encrypted versions have a separate explicit
+owner reveal operation that commits its audit before returning plaintext.
+Production uses separate owner and app database roles,
 strict secret files, an internal database network, and a public proxy network.
 
 OIDC accepts one configured issuer and exact pre-provisioned issuer/subject
@@ -58,8 +69,39 @@ passwords remain the recovery path.
 ## Current limits
 
 NeroCD does not claim SAML, LDAP, SCIM, group mapping, automatic provisioning,
-multi-provider OIDC, general scheduling, parallel workflows, or production
-encrypted secret storage. These are product limits, not configuration switches.
+multi-provider OIDC, general scheduling or parallel workflows. Project-managed
+encrypted secret storage is available; managed execution delivery and external
+providers remain incomplete.
+
+The accepted image API/UI runs anonymous public images with ordinary HTTP
+readiness on loopback ports. Automatic per-release port allocation retains
+earlier containers; explicit same-port replacement can interrupt service.
+Selected retained cleanup uses exact authority and preserves protected routes,
+unresolved effects and ownership holds. Allocating a new port does not switch
+public traffic. See [image execution](hosting-execution.md) and
+[deployment UI](hosting-image-deployments.md).
+
+The [controlled checkout](hosting-source-checkout.md) and
+[local build engine](hosting-build-engine.md) are usable components with separate
+contracts. Internal [source/build persistence](hosting-build-control.md) stores
+source generations, credential grants, immutable requests, fenced receipts and
+local OCI artifact identities. It has no public build API, River consumer,
+typed runner executor, source-to-engine bridge or deployment handoff.
+Managed Git credential delivery is not accepted at this assessment.
+
+The [proxy backend](hosting-proxy-control.md) authorizes hostname grants and
+whole-proxy generations, derives settled binding targets, and dispatches typed
+work through River. It rechecks [persisted mutation authority](hosting-proxy-auth.md).
+Runtime settlement in backend tests uses typed fixture receipts. The standalone
+TLS engine's real Traefik/Pebble evidence is separate. Default agents do not
+advertise or execute the required `proxy_apply` capability, so no integrated HTTPS flow or positive proxy
+WebUI workflow is available in the accepted base.
+
+Restore records independent holds for bindings and configured proxies. Read-only
+observation cannot prove that a pre-backup command stopped and cannot clear
+those holds. Trusted journal/process recovery and safe resumption remain
+required. No A01–A37 scenario or M0–M4 milestone is complete, and R65 remains
+ongoing.
 
 ## Target hosting architecture
 
@@ -165,17 +207,20 @@ which contain only `operation_id`. Transactional insertion shares the caller's
 application database transaction. River does not replace the existing fenced
 runner execution protocol.
 
-This package is infrastructure only. The server does not register or start a
-hosting worker yet. Construction requires a supplied preparation handler and
-never substitutes a no-op. The next consumer must resolve the operation ID to
-an immutable snapshot and an exact destination, then enqueue work for the
-existing runner protocol. It must not execute Docker in the job worker.
+The PostgreSQL server starts real image and proxy dispatch consumers after
+schema validation. Consumers resolve immutable snapshots and exact destinations
+into work for the existing fenced runner protocol. They do not execute Docker
+in the control-plane job worker. Queue completion is distinct from workload or
+proxy completion. There is no build consumer.
 
 The owner migration CLI applies River's pinned migration bundle under the same
 advisory lock as native migrations. Each River version and its adapter checksum
 commit together. Startup never applies migrations. The wrapper validates the
-complete pinned set before its explicit `Start`, but server readiness and
-restore admission holds will be wired with the actual consumer.
+complete pinned set before its explicit `Start`. Native migration 0048
+additively binds build functions to their owning schema without changing 0047
+or earlier checksums. Accepted PostgreSQL integration includes nondefault-schema,
+shadow-object and real dump/restore regression coverage at `836a3a92`.
+This persistence evidence does not install a build execution workflow.
 
 See [Hosting job infrastructure](hosting-jobs.md) for lifecycle, compatibility,
 and integration contracts.
