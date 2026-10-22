@@ -252,6 +252,8 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if _, err = sqlcgen.New(tx).CreateHostingSnapshot(ctx, sqlcgen.CreateHostingSnapshotParams{OperationID: id, Body: contents, BodyHash: domain.HostingDocumentHash(snap)}); err != nil {
 		return domain.HostingOperation{}, err
 	}
+	audit.ActorID, audit.Action, audit.TargetID = actorID, "hosting.deployment_requested", id
+	audit.Metadata = map[string]any{"project_id": projectID, "resource_id": resourceID, "binding_id": snap.BindingID}
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -394,7 +396,7 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 	if _, err = sqlcgen.New(tx).DispatchHostingOperation(ctx, sqlcgen.DispatchHostingOperationParams{ID: id, RunID: hostingStringPointer(runID)}); err != nil {
 		return err
 	}
-	audit := domain.AuditEvent{ID: "aud_dispatch_" + id, ActorID: op.CreatedBy, Action: "hosting.dispatched", TargetID: id, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"run_id": runID, "runner_id": op.Snapshot.RunnerID}}
+	audit := domain.AuditEvent{ID: "aud_dispatch_" + id, ActorID: op.CreatedBy, Action: "hosting.dispatched", TargetID: id, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"project_id": op.ProjectID, "resource_id": op.ResourceID, "binding_id": op.BindingID, "run_id": runID, "runner_id": op.Snapshot.RunnerID}}
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
 		return err
 	}
@@ -718,7 +720,7 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 }
 
 func hostingPhaseAudit(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, op domain.HostingOperation, actor, phase string) error {
-	return createAuditWithQueries(ctx, q.WithTx(tx), domain.AuditEvent{ID: "aud_hosting_" + phase + "_" + op.ID, ActorID: actor, Action: "hosting." + phase, TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"run_id": op.RunID, "binding_id": op.BindingID}})
+	return createAuditWithQueries(ctx, q.WithTx(tx), domain.AuditEvent{ID: "aud_hosting_" + phase + "_" + op.ID, ActorID: actor, Action: "hosting." + phase, TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"project_id": op.ProjectID, "resource_id": op.ResourceID, "run_id": op.RunID, "binding_id": op.BindingID}})
 }
 
 // HostingComplete atomically records result evidence and settles only a safe owned hold.
@@ -923,6 +925,8 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 			}
 		}
 	}
+	audit.TargetID = op.ID
+	audit.Metadata = map[string]any{"project_id": op.ProjectID, "resource_id": op.ResourceID, "binding_id": op.BindingID, "runner_id": op.Snapshot.RunnerID}
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -1115,7 +1119,7 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 	if _, err = sqlcgen.New(tx).CompleteHostingObservationTask(ctx, in.RunID); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	audit := domain.AuditEvent{ID: "aud_observed_" + in.LeaseID, ActorID: runnerID, Action: "hosting.target_observed", TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"runner_id": runnerID, "destination_id": op.Snapshot.DestinationID, "binding_id": op.BindingID, "task_mode": "observe"}}
+	audit := domain.AuditEvent{ID: "aud_observed_" + in.LeaseID, ActorID: runnerID, Action: "hosting.target_observed", TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"project_id": op.ProjectID, "resource_id": op.ResourceID, "runner_id": runnerID, "destination_id": op.Snapshot.DestinationID, "binding_id": op.BindingID, "task_mode": "observe"}}
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -1311,7 +1315,7 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 	lease := runLeaseFromSQLC(row)
 	op.TaskMode = "observe"
 	op.ObservationLease = &lease
-	audit := domain.AuditEvent{ID: "aud_observe_claim_" + lease.ID, ActorID: runnerID, Action: "hosting.observation_claimed", TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"runner_id": runnerID, "destination_id": op.Snapshot.DestinationID, "task_mode": "observe"}}
+	audit := domain.AuditEvent{ID: "aud_observe_claim_" + lease.ID, ActorID: runnerID, Action: "hosting.observation_claimed", TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"project_id": op.ProjectID, "resource_id": op.ResourceID, "binding_id": op.BindingID, "runner_id": runnerID, "destination_id": op.Snapshot.DestinationID, "task_mode": "observe"}}
 	if err = createAuditWithQueries(ctx, q, audit); err != nil {
 		return domain.HostingOperation{}, err
 	}

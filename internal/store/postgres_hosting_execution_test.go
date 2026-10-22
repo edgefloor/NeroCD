@@ -541,3 +541,68 @@ func TestPostgresHostingNonRestoredNeverDispatchedObservationRetainsQueuedIntent
 		t.Fatalf("normal queued operation did not dispatch: %+v %v", after, err)
 	}
 }
+
+func TestPostgresHostingAuditFailureRollsBackIntentAndSettlement(t *testing.T) {
+	pg, database, resource, server, _ := hostingExecutionFixture(t)
+	ctx := t.Context()
+	// Reuse an existing audit ID to force failure after operation/snapshot writes.
+	event := destinationEvent("image_binding")
+	if _, err := pg.RequestHostingDeployment(ctx, "hop_audit_rejected", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), event); err == nil {
+		t.Fatal("duplicate audit accepted")
+	}
+	var operations, snapshots, jobs int
+	if err := database.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_operations),(SELECT count(*) FROM hosting_snapshots),(SELECT count(*) FROM river_job)`).Scan(&operations, &snapshots, &jobs); err != nil || operations != 0 || snapshots != 0 || jobs != 0 {
+		t.Fatalf("failed audit leaked accepted intent: %d %d %d err=%v", operations, snapshots, jobs, err)
+	}
+	requestAudit := destinationEvent("audit_atomic")
+	requestAudit.Metadata = map[string]any{"project_id": "proj_security", "resource_id": "forged_resource", "binding_id": "forged_binding"}
+	op, err := pg.RequestHostingDeployment(ctx, "hop_audit_atomic", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), requestAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op = awaitHostingDispatch(t, pg, op.ID)
+	a, prepared := prepareHostingAttempt(t, pg, op, server.RunnerID)
+	admitted, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, `CREATE FUNCTION reject_hosting_completion_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hosting.completed' THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_hosting_completion_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_hosting_completion_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	complete := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "atomic_complete", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, ContainerID: "container_atomic", ImageID: prepared.Release.ImageID, DaemonID: prepared.Release.DaemonID, PlanHash: admitted.Plan.Hash}}
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, complete); err == nil {
+		t.Fatal("settlement ignored audit failure")
+	}
+	current, err := pg.GetHostingOperation(ctx, op.ID)
+	if err != nil || current.State != "applying" || !current.MutationHold || current.Result != nil || current.CompleteReceipt != nil {
+		t.Fatalf("failed audit partially settled: %+v %v", current, err)
+	}
+	var live, healthy bool
+	if err = database.QueryRow(ctx, `SELECT (SELECT status='active' FROM run_leases WHERE id=$1),(SELECT healthy IS NOT NULL FROM hosting_binding_state WHERE binding_id=$2)`, a.LeaseID, op.BindingID).Scan(&live, &healthy); err != nil || !live || healthy {
+		t.Fatalf("audit rollback changed authority/healthy: live=%v healthy=%v err=%v", live, healthy, err)
+	}
+	if _, err = database.Exec(ctx, `DROP TRIGGER reject_hosting_completion_audit ON audit_events; DROP FUNCTION reject_hosting_completion_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, complete); err != nil {
+		t.Fatalf("receipt could not commit after rollback: %v", err)
+	}
+	page, err := pg.ListAuditEventsPageForScope(ctx, store.AuditAuthorizationScope{ActorID: "usr_viewer", ProjectIDs: []string{resource.ProjectID}}, store.Page{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := map[string]bool{}
+	for _, event := range page.Items {
+		if event.TargetID == op.ID {
+			actions[event.Action] = true
+			if event.Metadata["project_id"] != resource.ProjectID || event.Metadata["resource_id"] != resource.ID || event.Metadata["binding_id"] != op.BindingID {
+				t.Fatal("audit target metadata was not derived from operation")
+			}
+		}
+	}
+	for _, action := range []string{"hosting.deployment_requested", "hosting.dispatched", "hosting.prepared", "hosting.apply_admitted", "hosting.completed"} {
+		if !actions[action] {
+			t.Fatalf("project viewer cannot see %s", action)
+		}
+	}
+}
