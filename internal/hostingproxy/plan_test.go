@@ -84,3 +84,30 @@ func TestPlanImmutableDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyGenerationOmitsStandaloneServicesAndKeepsMarker(t *testing.T) {
+	for _, previous := range []uint64{0, 7} {
+		plan, err := Prepare(testIdentity(), testSettings(), previous+1, previous, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document map[string]map[string]json.RawMessage
+		if err = json.Unmarshal(plan.dynamic(), &document); err != nil {
+			t.Fatal(err)
+		}
+		http := document["http"]
+		if _, present := http["services"]; present {
+			t.Fatal("Traefik rejects standalone empty services element")
+		}
+		var routers, middlewares map[string]json.RawMessage
+		if err = json.Unmarshal(http["routers"], &routers); err != nil {
+			t.Fatal(err)
+		}
+		if err = json.Unmarshal(http["middlewares"], &middlewares); err != nil {
+			t.Fatal(err)
+		}
+		if len(routers) != 1 || len(middlewares) != 1 || routers[plan.prefix()+"-generation"] == nil || middlewares[plan.prefix()] == nil {
+			t.Fatal("empty generation lost its loaded generation proof")
+		}
+	}
+}
