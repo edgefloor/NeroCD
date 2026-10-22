@@ -4,17 +4,21 @@ package hostingproxy
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -345,30 +349,115 @@ func TestRuntimeProxy(t *testing.T) {
 		t.Fatal("real ACME renewal not observed")
 	}
 	t.Log("short-lived certificate renewed by Traefik startup or periodic renewal, trusted fingerprint changed")
-	// Snapshot only with the sole Traefik writer stopped; restore at the same
-	// operator-owned path before restart. Never print certificate storage.
-	fixtureCommand(t, "stop", p.name())
-	acmePath := filepath.Join(s.Directory, "certificates", "acme.json")
-	backup, err := os.ReadFile(acmePath)
+	// Disable issuance before recording the certificate to be recovered. A new
+	// certificate cannot conceal a missing account or certificate backup.
+	fixtureCommand(t, "stop", "pebble")
+	if response, x := client.Get("https://localhost:14000/dir"); x == nil {
+		_ = response.Body.Close()
+		t.Fatal("fixture CA remains reachable during recovery")
+	}
+	again, err = e.Observe(ctx, current)
 	if err != nil {
 		t.Fatal(err)
 	}
-	backupPath := filepath.Join(root, "acme-backup.json")
-	if err = os.WriteFile(backupPath, backup, 0600); err != nil {
-		t.Fatal(err)
+	expectedCertificates := map[string]string{}
+	for _, route := range again.Routes {
+		if !route.HTTPSReady {
+			t.Fatal("certificate not ready before backup")
+		}
+		expectedCertificates[route.RouteID] = route.Certificate.Fingerprint
 	}
-	if err = os.WriteFile(acmePath, backup, 0600); err != nil {
-		t.Fatal(err)
-	}
+	fixtureCommand(t, "stop", p.name())
+	func() {
+		// Preserve the root, bind-mounted directories, and live lock inode. Only
+		// task-owned payload files are removed during this simulated state loss.
+		held, x := openStorage(ctx, s.Directory)
+		if x != nil {
+			t.Fatal(x)
+		}
+		defer held.close()
+		lockBefore, x := held.lock.Stat()
+		if x != nil {
+			t.Fatal(x)
+		}
+		rootBefore, x := os.Stat(s.Directory)
+		if x != nil {
+			t.Fatal(x)
+		}
+		fixtureAssertEngineExcluded(t, e, current)
+		expectedReceipt, x := held.load()
+		if x != nil {
+			t.Fatal(x)
+		}
+		backupDirectory := filepath.Join(root, "persisted-state-backup")
+		fixtureCopyState(t, s.Directory, backupDirectory, false)
+		savedState := fixtureStateMetadata(t, backupDirectory)
+		if !reflect.DeepEqual(savedState, fixtureStateMetadata(t, s.Directory)) {
+			t.Fatal("persisted backup differs from complete stopped state")
+		}
+		for _, required := range []string{"certificates/acme.json", "dynamic/routes.yml", "receipt.json"} {
+			if entry, ok := savedState[required]; !ok || !entry.Mode.IsRegular() {
+				t.Fatalf("backup missing required file %s", required)
+			}
+		}
+		for name, entry := range savedState {
+			if name == "lock" || entry.Mode.IsDir() {
+				continue
+			}
+			if x = os.Remove(filepath.Join(s.Directory, name)); x != nil {
+				t.Fatal(x)
+			}
+		}
+		for name, entry := range savedState {
+			if name == "lock" || entry.Mode.IsDir() {
+				continue
+			}
+			if _, x = os.Stat(filepath.Join(s.Directory, name)); !errors.Is(x, os.ErrNotExist) {
+				t.Fatalf("original payload %s survived simulated state loss", name)
+			}
+		}
+		// Prove a restore which only rewrites in-memory ACME bytes would fail: both
+		// routing and the generation receipt are absent before saved files are read.
+		if lost, x := held.load(); x != nil || lost.Generation != 0 {
+			t.Fatal("original generation receipt survived state loss")
+		}
+		fixtureAssertEngineExcluded(t, e, current)
+		fixtureCopyState(t, backupDirectory, s.Directory, true)
+		if !reflect.DeepEqual(savedState, fixtureStateMetadata(t, s.Directory)) {
+			t.Fatal("restored bytes, modes, ownership, or file set differ from persisted backup")
+		}
+		restored, x := held.load()
+		if x != nil || !reflect.DeepEqual(restored, expectedReceipt) || restored.Identity != identity || restored.Generation != current.generation || restored.Hash != current.hash || !reflect.DeepEqual(restored.Routes, current.Routes()) {
+			t.Fatal("restored identity, routes, or generation receipt mismatch")
+		}
+		lockAfter, x := os.Stat(filepath.Join(s.Directory, "lock"))
+		if x != nil || !os.SameFile(lockBefore, lockAfter) {
+			t.Fatal("live lock inode changed during restore")
+		}
+		rootAfter, x := os.Stat(s.Directory)
+		if x != nil || !os.SameFile(rootBefore, rootAfter) {
+			t.Fatal("state root inode changed during restore")
+		}
+		fixtureAssertEngineExcluded(t, e, current)
+	}()
 	fixtureCommand(t, "start", p.name())
 	if err = e.waitLoaded(ctx, current); err != nil {
 		t.Fatal(err)
 	}
 	again, err = e.Observe(ctx, current)
-	if err != nil || !again.Routes[0].HTTPSReady {
+	if err != nil {
 		t.Fatalf("backup restore not ready: %v", err)
 	}
-	t.Log("stopped-writer ACME backup/restore retained trusted service and 0600 file")
+	for _, route := range again.Routes {
+		if !route.HTTPSReady || route.Certificate.Fingerprint != expectedCertificates[route.RouteID] {
+			t.Fatal("restored route did not reuse its exact saved certificate with CA offline")
+		}
+	}
+	if len(again.Routes) != len(expectedCertificates) {
+		t.Fatal("restored route count changed")
+	}
+	t.Log("persisted complete backup restored after payload loss; exact certificates reused with CA offline, receipts/routes/modes verified, competing engine excluded throughout unchanged lock inode")
+	fixtureCommand(t, "start", "pebble")
 	// A failed new hostname must not interrupt an already trusted route.
 	routes := append(current.Routes(), Route{"blocked", "blocked.example.test", "/", 19001})
 	pending, _ := Prepare(identity, s, current.generation+1, current.generation, routes)
@@ -495,4 +584,142 @@ func TestRuntimeLostDockerResponse(t *testing.T) {
 		t.Fatal("lost response acknowledged")
 	}
 	t.Log("Docker run completed but response was lost; persisted intent and fresh observation remained uncertain")
+}
+
+// fixtureStateEntry describes persisted bytes without retaining certificate or
+// account key material in a manifest or ordinary test output.
+type fixtureStateEntry struct {
+	Mode fs.FileMode
+	Sum  [sha256.Size]byte
+}
+
+func fixtureStateMetadata(t *testing.T, root string) map[string]fixtureStateEntry {
+	t.Helper()
+	entries := map[string]fixtureStateEntry{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if err = owned(info); err != nil {
+			return err
+		}
+		name, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		entry := fixtureStateEntry{Mode: info.Mode()}
+		if info.IsDir() {
+			if info.Mode().Perm() != 0700 {
+				return fmt.Errorf("unsafe fixture directory mode for %s", name)
+			}
+		} else if info.Mode().IsRegular() {
+			if info.Mode().Perm() != 0600 {
+				return fmt.Errorf("unsafe fixture file mode for %s", name)
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			hash := sha256.New()
+			_, copyErr := io.Copy(hash, file)
+			closeErr := file.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			copy(entry.Sum[:], hash.Sum(nil))
+		} else {
+			return fmt.Errorf("unexpected fixture file type for %s", name)
+		}
+		entries[name] = entry
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entries
+}
+func fixtureCopyState(t *testing.T, source, destination string, preserveLock bool) {
+	t.Helper()
+	var directories []string
+	err := filepath.WalkDir(source, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		name, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destination, name)
+		if info.IsDir() {
+			if err = os.Mkdir(target, info.Mode().Perm()); err != nil && !errors.Is(err, os.ErrExist) {
+				return err
+			}
+			directories = append(directories, target)
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unexpected backup entry %s", name)
+		}
+		if preserveLock && name == "lock" {
+			return nil
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(out, in)
+		if err == nil {
+			err = out.Sync()
+		}
+		closeErr := out.Close()
+		if err != nil {
+			return err
+		}
+		return closeErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := len(directories) - 1; i >= 0; i-- {
+		directory, err := os.Open(directories[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		syncErr := directory.Sync()
+		closeErr := directory.Close()
+		if syncErr != nil {
+			t.Fatal(syncErr)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	}
+}
+func fixtureAssertEngineExcluded(t *testing.T, e *Engine, p Plan) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	competing, err := New(e.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = competing.Observe(ctx, p); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("competing engine was not excluded by held lock: %v", err)
+	}
 }

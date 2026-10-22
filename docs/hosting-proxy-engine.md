@@ -163,7 +163,13 @@ startup or periodic renewal can be observed. The test-only CA uses a one-hour ce
 The gate covers trusted issuance, routing semantics, concurrent generation CAS,
 container restart and fresh-engine replay, foreign proxy and 80/443 collisions,
 daemon mismatch, real malformed-file rollback, cancellation after publication,
-lost Docker run response, ACME failure continuity, renewal, coordinated stopped-
-writer backup/restore, and persistent permissions. Linux unit tests also cover
-unsafe directories, symlinks, nonempty Docker config, atomic replacement, and
+lost Docker run response, ACME failure continuity, renewal, and persistent permissions.
+The recovery check stops Traefik and the CA, holds the original lock inode, and
+persists the complete state directory. It removes original payload files, restores
+from the saved files, and verifies file hashes, ownership, modes, identities,
+routes, and receipts. A competing engine remains excluded before state loss,
+after state loss, and after restoration. With the CA still offline, each route
+must reuse the exact certificate fingerprint observed before backup.
+
+Linux unit tests also cover unsafe directories, symlinks, nonempty Docker config, atomic replacement, and
 lock cancellation. Ordinary unit/race/vet checks target `./internal/hostingproxy`.
