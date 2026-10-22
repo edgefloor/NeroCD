@@ -68,6 +68,18 @@ func (q *Queries) BindHostingBuildRun(ctx context.Context, arg BindHostingBuildR
 	return result.RowsAffected(), nil
 }
 
+const cancelQueuedHostingBuildTask = `-- name: CancelQueuedHostingBuildTask :execrows
+UPDATE task_runs AS r SET status='canceled',finished_at=clock_timestamp() WHERE r.id=$1 AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE run_id=$1)
+`
+
+func (q *Queries) CancelQueuedHostingBuildTask(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelQueuedHostingBuildTask, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const checkHostingBuildAuthority = `-- name: CheckHostingBuildAuthority :one
 SELECT l.id FROM run_leases l JOIN hosting_build_tasks t ON t.run_id=l.run_id JOIN task_runs r ON r.id=l.run_id WHERE t.build_id=$1 AND t.runner_id=$2 AND l.runner_id=$2 AND l.run_id=$3 AND l.id=$4 AND l.attempt=$5 AND l.fence=$6 AND r.project_id=$7 AND r.run_spec=jsonb_build_object('type','hosting_build_v1','hosting_build_id',$1::text) AND (NOT $8::boolean OR (l.status='active' AND l.expires_at>clock_timestamp() AND r.status='running' AND r.runner_id=$2)) FOR UPDATE OF l
 `
@@ -97,6 +109,48 @@ func (q *Queries) CheckHostingBuildAuthority(ctx context.Context, arg CheckHosti
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const completeHostingBuildLease = `-- name: CompleteHostingBuildLease :execrows
+UPDATE run_leases SET status=$1,completed_at=clock_timestamp(),completion_key=$2
+WHERE id=$3 AND run_id=$4 AND runner_id=$5 AND attempt=$6 AND fence=$7 AND status='active' AND expires_at>clock_timestamp()
+`
+
+type CompleteHostingBuildLeaseParams struct {
+	State     string  `json:"state"`
+	ReceiptID *string `json:"receipt_id"`
+	LeaseID   string  `json:"lease_id"`
+	RunID     string  `json:"run_id"`
+	RunnerID  string  `json:"runner_id"`
+	Attempt   int32   `json:"attempt"`
+	Fence     string  `json:"fence"`
+}
+
+func (q *Queries) CompleteHostingBuildLease(ctx context.Context, arg CompleteHostingBuildLeaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completeHostingBuildLease,
+		arg.State,
+		arg.ReceiptID,
+		arg.LeaseID,
+		arg.RunID,
+		arg.RunnerID,
+		arg.Attempt,
+		arg.Fence,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const countHostingBuilds = `-- name: CountHostingBuilds :one
+SELECT count(*) FROM hosting_builds WHERE resource_id=$1
+`
+
+func (q *Queries) CountHostingBuilds(ctx context.Context, resourceID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countHostingBuilds, resourceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createHostingBuildSource = `-- name: CreateHostingBuildSource :exec
@@ -147,8 +201,17 @@ func (q *Queries) CreateHostingSourceGrant(ctx context.Context, arg CreateHostin
 	return err
 }
 
+const expireHostingBuildForRun = `-- name: ExpireHostingBuildForRun :exec
+UPDATE hosting_builds SET state='cleanup_required',failure_code='authority_lost',revision=revision+1,updated_at=clock_timestamp() WHERE run_id=$1 AND state IN('queued','sourcing','building')
+`
+
+func (q *Queries) ExpireHostingBuildForRun(ctx context.Context, runID *string) error {
+	_, err := q.db.Exec(ctx, expireHostingBuildForRun, runID)
+	return err
+}
+
 const getHostingBuildDocument = `-- name: GetHostingBuildDocument :one
-SELECT jsonb_build_object('id',b.id,'project_id',b.project_id,'resource_id',b.resource_id,'state',b.state,'run_id',coalesce(b.run_id,''),'daemon_id',b.daemon_id,'revision',b.revision,'created_by',b.created_by,'snapshot',b.snapshot,'source_receipt',sr.body,'artifact',a.body,'failure_code',b.failure_code) FROM hosting_builds b LEFT JOIN hosting_build_receipts sr ON sr.build_id=b.id AND sr.phase='source' LEFT JOIN hosting_build_artifacts a ON a.build_id=b.id WHERE b.id=$1
+SELECT jsonb_build_object('id',b.id,'project_id',b.project_id,'resource_id',b.resource_id,'state',b.state,'run_id',coalesce(b.run_id,''),'daemon_id',b.daemon_id,'revision',b.revision,'created_by',b.created_by,'created_at',b.created_at,'updated_at',b.updated_at,'snapshot',b.snapshot,'source_receipt',sr.body,'artifact',a.body,'failure_code',b.failure_code) FROM hosting_builds b LEFT JOIN hosting_build_receipts sr ON sr.build_id=b.id AND sr.phase='source' LEFT JOIN hosting_build_artifacts a ON a.build_id=b.id WHERE b.id=$1
 `
 
 func (q *Queries) GetHostingBuildDocument(ctx context.Context, id string) (json.RawMessage, error) {
@@ -178,6 +241,22 @@ func (q *Queries) GetHostingBuildReceipt(ctx context.Context, arg GetHostingBuil
 	var i GetHostingBuildReceiptRow
 	err := row.Scan(&i.ReceiptID, &i.Authority, &i.BodyHash)
 	return i, err
+}
+
+const getHostingBuildTask = `-- name: GetHostingBuildTask :one
+SELECT build_id FROM hosting_build_tasks WHERE run_id=$1 AND runner_id=$2
+`
+
+type GetHostingBuildTaskParams struct {
+	RunID    string `json:"run_id"`
+	RunnerID string `json:"runner_id"`
+}
+
+func (q *Queries) GetHostingBuildTask(ctx context.Context, arg GetHostingBuildTaskParams) (string, error) {
+	row := q.db.QueryRow(ctx, getHostingBuildTask, arg.RunID, arg.RunnerID)
+	var build_id string
+	err := row.Scan(&build_id)
+	return build_id, err
 }
 
 const getHostingSourceGrant = `-- name: GetHostingSourceGrant :one
@@ -282,6 +361,28 @@ func (q *Queries) HostingBuildTaskExists(ctx context.Context, id string) (bool, 
 	return exists, err
 }
 
+const insertCanonicalHostingBuildRun = `-- name: InsertCanonicalHostingBuildRun :exec
+INSERT INTO task_runs(id,project_id,run_spec,workflow,workflow_state,runner_tags,status,requested_by,started_at,created_at,claim_order_at)
+VALUES($1,$2,jsonb_build_object('type','hosting_build_v1','hosting_build_id',$3::text),'{}','{}','{}','queued',$4,clock_timestamp(),clock_timestamp(),clock_timestamp())
+`
+
+type InsertCanonicalHostingBuildRunParams struct {
+	RunID     string `json:"run_id"`
+	ProjectID string `json:"project_id"`
+	BuildID   string `json:"build_id"`
+	Actor     string `json:"actor"`
+}
+
+func (q *Queries) InsertCanonicalHostingBuildRun(ctx context.Context, arg InsertCanonicalHostingBuildRunParams) error {
+	_, err := q.db.Exec(ctx, insertCanonicalHostingBuildRun,
+		arg.RunID,
+		arg.ProjectID,
+		arg.BuildID,
+		arg.Actor,
+	)
+	return err
+}
+
 const insertHostingBuild = `-- name: InsertHostingBuild :exec
 INSERT INTO hosting_builds(id,resource_id,project_id,source_id,source_generation,idempotency_key,request_hash,snapshot,snapshot_hash,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 `
@@ -368,6 +469,47 @@ type InsertHostingBuildTaskParams struct {
 func (q *Queries) InsertHostingBuildTask(ctx context.Context, arg InsertHostingBuildTaskParams) error {
 	_, err := q.db.Exec(ctx, insertHostingBuildTask, arg.BuildID, arg.RunID, arg.RunnerID)
 	return err
+}
+
+const isHostingBuildTask = `-- name: IsHostingBuildTask :one
+SELECT EXISTS(SELECT 1 FROM hosting_build_tasks WHERE run_id=$1)
+`
+
+func (q *Queries) IsHostingBuildTask(ctx context.Context, runID string) (bool, error) {
+	row := q.db.QueryRow(ctx, isHostingBuildTask, runID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const listHostingBuildIDs = `-- name: ListHostingBuildIDs :many
+SELECT id FROM hosting_builds WHERE resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT $3 OFFSET $2
+`
+
+type ListHostingBuildIDsParams struct {
+	ResourceID string `json:"resource_id"`
+	PageOffset int32  `json:"page_offset"`
+	PageLimit  int32  `json:"page_limit"`
+}
+
+func (q *Queries) ListHostingBuildIDs(ctx context.Context, arg ListHostingBuildIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listHostingBuildIDs, arg.ResourceID, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockHostingBuildEnrollment = `-- name: LockHostingBuildEnrollment :one
@@ -558,6 +700,30 @@ func (q *Queries) PinHostingBuildDaemon(ctx context.Context, arg PinHostingBuild
 	return result.RowsAffected(), nil
 }
 
+const recoverQueuedHostingBuilds = `-- name: RecoverQueuedHostingBuilds :many
+SELECT id FROM hosting_builds WHERE state='queued' AND run_id IS NULL ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED
+`
+
+func (q *Queries) RecoverQueuedHostingBuilds(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, recoverQueuedHostingBuilds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeHostingSourceGrant = `-- name: RevokeHostingSourceGrant :execrows
 UPDATE hosting_source_grants SET revoked_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL
 `
@@ -592,6 +758,15 @@ func (q *Queries) SetHostingBuildState(ctx context.Context, arg SetHostingBuildS
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const touchHostingBuild = `-- name: TouchHostingBuild :exec
+UPDATE hosting_builds SET updated_at=clock_timestamp(),revision=revision+1 WHERE id=$1 AND state='queued' AND run_id IS NULL
+`
+
+func (q *Queries) TouchHostingBuild(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, touchHostingBuild, id)
+	return err
 }
 
 const validateHostingBuildTask = `-- name: ValidateHostingBuildTask :one

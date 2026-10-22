@@ -39,7 +39,7 @@ SELECT id,request_hash FROM hosting_builds WHERE resource_id=$1 AND idempotency_
 -- name: InsertHostingBuild :exec
 INSERT INTO hosting_builds(id,resource_id,project_id,source_id,source_generation,idempotency_key,request_hash,snapshot,snapshot_hash,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
 -- name: GetHostingBuildDocument :one
-SELECT jsonb_build_object('id',b.id,'project_id',b.project_id,'resource_id',b.resource_id,'state',b.state,'run_id',coalesce(b.run_id,''),'daemon_id',b.daemon_id,'revision',b.revision,'created_by',b.created_by,'snapshot',b.snapshot,'source_receipt',sr.body,'artifact',a.body,'failure_code',b.failure_code) FROM hosting_builds b LEFT JOIN hosting_build_receipts sr ON sr.build_id=b.id AND sr.phase='source' LEFT JOIN hosting_build_artifacts a ON a.build_id=b.id WHERE b.id=$1;
+SELECT jsonb_build_object('id',b.id,'project_id',b.project_id,'resource_id',b.resource_id,'state',b.state,'run_id',coalesce(b.run_id,''),'daemon_id',b.daemon_id,'revision',b.revision,'created_by',b.created_by,'created_at',b.created_at,'updated_at',b.updated_at,'snapshot',b.snapshot,'source_receipt',sr.body,'artifact',a.body,'failure_code',b.failure_code) FROM hosting_builds b LEFT JOIN hosting_build_receipts sr ON sr.build_id=b.id AND sr.phase='source' LEFT JOIN hosting_build_artifacts a ON a.build_id=b.id WHERE b.id=$1;
 -- name: LockHostingBuildState :one
 SELECT revision FROM hosting_builds WHERE id=$1 FOR UPDATE;
 -- name: SetHostingBuildState :execrows
@@ -67,3 +67,26 @@ SELECT * FROM hosting_source_grants WHERE id=$1;
 SELECT e.id FROM runner_enrollments e JOIN runners r ON r.id=e.runner_id WHERE e.runner_id=$1 AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash FOR SHARE OF e;
 -- name: HostingBuildTaskExists :one
 SELECT EXISTS(SELECT 1 FROM task_runs WHERE id=$1);
+
+-- name: InsertCanonicalHostingBuildRun :exec
+INSERT INTO task_runs(id,project_id,run_spec,workflow,workflow_state,runner_tags,status,requested_by,started_at,created_at,claim_order_at)
+VALUES(sqlc.arg(run_id),sqlc.arg(project_id),jsonb_build_object('type','hosting_build_v1','hosting_build_id',sqlc.arg(build_id)::text),'{}','{}','{}','queued',sqlc.arg(actor),clock_timestamp(),clock_timestamp(),clock_timestamp());
+-- name: RecoverQueuedHostingBuilds :many
+SELECT id FROM hosting_builds WHERE state='queued' AND run_id IS NULL ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED;
+-- name: TouchHostingBuild :exec
+UPDATE hosting_builds SET updated_at=clock_timestamp(),revision=revision+1 WHERE id=$1 AND state='queued' AND run_id IS NULL;
+-- name: CountHostingBuilds :one
+SELECT count(*) FROM hosting_builds WHERE resource_id=$1;
+-- name: ListHostingBuildIDs :many
+SELECT id FROM hosting_builds WHERE resource_id=sqlc.arg(resource_id) ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
+-- name: GetHostingBuildTask :one
+SELECT build_id FROM hosting_build_tasks WHERE run_id=$1 AND runner_id=$2;
+-- name: IsHostingBuildTask :one
+SELECT EXISTS(SELECT 1 FROM hosting_build_tasks WHERE run_id=$1);
+-- name: CompleteHostingBuildLease :execrows
+UPDATE run_leases SET status=sqlc.arg(state),completed_at=clock_timestamp(),completion_key=sqlc.arg(receipt_id)
+WHERE id=sqlc.arg(lease_id) AND run_id=sqlc.arg(run_id) AND runner_id=sqlc.arg(runner_id) AND attempt=sqlc.arg(attempt) AND fence=sqlc.arg(fence) AND status='active' AND expires_at>clock_timestamp();
+-- name: CancelQueuedHostingBuildTask :execrows
+UPDATE task_runs AS r SET status='canceled',finished_at=clock_timestamp() WHERE r.id=$1 AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE run_id=$1);
+-- name: ExpireHostingBuildForRun :exec
+UPDATE hosting_builds SET state='cleanup_required',failure_code='authority_lost',revision=revision+1,updated_at=clock_timestamp() WHERE run_id=$1 AND state IN('queued','sourcing','building');

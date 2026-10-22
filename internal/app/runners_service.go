@@ -9,6 +9,7 @@ import (
 
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingbuildprotocol"
 	"nerocd/internal/runner"
 	"nerocd/internal/store"
 )
@@ -299,7 +300,7 @@ func (s *Service) RegisterRunner(ctx context.Context, input RunnerInput) (Regist
 func composeRunnerHasGenericShell(capabilities []string) bool {
 	compose, shell := false, false
 	for _, capability := range capabilities {
-		compose = compose || capability == domain.RunTypeComposeDeploy || capability == domain.RunTypeImageDeploy || capability == domain.RunTypeProxyApply
+		compose = compose || capability == domain.HostingBuildTaskType || capability == domain.RunTypeComposeDeploy || capability == domain.RunTypeImageDeploy || capability == domain.RunTypeProxyApply
 		shell = shell || capability == domain.RunTypeShell
 	}
 	return compose && shell
@@ -410,7 +411,21 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
+	if claim.Run.RunSpec.Type == domain.HostingBuildTaskType {
+		if err := domain.ValidateHostingBuildTask(claim.Run); err != nil {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		a := domain.HostingBuildAuthority{BuildID: claim.Run.RunSpec.HostingBuildID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+		status, e := s.RunnerHostingBuildStatus(ctx, hostingbuildprotocol.StatusRequest{Authority: a})
+		if e != nil {
+			return domain.ClaimedRun{}, e
+		}
+		if !status.MayExecute {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		claim.PrimitivePlan, e = s.registry.BuildPlan(claim.Run)
+		return claim, e
+	} else if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
 		if err := domain.ValidateProxyApplyTask(claim.Run); err != nil {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}

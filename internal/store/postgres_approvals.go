@@ -26,6 +26,9 @@ func (s *PostgresStore) ListApprovals(ctx context.Context, status string) ([]dom
 
 // CreateApproval implements the corresponding repository operation.
 func (s *PostgresStore) CreateApproval(ctx context.Context, approval domain.Approval) (domain.Approval, error) {
+	if err := rejectGenericHostingRun(ctx, s.queries, approval.RunID); err != nil {
+		return domain.Approval{}, err
+	}
 	if err := rejectGenericDeploymentRun(ctx, s.queries, approval.RunID); err != nil {
 		return domain.Approval{}, fmt.Errorf("reject generic deployment run: %w", err)
 	}
@@ -45,6 +48,9 @@ func (s *PostgresStore) ApproveRun(ctx context.Context, runID string, actorID st
 	}
 	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
+	if err := rejectGenericHostingRun(ctx, queries, runID); err != nil {
+		return domain.Approval{}, err
+	}
 	if err := rejectGenericDeploymentRun(ctx, queries, runID); err != nil {
 		return domain.Approval{}, fmt.Errorf("reject generic deployment run: %w", err)
 	}
@@ -82,6 +88,9 @@ func (s *PostgresStore) RejectRun(ctx context.Context, runID string, actorID str
 	}
 	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
+	if err := rejectGenericHostingRun(ctx, queries, runID); err != nil {
+		return domain.Approval{}, err
+	}
 	if err := rejectGenericDeploymentRun(ctx, queries, runID); err != nil {
 		return domain.Approval{}, fmt.Errorf("reject generic deployment run: %w", err)
 	}

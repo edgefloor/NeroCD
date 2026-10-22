@@ -422,6 +422,9 @@ func expireLeasesAtDBClock(ctx context.Context, queries *sqlcgen.Queries) error 
 		if err := queries.ExpireDeploymentAttemptsForRun(ctx, runID); err != nil {
 			return fmt.Errorf("expire deployment attempts for run query: %w", err)
 		}
+		if err := queries.ExpireHostingBuildForRun(ctx, &runID); err != nil {
+			return err
+		}
 		if err := queries.RequeueExpiredRun(ctx, runID); err != nil {
 			return fmt.Errorf("requeue expired run query: %w", err)
 		}

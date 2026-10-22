@@ -25,6 +25,7 @@ type Registry struct {
 // NewRegistry returns the built-in runner adapter registry.
 func NewRegistry() Registry {
 	adapters := []Adapter{
+		{Type: domain.HostingBuildTaskType, Name: "Git application build", Status: "controller", Description: "Internal fenced source/build task; execution requires an upgraded agent."},
 		{Type: domain.RunTypeImageDeploy, Name: "Image deployment", Status: "implemented", Description: "Fenced immutable public-image preparation and loopback HTTP deployment."},
 		{Type: "shell", Name: "Shell", Status: "implemented", Description: "Builds a local process plan from shell command input and shared runner primitives.", BuildPlan: buildShellPlan},
 		{Type: "ansible", Name: "Ansible", Status: "planned", Description: "Thin adapter over git checkout, process execution, artifacts, and secrets."},
@@ -49,6 +50,12 @@ func (r Registry) Supports(runType string) bool {
 
 // BuildPlan converts run into its runner primitive plan.
 func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, error) {
+	if run.RunSpec.Type == domain.HostingBuildTaskType {
+		if err := domain.ValidateHostingBuildTask(run); err != nil {
+			return domain.RunnerPrimitivePlan{}, err
+		}
+		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
+	}
 	if run.RunSpec.Type == domain.RunTypeProxyApply {
 		if err := domain.ValidateProxyApplyTask(run); err != nil {
 			return domain.RunnerPrimitivePlan{}, err

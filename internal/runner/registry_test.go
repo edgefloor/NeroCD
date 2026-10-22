@@ -62,3 +62,16 @@ func TestImagePlanRequiresCanonicalInternalTaskAndNoGenericPrimitives(t *testing
 		t.Fatal("internal nested task produced generic primitives")
 	}
 }
+
+func TestHostingBuildRegistryTypedPlanIsInternalOnly(t *testing.T) {
+	r := NewRegistry()
+	run := domain.TaskRun{ID: "build_run_build-a", RunSpec: domain.RunSpec{Type: domain.HostingBuildTaskType, HostingBuildID: "build-a"}}
+	plan, err := r.BuildPlan(run)
+	if err != nil || plan.Process != nil || plan.Checkout != nil {
+		t.Fatalf("typed plan=%+v %v", plan, err)
+	}
+	run.RunSpec.Process = &domain.ProcessSpec{Command: []string{"unused"}}
+	if _, err = r.BuildPlan(run); err == nil {
+		t.Fatal("generic process accepted")
+	}
+}

@@ -23,7 +23,11 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 	if err := s.configureHostingPorts(); err != nil {
 		return nil, err
 	}
-	client, err := hostingjobs.New(ctx, s.pool, s, hostingjobs.Config{})
+	var handler hostingjobs.Handler = deploymentOnlyHandler{s}
+	if s.hostingBuildPolicy != nil {
+		handler = s
+	}
+	client, err := hostingjobs.New(ctx, s.pool, handler, hostingjobs.Config{})
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +84,9 @@ func (s *PostgresStore) recoverHostingDispatch(ctx context.Context) error {
 		}
 	}
 	if err = s.recoverProxyDispatch(ctx, tx); err != nil {
+		return err
+	}
+	if err = s.recoverBuildDispatch(ctx, tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -1242,6 +1249,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 }
 
 func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runnerID string) (bool, error) {
+	if run.RunSpec.Type == domain.HostingBuildTaskType {
+		return s.buildClaimAllowed(ctx, tx, run, runnerID)
+	}
 	if run.RunSpec.Type == domain.RunTypeProxyApply {
 		if domain.ValidateProxyApplyTask(run) != nil {
 			return false, nil
@@ -1294,6 +1304,25 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 }
 
 func rejectGenericHostingRun(ctx context.Context, q *sqlcgen.Queries, runID string) error {
+	ownedBuild, err := q.IsHostingBuildTask(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if ownedBuild {
+		return ErrConflict
+	}
+	row, err := q.GetRun(ctx, runID)
+	if err != nil {
+		return hostingError(err)
+	}
+	run, err := taskRunFromSQLC(row)
+	if err != nil {
+		return err
+	}
+	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+		return ErrConflict
+	}
+
 	proxy, err := q.ProxyIsTask(ctx, runID)
 	if err != nil {
 		return err

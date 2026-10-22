@@ -13,8 +13,7 @@ import (
 	"nerocd/internal/source"
 )
 
-// HostingBuildTaskType is reserved for a future reviewed typed runner executor.
-// Its persistence contract does not register an executor or public task admission.
+// HostingBuildTaskType identifies internal, exactly targeted source/build work.
 const HostingBuildTaskType = "hosting_build_v1"
 
 // HostingBuildProtocol identifies the immutable local source/build persistence contract.
@@ -163,6 +162,8 @@ type HostingBuildArtifact struct {
 
 // HostingBuild is metadata only. Queued with an empty RunID is not dispatched.
 type HostingBuild struct {
+	CreatedAt     time.Time                  `json:"created_at"`
+	UpdatedAt     time.Time                  `json:"updated_at"`
 	ID            string                     `json:"id"`
 	ProjectID     string                     `json:"project_id"`
 	ResourceID    string                     `json:"resource_id"`
@@ -309,4 +310,26 @@ func ValidHostingBuildFailure(code string) bool {
 		return true
 	}
 	return false
+}
+
+// ValidateHostingBuildTask rejects any generic execution material on an internal task.
+// Persisted task targets and live lease authorization are separately mandatory.
+func ValidateHostingBuildTask(run TaskRun) error {
+	s := run.RunSpec
+	if !validBuildTaskID(s.HostingBuildID) || run.ID != "build_run_"+s.HostingBuildID || s.Type != HostingBuildTaskType || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(run.Workflow.Steps) != 0 || s.HostingOperationID != "" || s.HostingMode != "" || s.ProxyOperationID != "" || s.ProxyMode != "" {
+		return errors.New("invalid internal hosting build task")
+	}
+	return nil
+}
+
+func validBuildTaskID(id string) bool {
+	if len(id) < 1 || len(id) > 63 {
+		return false
+	}
+	for i, c := range id {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && (c != '-' || i == 0) {
+			return false
+		}
+	}
+	return true
 }

@@ -18,6 +18,7 @@ import (
 
 // PostgresStore is a PostgreSQL-backed implementation of the store repositories.
 type PostgresStore struct {
+	hostingBuildPolicy             *domain.HostingBuildPolicy
 	hostingJobs                    *hostingjobs.Client
 	hostingPortMin, hostingPortMax int
 	pool                           *pgxpool.Pool
