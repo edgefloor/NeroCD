@@ -1,7 +1,7 @@
 # Workspace capability ledger
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
-Accepted application/source assessment: `edf8f14c8262c896e4c886088f8058878d77e965`,
+Accepted application/source assessment: `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`,
 2026-10-22. This ledger covers revision 3's workspace product. The
 [hosting ledger](compatibility.md) retains full Coolify scope at
 `b12d1386f3d458618b4c579babcd1e339c6c40b3`.
@@ -90,19 +90,21 @@ No deletion, reversion or history rewriting is required.
 
 Only a bounded part that passes the [hosting-dependency test](plan.md#hosting-dependency-test)
 can restart. The active [next hosting slice](plan.md#next-hosting-slice) concerns
-private HTTPS runtime checkout and UI on the accepted control-plane bridge,
-not a new collaboration Task or general grant system. Configuration, scoped
-source grants and typed credential endpoint/client are accepted; the current
-compiled runtime refuses private capability. Neither private execution nor A03
-is complete. See the [hosting evidence](compatibility.md#accepted-foundations-and-evidence).
+runtime variables and managed-secret delivery, then runtime logs and continuous
+status. Private HTTPS checkout/build and the bounded Dockerfile UI journey are
+accepted at `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; automatic-builder UI
+qualification, provider breadth and complete A03 remain incomplete. These hosting
+contracts add no collaboration Task, Workspace or general grant system. See the
+[hosting evidence](compatibility.md#accepted-foundations-and-evidence).
 
 ## Retained accepted foundations
 
 Current reusable hosting and control-plane evidence is documented in
 [the hosting ledger](compatibility.md#accepted-foundations-and-evidence) and
 [specification section 12](product-spec.md#12-evidence-and-review-limits).
-It includes real public Git builds, same-host artifact deployment, controlled
-Traefik routing, durable typed build logs and the bounded output viewer. The
+It includes real public/private HTTPS Git CLI builds, the bounded Dockerfile
+private UI, same-host artifact deployment, controlled Traefik routing, durable
+typed build logs and the bounded output viewer. The
 Go application, PostgreSQL/River queue, authorization, audit, leases and journals
 remain the implementation foundation. No parallel job queue is proposed.
 

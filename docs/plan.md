@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`edf8f14c8262c896e4c886088f8058878d77e965`, 2026-10-22, through migration 0051.
+`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`, 2026-10-22, through migration 0051.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -32,7 +32,7 @@ remain distinct acceptance claims.
 | Application and persistence | Go API/application/store layers, PostgreSQL through migration 0051, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding and host readiness, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Scoped managed build/runtime delivery, broader variable scopes, provider credentials and key recovery |
-| Builds | Public HTTPS Git runtime, Dockerfile/Railpack/prepared-static artifacts; private HTTPS configuration, source grants and typed credential endpoint/client | Private runtime checkout and UI, provider integrations, compiled static, remote publication and hosting cache |
+| Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack, owner grant selection and Dockerfile UI through exact artifact deployment and test-CA HTTPS | Automatic-builder private UI qualification, provider integrations, compiled static, remote publication and hosting cache |
 | Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
 | Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Runtime application logs, continuous status, resource actions and terminals |
 | Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Public DNS/production ACME qualification, broader certificate modes, continuous observations and hosting preview access |
@@ -41,7 +41,7 @@ remain distinct acceptance claims.
 The [hosting ledger](compatibility.md#accepted-foundations-and-evidence)
 contains exact revisions and limits. Public Git builds, same-host artifact
 deployment, explicit route selection and typed build output are accepted.
-Private Git runtime/UI, production TLS qualification,
+Private provider breadth, runtime variables/managed-secret delivery, production TLS qualification,
 runtime logs/status and the broader hosting workflows remain incomplete.
 Test-only DNS and a trusted CA do not establish public production ACME.
 
@@ -61,28 +61,33 @@ A practical deployment demo alone does not complete Coolify parity.
 
 ## Next hosting slice
 
-The private HTTPS control plane is accepted at
-`edf8f14c8262c896e4c886088f8058878d77e965`: configuration, owner source-grant
-creation/revocation, gated build admission and typed credential endpoint/client.
-The current compiled CLI deliberately refuses the private transport capability.
-Private checkout execution and the UI workflow remain the next H1 work, serving
-R08–R09, R16, R29 and R31/A03 without a Task or general grant platform.
+Accepted private HTTPS work at `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`
+includes source grants, protected credential transport, compiled CLI Dockerfile
+and Railpack execution, and a Dockerfile browser workflow through build output,
+exact local artifact deployment and test-CA HTTPS. See the
+[scope and revision-specific evidence](compatibility.md#accepted-foundations-and-evidence).
+A03 remains partial. The private browser fixture does not qualify an automatic
+builder or provider integrations, and test-CA HTTPS is not production ACME.
 
-Reuse these accepted contracts and the controlled checkout credential window.
-Freeze runtime credential consumption, retained delivery identity/replay,
-secret-byte ownership/redaction and UI contracts before implementation. Preserve
-exact source/resource/project/policy/secret-version binding and revocation;
-clear transport credentials before build use. Keep the initial private HTTPS
-Basic/PAT scope and operator host restrictions. SSH, provider installations,
-webhooks and internal-LAN sources remain separate slices.
+The next proposed H1 slice is runtime variables and managed-secret delivery,
+followed by runtime application logs and continuous status. This serves R29–R32,
+R58–R60 and the applicable hosting acceptance scenarios, including A28 and A29.
+Use existing resources, Go application authorization, managed-secret versions,
+PostgreSQL/River and fenced runner execution. Do not require a collaboration
+Task, Workspace, VM or general grant platform.
 
-Acceptance must demonstrate authorized private checkout through the production
-API and enrolled CLI, no credential leakage, expired/revoked/wrong-scope denial,
-response-loss recovery and confirmed credential cleanup. Combine Dockerfile/
-Railpack, same-host artifact deployment and HTTPS routing in the named fixture;
-retain the test-CA versus production-TLS distinction. Complete A03 also requires
-its declared UI workflow. Reviewed control-plane tests and the integrated public
-build-to-HTTPS regression do not establish private execution or complete A03.
+Before implementation, freeze effective runtime configuration identity, explicit
+version selection, authorization, rotation/revocation, redaction, replay and
+cleanup contracts. Define how configuration changes affect redeploy/restart and
+retained rollback. Keep build, deployment and ongoing runtime logs distinct,
+with bounded reads, reconnect gaps and stale observation status. Verify failure,
+response loss, canceled authority and preservation of the serving release.
+
+Runtime-configuration persistence/API work, including allocated migration 0052,
+is in progress on an unaccepted candidate. The accepted inventory remains 0051.
+This work does not yet deliver environment values to workloads. Broader value
+inheritance, provider delivery, SSH, webhooks and production TLS qualification
+remain separate hosting work.
 
 ## Hosting-dependency test
 

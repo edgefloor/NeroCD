@@ -1,10 +1,16 @@
-# Public Git build executor component
+# Git build executor component
 
-`runnerruntime.BuildExecutor` connects the accepted source checkout adapter,
-local build engine, five authenticated build phase methods and version 5 attempt
-journal. This component is not wired into the runner claim dispatcher or CLI.
-It does not deploy an image, provision HTTPS, deliver private credentials or
-prove the later server controller's lifecycle behavior.
+`runnerruntime.BuildExecutor` is now connected to the compiled runner claim
+path, typed output and durable replay. Accepted integration
+`4ba9fcac1b484244cb2c662e53f588c2dce6b71e` includes explicitly configured private
+HTTPS Basic/PAT checkout. Use the [current operator setup](hosting-build-runtime.md#enable-private-https-git)
+and [accepted evidence](compatibility.md#accepted-foundations-and-evidence).
+Same-host deployment and routing remain separately enabled operations.
+
+The sections below retain the original public-only component's calling and test
+boundaries. Its version-5 journal description and original integration limits
+are historical. Current typed output requires journal format 7; no private
+credential or plaintext is persisted in that journal.
 
 ## Operator configuration and calling contract
 
@@ -44,7 +50,9 @@ initial lease interval. It does not stop a renewed same-tuple lease. Fresh
 authenticated `MayExecute` and the joined status watcher govern permission;
 renewal never extends the operation deadline.
 
-Only public HTTPS Git sources with no credential grant are supported. A fixture
+The original component supported only public HTTPS Git without a grant. The
+current private path requires the explicit configuration and exact matching
+source grant described above. A fixture
 may explicitly allow its loopback CIDR and isolated TLS CA through a trusted test
 Git wrapper. Production has no request-controlled CA or TLS bypass.
 

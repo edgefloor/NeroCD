@@ -2,9 +2,11 @@
 
 NeroCD stores project-managed secret values as encrypted, immutable versions.
 The managed-secret API supports metadata, creation, rotation, owner reveal, and
-irreversible revocation. Runner execution still supports only local
-`runner_file` and development-only `env` providers. Managed secrets do not yet
-provide runner resolution or transport for the `database` provider.
+irreversible revocation. Generic `RunSpec` bindings support local `runner_file`
+and development-only `env` providers; `database` binding resolution remains
+planned. Separately, the private HTTPS Git build path now delivers one authorized
+managed-secret version only for source transport. It is not application runtime
+or general build-secret injection.
 
 ## Binding Contract
 
@@ -19,8 +21,13 @@ provide runner resolution or transport for the `database` provider.
   descriptor at deployment time.
 
 Secret values never appear in normal metadata responses, run specs, audit
-metadata, log messages, artifact records, or runner primitive plans. Only the
-explicit owner reveal operation returns a plaintext value.
+metadata, artifact records or runner primitive plans. Runtime output redacts
+known secret patterns and supported encodings; it cannot guarantee removal of
+unknown secrets or arbitrary transformations. The explicit owner reveal operation
+returns plaintext to an authorized owner.
+The separate lease-bound Git credential endpoint returns scoped material only
+to its authenticated private-capable runner. Source-grant UI controls never call
+reveal or cache a value.
 
 ## Providers
 
@@ -91,11 +98,56 @@ selected version, and commits the audit before returning plaintext. Audit or
 commit failure returns no plaintext. Reveal and revoke use the same row lock.
 Historical versions can be revealed only while the secret remains active.
 
+## Private HTTPS Git source credentials
+
+In **Project secrets**, create or rotate an existing secret with this JSON shape:
+
+```json
+{
+  "username": "<provider-required-git-username>",
+  "password": "<repository-password-or-PAT>"
+}
+```
+
+Both fields are nonempty UTF-8 strings. No other fields, duplicates, trailing JSON
+or control characters are accepted. Username is at most 256 bytes and contains
+no colon. The connected Basic transport limits `username:password` to 4096 bytes.
+Keep the PAT scoped to the repository and required Git operation. Secret storage's
+65,536-byte limit does not expand this transport bound. SSH keys are not accepted
+by the connected private HTTPS workflow.
+
+The server requires its configured secret keyring to decrypt the selected immutable
+version. A project owner creates a source grant for the exact saved source and
+resource generations, secret ID and explicit version. A maintainer can select an
+eligible grant for a build. Rotation does not silently change a grant's version.
+The UI reads only secret/version metadata and submits references; it does not
+reveal a value. See the [source-grant workflow](hosting-git-resources.md#request-a-private-https-git-build).
+
+An explicitly enabled private-capable runner requests material through protected
+controller transport under its full live build/run/lease/attempt/fence authority.
+Current source, creator, grant, secret version, runner capability and expiry are
+checked before delivery. A retry reuses the durable delivery identity and original
+window. Grant/secret revocation denies further authorized delivery, but cannot
+recall bytes already delivered or revoke a PAT at its Git provider.
+
+Credential use is confined to Git source transport. The runtime/client own the
+bytes, and the checkout adapter clears them and removes transport files before
+engine use. No credential is injected into the build engine or application. Attempt-local redaction covers the password,
+Basic payload and supported encodings before durable output. Plaintext never
+belongs in a resource, RunSpec, journal, public build/grant response or audit.
+A canceled/uncertain private build retains its evidence for reconciliation;
+it must not manufacture an ordinary completion while cleanup or delivery is
+unresolved. See [private runtime configuration](hosting-build-runtime.md#enable-private-https-git).
+
+This purpose-specific path does not implement `database` RunSpec bindings,
+container environment injection, shared variable inheritance, registry/DNS
+credentials or application runtime-secret rotation. Those remain H1 work.
+
 ## Encryption configuration
 
 `NEROCD_SECRET_KEYRING_FILE` optionally names an absolute path to a keyring JSON
-file. An absent setting permits startup. Create, rotate, and reveal then return
-HTTP 503. Metadata and revocation remain available. An invalid configured file
+file. An absent setting permits startup. Create, rotate, reveal and private Git
+credential delivery then return HTTP 503. Metadata and revocation remain available. An invalid configured file
 fails startup with a safe error that excludes its path and contents.
 
 The file must be a regular file owned by the server's effective user, with mode
@@ -130,10 +182,12 @@ or key material from process memory.
   secret access retains its separate lease-bound authorization audit.
 - Logs must record that a binding was prepared without printing provider
   reference, target name, or value.
-- Required secret failures fail the current step and complete the lease as
-  failed.
-- Repository credentials are confined to provenance transport and must retain
-  an `env:` target; they cannot be repurposed as application Compose secrets.
+- Required generic RunSpec binding failures fail the current step and complete
+  its lease as failed. Private build uncertainty follows its separate retained
+  intent/cleanup contract above.
+- Legacy RunSpec repository credentials remain confined to provenance transport
+  with an `env:` target. Purpose-specific private Git build grants use their
+  separate transport contract and cannot become application Compose secrets.
 - Provenance migrations retain historical bare `sha256:` image values for
   reading. A legacy resolved revision is replay-compatible only for a
   single-service image whose new untagged `repository@sha256:` suffix exactly

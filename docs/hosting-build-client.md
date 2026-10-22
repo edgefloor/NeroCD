@@ -42,8 +42,9 @@ receipt never restores lease authority or implies execution permission.
 
 The client preserves an explicit wire `MayExecute` value only when it is
 structurally consistent: true requires queued, sourcing or building state and no
-cancel request. It never derives true from receipts. A future reviewed server
-path must establish live authority; this transport does not establish that path.
+cancel request. It never derives true from receipts. The production server
+establishes live authority separately; structural client validation cannot grant
+execution permission.
 
 The methods perform no automatic retries and never rewrite a request or completion
 revision. After an uncertain response, callers must retain exact intent and use
@@ -64,13 +65,25 @@ enrolled with build capability but lacks explicit build configuration. Legacy
 `Identity` behavior remains unchanged. None of these methods advertises a default
 capability or changes heartbeat/registration behavior.
 
+`RuntimeExecutionIdentity(ctx, proxyConfigured, buildConfigured,
+localBuildConfigured, privateConfigured...)` also checks exact persisted
+`local_build_deploy_v1` and `hosting_git_https_basic_v1` against local opt-ins.
+Omitting the private argument defaults to false. The older wrappers therefore
+reject private capability. Private execution also requires build configuration;
+configured build/local execution cannot share shell capability. These reads do
+not change an enrolled runner's persisted capabilities. Follow the
+[operator enrollment/restart review](hosting-build-runtime.md#enable-private-https-git).
+
 ## Limits and remaining integration
 
-This slice carries only nonsecret messages and is ready for public-source wiring.
-Plaintext private-source credential transport remains pending. Server handlers,
-credential delivery, CLI configuration, agent journal/executor, runtime permission
-checks and source/engine wiring remain separate work. There is no production
-endpoint or end-to-end deployment acceptance claim.
+This guide describes the nonsecret phase client and its original component
+boundary. The accepted compiled runtime now uses these methods with journal
+replay and exact completion. Private credentials use the separate strict
+`BuildSourceCredential` codec/client, never these nonsecret DTOs. Current private
+execution and the bounded Dockerfile WebUI are accepted at
+`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`. Use the
+[private operator setup](hosting-build-runtime.md#enable-private-https-git) and
+[accepted evidence](compatibility.md#accepted-foundations-and-evidence).
 
 Loopback HTTP tests cover authentication, exact messages, structural admission,
 response bounds and strict decoding, mismatched acknowledgments and status,

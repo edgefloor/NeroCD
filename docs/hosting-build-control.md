@@ -37,7 +37,9 @@ sources require no grant and reject an attached grant. A new secret version does
 not revoke an older selected version while the managed secret remains active.
 Secret metadata revocation revokes all versions. Grant rotation uses a new grant
 ID; grants cannot be retargeted. The separate managed credential delivery seam
-exists, but public resource configuration does not admit private Git credentials.
+now connects to the protected credential endpoint and configured private runner.
+Resource configuration admits public HTTPS or `https_basic`; it never accepts a
+credential value or caller-supplied policy.
 No credential recall is promised after transport delivery.
 
 `HostingBuildPolicy` is trusted in-process operator configuration, never public
@@ -136,15 +138,16 @@ cleanup-required history.
 
 ## Remaining integration and evidence
 
-Public source choice, resource API/UI, atomic source versions, managed credential
-delivery, the River build adapter and the explicitly enabled server controller
-now exist. No typed runner build executor, source-to-engine receipt bridge,
-artifact-to-deployment wiring, or end-to-end Git-to-HTTPS acceptance is installed
-by server wiring alone. Generic public and nested RunSpec admission denies
-internal build tasks. Agent execution, deadlines/lease renewal, retry and
-cleanup recovery need a separate reviewed
-integration. Startup/readiness now require both the accepted build predicate and
-the additive0049 Git resource reference predicate.
+The original controller/component tests below retain their revision-specific
+boundaries. Current accepted integration `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`
+adds compiled public/private execution, typed build output, same-host artifact
+deployment and a bounded Dockerfile private UI journey to test-CA HTTPS. Those
+additions do not follow from controller wiring alone. Generic public and nested
+RunSpec admission still denies internal build tasks. Startup/readiness requires
+the accepted predicates through migration 0051; the unaccepted 0052 candidate is
+not part of this accepted inventory.
+See the [accepted ledger](compatibility.md#accepted-foundations-and-evidence) and
+[current private operator setup](hosting-build-runtime.md#enable-private-https-git).
 
 The isolated PostgreSQL tests apply all embedded migrations and exercise CAS,
 request replay, DB-only callback rollback, project authorization and cross-project
@@ -182,12 +185,13 @@ compatibility assertions against the restored schema.
 
 ## Server controller configuration
 
-The server now wires public Git requests to the existing River adapter and
-canonical exact-target task dispatch. This is server control and phase transport.
-It does not by itself install a runner source/build executor or make a Git build
-journey available on older agents. There is no private source-credential HTTP
-endpoint in this slice. Image deployment and Git build configuration remain
-separate commands.
+The server wires public and owner-granted private HTTPS Git requests through
+the existing River adapter and canonical exact-target dispatch. The separate
+credential endpoint requires protected transport and live private-capable runner
+authority. Older agents gain no execution support from server wiring alone.
+Image deployment and Git build configuration remain separate commands. Follow
+the [private runner setup](hosting-build-runtime.md#enable-private-https-git)
+before enabling its persisted capability.
 
 Build admission is disabled by default. Set
 `NEROCD_HOSTING_BUILD_POLICY_FILE=/absolute/operator/build-policy.json` to enable

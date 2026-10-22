@@ -14,6 +14,32 @@ Local artifact evidence establishes journal format floor **6**. The floor applie
 
 Unresolved effects, lease loss, cancellation and restored ownership holds retain their journal evidence. Startup reconciliation precedes normal runner traffic. Missing local configuration blocks local replay. A retained local workload can be cleaned up after its image cache disappears, using the exact container ID, daemon, labels, image identity and port proof plus current server route guards. Cleanup never deletes images. Route-protected releases cannot be removed, and a healthy new release does not silently switch an existing route.
 
-`acceptance/runtime-hosting-local-build/gate.sh` uses an owned disposable Linux Docker daemon, real PostgreSQL/River and production HTTP APIs. It compiles the normal CLI for public HTTPS Git builds and local deployments, verifies ordinary HTTP, then uses the production proxy runtime with the existing test-only Pebble trust factory for managed Traefik HTTPS. The fixture does not establish public-CA issuance or test the entire proxy CLI. It uses the existing TCP/database readiness and verified PostgreSQL cache helpers, publishes no outer host ports in its default mode, and verifies owned cleanup. Its opt-in browser mode publishes only the disposable authenticated API and UI on an ephemeral host loopback port. See [the resource UI and browser check](hosting-build-deployments.md#deploy-through-the-resource-ui).
+`acceptance/runtime-hosting-local-build/gate.sh` uses an owned disposable Linux Docker daemon, real PostgreSQL/River and production HTTP APIs. Its default mode compiles the normal CLI for public HTTPS Git builds and local deployments, verifies ordinary HTTP, then uses the production proxy runtime with the existing test-only Pebble trust factory for managed Traefik HTTPS. The fixture does not establish public-CA issuance or test the entire proxy CLI. It uses the existing TCP/database readiness and verified PostgreSQL cache helpers, publishes no outer host ports in its default mode, and verifies owned cleanup. Its opt-in browser mode publishes only the disposable authenticated API and UI on an ephemeral host loopback port. See [the resource UI and browser check](hosting-build-deployments.md#deploy-through-the-resource-ui).
 
-This slice provides explicit build-artifact deployment and route selection on one host. The resource UI can select a successful build, request local artifact deployment, inspect the operation and select the settled healthy release for an existing managed proxy route. See [the UI workflow](hosting-build-deployments.md#deploy-through-the-resource-ui). Private Git delivery, automatic deployment after a build, image transfer, log streaming and broader M1 completion remain separate work. Rootful BuildKit remains a trusted host boundary; its delegated cgroup and monitored disk prerequisites are unchanged.
+This slice provides explicit build-artifact deployment and route selection on one host. The resource UI can select a successful build, request local artifact deployment, inspect the operation and select the settled healthy release for an existing managed proxy route. See [the UI workflow](hosting-build-deployments.md#deploy-through-the-resource-ui). Private HTTPS Basic/PAT delivery is accepted with [explicit build configuration](hosting-build-runtime.md#enable-private-https-git). Automatic deployment after a build, image transfer, runtime application logs and broader M1 completion remain separate work. Typed build output is available through its bounded opt-in viewer. Rootful BuildKit remains a trusted host boundary; its delegated cgroup and monitored disk prerequisites are unchanged.
+
+## Private runtime and browser qualification
+
+Run `NEROCD_PRIVATE_GIT_RUNTIME=1 bash acceptance/runtime-hosting-local-build/gate.sh`
+from the repository root to exercise the public regression plus private TLS Git
+Dockerfile and Railpack through the compiled CLI, exact local artifact deployment
+and managed HTTPS with the fixture CA. The private server rejects anonymous and
+wrong authentication. The fixture checks credential-response-loss retry, fresh
+registration capability composition, secret absence and transport cleanup.
+At source `4642dc413cc21be955fd9639d12fdf0606735cfc`, the public regression passed
+in 51.44 seconds and private cases in 76.59 seconds. These remain revision-specific
+reports, not a new execution by this documentation change.
+
+After building the frontend, use
+`NEROCD_PRIVATE_GIT_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`
+for the dedicated [private browser test](../web/app/tests/browser/private-git-build-deployments.spec.ts).
+Its fixture seeds a secret reference and resource, not a source grant or successful
+build. The UI creates the grant and drives the Dockerfile journey. Metadata
+contains references only. This opt-in mode publishes the disposable authenticated
+UI/API on host loopback; production must use the protected controller transport
+above. Public browser mode remains `NEROCD_LOCAL_BUILD_BROWSER=1`.
+
+Accepted integration `4ba9fcac1b484244cb2c662e53f588c2dce6b71e` records private
+browser 25.0 seconds/Go fixture 34.03 seconds and public browser regression
+22.2 seconds/Go fixture 30.63 seconds. All HTTPS evidence here uses a trusted test
+CA and isolated DNS. Production ACME and complete A03 remain unqualified.

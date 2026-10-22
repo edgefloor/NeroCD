@@ -1,6 +1,6 @@
 # Build execution in the Go agent
 
-The normal `nerocd runner` can execute public HTTPS Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Deployment, domain routing, HTTPS delivery and private Git credential delivery are separate integrations.
+The normal `nerocd runner` can execute public and explicitly enabled private HTTPS Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Same-host artifact deployment and managed routing are separately enabled integrations. Private Basic/PAT delivery is connected to the checkout path under the configuration below.
 
 Build execution is disabled by default. Enable it with `--build-config-file /absolute/operator/build.json`. The file must be an owned, nonsymlink, regular mode0600 file of at most 64 KiB. Version 1 rejects unknown fields, duplicate keys (including differently cased duplicates), null values and trailing JSON. Validation happens before registration, enrollment, heartbeat or claim effects. This nonsecret file must never contain Git or runner credentials.
 
@@ -62,6 +62,64 @@ The shape below illustrates the fields; replace identifiers, digests, paths and 
 All duration integers are nanoseconds: `100000000` is 100 ms, `5000000000` is 5 seconds and `600000000000` is 10 minutes. `ComputeBuildToolchainIdentity` computes the canonical inventory identity from fixed pins and the bounded actual Docker binary hash. Local paths are not published as identity data. See [the engine prerequisites](hosting-build-engine.md) for delegated cgroup ownership, trusted privileged BuildKit, fixed toolchain pins and monitored disk overshoot. These settings provide no hard disk quota or hostile-fork isolation.
 
 The runner advertises `hosting_build_v1` only with validated execution configuration. Shell and build execution cannot be combined. Explicit capability flags and persisted enrolled capabilities must match local configuration before heartbeat or claim. Image and configured proxy modes retain their existing behavior. The authenticated runner ID must equal `target.runner_id`; `--id` cannot override it.
+
+## Enable private HTTPS Git
+
+Start with the validated version 1 build configuration above. Add this field at
+its top level to opt into private Basic/PAT checkout. Merge this fragment with
+the existing fields; it is not a replacement for the complete file:
+
+```json
+{
+  "private_git": { "trusted_loopback_http": false }
+}
+```
+
+Omitting `private_git` keeps the runner public-only. This nonsecret configuration
+contains no PAT, password, managed-secret ID or source-grant ID. It does not
+replace the server's build policy, repository allowlist or destination grants.
+
+Use a verified HTTPS controller URL, for example `--server https://control.example.com`.
+The runner rejects unsafe credential-server configuration before enrollment,
+journal access, heartbeat or claim. A trusted TLS-terminating proxy must be
+explicitly trusted by the server and strip/replace forwarding headers. Client
+forwarding headers alone do not authorize delivery. Keep `trusted_loopback_http`
+false in production; its true setting exists only for isolated literal-loopback
+fixtures and never permits insecure remote transport or disabled TLS checks.
+
+Upgrade the agent, stop it, and review its persisted capability/enrollment and
+placement before restart. Private execution requires exact persisted
+`hosting_git_https_basic_v1` together with `hosting_build_v1`; shell cannot share
+this runner. Fresh registration selects the configured private profile. Adding
+configuration to an enrolled runner does not mutate its persisted identity.
+Use the supported enrollment/re-enrollment review when a capability change is
+needed, then restart with matching configuration. A mismatch fails before replay,
+heartbeat or claim. Add `--local-build-deploy` and its matching capability for
+same-host deployment; managed proxy execution needs its own explicit settings.
+
+A project owner creates the exact source grant from an existing managed-secret
+version. A maintainer selects that grant for a build. Follow the
+[private source workflow](hosting-git-resources.md#request-a-private-https-git-build).
+The credential endpoint requires live full attempt authority and rechecks current
+source, grant, secret version, runner and expiry. It returns a bounded owned
+credential with `Cache-Control: no-store` and no redirect fallback.
+
+The runtime derives one exact 32-hex delivery ID from its already durable build
+intent. At most three live attempts reuse that ID and its original server window;
+startup reconciliation never refetches credentials, source or engine output.
+The attempt redactor includes the password, Basic payload and supported encodings
+before private output reaches the journal. The checkout adapter removes askpass
+files and Git metadata and clears credential bytes before engine use. Build use
+can outlast the cleared transport window, while cancellation and the original
+operation deadline still apply. Failed authority, transport or cleanup retains
+unresolved evidence and cannot become ordinary successful completion.
+
+The real private CLI fixture qualifies Dockerfile and Railpack on a trusted Linux
+build host. This adds no hostile-input isolation, SSH/provider adapter, runtime
+application-secret injection or full A03 claim. See the
+[accepted evidence and limits](compatibility.md#accepted-foundations-and-evidence).
+
+## Placement, lifecycle and replay
 
 An omitted or empty `target.binding_id` permits multiple resource bindings only on the exact configured runner, server and destination. Every authenticated build snapshot must still have a valid nonempty binding, and the complete initial snapshot is pinned for execution and journal replay. A nonempty configured binding restricts execution to that exact binding. Job inputs never override operator placement or policy.
 

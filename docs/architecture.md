@@ -1,7 +1,7 @@
 # Architecture
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
-Accepted application/source assessment: `edf8f14c8262c896e4c886088f8058878d77e965`,
+Accepted application/source assessment: `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`,
 2026-10-22. The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c`
 and earlier `a763a90b3896257b784c9498d01650ccdad2427a` are historical.
 The [specification](product-spec.md) retains both targets. Hosting parity is the
@@ -23,7 +23,7 @@ runners, and retains operational evidence. Accepted hosting extends those execut
 | `internal/app` | Authorization, business operations, audit writes, and transactions. |
 | `internal/store` | PostgreSQL persistence and explicit disposable memory development store. |
 | `internal/runner` | Enrollment, credentials, fenced leases, execution, logs, and replay data. |
-| `internal/runnerruntime` | Fenced image/Compose execution, public Git builds, same-host artifact deployment and typed build output delivery/replay. |
+| `internal/runnerruntime` | Fenced image/Compose execution, public and explicitly enabled private HTTPS Git builds, same-host artifact deployment and typed build output delivery/replay. |
 | `internal/hostingjobs` | River OSS v0.44.1 image/proxy/build dispatch, with a production handler for enabled public builds. |
 | `internal/hostingbuild` | Bounded local builds with confined settings, immutable output receipts and serialized raw output observation. |
 | `internal/hostingproxy` | Standalone Linux Traefik configuration, TLS and state verification. |
@@ -74,8 +74,8 @@ passwords remain the recovery path.
 
 NeroCD does not claim SAML, LDAP, SCIM, group mapping, automatic provisioning,
 multi-provider OIDC, general scheduling or parallel workflows. Project-managed
-encrypted secret storage is available; managed execution delivery and external
-providers remain incomplete.
+encrypted secret storage and purpose-specific private Git delivery are available.
+Application runtime-secret injection and external providers remain incomplete.
 
 The accepted image API/UI runs anonymous public images with ordinary HTTP
 readiness on loopback ports. Automatic per-release port allocation retains
@@ -97,8 +97,10 @@ performs no network fetch. The private HTTPS control plane now accepts
 `https_basic` configuration, owner-created/revoked source grants and gated build
 requests. Its typed credential endpoint/client enforce live authority, bounded
 expiry and protected transport; private capability is rechecked at admission,
-replay, dispatch, claim and delivery. The compiled runtime still refuses this
-capability, so configuration does not establish private checkout or A03. See the
+replay, dispatch, claim and delivery. Explicit private configuration and matching
+persisted capability now enable compiled CLI checkout/build. The WebUI selects
+owner grants without revealing values. Dockerfile UI and CLI Dockerfile/Railpack
+qualification are bounded parts of A03. See the
 [accepted control-plane evidence](compatibility.md#accepted-foundations-and-evidence).
 Separate [build UI/API operations](hosting-git-resources.md) now request,
 inspect and cancel builds through the production controller and River handler.
@@ -119,8 +121,9 @@ logs, terminals and continuous health, which remain planned.
 The [private Git credential component](hosting-build-credentials.md) authorizes
 and decrypts the exact immutable secret version for a live sourcing attempt.
 Its audit-backed window and byte ownership now underpin the accepted typed
-credential endpoint/client. Private runtime consumption and UI wiring remain
-absent. The [source checkout contract](hosting-source-checkout.md) keeps the
+credential endpoint/client and explicit private runtime. Its attempt-local
+redactor includes the password, Basic payload and supported encodings before
+journal output. Source-grant UI uses only secret metadata and explicit versions. The [source checkout contract](hosting-source-checkout.md) keeps the
 credential window through fetch, tree validation, committed receipt and confirmed
 transport-file removal/byte clearing. Those credentials are cleared before the
 use/build callback; final checkout cleanup follows use. Once transport cleanup
@@ -270,8 +273,8 @@ in the control-plane job worker. Queue completion is distinct from workload or
 proxy completion. The BuildID worker registers when the supplied handler
 implements its build interface. The accepted production controller supplies
 that handler, and the explicitly enabled compiled agent executes public builds.
-Private credential HTTP/client delivery is accepted as a control-plane contract;
-private runtime checkout and UI remain absent. Same-host artifact
+Private HTTPS credential delivery, configured runtime checkout and owner-grant UI
+are now accepted within the [private runtime limits](hosting-build-runtime.md#enable-private-https-git). Same-host artifact
 deployment is accepted through the existing operation queue and an explicitly
 enabled agent; it creates no second queue.
 
@@ -297,8 +300,9 @@ shadow-object and real dump/restore regression coverage at `836a3a92`.
 That persistence checkpoint alone did not install build execution. Current
 accepted controller/runtime evidence is recorded in the [ledger](compatibility.md#accepted-foundations-and-evidence).
 It now includes public builds, explicit same-host artifact deployment and durable
-build output and private HTTPS control-plane contracts. Private runtime/UI and
-the complete hosting/workspace journeys remain planned.
+build output and private HTTPS control/runtime/UI contracts. Runtime variables,
+broader managed-secret injection, runtime logs/status and the complete hosting
+and workspace journeys remain planned.
 
 See [Hosting job infrastructure](hosting-jobs.md) for lifecycle, compatibility,
 and integration contracts.

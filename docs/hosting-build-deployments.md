@@ -16,9 +16,9 @@ Migration 0050 is additive. It binds operation-to-build artifact identity with a
 
 ## Deploy through the resource UI
 
-The resource UI supports public Git builds on one host. Configure the bound destination, active project grant and enrolled runner before requesting a build. The agent needs the operator-owned build configuration, the `local_build_deploy_v1` capability and `--local-build-deploy`. All three refer to the same runner and Docker daemon. The UI cannot enable those prerequisites or transfer an image to another host.
+The resource UI supports public and granted private HTTPS Git builds on one host. Configure the bound destination, active project grant and enrolled runner before requesting a build. The agent needs the operator-owned build configuration, the `local_build_deploy_v1` capability and `--local-build-deploy`. All three refer to the same runner and Docker daemon. The UI cannot enable those prerequisites or transfer an image to another host.
 
-1. Open the application's **Public Git builds** section. Request a build for the reviewed saved source and generations, or select an existing successful build with **View build**.
+1. Open the application's **Public Git builds** or **Private HTTPS Git builds** section. Request a build for the reviewed saved source and generations, or select an existing successful build with **View build**.
 2. Review the recorded source commit and local artifact image ID. A successful build records an artifact. It does not establish a running application.
 3. In **Deploy recorded local build**, choose the container port and ordinary HTTP readiness path and timeout. Prefer automatic per-release host port allocation. A fixed port can interrupt the current release before replacement readiness succeeds.
 4. Acknowledge the exact build and settings, then select **Deploy selected build**. The request identifies the build and current generations. The server selects the immutable artifact and current authorized placement.
@@ -29,4 +29,25 @@ If delivery is uncertain, retry the identical local deployment request. The UI r
 
 A restore hold blocks admission until trusted recovery evidence exists. Refresh, reconciliation and a new request key cannot clear that hold. Permission denial pauses mutations. Reload after project access is restored. Actor, resource and permission changes discard pending UI state and ignore late mutation responses. Viewers can inspect build artifacts and deployment evidence but cannot deploy or change routes.
 
-The opt-in real backend browser check is `NEROCD_LOCAL_BUILD_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`, run from the repository root after the frontend build. It uses a disposable Docker daemon, actual CLI build and local deployment, real authenticated browser sessions and the existing test-only managed proxy CA. It checks keyboard submission, identical receipt recovery, viewer denial and layouts at 320, 390, 430 and 1440 pixels. It does not seed a successful build. The default runtime gate remains unchanged.
+The opt-in real backend browser check is `NEROCD_LOCAL_BUILD_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`, run from the repository root after the frontend build. It uses a disposable Docker daemon, actual CLI build and local deployment, real authenticated browser sessions and the existing test-only managed proxy CA. It checks keyboard submission, identical receipt recovery, viewer denial and layouts at 320, 390, 430 and 1440 pixels. It does not seed a successful build. The default public runtime gate remains unchanged. The separate private browser
+mode and its accepted limits are below.
+
+## Deploy a private Git artifact
+
+First follow [private source grant and build selection](hosting-git-resources.md#request-a-private-https-git-build)
+and the [operator private-execution setup](hosting-build-runtime.md#enable-private-https-git).
+A successful private build uses the same exact-artifact deployment controls and
+route review described above. It does not pass a credential to the application,
+change the selected destination, rebuild at deployment time or select a route
+automatically. Runtime variables and application-secret injection remain planned.
+
+`NEROCD_PRIVATE_GIT_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`
+qualifies the Dockerfile WebUI workflow at accepted integration
+`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`. The
+[private browser test](../web/app/tests/browser/private-git-build-deployments.spec.ts)
+creates an owner grant, recovers an identical retry, verifies its ID in the build
+request, reads actual typed output and deploys the recorded artifact through
+trusted-test-CA HTTPS. Keyboard operation, four viewport widths and viewer 403
+are included. This is Dockerfile evidence; private Railpack is qualified by the
+CLI runtime fixture, not this browser scenario. Complete A03 and public ACME
+remain separate qualification work.

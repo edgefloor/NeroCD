@@ -1,15 +1,20 @@
 # Private Git credential delivery component
 
 This component authorizes and decrypts private Git source credentials for a live
-build's sourcing phase. It does not register an API endpoint, controller,
-runner executor, or public Git build workflow.
+build's sourcing phase. The component is now connected to the protected credential
+endpoint/client, compiled private runner and reference-only grant UI at accepted
+`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`. Use the
+[current private setup](hosting-build-runtime.md#enable-private-https-git) and
+[secret payload contract](secrets.md#private-https-git-source-credentials).
 
 ## Authorization contract
 
 `HostingSourceCredentialRequest` contains a full `HostingBuildAuthority` and an
 opaque `DeliveryID`. IDs are canonical lowercase hexadecimal encodings of 128
-or 256 random bits. Future clients must generate them with a cryptographic
-random source. The request cannot choose a secret or credential kind.
+or 256 random bits. The connected runtime uses the exact 128-bit suffix of its
+already durable `build_intent` ID. Live retries reuse that ID; startup never
+refetches credentials or invents a new window. The request cannot choose a
+secret or credential kind.
 
 `AuthorizeHostingSourceCredential` takes a separately authenticated runner ID.
 It uses the existing build transaction order: task and lease, destination and
@@ -63,14 +68,19 @@ already delivered, and this window is not a revocation mechanism for a Git PAT.
 HTTPS basic credentials use a UTF-8 JSON object containing exactly `username`
 and `password`. Both must be nonempty; username is limited to 256 bytes and the
 whole encrypted-secret plaintext to 65,536 bytes. Duplicate or unknown fields,
-trailing JSON, and control characters are refused. SSH credentials use a raw
-UTF-8 private key accepted by the existing `x/crypto/ssh` parser without an
-interactive passphrase.
+trailing JSON, and control characters are refused. The connected Basic payload
+is additionally bounded to 4096 bytes for
+`username:password`, with no colon in username. The historical component can
+parse SSH private keys, but this does not enable SSH in resource configuration,
+CLI private execution or the WebUI.
 
 The returned delivery, material, and repository authorization redact JSON and
 formatted output. `Take` transfers ownership once; `Close` clears untransferred
 or transferred byte storage. Callers must close the material and must not log,
 serialize, or retain field copies. Go cannot guarantee erasure of strings or
-runtime copies. Future client/runtime wiring maps the application material to
-the existing checkout adapter's credential shape; the application layer does
-not depend on the runtime package.
+runtime copies. The accepted client/runtime wiring transfers owned bytes into
+the existing
+checkout adapter and clears transport material before engine use. The application
+layer does not depend on the runtime package. Historical component-only evidence
+does not establish the full hosting workflow; current bounds are in the
+[compatibility ledger](compatibility.md#accepted-foundations-and-evidence).

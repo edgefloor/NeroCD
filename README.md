@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`edf8f14c8262c896e4c886088f8058878d77e965`, 2026-10-22. Existing Go API/application services, PostgreSQL, River execution,
+`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`, 2026-10-22. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - PostgreSQL state, checked migrations through 0051, bootstrap administration,
@@ -36,7 +36,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   destination and project-grant bindings through API and UI. Stable placement
   does not imply host virtualization or broad machine qualification.
 - Encrypted project-secret versions with create, rotate, protected owner reveal
-  and revoke. [Managed execution delivery and broader scopes](docs/secrets.md)
+  and revoke. [Broader execution delivery and value scopes](docs/secrets.md)
   remain planned; existing runner-file bindings have their own contract.
 - [Public registry-image deployment](docs/hosting-execution.md) through the
   API, transactional River dispatch and explicitly enabled agent. It records
@@ -45,10 +45,11 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 - [Public HTTPS Git configuration and builds](docs/hosting-git-resources.md)
   under trusted operator policy. The normal compiled agent builds Dockerfile,
   pinned Railpack and prepared static/SPA assets into immutable local artifacts.
-  The private HTTPS control plane now supports configuration, scoped source
-  grants and typed credential transport. The compiled runtime refuses the private
-  capability; private checkout, UI wiring, provider integrations, compiled-static
-  product coverage and complete A03 remain separate work. See the [accepted limits](docs/compatibility.md#accepted-foundations-and-evidence).
+  [Private HTTPS Git](docs/hosting-git-resources.md#request-a-private-https-git-build)
+  supports explicit Basic/PAT source grants, compiled CLI Dockerfile and Railpack
+  builds, and a Dockerfile WebUI journey through output, same-host deployment and
+  test-CA HTTPS. Provider breadth, automatic-builder UI qualification, compiled
+  static coverage and complete A03 remain separate work. See the [accepted limits](docs/compatibility.md#accepted-foundations-and-evidence).
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
@@ -68,9 +69,10 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Current gaps include onboarding, private Git runtime/UI and
-managed build/runtime secret delivery, trusted triggers, deployment policy, production TLS
-qualification, runtime logs/status, broader Compose/storage, databases, backups,
+and extended compatibility. The next H1 work is runtime variables and managed-secret
+delivery, followed by runtime logs and continuous status. Other gaps include onboarding,
+broader credentials, trusted triggers, deployment policy, production TLS
+qualification, broader Compose/storage, databases, backups,
 restores, previews, terminals, schedules and notifications.
 
 Remote builders, registry delivery, caching, releases, approvals, permissions and
