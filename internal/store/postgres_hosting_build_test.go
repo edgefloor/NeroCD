@@ -1,16 +1,21 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
@@ -1072,5 +1077,211 @@ func TestPostgresHostingBuildRejectsPlacementChangedDuringDestinationWait(t *tes
 	var builds int
 	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_builds WHERE id='stale-placement'`).Scan(&builds); err != nil || builds != 0 {
 		t.Fatal("stale placement persisted", builds, err)
+	}
+}
+
+func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx := t.Context()
+	b, a := f.start(t, "schema-bound")
+	other := enrollDestinationRunner(t, f.pg, "runner_schema_other", []string{domain.RunTypeComposeDeploy})
+	var schema string
+	if err := f.db.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	qualified := func(table string) string { return pgx.Identifier{schema, table}.Sanitize() }
+	shadow := schema + "_shadow"
+	shadowID := pgx.Identifier{shadow}.Sanitize()
+	if _, err := f.db.Exec(ctx, "CREATE SCHEMA "+shadowID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := f.db.Exec(cleanup, "DROP TABLE IF EXISTS "+shadowID+".task_runs,"+shadowID+".hosting_build_tasks,"+shadowID+".hosting_builds; DROP FUNCTION IF EXISTS "+shadowID+".jsonb_build_object(text[]),"+shadowID+".to_regclass(text); DROP SCHEMA "+shadowID); err != nil {
+			t.Error(err)
+		}
+	})
+	// Explicit owned fixture shadow objects model an unrelated caller schema.
+	for _, ddl := range []string{
+		"CREATE TABLE " + shadowID + ".task_runs(id text,run_spec jsonb)",
+		"CREATE TABLE " + shadowID + ".hosting_build_tasks(run_id text,build_id text,runner_id text)",
+		"CREATE TABLE " + shadowID + ".hosting_builds(id text,state text,run_id text)",
+		"CREATE FUNCTION " + shadowID + ".jsonb_build_object(VARIADIC text[]) RETURNS jsonb LANGUAGE sql IMMUTABLE AS 'SELECT ''{}''::jsonb'",
+		"CREATE FUNCTION " + shadowID + ".to_regclass(text) RETURNS regclass LANGUAGE sql IMMUTABLE AS 'SELECT NULL::regclass'",
+	} {
+		if _, err := f.db.Exec(ctx, ddl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.db.Exec(ctx, "INSERT INTO "+shadowID+".task_runs(id,run_spec) VALUES($1,'{\"type\":\"shell\"}')", b.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(ctx, `UPDATE run_leases SET status='expired' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(ctx, `INSERT INTO task_runs(id,project_id,run_spec,workflow,workflow_state,runner_tags,status,requested_by,started_at,created_at) VALUES('schema_shell','proj_platform','{"type":"shell"}','{}','{}','{}','queued','usr_bootstrap',clock_timestamp(),clock_timestamp())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(ctx, `INSERT INTO run_leases(id,run_id,runner_id,status,expires_at,created_at,attempt,fence) VALUES('schema_shell_lease','schema_shell',$1,'active',clock_timestamp()+interval '1 hour',clock_timestamp(),1,'shell_fence')`, f.runner); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []struct{ name, path string }{{"unrelated", "pg_catalog,pg_temp"}, {"shadow", shadowID + ",pg_catalog,pg_temp"}, {"temporary", "pg_temp,pg_catalog"}} {
+		t.Run(entry.name, func(t *testing.T) {
+			run := func(fn func(pgx.Tx) error) error {
+				tx, err := f.db.Begin(ctx)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = tx.Rollback(ctx) }()
+				if _, err = tx.Exec(ctx, "SET LOCAL search_path="+entry.path); err != nil {
+					return err
+				}
+				if entry.name == "temporary" {
+					if _, err = tx.Exec(ctx, `CREATE TEMP TABLE task_runs(id text,run_spec jsonb) ON COMMIT DROP; CREATE TEMP TABLE hosting_build_tasks(run_id text,build_id text,runner_id text) ON COMMIT DROP; CREATE TEMP TABLE hosting_builds(id text,state text,run_id text) ON COMMIT DROP`); err != nil {
+						return err
+					}
+					if _, err = tx.Exec(ctx, `INSERT INTO task_runs(id,run_spec) VALUES($1,'{"type":"shell"}')`, b.RunID); err != nil {
+						return err
+					}
+				}
+				return fn(tx)
+			}
+			t.Run("nonbuild_update", func(t *testing.T) {
+				if err := run(func(tx pgx.Tx) error {
+					_, err := tx.Exec(ctx, "UPDATE "+qualified("run_leases")+" SET expires_at=clock_timestamp()-interval '1 second' WHERE id='schema_shell_lease'")
+					return err
+				}); err != nil {
+					t.Fatal("schema-qualified nonbuild update inherited caller path", err)
+				}
+			})
+			insert := func(runner string) error {
+				return run(func(tx pgx.Tx) error {
+					_, err := tx.Exec(ctx, "INSERT INTO "+qualified("run_leases")+"(id,run_id,runner_id,status,expires_at,created_at,attempt,fence) VALUES('schema_build_next',$1,$2,'active',clock_timestamp()+interval '1 hour',clock_timestamp(),2,'schema_fence')", b.RunID, runner)
+					return err
+				})
+			}
+			t.Run("correct_build", func(t *testing.T) {
+				if err := insert(f.runner); err != nil {
+					t.Fatal("correct bound build denied", err)
+				}
+			})
+			t.Run("wrong_target", func(t *testing.T) {
+				err := insert(other.ID)
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+					t.Fatalf("wrong-target lease not rejected by bound build predicate: %v", err)
+				}
+			})
+			t.Run("compatibility", func(t *testing.T) {
+				err := run(func(tx pgx.Tx) error {
+					var ok bool
+					if err := tx.QueryRow(ctx, "SELECT "+qualified("nerocd_hosting_build_schema_compatible")+"()").Scan(&ok); err != nil {
+						return err
+					}
+					if !ok {
+						return errors.New("owning schema compatibility resolved caller objects")
+					}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+		})
+	}
+}
+
+// removeHostingBuildMigrationLayer removes only the explicit additive 0047/0048
+// dependencies so older missing-layer tests can retain their original assertions.
+func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
+	t.Helper()
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_build_lease_admission ON run_leases;
+ DROP TABLE hosting_build_artifacts,hosting_build_receipts,hosting_build_tasks,hosting_builds;
+ ALTER TABLE hosting_build_sources DROP CONSTRAINT hosting_build_source_current_fk;
+ DROP TABLE hosting_source_grants,hosting_build_source_versions,hosting_build_sources;
+ DROP FUNCTION nerocd_hosting_build_source_update(),nerocd_hosting_source_grant_update(),nerocd_hosting_build_update(),nerocd_hosting_build_lease_target(),nerocd_hosting_build_source_body(),nerocd_hosting_build_artifact_body(),nerocd_hosting_build_schema_compatible();
+ ALTER TABLE resources DROP CONSTRAINT resources_build_project_key;
+ ALTER TABLE project_managed_secrets DROP CONSTRAINT managed_secrets_build_project_key;`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresHostingBuildSchemaBindingRestoreAndReplay(t *testing.T) {
+	container := os.Getenv("NEROCD_TEST_PG_CONTAINER")
+	if container == "" {
+		t.Skip("set task-owned NEROCD_TEST_PG_CONTAINER for real pg_dump/pg_restore")
+	}
+	f := newBuildStoreFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	b, a := f.start(t, "schema-restore")
+	other := enrollDestinationRunner(t, f.pg, "runner_restore_other", []string{domain.RunTypeComposeDeploy})
+	var schema string
+	if err := f.db.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(os.Getenv("NEROCD_TEST_DATABASE_URL"))
+	if err != nil || parsed.User == nil {
+		t.Fatal("invalid fixture DSN")
+	}
+	dump := exec.CommandContext(ctx, "docker", "exec", container, "pg_dump", "--username", parsed.User.Username(), "--dbname", strings.TrimPrefix(parsed.Path, "/"), "--schema", schema, "--format=custom", "--no-owner", "--no-privileges")
+	archive, err := dump.Output()
+	if err != nil {
+		t.Fatal("owned schema dump failed", err)
+	}
+	targetName := fmt.Sprintf("nerocd_build_restore_%x", time.Now().UnixNano())
+	targetID := pgx.Identifier{targetName}.Sanitize()
+	if _, err = f.db.Exec(ctx, "CREATE DATABASE "+targetID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if _, err := f.db.Exec(cleanup, "DROP DATABASE "+targetID+" WITH (FORCE)"); err != nil {
+			t.Error(err)
+		}
+	})
+	restore := exec.CommandContext(ctx, "docker", "exec", "-i", container, "pg_restore", "--username", parsed.User.Username(), "--dbname", targetName, "--no-owner", "--no-privileges", "--exit-on-error")
+	restore.Stdin = bytes.NewReader(archive)
+	if output, err := restore.CombinedOutput(); err != nil {
+		t.Fatalf("owned schema restore failed: %v: %.1000s", err, output)
+	}
+	config := f.db.Config().Copy()
+	config.ConnConfig.Database = targetName
+	target, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(target.Close)
+	qualified := func(table string) string { return pgx.Identifier{schema, table}.Sanitize() }
+	for _, phase := range []string{"restored", "replayed"} {
+		t.Run(phase, func(t *testing.T) {
+			if phase == "replayed" {
+				if err := applyEmbeddedMigrations(ctx, target, "0047_hosting_builds.sql", "0048_hosting_build_schema_binding.sql"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tx, err := target.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			if _, err = tx.Exec(ctx, `SET LOCAL search_path=pg_catalog,pg_temp`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = tx.Exec(ctx, "UPDATE "+qualified("run_leases")+" SET status='expired',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", a.LeaseID); err != nil {
+				t.Fatal("restored lease lookup escaped owning schema", err)
+			}
+			var compatible bool
+			if err = tx.QueryRow(ctx, "SELECT "+qualified("nerocd_hosting_build_schema_compatible")+"()").Scan(&compatible); err != nil || !compatible {
+				t.Fatal("restored compatibility lost owning schema", compatible, err)
+			}
+			_, err = tx.Exec(ctx, "INSERT INTO "+qualified("run_leases")+"(id,run_id,runner_id,status,expires_at,created_at,attempt,fence) VALUES('restored_wrong_target',$1,$2,'active',clock_timestamp()+interval '1 hour',clock_timestamp(),2,'restored_fence')", b.RunID, other.ID)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+				t.Fatalf("restored wrong-target lease admitted: %v", err)
+			}
+		})
 	}
 }

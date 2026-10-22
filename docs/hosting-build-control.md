@@ -149,3 +149,27 @@ generation rejection, atomic audit failure, and lease expiry across an observed
 row-lock wait. Fixture queues and task creation exist only in tests; they do not
 claim a product worker. Existing source/engine transport and Docker acceptance
 remain separate component evidence.
+
+## Function schema binding
+
+Migration 0048 additively binds the seven functions introduced by immutable
+migration 0047 to their owning schema. Six trigger functions resolve through
+`pg_catalog`, that trusted schema, then explicit `pg_temp` last. The compatibility
+predicate puts the owning schema first because its `current_schema()` checks must
+inspect its own tables and triggers; trusted catalogs and `pg_temp` follow. Neither
+path inherits caller-selected schemas or `public` unless `public` is itself the
+migration's owning schema. Functions retain invoker permissions and all existing
+lease target, canonical task, build phase, receipt and artifact predicates.
+
+A schema-qualified lease update can therefore come from an administrator with an
+unrelated search path without breaking ordinary nonbuild leases. Same-name tables
+and functions in another schema, including temporary shadow tables, cannot bypass
+build target admission. The missing-secret and missing-destination migration
+fixtures explicitly remove the additive build dependencies and restore the full
+layers before checking recovery; their readiness and startup assertions remain.
+
+The PostgreSQL regression runs in a nondefault schema with unrelated, same-name
+shadow and temporary caller objects. It checks ordinary lease updates, correct
+build admission, wrong-target denial and owning-schema compatibility. A real
+`pg_dump`/`pg_restore` round trip and a replay of 0048 repeat the admission and
+compatibility assertions against the restored schema.
