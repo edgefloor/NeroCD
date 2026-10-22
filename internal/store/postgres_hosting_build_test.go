@@ -36,7 +36,7 @@ func newBuildStoreFixture(t *testing.T) buildStoreFixture {
 	ctx := t.Context()
 	pg, db := openPostgresIntegrationStore(t, ctx, "build_store")
 	t.Cleanup(func() { closePostgresStore(t, pg) })
-	resource := createDestinationResource(t, pg, "build_web", "proj_platform")
+	resource, src := createBuildGitResource(t, pg, "build_web", "proj_platform", domain.HostingGitSource{})
 	now := time.Now().UTC()
 	credential := fmt.Sprintf("%x", sha256.Sum256([]byte("build-fixture-token")))
 	enrollment, err := pg.CreateRunnerEnrollment(ctx, domain.RunnerEnrollment{ID: "enroll_build", TokenHash: "enrollhash_build", RunnerID: "runner_build", RunnerName: "build", Tags: []string{"build"}, Capabilities: []string{domain.RunTypeImageDeploy}, CreatedBy: "usr_bootstrap", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}, destinationEvent("enroll_build"))
@@ -58,10 +58,6 @@ func newBuildStoreFixture(t *testing.T) buildStoreFixture {
 	grantDestination(t, pg, dest.ID, resource.ProjectID, "grant_build")
 	if _, err = pg.BindResourceDestination(ctx, store.ResourceBindingInput{ID: "binding_build", ResourceID: resource.ID, DestinationID: dest.ID, CreatedBy: "usr_bootstrap", CreatedAt: now}, destinationEvent("bind_build")); err != nil {
 		t.Fatalf("fixture step 5: %v", err)
-	}
-	src := domain.HostingGitSource{ID: "source_build", ResourceID: resource.ID, ProjectID: resource.ProjectID, Generation: 1, RepositoryURL: "https://example.com/repo.git", RequestedRef: "main", CredentialKind: "public", Policy: source.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https"}, AllowedHosts: []string{"example.com"}}, Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}
-	if _, err = pg.ConfigureHostingBuildSource(ctx, "usr_bootstrap", 0, src, destinationEvent("source_build")); err != nil {
-		t.Fatalf("fixture step 6: %v", err)
 	}
 	return buildStoreFixture{pg, db, src, runner.ID}
 }
@@ -165,18 +161,18 @@ func TestPostgresHostingBuildMigrationAndIdempotency(t *testing.T) {
 	src := f.src
 	src.Generation = 2
 	src.Settings.ContextDir = "apps/web"
-	if _, err = f.pg.ConfigureHostingBuildSource(ctx, "usr_bootstrap", 1, src, destinationEvent("source_v2")); err != nil {
+	if _, err = configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 1, src, destinationEvent("source_v2")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.pg.ConfigureHostingBuildSource(ctx, "usr_bootstrap", 1, src, destinationEvent("source_stale")); !errors.Is(err, store.ErrConflict) {
+	if _, err = configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 1, src, destinationEvent("source_stale")); !errors.Is(err, store.ErrConflict) {
 		t.Fatal(err)
 	}
 	if _, err = f.db.Exec(ctx, `UPDATE hosting_build_source_versions SET body='{}' WHERE source_id=$1`, src.ID); err == nil {
 		t.Fatal("mutable source history")
 	}
 	var generation int
-	if err = f.db.QueryRow(ctx, `SELECT generation FROM resources WHERE id=$1`, src.ResourceID).Scan(&generation); err != nil || generation != 1 {
-		t.Fatal("sidecar changed resource", generation, err)
+	if err = f.db.QueryRow(ctx, `SELECT generation FROM resources WHERE id=$1`, src.ResourceID).Scan(&generation); err != nil || generation != 2 {
+		t.Fatal("atomic source change did not advance resource", generation, err)
 	}
 	if _, err = f.pg.CancelHostingBuild(ctx, "usr_bootstrap", b.ID, b.Revision, destinationEvent("cancel_first")); err != nil {
 		t.Fatal(err)
@@ -258,7 +254,7 @@ func TestPostgresHostingBuildFencedSourceDaemonArtifact(t *testing.T) {
 	next := f.src
 	next.Generation = 2
 	next.RequestedRef = "release"
-	if _, err = f.pg.ConfigureHostingBuildSource(ctx, "usr_bootstrap", 1, next, destinationEvent("source_next")); err != nil {
+	if _, err = configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 1, next, destinationEvent("source_next")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.pg.ResolveCurrentHostingBuildArtifact(ctx, "usr_bootstrap", f.src.ResourceID, b.ID); !errors.Is(err, store.ErrConflict) {
@@ -419,11 +415,11 @@ func TestPostgresHostingBuildSourceAndGrantAuthorization(t *testing.T) {
 	v2.Generation = 2
 	v2.CredentialKind = "https_basic"
 	for _, actor := range []string{"build_viewer", "build_cross"} {
-		if _, err := f.pg.ConfigureHostingBuildSource(ctx, actor, 1, v2, event(actor, "deny_source_"+actor)); err == nil {
+		if _, err := configureBuildFixtureSource(f.pg, ctx, actor, 1, v2, event(actor, "deny_source_"+actor)); err == nil {
 			t.Fatalf("unauthorized source %s", actor)
 		}
 	}
-	if _, err := f.pg.ConfigureHostingBuildSource(ctx, "build_maint", 1, v2, event("build_maint", "maint_source")); err != nil {
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "build_maint", 1, v2, event("build_maint", "maint_source")); err != nil {
 		t.Fatal(err)
 	}
 	f.src = v2
@@ -448,6 +444,7 @@ func TestPostgresHostingBuildSourceAndGrantAuthorization(t *testing.T) {
 	}
 	input := buildInput("private")
 	input.ExpectedSourceGeneration = 2
+	input.ExpectedResourceGeneration = 2
 	input.GrantID = grant.ID
 	b, err := f.pg.RequestHostingBuild(ctx, "private", v2.ResourceID, "build_maint", input, buildPolicy(), buildEnqueue, event("build_maint", "private_request"))
 	if err != nil {
@@ -461,15 +458,14 @@ func TestPostgresHostingBuildSourceAndGrantAuthorization(t *testing.T) {
 		t.Fatal("secret in metadata")
 	}
 	// Independent cross-project source/grant check, without placement requirements.
-	crossResource := createDestinationResource(t, f.pg, "build_cross_secret", "proj_security")
+	crossResource, crossInitial := createBuildGitResource(t, f.pg, "build_cross_secret", "proj_security", v2)
+	_ = crossInitial
 	cross := v2
-	cross.ID = "cross_source"
+	cross.ID = crossResource.Source.Git.SourceID
 	cross.ResourceID = crossResource.ID
 	cross.ProjectID = crossResource.ProjectID
 	cross.Generation = 1
-	if _, err = f.pg.ConfigureHostingBuildSource(ctx, "build_cross", 0, cross, event("build_cross", "cross_source")); err != nil {
-		t.Fatal(err)
-	}
+
 	crossGrant := grant
 	crossGrant.ID = "cross_grant"
 	crossGrant.SourceID = cross.ID
@@ -523,17 +519,19 @@ func TestPostgresHostingBuildServiceAccountAndLegacyToken(t *testing.T) {
 	event := func(actor, id string) domain.AuditEvent { e := destinationEvent(id); e.ActorID = actor; return e }
 	src := f.src
 	src.Generation = 2
-	if _, err := f.pg.ConfigureHostingBuildSource(ctx, "cross_bot", 1, src, event("cross_bot", "cross_bot")); err == nil {
+	src.RequestedRef = "account-v2"
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "cross_bot", 1, src, event("cross_bot", "cross_bot")); err == nil {
 		t.Fatal("cross project service account")
 	}
-	if _, err := f.pg.ConfigureHostingBuildSource(ctx, "build_bot", 1, src, event("build_bot", "bot_source")); err != nil {
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "build_bot", 1, src, event("build_bot", "bot_source")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.db.Exec(ctx, `UPDATE service_accounts SET role='viewer' WHERE id='build_bot'`); err != nil {
 		t.Fatal(err)
 	}
 	src.Generation = 3
-	if _, err := f.pg.ConfigureHostingBuildSource(ctx, "build_bot", 2, src, event("build_bot", "bot_viewer")); err == nil {
+	src.RequestedRef = "account-v3"
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "build_bot", 2, src, event("build_bot", "bot_viewer")); err == nil {
 		t.Fatal("current account role ignored")
 	}
 	for _, entry := range []struct{ id, role string }{{"build_legacy_admin", "system_admin"}, {"build_legacy_user", "viewer"}} {
@@ -541,17 +539,17 @@ func TestPostgresHostingBuildServiceAccountAndLegacyToken(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := f.pg.ConfigureHostingBuildSource(ctx, "build_legacy_user", 2, src, event("build_legacy_user", "legacy_user")); err == nil {
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "build_legacy_user", 2, src, event("build_legacy_user", "legacy_user")); err == nil {
 		t.Fatal("legacy nonadmin elevated")
 	}
-	if _, err := f.pg.ConfigureHostingBuildSource(ctx, "build_legacy_admin", 2, src, event("build_legacy_admin", "legacy_admin")); err != nil {
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "build_legacy_admin", 2, src, event("build_legacy_admin", "legacy_admin")); err != nil {
 		t.Fatal("legacy global admin changed", err)
 	}
 	if _, err := f.db.Exec(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()-interval '1 second' WHERE id='build_legacy_admin'`); err != nil {
 		t.Fatal(err)
 	}
 	src.Generation = 4
-	if _, err := f.pg.ConfigureHostingBuildSource(ctx, "build_legacy_admin", 3, src, event("build_legacy_admin", "legacy_expired")); err == nil {
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "build_legacy_admin", 3, src, event("build_legacy_admin", "legacy_expired")); err == nil {
 		t.Fatal("expired token accepted")
 	}
 }
@@ -562,7 +560,7 @@ func TestPostgresHostingBuildSelectedSecretVersionAndArtifactRevocation(t *testi
 	src := f.src
 	src.Generation = 2
 	src.CredentialKind = "https_basic"
-	if _, err := f.pg.ConfigureHostingBuildSource(ctx, "usr_bootstrap", 1, src, destinationEvent("version_private")); err != nil {
+	if _, err := configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 1, src, destinationEvent("version_private")); err != nil {
 		t.Fatal(err)
 	}
 	item, record, event := managedFixture(t, "version_secret", 1)
@@ -575,6 +573,7 @@ func TestPostgresHostingBuildSelectedSecretVersionAndArtifactRevocation(t *testi
 	}
 	input := buildInput("version")
 	input.ExpectedSourceGeneration = 2
+	input.ExpectedResourceGeneration = 2
 	input.GrantID = g.ID
 	if _, err := f.pg.RequestHostingBuild(ctx, "version", src.ResourceID, "usr_bootstrap", input, buildPolicy(), buildEnqueue, destinationEvent("version_request")); err != nil {
 		t.Fatal(err)
@@ -811,6 +810,10 @@ func TestPostgresHostingBuildImageAdmissionLockOrder(t *testing.T) {
 				}
 			}
 			enableBuildFixtureImageAdmission(t, f)
+			imageResource := createDestinationResource(t, f.pg, "image_lock_order", "proj_platform")
+			if _, err := f.pg.BindResourceDestination(ctx, store.ResourceBindingInput{ID: "binding_image_lock", ResourceID: imageResource.ID, DestinationID: "dest_build", CreatedBy: "usr_bootstrap", CreatedAt: time.Now().UTC()}, destinationEvent("bind_image_lock")); err != nil {
+				t.Fatal(err)
+			}
 			barrier, err := f.db.Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -845,7 +848,7 @@ func TestPostgresHostingBuildImageAdmissionLockOrder(t *testing.T) {
 			// waiting behind the image, causing a real image/build cycle on release.
 			imageStarted = true
 			go func() {
-				_, imageErr := f.pg.RequestHostingDeployment(ctx, "hop_concurrent_image", f.src.ResourceID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("concurrent_image"))
+				_, imageErr := f.pg.RequestHostingDeployment(ctx, "hop_concurrent_image", imageResource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("concurrent_image"))
 				imageDone <- imageErr
 			}()
 			waiters := func(want int) {
@@ -882,7 +885,7 @@ func TestPostgresHostingBuildImageAdmissionLockOrder(t *testing.T) {
 				t.Fatalf("concurrent image/build admission failed: image=%v build=%v", imageErr, buildErr)
 			}
 			image, err := f.pg.GetHostingOperation(ctx, "hop_concurrent_image")
-			if err != nil || image.ResourceID != f.src.ResourceID {
+			if err != nil || image.ResourceID != imageResource.ID {
 				t.Fatalf("real image request not committed: %+v %v", image, err)
 			}
 		})
@@ -1196,7 +1199,12 @@ func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 // dependencies so older missing-layer tests can retain their original assertions.
 func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
-	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_build_lease_admission ON run_leases;
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER resources_git_reference ON resources;
+ DROP TRIGGER resources_source_kind ON resources;
+ DROP TRIGGER hosting_sources_resource_reference ON hosting_build_sources;
+ DROP TRIGGER hosting_source_versions_resource_reference ON hosting_build_source_versions;
+ DROP FUNCTION nerocd_hosting_git_reference_consistent(),nerocd_hosting_source_kind_immutable(),nerocd_hosting_git_resource_schema_compatible();
+ DROP TRIGGER hosting_build_lease_admission ON run_leases;
  DROP TABLE hosting_build_artifacts,hosting_build_receipts,hosting_build_tasks,hosting_builds;
  ALTER TABLE hosting_build_sources DROP CONSTRAINT hosting_build_source_current_fk;
  DROP TABLE hosting_source_grants,hosting_build_source_versions,hosting_build_sources;
@@ -1273,6 +1281,14 @@ func TestPostgresHostingBuildSchemaBindingRestoreAndReplay(t *testing.T) {
 			if _, err = tx.Exec(ctx, "UPDATE "+qualified("run_leases")+" SET status='expired',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", a.LeaseID); err != nil {
 				t.Fatal("restored lease lookup escaped owning schema", err)
 			}
+			var gitCompatible bool
+			if err = tx.QueryRow(ctx, "SELECT "+qualified("nerocd_hosting_git_resource_schema_compatible")+"()").Scan(&gitCompatible); err != nil || !gitCompatible {
+				t.Fatal("restored0049 schema binding", gitCompatible, err)
+			}
+			var exact bool
+			if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM "+qualified("resources")+" r JOIN "+qualified("hosting_build_sources")+" h ON h.id=r.source->'git'->>'source_id' AND h.generation=(r.source->'git'->>'generation')::bigint WHERE r.id=$1)", f.src.ResourceID).Scan(&exact); err != nil || !exact {
+				t.Fatal("restored reference lost exact source", exact, err)
+			}
 			var compatible bool
 			if err = tx.QueryRow(ctx, "SELECT "+qualified("nerocd_hosting_build_schema_compatible")+"()").Scan(&compatible); err != nil || !compatible {
 				t.Fatal("restored compatibility lost owning schema", compatible, err)
@@ -1284,4 +1300,42 @@ func TestPostgresHostingBuildSchemaBindingRestoreAndReplay(t *testing.T) {
 			}
 		})
 	}
+}
+
+func createBuildGitResource(t *testing.T, pg *store.PostgresStore, id, project string, config domain.HostingGitSource) (domain.Resource, domain.HostingGitSource) {
+	t.Helper()
+	now := time.Now().UTC()
+	env, err := pg.CreateProjectEnvironment(t.Context(), domain.ProjectEnvironment{ID: "env_" + id, ProjectID: project, Name: id, CreatedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.RepositoryURL == "" {
+		config = domain.HostingGitSource{RepositoryURL: "https://example.com/repo.git", RequestedRef: "main", CredentialKind: "public", Policy: source.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https"}, AllowedHosts: []string{"example.com"}}, Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}
+	}
+	config.ID = "source_" + id
+	config.ResourceID = "resource_" + id
+	config.ProjectID = project
+	config.Generation = 1
+	item, err := pg.CreateResource(t.Context(), domain.Resource{ID: config.ResourceID, ProjectID: project, ProjectEnvironmentID: env.ID, Name: id, Kind: "application", Source: domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: config.ID, Generation: 1}}, CreatedBy: "usr_bootstrap", CreatedAt: now, UpdatedAt: now}, store.WithHostingGitSource(config), store.WithAudit(destinationEvent("create_"+id)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return item, config
+}
+func configureBuildFixtureSource(pg *store.PostgresStore, ctx context.Context, actor string, expected int64, src domain.HostingGitSource, event domain.AuditEvent) (domain.HostingGitSource, error) {
+	item, err := pg.GetResource(ctx, src.ResourceID)
+	if err != nil {
+		return src, err
+	}
+	if item.Source.Kind != "git" || item.Source.Git.Generation != expected || src.Generation != expected+1 {
+		return src, store.ErrConflict
+	}
+	src.Generation = expected
+	event.ActorID = actor
+	item.UpdatedAt = time.Now().UTC()
+	updated, err := pg.UpdateResource(ctx, item, item.Generation, store.WithHostingGitSource(src), store.WithAudit(event))
+	if err == nil {
+		src.Generation = updated.Source.Git.Generation
+	}
+	return src, err
 }

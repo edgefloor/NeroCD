@@ -38,6 +38,7 @@ type runtimeConfig struct {
 	devBootstrapPassword string
 	oidcProvider         auth.OIDCProvider
 	secretKeyring        *secretcrypto.Keyring
+	hostingGitHosts      []string
 }
 
 func runServer(args []string) error {
@@ -189,6 +190,10 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 		}
 		publicOrigin = origin.String()
 	}
+	hostingGitHosts, err := loadHostingGitHosts()
+	if err != nil {
+		return runtimeConfig{}, err
+	}
 	secretKeyring, err := loadManagedSecretKeyring()
 	if err != nil {
 		return runtimeConfig{}, err
@@ -197,7 +202,7 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	if err != nil {
 		return runtimeConfig{}, err
 	}
-	return runtimeConfig{addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider, secretKeyring: secretKeyring}, nil
+	return runtimeConfig{addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider, secretKeyring: secretKeyring, hostingGitHosts: hostingGitHosts}, nil
 }
 
 func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), error) {
@@ -217,6 +222,9 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 				_ = pg.Close()
 				return nil, nil, err
 			}
+		}
+		if err := service.ConfigureHostingGitHosts(cfg.hostingGitHosts); err != nil {
+			return nil, nil, err
 		}
 		if err := service.SetLeaseTTL(cfg.leaseTTL); err != nil {
 			_ = pg.Close()
@@ -254,6 +262,9 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		if err := service.ConfigureOIDC(cfg.oidcProvider); err != nil {
 			return nil, nil, err
 		}
+	}
+	if err := service.ConfigureHostingGitHosts(cfg.hostingGitHosts); err != nil {
+		return nil, nil, err
 	}
 	if err := service.SetLeaseTTL(cfg.leaseTTL); err != nil {
 		return nil, nil, err

@@ -31,7 +31,7 @@ type HostingBuildSettings struct {
 	SPAFallback    bool   `json:"spa_fallback,omitempty"`
 }
 
-// HostingGitSource is an inert sidecar revision, not a change to resources.source.
+// HostingGitSource is an immutable trusted source version referenced by a Git resource.
 type HostingGitSource struct {
 	ID             string                  `json:"id"`
 	ResourceID     string                  `json:"resource_id"`

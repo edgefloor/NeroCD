@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -128,46 +127,9 @@ func casBuild(n int64, err error) error {
 	return nil
 }
 
-// ConfigureHostingBuildSource appends a source-only configuration generation with project authorization.
-func (s *PostgresStore) ConfigureHostingBuildSource(ctx context.Context, actor string, expected int64, in domain.HostingGitSource, event domain.AuditEvent) (domain.HostingGitSource, error) {
-	if expected < 0 || expected == math.MaxInt64 || in.Generation != expected+1 || domain.ValidateHostingGitSource(in) != nil {
-		return domain.HostingGitSource{}, ErrConflict
-	}
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingGitSource, error) {
-		q := sqlcgen.New(tx)
-		resource, err := q.LockHostingBuildResource(ctx, in.ResourceID)
-		if err != nil {
-			return in, err
-		}
-		if resource.ProjectID != in.ProjectID {
-			return in, ErrConflict
-		}
-		if err = authorizeBuildActor(ctx, tx, actor, in.ProjectID, "maintainer"); err != nil {
-			return in, err
-		}
-		old, err := readBuildSource(ctx, tx, in.ResourceID)
-		if expected == 0 {
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return in, ErrConflict
-			}
-			err = q.CreateHostingBuildSource(ctx, sqlcgen.CreateHostingBuildSourceParams{ID: in.ID, ResourceID: in.ResourceID, ProjectID: in.ProjectID})
-		} else {
-			if err != nil || old.ID != in.ID || old.Generation != expected {
-				return in, ErrConflict
-			}
-			err = casBuild(q.AdvanceHostingBuildSource(ctx, sqlcgen.AdvanceHostingBuildSourceParams{ID: in.ID, Generation: expected}))
-		}
-		if err != nil {
-			return in, err
-		}
-		if err = q.AppendHostingBuildSourceVersion(ctx, sqlcgen.AppendHostingBuildSourceVersionParams{SourceID: in.ID, Generation: in.Generation, Body: buildJSON(in), BodyHash: domain.HostingDocumentHash(in), CreatedBy: actor}); err != nil {
-			return in, err
-		}
-		if err = buildAudit(ctx, tx, event, actor, "hosting.build_source.configured", in.ID); err != nil {
-			return in, err
-		}
-		return in, authorizeBuildActor(ctx, tx, actor, in.ProjectID, "maintainer")
-	})
+// ConfigureHostingBuildSource is retired. Use the atomic resource command.
+func (s *PostgresStore) ConfigureHostingBuildSource(context.Context, string, int64, domain.HostingGitSource, domain.AuditEvent) (domain.HostingGitSource, error) {
+	return domain.HostingGitSource{}, ErrConflict
 }
 
 // GetHostingBuildSource reads current source settings with current project viewer authorization.
@@ -359,6 +321,10 @@ func (s *PostgresStore) RequestHostingBuild(ctx context.Context, id, resourceID,
 		if err = authorizeBuildActor(ctx, tx, actor, resource.ProjectID, "maintainer"); err != nil {
 			return domain.HostingBuild{}, err
 		}
+		var desired domain.ResourceSource
+		if json.Unmarshal(resource.Source, &desired) != nil || desired.Kind != "git" {
+			return domain.HostingBuild{}, ErrConflict
+		}
 		hash := domain.HostingDocumentHash(struct {
 			Input  domain.HostingBuildInput
 			Policy domain.HostingBuildPolicy
@@ -385,7 +351,7 @@ func (s *PostgresStore) RequestHostingBuild(ctx context.Context, id, resourceID,
 		if err != nil {
 			return domain.HostingBuild{}, err
 		}
-		if resource.Generation != in.ExpectedResourceGeneration || src.Generation != in.ExpectedSourceGeneration {
+		if !exactBuildResourceSource(resource.Source, src) || resource.Generation != in.ExpectedResourceGeneration || src.Generation != in.ExpectedSourceGeneration {
 			return domain.HostingBuild{}, ErrConflict
 		}
 		if src.Settings.Strategy == "railpack" && policy.Limits.MemoryBytes < 512<<20 {
@@ -595,6 +561,9 @@ func (s *PostgresStore) ResolveCurrentHostingBuildArtifact(ctx context.Context, 
 		src, err := readBuildSource(ctx, tx, resourceID)
 		if err != nil {
 			return domain.HostingBuildArtifact{}, err
+		}
+		if !exactBuildResourceSource(r.Source, src) {
+			return domain.HostingBuildArtifact{}, ErrConflict
 		}
 		b, err := readBuild(ctx, q, id)
 		if err != nil {

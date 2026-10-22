@@ -47,6 +47,14 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
 	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='resource_bindings'::regclass AND conname='resource_bindings_resource_id_fkey' AND contype='f' AND convalidated) AND NOT EXISTS(SELECT 1 FROM resource_bindings b LEFT JOIN resources r ON r.id=b.resource_id WHERE r.id IS NULL)`).Scan(&restored); err != nil || !restored {
 		t.Fatalf("restored binding FK: %v %v", restored, err)
 	}
+	// Reinstall only the additive0049 resource triggers removed by the deliberate
+	// resources-table teardown. Existing historical checksums stay untouched.
+	if _, err := database.Exec(ctx, `DROP TRIGGER hosting_sources_resource_reference ON hosting_build_sources; DROP TRIGGER hosting_source_versions_resource_reference ON hosting_build_source_versions; DROP FUNCTION nerocd_hosting_git_reference_consistent(),nerocd_hosting_source_kind_immutable(),nerocd_hosting_git_resource_schema_compatible()`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyEmbeddedMigrations(ctx, database, "0048_hosting_build_schema_binding.sql", ""); err != nil {
+		t.Fatal(err)
+	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {
 		t.Fatalf("restored 0040 readiness: %v %v", ok, err)
 	}

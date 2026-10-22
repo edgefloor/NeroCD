@@ -121,6 +121,10 @@ func (s *PostgresStore) ListResources(ctx context.Context, projectID, environmen
 		if err != nil {
 			return PageResult[domain.Resource]{}, err
 		}
+		item, err = expandGitResource(ctx, s.queries, item)
+		if err != nil {
+			return PageResult[domain.Resource]{}, err
+		}
 		items = append(items, item)
 	}
 	return PageResult[domain.Resource]{Items: items, Total: int(total), Limit: page.Limit, Offset: page.Offset}, nil
@@ -132,50 +136,19 @@ func (s *PostgresStore) GetResource(ctx context.Context, id string) (domain.Reso
 	if err != nil {
 		return domain.Resource{}, hostingError(err)
 	}
-	return resourceFromHostingSQL(row)
+	item, err := resourceFromHostingSQL(row)
+	if err != nil {
+		return item, err
+	}
+	return expandGitResource(ctx, s.queries, item)
 }
 
-// CreateResource validates the source and commits configuration with its audit.
+// CreateResource commits desired source configuration and audit atomically.
 func (s *PostgresStore) CreateResource(ctx context.Context, item domain.Resource, opts ...MutationOption) (domain.Resource, error) {
-	if err := validateResource(item); err != nil {
-		return domain.Resource{}, err
-	}
-	source, err := json.Marshal(item.Source)
-	if err != nil {
-		return domain.Resource{}, fmt.Errorf("encode resource source: %w", err)
-	}
-	return hostingMutation(ctx, s, opts, func(q *sqlcgen.Queries) (domain.Resource, error) {
-		row, err := q.CreateResource(ctx, sqlcgen.CreateResourceParams{ID: item.ID, ProjectID: item.ProjectID, ProjectEnvironmentID: item.ProjectEnvironmentID, Name: item.Name, Kind: item.Kind, Source: source, CreatedBy: item.CreatedBy, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt})
-		if err != nil {
-			return domain.Resource{}, err
-		}
-		return resourceFromHostingSQL(row)
-	})
+	return s.mutateHostingResource(ctx, item, 0, true, opts)
 }
 
-// UpdateResource uses a single compare-and-swap statement inside the audit transaction.
-func (s *PostgresStore) UpdateResource(ctx context.Context, item domain.Resource, expectedGeneration int64, opts ...MutationOption) (domain.Resource, error) {
-	if err := validateResource(item); err != nil {
-		return domain.Resource{}, err
-	}
-	if expectedGeneration < 1 || expectedGeneration == 9223372036854775807 {
-		return domain.Resource{}, ErrConflict
-	}
-	source, err := json.Marshal(item.Source)
-	if err != nil {
-		return domain.Resource{}, fmt.Errorf("encode resource source: %w", err)
-	}
-	return hostingMutation(ctx, s, opts, func(q *sqlcgen.Queries) (domain.Resource, error) {
-		row, err := q.UpdateResource(ctx, sqlcgen.UpdateResourceParams{ID: item.ID, Name: item.Name, Source: source, UpdatedAt: item.UpdatedAt, Generation: expectedGeneration, ProjectID: item.ProjectID, ProjectEnvironmentID: item.ProjectEnvironmentID, Kind: item.Kind, CreatedBy: item.CreatedBy, CreatedAt: item.CreatedAt})
-		if errors.Is(err, pgx.ErrNoRows) {
-			if _, getErr := q.GetResource(ctx, item.ID); getErr != nil {
-				return domain.Resource{}, getErr
-			}
-			return domain.Resource{}, ErrConflict
-		}
-		if err != nil {
-			return domain.Resource{}, err
-		}
-		return resourceFromHostingSQL(row)
-	})
+// UpdateResource commits a compare-and-swap resource and optional source revision.
+func (s *PostgresStore) UpdateResource(ctx context.Context, item domain.Resource, expected int64, opts ...MutationOption) (domain.Resource, error) {
+	return s.mutateHostingResource(ctx, item, expected, false, opts)
 }

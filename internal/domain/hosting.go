@@ -1,7 +1,10 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"regexp"
 	"strconv"
@@ -32,10 +35,128 @@ type Resource struct {
 	UpdatedAt            time.Time      `json:"updated_at"`
 }
 
-// ResourceSource identifies the desired container image without resolving it.
+// ResourceSource describes an image or expands one exact immutable Git source version.
 type ResourceSource struct {
-	Kind  string      `json:"kind"`
-	Image ImageSource `json:"image"`
+	Kind  string             `json:"kind"`
+	Image ImageSource        `json:"-"`
+	Git   *GitResourceSource `json:"-"`
+}
+
+// GitResourceConfiguration is public, nonsecret desired build configuration.
+type GitResourceConfiguration struct {
+	RepositoryURL  string               `json:"repository_url"`
+	RequestedRef   string               `json:"requested_ref"`
+	CredentialKind string               `json:"credential_kind"`
+	Settings       HostingBuildSettings `json:"settings"`
+}
+
+// GitResourceSource expands one exact immutable persisted source version.
+type GitResourceSource struct {
+	SourceID   string `json:"source_id"`
+	Generation int64  `json:"generation"`
+	GitResourceConfiguration
+}
+
+// ResourceSourceInput excludes server-owned source identities and policy.
+type ResourceSourceInput struct {
+	Kind  string                    `json:"kind"`
+	Image ImageSource               `json:"-"`
+	Git   *GitResourceConfiguration `json:"-"`
+}
+
+func strictSourceJSON(data []byte, value any) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if err := d.Decode(value); err != nil {
+		return err
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		return errors.New("source must be one JSON document")
+	}
+	return nil
+}
+
+func (s ResourceSource) MarshalJSON() ([]byte, error) {
+	switch s.Kind {
+	case "image":
+		if s.Git != nil {
+			return nil, errors.New("mixed source variants")
+		}
+		return json.Marshal(struct {
+			Kind  string      `json:"kind"`
+			Image ImageSource `json:"image"`
+		}{s.Kind, s.Image})
+	case "git":
+		if s.Git == nil || s.Image.Reference != "" {
+			return nil, errors.New("missing or mixed git source")
+		}
+		return json.Marshal(struct {
+			Kind string             `json:"kind"`
+			Git  *GitResourceSource `json:"git"`
+		}{s.Kind, s.Git})
+	}
+	return nil, errors.New("unsupported source kind")
+}
+
+func (s *ResourceSource) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Kind  string          `json:"kind"`
+		Image json.RawMessage `json:"image"`
+		Git   json.RawMessage `json:"git"`
+	}
+	if err := strictSourceJSON(data, &wire); err != nil {
+		return err
+	}
+	*s = ResourceSource{Kind: wire.Kind}
+	switch wire.Kind {
+	case "image":
+		if len(wire.Git) > 0 || len(wire.Image) == 0 || bytes.Equal(wire.Image, []byte("null")) {
+			return errors.New("image source requires only image")
+		}
+		return strictSourceJSON(wire.Image, &s.Image)
+	case "git":
+		if len(wire.Image) > 0 || len(wire.Git) == 0 || bytes.Equal(wire.Git, []byte("null")) {
+			return errors.New("git source requires only git")
+		}
+		s.Git = &GitResourceSource{}
+		return strictSourceJSON(wire.Git, s.Git)
+	}
+	return errors.New("unsupported source kind")
+}
+
+func (s *ResourceSourceInput) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Kind  string          `json:"kind"`
+		Image json.RawMessage `json:"image"`
+		Git   json.RawMessage `json:"git"`
+	}
+	if err := strictSourceJSON(data, &wire); err != nil {
+		return err
+	}
+	*s = ResourceSourceInput{Kind: wire.Kind}
+	switch wire.Kind {
+	case "image":
+		if len(wire.Git) > 0 || len(wire.Image) == 0 || bytes.Equal(wire.Image, []byte("null")) {
+			return errors.New("image source requires only image")
+		}
+		return strictSourceJSON(wire.Image, &s.Image)
+	case "git":
+		if len(wire.Image) > 0 || len(wire.Git) == 0 || bytes.Equal(wire.Git, []byte("null")) {
+			return errors.New("git source requires only git")
+		}
+		s.Git = &GitResourceConfiguration{}
+		return strictSourceJSON(wire.Git, s.Git)
+	}
+	return errors.New("unsupported source kind")
+}
+
+// Source converts public configuration without manufacturing persisted identity.
+func (s ResourceSourceInput) Source() ResourceSource {
+	out := ResourceSource{Kind: s.Kind, Image: s.Image}
+	if s.Git != nil {
+		out.Git = &GitResourceSource{GitResourceConfiguration: *s.Git}
+	}
+	return out
 }
 
 // ImageSource holds an explicitly tagged image or repository SHA-256 digest.
@@ -152,8 +273,14 @@ func validImageRegistry(registry string) bool {
 
 // ValidateResourceSource rejects unsupported sources before persistence.
 func ValidateResourceSource(source ResourceSource) error {
-	if source.Kind != "image" {
-		return errors.New("source.kind must be image")
+	if source.Kind == "git" {
+		if source.Git == nil || source.Image.Reference != "" || source.Git.SourceID == "" || source.Git.Generation < 1 {
+			return errors.New("invalid git source reference")
+		}
+		return nil
+	}
+	if source.Kind != "image" || source.Git != nil {
+		return errors.New("source.kind must be image or git")
 	}
 	return ValidateImageReference(source.Image.Reference)
 }

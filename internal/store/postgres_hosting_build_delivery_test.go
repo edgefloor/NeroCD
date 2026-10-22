@@ -26,7 +26,7 @@ func privateDeliveryFixture(t *testing.T, malformed ...bool) (buildStoreFixture,
 	src := f.src
 	src.Generation = 2
 	src.CredentialKind = "https_basic"
-	if _, err := f.pg.ConfigureHostingBuildSource(t.Context(), "usr_bootstrap", 1, src, destinationEvent("delivery_private")); err != nil {
+	if _, err := configureBuildFixtureSource(f.pg, t.Context(), "usr_bootstrap", 1, src, destinationEvent("delivery_private")); err != nil {
 		t.Fatal(err)
 	}
 	f.src = src
@@ -49,6 +49,7 @@ func privateDeliveryFixture(t *testing.T, malformed ...bool) (buildStoreFixture,
 	}
 	in := buildInput("delivery")
 	in.ExpectedSourceGeneration = 2
+	in.ExpectedResourceGeneration = 2
 	in.GrantID = grant.ID
 	if _, err = f.pg.RequestHostingBuild(t.Context(), "delivery", src.ResourceID, "usr_bootstrap", in, buildPolicy(), buildEnqueue, destinationEvent("delivery_request")); err != nil {
 		t.Fatal(err)
@@ -121,6 +122,7 @@ func TestPostgresHostingSourceDeliveryWindowReplayAndConcurrentIdentity(t *testi
 	// Another valid build cannot reuse a globally claimed delivery ID.
 	input := buildInput("delivery-other")
 	input.ExpectedSourceGeneration = 2
+	input.ExpectedResourceGeneration = 2
 	input.GrantID = "delivery_grant"
 	if _, err = f.pg.RequestHostingBuild(ctx, "delivery-other", f.src.ResourceID, "usr_bootstrap", input, buildPolicy(), buildEnqueue, destinationEvent("delivery-other")); err != nil {
 		t.Fatal(err)
@@ -186,10 +188,13 @@ func TestPostgresHostingSourceDeliveryCurrentAuthorityFirstAndReplay(t *testing.
 				case "source_generation", "source_body":
 					src := f.src
 					src.Generation = 3
+					if loss == "source_generation" {
+						src.Policy.RedirectHosts = []string{"example.com"}
+					}
 					if loss == "source_body" {
 						src.RequestedRef = "other"
 					}
-					_, err = f.pg.ConfigureHostingBuildSource(ctx, "usr_bootstrap", 2, src, destinationEvent("changed_source"))
+					_, err = configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 2, src, destinationEvent("changed_source"))
 				case "resource":
 					_, err = f.db.Exec(ctx, `UPDATE resources SET generation=generation+1 WHERE id=$1`, f.src.ResourceID)
 				case "target_grant":

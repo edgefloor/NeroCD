@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
@@ -22,6 +23,9 @@ func (s *Service) RequestHostingDeployment(ctx context.Context, resourceID strin
 	resource, principal, err := s.resourceForDestinationRole(ctx, resourceID, domain.RoleMaintainer)
 	if err != nil {
 		return domain.HostingOperation{}, err
+	}
+	if resource.Source.Kind != "image" {
+		return domain.HostingOperation{}, InvalidInput(errors.New("Git resources cannot use image deployment"))
 	}
 	if err = domain.ValidateHostingDeployment(in); err != nil {
 		return domain.HostingOperation{}, InvalidInput(err)

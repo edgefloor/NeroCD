@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -26,5 +27,25 @@ func TestValidateImageReference(t *testing.T) {
 				t.Fatal("invalid image accepted")
 			}
 		})
+	}
+}
+
+func TestResourceSourceInputExclusiveVariants(t *testing.T) {
+	for _, raw := range []string{`null`, `{}`, `{"kind":"git"}`, `{"kind":"git","git":null}`, `{"kind":"image","image":null}`, `{"kind":"image","image":{"reference":"nginx:1"},"git":{}}`, `{"kind":"git","git":{"source_id":"caller"}}`, `{"kind":"git","git":{"policy":{}}}`, `{"kind":"git","git":{"settings":{"unknown":true}}}`, `{"kind":"image","image":{"reference":"nginx:1","unknown":true}}`} {
+		var input ResourceSourceInput
+		if json.Unmarshal([]byte(raw), &input) == nil {
+			t.Fatal("accepted ambiguous source", raw)
+		}
+	}
+	var input ResourceSourceInput
+	if err := json.Unmarshal([]byte(`{"kind":"git","git":{"repository_url":"https://github.com/acme/web","requested_ref":"main","credential_kind":"public","settings":{"strategy":"dockerfile"}}}`), &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.Source().Git.SourceID != "" || input.Source().Image.Reference != "" {
+		t.Fatal("manufactured source identity")
+	}
+	wire, err := json.Marshal(ResourceSource{Kind: "image", Image: ImageSource{Reference: "nginx:1"}})
+	if err != nil || string(wire) != `{"kind":"image","image":{"reference":"nginx:1"}}` {
+		t.Fatal(string(wire), err)
 	}
 }
