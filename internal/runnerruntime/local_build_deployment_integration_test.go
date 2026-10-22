@@ -110,6 +110,15 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 		}
 	})
 	roots, publicRoot := controlTrust(t, root)
+	pebbleID := strings.TrimSpace(string(controlDocker(t, "inspect", "--format", "{{.Id}}", "fixture-pebble")))
+	t.Cleanup(func() {
+		identity := strings.TrimSpace(string(controlDocker(t, "inspect", "--format", "{{.Id}} {{.Config.Image}}", pebbleID)))
+		if identity != pebbleID+" "+controlPebbleImage {
+			t.Error("owned Pebble identity changed")
+			return
+		}
+		controlDocker(t, "rm", "--force", pebbleID)
+	})
 	proxyConfig := ProxyConfig{Directory: root, DockerBinary: "/usr/local/bin/docker", DockerSocket: "/var/run/docker.sock", Protocol: domain.HostingProxyCompilerVersion, engineFactory: func(settings hostingproxy.Settings) (managedProxyEngine, error) {
 		if err := os.MkdirAll(filepath.Join(settings.Directory, "certificates"), 0700); err != nil {
 			return nil, err
