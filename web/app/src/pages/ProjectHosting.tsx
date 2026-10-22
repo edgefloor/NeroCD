@@ -10,6 +10,7 @@ import { maximumPageOffset } from "@/router/search";
 import { ResourceDestination } from "./ResourceDestination";
 import { ResourceRoutes } from "./ResourceRoutes";
 import { GitApplicationFields, emptyGitDraft, type GitApplicationDraft } from "./GitApplicationFields";
+import { ResourceBuilds } from "./ResourceBuilds";
 import { ResourceDeployments } from "./ResourceDeployments";
 
 const pageSize = 20;
@@ -150,8 +151,9 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <h4 className="break-words font-medium [overflow-wrap:anywhere]">{resource.name}</h4>
       <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{resource.source.kind === "image" ? resource.source.image.reference : `${resource.source.git.repository_url} · ${resource.source.git.requested_ref}`}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
-      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · Build and deployment unavailable</p> : null}
+      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · Public Git build operations available; artifact deployment is separate</p> : null}
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
+      <ResourceBuilds resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceRoutes resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {canWrite && editing?.id !== resource.id ? <Button type="button" variant="outline" disabled={busy || Boolean(editing)} onClick={() => { setEditing(resource); setNotice(""); }}>Edit configuration</Button> : null}

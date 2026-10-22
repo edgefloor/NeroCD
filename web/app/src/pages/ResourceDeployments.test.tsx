@@ -341,7 +341,7 @@ test("Git configuration keeps operation history visible without image admission 
  const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 1, repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
  render(<QueryClientProvider client={client}><ResourceDeployments resource={git} writable blocked={false} /></QueryClientProvider>);
  await screen.findByText("No deployment operations recorded.");
- expect(screen.getByText(/Git build and deployment are unavailable/)).toBeTruthy();
+ expect(screen.getByText(/Use Public Git builds/)).toBeTruthy();
  expect(screen.queryByRole("button", { name: "Request image deployment" })).toBeNull();
  expect(screen.queryByLabelText("Container port")).toBeNull();
  expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);

@@ -76,7 +76,7 @@ test("public Git and image configuration persist with CAS and roles at mobile an
    const originalSource = git.source.git.source_id;
    expect(JSON.stringify(git)).not.toMatch(/allowed_hosts|allowed_cidrs|fingerprints|repository_policy|"policy"|"image"/);
    const article = region.getByRole("article", { name: gitName, exact: true });
-   await expect(article.getByText(/Git build and deployment are unavailable/)).toBeVisible();
+   await expect(article.getByText(/Deployment of a build artifact is separate and unavailable/)).toBeVisible();
    await expect(article.getByRole("button", { name: "Request image deployment", exact: true })).toHaveCount(0);
    await expect(article.getByRole("region", { name: `Desired destination for ${gitName}`, exact: true })).toBeVisible();
    await expect(article.getByRole("region", { name: `Routes for ${gitName}`, exact: true })).toBeVisible();
@@ -132,7 +132,7 @@ test("public Git and image configuration persist with CAS and roles at mobile an
    git = await savedDraft.json();
    expect(git.generation).toBe(4); expect(git.source.git.generation).toBe(3); expect(git.source.git.source_id).toBe(originalSource);
    const reloaded = await hosting(page, project.id, environment);
-   await expect(reloaded.getByRole("article", { name: savedName, exact: true }).getByText(/release-draft/)).toBeVisible();
+   await expect(reloaded.getByRole("article", { name: savedName, exact: true }).getByText("https://github.com/acme/public-application.git · release-draft", { exact: true })).toBeVisible();
    const deniedDeploy = await page.request.post(`/api/v1/resources/${git.id}/deployments`, { headers: headers(page), data: { expected_generation: 4, idempotency_key: `git-deny-${width}`, container_port: 80, readiness: { path: "/", timeout_seconds: 5 } } });
    expect(deniedDeploy.status()).toBe(400);
    const read = await hosting(viewer, project.id, environment);
