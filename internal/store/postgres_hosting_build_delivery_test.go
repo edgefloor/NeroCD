@@ -23,6 +23,7 @@ const deliveryID = "0123456789abcdef0123456789abcdef"
 func privateDeliveryFixture(t *testing.T, malformed ...bool) (buildStoreFixture, domain.HostingBuild, domain.HostingBuildAuthority) {
 	t.Helper()
 	f := newBuildStoreFixture(t)
+	setPrivateGitCapability(t, f, true)
 	src := f.src
 	src.Generation = 2
 	src.CredentialKind = "https_basic"

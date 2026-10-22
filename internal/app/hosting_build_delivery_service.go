@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -219,7 +220,7 @@ func (s *Service) RunnerHostingSourceCredential(ctx context.Context, in domain.H
 		return zero, ErrHostingSourceCredentialUnavailable
 	}
 	identity, err := s.CurrentRunnerIdentity(ctx)
-	if err != nil || ctx.Err() != nil || !s.clock().Before(material.UseUntil) {
+	if err != nil || !slices.Contains(identity.Capabilities, domain.HostingPrivateGitCapability) || ctx.Err() != nil || !s.clock().Before(material.UseUntil) {
 		return zero, ErrHostingSourceCredentialUnavailable
 	}
 	return hostingbuildprotocol.SourceCredential{Authority: in.Authority, DeliveryID: in.DeliveryID, RequestHash: hostingbuildprotocol.SourceCredentialRequestHash(identity.RunnerID, in), Kind: material.Kind, Username: material.Username, Bytes: bytes.Clone(material.Bytes), UseUntil: material.UseUntil}, nil

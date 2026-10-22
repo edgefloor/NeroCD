@@ -609,11 +609,17 @@ func (q *Queries) LockHostingBuildResource(ctx context.Context, id string) (Lock
 }
 
 const lockHostingBuildRunner = `-- name: LockHostingBuildRunner :one
-SELECT r.id FROM runners r WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
+SELECT r.id FROM runners r WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND (NOT $2::boolean OR 'hosting_git_https_basic_v1'=ANY(r.capabilities)) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
 `
 
-func (q *Queries) LockHostingBuildRunner(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, lockHostingBuildRunner, id)
+type LockHostingBuildRunnerParams struct {
+	RunnerID          string `json:"runner_id"`
+	RequirePrivateGit bool   `json:"require_private_git"`
+}
+
+func (q *Queries) LockHostingBuildRunner(ctx context.Context, arg LockHostingBuildRunnerParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockHostingBuildRunner, arg.RunnerID, arg.RequirePrivateGit)
+	var id string
 	err := row.Scan(&id)
 	return id, err
 }

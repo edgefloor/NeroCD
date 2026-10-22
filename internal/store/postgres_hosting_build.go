@@ -300,7 +300,7 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 	} else if err != nil {
 		return target, "", err
 	}
-	if _, err = q.LockHostingBuildRunner(ctx, target.RunnerID); err != nil {
+	if _, err = q.LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{RunnerID: target.RunnerID, RequirePrivateGit: src.CredentialKind == "https_basic"}); err != nil {
 		return target, "", ErrConflict
 	}
 	if _, err = q.LockHostingBuildEnrollment(ctx, target.RunnerID); err != nil {

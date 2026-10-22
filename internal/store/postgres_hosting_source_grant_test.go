@@ -105,6 +105,7 @@ func TestPostgresSourceGrantAtomicReplayGenerationAndRevocation(t *testing.T) {
 
 func TestPostgresPrivateHostingAPIGrantBuildAndCredential(t *testing.T) {
 	f := newBuildStoreFixture(t)
+	setPrivateGitCapability(t, f, true)
 	pg := f.pg
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, SecretKeyring: managedRing(t), Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {

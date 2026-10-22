@@ -101,6 +101,9 @@ func TestRunnerBuildCapabilitiesExplicitAndDisabledByDefault(t *testing.T) {
 		fail             bool
 	}{
 		{nil, false, false, []string{"shell"}, []string{"shell"}, false},
+		{nil, false, true, []string{domain.HostingPrivateGitCapability}, nil, true},
+		{c, false, true, []string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}, nil, true},
+		{c, false, false, []string{domain.HostingPrivateGitCapability}, nil, true},
 		{c, false, false, []string{"shell"}, []string{domain.HostingBuildTaskType}, false},
 		{c, true, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.RunTypeProxyApply}, false},
 		{c, false, true, []string{"shell"}, nil, true},

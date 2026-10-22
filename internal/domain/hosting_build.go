@@ -16,6 +16,11 @@ import (
 // HostingBuildTaskType identifies internal, exactly targeted source/build work.
 const HostingBuildTaskType = "hosting_build_v1"
 
+// HostingPrivateGitCapability identifies runners that implement bounded HTTPS
+// Basic credential acquisition and private checkout. Public build support alone
+// does not advertise this feature.
+const HostingPrivateGitCapability = "hosting_git_https_basic_v1"
+
 // HostingBuildProtocol identifies the immutable local source/build persistence contract.
 const HostingBuildProtocol = "local-build.v1"
 
