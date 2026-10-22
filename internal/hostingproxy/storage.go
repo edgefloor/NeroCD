@@ -79,7 +79,7 @@ func openStorage(ctx context.Context, directory string) (*storage, error) {
 	}
 	entries, err := fs.ReadDir(root.FS(), "docker-config")
 	if err != nil || len(entries) != 0 {
-		return nil, errors.New("Docker config must be empty")
+		return nil, errors.New("docker config must be empty")
 	}
 	s.lock, err = root.OpenFile("lock", os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
@@ -123,7 +123,7 @@ func (s *storage) checkFile(name string) error {
 	}
 	return owned(st)
 }
-func (s *storage) read(name string) ([]byte, error) {
+func (s *storage) read(name string) (data []byte, err error) {
 	if err := s.checkFile(name); err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (s *storage) read(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { err = errors.Join(err, f.Close()) }()
 	st, err := f.Stat()
 	if err != nil || st.Size() > 4<<20 {
 		return nil, errors.New("oversized state")
@@ -157,7 +157,7 @@ func (s *storage) save(r receipt) error {
 	}
 	return s.atomic("receipt.json", b)
 }
-func (s *storage) atomic(name string, b []byte) error {
+func (s *storage) atomic(name string, b []byte) (err error) {
 	if _, err := s.root.Lstat(name); err == nil {
 		if err = s.checkFile(name); err != nil {
 			return err
@@ -170,7 +170,13 @@ func (s *storage) atomic(name string, b []byte) error {
 	if err != nil {
 		return err
 	}
-	defer s.root.Remove("candidate")
+	defer func() {
+		// Successful rename removes this name. Any other cleanup failure leaves
+		// state that the caller must reconcile instead of reporting clean success.
+		if removeErr := s.root.Remove("candidate"); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("remove unpublished candidate: %w", removeErr))
+		}
+	}()
 	if _, err = f.Write(b); err == nil {
 		err = f.Sync()
 	}
@@ -188,6 +194,6 @@ func (s *storage) atomic(name string, b []byte) error {
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() { err = errors.Join(err, dir.Close()) }()
 	return dir.Sync()
 }
