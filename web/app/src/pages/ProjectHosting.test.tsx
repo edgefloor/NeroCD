@@ -6,6 +6,7 @@ import * as api from "@/api/hosting";
 import { ProjectHosting } from "./ProjectHosting";
 
 vi.mock("./ResourceDestination", () => ({ ResourceDestination: ({ resource }: { resource: { name: string } }) => <div>Desired destination for {resource.name}</div> }));
+vi.mock("./ResourceDeployments", () => ({ ResourceDeployments: ({ resource }: { resource: { name: string } }) => <div>Image deployments for {resource.name}</div> }));
 
 vi.mock("@/api/hosting", () => ({ listProjectEnvironments: vi.fn(), listResources: vi.fn(), createProjectEnvironment: vi.fn(), createResource: vi.fn(), getResource: vi.fn(), updateResource: vi.fn() }));
 const projects = ["one", "two"].map((id) => ({ id, name: `Project ${id}`, description: "", created_at: "2026-01-01T00:00:00Z" }));
@@ -49,7 +50,7 @@ test("create environment selects the returned environment and saves an image app
   fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "API" } });
   fireEvent.change(within(form).getByLabelText("Image reference"), { target: { value: "registry.example.com/api:2" } });
   fireEvent.submit(form);
-  await screen.findByText("Application configuration saved. It has not been deployed.");
+  await screen.findByText("Application configuration saved. Deployment is a separate request.");
   expect(api.createResource).toHaveBeenCalledWith({ project_id: "one", project_environment_id: "staging", name: "API", kind: "application", source: { kind: "image", image: { reference: "registry.example.com/api:2" } } });
   expect(within(form).getByLabelText<HTMLInputElement>("Application name").value).toBe("");
 });
@@ -132,7 +133,7 @@ test("409 recovery keeps draft, requires review, and uses the latest generation 
   fireEvent.click(within(form).getByRole("button", { name: "Keep my draft with generation 2" }));
   expect(api.updateResource).toHaveBeenCalledTimes(1);
   fireEvent.submit(form);
-  await screen.findByText("Application configuration updated. It has not been deployed.");
+  await screen.findByText("Application configuration updated. Deployment is a separate request.");
   expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 2, name: "My draft" });
 });
 
