@@ -1,9 +1,18 @@
 # NeroCD
 
-NeroCD is a self-hosted automation control plane. It manages projects,
-repositories, templates, runs, approvals, runners, logs, and audit events.
-The API, CLI, runner, and embedded web application are built from one Go
-codebase.
+NeroCD is becoming a self-hosted application platform in Go, with the complete
+Coolify replacement scope recorded in the [product specification](docs/product-spec.md).
+The target journey is to connect a server, choose a repository, configure an
+application, deploy it, and open its HTTPS URL. Stateful hosting, previews,
+recovery, operations and migration are part of the same product.
+
+The current implementation is an automation control plane for projects,
+repositories, templates, runs, approvals, runners, logs and audit events. The
+Go API, CLI and runner share the codebase with an embedded React/TypeScript
+web application. The [implementation plan](docs/plan.md) and
+[compatibility ledger](docs/compatibility.md) distinguish the target from
+validated capabilities. Repository-to-HTTPS is the first hosting milestone;
+it is not a complete Coolify parity claim.
 
 ## Available now
 
@@ -67,4 +76,5 @@ and do not publish. See [release trust](docs/release-trust.md).
 ## Documentation
 
 [Documentation index](docs/index.md) · [Architecture](docs/architecture.md) ·
-[Product plan](docs/plan.md) · [API contract](openapi.yaml)
+[Product specification](docs/product-spec.md) · [Product plan](docs/plan.md) ·
+[Compatibility ledger](docs/compatibility.md) · [API contract](openapi.yaml)

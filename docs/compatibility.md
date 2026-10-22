@@ -1,0 +1,127 @@
+# Compatibility ledger
+
+Recorded on 2026-10-22 against NeroCD `a763a90b3896257b784c9498d01650ccdad2427a` and [Coolify `b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3). Official documentation is a separately dated capability reference. It can change independently of the pinned source.
+
+The [full specification](product-spec.md) defines the target. The [plan](plan.md) assigns P00–P18 and M0–M4. This ledger distinguishes feature compatibility, migration compatibility, and unchanged-client compatibility. Success in one dimension does not prove another.
+
+## Status and evidence
+
+- `planned`: required target with no validated implementation claim.
+- `partial`: existing foundations cover only the stated limits.
+- `implemented`: code exists for the declared boundary, without complete acceptance evidence.
+- `validated`: declared fixtures pass on a named release candidate with bounded evidence.
+- `intentionally different`: an explicit behavior difference remains part of the supported contract.
+
+All fixture names below are planned acceptance fixture identifiers, not existing test files or passing results. No target-hosting fixture was run for this documentation adoption. Future entries must name candidate SHA, tool and engine versions, architectures, check result, evidence location, and limits before a claim advances to validated. Missing and failed required checks block acceptance.
+
+## Product areas
+
+The C references resolve in the specification's [source list](product-spec.md#13-sources). Source labels identify the reference capability, not proof of NeroCD support.
+
+| Product area | Upstream reference | Status and supported limits at baseline | Required fixtures | Package and deliberate difference |
+| --- | --- | --- | --- | --- |
+| Server management | C4, C11 | partial: runner enrollment and leases; hosting servers, stable destinations, role checks and SSH onboarding planned | A01, A13, A14, A27; server-reenroll, host-key-mismatch, old-agent-capability | P02; persistent Go agent instead of upstream deployment over SSH |
+| Resource organization | C1, C10 | partial: projects and service-specific environments; shared environments and typed resources planned | A08, A34, A35; legacy-membership-preservation | P01; preserve legacy IDs and explicit environment grouping |
+| Git sources | C2 | partial: repository inputs exist; provider installation and complete source choices planned | A03, A09; provider matrix below | P04, P18; no-Git inputs need no artificial repository |
+| Builds | C2, C12, C13 | planned: prebuilt Compose execution does not validate builders | A02–A07; builder and architecture matrices below | P05; immutable image outputs retained independently of deployment retries |
+| Inputs without Git | C2, C3, C8 | planned: images, stored Dockerfiles, pasted Compose and catalog sources | A05, A15, A21; no-git-source | P04, P08, P11 |
+| Build placement | C4 | planned: same-host and dedicated builders with explicit image delivery | A07, A13; registry-push-pull, architecture-mismatch | P02, P05; tags never relocate stateful destinations |
+| Domains and HTTPS | C5 | planned: managed routes, domains, certificates and independent host traffic | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
+| Deployment automation | C2, C14, C15 | partial: approvals and durable deployment evidence; trusted automatic hosting releases planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval binds prepared release and destination |
+| Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
+| Persistent storage | C17 | planned: managed volumes, directories, managed files and external host files | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
+| Databases | C7 | planned: engine-specific lifecycle; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
+| Service catalog | C8 | planned: versioned definitions, stable generated values and explicit upgrades | A21, A22; catalog-version, component-upgrade | P11, P18; initial tested catalog expands through explicit version fixtures |
+| Variables and secrets | C16 | partial: runner_file and encryption helpers; managed persistence, grants and recovery planned | A03, A18, A35; scope-denial, redaction, key-recovery, revoked-version | P03; separate build/runtime/preview grants; external-provider versions explicit |
+| Ongoing operations | C9 | partial: run logs and runner evidence; continuous runtime observation and resource actions planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
+| Recovery | C18–C20, C15 | partial: platform backup/restore and linked rollback foundations; hosted data recovery planned | A25–A27, A37; resume-failure, new-resource-restore | P10; platform, database, storage and release rollback are distinct |
+| Automation | C21, C22 | planned: resource-bound schedules and durable notifications | A25, A30, A31; notification matrix below | P14; occurrence identity, DST, overlap and missed-run policies required |
+| Programmatic access | C1 | partial: native REST/CLI and generated web client; hosting and MCP operations planned | A35, A36; interface-parity, keyboard-mobile | P16; every interface uses the same authorized application operations |
+| Migration | C23 | planned: NeroCD upgrade mappings and Coolify compatibility report/cutover | A33, A34; controller-handoff, post-cutover-writes | P17; existing-container adoption requires explicit ownership transfer |
+| Broader infrastructure | C1, C4, C5 | planned: multi-server deployment, Swarm, provisioning, Actions runners and log integrations | infra-multi-server, infra-swarm, infra-provisioning, infra-actions-runner, log-drain | P18; explicit extended parity, with no Kubernetes dependency |
+
+## Database engines
+
+The reference backup/restore distinctions below are retained from R44. Every engine remains planned. Common container lifecycle code does not prove engine-specific backup, restore, credential rotation or major-version upgrade support.
+
+| Engine | Status | Reference scheduled backup | Reference dashboard restore | Supported limits and required outcome | Planned fixtures |
+| --- | --- | --- | --- | --- | --- |
+| PostgreSQL | planned, M2 | Yes | Yes | First stateful slice; generated credentials, application binding, engine-compatible backup and new-resource restore | db-postgresql-lifecycle, db-postgresql-restore, A17, A18, A26 |
+| Redis | planned, M2 | No | No | Early hosting; explicitly document persistence and recovery limits | db-redis-lifecycle, db-redis-persistence |
+| MySQL | planned, M3 | Yes | Yes | Engine-specific backup/import and application verification | db-mysql-backup-restore, db-mysql-upgrade |
+| MariaDB | planned, M3 | Yes | Yes | Separate version/configuration tests from MySQL | db-mariadb-backup-restore, db-mariadb-upgrade |
+| MongoDB | planned, M3 | Yes | Yes | Supported authentication and dump/import formats | db-mongodb-auth, db-mongodb-backup-restore |
+| ClickHouse | planned, M3 | Yes | No | Backup parity; explicit restore procedure or labeled improvement | db-clickhouse-backup, db-clickhouse-restore-procedure |
+| Dragonfly | planned, M3 | No | No | Hosting and persistence with explicit recovery limits | db-dragonfly-lifecycle, db-dragonfly-persistence |
+| KeyDB | planned, M3 | No | No | Hosting and persistence with explicit recovery limits | db-keydb-lifecycle, db-keydb-persistence |
+| SQLite | planned, experimental | Yes, experimental | Yes, experimental | Retain experimental label until versioned backup/restore fixtures pass | db-sqlite-experimental-backup-restore |
+
+Every supported engine/version pair also needs readiness, credential rotation, network reachability, storage retention, incompatible-version rejection and application read/write evidence. No engine inherits these results from another row.
+
+## Sources and providers
+
+| Provider or input | Reference | Status and delivery | Limits and planned fixtures |
+| --- | --- | --- | --- |
+| GitHub | C2, C6 | planned, first provider in P04 | Public/private Git, installation credentials, branch/commit selection, signed webhook receipts, duplicate/delayed events, PR status and cleanup; git-github, A03, A09, A23 |
+| GitLab | C2, C6 | planned, M3/P18 | Provider-specific credentials, signatures, MR events and status; git-gitlab |
+| Gitea | C2 | planned, M3/P18 | Provider-specific authentication, webhook and preview events; git-gitea |
+| Bitbucket | C2 | planned, M3/P18 | Provider-specific authentication, webhook and preview events; git-bitbucket |
+| Generic Git and deploy keys | C2 | planned, P04 | Connection test, selected branch/commit, operation-scoped credential; git-generic, git-deploy-key |
+| Signed manual deploy webhook | C2 | planned, P04 | Authentication, durable delivery identity, retries and supersession; deploy-webhook, A09 |
+| Registry image tag/digest | C2 | planned, P04/P05 | Resolve tag to digest; architecture and destination pull check; image-tag-digest, A05 |
+| Stored Dockerfile | C2 | planned, P04/P05 | Versioned input and context without fake repository; dockerfile-stored |
+| Git Compose and pasted Compose | C3 | planned, P08 | Explicit source of truth, controlled interpolation, mixed images/builds, profiles and component identity; A15, A16 |
+| Catalog installation | C8 | planned, P11 | Definition version, stable generated credentials, component state; A21, A22 |
+
+External secret-provider adapters remain planned under R33/P18. Each declared provider needs immutable-version or mutable-reference semantics, authorization, absent/revoked-value behavior and recovery fixtures. A provider list has not yet been selected; this is an explicit remaining adapter decision, not a support claim.
+
+## Builders and execution platforms
+
+| Strategy | Reference | Status and planned slice | Limits and planned fixtures |
+| --- | --- | --- | --- |
+| Dockerfile | C2 | planned, first P05 path | Context, target, monorepo base, command overrides, secret grants, pinned BuildKit/Buildx; build-dockerfile, A02, A06 |
+| Railpack | C12 | planned, first automatic builder | Upstream Beta label retained; pin tool version and supported languages; build-railpack, A03 |
+| Nixpacks | C2 | planned, separate M3 adapter | Never infer support from Railpack; version/language fixtures; build-nixpacks |
+| Prebuilt static files | C13 | planned, M1 | Package existing assets; publish path, web-server configuration, SPA fallback; build-static, A04 |
+| Compiled static/SPA | C13 | planned, M1 | Explicit build command and output directory; baked configuration requires rebuild; build-spa, A04 |
+| Compose build sections | C3 | planned, P05/P08 | Resolve all required images before mutation; initialization and optional-component semantics; build-compose, A15, A16 |
+| Dedicated builder | C4 | planned, M3 | Authorized registry delivery, cache identity, architecture/pull validation; build-remote, A07 |
+
+Each strategy requires separate supported CPU architecture and tool-version rows before validation. Initial CPU fixtures are planned for linux/amd64 and linux/arm64; actual support remains unclaimed until both build and destination execution pass. Cover cancellation, time/CPU/memory/disk/concurrency bounds, changed secret references, force rebuild, cache invalidation and active/rollback image retention.
+
+Compose compatibility includes managed and raw modes, service fields, interpolation required/default behavior, profiles, networks, volumes, operator labels, advanced host capabilities and versioned Docker Compose differential tests. Raw mode remains planned in P18; preflight rejects a protected policy if its release guarantees cannot be satisfied.
+
+## Proxy adapters
+
+| Adapter | Reference | Status and planned slice | Limits and planned fixtures |
+| --- | --- | --- | --- |
+| Traefik | C5 | planned, first P07/M1 | Route reservation, domains/path/port, redirects, WebSockets, headers, validated config, rollback, ACME renewal; proxy-traefik, A20, A27 |
+| Caddy | C5 | planned, P18 | Explicit configuration and migration adapter; proxy-caddy |
+| Custom proxy | C5 | planned, P18 | Declare operator/platform ownership and unavailable managed features; proxy-custom |
+| Proxy migration | C5 | planned, P18 | Validate ownership transfer, traffic continuity, certificate retention and recovery; proxy-migration |
+
+All managed modes need HTTP validation, separately configured DNS challenge for wildcards, custom certificate rotation, DNS credential protection and control-plane restart fixtures. A server's existing external proxy network does not prove managed routing support.
+
+## Notification channels
+
+Pinned source evidence is [Team notification configuration](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Team.php), C22.
+
+| Channel | Status and slice | Supported limits | Planned fixtures |
+| --- | --- | --- | --- |
+| Email | planned, M2 | Configure credentials, event selection, bounded retry and actionable delivery result | notify-email, A25 |
+| Generic webhook | planned, M2 | Scoped endpoint/credential, durable event identity, retry and duplicate handling | notify-webhook, A25 |
+| Discord | planned, M3 | Separate channel adapter and delivery evidence | notify-discord |
+| Slack | planned, M3 | Separate channel adapter and delivery evidence | notify-slack |
+| Telegram | planned, M3 | Separate channel adapter and delivery evidence | notify-telegram |
+| Pushover | planned, M3 | Separate channel adapter and delivery evidence | notify-pushover |
+
+Each channel must redact credentials, preserve resource/project authorization, retain execution history and report partial outcomes. A successful database dump followed by failed upload must generate a useful notification while preserving local recovery data.
+
+## Migration and client compatibility claims
+
+Feature equivalence does not imply drop-in Coolify database or API compatibility. Native API/CLI/MCP support and Coolify client adapters have separate fixtures. Requested adapters require explicit endpoints, request/response/error contracts and version limits before a support claim.
+
+NeroCD upgrades begin in M0 and preserve old IDs, approvals, effective permissions and in-flight execution semantics. Equal environment names are not an automatic grouping rule. Coolify import starts with read-only discovery and a versioned intermediate manifest. Missing secrets remain missing. A33 requires source automation suspension, final data synchronization, explicit traffic handoff, destination automation activation and a recovery policy for writes after cutover.
+
+No migration or unchanged-client compatibility is validated at this baseline. Existing-container adoption is a separate capability; discovered labels do not prove surrender of the previous controller's authority.
+
