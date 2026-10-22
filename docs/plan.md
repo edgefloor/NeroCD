@@ -8,7 +8,7 @@ The accepted planning review examined the complete supplied specification, inclu
 
 ## Accepted progress on 2026-10-22
 
-The current assessment is `08c1aaf0b6622648fd373a7e65c053bfc8a151eb`.
+The current assessment is `df515f3c5819627c1ee6877b2d22e1f79895f46b`.
 The earlier `a763a90` inspection remains planning history. The complete target,
 P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
 
@@ -18,12 +18,12 @@ P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
 | P01 | Shared project environments and image-application desired configuration, authorized API and WebUI; public-image operation admission has binding mutation holds | Team model, additional resource kinds, legacy mappings and broader shared-resource concurrency |
 | P02 | Enrolled server admission, stable default destinations, project grants and immutable bindings through API/WebUI; authoritative runner identity and exact-target image execution | SSH-assisted onboarding, onboarding-time host capability/readiness validation, full server lifecycle and trusted recovery of uncertain effects |
 | P03 | Encrypted immutable project-secret versions, create/rotate/reveal/revoke, strict keyring file and protected WebUI | Execution delivery, broader value scopes, grants, key recovery workflows and external providers |
-| P04/P05 | Public HTTPS Git configuration API/UI with operator allowlist and atomic 0049 source references; controlled checkout, persisted build evidence, private delivery component and optional BuildID adapter | Private configuration/provider workflows, credential endpoint/runtime bridge, production build API/controller/handler, typed executor, source-to-engine and artifact-to-deployment handoff |
-| P05 engine | Standalone local Dockerfile/Railpack/prebuilt-static engine with confined context/Dockerfile/target, publish-directory/SPA settings, retained output and owned cleanup | Integrated build orchestration, log streaming, private dependency credentials, compiled-static product path and remote image delivery |
+| P04/P05 | Public HTTPS Git configuration and separate build request/history/cancel UI/API; production River controller and explicitly configured CLI execute source-to-engine work into immutable local artifacts | Artifact-to-deployment handoff, private configuration/provider workflows, private credential HTTP/runtime bridge, build-output logs and remote image delivery |
+| P05 engine | Dockerfile/Railpack/prebuilt-static engine integrated with public Git checkout and the normal enrolled CLI; confined settings, immutable receipts and owned cleanup | Log streaming, private dependency credentials, compiled-static product coverage and remote image delivery |
 | P06 | Live River image consumer, public-tag freeze, fenced agent/Docker apply, ordinary HTTP readiness, per-release autoports, explicit fixed ports, cancellation/replay, holds and selected retained-container cleanup | Verified public traffic switch, broader release strategies, optional hosting approval, managed variables/secrets, private registries and safe restored-ownership resumption |
 | P07 | Authorized route/grant/generation API, fenced explicitly capable Linux agent runtime, journal/replay, Traefik HTTP-01 and managed routing UI; real isolated HTTP/trusted-test-CA HTTPS and outage/renewal fixtures | Public DNS/production ACME verification, DNS-01/wildcard/custom certificates, Caddy and trusted restore resumption; image-only enrollment does not gain proxy authority |
-| P14 infrastructure | River OSS v0.44.1 image/proxy dispatch and optional BuildID adapter sharing transactional queue/lifecycle contracts | Actual production build controller/handler wiring, general schedules, notifications and their lifecycle contracts |
-| P16 | Image, public Git configuration and managed routing UI; Git CAS review shows all current saved settings without discarding the draft | Build execution/private-source workflows, remaining R65 coverage and complete hosting CLI/MCP operations |
+| P14 infrastructure | River OSS v0.44.1 image/proxy dispatch and production BuildID handler sharing transactional queue/lifecycle contracts | General schedules, notifications and their lifecycle contracts |
+| P16 | Image, public Git configuration/build request/history/cancel and managed routing UI; exact retries and CAS review retain intent | Artifact deployment/private-source/log workflows, remaining R65 coverage and complete hosting CLI/MCP operations |
 
 See [bounded evidence and exact commits](compatibility.md#accepted-foundations-and-evidence),
 the [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
@@ -32,7 +32,9 @@ and [deployment WebUI guide](hosting-image-deployments.md) define the accepted
 runtime path. The [build](hosting-build-engine.md),
 [source acquisition](hosting-source-checkout.md) and
 [source/build store](hosting-build-control.md) components are not yet a runnable
-Git build workflow. The [proxy backend](hosting-proxy-control.md) dispatches
+Git deployment workflow. The [public build runtime](hosting-build-runtime.md)
+now wires source acquisition and engine execution through the configured
+controller and normal enrolled CLI. The [proxy backend](hosting-proxy-control.md) dispatches
 authorized snapshots to explicitly enrolled `proxy_apply` agents. The
 [managed routing UI](hosting-proxy-ui.md) has accepted real-backend HTTP and
 trusted-test-CA HTTPS coverage. The [runtime guide](hosting-proxy-control.md)
@@ -45,9 +47,8 @@ No result here completes A01, A05, A08 or A27, and results from different
 revisions cannot be combined into the A36 release assertion.
 
 M1 still requires private Git configuration and provider integration,
-the credential endpoint/runtime bridge, a production build controller/handler and
-executor, authorized orchestration, source-to-engine receipt wiring,
-build-to-deployment handoff, managed-secret
+the private credential endpoint/runtime bridge, artifact-to-deployment handoff,
+build-output logs and managed-secret
 execution delivery, public DNS/production ACME verification, continuous
 observations/runtime logs, trusted automatic triggers and optional hosting
 approval. Restore holds prevent mutation after recovery; trusted local process
@@ -58,10 +59,16 @@ Public Git configuration is accepted at `904834bb41df350405776ec983529250f86f1e9
 The nonsecret protocol, v5 journal and typed client are accepted infrastructure at
 `ca5f48956087fe21a3aff6c511af45f4148651a2`,
 `18c45e820974563ec75af842713b7d9c97e78ce0` and
-`08c1aaf0b6622648fd373a7e65c053bfc8a151eb`. They do not install build
-endpoints, advertise a build capability or execute work. Controller/executor
-work outside this base remains unaccepted. M0/M1 and the complete Git journey
-remain incomplete.
+`08c1aaf0b6622648fd373a7e65c053bfc8a151eb`. Production controller
+`4c1ebeaf05d6e02003bae78e3f9a6ffde56e3e0a`, build UI
+`63b6f21b41a095e64dfcb5e26b4be033988aa9d0` and runtime integration
+`a907703572e7e1eb7fb3858998a0cef862645198` are now accepted through the
+`df515f3c5819627c1ee6877b2d22e1f79895f46b` runtime fixture checkpoint.
+Admission and execution require trusted server policy and explicit compatible
+agent configuration; the capability is not enabled by default. The runtime gate
+proves build-to-artifact behavior, not artifact deployment or repository-to-HTTPS.
+Pending artifact-deployment work is outside this assessment. M0/M1 and the
+complete Git journey remain incomplete.
 
 ## The architectural decision
 
@@ -310,9 +317,11 @@ Historical migration checksums remain unchanged.
 
 Internal source/build requests have immutable snapshots, idempotency, grants,
 fenced receipts and artifact admission, but require trusted DB-only queue/task
-callbacks. Public Git configuration is separate from execution. No production
-build API/consumer, runner executor or
-deployment handoff is installed. See [source/build persistence](hosting-build-control.md).
+callbacks. The production controller now supplies transactional queue/task
+wiring and phase endpoints; the enabled agent executes public-source builds.
+The private credential endpoint/runtime bridge and artifact deployment handoff
+remain absent. See [build runtime](hosting-build-runtime.md) for exact operator
+policy, enrollment, journal and cleanup requirements. See [source/build persistence](hosting-build-control.md).
 
 Preparation freezes the selected public-image identity; apply uses live lease authority.
 Unknown effects retain mutation holds; exact committed receipts can replay.

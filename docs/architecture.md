@@ -2,7 +2,7 @@
 
 Planning baseline: `a763a90b3896257b784c9498d01650ccdad2427a`, inspected on
 2026-10-22. Current accepted assessment:
-`08c1aaf0b6622648fd373a7e65c053bfc8a151eb`, also dated 2026-10-22.
+`df515f3c5819627c1ee6877b2d22e1f79895f46b`, also dated 2026-10-22.
 The [product specification](product-spec.md) defines the full Go
 hosting platform target. The [plan](plan.md) orders implementation and the
 [compatibility ledger](compatibility.md) records support limits. The current
@@ -21,7 +21,7 @@ runners, and retains operational evidence. It is not a general CI system.
 | `internal/store` | PostgreSQL persistence and explicit disposable memory development store. |
 | `internal/runner` | Enrollment, credentials, fenced leases, execution, logs, and replay data. |
 | `internal/runnerruntime` | Fenced image/Compose execution and the controlled Git checkout adapter. |
-| `internal/hostingjobs` | River OSS v0.44.1 image/proxy dispatch and optional BuildID adapter; no production build controller. |
+| `internal/hostingjobs` | River OSS v0.44.1 image/proxy/build dispatch, with a production handler for enabled public builds. |
 | `internal/hostingbuild` | Standalone bounded local builds with confined settings and retained output receipts. |
 | `internal/hostingproxy` | Standalone Linux Traefik configuration, TLS and state verification. |
 | `web/app` | React/Vite/TanStack application built into `web/dist` and embedded in Go. |
@@ -90,8 +90,11 @@ admits public HTTPS under an operator allowlist and stores atomic source/version
 references through migration 0049. Reads resolve the exact immutable version;
 CAS review exposes all current settings. PostgreSQL is required, and configuration
 performs no network fetch. Private Git configuration remains unsupported.
-There is no production build API/consumer,
-typed runner executor, source-to-engine bridge or deployment handoff.
+Separate [build UI/API operations](hosting-git-resources.md) now request,
+inspect and cancel builds through the production controller and River handler.
+The [normal agent runtime](hosting-build-runtime.md) connects source checkout,
+source receipts, local engine and artifact completion. Artifact deployment
+handoff is not installed.
 The [private Git credential component](hosting-build-credentials.md) authorizes
 and decrypts the exact immutable secret version for a live sourcing attempt.
 Its audit-backed window and byte ownership do not install an endpoint or runtime
@@ -102,7 +105,11 @@ use/build callback; final checkout cleanup follows use. Once transport cleanup
 is confirmed, a build may outlast credential expiry, while the parent operation
 deadline, cancellation and budgets still govern use.
 The [optional River BuildID adapter](hosting-build-jobs.md) requires a
-real supplied handler; production build dispatch is not enabled.
+real supplied handler, now provided by the configured production controller.
+Build admission stays disabled until the server has an explicit trusted policy.
+The agent separately requires a strict owned mode-0600 build configuration,
+matching enrolled `hosting_build_v1`, exact placement and matching frozen policy.
+Shell and build execution cannot be combined.
 
 The [proxy backend](hosting-proxy-control.md) authorizes hostname grants and
 whole-proxy generations, derives settled binding targets, and dispatches typed
@@ -236,18 +243,22 @@ The PostgreSQL server starts real image and proxy dispatch consumers after
 schema validation. Consumers resolve immutable snapshots and exact destinations
 into work for the existing fenced runner protocol. They do not execute Docker
 in the control-plane job worker. Queue completion is distinct from workload or
-proxy completion. The optional BuildID worker registers only when the supplied
-handler implements its build interface. No production source/build controller
-supplies that handler, and no build executor or deployment handoff is installed.
+proxy completion. The BuildID worker registers when the supplied handler
+implements its build interface. The accepted production controller supplies
+that handler, and the explicitly enabled compiled agent executes public builds.
+Private credential HTTP/runtime delivery and artifact deployment remain absent.
 
 The accepted nonsecret [phase protocol](hosting-build-protocol.md),
 [v5 build journal](hosting-build-journal.md) and
 [HTTP client](hosting-build-client.md) provide exact messages, immutable local
 intent and acknowledgment validation. Historical receipts do not authorize new
 effects. The client does not retry automatically, and status proof must match
-retained intent before local acknowledgment. These components register no server
-endpoint or default build capability and do not connect the checkout/build engine
-to the normal runner loop.
+retained intent before local acknowledgment. The accepted controller installs
+nonsecret phase endpoints, and the compiled
+agent uses them and the journal around source-to-engine execution. No default
+build capability is advertised without validated local configuration. Live
+completion atomically settles build/task/lease evidence; uncertain intent and
+cleanup records fail closed rather than silently rebuilding.
 
 The owner migration CLI applies River's pinned migration bundle under the same
 advisory lock as native migrations. Each River version and its adapter checksum
@@ -256,7 +267,10 @@ complete pinned set before its explicit `Start`. Native migration 0048
 additively binds build functions to their owning schema without changing 0047
 or earlier checksums. Accepted PostgreSQL integration includes nondefault-schema,
 shadow-object and real dump/restore regression coverage at `836a3a92`.
-This persistence evidence does not install a build execution workflow.
+That persistence checkpoint alone did not install build execution. Current
+accepted controller/runtime evidence is recorded in the [ledger](compatibility.md#accepted-foundations-and-evidence).
+It covers public-source build-to-artifact operation, not artifact deployment,
+private Git or the full M1 journey.
 
 See [Hosting job infrastructure](hosting-jobs.md) for lifecycle, compatibility,
 and integration contracts.
