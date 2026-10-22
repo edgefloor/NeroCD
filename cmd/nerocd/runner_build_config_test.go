@@ -121,3 +121,24 @@ func TestRunnerBuildCapabilitiesExplicitAndDisabledByDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerPrivateGitConfigurationAndCapabilities(t *testing.T) {
+	c, err := decodeRunnerBuildConfig([]byte(`{"version":1,"private_git":{"trusted_loopback_http":true}}`))
+	if err != nil || c.PrivateGit == nil || !c.PrivateGit.TrustedLoopbackHTTP {
+		t.Fatal("private opt-in lost", err)
+	}
+	for _, raw := range []string{`{"version":1,"private_git":null}`, `{"version":1,"private_git":{"unknown":true}}`, `{"version":1,"private_git":{"trusted_loopback_http":"true"}}`} {
+		if _, err := decodeRunnerBuildConfig([]byte(raw)); err == nil {
+			t.Fatal("invalid private config accepted")
+		}
+	}
+	for _, caps := range [][]string{nil, {domain.HostingBuildTaskType}, {domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}} {
+		got, err := runnerBuildCapabilities(c, false, len(caps) > 0, caps)
+		if err != nil || !strings.Contains(strings.Join(got, ","), domain.HostingPrivateGitCapability) {
+			t.Fatal("private capability missing", err)
+		}
+	}
+	if _, err := runnerBuildCapabilities(c, false, true, []string{"shell"}); err == nil {
+		t.Fatal("private shell enabled")
+	}
+}

@@ -17,8 +17,9 @@ import (
 )
 
 type runnerBuildConfigFile struct {
-	Version    int    `json:"version"`
-	SourceRoot string `json:"source_root"`
+	PrivateGit *runnerruntime.PrivateGitConfig `json:"private_git,omitempty"`
+	Version    int                             `json:"version"`
+	SourceRoot string                          `json:"source_root"`
 	Engine     struct {
 		DockerBinary string `json:"docker_binary"`
 		Socket       string `json:"socket"`
@@ -84,7 +85,7 @@ func decodeRunnerBuildConfig(raw []byte) (*runnerruntime.BuildConfig, error) {
 	if d.Decode(&f) != nil || f.Version != 1 {
 		return nil, invalid
 	}
-	return &runnerruntime.BuildConfig{SourceRoot: f.SourceRoot, Engine: hostingbuild.Config{DockerBinary: f.Engine.DockerBinary, Socket: f.Engine.Socket, BuildxBinary: f.Engine.BuildxBinary, BuildxSHA256: f.Engine.BuildxSHA256, PlannerImage: f.Engine.PlannerImage, StateDir: f.Engine.StateDir, CgroupRoot: f.Engine.CgroupRoot}, Target: runnerruntime.BuildTarget{RunnerID: f.Target.RunnerID, ServerID: f.Target.ServerID, DestinationID: f.Target.DestinationID, BindingID: f.Target.BindingID}, Policy: f.Policy, StatusInterval: f.StatusInterval, RequestTimeout: f.RequestTimeout}, nil
+	return &runnerruntime.BuildConfig{PrivateGit: f.PrivateGit, SourceRoot: f.SourceRoot, Engine: hostingbuild.Config{DockerBinary: f.Engine.DockerBinary, Socket: f.Engine.Socket, BuildxBinary: f.Engine.BuildxBinary, BuildxSHA256: f.Engine.BuildxSHA256, PlannerImage: f.Engine.PlannerImage, StateDir: f.Engine.StateDir, CgroupRoot: f.Engine.CgroupRoot}, Target: runnerruntime.BuildTarget{RunnerID: f.Target.RunnerID, ServerID: f.Target.ServerID, DestinationID: f.Target.DestinationID, BindingID: f.Target.BindingID}, Policy: f.Policy, StatusInterval: f.StatusInterval, RequestTimeout: f.RequestTimeout}, nil
 }
 func checkRunnerBuildJSON(d *json.Decoder, depth int) error {
 	if depth > 32 {
@@ -138,9 +139,10 @@ func checkRunnerBuildJSON(d *json.Decoder, depth int) error {
 	return err
 }
 func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, specified bool, capabilities []string) ([]string, error) {
+	private := c != nil && c.PrivateGit != nil
 	for _, capability := range capabilities {
-		if capability == domain.HostingPrivateGitCapability {
-			return nil, errors.New("private Git execution is not supported by this runner")
+		if capability == domain.HostingPrivateGitCapability && !private {
+			return nil, errors.New("private Git capability requires explicit configuration")
 		}
 	}
 	if c != nil && !specified {
@@ -162,6 +164,15 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 	}
 	if c != nil && !buildCap {
 		capabilities = append(capabilities, domain.HostingBuildTaskType)
+	}
+	if private {
+		found := false
+		for _, capability := range capabilities {
+			found = found || capability == domain.HostingPrivateGitCapability
+		}
+		if !found {
+			capabilities = append(capabilities, domain.HostingPrivateGitCapability)
+		}
 	}
 	return capabilities, nil
 }

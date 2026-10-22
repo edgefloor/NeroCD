@@ -35,6 +35,11 @@ func validateBuildRuntimeConfig(c Config) error {
 	if !c.Execute || c.CompleteStatus != "" || c.Build.Target.RunnerID != c.RunnerID {
 		return errors.New("build execution requires exact authenticated runner identity and execution mode")
 	}
+	if c.Build.PrivateGit != nil {
+		if err := runnerclient.ValidateSourceCredentialServer(c.Server, runnerclient.SourceCredentialTransport{TrustedLoopbackHTTP: c.Build.PrivateGit.TrustedLoopbackHTTP}); err != nil {
+			return err
+		}
+	}
 	return c.Build.Validate()
 }
 func reconcileRuntimeBuilds(ctx context.Context, c Config, journal *runner.AttemptJournal) (*BuildExecutor, error) {
@@ -99,7 +104,7 @@ func executeBuildClaim(parent context.Context, server, token string, claim domai
 func validateRuntimeIdentity(parent context.Context, c Config) error {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
-	identity, err := runnerclient.New(c.Server, c.Token).RuntimeCapabilitiesIdentity(ctx, c.Proxy.Enabled(), c.Build != nil)
+	identity, err := runnerclient.New(c.Server, c.Token).RuntimeExecutionIdentity(ctx, c.Proxy.Enabled(), c.Build != nil, false, c.Build != nil && c.Build.PrivateGit != nil)
 	if err != nil || identity != c.RunnerID {
 		return errors.New("authenticated runner capabilities do not match explicit runtime configuration")
 	}

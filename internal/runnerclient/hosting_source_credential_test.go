@@ -95,3 +95,18 @@ func TestBuildSourceCredentialTransportAndIdentity(t *testing.T) {
 		t.Fatal("TLS bypass accepted")
 	}
 }
+
+func TestSourceCredentialServerPreflight(t *testing.T) {
+	for _, tc := range []struct {
+		server         string
+		fixture, valid bool
+	}{
+		{"https://controller.example", false, true}, {"http://127.0.0.1:8080", true, true}, {"http://[::1]:8080", true, true},
+		{"http://127.0.0.1:8080", false, false}, {"http://localhost:8080", true, false}, {"http://127.0.0.2:8080", true, false},
+		{"http://192.0.2.1", true, false}, {"https://user:password@example.com", false, false}, {"https://example.com?x=1", false, false},
+	} {
+		if got := ValidateSourceCredentialServer(tc.server, SourceCredentialTransport{TrustedLoopbackHTTP: tc.fixture}); (got == nil) != tc.valid {
+			t.Fatalf("transport %q: %v", tc.server, got)
+		}
+	}
+}

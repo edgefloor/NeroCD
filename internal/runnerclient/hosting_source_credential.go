@@ -21,6 +21,22 @@ var ErrSourceCredential = errors.New("hosting source credential unavailable")
 // fixtures. It never enables insecure remote transport or disables TLS verification.
 type SourceCredentialTransport struct{ TrustedLoopbackHTTP bool }
 
+// ValidateSourceCredentialServer checks configuration without requests or effects.
+func ValidateSourceCredentialServer(server string, options SourceCredentialTransport) error {
+	u, err := url.Parse(server)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
+		return ErrSourceCredential
+	}
+	if u.Scheme != "https" {
+		ip, e := netip.ParseAddr(u.Hostname())
+		fixture := options.TrustedLoopbackHTTP && u.Scheme == "http" && e == nil && (ip == netip.MustParseAddr("127.0.0.1") || ip == netip.IPv6Loopback())
+		if !fixture {
+			return ErrSourceCredential
+		}
+	}
+	return nil
+}
+
 // BuildSourceCredential requests an owned credential under one retained random ID.
 // runnerID must be the configured runner identity, never a response-derived value.
 func (c Client) BuildSourceCredential(ctx context.Context, runnerID string, in domain.HostingSourceCredentialRequest, options SourceCredentialTransport) (hostingbuildprotocol.SourceCredential, error) {
@@ -28,18 +44,11 @@ func (c Client) BuildSourceCredential(ctx context.Context, runnerID string, in d
 	if runnerID == "" || hostingbuildprotocol.ValidateAuthority(in.Authority) != nil || !domain.ValidHostingSourceDeliveryID(in.DeliveryID) {
 		return zero, ErrSourceCredential
 	}
-	u, err := url.Parse(c.Server)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
+	if ValidateSourceCredentialServer(c.Server, options) != nil {
 		return zero, ErrSourceCredential
 	}
-	fixture := false
-	if u.Scheme != "https" {
-		ip, e := netip.ParseAddr(u.Hostname())
-		fixture = options.TrustedLoopbackHTTP && u.Scheme == "http" && e == nil && (ip == netip.MustParseAddr("127.0.0.1") || ip == netip.IPv6Loopback())
-		if !fixture {
-			return zero, ErrSourceCredential
-		}
-	}
+	u, _ := url.Parse(c.Server)
+	fixture := u.Scheme == "http"
 	hc := c.HTTP
 	if hc == nil {
 		hc = http.DefaultClient

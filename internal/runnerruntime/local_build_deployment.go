@@ -62,7 +62,7 @@ func validateLocalBuildRuntimeIdentity(parent context.Context, config Config) er
 	}
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
-	id, err := runnerclient.New(config.Server, config.Token).RuntimeExecutionIdentity(ctx, config.Proxy.Enabled(), config.Build != nil, true)
+	id, err := runnerclient.New(config.Server, config.Token).RuntimeExecutionIdentity(ctx, config.Proxy.Enabled(), config.Build != nil, true, config.Build != nil && config.Build.PrivateGit != nil)
 	if err != nil || id != config.RunnerID {
 		return errors.New("authenticated execution capabilities do not match explicit local configuration")
 	}

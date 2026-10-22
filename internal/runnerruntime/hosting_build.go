@@ -37,11 +37,18 @@ type BuildTarget struct{ RunnerID, ServerID, DestinationID, BindingID string }
 // BuildConfig contains explicit operator settings. Policy must exactly match the
 // server snapshot. SourceRoot and Engine.StateDir must be separate owned roots.
 type BuildConfig struct {
+	PrivateGit                     *PrivateGitConfig
 	SourceRoot                     string
 	Engine                         hostingbuild.Config
 	Policy                         domain.HostingBuildPolicy
 	Target                         BuildTarget
 	StatusInterval, RequestTimeout time.Duration
+}
+
+// PrivateGitConfig enables trusted HTTPS Basic/PAT checkout explicitly.
+// TrustedLoopbackHTTP permits only isolated literal-loopback controller fixtures.
+type PrivateGitConfig struct {
+	TrustedLoopbackHTTP bool `json:"trusted_loopback_http"`
 }
 
 type localBuildEngine interface {
