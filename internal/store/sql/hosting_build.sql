@@ -64,11 +64,11 @@ INSERT INTO hosting_build_artifacts(build_id,body,body_hash) VALUES($1,$2,$3);
 -- name: GetHostingSourceGrant :one
 SELECT * FROM hosting_source_grants WHERE id=$1;
 -- name: CountResourceHostingSourceGrants :one
-SELECT count(*) FROM hosting_source_grants WHERE resource_id=$1;
+SELECT count(*) FROM hosting_source_grants WHERE resource_id=$1 AND kind='https_basic';
 -- name: ListResourceHostingSourceGrants :many
 SELECT jsonb_build_object('id',g.id,'version',g.version,'source_id',g.source_id,'source_generation',coalesce((a.metadata->>'source_generation')::bigint,0),'resource_id',g.resource_id,'kind',g.kind,'revoked',g.revoked_at IS NOT NULL)
 FROM hosting_source_grants g LEFT JOIN audit_events a ON a.id='aud_'||g.id AND a.action='hosting.source_grant.created'
-WHERE g.resource_id=sqlc.arg(resource_id) ORDER BY g.created_at DESC,g.id DESC LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
+WHERE g.resource_id=sqlc.arg(resource_id) AND g.kind='https_basic' ORDER BY g.created_at DESC,g.id DESC LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 -- name: LockHostingBuildEnrollment :one
 SELECT e.id FROM runner_enrollments e JOIN runners r ON r.id=e.runner_id WHERE e.runner_id=$1 AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash FOR SHARE OF e;
 -- name: HostingBuildTaskExists :one

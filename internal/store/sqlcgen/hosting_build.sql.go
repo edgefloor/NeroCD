@@ -154,7 +154,7 @@ func (q *Queries) CountHostingBuilds(ctx context.Context, resourceID string) (in
 }
 
 const countResourceHostingSourceGrants = `-- name: CountResourceHostingSourceGrants :one
-SELECT count(*) FROM hosting_source_grants WHERE resource_id=$1
+SELECT count(*) FROM hosting_source_grants WHERE resource_id=$1 AND kind='https_basic'
 `
 
 func (q *Queries) CountResourceHostingSourceGrants(ctx context.Context, resourceID string) (int64, error) {
@@ -526,7 +526,7 @@ func (q *Queries) ListHostingBuildIDs(ctx context.Context, arg ListHostingBuildI
 const listResourceHostingSourceGrants = `-- name: ListResourceHostingSourceGrants :many
 SELECT jsonb_build_object('id',g.id,'version',g.version,'source_id',g.source_id,'source_generation',coalesce((a.metadata->>'source_generation')::bigint,0),'resource_id',g.resource_id,'kind',g.kind,'revoked',g.revoked_at IS NOT NULL)
 FROM hosting_source_grants g LEFT JOIN audit_events a ON a.id='aud_'||g.id AND a.action='hosting.source_grant.created'
-WHERE g.resource_id=$1 ORDER BY g.created_at DESC,g.id DESC LIMIT $3 OFFSET $2
+WHERE g.resource_id=$1 AND g.kind='https_basic' ORDER BY g.created_at DESC,g.id DESC LIMIT $3 OFFSET $2
 `
 
 type ListResourceHostingSourceGrantsParams struct {

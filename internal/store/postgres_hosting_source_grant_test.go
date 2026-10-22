@@ -391,3 +391,28 @@ func TestPostgresSourceGrantExpiresAfterAuditWait(t *testing.T) {
 		t.Fatal("expired authorization left grant", err, count)
 	}
 }
+
+func TestPostgresSourceGrantListExcludesUnsupportedLegacyTransport(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	src := f.src
+	src.Generation = 2
+	src.CredentialKind = "ssh_private_key"
+	src.RepositoryURL = strings.Replace(src.RepositoryURL, "https://", "ssh://git@", 1)
+	src.Policy.AllowedSchemes = []string{"ssh"}
+	src.Policy.SSHHostFingerprints = []string{"SHA256:legacy-test-fingerprint"}
+	if _, err := configureBuildFixtureSource(f.pg, t.Context(), "usr_bootstrap", 1, src, destinationEvent("legacy_ssh_source")); err != nil {
+		t.Fatal(err)
+	}
+	item, record, audit := managedFixture(t, "legacy_ssh_secret", 1)
+	if _, err := f.pg.CreateManagedSecret(t.Context(), item, record, audit); err != nil {
+		t.Fatal(err)
+	}
+	g := domain.HostingSourceGrant{ID: "legacy_ssh_grant", Version: 1, SourceID: src.ID, ResourceID: src.ResourceID, ProjectID: src.ProjectID, RepositoryURL: src.RepositoryURL, PolicyHash: domain.HostingDocumentHash(src.Policy), SecretID: item.ID, SecretVersion: 1, Kind: src.CredentialKind}
+	if _, err := f.pg.CreateHostingSourceGrant(t.Context(), "usr_bootstrap", g, destinationEvent("legacy_ssh_grant")); err != nil {
+		t.Fatal(err)
+	}
+	page, err := f.pg.ListHostingSourceGrants(t.Context(), "usr_bootstrap", src.ResourceID, store.Page{Enabled: true, Limit: 1, LimitSpecified: true})
+	if err != nil || page.Total != 0 || len(page.Items) != 0 {
+		t.Fatal("unsupported legacy transport advertised", err, page.Total)
+	}
+}
