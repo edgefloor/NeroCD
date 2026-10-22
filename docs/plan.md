@@ -267,5 +267,7 @@ backup migration identity. It is not registered in the runtime server.
 must persist real operation state, authorize preparation, resolve the immutable
 snapshot and exact destination, and use the existing fenced runner queue.
 Runtime readiness and restore admission must include the queue before that
-consumer is enabled. Native migration 0044 remains available for actual
-operation records; this infrastructure adds no placeholder operation table.
+consumer is enabled. Before adding operation records, inspect the accepted
+schema and allocate the next available native migration. Do not edit historical
+migrations or treat migration reservations in unaccepted worktrees as accepted
+schema. This infrastructure adds no placeholder operation table.
