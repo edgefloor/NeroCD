@@ -68,7 +68,7 @@ type controllerBuildFixture struct {
 	containers                                                   []string
 }
 
-func newControllerBuildFixture(t *testing.T) *controllerBuildFixture {
+func newControllerBuildFixture(t *testing.T, capabilities ...string) *controllerBuildFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
@@ -165,7 +165,10 @@ func newControllerBuildFixture(t *testing.T) *controllerBuildFixture {
 	f.admin = session.Token
 	f.request(t, "POST", "/api/v1/project-environments", f.admin, app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "build runtime"}, http.StatusCreated, &f.environment)
 	var enrollment app.CreatedRunnerEnrollment
-	f.request(t, "POST", "/api/v1/runner-enrollments", f.admin, app.RunnerEnrollmentInput{RunnerID: "runner_build_runtime", RunnerName: "Build Runtime", Capabilities: []string{domain.HostingBuildTaskType, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy}}, http.StatusCreated, &enrollment)
+	if len(capabilities) == 0 {
+		capabilities = []string{domain.HostingBuildTaskType, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy}
+	}
+	f.request(t, "POST", "/api/v1/runner-enrollments", f.admin, app.RunnerEnrollmentInput{RunnerID: "runner_build_runtime", RunnerName: "Build Runtime", Capabilities: capabilities}, http.StatusCreated, &enrollment)
 	f.credential = "ncr_isolated_build_controller_credential"
 	sum := sha256.Sum256([]byte(f.credential))
 	var consumed app.ConsumedRunnerEnrollment
@@ -307,8 +310,9 @@ func (f *controllerBuildFixture) build(t *testing.T, r domain.Resource, key stri
 		time.Sleep(20 * time.Millisecond)
 	}
 }
-func (f *controllerBuildFixture) agentCommand(ctx context.Context) *exec.Cmd {
+func (f *controllerBuildFixture) agentCommand(ctx context.Context, extra ...string) *exec.Cmd {
 	command := exec.CommandContext(ctx, "/fixture/nerocd", "runner", "--server", f.server.URL, "--credential-file", f.credentialFile, "--build-config-file", f.configFile, "--journal-dir", f.journal, "--work-dir", f.work, "--cancel-poll-interval", "200ms", "--once")
+	command.Args = append(command.Args, extra...)
 	command.Env = append(os.Environ(), "NEROCD_MODE=development", "NEROCD_TOKEN=", "NEROCD_RUNNER_CREDENTIAL_FILE=", "NEROCD_RUNNER_JOURNAL_DIR=")
 	return command
 }
