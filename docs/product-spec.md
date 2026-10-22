@@ -1,11 +1,11 @@
-# NeroCD product specification: shared workspaces on machines you control
+# NeroCD product specification: hosting replacement and future shared workspaces
 
-Revision: 3
+Revision: 3, with hosting-first delivery amendment
 Status: Adopted target specification; implementation status is recorded separately
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Current accepted assessment: `852f8e6b8d5624a95865c276dcea4a239d1f8fea`, reviewed on 2026-10-22. Native migrations extend through 0051. This assessment supersedes stale current-state claims in the supplied baseline.
+Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`. Its revision 3 adoption changed documentation only; accepted application/source assessment remains `852f8e6b8d5624a95865c276dcea4a239d1f8fea`, reviewed on 2026-10-22. Native migrations extend through 0051. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -13,19 +13,41 @@ The [workspace capability ledger](workspace-capabilities.md), [hosting compatibi
 
 ## 1. Product objective
 
-NeroCD is proposed as a shared workspace where remote teams and AI agents build, test, review and deploy software using machines the team controls. The same machine, environment and application-management capabilities should support a personal cloud operated by one person.
+The active objective is a functional replacement for the self-hosted hosting
+workflows in the pinned Coolify reference. Prioritize R01–R68, A01–A37 and the
+declared hosting matrices. Direct hosting is the primary navigation and
+onboarding journey until core hosting replacement is complete:
+
+> Connect a server → select a repository or image → configure the application → deploy → open its HTTPS URL → operate and recover it.
+
+Users must not need a Task, coding agent, workspace or operational template to
+deploy or operate an application. Deliver practical hosting first, then useful
+stateful hosting, remaining core parity, and migration/extended compatibility.
+Feature parity, migration compatibility and unchanged-client compatibility
+remain separate claims.
+
+Revision 3's broader direction is retained in full as a subsequent track:
+a shared workspace where remote teams and AI agents build, test, review and
+deploy software using machines the team controls, also supporting a personal
+cloud operated by one person.
 
 > Give your team and AI agents a place to work that stays running when you go offline, powered by machines you control.
 
-The central collaboration object is a task with a working environment attached. A task carries its goal, source revision and changes, human and agent activity, workspace checkpoints, preview, verification evidence and deployment history. A teammate should be able to inspect the result and continue supported work without reconstructing another person's laptop.
+In that future collaboration experience, a Task carries its goal, source
+revision and changes, human and agent activity, checkpoints, preview,
+verification evidence and deployment history. A teammate can inspect the
+result and continue supported work without reconstructing another person's laptop.
 
-The Coolify rewrite remains the hosting foundation and a separately measured compatibility target. Applications, databases, Compose, volumes, routes, TLS, logs, backups and recovery remain required. This revision expands the product beyond hosting and changes the first demonstration and primary collaboration view. It does not claim that the broader product already exists.
+The deferred workspace demonstration remains assigning a repository task to an
+agent on a team-owned machine, retaining progress while the submitting laptop
+is offline, building with shared cache, publishing an isolated preview, and
+letting a teammate review and approve the same artifact for deployment. It no
+longer defines the first public demonstration or a prerequisite for hosting.
 
-The first complete demonstration is:
-
-> Assign a repository task to an agent on a team-owned machine, retain its progress while the initiating laptop is offline, build with shared cache, publish an isolated preview, and let a teammate review and approve the same artifact for deployment.
-
-Remote execution requires an available execution machine. A durable task record can survive a worker failure, but continuation on another machine requires a supported checkpoint and compatible capacity. A public gateway does not keep an offline application host running.
+Remote execution still requires an available execution machine. A durable task
+record can survive worker failure, but another host can continue only from a
+supported checkpoint with compatible capacity. A gateway cannot keep an offline
+application host running.
 
 ### 1.1 Meaning of "rewrite in Go"
 
@@ -43,7 +65,7 @@ Task collaboration, machine pooling and agent execution are additional product c
 
 ### 1.2 Intended users and success
 
-The primary proposed audience is a remote development team that wants asynchronous work, reproducible review and useful capacity from hardware it controls. Self-hosters use the same primitives with one owner and fewer collaboration steps. These are product hypotheses, not conclusions from customer research.
+The active audience is developers, self-hosters and small platform teams operating their own application hosts. The later workspace direction also serves remote teams seeking asynchronous work and reproducible review on owned hardware. These are product hypotheses, not customer-research conclusions.
 
 A successful product lets users:
 
@@ -57,9 +79,15 @@ A successful product lets users:
 
 Direct application hosting remains a complete journey. Users need not create a coding task or run an AI agent to install an application. Coolify's hosting categories and source/build paths remain the reference for that part of the product. C1, C2
 
-### 1.3 Decisions introduced by this revision
+### 1.3 Scope and delivery precedence
 
-This document proposes task-centered collaboration, distinct task/run/workspace/environment lifecycles, capability-aware placement, VM isolation for untrusted work, and separate cache, artifact and verification reuse. It proposes one supported Linux architecture and one qualified VM backend for the first demonstration. Mac, Windows, NAS, GPU and additional runtime support remain explicit capability tracks.
+The later workspace direction retains task-centered collaboration, distinct Task/Run/Workspace/Environment lifecycles, capability-aware placement, qualified isolation for untrusted work, and separate cache/artifact/verification reuse. D0–D3 and Mac, Windows, NAS, GPU and additional runtimes remain visible deferred gates/tracks.
+
+This amendment changes delivery order, not scope. R01–R102 and A01–A66 remain intact. Direct hosting stays primary now; R65's Task-centered main collaboration view applies to the later workspace phase. References from hosting requirements to future workspace detail require only the smallest justified hosting contract, not the whole workspace product.
+
+Before any workspace-track change starts, identify the named hosting requirement, why current hosting needs it now, the minimum scope, and the hosting acceptance test. General future usefulness, sunk effort and a possible later integration are insufficient. See the [hosting-dependency test](plan.md#hosting-dependency-test).
+
+Supported trusted-host deployment does not require a new VM backend. Keep untrusted execution disabled until a declared hosting/preview workflow has satisfied its qualified isolation requirements. Do not weaken trust or data boundaries to accelerate parity.
 
 Requirements are targets. The pinned source inspection establishes reusable foundations and current limitations. The implementation sequence is a recommendation without asserted delivery dates, effort estimates or measured performance claims.
 
@@ -74,12 +102,12 @@ A delivery phase is an implementation sequence. It does not remove later capabil
 |Server management     |Add local and remote servers, validate capabilities, manage destinations, build roles and proxies                   |Local enrollment and SSH-assisted remote onboarding first                                                                       |
 |Resource organization |Teams, projects, shared environments, applications, databases and Compose stacks                                    |Introduce the correct domain model before exposing hosting workflows                                                            |
 |Git sources           |Public and private repositories, branch/commit selection, deploy keys and provider integrations                     |GitHub first, then GitLab, Gitea, Bitbucket and generic Git/webhooks                                                            |
-|Build strategies      |Dockerfile, automatic builders, static files, compiled static sites and Compose builds                              |Dockerfile in the first task demonstration; add automatic builders and complete Nixpacks/Railpack compatibility through adapters|
+|Build strategies      |Dockerfile, automatic builders, static files, compiled static sites and Compose builds                              |Complete hosting Dockerfile/automatic/static paths; retain Nixpacks and Railpack as separate tested adapters|
 |Inputs without Git    |Registry images, stored Dockerfiles, pasted Compose and catalog templates                                           |Do not require artificial repository records                                                                                    |
-|Build placement       |Builds on application hosts or dedicated build servers, with image delivery and cache controls                      |Remote build, registry delivery and shared cache are part of the first task demonstration                                       |
+|Build placement       |Builds on application hosts or dedicated build servers, with image delivery and cache controls                      |Hosting remote-builder/image-delivery work under R14–R15/A07; no broader Task or Workspace prerequisite                                       |
 |Domains and HTTPS     |Custom and generated domains, target ports, paths, redirects, certificate issuance and renewal                      |Managed Traefik first; Caddy and custom proxy modes tracked explicitly                                                          |
 |Deployment automation |Manual deploy, deploy on push, deploy webhooks, redeploy and retained releases                                      |Automatic trusted-source deployment is a normal workflow                                                                        |
-|Preview deployments   |PR/MR and task previews, isolated configuration and storage, domains, status reporting and cleanup                  |A private multi-resource preview is part of the first task demonstration                                                        |
+|Preview deployments   |PR/MR and task previews, isolated configuration and storage, domains, status reporting and cleanup                  |PR/MR previews remain core hosting parity; task-linked private previews belong to deferred workspace gates                                                        |
 |Persistent storage    |Named volumes, directory mounts, managed files and existing host-file mounts                                        |Ownership and retention must exist before general stateful hosting                                                              |
 |Databases             |Engine-specific creation, credentials, networking, storage, health, configuration and supported recovery            |PostgreSQL and Redis first; complete the engine matrix below                                                                    |
 |Service catalog       |One-click installation, generated values, component controls and versioned upgrades                                 |Start with a useful tested catalog, then expand compatibility and breadth                                                       |
@@ -95,7 +123,7 @@ References for the baseline categories: build paths C2, Compose C3, server/build
 
 ### 2.1 Workspace capability ledger
 
-|Product area            |Proposed target                                                                                        |First demonstration and follow-through                                                                                    |
+|Product area            |Proposed target                                                                                        |Deferred workspace demonstration and follow-through                                                                                    |
 |------------------------|-------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
 |Machine pool            |Stable machine identities, roles, capabilities, architecture, availability, trust and bounded resources|Qualified Linux hosts first, with explicit host adapter qualification for other systems                                   |
 |Durable tasks           |Goal, repository lineage, runs, activity, workspace, evidence and review history                       |One task survives client disconnect and records an agent attempt                                                          |
@@ -129,7 +157,7 @@ The current baseline is accepted NeroCD `852f8e6b8d5624a95865c276dcea4a239d1f8fe
 |Runner enrollment, leases, fences and replay     |Reuse and extend      |Evolve into host agents and build workers with explicit server/destination identity                                           |
 |Local/OIDC login and project authorization       |Reuse                 |Add team ownership and resource/server permission rules                                                                       |
 |Managed service accounts                         |Reuse and extend      |Preserve principal lifecycle and add short-lived task grants with enforceable operation and resource scopes                   |
-|React/Vite/TanStack frontend and generated client|Reuse infrastructure  |Make the durable task the main collaboration view and keep environment, application and machine operations directly accessible|
+|React/Vite/TanStack frontend and generated client|Reuse infrastructure  |Keep direct hosting primary now; retain the richer Task collaboration view for the deferred workspace phase                    |
 |Service/environment/revision model               |Extend accepted hosting|Shared project environments and typed resources already exist; add remaining kinds and legacy migration mappings              |
 |Compose execution primitives                     |Reuse selectively     |Keep legacy restrictions explicit; extend managed Compose/storage without regressing ordinary hosting HTTP readiness           |
 |Provenance and linked rollback                   |Extend                |Separate build outputs, releases, target-specific application and data recovery                                               |
@@ -165,6 +193,11 @@ A database lease alone cannot stop an old process from writing a workspace or ma
 
 Keep a modular Go application and the existing PostgreSQL authority. Separate responsibilities in code and job types before considering independently deployed services. Humans, agents, CLI and integrations use one authorized application layer.
 
+Hosting contracts lead current implementation. The Task/Workspace, reservation,
+agent and model architecture below remains future scope; any bounded part must
+pass the hosting-dependency test before work starts. It is not a prerequisite
+for supported trusted-host hosting.
+
 ```mermaid
 flowchart TB
     Clients["Humans and agent integrations"] --> Control["Go control plane and PostgreSQL"]
@@ -190,7 +223,7 @@ Coolify currently describes SSH-based management without requiring a persistent 
 
 Use a small privileged backend helper where virtualization or host networking requires it, and a guest-side supervisor for work inside an isolated Linux environment. Version and authenticate the interfaces. Keep host administration, guest execution and user task credentials separate.
 
-For the first qualified untrusted-work backend, use Linux with working KVM and Firecracker, with Docker/Compose or BuildKit inside supported guests. Firecracker requires a Linux host and runs guests matching the host architecture. Native Mac execution needs a different adapter, for example Apple Virtualization.framework. These are backend-specific implementations of one lifecycle contract. W1, W2
+For a future qualified untrusted-work backend, the proposed first adapter is Linux with working KVM and Firecracker, with Docker/Compose or BuildKit inside supported guests. This is deferred unless the hosting-dependency test establishes a bounded need for a declared untrusted hosting/preview workflow; trusted-host deployment does not wait for it. Firecracker requires a Linux host and runs guests matching the host architecture. Native Mac execution needs a different adapter, for example Apple Virtualization.framework. These are backend-specific implementations of one lifecycle contract. W1, W2
 
 A task workspace, a preview environment and a production environment have separate lifecycle and authority boundaries. A supported preview can contain an application, worker and isolated database within one environment boundary. Persist its data only through declared volume bindings. Shared tenant Docker daemons are an explicitly trusted mode, not the default boundary for untrusted agent tasks.
 
@@ -317,7 +350,7 @@ The operator inspects resource health after deployments finish, restarts a conta
 
 A control-plane restart leaves hosted resources running. A restored control plane reconciles ownership before resuming mutation.
 
-### 5.6 Task to reviewed deployment: first complete demonstration
+### 5.6 Task to reviewed deployment: deferred workspace demonstration
 
 Use one supported Linux architecture and two physical machines with three logical roles: an always-on control/gateway role, a team-owned agent/build worker, and an always-on preview/deployment target. The control/gateway and target may share a machine with bounded allocations. Use a real registry transfer between build and deployment hosts.
 
@@ -348,7 +381,7 @@ A supported application update declares its version path, preflight, backup, mig
 
 ## 6. Functional requirements
 
-All requirements below describe the target rewrite. Milestones in section 10 determine implementation order. Current limitations are recorded in the parity ledger, not used to remove these requirements.
+All requirements below describe the complete target. The hosting-first amendment in sections 1.3 and 10 governs delivery order: R01–R68/A01–A37 and declared hosting matrices first; R69–R102/A38–A66 remain visible future scope. R65's Task-first collaboration view is deferred; direct hosting is primary now. No requirement definition is removed or narrowed by this ordering.
 
 ### 6.1 Organization and server management
 
@@ -717,7 +750,7 @@ These scenarios define the corrected product outcome. They are proposed tests, n
 
 ### 8.1 Workspace and owned-machine acceptance
 
-The first full task demonstration must pass the applicable workspace cases together with its hosting dependencies. Later capability rows are acceptance targets for those tracks, not claims of first-release support.
+The deferred full task demonstration must pass the applicable workspace cases together with its hosting dependencies. Later capability rows are acceptance targets for those tracks, not claims of current hosting support or the active first demonstration.
 
 |ID |Scenario                                                            |Required result                                                                                                                                                                       |
 |---|--------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -778,9 +811,34 @@ Owned hardware has power, maintenance, connectivity, storage and replacement cos
 
 ## 10. Delivery plan
 
-Sequence by a complete user outcome and dependency gates. The first public demonstration should complete the task-to-reviewed-deployment journey in section 5.6. Do not wait for every host adapter or complete Coolify compatibility before demonstrating that journey, and do not drop the hosting requirements needed to make its preview useful.
+Hosting parity is the active priority. Complete the repository/image-to-HTTPS
+hosting journey and its operation/recovery paths before the broader workspace
+product. The [implementation plan](plan.md) identifies accepted foundations,
+remaining gaps and candidate-specific acceptance.
 
-### 10.1 First demonstration
+| Order | Active hosting outcome | Required evidence |
+| --- | --- | --- |
+| H1 | Practical repository/image-to-HTTPS hosting: onboarding, private Git, required variables and secret delivery, trusted deploy-on-push, deployment policy, production TLS qualification, runtime logs and continuous status | Applicable R01–R33 and R57–R68; A01–A14, A20, A27–A29, A35 and relevant matrix/failure/recovery cases |
+| H2 | Useful stateful hosting: Compose, persistent storage, PostgreSQL/Redis, application bindings, initial tested catalog, backups and application-verified restores | R34–R53 and related secrets/operations; A15–A22, A25–A27, A37 |
+| H3 | Remaining core parity: PR/MR previews, remote builders/image delivery, provider/build/database coverage, terminals, schedules, notifications, authorized API/CLI/MCP | Remaining R01–R68 and core hosting matrices; applicable A01–A32, A35–A37 together on the release candidate |
+| H4 | Declared migration and extended compatibility | R67 and section 7; A33–A34 plus explicit migration, unchanged-client and extended-infrastructure matrices |
+
+Order individual slices by real dependencies and verified gaps. Any necessary
+legacy-ID/permission mapping or data ownership protection ships with the hosting
+behavior it protects; this sequence does not permit unsafe migration shortcuts.
+A narrow deployment demo is not complete Coolify parity.
+
+Before starting a workspace-track change, record the exact hosting R requirement,
+evidence of need now, minimum scope and A acceptance test. Remote builders,
+registry delivery, cache, immutable releases, approvals, permissions and runtime
+observations can proceed through their hosting contracts without a durable
+collaboration Task, coding agent or general machine reservation system.
+
+Unaccepted workspace work remains a coherent recoverable checkpoint. Preserve
+it and unrelated changes without deletion, reversion or history rewriting.
+Do not integrate it because work has already been spent on it.
+
+### 10.1 Deferred workspace demonstration
 
 |Gate                                |Deliverable                                                                                                                                                                   |Exit conditions                                                                                                                               |
 |------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
@@ -789,13 +847,13 @@ Sequence by a complete user outcome and dependency gates. The first public demon
 |D2: Working environment and handoff |App plus seeded isolated PostgreSQL preview, private ingress/TLS, runtime observations/logs, trusted checks against the final artifact, teammate review and supported takeover|Another user opens the task and working application after the agent run ends; evidence and permissions agree; cleanup preserves data ownership|
 |D3: Reviewed deployment             |Target-specific plan, human production approval, same-artifact promotion, mutation fencing and supported failure recovery                                                     |The full journey passes together, including changed-source/plan, lost-worker, revoked-grant, missing-artifact and expiry cases                |
 
-D0 is enabling work. D1 proves retained execution and shared output. D2 proves useful collaboration. D3 completes the first product demonstration. One supported architecture and one backend are sufficient for this milestone, provided limits are explicit.
+D0–D3 remain the later workspace demonstration gates. They do not lead the active delivery plan or block trusted-host hosting. Their Task, agent, checkpoint, general reservation, model/GPU and vendor-package work stays deferred unless a bounded part passes the hosting-dependency test. One architecture/backend may qualify a later declared milestone only with explicit limits.
 
-Implement conservative complete-artifact reuse and verification reuse after input/evidence recording is dependable. The initial demonstration may rebuild through shared layer cache and rerun checks. Its schema and UI must already distinguish these outcomes so later reuse does not require misleading history.
+Implement conservative complete-artifact reuse and verification reuse after input/evidence recording is dependable. The deferred workspace demonstration may rebuild through shared layer cache and rerun checks. Its schema and UI must already distinguish these outcomes so later reuse does not require misleading history.
 
 ### 10.2 Subsequent capability tracks
 
-These tracks are separate acceptance claims and may advance in parallel when their prerequisites are satisfied.
+H is the active hosting track. P/M/R/O/V retain their future scope; a bounded part may advance only when the hosting-dependency test establishes a current hosting need. The broader workspace tracks must not displace or delay hosting replacement.
 
 |Track                            |Deliverable                                                                                                                                                               |Completion evidence                                                                                                 |
 |---------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
@@ -806,7 +864,7 @@ These tracks are separate acceptance claims and may advance in parallel when the
 |O: Application care              |Version-specific upgrades, guided data migration, tested restores, database-aware plans, eligible progressive delivery and drift reconciliation                           |Application/version-path fixtures and failure/recovery cases pass                                                   |
 |V: Vendor packages               |Verified package identity, customer-controlled installation/update policy, compatibility and recovery metadata                                                            |Publisher/customer authority, revocation, version pinning and compromised-update scenarios are defined and tested   |
 
-An existing authenticated model endpoint can be connected before managed GPU/model lifecycle is ready. A manually enrolled cloud machine can add capacity before provider provisioning is ready. Neither shortcut should be presented as completion of the broader track.
+Future model endpoints and manually enrolled cloud capacity remain valid smaller steps within their tracks. They do not receive active priority without a named current hosting dependency, and neither establishes managed GPU/model lifecycle or provider provisioning.
 
 Additional proxy modes, raw Compose, provider/template breadth, multi-server application deployment, Swarm, GitHub Actions runner hosting, external secret/log integrations and requested Coolify API adapters remain visible compatibility entries. A generic shell job does not establish support for these workflows.
 
@@ -818,8 +876,8 @@ No delivery dates, staffing estimates or performance improvements are asserted. 
 
 Adopt this as the proposed revision of the product specification. Repository documentation should distinguish implemented behavior, planned workspace capabilities and the hosting compatibility target.
 
-- README.md: explain the task/environment promise, owned-machine roles and direct hosting workflow, with explicit current support.
-- docs/plan.md: link the first complete demonstration, dependency gates, capability tracks and acceptance evidence.
+- README.md: lead with direct hosting and the repository/image-to-HTTPS-to-operation/recovery journey, while retaining the future workspace vision and explicit current support.
+- docs/plan.md: order hosting H1–H4 first, preserve deferred D0–D3 and broader tracks, and require the hosting-dependency test before workspace work.
 - docs/architecture.md: document task/run/workspace/environment lifecycles, stable machine identity, reservations, grants, build/artifact/verification/release/plan separation and independent workload traffic.
 - Task and agent guides: describe submission, checkpoints, cancellation, budgets, human takeover, review, adapter resume limits and production authority.
 - Machine guides: publish backend/OS/architecture qualification, trust profiles, model roles, availability policy, private ingress and cloud data-placement rules.
@@ -828,11 +886,11 @@ Adopt this as the proposed revision of the product specification. Repository doc
 - Application support matrix: describe supported version transitions, recovery, migration and restore-test procedures per application/engine.
 - Compatibility and capability ledgers: identify pinned references, tested versions, acceptance fixtures, partial support and deliberate differences.
 
-Revision 2's decision to make hosting replace task-first navigation is superseded. The new durable Task is richer than the existing generic execution view. Hosting remains directly accessible and supplies the environments attached to tasks. The earlier narrow prebuilt-only scope also remains superseded.
+The earlier revision 3 instruction to make Task collaboration and D0–D3 the first public demonstration is superseded by this delivery amendment. Direct hosting remains primary until core hosting replacement is complete. The richer durable Task stays future scope alongside all R69–R102/A38–A66 requirements. The earlier narrow prebuilt-only scope remains superseded.
 
 ## 12. Evidence and review limits
 
-This adoption uses accepted NeroCD `852f8e6b8d5624a95865c276dcea4a239d1f8fea`, not the supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c`. Both are repository commits and the supplied baseline is an ancestor. The maximum native migration is 0051. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+The priority amendment starts from accepted documentation `806b57e46db9f920da240ca9ed42f5578d21226a`; accepted application behavior is still assessed at `852f8e6b8d5624a95865c276dcea4a239d1f8fea`, not the supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c`. Both are repository commits and the supplied baseline is an ancestor. The maximum native migration is 0051. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -851,7 +909,9 @@ Revision 3 targets remain unimplemented unless the ledgers identify narrower acc
 
 The pinned Coolify reference stays `b12d1386f3d458618b4c579babcd1e339c6c40b3`; its revision 2 evidence is retained. W1–W13 were reviewed against primary documentation on 2026-10-22. They describe dependency behavior, not NeroCD integration qualification. Docker's overview still labels S3 cache unreleased, while its S3 page labels it experimental. Adoption must pin and test the chosen driver/backend combination.
 
-Only documentation changes in this candidate. No new workspace runtime, schema, API, configuration or migration is implemented by adopting this target.
+The unaccepted Task backend checkpoint `6a3d04bc28e950d569cbc7705a5d1dbf8df8c5f5` and Task UI checkpoint `560ef12499cd361c7c2eae5a8a7d310c33ce34a7` are preserved and deferred. Neither is merged into the accepted baseline. The UI uses temporary DTO wiring; its Go/browser validation was not run. These checkpoints are not support claims or justification for integration.
+
+Only documentation changes in this priority candidate. No new hosting feature or workspace runtime, schema, API, configuration or migration is implemented here. Earlier accepted application/runtime work remains recorded above.
 
 ## 13. Sources
 

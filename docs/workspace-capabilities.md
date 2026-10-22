@@ -1,11 +1,15 @@
 # Workspace capability ledger
 
-Assessment: accepted NeroCD `852f8e6b8d5624a95865c276dcea4a239d1f8fea`,
+Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
+Application/source assessment remains `852f8e6b8d5624a95865c276dcea4a239d1f8fea`,
 2026-10-22. This ledger covers revision 3's workspace product. The
 [hosting ledger](compatibility.md) retains full Coolify scope at
 `b12d1386f3d458618b4c579babcd1e339c6c40b3`.
 The [specification](product-spec.md) preserves R01–R102 and A01–A66.
-The [plan](plan.md) orders D0–D3 and later H/P/M/R/O/V tracks.
+The [plan](plan.md) prioritizes hosting R01–R68/A01–A37 and declared matrices.
+D0–D3 and the broader workspace/agent vision remain deferred; R69–R102/A38–A66
+are preserved future scope. Direct hosting is primary navigation/onboarding and
+requires no Task, coding agent, Workspace or operational template.
 
 `planned` means a target has no accepted product implementation. `partial`
 identifies specific reusable accepted foundations, not completion of a
@@ -13,11 +17,20 @@ requirement. No workspace row is validated by ordinary runner or hosting
 tests alone. Every future qualification must name candidate, backend/tool
 versions, architecture, fixture, result and limits.
 
-## Product capability matrix
+Before any workspace-track change, identify its named hosting requirement,
+why current hosting needs it now, its minimum scope and its hosting acceptance
+test. [The four-part test](plan.md#hosting-dependency-test) must precede work;
+future usefulness or sunk effort is insufficient. Remote builders, registry
+delivery, cache, release/approval and observations can ship their bounded
+hosting contracts without the broader workspace platform. Trusted-host hosting
+does not wait for VM qualification; keep untrusted execution disabled until
+its declared isolation requirements are met.
+
+## Deferred product capability matrix
 
 | Capability | Status at the accepted baseline | Required target and acceptance | Track and dependency |
 | --- | --- | --- | --- |
-| Durable Task and activity | planned product; additive project-scoped metadata/activity backend in progress and unaccepted, Task UI planned; existing `TaskRun` and operational templates are execution records | Goal/collaborators/source lineage, human/integration/agent activity, multiple runs/candidates/reviews; R69–R70, R74; A38–A39, A66 | First partial R69/R74 metadata/activity slice, then D0 admission |
+| Durable Task and activity | deferred product; unaccepted backend/UI checkpoints preserved, not merged; existing `TaskRun` and operational templates are execution records | Goal/collaborators/source lineage, human/integration/agent activity, multiple runs/candidates/reviews; R69–R70, R74; A38–A39, A66 | Deferred partial R69/R74 checkpoint; no active hosting dependency established |
 | Workspace and checkpoint | planned; controlled hosting checkout is a bounded component | Owned mutable checkout, one writer, immutable portable checkpoint, excluded secrets and declared resume/restart/evidence-only limits; R71–R73; A40–A41 | D0–D1; host/guest fencing and grants |
 | Source handoff | partial foundations only; Git source receipts and immutable versions exist | Authorized patch/commit/review-branch operations, actual provider/broker ref enforcement and stable lineage; R75; A45 | D1; task grants and provider adapter |
 | Machine pool and reservations | partial hosting Server/destination/grant identity; no general Machine reservation product | Typed native/emulated capabilities, trust/location/capacity filters, atomic reservations and local enforcement; R03–R07, R76–R77; A42–A44 | D0, then P |
@@ -60,18 +73,25 @@ constraints; it is not a passed integration test.
 A pool schedules separate jobs. It provides neither shared memory across arbitrary
 hosts, distributed GPU inference nor universal process/live-data migration.
 
-## Completion gates
+## Deferred gates and preserved checkpoints
 
-D0 establishes machine/authority foundations, D1 retained work and shared builds,
+D0 retains machine/authority foundations, D1 retained work and shared builds,
 D2 a useful independent environment and handoff, and D3 reviewed deployment.
-All four are planned. Their combined acceptance uses applicable hosting cases
-A01–A37 plus workspace A38–A66, scoped as required by the demonstration and
-later tracks. Each later capability still needs its own fixtures.
+All four are deferred workspace gates, not the first public demonstration or
+prerequisites for trusted-host hosting. Their later combined acceptance still
+uses applicable hosting cases A01–A37 plus workspace A38–A66; no scope is removed.
 
-The first proposed implementation is the additive Task metadata/activity slice
-in the [plan](plan.md#next-implementation-slice). It must not advertise a
-Workspace, reservation, VM sandbox, agent execution or private preview merely
-because the UI can link an existing Run or project environment.
+Preserve backend checkpoint `6a3d04bc28e950d569cbc7705a5d1dbf8df8c5f5`
+and UI checkpoint `560ef12499cd361c7c2eae5a8a7d310c33ce34a7`.
+Both are unaccepted, deferred and outside main. The UI has temporary DTO/backend
+wiring, no accepted main-navigation change, and Go/browser checks were not run.
+Do not integrate these checkpoints merely because effort has already been spent.
+No deletion, reversion or history rewriting is required.
+
+Only a bounded part that passes the [hosting-dependency test](plan.md#hosting-dependency-test)
+can restart. The active [next hosting slice](plan.md#next-hosting-slice) concerns
+private HTTPS Git and existing credential delivery foundations, not a new
+collaboration Task or general grant system.
 
 ## Retained accepted foundations
 

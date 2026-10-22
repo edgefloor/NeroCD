@@ -1,9 +1,12 @@
 # Architecture
 
-Revision 3 current assessment: `852f8e6b8d5624a95865c276dcea4a239d1f8fea`,
+Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
+Application/source assessment remains `852f8e6b8d5624a95865c276dcea4a239d1f8fea`,
 2026-10-22. The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c`
 and earlier `a763a90b3896257b784c9498d01650ccdad2427a` are historical.
-The [specification](product-spec.md) defines the workspace and hosting targets.
+The [specification](product-spec.md) retains both targets. Hosting parity is the
+active priority: R01–R68/A01–A37 and declared matrices first. Direct hosting
+remains primary navigation/onboarding; Task/Workspace work is deferred.
 The [plan](plan.md), [workspace ledger](workspace-capabilities.md) and
 [hosting ledger](compatibility.md) distinguish accepted behavior from proposed design.
 The [glossary](../CONTEXT.md) fixes Task, Run, Workspace and Environment terminology.
@@ -145,9 +148,10 @@ Restore records independent holds for bindings and configured proxies. Read-only
 observation cannot prove that a pre-backup command stopped and cannot clear
 those holds. Trusted journal/process recovery and safe resumption remain
 required. No complete Coolify parity or D0–D3 workspace milestone is claimed. R65 now
-requires a new durable Task collaboration view alongside direct hosting.
+retains a later durable Task collaboration view alongside direct hosting;
+that future view does not lead the current hosting navigation or delivery order.
 
-## Target hosting architecture
+## Active target hosting architecture
 
 Retain the modular Go application, PostgreSQL authority, authorization, durable
 execution protocol and React/TypeScript frontend. Go owns the API, orchestration,
@@ -290,9 +294,13 @@ build output. Private Git and the complete hosting/workspace journeys remain pla
 See [Hosting job infrastructure](hosting-jobs.md) for lifecycle, compatibility,
 and integration contracts.
 
-## Target workspace architecture
+## Deferred target workspace architecture
 
-This section describes unimplemented revision 3 contracts. Existing hosting
+This section preserves later revision 3 scope. It does not lead delivery or
+make Task, Workspace, agent, reservations or VM execution prerequisites for
+supported hosting. Any bounded part must first pass the [hosting-dependency test](plan.md#hosting-dependency-test):
+name the hosting requirement, need now, minimum scope and acceptance test.
+General future usefulness and sunk effort are insufficient. Existing hosting
 Server, resource, lease and operation records are reusable foundations, not
 already qualified Machine, Workspace or Task-grant implementations.
 
@@ -344,7 +352,9 @@ opportunistic tasks. Budgets aggregate across retries and show measurement gaps.
 Unavailable capacity leaves durable blocked work. Cloud fallback needs explicit
 provider, location, source/data-transfer and spend authority.
 
-The first proposed untrusted-work adapter is one qualified Linux/KVM/Firecracker
+Supported trusted-host deployment does not wait for a VM adapter. Keep untrusted
+execution disabled until its actual isolation requirements are satisfied for the
+declared workflow. The deferred proposed untrusted-work adapter is one qualified Linux/KVM/Firecracker
 backend and architecture. Version the privileged host helper and guest supervisor;
 separate host administration, guest execution and task grants. Deny personal
 home directories, SSH agents, host Docker sockets and LAN/metadata routes unless
@@ -390,7 +400,7 @@ artifact without rebuilding, while runtime data/configuration may differ.
 
 ### Preview, ingress and recovery
 
-The first target preview contains an application and isolated seeded PostgreSQL,
+The later workspace target preview contains an application and isolated seeded PostgreSQL,
 plus a worker when required. It has an independent runtime/data lifetime,
 authenticated project-scoped ingress, a named release, required component
 observations, expiry and owned cleanup. Completion of an agent Run or draining
