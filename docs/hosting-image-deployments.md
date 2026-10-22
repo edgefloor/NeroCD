@@ -3,9 +3,11 @@
 Use **Projects → Project hosting** to select a shared environment and saved image
 application. Save its desired destination before requesting deployment. The
 destination identifies one enrolled runner and an immutable runtime namespace.
-The runner must be active, advertise `image_deploy`, and have no `shell`
-capability. Server admission also requires `compose-deploy`; enroll the intended
-runner with both capabilities. Use the file-based onboarding instructions in
+The runner must be active, advertise `image_deploy` and `image_release_ports_v1`, and have no `shell`
+capability. Server admission also requires `compose-deploy`. Use the explicit
+**Use image hosting capability preset** for this new enrollment; it replaces
+the capability draft with all three required values without changing existing
+runner grants. Use the file-based onboarding instructions in
 [Hosting destinations](hosting-destinations.md).
 
 The runner host needs NeroCD, Docker Engine, and Docker Compose. Preserve its
@@ -23,15 +25,22 @@ command arguments.
 
 1. Review the saved image reference, configuration generation, and binding shown
    in **Image deployments**. A deployment captures this configuration and target.
-2. Enter the container port and runner-local host port. Container ports range
-   from 1 through 65535; host ports range from 1024 through 65535.
+2. Enter the container port, from 1 through 65535. Keep **Automatic per-release
+   port** to allocate an available loopback port from the configured server
+   range. The operation shows the allocated port. **Advanced: explicit fixed
+   port** accepts 1024 through 65535, but rejects ports reserved by a current,
+   retained, or route-protected release.
 3. Enter an origin-relative HTTP readiness path, such as `/health`, and a timeout
    from 1 through 120 seconds. The check does not require revision-specific
    response headers.
-4. Acknowledge that replacing a workload on the fixed host port interrupts
-   service while the old container stops and the new container is verified.
+4. Acknowledge the selected port policy. Automatic allocation retains previous
+   containers until explicit cleanup; an explicit port must be available. This
+   control does not promise an automatic traffic switch or zero downtime.
 5. Select **Request image deployment**. A project maintainer or owner can submit
    the request. The server also permits a system administrator.
+
+Previous containers can remain running after a successful deployment. Changing
+the allocated port does not update a public route or client endpoint.
 
 The host port listens on `127.0.0.1` at the runner. It is not a public application
 URL. This workflow does not provision DNS, HTTPS, a reverse proxy, or SSH access.
@@ -104,3 +113,25 @@ reconciliation can observe the target, but cannot clear restored ownership or
 resume deployment admission. This image deployment workflow has no administrator
 unlock action. Do not repeatedly resubmit or replace the request key to bypass
 the hold.
+
+## Clean up a retained release
+
+The **Retained releases** ledger excludes the current healthy release and shows
+each earlier operation, exact container, image, binding, runner, local port, and
+original readiness request. Its running flag is recorded evidence, not a live
+health probe. The API returns the resource ledger without pagination.
+
+A project maintainer can choose **Review cleanup** for a retained release. Read
+the exact operation, container, and port in the confirmation, then confirm and
+request cleanup. The server selects the target from that operation; the browser
+submits only the expected configuration generation and an idempotency key.
+Current, routed, held, restored, or otherwise protected releases fail closed.
+Cleanup does not switch traffic, remove data volumes, or globally prune images.
+
+If the response is lost, retry the identical cleanup request using the retained
+key and target. If the server reports a conflict, refresh and review the current
+configuration and release state before explicitly confirming a separate request.
+No refreshed generation is submitted automatically. The cleanup operation appears
+in operation history; the retained list records pending cleanup and omits releases after removal. A successful
+cleanup result applies only to the exact retained container and does not report
+readiness of the current workload.

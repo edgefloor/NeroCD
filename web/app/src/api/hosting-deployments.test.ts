@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { ApiError } from "./errors";
-import { cancelHostingOperation, getHostingOperation, HostingDeploymentError, hostingDeploymentsQuery, hostingOperationQuery, listHostingDeployments, reconcileHostingOperation, requestHostingDeployment } from "./hosting-deployments";
+import { cancelHostingOperation, getHostingOperation, HostingDeploymentError, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, listHostingDeployments, listHostingRetainedReleases, reconcileHostingOperation, requestHostingDeployment, requestHostingReleaseCleanup } from "./hosting-deployments";
 
 afterEach(() => vi.unstubAllGlobals());
 const input = { expected_generation: 3, idempotency_key: "stable-request", container_port: 80, host_port: 8080, readiness: { path: "/health", timeout_seconds: 30 } };
@@ -41,4 +41,19 @@ test("deployment admission retains the restore hold code independently of generi
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "hosting_restore_held", error: "recovery proof pending" }), { status: 409, headers: { "X-Request-ID": "restore-request" } })));
   await expect(requestHostingDeployment("r", input)).rejects.toMatchObject({ status: 409, code: "hosting_restore_held", requestID: "restore-request" });
   expect(new HostingDeploymentError(409, "held", null, "hosting_restore_held")).toBeInstanceOf(ApiError);
+});
+test("retained release wrappers encode exact target IDs and preserve cleanup CAS/key with abort and CSRF", async () => {
+  const fetch = vi.fn().mockImplementation(async () => new Response("[]")); vi.stubGlobal("fetch", fetch);
+  const signal = new AbortController().signal;
+  await listHostingRetainedReleases("resource/one", { signal });
+  await requestHostingReleaseCleanup("resource/one", "operation/old", { expected_generation: 7, idempotency_key: "cleanup-key" }, { signal });
+  expect(fetch.mock.calls[0][0]).toBe("/api/v1/resources/resource%2Fone/retained-releases");
+  expect(fetch.mock.calls[1][0]).toBe("/api/v1/resources/resource%2Fone/retained-releases/operation%2Fold/cleanup");
+  expect(fetch.mock.calls[1][1]).toMatchObject({ method: "POST", signal, credentials: "include", body: JSON.stringify({ expected_generation: 7, idempotency_key: "cleanup-key" }), headers: { "X-NeroCD-CSRF": "1" } });
+  expect(hostingRetainedQuery("p", "r").queryKey).not.toEqual(hostingRetainedQuery("other", "r").queryKey);
+});
+test("retained release metadata rejects a foreign resource response", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([{ healthy: { snapshot: { resource_id: "foreign" } } }]))));
+  const client = new QueryClient();
+  await expect(client.fetchQuery(hostingRetainedQuery("p", "r"))).rejects.toThrow("scope mismatch"); client.clear();
 });

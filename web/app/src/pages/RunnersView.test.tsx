@@ -36,3 +36,12 @@ test.each(["permission", "unmount"])("late enrollment replies cannot expose a se
   if (context === "permission") view.rerender(<RunnersView runners={[]} canAdmin={false} onEnroll={onEnroll} />); else view.unmount();
   await act(async () => resolve(created())); expect(screen.queryByText("test-only-bootstrap")).toBeNull();
 });
+test("image hosting preset is explicit and includes versioned release ports without modifying custom grants silently", async () => {
+  const onEnroll = vi.fn().mockResolvedValue(created()); render(<RunnersView runners={[]} canAdmin onEnroll={onEnroll} />);
+  expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).toBe("compose-deploy");
+  fireEvent.change(screen.getByLabelText("Runner capabilities"), { target: { value: "shell,custom" } });
+  expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).toBe("shell,custom");
+  fireEvent.click(screen.getByRole("button", { name: "Use image hosting capability preset" })); submit();
+  await screen.findByRole("dialog");
+  expect(onEnroll).toHaveBeenCalledWith(expect.objectContaining({ capabilities: ["compose-deploy", "image_deploy", "image_release_ports_v1"] }));
+});

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
 import { getResource, type Resource } from "@/api/hosting";
 import { resourceBindingQuery } from "@/api/destinations";
-import { cancelHostingOperation, HostingDeploymentError, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, reconcileHostingOperation, requestHostingDeployment, type HostingDeploymentInput } from "@/api/hosting-deployments";
+import { cancelHostingOperation, HostingDeploymentError, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, reconcileHostingOperation, requestHostingDeployment, requestHostingReleaseCleanup, type HostingCleanupInput, type HostingRetainedRelease, type HostingOperation, type HostingDeploymentInput } from "@/api/hosting-deployments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageNavigation } from "@/components/common/PageNavigation";
@@ -61,6 +61,7 @@ function OperationDetail({ projectID, resourceID, operationID, writable, owner, 
     <Button type="button" variant="outline" disabled={detail.isFetching || busy} onClick={() => void detail.refetch()}>Refresh operation</Button>
     {operation ? <>
       <h6 className="font-medium">{stateText[operation.state] ?? operation.state}</h6>
+      {operation.cleanup_plan ? <p>Retained release cleanup · target {operation.cleanup_plan.target.operation_id}</p> : null}
       <dl className="space-y-1 break-all text-sm">
         <dt>Operation ID</dt><dd>{operation.id}</dd><dt>Recorded update</dt><dd>{operation.updated_at}</dd>
         <dt>Requested image</dt><dd>{operation.snapshot.image_reference}</dd><dt>Configuration generation</dt><dd>{operation.snapshot.resource_generation}</dd>
@@ -75,9 +76,9 @@ function OperationDetail({ projectID, resourceID, operationID, writable, owner, 
       {operation.mutation_hold ? <p role="status">Mutation hold retained. Another workload change must wait for the server to settle this operation.</p> : null}
       {operation.restore_ownership_held ? <p role="alert">Deployment admission blocked after platform restore. Trusted local recovery proof is pending. Reconciliation can observe the target but cannot release restored ownership; there is no administrator unlock action.</p> : null}
       {operation.state === "cancel_requested" || operation.state === "reconciliation_required" ? <p className="text-sm">Apply may have started. Cancellation is not proof of rollback or a stopped workload. An owner can request reconciliation.</p> : null}
-      {operation.result ? <section className="space-y-1 text-sm" aria-label="Recorded deployment result">
-        <h6 className="font-medium">Recorded deployment result</h6><p>Outcome: {operation.result.outcome}</p>
-        <p>Readiness recorded at completion: {operation.result.ready ? "passed" : "not confirmed"}.</p>
+      {operation.result ? <section className="space-y-1 text-sm" aria-label={operation.cleanup_plan ? "Recorded cleanup result" : "Recorded deployment result"}>
+        <h6 className="font-medium">{operation.cleanup_plan ? "Recorded cleanup result" : "Recorded deployment result"}</h6><p>Outcome: {operation.result.outcome}</p>
+        {operation.cleanup_plan ? <p>Cleanup outcome is recorded for the exact retained container. Data volumes and globally shared images are not deleted by this action.</p> : <p>Readiness recorded at completion: {operation.result.ready ? "passed" : "not confirmed"}.</p>}
         {operation.result.restored ? <p>The result records restoration of the previous workload.</p> : null}
         {operation.result.uncertain ? <p>The result is uncertain; do not assume the workload is running or stopped.</p> : null}
       </section> : null}
@@ -86,6 +87,79 @@ function OperationDetail({ projectID, resourceID, operationID, writable, owner, 
       {owner ? <Button type="button" variant="outline" disabled={blocked || busy || detail.isError || operation.reconcile_requested} onClick={() => void control("reconcile")}>{operation.reconcile_requested ? "Reconciliation pending" : "Request reconciliation"}</Button> : <p className="text-xs text-muted-foreground">Project owner access is required to request reconciliation.</p>}
     </> : null}
     {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
+  </section>;
+}
+
+function RetainedReleases({ resource, writable, blocked, mutationHeld, restoreHeld, onSelected, onChanged }: {
+  resource: Resource; writable: boolean; blocked: boolean; mutationHeld: boolean; restoreHeld: boolean;
+  onSelected: (id: string) => void; onChanged: () => Promise<void>;
+}) {
+  const releases = useQuery(hostingRetainedQuery(resource.project_id, resource.id));
+  const [target, setTarget] = useState<HostingRetainedRelease>();
+  const [confirmed, setConfirmed] = useState(false);
+  const [attempt, setAttempt] = useState<HostingCleanupInput>();
+  const [expected, setExpected] = useState(resource.generation);
+  const [busy, setBusy] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState("");
+  const active = useRef(true);
+  const submitting = useRef(false);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const current = releases.data?.find((item) => item.healthy.operation_id === target?.healthy.operation_id);
+  const matches = current?.state === "retained" && current.healthy.container_id === target?.healthy.container_id && current.healthy.snapshot.host_port === target?.healthy.snapshot.host_port;
+  const paused = blocked || releases.isError || releases.isPending || restoreHeld;
+  async function cleanup(event: FormEvent) {
+    event.preventDefault();
+    if (!writable || paused || submitting.current || conflict || !target || !confirmed || (!attempt && (mutationHeld || !matches))) return;
+    const body = attempt ?? { expected_generation: expected, idempotency_key: crypto.randomUUID() };
+    setAttempt(body); setBusy(true); submitting.current = true; setError("");
+    try {
+      const operation = await requestHostingReleaseCleanup(resource.id, target.healthy.operation_id, body);
+      if (!active.current) return;
+      if (operation.resource_id !== resource.id || operation.project_id !== resource.project_id || operation.cleanup_plan?.target.operation_id !== target.healthy.operation_id || operation.cleanup_plan.target.container_id !== target.healthy.container_id) throw new Error("Cleanup target mismatch");
+      onSelected(operation.id); setTarget(undefined); setAttempt(undefined); setConfirmed(false);
+      await releases.refetch(); await onChanged();
+    } catch (cause) {
+      if (!active.current) return;
+      setError(deploymentError(cause));
+      if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await releases.refetch(); await onChanged(); }
+    } finally { submitting.current = false; if (active.current) setBusy(false); }
+  }
+  async function review() {
+    setBusy(true); setError("");
+    try {
+      const latest = await getResource(resource.id);
+      await releases.refetch(); await onChanged();
+      if (!active.current) return;
+      if (latest.id !== resource.id || latest.project_id !== resource.project_id) throw new Error("Cleanup resource mismatch");
+      setExpected(latest.generation); setAttempt(undefined); setConflict(false); setConfirmed(false);
+    } catch { if (active.current) setError("Unable to refresh cleanup configuration and release state. No request was resubmitted."); }
+    finally { if (active.current) setBusy(false); }
+  }
+  return <section className="min-w-0 space-y-3 border-t pt-3" aria-label="Retained releases">
+    <h6 className="font-medium">Retained releases</h6>
+    <p className="text-xs text-muted-foreground">Earlier release containers are retained until explicit cleanup. The current healthy release is excluded from this list. The server rejects cleanup of current, route-protected, held, or restored targets. Recorded running state is not continuous health monitoring.</p>
+    <Button type="button" variant="outline" disabled={releases.isFetching || busy} onClick={() => void releases.refetch()}>Refresh retained releases</Button>
+    {releases.isPending ? <p role="status">Loading retained releases...</p> : null}
+    {releases.isError ? <p role="alert">Unable to refresh retained releases. Cleanup is paused; the selected target is preserved.</p> : null}
+    {releases.data?.length === 0 ? <p>No retained releases recorded.</p> : null}
+    {releases.data?.map((release) => <article key={release.healthy.operation_id} className="min-w-0 space-y-2 rounded-lg border p-3" aria-label={`Retained release ${release.healthy.operation_id}`}>
+      <dl className="space-y-1 break-all text-sm"><dt>Release operation</dt><dd>{release.healthy.operation_id}</dd><dt>Container</dt><dd>{release.healthy.container_id}</dd><dt>Release state</dt><dd>{release.state}</dd><dt>Recorded retained running</dt><dd>{release.retained_running ? "yes" : "no"}</dd><dt>Image</dt><dd>{release.healthy.release.canonical_image}</dd><dt>Target binding</dt><dd>{release.healthy.snapshot.binding_id}</dd><dt>Destination / runner</dt><dd>{release.healthy.snapshot.destination_id} / {release.healthy.snapshot.runner_id}</dd><dt>Retained local port</dt><dd>127.0.0.1:{release.healthy.snapshot.host_port}</dd><dt>Original readiness request</dt><dd>{release.healthy.snapshot.readiness.path} · {release.healthy.snapshot.readiness.timeout_seconds}s</dd></dl>
+      {release.cleanup_operation_id ? <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all text-left" onClick={() => onSelected(release.cleanup_operation_id!)}>View cleanup operation {release.cleanup_operation_id}</Button> : null}
+      {writable && release.state === "retained" ? <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all text-left" disabled={paused || mutationHeld || busy || Boolean(target)} onClick={() => { setTarget(release); setExpected(resource.generation); setAttempt(undefined); setConfirmed(false); setConflict(false); setError(""); }}>Review cleanup {release.healthy.operation_id}</Button> : null}
+    </article>)}
+    {writable && target ? <form className="space-y-2 rounded-lg border p-3" aria-label="Confirm retained release cleanup" onSubmit={(event) => void cleanup(event)}>
+      <p className="break-all">Remove only release {target.healthy.operation_id}, container {target.healthy.container_id}, at 127.0.0.1:{target.healthy.snapshot.host_port}?</p>
+      <p className="text-xs text-muted-foreground">This requests exact container cleanup. It does not delete application data or volumes, globally prune images, or authorize removal of the current workload.</p>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} /><span>I confirm cleanup of this exact retained release and container.</span></label>
+      {!matches && !attempt ? <p role="status">The selected release is no longer eligible in the refreshed ledger. Keep it and review the current release list.</p> : null}
+      <Button type="submit" className="h-auto max-w-full whitespace-normal" disabled={paused || busy || conflict || !confirmed || (!attempt && (mutationHeld || !matches))}>{attempt ? "Retry identical cleanup request" : "Request retained release cleanup"}</Button>
+      {attempt ? <p className="break-all text-xs">Cleanup key: {attempt.idempotency_key} · generation {attempt.expected_generation}. The target and request body remain frozen for recovery.</p> : null}
+      {conflict ? <><p role="status">Cleanup conflicts with current generation or release protection. Review the refreshed target before a separate request; nothing was automatically resubmitted.</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" disabled={busy || paused || mutationHeld} onClick={() => void review()}>Review current cleanup generation</Button><p className="text-xs">Review clears the prior request and confirmation, then requires explicit confirmation again.</p></> : null}
+      <Button type="button" variant="outline" disabled={busy || Boolean(attempt)} onClick={() => setTarget(undefined)}>Keep retained release</Button>
+    </form> : null}
+    {error ? <p role="alert">{error}</p> : null}
+    {!writable ? <p className="text-xs text-muted-foreground">Project maintainer access is required to request retained release cleanup.</p> : null}
   </section>;
 }
 
@@ -106,6 +180,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   const [selected, setSelected] = useState("");
   const [containerPort, setContainerPort] = useState("80");
   const [hostPort, setHostPort] = useState("8080");
+  const [portMode, setPortMode] = useState("automatic");
   const [path, setPath] = useState("/");
   const [timeout, setTimeout] = useState("30");
   const [acknowledged, setAcknowledged] = useState(false);
@@ -129,7 +204,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   // An existing exact key is receipt recovery, not new workload admission.
   // Keep its frozen body available even if refreshed history reveals its hold.
   const newAdmissionHeld = mutationHeld && !attempt;
-  const refreshHistory = async () => { await client.invalidateQueries({ queryKey: hostingDeploymentKeys.history(resource.project_id, resource.id) }); };
+  const refreshHistory = async () => { await Promise.all([client.invalidateQueries({ queryKey: hostingDeploymentKeys.history(resource.project_id, resource.id) }), client.invalidateQueries({ queryKey: hostingDeploymentKeys.retained(resource.project_id, resource.id) })]); };
   async function reviewCurrent() {
     setRefreshError(""); setCurrent(undefined);
     try {
@@ -144,7 +219,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
     event.preventDefault();
     if (!canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
     submitting.current = true;
-    const input = attempt ?? { expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), host_port: Number(hostPort), readiness: { path, timeout_seconds: Number(timeout) } };
+    const input = attempt ?? { expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(portMode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
     setAttempt(input); setBusy(true); setError("");
     try {
       const operation = await requestHostingDeployment(resource.id, input);
@@ -177,17 +252,19 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
     <ol className="space-y-2" aria-label="Deployment history">{history.data?.items.map((operation) => <li key={operation.id} className="min-w-0 rounded-lg border p-2"><p className="break-all text-sm">{stateText[operation.state] ?? operation.state} · {operation.created_at}</p><p className="break-all text-xs">{operation.snapshot.image_reference} · generation {operation.snapshot.resource_generation}</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all" onClick={() => setSelected(operation.id)}>View operation {operation.id}</Button></li>)}</ol>
     <PageNavigation label={`deployments for ${resource.name}`} page={history.data} loading={history.isFetching || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))} />
     {selected ? <OperationDetail key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
+    {binding.data ? <RetainedReleases key={binding.data.id} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
     {writable ? <form className="space-y-3 rounded-lg border p-3" aria-label={`Deploy image for ${resource.name}`} onSubmit={(event) => void submit(event)}>
       <p className="break-all text-sm">Deploy saved image {base.source.image.reference} at generation {base.generation} to binding {binding.data?.id ?? "unavailable"}.</p>
       {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label className="space-y-1" htmlFor={`${id}-container`}>Container port<Input id={`${id}-container`} type="number" min={1} max={65535} required value={containerPort} disabled={busy || Boolean(attempt)} onChange={(event) => setContainerPort(event.target.value)} /></label>
-        <label className="space-y-1" htmlFor={`${id}-host`}>Runner-local host port<Input id={`${id}-host`} type="number" min={1024} max={65535} required value={hostPort} disabled={busy || Boolean(attempt)} onChange={(event) => setHostPort(event.target.value)} /></label>
+        <div className="space-y-1"><label htmlFor={`${id}-mode`}>Host port allocation</label><select id={`${id}-mode`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm" value={portMode} disabled={busy || Boolean(attempt)} onChange={(event) => { setPortMode(event.target.value); setAcknowledged(false); }}><option value="automatic">Automatic per-release port</option><option value="fixed">Advanced: explicit fixed port</option></select></div>
+        {portMode === "fixed" ? <label className="space-y-1" htmlFor={`${id}-host`}>Runner-local host port<Input id={`${id}-host`} type="number" min={1024} max={65535} required value={hostPort} disabled={busy || Boolean(attempt)} onChange={(event) => setHostPort(event.target.value)} /></label> : null}
         <label className="space-y-1" htmlFor={`${id}-path`}>Readiness path<Input id={`${id}-path`} required maxLength={1024} value={path} disabled={busy || Boolean(attempt)} onChange={(event) => setPath(event.target.value)} /></label>
         <label className="space-y-1" htmlFor={`${id}-timeout`}>Readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} required value={timeout} disabled={busy || Boolean(attempt)} onChange={(event) => setTimeout(event.target.value)} /></label>
       </div>
-      <p className="text-xs text-muted-foreground">The readiness path must be relative to the local origin, such as /health. This is a generic HTTP check without revision-specific response headers. Port 127.0.0.1:{hostPort} is local to the runner, not a public application URL.</p>
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={(event) => setAcknowledged(event.target.checked)} /><span>I understand that replacing a workload on this fixed host port interrupts service while the old container stops and the new container is verified.</span></label>
+      <p className="text-xs text-muted-foreground">The readiness path must be relative to the local origin, such as /health. This is a generic HTTP check without revision-specific response headers. {portMode === "fixed" ? `Port 127.0.0.1:${hostPort}` : "The allocated loopback port"} is local to the runner, not a public application URL. Automatic allocation uses a separate port per release and retains prior containers until explicit cleanup. It does not switch traffic or provision HTTPS.</p>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={(event) => setAcknowledged(event.target.checked)} /><span>I understand that {portMode === "fixed" ? "this explicit port must be available; conflicts with a retained or protected release are rejected" : "the server allocates a new release port and previous containers remain until explicit cleanup"}. No automatic traffic switch or zero-downtime behavior is promised.</span></label>
       <Button type="submit" className="h-auto whitespace-normal" disabled={!canWrite || newAdmissionHeld || busy || !binding.data || !acknowledged || conflict || restoreHeld}>{restoreHeld ? "Deployment blocked after restore" : newAdmissionHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
       {attempt ? <p className="break-all text-xs">Request key: {attempt.idempotency_key}. Submitted settings and generation {attempt.expected_generation} are retained{restoreHeld ? ". Deployment admission remains blocked." : " for an identical retry."}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
@@ -197,7 +274,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
         {refreshError ? <p role="alert">{refreshError}</p> : null}
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={differentIntent} disabled={busy} onChange={(event) => setDifferentIntent(event.target.checked)} /><span>I reviewed history and understand the earlier request may already exist. I intend a separate request with the current configuration and a new request key.</span></label>
         <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={busy || !current || !differentIntent || unavailable || mutationHeld} onClick={() => newIntent(current)}>Use reviewed configuration for a new request</Button>
-        <p className="text-xs text-muted-foreground">This unlocks settings and requires a new interruption acknowledgment. It never deploys automatically.</p>
+        <p className="text-xs text-muted-foreground">This unlocks settings and requires a new deployment acknowledgment. It never deploys automatically.</p>
       </section> : null}
     </form> : <p className="text-xs text-muted-foreground">Project maintainer access is required to request or cancel deployments.</p>}
   </section>;

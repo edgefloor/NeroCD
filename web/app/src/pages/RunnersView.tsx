@@ -126,6 +126,8 @@ function EnrollmentForm({ busy, disabled, error, onSubmit }: { busy: boolean; di
           {tagsError ? <p id={`${tagsID}-error`} role="alert" className="text-sm text-destructive">{tagsError}</p> : null}
         </div>
         <label className="grid gap-1 text-sm">Capabilities<Input disabled={locked} aria-label="Runner capabilities" value={capabilities} onChange={(event) => setCapabilities(event.target.value)} required /></label>
+        <Button type="button" variant="outline" disabled={locked} onClick={() => setCapabilities("compose-deploy,image_deploy,image_release_ports_v1")}>Use image hosting capability preset</Button>
+        <p className="text-xs text-muted-foreground">Image hosting requires compose-deploy, image_deploy, and image_release_ports_v1 with no shell capability. The preset replaces this new enrollment's capability draft; it does not change existing runner grants.</p>
         <label className="grid gap-1 text-sm">Enrollment lifetime<Select disabled={locked} aria-label="Enrollment lifetime" value={ttl} onChange={(event) => setTTL(event.target.value)}><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></Select></label>
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         <Button type="submit" disabled={locked}>{busy ? "Creating…" : "Create enrollment"}</Button>
