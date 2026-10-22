@@ -11,7 +11,8 @@ import (
 
 // RunnerIdentity is the persisted identity of a dedicated runner credential.
 type RunnerIdentity struct {
-	RunnerID string `json:"runner_id"`
+	RunnerID     string   `json:"runner_id"`
+	Capabilities []string `json:"capabilities"`
 }
 
 // CurrentRunnerIdentity reads current authority without heartbeat or other writes.
@@ -30,5 +31,5 @@ func (s *Service) CurrentRunnerIdentity(ctx context.Context) (RunnerIdentity, er
 	if current.ID != principal.ID || current.ID == "" || current.Status != domain.RunnerActive || current.TokenHash == "" {
 		return RunnerIdentity{}, auth.ErrUnauthenticated
 	}
-	return RunnerIdentity{RunnerID: current.ID}, nil
+	return RunnerIdentity{RunnerID: current.ID, Capabilities: append([]string{}, current.Capabilities...)}, nil
 }
