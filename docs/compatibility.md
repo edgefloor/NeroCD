@@ -73,7 +73,15 @@ Every supported engine/version pair also needs readiness, credential rotation, n
 | Git Compose and pasted Compose | C3 | planned, P08 | Explicit source of truth, controlled interpolation, mixed images/builds, profiles and component identity; A15, A16 |
 | Catalog installation | C8 | planned, P11 | Definition version, stable generated credentials, component state; A21, A22 |
 
-External secret-provider adapters remain planned under R33/P18. Each declared provider needs immutable-version or mutable-reference semantics, authorization, absent/revoked-value behavior and recovery fixtures. A provider list has not yet been selected; this is an explicit remaining adapter decision, not a support claim.
+R33 requires Doppler, Infisical and Vault adapters as planned parity work in P18.
+Each provider's contract and supported versions remain unselected. No provider
+integration is implemented or validated by this ledger.
+
+| External secret provider | Reference | Status | Contract decisions and planned fixtures |
+| --- | --- | --- | --- |
+| Doppler | R33, C16 | planned, P18 | Define supported versions, authentication, scope, immutable-version or mutable-reference semantics, absent/revoked-value behavior and recovery; secret-doppler-auth, secret-doppler-version, secret-doppler-revocation, secret-doppler-recovery |
+| Infisical | R33, C16 | planned, P18 | Define supported versions, authentication, scope, immutable-version or mutable-reference semantics, absent/revoked-value behavior and recovery; secret-infisical-auth, secret-infisical-version, secret-infisical-revocation, secret-infisical-recovery |
+| Vault | R33, C16 | planned, P18 | Define supported versions, authentication, scope, immutable-version or mutable-reference semantics, absent/revoked-value behavior and recovery; secret-vault-auth, secret-vault-version, secret-vault-revocation, secret-vault-recovery |
 
 ## Builders and execution platforms
 
