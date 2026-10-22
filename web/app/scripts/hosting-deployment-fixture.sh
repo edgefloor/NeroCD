@@ -10,6 +10,8 @@ fixture_label="io.nerocd.browser.fixture=$suffix"
 browser_pid=''
 image_id_a=''
 image_id_b=''
+image_ref_b=''
+image_tag_b=''
 tag_a="nerocd-hosting-ui-a:$suffix"
 tag_b="nerocd-hosting-ui-b:$suffix"
 source "$root/scripts/local-image-registry.sh"
@@ -58,6 +60,13 @@ cleanup() {
     fi
   done
   # Non-forced image removal preserves references still in use by other work.
+  for reference in "$image_ref_b" "$image_tag_b"; do
+    if [[ -n "$reference" ]] && command docker image inspect "$reference" >/dev/null 2>&1; then
+      actual=$(command docker image inspect --format '{{.Id}} {{index .Config.Labels "io.nerocd.browser.fixture"}}' "$reference")
+      if [[ "$actual" == "$image_id_b $suffix" ]]; then command docker image rm "$reference" >/dev/null || status=1
+      else printf '%s\n' 'fixture B reference ownership changed; preserving reference' >&2; status=1; fi
+    fi
+  done
   local_registry_cleanup || status=1
   for source_tag in "$tag_a" "$tag_b"; do
     if [[ "$source_tag" == "$tag_a" ]]; then expected_image=$image_id_a; else expected_image=$image_id_b; fi
@@ -85,14 +94,43 @@ for version in A B; do
   else image_id_b=$(command docker image inspect --format '{{.Id}}' "$tag"); fi
 done
 local_registry_publish "$tag_a" "$suffix"
+image_tag_b="${local_registry_tag%:candidate}:b"
+command docker tag "$tag_b" "$image_tag_b"
+command docker push "$image_tag_b" >/dev/null
+image_ref_b=$(command docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image_tag_b" | head -n 1)
+[[ "$image_ref_b" == "${local_registry_tag%:candidate}@sha256:"* ]] || exit 1
 export NEROCD_IMAGE_TEST_TAG="$local_registry_tag"
 export NEROCD_IMAGE_TEST_A="$local_registry_image_ref"
-export NEROCD_IMAGE_TEST_B="$tag_b"
+export NEROCD_IMAGE_TEST_B="$image_ref_b"
 export NEROCD_HOSTING_UI_FIXTURE_DIR="$fixture_dir"
 if [[ -n "${DOCKER_HOST:-}" ]]; then image_endpoint=$DOCKER_HOST
 else image_endpoint=$(command docker context inspect --format '{{(index .Endpoints "docker").Host}}'); fi
 [[ "$image_endpoint" == unix:///* ]] || { printf '%s\n' 'fixture requires a local Docker Unix socket' >&2; exit 1; }
 export NEROCD_HOSTING_UI_DOCKER_ENDPOINT="$image_endpoint"
+# Give this disposable server an operator-controlled range distinct from the
+# default range used by other test databases. Probe availability without touching
+# foreign containers; admission/runtime still fail closed if a later race occurs.
+auto_port_min=$(node --input-type=module -e '
+import { createServer } from "node:net";
+import { randomInt } from "node:crypto";
+for (let attempt = 0; attempt < 32; attempt++) {
+  const first = randomInt(35000, 55000);
+  const listeners = [];
+  try {
+    for (let offset = 0; offset < 8; offset++) {
+      const listener = createServer();
+      await new Promise((resolve, reject) => { listener.once("error", reject); listener.listen(first + offset, "127.0.0.1", resolve); });
+      listeners.push(listener);
+    }
+    process.stdout.write(String(first));
+    break;
+  } catch { if (attempt === 31) process.exitCode = 1; }
+  finally { await Promise.all(listeners.map((listener) => new Promise((resolve) => listener.close(resolve)))); }
+}
+')
+[[ "$auto_port_min" =~ ^[0-9]{5}$ ]] || exit 1
+export NEROCD_HOSTING_AUTO_PORT_MIN="$auto_port_min"
+export NEROCD_HOSTING_AUTO_PORT_MAX="$((auto_port_min + 7))"
 # Isolate the browser/fixture descendants in a newly created session. Only this
 # captured process group is signaled during cleanup; the browser server retains
 # its own existing cleanup for PostgreSQL and API/OIDC child PIDs.

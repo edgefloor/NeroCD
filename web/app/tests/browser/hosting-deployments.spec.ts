@@ -2,7 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createServer } from "node:net";
 
 // No automatic screenshot or trace may contain one-time enrollment material.
 test.use({ trace: "off", screenshot: "off" });
@@ -25,14 +24,6 @@ async function signIn(page: Page) {
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
 }
-async function availablePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("fixture port unavailable");
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  return address.port;
-}
 type Agent = { directory: string; origin: string };
 function agentArguments(agent: Agent, execute: boolean) {
   const endpoint = process.env.NEROCD_HOSTING_UI_DOCKER_ENDPOINT;
@@ -52,7 +43,8 @@ async function enroll(page: Page, suffix: string): Promise<{ agent: Agent; runne
   const form = page.getByRole("form", { name: "Create runner enrollment", exact: true });
   await form.getByLabel("Runner ID", { exact: true }).fill(runnerID); await form.getByLabel("Runner name", { exact: true }).fill(`Image host ${suffix}`);
   await form.getByLabel("Runner tags", { exact: true }).fill(`image-ui-${suffix}`);
-  await form.getByLabel("Runner capabilities", { exact: true }).fill("compose-deploy,image_deploy");
+  await form.getByRole("button", { name: "Use image hosting capability preset", exact: true }).click();
+  await expect(form.getByLabel("Runner capabilities", { exact: true })).toHaveValue("compose-deploy,image_deploy,image_release_ports_v1");
   const response = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/v1/runner-enrollments");
   await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
   const created = await response; expect(created.status()).toBe(201);
@@ -87,6 +79,14 @@ async function hosting(page: Page, projectID: string, environment?: string) {
 function captureOperation(operation: { id: string; binding_id: string }) {
   if (!/^hop_[A-Za-z0-9_-]+$/.test(operation.id) || !/^binding_[A-Za-z0-9_-]+$/.test(operation.binding_id)) throw new Error("unexpected operation ownership identity");
   appendFileSync(join(fixtureDirectory(), "operations"), `${operation.binding_id} ${operation.id}\n`, { mode: 0o600 });
+}
+function removeCompletedFixtureContainer(containerID: string, bindingID: string, operationID: string) {
+  if (!/^[a-f0-9]{64}$/.test(containerID)) throw new Error("invalid captured fixture container");
+  const endpoint = process.env.NEROCD_HOSTING_UI_DOCKER_ENDPOINT!;
+  const inspected = spawnSync("docker", ["--host", endpoint, "inspect", "--format", '{{.Id}}|{{index .Config.Labels "io.nerocd.binding"}}|{{index .Config.Labels "io.nerocd.operation"}}', containerID], { encoding: "utf8", stdio: "pipe" });
+  if (inspected.status !== 0 || inspected.stdout.trim() !== `${containerID}|${bindingID}|${operationID}`) throw new Error("fixture container ownership mismatch");
+  const removed = spawnSync("docker", ["--host", endpoint, "rm", "-f", containerID], { stdio: "pipe" });
+  if (removed.status !== 0) throw new Error("captured fixture container cleanup failed");
 }
 
 test("manual onboarding deploys a real image through River and the runner, preserving history and explicit cancellation", async ({ page, browser }, info) => {
@@ -126,12 +126,21 @@ test("manual onboarding deploys a real image through River and the runner, prese
     await placement.getByLabel("Available destination", { exact: true }).selectOption(destination.id);
     await placement.getByRole("button", { name: "Save desired destination", exact: true }).click();
     await expect(placement.getByText("Saved placement", { exact: true })).toBeVisible();
-    const port = await availablePort();
     await deployments.getByLabel("Container port", { exact: true }).fill("8080");
-    await deployments.getByLabel("Runner-local host port", { exact: true }).fill(String(port));
+    await expect(deployments.getByLabel("Host port allocation", { exact: true })).toHaveValue("automatic");
+    await deployments.getByLabel("Host port allocation", { exact: true }).selectOption("fixed");
+    await expect(deployments.getByRole("note")).toContainText("stops the current container before replacement readiness is verified, interrupting service");
+    await expect(deployments.getByLabel(/I understand that/)).not.toBeChecked();
+    await deployments.getByLabel(/I understand that/).check();
+    await deployments.getByLabel("Runner-local host port", { exact: true }).fill("9090");
+    await expect(deployments.getByLabel(/I understand that/)).not.toBeChecked();
+    await expect(deployments.getByRole("button", { name: "Request image deployment", exact: true })).toBeDisabled();
+    await expect(deployments.getByLabel("Runner-local host port", { exact: true })).toBeVisible();
+    await deployments.getByLabel("Host port allocation", { exact: true }).selectOption("automatic");
+    await expect(deployments.getByLabel("Runner-local host port", { exact: true })).toHaveCount(0);
     await deployments.getByLabel("Readiness timeout in seconds", { exact: true }).fill("10");
     await expect(deployments.getByRole("button", { name: "Request image deployment", exact: true })).toBeDisabled();
-    await deployments.getByLabel(/I understand that replacing/).check();
+    await deployments.getByLabel(/I understand that/).check();
     let firstOperation: { id: string; binding_id: string } | undefined;
     const requestPath = `/api/v1/resources/${resource.id}/deployments`;
     if (width === 320) {
@@ -149,7 +158,9 @@ test("manual onboarding deploys a real image through River and the runner, prese
     const deploymentResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === requestPath);
     await page.keyboard.press("Enter");
     const accepted = await deploymentResponse; expect(accepted.status()).toBe(202);
-    const operation = await accepted.json() as { id: string; binding_id: string };
+    let operation = await accepted.json() as { id: string; binding_id: string; snapshot: { host_port: number } };
+    let port = operation.snapshot.host_port;
+    expect(accepted.request().postDataJSON()).not.toHaveProperty("host_port");
     captureOperation(operation); if (firstOperation) expect(operation.id).toBe(firstOperation.id);
     for (let attempt = 0; attempt < 5; attempt++) {
       runAgent(agent, true);
@@ -167,24 +178,86 @@ test("manual onboarding deploys a real image through River and the runner, prese
     const persisted = reloaded.getByRole("region", { name: `Image deployments for ${applicationName}`, exact: true });
     await persisted.getByRole("button", { name: `View operation ${operation.id}`, exact: true }).click();
     await expect(persisted.getByText("Readiness recorded at completion: passed.", { exact: true })).toBeVisible();
+    // A new saved image requests another allocated release port through the UI.
+    // Both real containers serve until the exact older release is cleaned up.
+    const firstRelease = operation;
+    const oldPort = port;
+    const imageB = process.env.NEROCD_IMAGE_TEST_B;
+    if (!imageB?.includes("@sha256:")) throw new Error("fixture B digest unavailable");
+    const application = reloaded.getByRole("article", { name: applicationName, exact: true });
+    await application.getByRole("button", { name: "Edit configuration", exact: true }).click();
+    const editor = application.getByRole("form", { name: `Edit ${applicationName}`, exact: true });
+    await editor.getByLabel("Image reference", { exact: true }).fill(imageB);
+    await editor.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await persisted.getByLabel("Container port", { exact: true }).fill("8080");
+    await persisted.getByLabel(/I understand that/).check();
+    const secondResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === requestPath);
+    await persisted.getByRole("button", { name: "Request image deployment", exact: true }).click();
+    const second = await secondResponse; expect(second.status()).toBe(202);
+    operation = await second.json(); captureOperation(operation);
+    port = operation.snapshot.host_port; expect(port).not.toBe(oldPort);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      runAgent(agent, true);
+      if ((await (await page.request.get(`/api/v1/hosting-operations/${operation.id}`)).json() as { state: string }).state === "succeeded") break;
+      await expect.poll(async () => (await (await page.request.get(`/api/v1/hosting-operations/${operation.id}`)).json() as { state: string }).state).not.toBe("queued");
+    }
+    expect((await (await page.request.get(`http://127.0.0.1:${oldPort}/`)).text()).trim()).toBe("A");
+    expect((await (await page.request.get(`http://127.0.0.1:${port}/`)).text()).trim()).toBe("B");
+    const retained = persisted.getByRole("region", { name: "Retained releases", exact: true });
+    await retained.getByRole("button", { name: "Refresh retained releases", exact: true }).click();
+    const row = retained.getByRole("article", { name: `Retained release ${firstRelease.id}`, exact: true });
+    await row.getByRole("button", { name: `Review cleanup ${firstRelease.id}`, exact: true }).click();
+    const cleanupForm = retained.getByRole("form", { name: "Confirm retained release cleanup", exact: true });
+    await expect(cleanupForm.getByText(new RegExp(firstRelease.id))).toBeVisible();
+    await cleanupForm.getByLabel(/I confirm cleanup/).check();
+    expect(await page.locator("main").evaluate((element) => element.scrollLeft)).toBe(0);
+    await page.screenshot({ path: info.outputPath(`retained-cleanup-${width}.png`), fullPage: true, animations: "disabled" });
+    const cleanupPath = `/api/v1/resources/${resource.id}/retained-releases/${firstRelease.id}/cleanup`;
+    let lostCleanup: { id: string; binding_id: string } | undefined;
+    let cleanupBody: string | null = null;
+    if (width === 320) {
+      await page.route(`**${cleanupPath}`, async (route) => {
+        cleanupBody = route.request().postData();
+        const response = await route.fetch(); expect(response.status()).toBe(202);
+        lostCleanup = await response.json(); captureOperation(lostCleanup!); await route.abort("failed");
+      }, { times: 1 });
+      await cleanupForm.getByRole("button", { name: "Request retained release cleanup", exact: true }).click();
+      await expect(cleanupForm.getByRole("button", { name: "Retry identical cleanup request", exact: true })).toBeEnabled();
+      await retained.getByRole("button", { name: "Refresh retained releases", exact: true }).click();
+    }
+    const cleanupResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === cleanupPath);
+    await cleanupForm.getByRole("button", { name: width === 320 ? "Retry identical cleanup request" : "Request retained release cleanup", exact: true }).click();
+    const cleanupAccepted = await cleanupResponse; expect(cleanupAccepted.status()).toBe(202);
+    const cleanupOperation = await cleanupAccepted.json() as { id: string; binding_id: string }; captureOperation(cleanupOperation);
+    if (lostCleanup) { expect(cleanupOperation.id).toBe(lostCleanup.id); expect(cleanupAccepted.request().postData()).toBe(cleanupBody); }
+    for (let attempt = 0; attempt < 5; attempt++) {
+      runAgent(agent, true);
+      if ((await (await page.request.get(`/api/v1/hosting-operations/${cleanupOperation.id}`)).json() as { state: string }).state === "succeeded") break;
+      await expect.poll(async () => (await (await page.request.get(`/api/v1/hosting-operations/${cleanupOperation.id}`)).json() as { state: string }).state).not.toBe("queued");
+    }
+    await retained.getByRole("button", { name: "Refresh retained releases", exact: true }).click();
+    await expect(row).toHaveCount(0);
+    expect((await (await page.request.get(`http://127.0.0.1:${port}/`)).text()).trim()).toBe("B");
+    await expect(page.request.get(`http://127.0.0.1:${oldPort}/`, { timeout: 1000 })).rejects.toThrow();
     // Saved configuration changes before a new request: generation conflict must
     // preserve the form, refetch, and require a separate explicit intent.
-    expect((await page.request.patch(`/api/v1/resources/${resource.id}`, { headers: headers(page), data: { expected_generation: 1, name: applicationName + " updated" } })).status()).toBe(200);
-    await persisted.getByLabel("Container port", { exact: true }).fill("8080"); await persisted.getByLabel("Runner-local host port", { exact: true }).fill(String(port));
-    await persisted.getByLabel(/I understand that replacing/).check();
+    expect((await page.request.patch(`/api/v1/resources/${resource.id}`, { headers: headers(page), data: { expected_generation: 2, name: applicationName + " updated" } })).status()).toBe(200);
+    await persisted.getByLabel("Container port", { exact: true }).fill("8080");
+    await persisted.getByLabel(/I understand that/).check();
     const conflictResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === requestPath);
     await persisted.getByRole("button", { name: "Request image deployment", exact: true }).click(); expect((await conflictResponse).status()).toBe(409);
-    await expect(persisted.getByText(/Current saved configuration: generation 2/)).toBeVisible();
-    await expect(persisted.getByLabel("Runner-local host port", { exact: true })).toHaveValue(String(port));
+    await expect(persisted.getByText(/Current saved configuration: generation 3/)).toBeVisible();
+    await expect(persisted.getByLabel("Host port allocation", { exact: true })).toHaveValue("automatic");
     await persisted.getByLabel(/I reviewed history/).check(); await persisted.getByRole("button", { name: "Use reviewed configuration for a new request", exact: true }).click();
-    await persisted.getByLabel(/I understand that replacing/).check();
+    await persisted.getByLabel(/I understand that/).check();
     const nextResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === requestPath);
     await persisted.getByRole("button", { name: "Request image deployment", exact: true }).click();
     const next = await (await nextResponse).json() as { id: string; binding_id: string }; captureOperation(next);
     const nextDetail = persisted.getByRole("region", { name: "Deployment operation detail", exact: true });
     await nextDetail.getByRole("button", { name: "Request cancellation", exact: true }).click();
     await expect(nextDetail.getByText("Canceled", { exact: true })).toBeVisible();
-    expect((await (await page.request.get(`http://127.0.0.1:${port}/`)).text()).trim()).toBe("A");
+    expect((await (await page.request.get(`http://127.0.0.1:${port}/`)).text()).trim()).toBe("B");
     await persisted.getByRole("button", { name: "Refresh deployment history", exact: true }).click();
     if (width === 1440) {
       await persisted.getByRole("button", { name: `View operation ${operation.id}`, exact: true }).click();
@@ -217,7 +290,7 @@ test("manual onboarding deploys a real image through River and the runner, prese
           await viewer.screenshot({ path: info.outputPath(`image-deployment-viewer-${viewerWidth}.png`), fullPage: true, animations: "disabled" });
         }
         expect((await viewer.request.get(`/api/v1/hosting-operations/${operation.id}`)).status()).toBe(200);
-        for (const [path, data] of [[requestPath, { expected_generation: 2, idempotency_key: `denied-${suffix}`, container_port: 8080, host_port: port, readiness: { path: "/", timeout_seconds: 10 } }], [`/api/v1/hosting-operations/${operation.id}/cancel`, {}], [`/api/v1/hosting-operations/${operation.id}/reconcile`, {}]] as const) expect((await viewer.request.post(path, { headers: headers(viewer), data })).status()).toBe(403);
+        for (const [path, data] of [[requestPath, { expected_generation: 3, idempotency_key: `denied-${suffix}`, container_port: 8080, host_port: port, readiness: { path: "/", timeout_seconds: 10 } }], [`/api/v1/resources/${resource.id}/retained-releases/${firstRelease.id}/cleanup`, { expected_generation: 3, idempotency_key: `denied-cleanup-${suffix}` }], [`/api/v1/hosting-operations/${operation.id}/cancel`, {}], [`/api/v1/hosting-operations/${operation.id}/reconcile`, {}]] as const) expect((await viewer.request.post(path, { headers: headers(viewer), data })).status()).toBe(403);
         expect((await page.request.post("/api/v1/project-members", { headers: headers(page), data: { ...membership, role: "maintainer" } })).ok()).toBe(true);
         await viewer.reload();
         const maintain = await hosting(viewer, projectID, environmentName);
@@ -226,13 +299,14 @@ test("manual onboarding deploys a real image through River and the runner, prese
         await section.getByRole("button", { name: `View operation ${operation.id}`, exact: true }).click();
         await expect(section.getByRole("button", { name: "Request reconciliation", exact: true })).toHaveCount(0);
         expect((await viewer.request.post(`/api/v1/hosting-operations/${operation.id}/reconcile`, { headers: headers(viewer), data: {} })).status()).toBe(403);
+        expect((await viewer.request.post(`/api/v1/resources/${resource.id}/retained-releases/${operation.id}/cleanup`, { headers: headers(viewer), data: { expected_generation: 3, idempotency_key: `protect-current-${suffix}` } })).status()).toBe(409);
       } finally { await context.close(); }
       // Stop only this captured runner after apply admission while the owned
       // fixture container fails readiness. The persisted hold must remain
       // visible and cancellation must not be presented as a proven rollback.
       await persisted.getByLabel("Readiness path", { exact: true }).fill("/unready");
       await persisted.getByLabel("Readiness timeout in seconds", { exact: true }).fill("30");
-      await persisted.getByLabel(/I understand that replacing/).check();
+      await persisted.getByLabel(/I understand that/).check();
       let held: { id: string; binding_id: string } | undefined;
       let heldRequestBody: string | null = null;
       await page.route(`**${requestPath}`, async (route) => {
@@ -256,7 +330,7 @@ test("manual onboarding deploys a real image through River and the runner, prese
         child.kill("SIGKILL"); await closed;
         await persisted.getByRole("button", { name: "Refresh deployment history", exact: true }).click();
         await expect(persisted.getByText(/New deployment requests are paused/)).toBeVisible();
-        await expect(persisted.getByLabel("Runner-local host port", { exact: true })).toBeDisabled();
+        await expect(persisted.getByLabel("Host port allocation", { exact: true })).toBeDisabled();
         await expect(persisted.getByRole("button", { name: "Retry identical deployment request", exact: true })).toBeEnabled();
         const recoveryResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === requestPath);
         await persisted.getByRole("button", { name: "Retry identical deployment request", exact: true }).click();
@@ -269,7 +343,7 @@ test("manual onboarding deploys a real image through River and the runner, prese
         await expect(heldDetail.getByText("Cancellation requested after admission", { exact: true })).toBeVisible();
         await expect(heldDetail.getByText(/Mutation hold retained/)).toBeVisible();
         await expect(heldDetail.getByText(/not proof of rollback/)).toBeVisible();
-        await persisted.getByLabel(/I understand that replacing/).check();
+        await persisted.getByLabel(/I understand that/).check();
         await expect(persisted.getByRole("button", { name: "Deployment waiting for settlement", exact: true })).toBeDisabled();
         const recorded = await (await page.request.get(statusPath)).json() as { mutation_hold: boolean; restore_ownership_held: boolean };
         expect(recorded.mutation_hold).toBe(true); expect(recorded.restore_ownership_held).toBe(false);
@@ -285,5 +359,12 @@ test("manual onboarding deploys a real image through River and the runner, prese
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`image-deployment-${width}.png`), fullPage: true, animations: "disabled" });
+    // Independent destination records share this fixture's physical Docker
+    // daemon. End the completed width's fixture workload only after all HTTP
+    // preservation assertions, so the next width can reuse its allocated range.
+    if (width !== 1440) {
+      const settled = await (await page.request.get(`/api/v1/hosting-operations/${operation.id}`)).json() as { result: { container_id: string } };
+      removeCompletedFixtureContainer(settled.result.container_id, operation.binding_id, operation.id);
+    }
   }
 });

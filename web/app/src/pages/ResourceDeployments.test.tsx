@@ -13,17 +13,21 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const page = (items: HostingOperation[] = [], offset = 0, total = items.length) => ({ items, count: items.length, total, limit: 20, offset });
 let client: QueryClient;
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
-function setup(role = "maintainer", globalRoles: string[] = []) {
+function setup(role = "maintainer", globalRoles: string[] = [], automatic = false) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(queryKeys.principal, { id: "user", name: "Operator", email: "operator@example.test", provider: "oidc", roles: globalRoles });
   client.setQueryData(queryKeys.allProjectMembers, role ? [{ id: "member", project_id: "project", user_id: "user", email: "operator@example.test", role, created_at: "" }] : []);
-  return render(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={["owner", "maintainer"].includes(role) || globalRoles.includes("system_admin")} blocked={false} /></QueryClientProvider>);
+  const view = render(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={["owner", "maintainer"].includes(role) || globalRoles.includes("system_admin")} blocked={false} /></QueryClientProvider>);
+  const mode = screen.queryByLabelText("Host port allocation");
+  if (mode && !automatic) fireEvent.change(mode, { target: { value: "fixed" } });
+  return view;
 }
 function backend(handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined) {
   const fetch = vi.fn(async (url: string, options: RequestInit) => {
     const response = await handler?.(url, options);
     if (response) return response;
     if (url.endsWith("/binding")) return json(binding);
+    if (url.includes("/retained-releases")) return json([]);
     if (url.includes("/deployments")) return options.method === "POST" ? json(operation, 202) : json(page());
     if (url.includes("/hosting-operations/")) return json(operation);
     if (url === "/api/v1/resources/resource") return json({ ...resource, generation: 2 });
@@ -35,7 +39,7 @@ async function request() {
   await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request image deployment" }).disabled).toBe(false));
   fireEvent.submit(screen.getByRole("form", { name: "Deploy image for Web" }));
 }
-function acknowledge() { fireEvent.click(screen.getByLabelText(/I understand that replacing/)); }
+function acknowledge() { fireEvent.click(screen.getByLabelText(/I understand that/)); }
 test("viewer reads persisted history and results without request, cancel, or reconcile controls", async () => {
   backend((url) => url.includes("/deployments") ? json(page([{ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }])) : url.includes("/hosting-operations/") ? json({ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }) : undefined);
   setup("viewer"); fireEvent.click(await screen.findByRole("button", { name: "View operation hop_one" }));
@@ -43,7 +47,7 @@ test("viewer reads persisted history and results without request, cancel, or rec
   expect(screen.queryByRole("form")).toBeNull();
   expect(screen.queryByRole("button", { name: "Request cancellation" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Request reconciliation" })).toBeNull();
-  expect(screen.getByText(/not continuous health monitoring/)).toBeTruthy();
+  expect(screen.getAllByText(/not continuous health monitoring/).length).toBeGreaterThan(0);
 });
 test("explicit interruption acknowledgment submits the captured generation and scoped intent once", async () => {
   const fetch = backend(); setup();
@@ -55,7 +59,7 @@ test("explicit interruption acknowledgment submits the captured generation and s
   expect(calls).toHaveLength(1);
   expect(JSON.parse(calls[0]![1].body as string)).toMatchObject({ expected_generation: 1, container_port: 80, host_port: 8080, readiness: { path: "/", timeout_seconds: 30 } });
   expect(JSON.parse(calls[0]![1].body as string).idempotency_key).toHaveLength(36);
-  expect(screen.getByLabelText<HTMLInputElement>(/I understand that replacing/).checked).toBe(false);
+  expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
 });
 test.each(["disconnect", "503"])("%s retains exactly the same request body and key on explicit retry", async (failure) => {
   let count = 0;
@@ -93,7 +97,7 @@ test("409 preserves settings, refetches generation and history, then requires an
   expect(screen.getByLabelText<HTMLInputElement>("Runner-local host port").value).toBe("9080");
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical deployment request" }).disabled).toBe(true);
   fireEvent.click(screen.getByLabelText(/I reviewed history/)); fireEvent.click(screen.getByRole("button", { name: "Use reviewed configuration for a new request" }));
-  expect(screen.getByLabelText<HTMLInputElement>(/I understand that replacing/).checked).toBe(false);
+  expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
   acknowledge(); await request(); await screen.findByRole("region", { name: "Deployment operation detail" });
   const writes = fetch.mock.calls.filter(([, options]) => options.method === "POST").map(([, options]) => JSON.parse(options.body as string));
   expect(writes[1]).toMatchObject({ expected_generation: 2, host_port: 9080 }); expect(writes[1].idempotency_key).not.toBe(writes[0].idempotency_key);
@@ -145,7 +149,7 @@ test("late mutation response cannot select an operation after switching project 
   await act(async () => resolve(json(operation, 202)));
   expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
   expect(screen.queryByText("hop_one")).toBeNull();
-  expect(screen.getByLabelText<HTMLInputElement>(/I understand that replacing/).checked).toBe(false);
+  expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
 });
 test("restore-held admission preserves input without a generation or retry flow", async () => {
   const fetch = backend((url, options) => url.includes("/deployments") && options.method === "POST" ? json({ code: "hosting_restore_held", error: "restored ownership is held" }, 409) : undefined);
@@ -202,4 +206,129 @@ test("lost response then held history permits only the authorized retained exact
   const writes = fetch.mock.calls.filter(([, options]) => options.method === "POST");
   expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deployment waiting for settlement" }).disabled).toBe(true);
+});
+
+test("automatic allocation is default and the frozen retry omits host_port", async () => {
+  let count = 0;
+  const fetch = backend((url, options) => url.includes("/deployments") && options.method === "POST" && ++count === 1 ? Promise.reject(new TypeError("lost")) : undefined);
+  setup("maintainer", [], true);
+  expect(screen.queryByLabelText("Runner-local host port")).toBeNull(); acknowledge(); await request();
+  await screen.findByRole("button", { name: "Retry identical deployment request" });
+  expect(screen.getByLabelText<HTMLSelectElement>("Host port allocation").disabled).toBe(true);
+  fireEvent.submit(screen.getByRole("form")); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const writes = fetch.mock.calls.filter(([, options]) => options.method === "POST");
+  expect(JSON.parse(writes[0]![1].body as string)).not.toHaveProperty("host_port");
+  expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
+const retained = { healthy: { snapshot: operation.snapshot, operation_id: "hop_old", container_id: "container_old", release: { canonical_image: "team/web@sha256:old", image_id: "image_old", daemon_id: "daemon", hash: "release", os: "linux" as const, architecture: "amd64" }, plan_hash: "plan_old" }, state: "retained" as const, retained_running: true };
+const cleanupOperation: HostingOperation = { ...operation, id: "hop_cleanup", task_mode: "cleanup", cleanup_plan: { target: retained.healthy, current_healthy_operation_id: "hop_current", compiler_version: "image-hosting.release-ports.v1", hash: "cleanup_plan" } };
+test("maintainer confirms exact retained target and sends only generation and key", async () => {
+  const fetch = backend((url, options) => url.endsWith("/cleanup") ? json(cleanupOperation, 202) : url.includes("/retained-releases") ? json([retained]) : url.includes("/hosting-operations/") ? json(cleanupOperation) : undefined);
+  setup(); fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  expect(screen.getByText(/Remove only release hop_old, container container_old, at 127.0.0.1:8080/)).toBeTruthy();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request retained release cleanup" }).disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText(/I confirm cleanup/)); fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" }));
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  const write = fetch.mock.calls.find(([url]) => url.endsWith("/cleanup"))!;
+  expect(write[0]).toBe("/api/v1/resources/resource/retained-releases/hop_old/cleanup");
+  expect(Object.keys(JSON.parse(write[1].body as string)).sort()).toEqual(["expected_generation", "idempotency_key"]);
+});
+test("cleanup exact-key recovery survives uncertain delivery and a refreshed hold/pending release", async () => {
+  let accepted = false;
+  const fetch = backend((url, options) => {
+    if (url.endsWith("/cleanup")) { if (!accepted) { accepted = true; throw new TypeError("response lost"); } return json(cleanupOperation, 202); }
+    if (url.includes("/retained-releases")) return json([{ ...retained, state: accepted ? "cleanup_pending" : "retained" }]);
+    if (url.includes("/deployments") && options.method !== "POST") return json(page(accepted ? [{ ...operation, mutation_hold: true }] : []));
+    if (url.includes("/hosting-operations/")) return json(cleanupOperation);
+  });
+  setup(); fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" })); fireEvent.click(screen.getByLabelText(/I confirm cleanup/));
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" })); await screen.findByRole("button", { name: "Retry identical cleanup request" });
+  await act(async () => { await client.invalidateQueries({ queryKey: ["hostingDeployments"] }); await client.invalidateQueries({ queryKey: ["hostingRetained"] }); });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical cleanup request" }).disabled).toBe(false);
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" })); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const writes = fetch.mock.calls.filter(([url]) => url.endsWith("/cleanup")); expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
+test("cleanup conflicts refresh metadata and require fresh explicit confirmation with current generation", async () => {
+  let count = 0;
+  const fetch = backend((url) => url.endsWith("/cleanup") ? ++count === 1 ? json({}, 409) : json(cleanupOperation, 202) : url.includes("/retained-releases") ? json([retained]) : url.includes("/hosting-operations/") ? json(cleanupOperation) : undefined);
+  setup(); fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" })); fireEvent.click(screen.getByLabelText(/I confirm cleanup/)); fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Review current cleanup generation" }));
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request retained release cleanup" }).disabled).toBe(true));
+  expect(screen.getByLabelText<HTMLInputElement>(/I confirm cleanup/).checked).toBe(false);
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/cleanup"))).toHaveLength(1);
+  fireEvent.click(screen.getByLabelText(/I confirm cleanup/)); fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" }));
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  const writes = fetch.mock.calls.filter(([url]) => url.endsWith("/cleanup")).map(([, options]) => JSON.parse(options.body as string)); expect(writes[1].expected_generation).toBe(2); expect(writes[1].idempotency_key).not.toBe(writes[0].idempotency_key);
+});
+test.each(["viewer", "restore", "error"])("retained cleanup fails closed for %s", async (mode) => {
+  backend((url) => url.includes("/retained-releases") ? mode === "error" ? json({}, 503) : json([retained]) : url.includes("/deployments") && mode === "restore" ? json(page([{ ...operation, restore_ownership_held: true }])) : undefined);
+  setup(mode === "viewer" ? "viewer" : "owner"); await screen.findByRole("region", { name: "Retained releases" });
+  if (mode === "viewer") { await screen.findByText("container_old"); expect(screen.queryByRole("button", { name: "Review cleanup hop_old" })).toBeNull(); }
+  else if (mode === "restore") expect((await screen.findByRole<HTMLButtonElement>("button", { name: "Review cleanup hop_old" })).disabled).toBe(true);
+  else await screen.findByText(/Unable to refresh retained releases/);
+});
+
+
+test.each(["permission", "principal"])("cleanup intent and frozen retry end on %s scope change", async (scope) => {
+  const fetch = backend((url) => url.endsWith("/cleanup") ? Promise.reject(new TypeError("response lost")) : url.includes("/retained-releases") ? json([retained]) : undefined);
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  fireEvent.click(screen.getByLabelText(/I confirm cleanup/));
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" }));
+  await screen.findByRole("button", { name: "Retry identical cleanup request" });
+  if (scope === "permission") {
+    view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={false} blocked={false} /></QueryClientProvider>);
+    expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull();
+    view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable blocked={false} /></QueryClientProvider>);
+  } else {
+    await act(async () => { client.setQueryData(queryKeys.principal, { id: "another-maintainer", provider: "oidc", roles: [] }); });
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull());
+  }
+  expect(screen.queryByRole("button", { name: "Retry identical cleanup request" })).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  expect(screen.getByLabelText<HTMLInputElement>(/I confirm cleanup/).checked).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request retained release cleanup" }).disabled).toBe(true);
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/cleanup"))).toHaveLength(1);
+});
+
+test.each(["permission", "principal"])("late cleanup response cannot restore intent or select an operation after %s scope change", async (scope) => {
+  let resolve!: (response: Response) => void;
+  backend((url) => url.endsWith("/cleanup") ? new Promise<Response>((done) => { resolve = done; }) : url.includes("/retained-releases") ? json([retained]) : undefined);
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  fireEvent.click(screen.getByLabelText(/I confirm cleanup/));
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" }));
+  await waitFor(() => expect(resolve).toBeTypeOf("function"));
+  if (scope === "permission") {
+    view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={false} blocked={false} /></QueryClientProvider>);
+    view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable blocked={false} /></QueryClientProvider>);
+  } else {
+    await act(async () => { client.setQueryData(queryKeys.principal, { id: "another-maintainer", provider: "oidc", roles: [] }); });
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull());
+  }
+  await act(async () => { resolve(json(cleanupOperation, 202)); });
+  expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+  expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  expect(screen.getByLabelText<HTMLInputElement>(/I confirm cleanup/).checked).toBe(false);
+});
+
+
+test("fixed-port mode requires explicit interruption acknowledgment and resets it when settings change", async () => {
+  backend(); setup("maintainer", [], true);
+  expect(screen.queryByRole("note")).toBeNull();
+  acknowledge();
+  fireEvent.change(screen.getByLabelText("Host port allocation"), { target: { value: "fixed" } });
+  expect(screen.getByRole("note").textContent).toMatch(/stops the current container before replacement readiness is verified, interrupting service/);
+  expect(screen.getByLabelText(/I understand that reusing.*interrupts service/)).toBeTruthy();
+  for (const [label, value] of [["Runner-local host port", "9090"], ["Container port", "8080"], ["Readiness path", "/health"], ["Readiness timeout in seconds", "45"]]) {
+    expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
+    acknowledge();
+    fireEvent.change(screen.getByLabelText(label!), { target: { value } });
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request image deployment" }).disabled).toBe(true);
+  }
+  acknowledge();
+  fireEvent.change(screen.getByLabelText("Host port allocation"), { target: { value: "automatic" } });
+  expect(screen.getByLabelText<HTMLInputElement>(/I understand that/).checked).toBe(false);
+  expect(screen.queryByRole("note")).toBeNull();
 });

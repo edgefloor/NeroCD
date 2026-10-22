@@ -7,6 +7,8 @@ import { ApiError } from "./errors";
 export type HostingDeploymentInput = components["schemas"]["HostingDeploymentInput"];
 export type HostingOperation = components["schemas"]["HostingOperation"];
 export type HostingOperationList = components["schemas"]["HostingOperationList"];
+export type HostingCleanupInput = components["schemas"]["HostingCleanupInput"];
+export type HostingRetainedRelease = components["schemas"]["HostingRetainedRelease"];
 export class HostingDeploymentError extends ApiError {
   constructor(status: number, message: string, requestID: string | null, readonly code?: string) {
     super(status, message, requestID);
@@ -18,7 +20,10 @@ const operationPath = (id: string) => `/api/v1/hosting-operations/${encodeURICom
 // Preserve the structured admission code, which the shared generic client does
 // not expose. A restored binding must never become a generation-retry flow.
 export async function requestHostingDeployment(resourceID: string, body: HostingDeploymentInput, options?: Options): Promise<HostingOperation> {
-  const response = await fetch(deploymentsPath(resourceID), {
+  return hostingMutation(deploymentsPath(resourceID), body, options);
+}
+async function hostingMutation(path: string, body: HostingDeploymentInput | HostingCleanupInput, options?: Options): Promise<HostingOperation> {
+  const response = await fetch(path, {
     method: "POST", credentials: "include", signal: options?.signal,
     headers: { Accept: "application/json", "Content-Type": "application/json", "X-NeroCD-CSRF": "1" }, body: JSON.stringify(body),
   });
@@ -34,6 +39,9 @@ export async function requestHostingDeployment(resourceID: string, body: Hosting
   }
   return await response.json() as HostingOperation;
 }
+const retainedPath = (id: string) => `/api/v1/resources/${encodeURIComponent(id)}/retained-releases`;
+export const listHostingRetainedReleases = (resourceID: string, options?: Options): Promise<HostingRetainedRelease[]> => request(retainedPath(resourceID), options);
+export const requestHostingReleaseCleanup = (resourceID: string, operationID: string, body: HostingCleanupInput, options?: Options): Promise<HostingOperation> => hostingMutation(`${retainedPath(resourceID)}/${encodeURIComponent(operationID)}/cleanup`, body, options);
 export const listHostingDeployments = (resourceID: string, query: { limit: number; offset: number }, options?: Options): Promise<HostingOperationList> => request(deploymentsPath(resourceID), { ...options, query });
 export const getHostingOperation = (id: string, options?: Options): Promise<HostingOperation> => request(operationPath(id), options);
 export const cancelHostingOperation = (id: string, options?: Options): Promise<HostingOperation> => request(`${operationPath(id)}/cancel`, { ...options, method: "POST", body: {} });
@@ -41,7 +49,16 @@ export const reconcileHostingOperation = (id: string, options?: Options): Promis
 export const hostingDeploymentKeys = {
   history: (projectID: string, resourceID: string) => ["hostingDeployments", projectID, resourceID] as const,
   operation: (projectID: string, resourceID: string, id: string) => ["hostingOperation", projectID, resourceID, id] as const,
+  retained: (projectID: string, resourceID: string) => ["hostingRetained", projectID, resourceID] as const,
 };
+export const hostingRetainedQuery = (projectID: string, resourceID: string) => queryOptions({
+  queryKey: hostingDeploymentKeys.retained(projectID, resourceID), retry: false,
+  queryFn: async ({ signal }) => {
+    const releases = await listHostingRetainedReleases(resourceID, { signal });
+    if (releases.some((release) => release.healthy.snapshot.resource_id !== resourceID)) throw new Error("Retained release scope mismatch");
+    return releases;
+  },
+});
 export const hostingDeploymentsQuery = (projectID: string, resourceID: string, offset: number) => queryOptions({
   queryKey: [...hostingDeploymentKeys.history(projectID, resourceID), offset],
   queryFn: async ({ signal }) => {
