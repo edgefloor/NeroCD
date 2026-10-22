@@ -147,7 +147,7 @@ func TestHostingBuildProductionControllerCLI(t *testing.T) {
 					t.Fatal("production retention failed", err)
 				}
 				var retained domain.HostingBuildLogPage
-					f.request(t, "GET", "/api/v1/hosting-builds/"+b.ID+"/logs?after_sequence=0&limit=200", f.admin, nil, http.StatusOK, &retained)
+				f.request(t, "GET", "/api/v1/hosting-builds/"+b.ID+"/logs?after_sequence=0&limit=200", f.admin, nil, http.StatusOK, &retained)
 				if len(retained.Items) != 0 || !retained.Gap || retained.DeletedThroughSequence == 0 || !retained.Terminal || !retained.HistoryComplete {
 					t.Fatal("retention lost output cursor evidence")
 				}
