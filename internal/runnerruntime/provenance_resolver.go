@@ -779,7 +779,10 @@ func gitCurlResolveOption(repositoryURL *url.URL, address netip.Addr) (string, e
 	if address.Is6() {
 		ip = "[" + ip + "]"
 	}
-	return strings.ToLower(strings.TrimSuffix(repositoryURL.Hostname(), ".")) + ":" + strconv.Itoa(port) + ":" + ip, nil
+	// CURLOPT_RESOLVE must match the hostname spelling used by the fetch URL.
+	// A terminal DNS dot is significant to curl's lookup key even though policy
+	// host matching treats it as equivalent. Removing it bypasses this pin.
+	return repositoryURL.Hostname() + ":" + strconv.Itoa(port) + ":" + ip, nil
 }
 
 func prepareSSHTransport(ctx context.Context, command provenanceCommand, workspace, secretRoot string, plan domain.DeploymentPlan, policy source.RepositoryPolicy, repositoryURL *url.URL, pinnedIP netip.Addr, authorize runner.SecretAuthorizer) ([]string, func(), error) {

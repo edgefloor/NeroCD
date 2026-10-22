@@ -829,3 +829,19 @@ func TestComposeSharedCheckoutRetainsExplicitInternalHTTPAndCallback(t *testing.
 		t.Fatal("internal HTTP lost controlled pinning")
 	}
 }
+
+func TestGitCurlResolveOptionRetainsExactTransportHostname(t *testing.T) {
+	for _, host := range []string{"localhost.", "git.example.test", "Git.Example.Test."} {
+		u, err := url.Parse("https://" + host + ":8443/repo.git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pin, err := gitCurlResolveOption(u, netip.MustParseAddr("127.0.0.2"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pin != host+":8443:127.0.0.2" {
+			t.Fatalf("pin %q does not retain transport host %q", pin, host)
+		}
+	}
+}
