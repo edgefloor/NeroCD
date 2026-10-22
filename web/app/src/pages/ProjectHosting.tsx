@@ -89,6 +89,21 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
       <p role="status">The saved configuration changed. Your draft is preserved. Review the current values before saving again.</p>
       {latest ? <>
         <dl className="space-y-1 break-words text-sm [overflow-wrap:anywhere]"><dt>Current generation</dt><dd>{latest.generation}</dd><dt>Current name</dt><dd>{latest.name}</dd><dt>Current source</dt><dd>{latest.source.kind === "image" ? latest.source.image.reference : `${latest.source.git.repository_url} at ${latest.source.git.requested_ref} · source generation ${latest.source.git.generation}`}</dd></dl>
+        {latest.source.kind === "git" ? <section aria-label="Current Git configuration">
+          <dl className="min-w-0 space-y-1 break-words text-sm [overflow-wrap:anywhere]">
+            <dt>Current repository URL</dt><dd>{latest.source.git.repository_url}</dd>
+            <dt>Current requested ref</dt><dd>{latest.source.git.requested_ref}</dd>
+            <dt>Current credential kind</dt><dd>{latest.source.git.credential_kind}</dd>
+            <dt>Current source ID</dt><dd>{latest.source.git.source_id}</dd>
+            <dt>Current source generation</dt><dd>{latest.source.git.generation}</dd>
+            <dt>Current build strategy</dt><dd>{latest.source.git.settings.strategy}</dd>
+            <dt>Current context directory</dt><dd>{latest.source.git.settings.context_dir || "Repository root (default)"}</dd>
+            <dt>Current Dockerfile path</dt><dd>{latest.source.git.settings.dockerfile_path || (latest.source.git.settings.strategy === "dockerfile" ? "Dockerfile (default)" : "Not applicable")}</dd>
+            <dt>Current build target</dt><dd>{latest.source.git.settings.build_target || (latest.source.git.settings.strategy === "dockerfile" ? "Final stage (default)" : "Not applicable")}</dd>
+            <dt>Current publish directory</dt><dd>{latest.source.git.settings.publish_dir || (latest.source.git.settings.strategy === "static" ? "Selected context root (default)" : "Not applicable")}</dd>
+            <dt>Current SPA fallback</dt><dd>{latest.source.git.settings.spa_fallback ? "Enabled" : "Disabled (default)"}</dd>
+          </dl>
+        </section> : null}
         <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={busy || !writable} onClick={() => { setBase(latest); setConflict(false); setError(""); }}>Keep my draft with generation {latest.generation}</Button>
         <p className="text-xs text-muted-foreground">This enables Save configuration. It does not save automatically.</p>
       </> : null}
