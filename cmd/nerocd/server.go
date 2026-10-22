@@ -200,7 +200,7 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		if err != nil {
 			return nil, nil, err
 		}
-		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg})
+		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg})
 		if err != nil {
 			_ = pg.Close()
 			return nil, nil, err
@@ -223,7 +223,7 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		return nil, nil, errors.New("in-memory store requires explicit development mode")
 	}
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Retention: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Retention: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem})
 	if err != nil {
 		return nil, nil, err
 	}

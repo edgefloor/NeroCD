@@ -224,14 +224,6 @@ func TestPostgresServiceAccountMigrationUpgradesFrom0038(t *testing.T) {
 		t.Fatalf("upgrade from 0038 through 0039: %v", err)
 	}
 
-	pg, err := store.OpenPostgres(ctx, schemaURL)
-	if err != nil {
-		t.Fatalf("open upgraded store: %v", err)
-	}
-	defer closePostgresStore(t, pg)
-	if compatible, err := pg.SchemaCompatible(ctx); err != nil || !compatible {
-		t.Fatalf("upgraded schema compatibility=%v err=%v", compatible, err)
-	}
 	var serviceAccountCompatible, policyCompatible bool
 	if err := database.QueryRow(ctx, `SELECT nerocd_service_account_schema_compatible(), nerocd_repository_policy_schema_compatible()`).Scan(&serviceAccountCompatible, &policyCompatible); err != nil {
 		t.Fatal(err)
@@ -253,6 +245,19 @@ func TestPostgresServiceAccountMigrationUpgradesFrom0038(t *testing.T) {
 	}
 	if serviceAccountID != nil || fmt.Sprint(roles) != fmt.Sprint([]string{domain.RoleRunnerAdmin}) {
 		t.Fatalf("upgraded legacy token service_account_id=%v roles=%v", serviceAccountID, roles)
+	}
+	// Historical 0039 assertions above do not depend on later migrations.
+	// Current store startup additionally requires the complete current schema.
+	if err := applyEmbeddedMigrations(ctx, database, "0039_service_accounts.sql", ""); err != nil {
+		t.Fatalf("apply current migrations after 0039 assertions: %v", err)
+	}
+	pg, err := store.OpenPostgres(ctx, schemaURL)
+	if err != nil {
+		t.Fatalf("open upgraded store: %v", err)
+	}
+	defer closePostgresStore(t, pg)
+	if compatible, err := pg.SchemaCompatible(ctx); err != nil || !compatible {
+		t.Fatalf("upgraded schema compatibility=%v err=%v", compatible, err)
 	}
 	legacy, err := pg.GetAPITokenByHash(ctx, "pre-0039-legacy-hash", time.Now().UTC())
 	if err != nil || legacy.ID != "pat_pre_0039" || legacy.ServiceAccountID != nil {

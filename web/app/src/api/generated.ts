@@ -4,6 +4,62 @@
  */
 
 export interface paths {
+    "/api/v1/project-environments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List ProjectEnvironment desired configuration */
+        get: operations["listProjectEnvironments"];
+        put?: never;
+        /** Create ProjectEnvironment desired configuration */
+        post: operations["createProjectEnvironment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Resource desired configuration */
+        get: operations["listResources"];
+        put?: never;
+        /** Create Resource desired configuration */
+        post: operations["createResource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Read desired resource configuration */
+        get: operations["getResource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update desired configuration and advance generation */
+        patch: operations["updateResource"];
+        trace?: never;
+    };
     "/api/v1/services": {
         parameters: {
             query?: never;
@@ -1254,6 +1310,70 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ImageSource: {
+            /** @description Repository with an explicit tag or sha256 digest. Registry ports are supported. No registry resolution occurs. */
+            reference: string;
+        };
+        ResourceSource: {
+            /** @enum {string} */
+            kind: "image";
+            image: components["schemas"]["ImageSource"];
+        };
+        ProjectEnvironmentInput: {
+            project_id: string;
+            name: string;
+        };
+        ProjectEnvironment: {
+            id: string;
+            project_id: string;
+            name: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        ResourceInput: {
+            project_id: string;
+            project_environment_id: string;
+            name: string;
+            /** @enum {string} */
+            kind: "application";
+            source: components["schemas"]["ResourceSource"];
+        };
+        ResourcePatch: {
+            name?: string;
+            source?: components["schemas"]["ResourceSource"];
+            /** Format: int64 */
+            expected_generation: number;
+        } | unknown | unknown;
+        Resource: {
+            id: string;
+            project_id: string;
+            project_environment_id: string;
+            name: string;
+            /** @enum {string} */
+            kind: "application";
+            source: components["schemas"]["ResourceSource"];
+            /** Format: int64 */
+            generation: number;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ResourceListResponse: {
+            items: components["schemas"]["Resource"][];
+            limit: number;
+            offset: number;
+            count: number;
+            total: number;
+        };
+        ProjectEnvironmentListResponse: {
+            items: components["schemas"]["ProjectEnvironment"][];
+            limit: number;
+            offset: number;
+            count: number;
+            total: number;
+        };
         PaginatedResponse: {
             items: unknown[];
             limit: number;
@@ -2319,6 +2439,181 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listProjectEnvironments: {
+        parameters: {
+            query: {
+                project_id: string;
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectEnvironmentListResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createProjectEnvironment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectEnvironmentInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectEnvironment"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    listResources: {
+        parameters: {
+            query: {
+                project_id: string;
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+                project_environment_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceListResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Resource"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    getResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resource */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Resource"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourcePatch"];
+            };
+        };
+        responses: {
+            /** @description Updated resource */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Resource"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
     listServices: {
         parameters: {
             query?: {

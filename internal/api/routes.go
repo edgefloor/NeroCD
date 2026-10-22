@@ -3,6 +3,12 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/project-environments"},
+	{Method: http.MethodPost, Path: "/api/v1/project-environments"},
+	{Method: http.MethodGet, Path: "/api/v1/resources"},
+	{Method: http.MethodPost, Path: "/api/v1/resources"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}"},
+	{Method: http.MethodPatch, Path: "/api/v1/resources/{id}"},
 	{Method: http.MethodGet, Path: "/api/v1/health"},
 	{Method: http.MethodGet, Path: "/api/v1/ready"},
 	{Method: http.MethodGet, Path: "/api/v1/bootstrap-status"},
@@ -105,6 +111,12 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/project-environments":
+		return s.projectEnvironmentsHandler
+	case "/api/v1/resources":
+		return s.resourcesHandler
+	case "/api/v1/resources/{id}":
+		return s.resourceByID
 	case "/api/v1/health":
 		return s.health
 	case "/api/v1/ready":

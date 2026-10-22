@@ -192,6 +192,13 @@ type Project struct {
 	ArchivedAt  *time.Time `json:"archived_at"`
 }
 
+type ProjectEnvironment struct {
+	ID        string    `json:"id"`
+	ProjectID string    `json:"project_id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type ProjectMember struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
@@ -237,6 +244,19 @@ type RepositoryPolicyConfigurationReceipt struct {
 	PolicySha256    string    `json:"policy_sha256"`
 	AuditID         string    `json:"audit_id"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+type Resource struct {
+	ID                   string          `json:"id"`
+	ProjectID            string          `json:"project_id"`
+	ProjectEnvironmentID string          `json:"project_environment_id"`
+	Name                 string          `json:"name"`
+	Kind                 string          `json:"kind"`
+	Source               json.RawMessage `json:"source"`
+	Generation           int64           `json:"generation"`
+	CreatedBy            string          `json:"created_by"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 type Revision struct {

@@ -37,6 +37,7 @@ type Service struct {
 	apiTokens            store.APITokenRepository
 	serviceAccounts      store.ServiceAccountRepository
 	projects             store.ProjectRepository
+	hosting              store.HostingRepository
 	members              store.ProjectMemberRepository
 	templates            store.TemplateRepository
 	sources              store.SourceRepository
@@ -70,6 +71,7 @@ type Dependencies struct {
 	ServiceAccounts   store.ServiceAccountRepository
 	OIDC              store.OIDCRepository
 	Projects          store.ProjectRepository
+	Hosting           store.HostingRepository
 	Members           store.ProjectMemberRepository
 	Templates         store.TemplateRepository
 	Sources           store.SourceRepository
@@ -105,6 +107,9 @@ func NewService(deps Dependencies) (*Service, error) {
 	}
 	if deps.OIDC == nil {
 		missing = append(missing, "OIDC")
+	}
+	if deps.Hosting == nil {
+		missing = append(missing, "Hosting")
 	}
 	if deps.Projects == nil {
 		missing = append(missing, "Projects")
@@ -155,6 +160,7 @@ func NewService(deps Dependencies) (*Service, error) {
 		apiTokens:            deps.APITokens,
 		serviceAccounts:      deps.ServiceAccounts,
 		projects:             deps.Projects,
+		hosting:              deps.Hosting,
 		members:              deps.Members,
 		templates:            deps.Templates,
 		sources:              deps.Sources,

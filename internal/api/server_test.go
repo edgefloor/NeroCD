@@ -37,7 +37,7 @@ func (incompatibleProjects) SchemaCompatible(context.Context) (bool, error) { re
 
 func newTestServer() (*Server, *store.MemoryStore) {
 	mem := newSeededTestStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		panic(err)
 	}
@@ -46,7 +46,7 @@ func newTestServer() (*Server, *store.MemoryStore) {
 
 func newTestServerWithConfig(cfg ServerConfig) (*Server, *store.MemoryStore) {
 	mem := newSeededTestStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		panic(err)
 	}
@@ -541,7 +541,7 @@ func TestReadinessIsPublicAndMetricsRequireAdmin(t *testing.T) {
 
 func TestBootstrapAndOperationsStatusAreBoundedAndRoleProtected(t *testing.T) {
 	empty := store.NewMemoryStore()
-	emptyService, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, ServiceAccounts: empty, OIDC: empty, Projects: empty, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
+	emptyService, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, ServiceAccounts: empty, OIDC: empty, Hosting: empty, Projects: empty, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +580,7 @@ func TestBootstrapAndOperationsStatusAreBoundedAndRoleProtected(t *testing.T) {
 		t.Fatalf("admin operations status=%d %s", ready.Code, ready.Body.String())
 	}
 
-	incompatible, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, ServiceAccounts: empty, OIDC: empty, Projects: incompatibleProjects{empty}, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
+	incompatible, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: empty, Sessions: empty, APITokens: empty, ServiceAccounts: empty, OIDC: empty, Hosting: empty, Projects: incompatibleProjects{empty}, Members: empty, Templates: empty, Sources: empty, Runs: empty, Runners: empty, Approvals: empty, Audit: empty, Deployments: empty, Observability: empty, ObservationWriter: empty, ObservationReader: empty, Retention: empty})
 
 	if err != nil {
 
@@ -732,7 +732,7 @@ func TestDrainKeepsLivenessButRejectsReadinessAndOrdinaryWork(t *testing.T) {
 
 func TestReadinessDoesNotConflateLivenessWithDatabaseCompatibility(t *testing.T) {
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: unavailableProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Projects: unavailableProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,7 +753,7 @@ func TestReadinessDoesNotConflateLivenessWithDatabaseCompatibility(t *testing.T)
 
 func TestReadinessRejectsOldOrPartialSchema(t *testing.T) {
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: incompatibleProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Projects: incompatibleProjects{mem}, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		t.Fatal(err)
 	}
