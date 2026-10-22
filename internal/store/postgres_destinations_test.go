@@ -172,6 +172,7 @@ func TestPostgresDestinationMissingMigrationBlocksStartup(t *testing.T) {
 	ctx := t.Context()
 	pg, db := openPostgresIntegrationStore(t, ctx, "dest_missing")
 	t.Cleanup(func() { closePostgresStore(t, pg) })
+	removeHostingBuildMigrationLayer(t, db)
 	// Remove the newest additive dependencies first; missing proxy/port schema
 	// must fail readiness before the older destination regression is exercised.
 	if _, err := db.Exec(ctx, `DROP TABLE hosting_release_claims,hosting_release_slots,hosting_cleanup_targets,hosting_retained_releases,hosting_proxy_release_references,hosting_proxy_receipts,hosting_proxy_admissions,hosting_proxy_task_targets,hosting_proxy_operations,hosting_proxy_routes,hosting_proxy_hostname_grants,hosting_proxy_restore_holds,hosting_proxies; DROP FUNCTION nerocd_hosting_proxy_schema_compatible(); DROP FUNCTION nerocd_hosting_release_identity(); DROP FUNCTION nerocd_hosting_release_claim_identity(); DROP FUNCTION nerocd_hosting_proxy_identity(); DROP FUNCTION nerocd_hosting_proxy_operation_identity()`); err != nil {

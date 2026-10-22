@@ -303,6 +303,7 @@ func TestPostgresManagedSecretsMissingMigrationBlocksStartup(t *testing.T) {
 	ctx := t.Context()
 	pg, db := openPostgresIntegrationStore(t, ctx, "managed_missing")
 	t.Cleanup(func() { closePostgresStore(t, pg) })
+	removeHostingBuildMigrationLayer(t, db)
 	if _, err := db.Exec(ctx, `DROP TABLE project_managed_secrets,project_managed_secret_versions; DROP FUNCTION nerocd_managed_secrets_schema_compatible(); DROP FUNCTION nerocd_managed_secret_update(); DROP FUNCTION nerocd_managed_secret_version_immutable()`); err != nil {
 		t.Fatal(err)
 	}
@@ -314,6 +315,9 @@ func TestPostgresManagedSecretsMissingMigrationBlocksStartup(t *testing.T) {
 		t.Fatal("missing migration allowed startup")
 	}
 	if err := applyEmbeddedMigrations(ctx, db, "0040_hosting_resources.sql", "0041_project_managed_secrets.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyEmbeddedMigrations(ctx, db, "0046_hosting_proxy_control.sql", ""); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {
