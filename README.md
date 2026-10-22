@@ -31,8 +31,8 @@ it is not a complete Coolify parity claim.
   uses the runner CLI; these controls do not validate Docker or deploy resources.
 - [Transactional hosting job infrastructure](docs/hosting-jobs.md) using River
   OSS v0.44.1, with checked migrations and backup schema identity. PostgreSQL
-  mode starts image and proxy dispatch consumers. An optional BuildID adapter
-  is available, but no production build controller supplies its handler.
+  mode starts image/proxy consumers and the production BuildID handler when
+  trusted operator build policy enables admission.
 - [Public image deployment](docs/hosting-execution.md) through the API, River,
   agent and Docker, with frozen image identity, ordinary HTTP readiness and
   per-release loopback port allocation or explicit fixed ports. The
@@ -43,23 +43,33 @@ it is not a complete Coolify parity claim.
   the API and WebUI, with atomic immutable source versions and explicit conflict
   review. Public HTTPS defaults to `github.com` under an operator allowlist.
   PostgreSQL is required. Saving configuration does not fetch or build, private
-  source configuration is unsupported, and Git build/deploy controls remain unavailable.
+  source configuration is unsupported. Separate public build controls provide
+  request/history/cancel through the enabled controller; artifact deployment
+  remains unavailable.
 - A [controlled Git checkout adapter](docs/hosting-source-checkout.md) with
   pinned transport policy and source receipts, plus an internal
   [source/build persistence contract](docs/hosting-build-control.md) for
   immutable settings, purpose-specific grants, fenced receipts and artifacts.
   The [private credential delivery component](docs/hosting-build-credentials.md)
   authorizes exact live sourcing attempts. Its endpoint and controller wiring
-  remain absent, so these components do not form a usable Git build flow.
+  remain absent for private sources. Public HTTPS builds use the configured
+  production controller and explicitly enabled agent runtime.
 - Nonsecret [build protocol](docs/hosting-build-protocol.md), additive
   [v5 journal records](docs/hosting-build-journal.md) and
   [typed client methods](docs/hosting-build-client.md) are available as
-  infrastructure. They register no build endpoint, default capability or executor.
+  used by the production controller and enrolled build executor. Execution is
+  disabled by default and requires strict owned local configuration, matching
+  persisted capability and exact server policy.
+- The [public Git build runtime](docs/hosting-build-runtime.md) connects the
+  API, PostgreSQL, River and normal compiled agent to controlled checkout and
+  the local engine. Accepted real-Docker coverage builds Dockerfile, Railpack
+  and prepared static output into immutable local artifacts. A successful build
+  is not a running application and cannot yet be deployed from these controls.
 - A [standalone local build engine](docs/hosting-build-engine.md) for Dockerfile,
   Railpack and prebuilt static assets on a fixed Linux Docker host. Confined
   context/Dockerfile/target and publish-directory/SPA settings are supported.
-  Build orchestration, the credential endpoint/runtime bridge, deployment handoff
-  and log streaming remain separate work.
+  Private credential HTTP/runtime delivery, artifact deployment handoff and
+  build-output/runtime-log streaming remain separate work.
 - A [standalone Traefik engine](docs/hosting-proxy-engine.md) with routing,
   HTTP-01 TLS and persistent state. The [proxy backend](docs/hosting-proxy-control.md)
   persists authorized route generations and dispatches exact-target tasks.
