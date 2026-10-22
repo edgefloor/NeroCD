@@ -314,16 +314,20 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		writeErrorEnvelope(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "application/json is required")
 		return false
 	}
-	if r.ContentLength > maxJSONBodyBytes {
+	limit := maxJSONBodyBytes
+	if strings.HasPrefix(r.URL.Path, "/api/v1/resources/") && strings.HasSuffix(r.URL.Path, "/runtime-configuration") {
+		limit = domain.HostingRuntimeRequestLimit
+	}
+	if r.ContentLength > int64(limit) {
 		writeErrorEnvelope(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the limit")
 		return false
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxJSONBodyBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	if err != nil {
 		writeErrorEnvelope(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return false
 	}
-	if len(body) > maxJSONBodyBytes {
+	if len(body) > limit {
 		writeErrorEnvelope(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the limit")
 		return false
 	}
@@ -599,7 +603,7 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
-	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable):
+	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable), errors.Is(err, store.ErrHostingRuntimeConfigurationUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_unavailable"
 	case errors.Is(err, app.ErrManagedSecretsUnavailable), errors.Is(err, app.ErrHostingSourceCredentialUnavailable):

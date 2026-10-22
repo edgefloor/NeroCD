@@ -3,6 +3,8 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/runtime-configuration"},
+	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/runtime-configuration"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/builds/source-credential"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/source-grants"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/source-grants"},
@@ -185,6 +187,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingHostnameGrants
 	case "/api/v1/servers/{id}/proxy/hostname-grants/{grant_id}/revoke":
 		return s.hostingHostnameRevoke
+	case "/api/v1/resources/{id}/runtime-configuration":
+		return http.HandlerFunc(s.hostingRuntimeConfiguration)
 	case "/api/v1/resources/{id}/routes":
 		return s.hostingRoutes
 	case "/api/v1/routes/{id}":

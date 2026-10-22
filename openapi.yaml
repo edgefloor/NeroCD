@@ -1355,6 +1355,45 @@ paths:
         "403": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
         "409": {$ref: "#/components/responses/Error"}
+  /api/v1/resources/{id}/runtime-configuration:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/HostingIdentifier"}
+    get:
+      summary: Read desired runtime literals and secret references with current project viewer access
+      description: Reference metadata remains readable after secret revocation. Generation zero with empty entries represents untouched configuration. No secret values are expanded. Saving or reading does not imply runtime injection support.
+      operationId: getHostingRuntimeConfiguration
+      responses:
+        "200":
+          description: Desired configuration; do not cache
+          headers: {Cache-Control: {schema: {type: string, const: no-store}}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/HostingRuntimeConfigurationResponse"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+    put:
+      summary: Replace desired runtime configuration with current project owner access
+      description: Application resources with image or Git sources only. Each new request appends an immutable version, including identical or empty documents. Exact replay reauthorizes the owner and active same-project secret versions and returns the original version; changed intent or resource generation conflicts. Separate runtime generation does not change resource/source generations or start deployment. Exact field casing is required; unknown, duplicate, trailing or malformed Unicode JSON is rejected. Maximum raw request is 512 KiB and canonical document 256 KiB. No interpolation or inheritance.
+      operationId: putHostingRuntimeConfiguration
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/HostingRuntimeConfigurationInput"}}}}
+      responses:
+        "200":
+          description: Saved desired configuration; do not cache
+          headers: {Cache-Control: {schema: {type: string, const: no-store}}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/HostingRuntimeConfigurationResponse"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "413": {$ref: "#/components/responses/Error"}
+        "415": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   /api/v1/resources/{id}/binding:
     parameters:
       - name: id
@@ -4766,6 +4805,56 @@ components:
       required: [destination_id]
       properties:
         destination_id: {$ref: "#/components/schemas/HostingIdentifier"}
+    HostingRuntimeSecretReference:
+      type: object
+      additionalProperties: false
+      required: [secret_id, version]
+      properties:
+        secret_id: {type: string, minLength: 1, maxLength: 128, description: "Exact same-project managed secret ID, UTF-8 at most 128 bytes without control or surrounding whitespace"}
+        version: {type: integer, format: int64, minimum: 1}
+    HostingRuntimeEntry:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [name, kind, value]
+          properties:
+            name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,127}$', description: "Exact NEROCD_ prefix is reserved"}
+            kind: {type: string, enum: [literal]}
+            value: {type: string, maxLength: 4096, description: "Explicitly nonsecret viewer-readable literal, at most 4096 UTF-8 bytes, no NUL CR LF; empty allowed"}
+        - type: object
+          additionalProperties: false
+          required: [name, kind, secret]
+          properties:
+            name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,127}$', description: "Exact NEROCD_ prefix is reserved"}
+            kind: {type: string, enum: [managed_secret]}
+            secret: {$ref: "#/components/schemas/HostingRuntimeSecretReference"}
+    HostingRuntimeConfigurationInput:
+      type: object
+      additionalProperties: false
+      required: [expected_resource_generation, expected_runtime_generation, request_id, entries]
+      properties:
+        expected_resource_generation: {type: integer, format: int64, minimum: 1}
+        expected_runtime_generation: {type: integer, format: int64, minimum: 0, maximum: 9223372036854775806}
+        request_id: {type: string, pattern: '^[0-9a-f]{32}$', description: "Client-generated cryptographically random 128-bit ID retained across retries"}
+        entries: {type: array, maxItems: 64, items: {$ref: "#/components/schemas/HostingRuntimeEntry"}, description: "Unique names, at most 16 distinct secret ID/version pairs; sorted by name when saved"}
+    HostingRuntimeConfigurationResponse:
+      type: object
+      additionalProperties: false
+      required: [runtime_configuration]
+      properties:
+        runtime_configuration: {$ref: "#/components/schemas/HostingRuntimeConfiguration"}
+    HostingRuntimeConfiguration:
+      type: object
+      additionalProperties: false
+      required: [resource_id, project_id, resource_generation, runtime_generation, entries]
+      properties:
+        resource_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        project_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        resource_generation: {type: integer, format: int64, minimum: 1}
+        runtime_generation: {type: integer, format: int64, minimum: 0}
+        entries: {type: array, maxItems: 64, items: {$ref: "#/components/schemas/HostingRuntimeEntry"}}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
     ResourceBinding:
       type: object
       additionalProperties: false
