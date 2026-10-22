@@ -70,7 +70,7 @@ func destinationServiceContract(t *testing.T, service *Service) {
 	}
 	runnerAdmin := auth.WithPrincipal(ctx, legacyPrincipal)
 	viewer := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_viewer", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleViewer}})
-	eligible := enrollApplicationDestinationRunner(t, service, admin, "runner_dest_first", []string{"compose_deploy"})
+	eligible := enrollApplicationDestinationRunner(t, service, admin, "runner_dest_first", []string{domain.RunTypeComposeDeploy})
 	detail, err := service.CreateServer(runnerAdmin, ServerInput{Name: "First host", RunnerID: eligible.ID})
 	if err != nil {
 		t.Fatal(err)
