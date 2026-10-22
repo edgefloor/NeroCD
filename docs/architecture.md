@@ -1,7 +1,7 @@
 # Architecture
 
-Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
-Application/source assessment remains `852f8e6b8d5624a95865c276dcea4a239d1f8fea`,
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
+Accepted application/source assessment: `edf8f14c8262c896e4c886088f8058878d77e965`,
 2026-10-22. The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c`
 and earlier `a763a90b3896257b784c9498d01650ccdad2427a` are historical.
 The [specification](product-spec.md) retains both targets. Hosting parity is the
@@ -93,7 +93,13 @@ local OCI artifact identities. The accepted [Git configuration API/UI](hosting-g
 admits public HTTPS under an operator allowlist and stores atomic source/version
 references through migration 0049. Reads resolve the exact immutable version;
 CAS review exposes all current settings. PostgreSQL is required, and configuration
-performs no network fetch. Private Git configuration remains unsupported.
+performs no network fetch. The private HTTPS control plane now accepts
+`https_basic` configuration, owner-created/revoked source grants and gated build
+requests. Its typed credential endpoint/client enforce live authority, bounded
+expiry and protected transport; private capability is rechecked at admission,
+replay, dispatch, claim and delivery. The compiled runtime still refuses this
+capability, so configuration does not establish private checkout or A03. See the
+[accepted control-plane evidence](compatibility.md#accepted-foundations-and-evidence).
 Separate [build UI/API operations](hosting-git-resources.md) now request,
 inspect and cancel builds through the production controller and River handler.
 The [normal agent runtime](hosting-build-runtime.md) connects source checkout,
@@ -112,8 +118,9 @@ plaintext and revalidates project access. This is separate from application-runt
 logs, terminals and continuous health, which remain planned.
 The [private Git credential component](hosting-build-credentials.md) authorizes
 and decrypts the exact immutable secret version for a live sourcing attempt.
-Its audit-backed window and byte ownership do not install an endpoint or runtime
-bridge. The [source checkout contract](hosting-source-checkout.md) keeps the
+Its audit-backed window and byte ownership now underpin the accepted typed
+credential endpoint/client. Private runtime consumption and UI wiring remain
+absent. The [source checkout contract](hosting-source-checkout.md) keeps the
 credential window through fetch, tree validation, committed receipt and confirmed
 transport-file removal/byte clearing. Those credentials are cleared before the
 use/build callback; final checkout cleanup follows use. Once transport cleanup
@@ -263,7 +270,8 @@ in the control-plane job worker. Queue completion is distinct from workload or
 proxy completion. The BuildID worker registers when the supplied handler
 implements its build interface. The accepted production controller supplies
 that handler, and the explicitly enabled compiled agent executes public builds.
-Private credential HTTP/runtime delivery remains absent. Same-host artifact
+Private credential HTTP/client delivery is accepted as a control-plane contract;
+private runtime checkout and UI remain absent. Same-host artifact
 deployment is accepted through the existing operation queue and an explicitly
 enabled agent; it creates no second queue.
 
@@ -289,7 +297,8 @@ shadow-object and real dump/restore regression coverage at `836a3a92`.
 That persistence checkpoint alone did not install build execution. Current
 accepted controller/runtime evidence is recorded in the [ledger](compatibility.md#accepted-foundations-and-evidence).
 It now includes public builds, explicit same-host artifact deployment and durable
-build output. Private Git and the complete hosting/workspace journeys remain planned.
+build output and private HTTPS control-plane contracts. Private runtime/UI and
+the complete hosting/workspace journeys remain planned.
 
 See [Hosting job infrastructure](hosting-jobs.md) for lifecycle, compatibility,
 and integration contracts.
