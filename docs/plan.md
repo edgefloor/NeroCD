@@ -8,26 +8,46 @@ The accepted planning review examined the complete supplied specification, inclu
 
 ## Accepted progress on 2026-10-22
 
-The current assessment is `45d7fa9a0bd20fb3733ac97c0bc93966c803dc4a`.
+The current assessment is `69735f6ca34e68147b00cae4afbfe135b2b5fa1b`.
 The earlier `a763a90` inspection remains planning history. The complete target,
 P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
 
 | Package | Accepted foundation | Remaining package boundary |
 | --- | --- | --- |
 | P00 | Full specification, ordered plan and compatibility ledger adopted | Keep support claims and evidence current |
-| P01 | Shared project environments and image-application desired configuration, authorized API and WebUI | Team model, additional resource kinds, legacy mappings and runtime mutation concurrency |
-| P02 | Enrolled server admission, stable default destinations, project grants and immutable bindings through API/WebUI; authoritative runner identity endpoint | SSH-assisted onboarding, actual host capability/readiness validation, full server lifecycle and runtime reconciliation |
+| P01 | Shared project environments and image-application desired configuration, authorized API and WebUI; public-image operation admission has binding mutation holds | Team model, additional resource kinds, legacy mappings and broader shared-resource concurrency |
+| P02 | Enrolled server admission, stable default destinations, project grants and immutable bindings through API/WebUI; authoritative runner identity and exact-target image execution | SSH-assisted onboarding, onboarding-time host capability/readiness validation, full server lifecycle and trusted recovery of uncertain effects |
 | P03 | Encrypted immutable project-secret versions, create/rotate/reveal/revoke, strict keyring file and protected WebUI | Execution delivery, broader value scopes, grants, key recovery workflows and external providers |
-| P06/P14 infrastructure | River OSS v0.44.1 transactional enqueue, checked owner migrations and backup identity | Production consumer registration, hosting operation integration, runtime queue readiness and restore admission holds |
-| P16 | Configuration, secret and placement controls accompany their accepted API slices | Deployment controls and complete hosting UI/API/CLI/MCP workflows |
+| P05 | Standalone local Dockerfile, Railpack and prebuilt-static engine with retained output identity and owned cleanup | Git acquisition, build API/records, deployment handoff, log streaming, private credentials, compiled-static product path and remote image delivery |
+| P06 | Live River image consumer, public-tag freeze, fenced agent/Docker apply, generic HTTP readiness, fixed-port replacement, cancellation/replay and mutation holds | Broader release strategies, optional hosting approval, managed variables/secrets, private registries and safe restored-ownership resumption |
+| P07 | Standalone Traefik engine with typed routes, HTTP-01 TLS, real renewal and coordinated state backup/restore fixtures | Authorized route APIs, agent dispatch, binding-derived targets, fenced proxy ownership, WebUI, DNS-01/custom certificates and proxy adapters |
+| P14 infrastructure | River OSS v0.44.1 transactional enqueue and live image consumer, checked migrations, runtime schema readiness and backup identity | General schedules, notification delivery and their lifecycle contracts |
+| P16 | Configuration, secret, placement and public-image deployment controls; history, exact retained-request recovery, cancel and read-only reconcile | HTTPS workflow and complete hosting UI/API/CLI/MCP workflows |
 
 See [bounded evidence and exact commits](compatibility.md#accepted-foundations-and-evidence),
 the [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
-[job infrastructure guide](hosting-jobs.md). An image setting is not a deployed
-application; a saved binding is not runtime health. Image execution, hosting
-deployment UI and proxy-engine work outside this accepted base remain unaccepted.
+[job infrastructure guide](hosting-jobs.md). The [image execution guide](hosting-execution.md)
+and [deployment WebUI guide](hosting-image-deployments.md) define the accepted
+runtime path. The [build](hosting-build-engine.md) and
+[proxy](hosting-proxy-engine.md) engines are standalone components, not an
+integrated repository-to-HTTPS journey. Saving configuration or placement does
+not itself deploy. A successful operation records past readiness rather than
+continuous health.
 No result here completes A01, A05, A08 or A27, and results from different
 revisions cannot be combined into the A36 release assertion.
+
+M1 still requires source acquisition and provider credentials, build records
+and authorized orchestration, build-to-deployment handoff, managed-secret
+execution delivery, integrated route/TLS operations and UI, continuous
+observations/runtime logs, trusted automatic triggers and optional hosting
+approval. Restore holds prevent mutation after recovery; trusted local process
+and journal proof for resumption is not implemented. No A01–A37 scenario or
+M0–M4 milestone is declared complete by this assessment.
+
+Source-adapter and per-release proxy-retention work outside this accepted base
+remain unaccepted. Future integration must use newly reviewed candidates and
+fresh relevant evidence rather than treating those worktree interfaces as
+available product behavior.
 
 ## The architectural decision
 
@@ -258,16 +278,22 @@ Run narrow checks during implementation, then the affected integration gates at 
 
 The largest risks are ownership migration, secret material escaping through normalized Compose, uncertainty after Docker mutation, data lifecycle mistakes, and mismatches between generated UI assets and the shipped binary. The proposed order addresses those before broad catalog or provider expansion. It leaves no declared feature silently removed from the campaign, and it makes each release claim depend on demonstrated workflows rather than the amount of code written.
 
-## River infrastructure status
+## River and image execution status
 
-The River OSS adapter provides transactional hosting job insertion, a required
-handler interface, finite retries, bounded shutdown, owner CLI migration, and
-backup migration identity. It is not registered in the runtime server.
-`hosting.prepare_deployment.v1` has no production consumer yet. The next slice
-must persist real operation state, authorize preparation, resolve the immutable
-snapshot and exact destination, and use the existing fenced runner queue.
-Runtime readiness and restore admission must include the queue before that
-consumer is enabled. Before adding operation records, inspect the accepted
-schema and allocate the next available native migration. Do not edit historical
-migrations or treat migration reservations in unaccepted worktrees as accepted
-schema. This infrastructure adds no placeholder operation table.
+The PostgreSQL server validates native and River schema evidence before starting
+the live image consumer. Deployment admission commits operation, immutable
+snapshot, audit and queue insertion together. Dispatch records one typed
+`image_deploy` task for the exact bound runner. Queue completion and workload
+completion remain separate. Native migration 0044 owns destination capability
+compatibility; 0045 owns image operation and execution evidence.
+
+Preparation freezes the selected public-image identity; apply uses live lease authority.
+Unknown effects retain mutation holds; exact committed receipts can replay.
+Restored bindings retain a separate ownership hold that read-only reconciliation
+cannot clear. The [execution](hosting-execution.md) and
+[job](hosting-jobs.md) guides state these boundaries. General scheduling,
+notifications and trusted restored-ownership resumption remain planned.
+
+Before adding further schema, inspect the accepted schema and allocate the next
+available native migration. Preserve historical migrations and do not treat
+reservations in unaccepted worktrees as accepted schema.

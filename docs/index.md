@@ -8,7 +8,15 @@
 - [Hosting destinations](hosting-destinations.md): manual enrollment, server
   admission, project grants and immutable desired placement through API and WebUI.
 - [Hosting job infrastructure](hosting-jobs.md): River transactional enqueue,
-  migration checksums and backup identity, before a production consumer.
+  live image consumer, migration checksums and backup identity.
+- [Public image execution](hosting-execution.md): API, River, agent and Docker
+  path, generic HTTP readiness, cancellation, replay and restore holds.
+- [Deploy an image application](hosting-image-deployments.md): WebUI requests,
+  operation history, retained-request recovery and role boundaries.
+- [Local build engine](hosting-build-engine.md): standalone Dockerfile, Railpack
+  and prebuilt-static adapters, fixed-host limits and runtime fixture.
+- [Linux proxy engine](hosting-proxy-engine.md): standalone Traefik routing,
+  HTTP-01 certificates and state recovery, before control-plane/UI integration.
 - [Getting started](getting-started.md): local PostgreSQL, Compose, and memory.
 - [Production](production.md): Compose, secrets, proxy, bootstrap, and OIDC.
 - [Architecture](architecture.md): current components and the target hosting model.

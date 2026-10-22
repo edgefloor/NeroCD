@@ -30,17 +30,31 @@ it is not a complete Coolify parity claim.
   project grants and immutable desired resource placement. Manual enrollment
   uses the runner CLI; these controls do not validate Docker or deploy resources.
 - [Transactional hosting job infrastructure](docs/hosting-jobs.md) using River
-  OSS v0.44.1, with checked migrations and backup schema identity. The accepted
-  server does not start a production hosting consumer.
+  OSS v0.44.1, with checked migrations and backup schema identity. PostgreSQL
+  mode starts the hosting consumer and dispatches fenced image work to agents.
+- [Public image deployment](docs/hosting-execution.md) through the API, River,
+  agent and Docker, with frozen image identity, ordinary HTTP readiness and
+  fixed loopback host ports. The [deployment WebUI](docs/hosting-image-deployments.md)
+  provides role-aware requests, history, cancellation, read-only reconciliation
+  and retry of the retained exact request.
+- A [standalone local build engine](docs/hosting-build-engine.md) for Dockerfile,
+  Railpack and prebuilt static assets on a fixed Linux Docker host. Git retrieval,
+  build APIs/records, deployment handoff and log streaming remain separate work.
+- A [standalone Traefik engine](docs/hosting-proxy-engine.md) with routing,
+  HTTP-01 TLS and persistent state. Control-plane route authorization, agent
+  dispatch and WebUI integration remain separate work.
 - A React/Vite/TanStack web application embedded from `web/dist`, plus the
   versioned `/api/v1` contract in [openapi.yaml](openapi.yaml).
 - Offset-paginated list APIs. Use `limit` and `offset`; do not assume cursors.
 
 NeroCD does not currently provide SAML, LDAP, SCIM, claim or group mapping,
 automatic OIDC signup, multiple issuers, general workflow parallelism,
-managed-secret runner delivery or Vault lookup. Server readiness checks,
-image-resource execution, managed proxy/TLS and the remaining full hosting
-journey are still required. See the [dated progress assessment](docs/compatibility.md#accepted-foundations-and-evidence)
+managed-secret runner delivery or Vault lookup. SSH-assisted onboarding, the
+repository-to-build-to-deploy path, integrated public routes/HTTPS, continuous
+runtime monitoring and trusted restore resumption remain required. Image
+deployment uses loopback HTTP with interruption during fixed-port replacement.
+Restored ownership stays blocked; there is no unlock action in this slice.
+See the [dated progress assessment](docs/compatibility.md#accepted-foundations-and-evidence)
 and [plan](docs/plan.md).
 
 ## Quick start
