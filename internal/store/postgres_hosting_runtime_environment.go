@@ -99,8 +99,13 @@ func hostingFreshRuntimeGate(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 }
 
 func replayHostingApplyAdmission(ctx context.Context, tx pgx.Tx, a domain.HostingAuthority, op domain.HostingOperation) error {
-	var matches bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_apply_admissions WHERE operation_id=$1 AND run_id=$2 AND lease_id=$3 AND authority=$4::jsonb AND plan_hash=$5)`, op.ID, a.RunID, a.LeaseID, buildJSON(a), op.Plan.Hash).Scan(&matches)
+	matches, err := sqlcgen.New(tx).HostingApplyAdmissionMatches(ctx, sqlcgen.HostingApplyAdmissionMatchesParams{
+		OperationID: op.ID,
+		RunID:       a.RunID,
+		LeaseID:     a.LeaseID,
+		Authority:   buildJSON(a),
+		PlanHash:    op.Plan.Hash,
+	})
 	if err != nil {
 		return err
 	}
