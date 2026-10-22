@@ -233,6 +233,9 @@ func (s *Server) clientSource(r *http.Request) string {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/v1/managed-secrets" || strings.HasPrefix(r.URL.Path, "/api/v1/managed-secrets/") {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	start := time.Now()
 	requestID := requestID(r)
 	r = r.WithContext(app.WithRequestID(r.Context(), requestID))
@@ -313,6 +316,10 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if len(body) > maxJSONBodyBytes {
 		writeErrorEnvelope(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the limit")
+		return false
+	}
+	if (r.URL.Path == "/api/v1/managed-secrets" || strings.HasPrefix(r.URL.Path, "/api/v1/managed-secrets/")) && !validManagedJSONUnicode(body) {
+		writeErrorEnvelope(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -568,6 +575,9 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
+	case errors.Is(err, app.ErrManagedSecretsUnavailable):
+		status = http.StatusServiceUnavailable
+		code = "unavailable"
 	case errors.Is(err, auth.ErrUnauthenticated):
 		status = http.StatusUnauthorized
 		code = "unauthenticated"
@@ -599,6 +609,7 @@ func writeError(w http.ResponseWriter, err error) {
 		"conflict":            "request conflicts with current state",
 		"bad_request":         "invalid request",
 		"internal_error":      "internal server error",
+		"unavailable":         "managed secrets are unavailable",
 	}[code]
 	writeErrorEnvelope(w, status, code, message)
 }

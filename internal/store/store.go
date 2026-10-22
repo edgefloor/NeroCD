@@ -122,6 +122,8 @@ type MemoryStore struct {
 	projects              []domain.Project
 	projectEnvironments   []domain.ProjectEnvironment
 	resources             []domain.Resource
+	managedSecrets        []domain.ManagedSecret
+	managedSecretVersions []ManagedSecretRecord
 	templates             []domain.TaskTemplate
 	repositories          []domain.Repository
 	accessKeys            []domain.AccessKey

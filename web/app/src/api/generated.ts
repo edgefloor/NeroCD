@@ -4,6 +4,93 @@
  */
 
 export interface paths {
+    "/api/v1/managed-secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** listManagedSecrets */
+        get: operations["listManagedSecrets"];
+        put?: never;
+        /** createManagedSecret */
+        post: operations["createManagedSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/managed-secrets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** getManagedSecret */
+        get: operations["getManagedSecret"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/managed-secrets/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** listManagedSecretVersions */
+        get: operations["listManagedSecretVersions"];
+        put?: never;
+        /** rotateManagedSecret */
+        post: operations["rotateManagedSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/managed-secrets/{id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** revokeManagedSecret */
+        post: operations["revokeManagedSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/managed-secrets/{id}/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** revealManagedSecret */
+        post: operations["revealManagedSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/project-environments": {
         parameters: {
             query?: never;
@@ -1310,6 +1397,70 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ManagedSecret: {
+            id: string;
+            project_id: string;
+            name: string;
+            /** Format: int64 */
+            current_version: number;
+            /** @enum {string} */
+            status: "active" | "revoked";
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            revoked_at?: string;
+        };
+        ManagedSecretVersion: {
+            secret_id: string;
+            /** Format: int64 */
+            version: number;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        ManagedSecretInput: {
+            project_id: string;
+            name: string;
+            /** @description Exact UTF-8 value; maximum 65536 bytes; whitespace is preserved */
+            value: string;
+        };
+        ManagedSecretRotateInput: {
+            /** Format: int64 */
+            expected_version: number;
+            /** @description Exact UTF-8 value; maximum 65536 bytes */
+            value: string;
+        };
+        ManagedSecretRevokeInput: {
+            /** Format: int64 */
+            expected_version: number;
+        };
+        ManagedSecretRevealInput: {
+            /** Format: int64 */
+            version: number;
+        };
+        ManagedSecretReveal: {
+            secret_id: string;
+            /** Format: int64 */
+            version: number;
+            value: string;
+        };
+        ManagedSecretListResponse: {
+            items: components["schemas"]["ManagedSecret"][];
+            count: number;
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        ManagedSecretVersionListResponse: {
+            items: components["schemas"]["ManagedSecretVersion"][];
+            count: number;
+            total: number;
+            limit: number;
+            offset: number;
+        };
         ImageSource: {
             /** @description Repository with an explicit tag or sha256 digest. Registry ports are supported. No registry resolution occurs. */
             reference: string;
@@ -2439,6 +2590,232 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listManagedSecrets: {
+        parameters: {
+            query: {
+                project_id: string;
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation; response must not be cached */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSecretListResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    createManagedSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagedSecretInput"];
+            };
+        };
+        responses: {
+            /** @description Successful operation; response must not be cached */
+            201: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSecret"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getManagedSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation; response must not be cached */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSecret"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    listManagedSecretVersions: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation; response must not be cached */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSecretVersionListResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    rotateManagedSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagedSecretRotateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful operation; response must not be cached */
+            201: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSecret"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    revokeManagedSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagedSecretRevokeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful operation; response must not be cached */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSecret"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    revealManagedSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagedSecretRevealInput"];
+            };
+        };
+        responses: {
+            /** @description Successful operation; response must not be cached */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSecretReveal"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     listProjectEnvironments: {
         parameters: {
             query: {

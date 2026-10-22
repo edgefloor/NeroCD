@@ -3,6 +3,14 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/managed-secrets"},
+	{Method: http.MethodPost, Path: "/api/v1/managed-secrets"},
+	{Method: http.MethodGet, Path: "/api/v1/managed-secrets/{id}"},
+	{Method: http.MethodGet, Path: "/api/v1/managed-secrets/{id}/versions"},
+	{Method: http.MethodPost, Path: "/api/v1/managed-secrets/{id}/versions"},
+	{Method: http.MethodPost, Path: "/api/v1/managed-secrets/{id}/revoke"},
+	{Method: http.MethodPost, Path: "/api/v1/managed-secrets/{id}/reveal"},
+
 	{Method: http.MethodGet, Path: "/api/v1/project-environments"},
 	{Method: http.MethodPost, Path: "/api/v1/project-environments"},
 	{Method: http.MethodGet, Path: "/api/v1/resources"},
@@ -111,6 +119,17 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/managed-secrets":
+		return s.managedSecretsHandler
+	case "/api/v1/managed-secrets/{id}":
+		return s.managedSecretByID
+	case "/api/v1/managed-secrets/{id}/versions":
+		return s.managedSecretVersions
+	case "/api/v1/managed-secrets/{id}/revoke":
+		return s.managedSecretRevoke
+	case "/api/v1/managed-secrets/{id}/reveal":
+		return s.managedSecretReveal
+
 	case "/api/v1/project-environments":
 		return s.projectEnvironmentsHandler
 	case "/api/v1/resources":

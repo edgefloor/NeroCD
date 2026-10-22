@@ -19,6 +19,7 @@ import (
 	"nerocd/internal/api"
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
+	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store"
 	"nerocd/web"
 )
@@ -36,6 +37,7 @@ type runtimeConfig struct {
 	devBootstrapEmail    string
 	devBootstrapPassword string
 	oidcProvider         auth.OIDCProvider
+	secretKeyring        *secretcrypto.Keyring
 }
 
 func runServer(args []string) error {
@@ -187,11 +189,15 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 		}
 		publicOrigin = origin.String()
 	}
+	secretKeyring, err := loadManagedSecretKeyring()
+	if err != nil {
+		return runtimeConfig{}, err
+	}
 	oidcProvider, err := loadOIDCProvider(mode, publicOrigin)
 	if err != nil {
 		return runtimeConfig{}, err
 	}
-	return runtimeConfig{addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider}, nil
+	return runtimeConfig{addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider, secretKeyring: secretKeyring}, nil
 }
 
 func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), error) {
@@ -200,7 +206,7 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		if err != nil {
 			return nil, nil, err
 		}
-		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg})
+		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, SecretKeyring: cfg.secretKeyring, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, ManagedSecrets: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg})
 		if err != nil {
 			_ = pg.Close()
 			return nil, nil, err
@@ -223,7 +229,7 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		return nil, nil, errors.New("in-memory store requires explicit development mode")
 	}
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Retention: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, SecretKeyring: cfg.secretKeyring, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Retention: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem})
 	if err != nil {
 		return nil, nil, err
 	}

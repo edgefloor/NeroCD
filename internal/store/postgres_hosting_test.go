@@ -36,7 +36,7 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
 	if _, err := store.OpenPostgres(ctx, database.Config().ConnConfig.ConnString()); err == nil {
 		t.Fatal("startup accepted schema without hosting migration")
 	}
-	if err := applyEmbeddedMigrations(ctx, database, "0039_service_accounts.sql", ""); err != nil {
+	if err := applyEmbeddedMigrations(ctx, database, "0039_service_accounts.sql", "0040_hosting_resources.sql"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {
@@ -63,7 +63,7 @@ func TestPostgresHostingServiceAccountScope(t *testing.T) {
 	ctx := t.Context()
 	pg, _ := openPostgresIntegrationStore(t, ctx, "hosting_account")
 	defer closePostgresStore(t, pg)
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Hosting: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Hosting: pg, ManagedSecrets: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal(err)
 	}
