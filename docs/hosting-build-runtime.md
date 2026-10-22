@@ -25,9 +25,9 @@ The shape below illustrates the fields; replace identifiers, digests, paths and 
     "destination_id": "destination_build"
   },
   "policy": {
-    "identity": "operator-policy-v1",
+    "identity": "sha256:<operator-policy-digest>",
     "toolchain_identity": "sha256:<computed-toolchain-identity>",
-    "protocol": "hosting_build_v1",
+    "protocol": "local-build.v1",
     "platform": "linux/arm64",
     "limits": {
       "cpu_quota": 100000,
