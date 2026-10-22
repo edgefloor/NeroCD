@@ -307,6 +307,18 @@ func TestPostgresHostingBuildStatusExpiresAfterBlockingResourceLock(t *testing.T
 	done := make(chan answer, 1)
 	go func() { status, err := f.pg.HostingBuildStatus(ctx, f.runner, a); done <- answer{status, err} }()
 	deadline := time.Now().Add(5 * time.Second)
+	waiting := false
+	for !waiting && time.Now().Before(deadline) {
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity a WHERE wait_event_type='Lock' AND query LIKE '%LockHostingResourceTarget%' AND query NOT LIKE '%pg_stat_activity%' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND l.relation='resources'::regclass))`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if !waiting {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if !waiting {
+		t.Fatal("status never reached target-resource lock")
+	}
 	expired := false
 	for !expired && time.Now().Before(deadline) {
 		if err = f.db.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM run_leases WHERE id=$1`, a.LeaseID).Scan(&expired); err != nil {
@@ -442,7 +454,7 @@ func TestPostgresHostingBuildRenewalSerializesWithCancellation(t *testing.T) {
 				deadline := time.Now().Add(3 * time.Second)
 				for time.Now().Before(deadline) {
 					var waiting int
-					if e := f.db.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%LockHostingTaskForAuthority%' AND query NOT LIKE '%pg_stat_activity%'`).Scan(&waiting); e != nil {
+					if e := f.db.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity a WHERE wait_event_type='Lock' AND query LIKE '%LockHostingTaskForAuthority%' AND query NOT LIKE '%pg_stat_activity%' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND l.relation='task_runs'::regclass)`).Scan(&waiting); e != nil {
 						t.Fatal(e)
 					}
 					if waiting >= want {
