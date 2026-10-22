@@ -77,3 +77,9 @@ test("foreign or substituted artifact in an accepted response never becomes a se
  backend((url) => url.endsWith("/from-build") ? json({ ...operation, snapshot: { ...operation.snapshot, local_build: { ...operation.snapshot.local_build, artifact: { ...operation.snapshot.local_build.artifact, build_id: "different" } } } }, 202) : undefined);
  await setup(); await submit(); await screen.findByText(/Deployment delivery is unconfirmed/); expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
 });
+
+test("access denial while reviewing a separate intent also pauses the retained request", async () => {
+ backend((url) => url.endsWith("/from-build") ? json({}, 503) : url === "/api/v1/resources/r" ? json({}, 403) : undefined);
+ await setup(); await submit(); await screen.findByText(/Deployment delivery is unconfirmed/); fireEvent.click(screen.getByRole("button", { name: "Review this exact build for a separate request" }));
+ await screen.findByText(/Deployment permission denied/); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical local build deployment" }).disabled).toBe(true);
+});

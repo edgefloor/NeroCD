@@ -68,7 +68,11 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
       await binding.refetch(); await changed();
       if (!active.current) return;
       setBase(latest); setAttempt(undefined); setConflict(false); setConfirmed(false); setError("");
-    } catch { if (active.current) setError("Unable to review this exact artifact against current resource and source generations. Keep the retained request, refresh the resource, and select a current successful build explicitly."); }
+    } catch (cause) {
+      if (!active.current) return;
+      if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setDenied(true); onDenied(); setError("Deployment permission denied. Reload to refresh project access before another action."); }
+      else setError("Unable to review this exact artifact against current resource and source generations. Keep the retained request, refresh the resource, and select a current successful build explicitly.");
+    }
     finally { if (active.current) setBusy(false); }
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label="Deploy recorded local build">
@@ -96,6 +100,6 @@ export function LocalBuildDeployment({ actor, resource, build, writable, blocked
     </form> : <p>Project maintainer access is required to deploy this build.</p>}
     {attempt && !restored && !denied ? <section className="space-y-2" aria-label="Review separate local deployment request"><p className="text-xs">The earlier request may already exist. Review history before choosing a separate request. This action checks this exact build against current generations and clears its key and acknowledgment only after a successful review. It never selects another build or deploys automatically.</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" disabled={busy || blocked || held} onClick={() => void reviewSeparateRequest()}>Review this exact build for a separate request</Button></section> : null}
     {error ? <p role="alert">{error}</p> : null}
-    {selected ? <><p role="status">Deployment operation {selected} was admitted. Review its recorded result below or in deployment history. After a settled healthy release, use this application's HTTPS routes to select the existing managed proxy route backend.</p><OperationDetail key={selected} actor={actor} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable && !denied} owner={false} blocked={blocked || denied} onChanged={changed} /></> : null}
+    {selected ? <><p role="status" className="break-all">Deployment operation {selected} was admitted. Review its recorded result below or in deployment history. After a settled healthy release, use this application's Resource routes to select the existing managed proxy route backend.</p><OperationDetail key={selected} actor={actor} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable && !denied} owner={false} blocked={blocked || denied} onChanged={changed} /></> : null}
   </section>;
 }
