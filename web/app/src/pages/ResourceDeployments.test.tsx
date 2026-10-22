@@ -267,3 +267,48 @@ test.each(["viewer", "restore", "error"])("retained cleanup fails closed for %s"
   else if (mode === "restore") expect((await screen.findByRole<HTMLButtonElement>("button", { name: "Review cleanup hop_old" })).disabled).toBe(true);
   else await screen.findByText(/Unable to refresh retained releases/);
 });
+
+
+test.each(["permission", "principal"])("cleanup intent and frozen retry end on %s scope change", async (scope) => {
+  const fetch = backend((url) => url.endsWith("/cleanup") ? Promise.reject(new TypeError("response lost")) : url.includes("/retained-releases") ? json([retained]) : undefined);
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  fireEvent.click(screen.getByLabelText(/I confirm cleanup/));
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" }));
+  await screen.findByRole("button", { name: "Retry identical cleanup request" });
+  if (scope === "permission") {
+    view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={false} blocked={false} /></QueryClientProvider>);
+    expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull();
+    view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable blocked={false} /></QueryClientProvider>);
+  } else {
+    await act(async () => { client.setQueryData(queryKeys.principal, { id: "another-maintainer", provider: "oidc", roles: [] }); });
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull());
+  }
+  expect(screen.queryByRole("button", { name: "Retry identical cleanup request" })).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  expect(screen.getByLabelText<HTMLInputElement>(/I confirm cleanup/).checked).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request retained release cleanup" }).disabled).toBe(true);
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/cleanup"))).toHaveLength(1);
+});
+
+test.each(["permission", "principal"])("late cleanup response cannot restore intent or select an operation after %s scope change", async (scope) => {
+  let resolve!: (response: Response) => void;
+  backend((url) => url.endsWith("/cleanup") ? new Promise<Response>((done) => { resolve = done; }) : url.includes("/retained-releases") ? json([retained]) : undefined);
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  fireEvent.click(screen.getByLabelText(/I confirm cleanup/));
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm retained release cleanup" }));
+  await waitFor(() => expect(resolve).toBeTypeOf("function"));
+  if (scope === "permission") {
+    view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={false} blocked={false} /></QueryClientProvider>);
+    view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable blocked={false} /></QueryClientProvider>);
+  } else {
+    await act(async () => { client.setQueryData(queryKeys.principal, { id: "another-maintainer", provider: "oidc", roles: [] }); });
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull());
+  }
+  await act(async () => { resolve(json(cleanupOperation, 202)); });
+  expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+  expect(screen.queryByRole("form", { name: "Confirm retained release cleanup" })).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup hop_old" }));
+  expect(screen.getByLabelText<HTMLInputElement>(/I confirm cleanup/).checked).toBe(false);
+});
