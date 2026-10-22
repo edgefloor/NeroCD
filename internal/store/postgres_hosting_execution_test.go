@@ -113,11 +113,12 @@ func TestPostgresHostingAutoPortsRecycleSafeTerminalClaims(t *testing.T) {
 		if op.Snapshot.HostPort != 20100 && op.Snapshot.HostPort != 20101 {
 			t.Fatalf("outside operator range: %d", op.Snapshot.HostPort)
 		}
-		if outcome == "cancel" {
+		switch outcome {
+		case "cancel":
 			if _, err = pg.CancelHostingOperation(ctx, op.ID, destinationEvent(fmt.Sprintf("recycle_cancel_%d", index))); err != nil {
 				t.Fatal(err)
 			}
-		} else if outcome == "preflight" {
+		case "preflight":
 			if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +132,7 @@ func TestPostgresHostingAutoPortsRecycleSafeTerminalClaims(t *testing.T) {
 			if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingReleasePortsCapability); err != nil {
 				t.Fatal(err)
 			}
-		} else {
+		default:
 			if err = pg.PrepareDeployment(ctx, op.ID); err != nil {
 				t.Fatal(err)
 			}
