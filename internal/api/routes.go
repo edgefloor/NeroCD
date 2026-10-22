@@ -3,6 +3,9 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting-observations/targets"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting-observations/report"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/runtime-status"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/runtime-environment"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/runtime-configuration"},
 	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/runtime-configuration"},
@@ -216,6 +219,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingSourceGrants
 	case "/api/v1/resources/{id}/source-grants/{grant_id}/revoke":
 		return s.hostingSourceGrantRevoke
+	case "/api/v1/runners/hosting-observations/targets":
+		return s.runnerHostingObservationTargets
+	case "/api/v1/runners/hosting-observations/report":
+		return s.runnerReportHostingObservation
+	case "/api/v1/resources/{id}/runtime-status":
+		return s.hostingRuntimeStatus
 	case "/api/v1/runners/hosting/runtime-environment":
 		return s.runnerHostingRuntimeEnvironment
 	case "/api/v1/runners/builds/source-credential":
