@@ -77,6 +77,9 @@ function SecretDetail({ initial, writable, owner, blocked, onChanged, onClose }:
   // Each explicit clear ends the entry's pending reads, even if already empty.
   const [entryGeneration, setEntryGeneration] = useState(0);
   function clearValue() { setValue(""); setEntryGeneration((generation) => generation + 1); }
+  useEffect(() => {
+    if (!writable) { setValue(""); setEntryGeneration((generation) => generation + 1); }
+  }, [writable]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -153,6 +156,9 @@ function ProjectSecretList({ projectID, writable, owner, blocked }: { projectID:
   // Each explicit clear ends the entry's pending reads, even if already empty.
   const [entryGeneration, setEntryGeneration] = useState(0);
   function clearValue() { setValue(""); setEntryGeneration((generation) => generation + 1); }
+  useEffect(() => {
+    if (!writable) { setValue(""); setEntryGeneration((generation) => generation + 1); }
+  }, [writable]);
   const [selected, setSelected] = useState<ManagedSecret>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

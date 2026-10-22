@@ -32,6 +32,71 @@ async function projectFor(page: Page, role: "owner" | "maintainer" | "viewer", s
   return project;
 }
 
+test("managed secret write permission loss clears both drafts and pending files without losing metadata", async ({ page, browser }) => {
+  test.setTimeout(90_000);
+  await signInAdmin(page);
+  const project = await projectFor(page, "owner", `${Date.now()}`);
+  await post(page, "/api/v1/managed-secrets", { project_id: project.id, name: "PERMISSION_SECRET", value: "test-only-stored-value" });
+  const context = await browser.newContext();
+  try {
+    const operator = await context.newPage();
+    await operator.addInitScript(() => {
+      const original = File.prototype.arrayBuffer;
+      const reads: Array<() => Promise<void>> = [];
+      File.prototype.arrayBuffer = function () {
+        if (this.name !== "permission-revocation-test.pem") return original.call(this);
+        const file = this;
+        return new Promise<ArrayBuffer>((resolve) => { reads.push(async () => { resolve(await original.call(file)); }); });
+      };
+      Object.defineProperty(window, "completePermissionFiles", { value: async () => {
+        await Promise.all(reads.splice(0).map((read) => read()));
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      } });
+    });
+    await operator.goto("/sign-in"); await operator.getByRole("link", { name: "Continue with SSO" }).click();
+    await expect(operator.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    await operator.goto("/projects");
+    const section = operator.getByRole("region", { name: "Project managed secrets", exact: true });
+    await section.getByLabel("Secrets project", { exact: true }).selectOption(project.id);
+    await section.getByRole("button", { name: "Manage PERMISSION_SECRET", exact: true }).click();
+    await expect(section.getByText("Version 1", { exact: true })).toBeVisible();
+    const refresh = async () => { await operator.getByRole("button", { name: "Account", exact: true }).click(); await operator.getByRole("button", { name: "Refresh data", exact: true }).click(); };
+    for (const width of [320, 390, 430, 1440]) {
+      await operator.setViewportSize({ width, height: 1000 });
+      for (const phase of ["draft", "file"]) {
+        await section.getByLabel("Secret name", { exact: true }).fill(`Preserved name ${width}`);
+        for (const label of ["Secret value", "New secret value"]) {
+          if (phase === "draft") await enterValue(section, label, `${label}-test-only-draft\r\n`);
+          else {
+            const entry = section.getByRole("group", { name: `${label} entry`, exact: true });
+            await entry.getByLabel(`Load ${label.toLowerCase()} from UTF-8 file`, { exact: true }).setInputFiles({ name: "permission-revocation-test.pem", mimeType: "text/plain", buffer: Buffer.from("late-test-only-file\r\n") });
+            await expect(entry.getByText("Reading secret file...", { exact: true })).toBeVisible();
+          }
+        }
+        await post(page, "/api/v1/project-members", { project_id: project.id, email: "oidc-browser@example.invalid", role: "viewer" });
+        await refresh();
+        await expect(section.getByRole("form", { name: "Create managed secret", exact: true })).toHaveCount(0);
+        await expect(section.getByRole("form", { name: "Rotate secret", exact: true })).toHaveCount(0);
+        await expect(section.getByText("Version 1", { exact: true })).toBeVisible();
+        await expect(section.getByRole("button", { name: /Select version.*to reveal/ })).toHaveCount(0);
+        await post(page, "/api/v1/project-members", { project_id: project.id, email: "oidc-browser@example.invalid", role: "owner" });
+        await refresh();
+        await expect(section.getByRole("form", { name: "Rotate secret", exact: true })).toBeVisible();
+        if (phase === "file") await operator.evaluate(async () => { await (window as unknown as { completePermissionFiles: () => Promise<void> }).completePermissionFiles(); });
+        await expect(section.getByLabel("Secret name", { exact: true })).toHaveValue(`Preserved name ${width}`);
+        for (const label of ["Secret value", "New secret value"]) {
+          const entry = section.getByRole("group", { name: `${label} entry`, exact: true });
+          await expect(entry.getByLabel(label, { exact: true })).toHaveValue("");
+          await expect(entry.getByText("Reading secret file...", { exact: true })).toHaveCount(0);
+          await entry.getByRole("button", { name: "Show value to edit", exact: true }).click();
+          await expect(entry.getByLabel(label, { exact: true })).toHaveValue("");
+          await entry.getByRole("button", { name: "Hide value", exact: true }).click();
+        }
+      }
+    }
+  } finally { await context.close(); }
+});
+
 test("managed secret parent actions discard deferred file reads even for already empty drafts", async ({ page }) => {
   test.setTimeout(60_000);
   await page.addInitScript(() => {

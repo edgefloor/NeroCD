@@ -143,6 +143,57 @@ test("opening secret details and changing reveal version clear unrelated sensiti
   expect(api.revealManagedSecret).not.toHaveBeenCalled();
 });
 
+test("owner to viewer to owner clears both plaintext drafts while retaining metadata access and the nonsecret name", async () => {
+  const { client, members, rerender } = setup(); await detail();
+  fireEvent.change(screen.getByLabelText("Secret name"), { target: { value: "Preserved name" } });
+  pasteValue("Secret value", "create-permission-draft\r\n");
+  pasteValue("New secret value", "rotate-permission-draft\n");
+  const renderRole = (role: ProjectMember["role"], unavailable = false) => rerender(<QueryClientProvider client={client}><ProjectSecrets projects={projects} principal={principal} members={members.map((member) => ({ ...member, role }))} unavailable={unavailable} /></QueryClientProvider>);
+  renderRole("viewer");
+  expect(screen.queryByLabelText("Secret value")).toBeNull();
+  expect(screen.queryByLabelText("New secret value")).toBeNull();
+  expect(screen.getByRole("region", { name: "Secret Database" })).toBeTruthy();
+  expect(screen.getByText("Version 1")).toBeTruthy();
+  renderRole("owner");
+  expect(screen.getByLabelText<HTMLInputElement>("Secret name").value).toBe("Preserved name");
+  for (const label of ["Secret value", "New secret value"]) {
+    const entry = screen.getByRole("group", { name: `${label} entry` });
+    expect(within(entry).getByLabelText<HTMLTextAreaElement>(label).value).toBe("");
+    fireEvent.click(within(entry).getByRole("button", { name: "Show value to edit" }));
+    expect(within(entry).getByLabelText<HTMLTextAreaElement>(label).value).toBe("");
+  }
+  expect(api.createManagedSecret).not.toHaveBeenCalled(); expect(api.rotateManagedSecret).not.toHaveBeenCalled();
+});
+
+test.each(["Secret value", "New secret value"])("write permission loss invalidates a pending %s file before permission is restored", async (label) => {
+  const { client, members, rerender } = setup(); await detail();
+  let resolve!: (value: ArrayBuffer) => void;
+  const pending = new Promise<ArrayBuffer>((done) => { resolve = done; });
+  const file = new File(["test-only"], "permission-test-only.pem");
+  Object.defineProperty(file, "arrayBuffer", { value: () => pending });
+  fireEvent.change(screen.getByLabelText(`Load ${label.toLowerCase()} from UTF-8 file`), { target: { files: [file] } });
+  await screen.findByText("Reading secret file...");
+  const renderRole = (role: ProjectMember["role"]) => rerender(<QueryClientProvider client={client}><ProjectSecrets projects={projects} principal={principal} members={members.map((member) => ({ ...member, role }))} /></QueryClientProvider>);
+  renderRole("viewer"); renderRole("owner");
+  await act(async () => resolve(new TextEncoder().encode("late-permission-test-value\r\n").buffer));
+  const entry = screen.getByRole("group", { name: `${label} entry` });
+  expect(within(entry).queryByText("Reading secret file...")).toBeNull();
+  fireEvent.click(within(entry).getByRole("button", { name: "Show value to edit" }));
+  expect(within(entry).getByLabelText<HTMLTextAreaElement>(label).value).toBe("");
+});
+
+test("transient metadata unavailability does not imply write permission loss", async () => {
+  const { client, members, rerender } = setup(); await detail();
+  pasteValue("Secret value", "create-transient-test-value"); pasteValue("New secret value", "rotate-transient-test-value");
+  const renderBlocked = (unavailable: boolean) => rerender(<QueryClientProvider client={client}><ProjectSecrets projects={projects} principal={principal} members={members} unavailable={unavailable} /></QueryClientProvider>);
+  renderBlocked(true); renderBlocked(false);
+  for (const [label, expected] of [["Secret value", "create-transient-test-value"], ["New secret value", "rotate-transient-test-value"]] as const) {
+    const entry = screen.getByRole("group", { name: `${label} entry` });
+    fireEvent.click(within(entry).getByRole("button", { name: "Show value to edit" }));
+    expect(within(entry).getByLabelText<HTMLTextAreaElement>(label).value).toBe(expected);
+  }
+});
+
 test.each(["create", "rotate"] as const)("%s file read cannot restore a draft after its real parent clear action", async (kind) => {
   setup(); await screen.findByRole("button", { name: "Manage Database" });
   if (kind === "rotate") await detail();
