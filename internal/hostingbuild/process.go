@@ -33,15 +33,18 @@ func (e *Engine) environment(dir string) []string {
 	return []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + dir, "DOCKER_CONFIG=" + filepath.Join(dir, "docker"), "DOCKER_HOST=unix://" + e.config.Socket, "BUILDX_CONFIG=" + filepath.Join(dir, "buildx"), "BUILDX_NO_DEFAULT_ATTESTATIONS=1", "NO_COLOR=1"}
 }
 func (e *Engine) command(ctx context.Context, dir string, output io.Writer, binary string, args ...string) error {
+	return e.commandStreams(ctx, dir, output, output, binary, args...)
+}
+func (e *Engine) commandStreams(ctx context.Context, dir string, stdout, stderr io.Writer, binary string, args ...string) error {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
 	cmd.Env = e.environment(dir)
-	cmd.Stdout = output
-	cmd.Stderr = output
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Run(); err != nil {
 		err = errors.Join(err, ctx.Err())
-		if writer, ok := output.(*cappedWriter); ok {
+		if writer, ok := stdout.(*cappedWriter); ok {
 			writer.mu.Lock()
 			tail := writer.b.Bytes()
 			if len(tail) > 8192 {

@@ -100,6 +100,12 @@ func owned(c containerInfo, r ownedResources) bool {
 // Build is synchronous. A process-wide host flock rejects concurrent admission.
 // A durable intent blocks reuse after crashes or uncertain Docker cleanup.
 func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr error) {
+	return e.BuildWithOutput(parent, r, nil)
+}
+
+// BuildWithOutput builds synchronously and observes selected fresh build text.
+// Receipt replay emits no output. The sink is not part of immutable identity.
+func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputSink) (result Result, retErr error) {
 	if err := r.validate(parent); err != nil {
 		return result, err
 	}
@@ -235,6 +241,7 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 		return result, err
 	}
 	logs := &cappedWriter{remaining: l.LogBytes, cancel: cancel}
+	observer := newOutputObserver(ctx, cancel, sink)
 	// Register the pre-created, explicitly constrained builder. Buildx therefore
 	// cannot add its default network.host daemon entitlement.
 	if err = e.command(ctx, dir, logs, e.config.BuildxBinary, "create", "--name", builder, "--node", builder+"0", "--driver", "docker-container", "--driver-opt", "image="+BuildKitImage, "unix://"+e.config.Socket); err != nil {
@@ -291,7 +298,7 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	case Railpack:
 		frontend = RailpackFrontend
 		filename = "railpack-plan.json"
-		if err = e.plan(ctx, dir, source, resources, r, logs); err != nil {
+		if err = e.plan(ctx, dir, source, resources, r, logs, observer); err != nil {
 			return result, err
 		}
 	}
@@ -300,7 +307,7 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	if r.BuildTarget != "" {
 		buildArgs = append(buildArgs[:len(buildArgs)-1], "--target", r.BuildTarget, source)
 	}
-	if err = e.command(ctx, dir, logs, e.config.BuildxBinary, buildArgs...); err != nil {
+	if err = e.observedCommand(ctx, dir, logs, observer, OutputBuildKit, false, e.config.BuildxBinary, buildArgs...); err != nil {
 		return result, err
 	}
 	if err = verifyDescendants(ctx, c.State.PID, group, l); err != nil {

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func (e *Engine) plan(ctx context.Context, dir, source string, r ownedResources, request Request, logs *cappedWriter) error {
+func (e *Engine) plan(ctx context.Context, dir, source string, r ownedResources, request Request, logs *cappedWriter, observer *outputObserver) error {
 	image := e.config.PlannerImage
 	if !digestPattern.MatchString(image) && (!strings.Contains(image, "@") || !digestPattern.MatchString(strings.SplitN(image, "@", 2)[1])) {
 		return errors.New("immutable trusted Railpack helper image required")
@@ -55,6 +55,14 @@ func (e *Engine) plan(ctx context.Context, dir, source string, r ownedResources,
 		}
 		b, readErr := e.docker(ctx, dir, "exec", r.Planner, "cat", "/out/status")
 		if readErr == nil {
+			if observer != nil {
+				// Only the completed planner's merged text is observable. Docker
+				// diagnostics and plan/info JSON remain internal.
+				logArgs := []string{"--host", "unix://" + e.config.Socket, "--config", filepath.Join(dir, "docker"), "exec", r.Planner, "cat", "/out/planner.log"}
+				if err = e.observedCommand(ctx, dir, logs, observer, OutputRailpack, true, e.config.DockerBinary, logArgs...); err != nil {
+					return err
+				}
+			}
 			if strings.TrimSpace(string(b)) != "0" {
 				return fmt.Errorf("railpack planner failed, exit %s", strings.TrimSpace(string(b)))
 			}
