@@ -15,6 +15,14 @@ email, a closed `CA` choice, and an unprivileged loopback management port.
 `New` refuses non-Linux hosts. The package still compiles on other platforms.
 Project input must never populate Settings.
 
+The managed agent adapter uses `PrepareManaged` to resolve and pin only that Unix
+daemon before controller preparation. It accepts the same typed identities and routes.
+`VerifyManagedReceipt` compares a settled server result with the owner-only committed
+local receipt, owned container and actual loaded generation before journal removal.
+Neither adapter operation installs or reapplies a routing generation. Uncertain results
+cannot pass receipt verification. See `hosting-proxy-control.md` for agent enrollment
+and the explicit operator CLI settings.
+
 `Prepare(identity, settings, generation, previous, routes)` returns an opaque
 immutable `Plan`. Identity contains the proxy, server, destination, runner, and
 exact Docker daemon IDs. A route contains only an ID, a lower-case DNS hostname,
@@ -28,6 +36,11 @@ identity remain separate from the dynamic generation. Container labels bind the
 static hash, because labels do not change when the file provider reloads routes.
 The caller can reconstruct a plan from persisted typed inputs. Do not expose
 operator paths or email settings as a downloadable project plan.
+
+An empty generation retains its private generation marker router and middleware.
+It omits an empty `http.services` element because pinned Traefik 3.7.15 rejects that
+standalone element. The same rendering supports initial installation and complete
+route withdrawal while retaining the container and ACME state.
 
 - `Install(ctx, plan)` creates an absent proxy, or verifies an existing matching
   proxy and generation. It refuses a foreign named container, changed static

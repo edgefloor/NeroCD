@@ -163,6 +163,7 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
+	Proxy               ProxyConfig
 	ImageDockerEndpoint string
 	Server              string
 	Token               string
@@ -180,6 +181,18 @@ type Config struct {
 
 // Run owns the runner loop, durable replay, lease lifecycle, and execution.
 func Run(config Config) error {
+	if err := config.Proxy.Validate(); err != nil {
+		return err
+	}
+	if config.Proxy.Enabled() {
+		if !config.Execute {
+			return errors.New("configured managed proxy requires execution")
+		}
+		identity, err := runnerclient.New(config.Server, config.Token).ProxyIdentity(context.Background())
+		if err != nil || identity != config.RunnerID {
+			return errors.New("authenticated runner lacks the configured managed proxy identity or capability")
+		}
+	}
 	imagePolicy, err := parseComposeImagePolicy(config.ImagePolicy)
 	if err != nil {
 		return err
@@ -194,6 +207,9 @@ func Run(config Config) error {
 	}
 	defer func() { _ = journal.Close() }()
 	operational := &runnerOperationalCounters{}
+	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, config.Proxy); err != nil {
+		return fmt.Errorf("reconcile proxy journal: %w", err)
+	}
 	if err := reconcileHostingJournal(config.Server, config.Token, journal, config.ImageDockerEndpoint); err != nil {
 		return fmt.Errorf("reconcile hosting journal: %w", err)
 	}
@@ -224,10 +240,13 @@ func Run(config Config) error {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithJournalAndSecretRootAndCounters(config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, config.ImageDockerEndpoint); err != nil {
+			if err := executeClaimWithOptions(config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy}); err != nil {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
+			if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
+				return errors.New("proxy_apply requires explicit managed proxy execution; generic completion is forbidden")
+			}
 			if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
 				return errors.New("image_deploy requires --execute; generic completion is forbidden")
 			}
@@ -276,9 +295,29 @@ func executeClaimWithJournalAndSecretRoot(server string, token string, claim dom
 }
 
 func executeClaimWithJournalAndSecretRootAndCounters(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, imageEndpoints ...string) error {
+	options := claimExecutionOptions{}
+	if len(imageEndpoints) > 0 {
+		options.imageEndpoint = imageEndpoints[0]
+	}
+	return executeClaimWithOptions(server, token, claim, workDir, cancelPollInterval, journal, secretRoot, imagePolicy, operational, options)
+}
+
+type claimExecutionOptions struct {
+	imageEndpoint string
+	proxy         ProxyConfig
+}
+
+func executeClaimWithOptions(server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, options claimExecutionOptions) error {
 	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
 		if err := domain.ValidateImageDeploymentTask(claim.Run); err != nil {
 			return err
+		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
+		if err := domain.ValidateProxyApplyTask(claim.Run); err != nil {
+			return err
+		}
+		if !options.proxy.Enabled() {
+			return errors.New("managed proxy execution is not configured")
 		}
 	} else if domain.ContainsHostingExecution(claim.Run.RunSpec, claim.Run.Workflow) {
 		return errors.New("hosting execution cannot enter the generic runtime")
@@ -345,12 +384,11 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 	defer watcher.Stop()
 	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
 	defer reporter.Stop()
+	if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
+		return executeProxyClaim(supervisor, journal, reporter, server, token, claim, options.proxy)
+	}
 	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy {
-		endpoint := ""
-		if len(imageEndpoints) > 0 {
-			endpoint = imageEndpoints[0]
-		}
-		return executeImageClaim(supervisor, journal, reporter, server, token, claim, endpoint)
+		return executeImageClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint)
 	}
 	if claim.PrimitivePlan.Process == nil {
 		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {
