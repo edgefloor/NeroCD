@@ -88,26 +88,8 @@ func ValidateImageReference(value string) error {
 	}
 	parts := strings.Split(repository, "/")
 	if len(parts) > 1 && (strings.ContainsAny(parts[0], ".:") || parts[0] == "localhost" || strings.HasPrefix(parts[0], "[")) {
-		registry := parts[0]
-		host := registry
-		if strings.HasPrefix(registry, "[") || strings.Contains(registry, ":") {
-			var port string
-			var err error
-			host, port, err = net.SplitHostPort(registry)
-			if err != nil || !imagePort.MatchString(port) {
-				return invalid
-			}
-			n, err := strconv.Atoi(port)
-			if err != nil || n < 1 || n > 65535 {
-				return invalid
-			}
-		}
-		if net.ParseIP(host) == nil {
-			for _, label := range strings.Split(host, ".") {
-				if len(label) > 63 || !imageHostname.MatchString(label) {
-					return invalid
-				}
-			}
+		if !validImageRegistry(parts[0]) {
+			return invalid
 		}
 		parts = parts[1:]
 	}
@@ -117,6 +99,55 @@ func ValidateImageReference(value string) error {
 		}
 	}
 	return nil
+}
+
+// validImageRegistry keeps IPv6 brackets distinct from DNS names. Image
+// references permit IPv6 literals with optional ports, but no zones or embedded
+// dotted IPv4 addresses. DNS names and IPv4 addresses must be unbracketed.
+func validImageRegistry(registry string) bool {
+	host := registry
+	port := ""
+	if strings.HasPrefix(registry, "[") {
+		end := strings.IndexByte(registry, ']')
+		if end < 0 {
+			return false
+		}
+		host = registry[1:end]
+		if net.ParseIP(host) == nil || !strings.Contains(host, ":") || strings.Contains(host, ".") {
+			return false
+		}
+		suffix := registry[end+1:]
+		if suffix == "" {
+			return true
+		}
+		if !strings.HasPrefix(suffix, ":") {
+			return false
+		}
+		port = suffix[1:]
+	} else {
+		if strings.Contains(registry, ":") {
+			var err error
+			host, port, err = net.SplitHostPort(registry)
+			if err != nil {
+				return false
+			}
+		}
+		if net.ParseIP(host) == nil {
+			for _, label := range strings.Split(host, ".") {
+				if len(label) > 63 || !imageHostname.MatchString(label) {
+					return false
+				}
+			}
+		}
+		if !strings.Contains(registry, ":") {
+			return true
+		}
+	}
+	if !imagePort.MatchString(port) {
+		return false
+	}
+	number, err := strconv.Atoi(port)
+	return err == nil && number >= 1 && number <= 65535
 }
 
 // ValidateResourceSource rejects unsupported sources before persistence.
