@@ -22,8 +22,8 @@ type buildOutputEngine interface {
 	BuildWithOutput(context.Context, hostingbuild.Request, hostingbuild.OutputSink) (hostingbuild.Result, error)
 }
 
-// Secret material stays in memory. Public source builds have no private Git or
-// provider credentials; the authenticated runtime token is the known secret.
+// Reusable secret material stays in memory. Private credentials are added only
+// to the owning attempt adapter, never to this executor configuration.
 func (e *BuildExecutor) setBuildLogSecrets(token string) error {
 	if len(token) > 4096 {
 		return errors.New("build log secret exceeds bound")

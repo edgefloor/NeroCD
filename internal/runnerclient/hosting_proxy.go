@@ -56,7 +56,8 @@ func (c Client) RuntimeCapabilitiesIdentity(ctx context.Context, proxyConfigured
 }
 
 // RuntimeExecutionIdentity checks persisted execution capabilities against all
-// explicit local execution modes. Legacy wrappers require local builds disabled.
+// explicit local execution modes. Omitted privateConfigured defaults to false;
+// legacy wrappers require local builds and private Git disabled.
 func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, buildConfigured, localBuildConfigured bool, privateConfigured ...bool) (string, error) {
 	var result proxyIdentityResponse
 	if err := c.get(ctx, "/api/v1/runners/identity", &result); err != nil {

@@ -7,6 +7,11 @@ case "$repo_root" in */NeroCD*) ;; *) echo 'run from assigned repository root' >
 source "$repo_root/acceptance/runtime-hosting-build-controller/helpers.sh"
 browser_mode=${NEROCD_LOCAL_BUILD_BROWSER:-0}
 case "$browser_mode" in 0|1) ;; *) echo 'invalid browser fixture option' >&2; exit 1;; esac
+private_mode=${NEROCD_PRIVATE_GIT_RUNTIME:-0}
+private_browser_mode=${NEROCD_PRIVATE_GIT_BROWSER:-0}
+case "$private_mode:$private_browser_mode" in 0:0|1:0|0:1|1:1) ;; *) echo 'invalid private Git fixture option' >&2; exit 1;; esac
+if [[ "$private_browser_mode" == 1 ]]; then private_mode=1; browser_mode=1; fi
+export NEROCD_PRIVATE_GIT_BROWSER="$private_browser_mode"
 preload_postgres=${NEROCD_BUILD_CONTROLLER_PRELOAD_POSTGRES:-0}
 case "$preload_postgres" in 0|1) ;; *) echo 'invalid PostgreSQL preload option' >&2; exit 1;; esac
 arch=$(docker info --format '{{.Architecture}}')
@@ -87,7 +92,9 @@ if [[ "$ready" != true ]]; then echo 'owned PostgreSQL not ready' >&2; exit 1; f
 printf 'owned PostgreSQL TCP query ready: container=%s database=nerocd_build_controller\n' "$pg_id"
 pg_addr=$(docker exec "$name" docker port "$pg_id" 5432/tcp)
 if [[ "$browser_mode" == 0 ]]; then
-docker exec --env NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind --env "NEROCD_BUILD_CONTROLLER_DATABASE_URL=postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" --env "NEROCD_BUILDX_SHA256=sha256:$buildx_sha" "$name" /fixture/hosting-controller.test -test.v -test.run '^TestLocalBuildProductionHTTPS$' -test.timeout=15m
+test_pattern='^TestLocalBuildProductionHTTPS$'
+if [[ "$private_mode" == 1 ]]; then test_pattern='^(TestPrivateBuildProductionHTTPS|TestLocalBuildProductionHTTPS)$'; fi
+docker exec --env NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind --env "NEROCD_BUILD_CONTROLLER_DATABASE_URL=postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" --env "NEROCD_BUILDX_SHA256=sha256:$buildx_sha" "$name" /fixture/hosting-controller.test -test.v -test.run "$test_pattern" -test.timeout=15m
 else
  browser_addr=$(docker port "$container_id" 18080/tcp)
  [[ "$browser_addr" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
@@ -102,7 +109,8 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 const container = process.argv[1];
 const env = process.env;
-const args = ["exec", "--env", "NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind", "--env", "NEROCD_LOCAL_BUILD_BROWSER=1", "--env", `NEROCD_LOCAL_BUILD_BROWSER_ORIGIN=${env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN}`, "--env", `NEROCD_BUILD_CONTROLLER_DATABASE_URL=${env.NEROCD_BROWSER_FIXTURE_DSN}`, "--env", `NEROCD_CGROUP_ROOT=${env.NEROCD_CGROUP_ROOT}`, "--env", `NEROCD_PLANNER_IMAGE=${env.NEROCD_PLANNER_IMAGE}`, "--env", `NEROCD_BUILDX_SHA256=${env.NEROCD_BUILDX_SHA256}`, container, "/fixture/hosting-controller.test", "-test.v", "-test.run", "^(TestControllerBrowserOrigin|TestLocalBuildBrowser)$", "-test.timeout=10m"];
+const privateMode = env.NEROCD_PRIVATE_GIT_BROWSER === "1";
+const args = ["exec", "--env", `NEROCD_PRIVATE_GIT_BROWSER=${privateMode ? "1" : "0"}`, "--env", "NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind", "--env", "NEROCD_LOCAL_BUILD_BROWSER=1", "--env", `NEROCD_LOCAL_BUILD_BROWSER_ORIGIN=${env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN}`, "--env", `NEROCD_BUILD_CONTROLLER_DATABASE_URL=${env.NEROCD_BROWSER_FIXTURE_DSN}`, "--env", `NEROCD_CGROUP_ROOT=${env.NEROCD_CGROUP_ROOT}`, "--env", `NEROCD_PLANNER_IMAGE=${env.NEROCD_PLANNER_IMAGE}`, "--env", `NEROCD_BUILDX_SHA256=${env.NEROCD_BUILDX_SHA256}`, container, "/fixture/hosting-controller.test", "-test.v", "-test.run", privateMode ? "^(TestControllerBrowserOrigin|TestPrivateGitBrowser)$" : "^(TestControllerBrowserOrigin|TestLocalBuildBrowser)$", "-test.timeout=10m"];
 const fixture = spawn("docker", args, { stdio: ["ignore", "pipe", "inherit"] });
 let browser;
 let buffer = "";
@@ -117,14 +125,15 @@ fixture.stdout.on("data", (chunk) => {
  let newline;
  while ((newline = buffer.indexOf("\n")) !== -1) {
   const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-  if (!line.startsWith("LOCAL_BUILD_BROWSER_READY ")) { process.stdout.write(line + "\n"); continue; }
+  const prefix = privateMode ? "PRIVATE_GIT_BROWSER_READY " : "LOCAL_BUILD_BROWSER_READY ";
+ if (!line.startsWith(prefix)) { process.stdout.write(line + "\n"); continue; }
   if (ready) { stop(); continue; }
   ready = true;
   let metadata;
-  try { metadata = JSON.parse(line.slice("LOCAL_BUILD_BROWSER_READY ".length)); } catch { stop(); continue; }
+  try { metadata = JSON.parse(line.slice(prefix.length)); } catch { stop(); continue; }
   if (metadata.origin !== env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN) { stop(); continue; }
   process.stdout.write(`authenticated browser fixture ready at ${metadata.origin}\n`);
-  browser = spawn("bun", ["run", "--cwd", "web/app", "smoke:browser", "local-build-deployments.spec.ts", "--project", "chromium", "--no-deps"], { cwd: process.cwd(), env: { ...env, PLAYWRIGHT_BASE_URL: metadata.origin, NEROCD_LOCAL_BUILD_BROWSER_META: JSON.stringify(metadata) }, stdio: "inherit" });
+  browser = spawn("bun", ["run", "--cwd", "web/app", "smoke:browser", privateMode ? "private-git-build-deployments.spec.ts" : "local-build-deployments.spec.ts", "--project", "chromium", "--no-deps"], { cwd: process.cwd(), env: { ...env, PLAYWRIGHT_BASE_URL: metadata.origin, NEROCD_LOCAL_BUILD_BROWSER_META: JSON.stringify(metadata), ...(privateMode ? { NEROCD_PRIVATE_GIT_BROWSER_META: JSON.stringify(metadata) } : {}) }, stdio: "inherit" });
   browserResult = once(browser, "exit").then(([code]) => { if (code !== 0) stop(); return code; });
  }
 });

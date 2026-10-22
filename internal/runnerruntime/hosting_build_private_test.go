@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -220,6 +222,19 @@ func TestPrivateBuildRejectsNoncanonicalDurableDeliverySuffix(t *testing.T) {
 		cancel()
 		if err == nil || len(f.requests) != 0 || len(e.journal.Snapshot().Build) != 1 {
 			t.Fatal("noncanonical delivery identity consumed/transported")
+		}
+	}
+}
+
+func TestPrivateRuntimeTransportPreflightBeforeJournalOrNetwork(t *testing.T) {
+	for _, server := range []string{"http://controller.example", "http://localhost:8080", "https://user:password@controller.example"} {
+		journal := filepath.Join(t.TempDir(), "not-created")
+		err := RunContext(t.Context(), Config{Execute: true, Server: server, RunnerID: "runner", JournalDir: journal, Build: &BuildConfig{Target: BuildTarget{RunnerID: "runner"}, PrivateGit: &PrivateGitConfig{}}})
+		if !errors.Is(err, runnerclient.ErrSourceCredential) {
+			t.Fatal("transport preflight did not run before local prerequisites", err)
+		}
+		if _, err := os.Stat(journal); !os.IsNotExist(err) {
+			t.Fatal("invalid private transport created journal")
 		}
 	}
 }
