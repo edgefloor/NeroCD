@@ -21,13 +21,27 @@ it is not a complete Coolify parity claim.
 - Project-scoped resources, audit events, API tokens, runner enrollment,
   fenced leases, sequential shell and Docker Compose execution, and artifact
   records.
+- Shared project environments and image-application configuration in the API
+  and WebUI. Saving an image reference records desired configuration.
+- Project-managed encrypted secret versions with create, rotate, owner reveal,
+  revoke and protected WebUI controls. Managed-secret execution delivery remains
+  planned. See [secret storage and key configuration](docs/secrets.md).
+- [Hosting servers and destinations](docs/hosting-destinations.md), explicit
+  project grants and immutable desired resource placement. Manual enrollment
+  uses the runner CLI; these controls do not validate Docker or deploy resources.
+- [Transactional hosting job infrastructure](docs/hosting-jobs.md) using River
+  OSS v0.44.1, with checked migrations and backup schema identity. The accepted
+  server does not start a production hosting consumer.
 - A React/Vite/TanStack web application embedded from `web/dist`, plus the
   versioned `/api/v1` contract in [openapi.yaml](openapi.yaml).
 - Offset-paginated list APIs. Use `limit` and `offset`; do not assume cursors.
 
 NeroCD does not currently provide SAML, LDAP, SCIM, claim or group mapping,
-automatic OIDC signup, multiple issuers, general workflow parallelism, or a
-production database/vault secret backend. See [the plan](docs/plan.md).
+automatic OIDC signup, multiple issuers, general workflow parallelism,
+managed-secret runner delivery or Vault lookup. Server readiness checks,
+image-resource execution, managed proxy/TLS and the remaining full hosting
+journey are still required. See the [dated progress assessment](docs/compatibility.md#accepted-foundations-and-evidence)
+and [plan](docs/plan.md).
 
 ## Quick start
 
@@ -41,7 +55,8 @@ Open <http://localhost:8080>. This starts PostgreSQL, migrates it, loads the
 development fixture, and starts NeroCD. Stop it with `docker compose down`; add
 `-v` only when you intend to discard the local database volume.
 
-To run from source outside Compose, use Go 1.26.10 and Bun 1.3.6 (the
+To run from source outside Compose, use the Go 1.26.10 compiler with the Go 1.25
+language baseline and Bun 1.3.6 (the
 locked version used by CI), then build the embedded web assets. An unconfigured
 server is rejected. Disposable memory is available only with
 `NEROCD_DEV_MEMORY=true` and the required bootstrap email and owner-only

@@ -1,16 +1,41 @@
 # Hosting implementation plan
 
-Accepted planning basis: one-time Astra architectural plan, dated 2026-10-22. This plan adopts the complete [product specification](product-spec.md), including every R01–R68 requirement and A01–A37 scenario. Package and milestone sequencing does not defer any declared feature out of the target product. Status at adoption: P00 documents the contract; P01–P18 are planned. No application-hosting milestone is validated by this documentation commit.
+Accepted planning basis: one-time Astra architectural plan, dated 2026-10-22. This plan adopts the complete [product specification](product-spec.md), including every R01–R68 requirement and A01–A37 scenario. Package and milestone sequencing does not defer any declared feature out of the target product. At adoption, P00 documented the contract and P01–P18 were planned. The current accepted assessment below records subsequent bounded foundations; no full hosting milestone is declared complete.
 
-Use the [compatibility ledger](compatibility.md) for limits and fixture status and [architecture](architecture.md) for current and target structure. Implementation issues and runtime evidence are not yet assigned; add concrete issue and evidence links as each bounded package starts and completes. Do not treat an uncreated issue or planned fixture as passing evidence.
+Use the [compatibility ledger](compatibility.md) for limits and fixture status and [architecture](architecture.md) for the original current/target design distinction. Accepted implementation commits and test paths are linked in the ledger. Add issue and runtime-evidence links as each remaining package starts and completes. Do not treat an uncreated issue or planned fixture as passing evidence.
 
 The accepted planning review examined the complete supplied specification, including R01–R68 and A01–A37, against NeroCD `a763a90b3896257b784c9498d01650ccdad2427a`. The review verified that the pinned Coolify commit exists and inspected relevant source at `b12d1386f3d458618b4c579babcd1e339c6c40b3`. Current official documentation was reviewed separately on 2026-10-22. This was bounded architectural discovery, not an exhaustive audit of either repository.
+
+## Accepted progress on 2026-10-22
+
+The current assessment is `45d7fa9a0bd20fb3733ac97c0bc93966c803dc4a`.
+The earlier `a763a90` inspection remains planning history. The complete target,
+P00–P18 dependencies and M0–M4 acceptance gates below remain in force.
+
+| Package | Accepted foundation | Remaining package boundary |
+| --- | --- | --- |
+| P00 | Full specification, ordered plan and compatibility ledger adopted | Keep support claims and evidence current |
+| P01 | Shared project environments and image-application desired configuration, authorized API and WebUI | Team model, additional resource kinds, legacy mappings and runtime mutation concurrency |
+| P02 | Enrolled server admission, stable default destinations, project grants and immutable bindings through API/WebUI; authoritative runner identity endpoint | SSH-assisted onboarding, actual host capability/readiness validation, full server lifecycle and runtime reconciliation |
+| P03 | Encrypted immutable project-secret versions, create/rotate/reveal/revoke, strict keyring file and protected WebUI | Execution delivery, broader value scopes, grants, key recovery workflows and external providers |
+| P06/P14 infrastructure | River OSS v0.44.1 transactional enqueue, checked owner migrations and backup identity | Production consumer registration, hosting operation integration, runtime queue readiness and restore admission holds |
+| P16 | Configuration, secret and placement controls accompany their accepted API slices | Deployment controls and complete hosting UI/API/CLI/MCP workflows |
+
+See [bounded evidence and exact commits](compatibility.md#accepted-foundations-and-evidence),
+the [destination guide](hosting-destinations.md), [secret guide](secrets.md) and
+[job infrastructure guide](hosting-jobs.md). An image setting is not a deployed
+application; a saved binding is not runtime health. Image execution, hosting
+deployment UI and proxy-engine work outside this accepted base remain unaccepted.
+No result here completes A01, A05, A08 or A27, and results from different
+revisions cannot be combined into the A36 release assertion.
 
 ## The architectural decision
 
 Keep the existing modular Go application, PostgreSQL authority, authorization, durable execution and React frontend. Build hosting capabilities around those components. Do not translate Coolify’s PHP classes directly or create a second orchestration system.
 
-The current implementation provides useful execution guarantees, but several existing concepts cannot carry the target product unchanged:
+The original planning inspection identified the following constraints at
+`a763a90`. The accepted-progress table above records the bounded changes
+since that inspection; these historical rows do not describe all current APIs.
 
 | Existing evidence | Consequence for the port |
 |---|---|
@@ -168,7 +193,10 @@ Existing-container adoption remains a separate capability. Labels can help disco
 
 ## The first execution wave
 
-The next action should be P00 and the smallest foundation contracts needed by M1. There is no blocking product question that prevents starting this work.
+The original first-wave sequence is retained below. P00 and bounded resource,
+secret and destination foundations have since been accepted as recorded above.
+Remaining M0 migration and recovery work and the complete M1 runtime journey
+still require implementation and evidence.
 
 1. A documentation worker saves the supplied specification with its requirement IDs intact, adds the evidence-linked ledger, and updates README, architecture and plan. Use the inspected NeroCD SHA as the explicitly dated planning baseline, without claiming it was the earlier specification’s unnamed baseline.
 
