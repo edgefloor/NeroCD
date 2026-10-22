@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { maximumPageOffset } from "@/router/search";
 import { ResourceDestination } from "./ResourceDestination";
+import { ResourceDeployments } from "./ResourceDeployments";
 
 const pageSize = 20;
 const selectClass = "h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm";
@@ -109,7 +110,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     setBusy(true); setError(""); setNotice("");
     try {
       await createResource({ project_id: projectID, project_environment_id: environment.id, name, kind: "application", source: { kind: "image", image: { reference: image } } });
-      setName(""); setImage(""); setNotice("Application configuration saved. It has not been deployed.");
+      setName(""); setImage(""); setNotice("Application configuration saved. Deployment is a separate request.");
       setOffset(0);
       await refresh();
     } catch (cause) { setError(errorText(cause)); }
@@ -125,8 +126,9 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{resource.source.image.reference}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
+      <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {canWrite && editing?.id !== resource.id ? <Button type="button" variant="outline" disabled={busy || Boolean(editing)} onClick={() => { setEditing(resource); setNotice(""); }}>Edit configuration</Button> : null}
-      {editing?.id === resource.id ? <ApplicationEditor key={resource.id} resource={editing} writable={canWrite} onClose={() => setEditing(undefined)} onSaved={async () => { await refresh(); setNotice("Application configuration updated. It has not been deployed."); }} /> : null}
+      {editing?.id === resource.id ? <ApplicationEditor key={resource.id} resource={editing} writable={canWrite} onClose={() => setEditing(undefined)} onSaved={async () => { await refresh(); setNotice("Application configuration updated. Deployment is a separate request."); }} /> : null}
     </article>)}</div>
     <PageNavigation label="applications" page={resources.data} loading={resources.isFetching || Boolean(editing) || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - pageSize))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + pageSize))} />
     {writable ? <form onSubmit={(event) => void create(event)} aria-label="Create application" aria-busy={busy} className="space-y-3 border-t pt-4">
@@ -182,7 +184,7 @@ export function ProjectHosting({ projects, canOperateProject, unavailable = fals
   const [projectID, setProjectID] = useState("");
   const project = projects.find((item) => item.id === projectID);
   return <Card className="min-w-0" role="region" aria-label="Project hosting">
-    <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save image application configuration in shared project environments. These settings do not deploy applications or report runtime health.</p></CardHeader>
+    <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save image application configuration in shared project environments, choose placement, and request image deployment separately. Operation history records outcomes; it does not provide continuous runtime health.</p></CardHeader>
     <CardContent className="min-w-0 space-y-5">
       <div className="max-w-xl space-y-1.5"><label htmlFor={`${id}-project`}>Hosting project</label><select id={`${id}-project`} className={selectClass} value={project?.id ?? ""} onChange={(event) => setProjectID(event.target.value)}><option value="">Select a project</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
       {project ? <><p className="break-all text-xs text-muted-foreground">Project ID for destination grants: {project.id}</p><ProjectEnvironments key={project.id} projectID={project.id} writable={canOperateProject(project.id)} blocked={unavailable} /></> : <p className="text-sm text-muted-foreground">Choose a project to manage or view saved configuration.</p>}
