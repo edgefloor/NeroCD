@@ -66,10 +66,18 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 }
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
-type RuntimeExecutionOptions struct{ Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment bool }
+type RuntimeExecutionOptions struct{ Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation bool }
 
 // RuntimeExecutionIdentityWithOptions checks every protected execution capability.
 func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options RuntimeExecutionOptions) (string, error) {
+	if options.Observation {
+		secured, closeTransport, err := c.observationHTTP()
+		if err != nil {
+			return "", err
+		}
+		defer closeTransport()
+		c = secured
+	}
 	proxyConfigured, buildConfigured, localBuildConfigured := options.Proxy, options.Build, options.LocalBuild
 	var result proxyIdentityResponse
 	if err := c.get(ctx, "/api/v1/runners/identity", &result); err != nil {
@@ -101,6 +109,13 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	}
 	if environmentCap != options.RuntimeEnvironment || environmentCap && (!imageCap || !releaseCap || shellCapable) {
 		return "", errors.New("authenticated runtime environment capabilities do not match explicit configuration")
+	}
+	observationCap := false
+	for _, capability := range result.Capabilities {
+		observationCap = observationCap || capability == domain.HostingObservationCapability
+	}
+	if observationCap != options.Observation || observationCap && shellCapable {
+		return "", errors.New("authenticated observation capability does not match explicit configuration")
 	}
 	if private != privateCapable {
 		return "", errors.New("authenticated private Git capability does not match explicit configuration")
