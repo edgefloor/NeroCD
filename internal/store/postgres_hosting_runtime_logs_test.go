@@ -474,6 +474,20 @@ func TestPostgresHostingRuntimeLogProjectAndCollectorQuotas(t *testing.T) {
 	if err != nil || len(page.Targets) != 4 {
 		t.Fatal(len(page.Targets), err)
 	}
+	// A disconnected source retains its live lease slot, including while it
+	// transitions back to following without restarting its epoch.
+	disconnected := runtimeLogBatch(page.Targets[0], 700, 0, "disconnect")
+	disconnected.State = "disconnected"
+	f.append(t, disconnected)
+	competing, err := f.pg.ClaimRuntimeLogSessions(t.Context(), f.server.RunnerID, f.hash, domain.HostingRuntimeLogClaimInput{InstanceID: strings.Repeat("f", 32), AfterSessionID: page.NextCursor, Limit: 4})
+	if err != nil || len(competing.Targets) != 0 {
+		t.Fatal("disconnected lease released collector slot", competing, err)
+	}
+	reused, err := f.pg.ClaimRuntimeLogSessions(t.Context(), f.server.RunnerID, f.hash, domain.HostingRuntimeLogClaimInput{InstanceID: instance, AfterSessionID: "", Limit: 4})
+	if err != nil || len(reused.Targets) != 4 || reused.Targets[0].CollectionEpoch != page.Targets[0].CollectionEpoch {
+		t.Fatal("same instance lost counted slot", reused, err)
+	}
+	f.append(t, runtimeLogBatch(page.Targets[0], 701, 1, "following again"))
 	remaining, err := f.pg.ClaimRuntimeLogSessions(t.Context(), f.server.RunnerID, f.hash, domain.HostingRuntimeLogClaimInput{InstanceID: instance, AfterSessionID: page.NextCursor, Limit: 4})
 	if err != nil || len(remaining.Targets) != 0 {
 		t.Fatal("collector quota", remaining, err)

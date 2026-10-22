@@ -29,7 +29,7 @@ UPDATE hosting_runtime_log_sessions SET state=$2,ended_at=COALESCE(ended_at,stam
 -- name: ListRuntimeLogClaimCandidates :many
 SELECT id FROM hosting_runtime_log_sessions WHERE runner_id=$1 AND id>sqlc.arg(after_session_id)::text AND ended_at IS NULL AND state IN('waiting','following','disconnected') AND demand_expires_at>clock_timestamp() ORDER BY id LIMIT sqlc.arg(page_limit)::integer;
 -- name: RuntimeLogCollectorCount :one
-SELECT count(*)::integer FROM hosting_runtime_log_sessions WHERE runner_id=$1 AND ended_at IS NULL AND state='following' AND demand_expires_at>clock_timestamp() AND epoch_expires_at>clock_timestamp();
+SELECT count(*)::integer FROM hosting_runtime_log_sessions WHERE runner_id=$1 AND ended_at IS NULL AND state IN('following','disconnected') AND demand_expires_at>clock_timestamp() AND epoch_expires_at>clock_timestamp();
 -- name: SetRuntimeLogEpoch :one
 UPDATE hosting_runtime_log_sessions SET instance_id=$2,collection_epoch=$3,epoch_expires_at=LEAST(clock_timestamp()+interval '10 seconds',demand_expires_at),state='following',source_gap=source_gap OR (collection_epoch<>'' AND collection_epoch<>$3),receipt=CASE WHEN collection_epoch=$3 THEN receipt ELSE NULL END WHERE id=$1 RETURNING *;
 -- name: MarkRuntimeLogGap :exec

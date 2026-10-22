@@ -455,7 +455,7 @@ func (s *PostgresStore) claimRuntimeLog(ctx context.Context, runner, credential,
 		if live && row.InstanceID != instance {
 			return out, ErrConflict
 		}
-		if !live || row.State != "following" {
+		if !live {
 			count, e := q.RuntimeLogCollectorCount(ctx, runner)
 			if e != nil {
 				return out, e

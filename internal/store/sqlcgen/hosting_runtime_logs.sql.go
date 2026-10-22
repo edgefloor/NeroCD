@@ -534,7 +534,7 @@ func (q *Queries) RenewRuntimeLogDemand(ctx context.Context, id string) (Hosting
 }
 
 const runtimeLogCollectorCount = `-- name: RuntimeLogCollectorCount :one
-SELECT count(*)::integer FROM hosting_runtime_log_sessions WHERE runner_id=$1 AND ended_at IS NULL AND state='following' AND demand_expires_at>clock_timestamp() AND epoch_expires_at>clock_timestamp()
+SELECT count(*)::integer FROM hosting_runtime_log_sessions WHERE runner_id=$1 AND ended_at IS NULL AND state IN('following','disconnected') AND demand_expires_at>clock_timestamp() AND epoch_expires_at>clock_timestamp()
 `
 
 func (q *Queries) RuntimeLogCollectorCount(ctx context.Context, runnerID string) (int32, error) {
