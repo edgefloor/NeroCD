@@ -36,13 +36,13 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   const [base, setBase] = useState(resource);
   const [name, setName] = useState(resource.name);
   const [image, setImage] = useState(resource.source.kind === "image" ? resource.source.image.reference : "");
-  const [git, setGit] = useState<GitApplicationDraft>(resource.source.kind === "git" ? { repository_url: resource.source.git.repository_url, requested_ref: resource.source.git.requested_ref, credential_kind: "public", settings: resource.source.git.settings } : emptyGitDraft());
+  const [git, setGit] = useState<GitApplicationDraft>(resource.source.kind === "git" ? { repository_url: resource.source.git.repository_url, requested_ref: resource.source.git.requested_ref, credential_kind: resource.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: resource.source.git.settings } : emptyGitDraft());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState(false);
   const [latest, setLatest] = useState<Resource>();
   const [refreshError, setRefreshError] = useState("");
-  const baseInput: ResourceSourceInput = base.source.kind === "image" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: "public", settings: base.source.git.settings } };
+  const baseInput: ResourceSourceInput = base.source.kind === "image" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: base.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: base.source.git.settings } };
   const source: ResourceSourceInput = base.source.kind === "image" ? { kind: "image", image: { reference: image } } : { kind: "git", git };
   const sourceChanged = JSON.stringify(source) !== JSON.stringify(baseInput);
   const changed = name !== base.name || sourceChanged;
@@ -151,7 +151,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <h4 className="break-words font-medium [overflow-wrap:anywhere]">{resource.name}</h4>
       <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{resource.source.kind === "image" ? resource.source.image.reference : `${resource.source.git.repository_url} · ${resource.source.git.requested_ref}`}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
-      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · Public Git build operations available; artifact deployment is separate</p> : null}
+      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · {resource.source.git.credential_kind === "https_basic" ? "Private HTTPS" : "Public Git"} build operations available; artifact deployment is separate</p> : null}
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceBuilds resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
@@ -162,7 +162,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     <PageNavigation label="applications" page={resources.data} loading={resources.isFetching || Boolean(editing) || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - pageSize))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + pageSize))} />
     {writable ? <form onSubmit={(event) => void create(event)} aria-label="Create application" aria-busy={busy} className="space-y-3 border-t pt-4">
       <h4 className="font-medium">Add application</h4>
-      <div className="space-y-1.5"><label htmlFor={sourceSelectID}>Application source</label><select id={sourceSelectID} className={selectClass} value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "image" | "git")}><option value="image">Container image</option><option value="git">Public Git repository</option></select></div>
+      <div className="space-y-1.5"><label htmlFor={sourceSelectID}>Application source</label><select id={sourceSelectID} className={selectClass} value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "image" | "git")}><option value="image">Container image</option><option value="git">Git repository</option></select></div>
       <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy} showImage={sourceKind === "image"} />
       {sourceKind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy} /> : null}
       <Button type="submit" disabled={!canWrite || busy || Boolean(editing)}>{busy ? "Saving application..." : "Save application"}</Button>

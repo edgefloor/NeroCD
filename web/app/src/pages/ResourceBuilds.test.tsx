@@ -11,7 +11,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 let client: QueryClient;
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
 function setup(writable = true) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceBuilds resource={resource} writable={writable} blocked={false} /></QueryClientProvider>); }
-function backend(handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined) {
+function backend(handler?: (url: string, options: RequestInit) => Response | Promise<Response | undefined> | undefined) {
   const fetch = vi.fn(async (url: string, options: RequestInit) => await handler?.(url, options) ?? (url.endsWith("/binding") ? json({ id: "binding", resource_id: "resource" }) : url.includes("/builds?") ? json({ items: [build], limit: 20, offset: Number(new URL(url, "http://local").searchParams.get("offset")), count: 1, total: 21 }) : url.includes("/hosting-builds/") || options.method === "POST" ? json({ build }) : json({ ...resource, generation: 4, source: { ...resource.source, git: { ...(resource.source.kind === "git" ? resource.source.git : {}), generation: 5, requested_ref: "next" } } })));
   vi.stubGlobal("fetch", fetch); return fetch;
 }
@@ -36,7 +36,7 @@ test("only scoped build detail mounts output and parent blocking clears plaintex
   const fetch = backend((url) => url.includes("/logs?") ? json({ items: [{ sequence: 1, component: "build", stream: "system", message: "persisted scoped output", created_at: "" }], next_sequence: 1, earliest_available_sequence: 1, deleted_through_sequence: 0, terminal: true, truncated: false, gap: false, history_complete: true }) : undefined);
   const view = setup(false); fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
   fireEvent.click(await screen.findByRole("button", { name: "Show build output" })); await screen.findByText("persisted scoped output");
-  expect(client.getQueryCache().getAll().some((query) => JSON.stringify(query.state.data).includes("persisted scoped output"))).toBe(false);
+  expect(client.getQueryCache().getAll().some((query) => JSON.stringify(query.state.data)?.includes("persisted scoped output"))).toBe(false);
   view.rerender(<QueryClientProvider client={client}><ResourceBuilds resource={resource} writable={false} blocked /></QueryClientProvider>);
   expect(screen.queryByText("persisted scoped output")).toBeNull(); expect(fetch.mock.calls.filter(([url]) => url.includes("/logs?"))).toHaveLength(1);
 });
@@ -44,4 +44,26 @@ test("foreign build detail never offers output", async () => {
   const fetch = backend((url) => url.includes("/hosting-builds/") ? json({ build: { ...build, resource_id: "foreign" } }) : undefined); setup(false);
   fireEvent.click(await screen.findByRole("button", { name: "View build build-one" })); await screen.findByText(/Unable to refresh build detail/);
   expect(screen.queryByRole("button", { name: "Show build output" })).toBeNull(); expect(fetch.mock.calls.some(([url]) => url.includes("/logs?"))).toBe(false);
+});
+
+const privateResource: Resource = { ...resource, source: { kind: "git", git: { ...(resource.source.kind === "git" ? resource.source.git : {}), credential_kind: "https_basic" } } } as Resource;
+const privateGrant = { id: "grant-one", resource_id: "resource", source_id: "source", source_generation: 3, version: 1, kind: "https_basic", revoked: false };
+function privateBackend(handler?: (url: string, options: RequestInit) => Response | Promise<Response | undefined> | undefined) {
+ return backend(async (url, options) => await handler?.(url, options) ?? (url.includes("/source-grants?") ? json({ items: [privateGrant, { ...privateGrant, id: "legacy", source_generation: 0 }, { ...privateGrant, id: "revoked", revoked: true }], count: 3, total: 3, limit: 20, offset: 0 }) : url.includes("/project-members?") ? json({ items: [{ project_id: "project", user_id: "user", role: "maintainer" }], count: 1, total: 1, limit: 100, offset: 0 }) : undefined));
+}
+function setupPrivate(writable = true) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceBuilds resource={privateResource} writable={writable} blocked={false} /></QueryClientProvider>); }
+async function privateReview() { await screen.findByRole("option", { name: "grant-one · source 3 · eligible" }); fireEvent.change(screen.getByLabelText("Private source grant"), { target: { value: "grant-one" } }); fireEvent.click(screen.getByLabelText(/I reviewed this exact private HTTPS Git source/)); }
+test.each(["lost", "503"])("private %s retry freezes exact grant ID, key and generations", async (failure) => {
+ let count = 0; const fetch = privateBackend((url, options) => url.endsWith("/builds") && options.method === "POST" ? ++count === 1 ? failure === "lost" ? Promise.reject(new TypeError("lost")) : json({}, 503) : json({ build }, 202) : undefined); const view = setupPrivate(); await privateReview();
+ expect(screen.getByRole<HTMLOptionElement>("option", { name: "legacy · source 0 · ineligible" }).disabled).toBe(true); expect(screen.getByRole<HTMLOptionElement>("option", { name: "revoked · source 3 · revoked" }).disabled).toBe(true);
+ fireEvent.click(screen.getByRole("button", { name: "Request private Git build" })); await screen.findByRole("button", { name: "Retry identical build request" });
+ expect(screen.getByLabelText<HTMLSelectElement>("Private source grant").disabled).toBe(true);
+ view.rerender(<QueryClientProvider client={client}><ResourceBuilds resource={{ ...privateResource, generation: 4, source: { kind: "git", git: { ...(privateResource.source.kind === "git" ? privateResource.source.git : {}), generation: 5 } } } as Resource} writable blocked={false} /></QueryClientProvider>);
+ fireEvent.click(screen.getByRole("button", { name: "Retry identical build request" })); await screen.findByRole("region", { name: "Build operation detail" }); const writes = fetch.mock.calls.filter(([url, options]) => url.endsWith("/builds") && options.method === "POST"); expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body); expect(JSON.parse(writes[0]![1].body as string)).toMatchObject({ grant_id: "grant-one", expected_resource_generation: 2, expected_source_generation: 3 });
+});
+test("a revoked selected grant blocks a new private request and viewer reads skip grant endpoints", async () => {
+ const fetch = privateBackend(); const view = setupPrivate(); await privateReview();
+ await act(async () => client.setQueryData(["hostingSourceGrants", JSON.stringify(["oidc", "user"]), "project", "resource", 0], { items: [{ ...privateGrant, revoked: true }], limit: 20, offset: 0, count: 1, total: 1 }));
+ await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request private Git build" }).disabled).toBe(true)); expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);
+ view.unmount(); fetch.mockClear(); setupPrivate(false); fireEvent.click(await screen.findByRole("button", { name: "View build build-one" })); await screen.findByRole("button", { name: "Show build output" }); expect(fetch.mock.calls.some(([url]) => url.includes("/source-grants") || url.includes("/managed-secrets"))).toBe(false);
 });

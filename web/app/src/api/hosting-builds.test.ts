@@ -28,3 +28,10 @@ test("output reads encode the build and preserve the server page without caching
   expect(await getHostingBuildLogs("build/one", 4, { signal })).toEqual(page);
   expect(fetch).toHaveBeenCalledWith("/api/v1/hosting-builds/build%2Fone/logs?after_sequence=4&limit=200", expect.objectContaining({ method: "GET", credentials: "include", cache: "no-store", signal }));
 });
+
+test("only explicitly private requests forward the frozen grant ID", async () => {
+ const fetch = vi.fn(async (_url: string, _options: RequestInit) => json({ build })); vi.stubGlobal("fetch", fetch);
+ const input = { expected_resource_generation: 2, expected_source_generation: 3, idempotency_key: "same-private", grant_id: "grant-one" };
+ await requestHostingBuild("resource", input, { credentialKind: "https_basic" }); await requestHostingBuild("resource", input, { credentialKind: "https_basic" }); await requestHostingBuild("resource", input, { credentialKind: "public" });
+ expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).toEqual(input); expect(fetch.mock.calls[0]![1].body).toBe(fetch.mock.calls[1]![1].body); expect(JSON.parse(fetch.mock.calls[2]![1].body as string)).not.toHaveProperty("grant_id");
+});
