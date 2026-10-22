@@ -23,6 +23,7 @@ import (
 
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
+	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store"
 )
@@ -260,7 +261,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(rec, http.StatusServiceUnavailable, map[string]string{"status": "draining"})
 		return
 	}
-	if err := validatePagination(r); err != nil {
+	if err := s.validatePagination(r); err != nil {
 		writeErrorEnvelope(rec, http.StatusBadRequest, "bad_request", "invalid pagination")
 		return
 	}
@@ -337,7 +338,16 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func validatePagination(r *http.Request) error {
+func (s *Server) validatePagination(r *http.Request) error {
+	limit := maxPageLimit
+	// Resolve the registered route before dispatch, without invoking its handler
+	// or trusting a caller-provided Pattern. Authentication still runs on dispatch.
+	if r.Method == http.MethodGet {
+		_, pattern := s.mux.Handler(r)
+		if pattern == "GET /api/v1/hosting-builds/{id}/logs" {
+			limit = domain.HostingBuildLogReadLimit
+		}
+	}
 	query := r.URL.Query()
 	for _, name := range []string{"limit", "offset"} {
 		value, present := query[name]
@@ -348,7 +358,7 @@ func validatePagination(r *http.Request) error {
 			continue
 		}
 		parsed, err := strconv.Atoi(value[0])
-		if err != nil || parsed < 0 || (name == "limit" && parsed > maxPageLimit) || (name == "offset" && parsed > maxPageOffset) {
+		if err != nil || parsed < 0 || (name == "limit" && parsed > limit) || (name == "offset" && parsed > maxPageOffset) {
 			return errors.New("invalid pagination")
 		}
 	}
