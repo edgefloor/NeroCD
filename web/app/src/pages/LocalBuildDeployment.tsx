@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { OperationDetail } from "./ResourceDeployments";
 
 function matchesBuildGenerations(resource: Resource, build: HostingBuild): boolean {
-  return resource.source.kind === "git" && resource.source.git.credential_kind === "public"
+  return resource.source.kind === "git" && ["public", "https_basic"].includes(resource.source.git.credential_kind)
+    && resource.source.git.credential_kind === build.snapshot.source.credential_kind
     && resource.generation === build.snapshot.resource_generation
     && resource.source.git.source_id === build.snapshot.source.source_id
     && resource.source.git.generation === build.snapshot.source.generation;

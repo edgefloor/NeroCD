@@ -182,7 +182,7 @@ test("Git create and edit forms describe separately requested builds alongside b
  fireEvent.change(within(create).getByLabelText("Application source"), { target: { value: "git" } });
  expect(screen.getByText("Build controls for Web")).toBeTruthy();
  for (const form of [create, editor]) {
-  expect(within(form).getByText(/Saving records configuration only\. Request builds separately when enabled by your operator\. Deploying a build artifact is not available yet\./)).toBeTruthy();
+  expect(within(form).getByText(/Saving records configuration only\. Request builds separately when enabled by your operator\. Select a successful build to request deployment of its recorded artifact\./)).toBeTruthy();
   expect(within(form).queryByText(/Git builds and deployment are unavailable|build controller is connected/)).toBeNull();
  }
 });
@@ -246,4 +246,20 @@ test("viewer reads Git generations without source mutation controls", async () =
  expect(screen.getByText(/Git source generation 2/)).toBeTruthy();
  expect(screen.queryByRole("button", { name: "Edit configuration" })).toBeNull();
  expect(screen.queryByRole("form", { name: "Create application" })).toBeNull();
+});
+
+test("private Git editor preserves credential kind and sends only a rename when source is unchanged", async () => {
+ const saved: api.Resource = { ...gitResource, source: { kind: "git", git: { ...(gitResource.source.kind === "git" ? gitResource.source.git : {}), credential_kind: "https_basic" } } } as api.Resource;
+ vi.mocked(api.listResources).mockResolvedValue(page([saved])); vi.mocked(api.updateResource).mockResolvedValue({ ...saved, name: "Renamed" }); setup(); const form = await edit();
+ expect(within(form).getByLabelText<HTMLSelectElement>("Git source access").value).toBe("https_basic"); expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Save configuration" }).disabled).toBe(true);
+ fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "Renamed" } }); fireEvent.submit(form); await screen.findByText("Application configuration updated. Deployment is a separate request.");
+ expect(api.updateResource).toHaveBeenCalledWith("app", { expected_generation: 1, name: "Renamed" });
+});
+test("private Git source edits retain access until an explicit public selection", async () => {
+ const saved: api.Resource = { ...gitResource, source: { kind: "git", git: { ...(gitResource.source.kind === "git" ? gitResource.source.git : {}), credential_kind: "https_basic" } } } as api.Resource;
+ vi.mocked(api.listResources).mockResolvedValue(page([saved])); vi.mocked(api.updateResource).mockRejectedValue(new ApiError(400, "invalid", "request")); setup(); const form = await edit();
+ fireEvent.change(within(form).getByLabelText("Git branch, tag, or commit"), { target: { value: "private-next" } }); fireEvent.submit(form); await screen.findByRole("alert");
+ expect(vi.mocked(api.updateResource).mock.calls[0]![1]).toMatchObject({ source: { git: { credential_kind: "https_basic", requested_ref: "private-next" } } });
+ fireEvent.change(within(form).getByLabelText("Git source access"), { target: { value: "public" } }); fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(2));
+ expect(vi.mocked(api.updateResource).mock.calls[1]![1]).toMatchObject({ source: { git: { credential_kind: "public", requested_ref: "private-next" } } });
 });

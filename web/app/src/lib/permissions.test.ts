@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { Principal, ProjectMember } from "@/api";
-import { canMaintainProject } from "./permissions";
+import { canMaintainProject, canOwnProject } from "./permissions";
 
 const principal: Principal = { id: "user_one", roles: [], name: "Operator", email: "operator@example.test", provider: "oidc" };
 const member = (role: string, projectID = "project_one", userID = principal.id): ProjectMember => ({ id: "membership", project_id: projectID, user_id: userID, email: principal.email, role, created_at: "2026-01-01T00:00:00Z" });
@@ -22,4 +22,14 @@ test("system admin is global but project role names in principal roles are not",
   expect(canMaintainProject({ ...principal, roles: ["system_admin"] }, [], "project_one")).toBe(true);
   expect(canMaintainProject({ ...principal, roles: ["maintainer"] }, [], "project_one")).toBe(false);
   expect(canMaintainProject({ ...principal, roles: ["owner"] }, [], "project_one")).toBe(false);
+});
+
+test("only exact project owners and system administrators control source grants", () => {
+ expect(canOwnProject(principal, [member("owner")], "project_one")).toBe(true);
+ for (const role of ["maintainer", "viewer"]) expect(canOwnProject(principal, [member(role)], "project_one")).toBe(false);
+ expect(canOwnProject(principal, [member("owner", "project_two")], "project_one")).toBe(false);
+ expect(canOwnProject(principal, [member("owner", "project_one", "other")], "project_one")).toBe(false);
+ expect(canOwnProject({ ...principal, roles: ["owner"] }, [], "project_one")).toBe(false);
+ expect(canOwnProject({ ...principal, roles: ["system_admin"] }, [], "project_one")).toBe(true);
+ expect(canOwnProject(undefined, [member("owner")], "project_one")).toBe(false);
 });
