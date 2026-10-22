@@ -2,6 +2,8 @@ package domain
 
 import "errors"
 
+// HostingRuntimeEnvironmentCapability and the policy and compiler versions below
+// identify deployment admission that pins saved runtime configuration.
 const (
 	HostingRuntimeEnvironmentCapability     = "hosting_runtime_env_v1"
 	HostingRuntimePolicyVersion             = "public-image.runtime-env.release-ports.v1"
