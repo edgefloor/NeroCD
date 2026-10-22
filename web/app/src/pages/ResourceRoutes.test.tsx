@@ -46,3 +46,8 @@ test.each(["mutation", "restore"])("recorded %s ownership hold pauses separate r
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save desired route" }).disabled).toBe(true);
   expect(screen.queryByRole("button", { name: /unlock|clear hold/i })).toBeNull();
 });
+
+test("settled local build route candidate displays recorded source and artifact identity", async () => {
+  backend((url) => url.includes("/deployments") ? json({ items: [{ ...healthy, snapshot: { image_reference: "", local_build: { source_generation: 3, artifact: { build_id: "build-exact", image_id: "sha256:exact" } } } }], limit: 20, offset: 0, count: 1, total: 1 }) : undefined);
+  setup(); await screen.findByRole("option", { name: "hop_healthy · Local build build-exact · source generation 3 · sha256:exact" });
+});

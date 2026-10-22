@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { ApiError } from "./errors";
-import { cancelHostingOperation, getHostingOperation, HostingDeploymentError, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, listHostingDeployments, listHostingRetainedReleases, reconcileHostingOperation, requestHostingDeployment, requestHostingReleaseCleanup } from "./hosting-deployments";
+import { cancelHostingOperation, getHostingOperation, HostingDeploymentError, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, listHostingDeployments, listHostingRetainedReleases, reconcileHostingOperation, requestHostingDeployment, requestHostingBuildDeployment, requestHostingReleaseCleanup } from "./hosting-deployments";
 
 afterEach(() => vi.unstubAllGlobals());
 const input = { expected_generation: 3, idempotency_key: "stable-request", container_port: 80, host_port: 8080, readiness: { path: "/health", timeout_seconds: 30 } };
@@ -56,4 +56,13 @@ test("retained release metadata rejects a foreign resource response", async () =
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([{ healthy: { snapshot: { resource_id: "foreign" } } }]))));
   const client = new QueryClient();
   await expect(client.fetchQuery(hostingRetainedQuery("p", "r"))).rejects.toThrow("scope mismatch"); client.clear();
+});
+
+test("local build admission preserves exact generated body, CSRF, signal and structured conflict", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(new Response("{}", { status: 202 })).mockResolvedValueOnce(new Response(JSON.stringify({ code: "hosting_restore_held" }), { status: 409 })); vi.stubGlobal("fetch", fetch);
+  const body = { ...input, build_id: "build-one", expected_source_generation: 4 }, signal = new AbortController().signal;
+  await requestHostingBuildDeployment("resource/one", body, { signal });
+  expect(fetch.mock.calls[0]).toEqual(["/api/v1/resources/resource%2Fone/deployments/from-build", expect.objectContaining({ method: "POST", signal, credentials: "include", body: JSON.stringify(body), headers: expect.objectContaining({ "X-NeroCD-CSRF": "1" }) })]);
+  await expect(requestHostingBuildDeployment("resource/one", body)).rejects.toMatchObject({ status: 409, code: "hosting_restore_held" });
+  expect(hostingDeploymentsQuery("p", "r", 0, "actor").queryKey).not.toEqual(hostingDeploymentsQuery("p", "r", 0, "other").queryKey);
 });

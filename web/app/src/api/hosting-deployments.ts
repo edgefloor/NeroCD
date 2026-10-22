@@ -3,7 +3,9 @@ import { request, type RequestOptions } from "./client";
 
 import type { components } from "./generated";
 import { ApiError } from "./errors";
+import { getResourceBinding } from "./destinations";
 
+export type HostingBuildDeploymentInput = components["schemas"]["HostingBuildDeploymentInput"];
 export type HostingDeploymentInput = components["schemas"]["HostingDeploymentInput"];
 export type HostingOperation = components["schemas"]["HostingOperation"];
 export type HostingOperationList = components["schemas"]["HostingOperationList"];
@@ -22,7 +24,10 @@ const operationPath = (id: string) => `/api/v1/hosting-operations/${encodeURICom
 export async function requestHostingDeployment(resourceID: string, body: HostingDeploymentInput, options?: Options): Promise<HostingOperation> {
   return hostingMutation(deploymentsPath(resourceID), body, options);
 }
-async function hostingMutation(path: string, body: HostingDeploymentInput | HostingCleanupInput, options?: Options): Promise<HostingOperation> {
+export async function requestHostingBuildDeployment(resourceID: string, body: HostingBuildDeploymentInput, options?: Options): Promise<HostingOperation> {
+  return hostingMutation(`${deploymentsPath(resourceID)}/from-build`, body, options);
+}
+async function hostingMutation(path: string, body: HostingDeploymentInput | HostingBuildDeploymentInput | HostingCleanupInput, options?: Options): Promise<HostingOperation> {
   const response = await fetch(path, {
     method: "POST", credentials: "include", signal: options?.signal,
     headers: { Accept: "application/json", "Content-Type": "application/json", "X-NeroCD-CSRF": "1" }, body: JSON.stringify(body),
@@ -47,31 +52,42 @@ export const getHostingOperation = (id: string, options?: Options): Promise<Host
 export const cancelHostingOperation = (id: string, options?: Options): Promise<HostingOperation> => request(`${operationPath(id)}/cancel`, { ...options, method: "POST", body: {} });
 export const reconcileHostingOperation = (id: string, options?: Options): Promise<HostingOperation> => request(`${operationPath(id)}/reconcile`, { ...options, method: "POST", body: {} });
 export const hostingDeploymentKeys = {
-  history: (projectID: string, resourceID: string) => ["hostingDeployments", projectID, resourceID] as const,
-  operation: (projectID: string, resourceID: string, id: string) => ["hostingOperation", projectID, resourceID, id] as const,
-  retained: (projectID: string, resourceID: string) => ["hostingRetained", projectID, resourceID] as const,
+  history: (projectID: string, resourceID: string, actor?: string) => ["hostingDeployments", projectID, resourceID, ...(actor ? [actor] : [])] as const,
+  operation: (projectID: string, resourceID: string, id: string, actor?: string) => ["hostingOperation", projectID, resourceID, id, ...(actor ? [actor] : [])] as const,
+  retained: (projectID: string, resourceID: string, actor?: string) => ["hostingRetained", projectID, resourceID, ...(actor ? [actor] : [])] as const,
 };
-export const hostingRetainedQuery = (projectID: string, resourceID: string) => queryOptions({
-  queryKey: hostingDeploymentKeys.retained(projectID, resourceID), retry: false,
+export const hostingRetainedQuery = (projectID: string, resourceID: string, actor?: string) => queryOptions({
+  queryKey: hostingDeploymentKeys.retained(projectID, resourceID, actor), retry: false,
   queryFn: async ({ signal }) => {
     const releases = await listHostingRetainedReleases(resourceID, { signal });
     if (releases.some((release) => release.healthy.snapshot.resource_id !== resourceID)) throw new Error("Retained release scope mismatch");
     return releases;
   },
 });
-export const hostingDeploymentsQuery = (projectID: string, resourceID: string, offset: number) => queryOptions({
-  queryKey: [...hostingDeploymentKeys.history(projectID, resourceID), offset],
+export const hostingDeploymentsQuery = (projectID: string, resourceID: string, offset: number, actor?: string) => queryOptions({
+  queryKey: [...hostingDeploymentKeys.history(projectID, resourceID, actor), offset],
   queryFn: async ({ signal }) => {
     const page = await listHostingDeployments(resourceID, { limit: 20, offset }, { signal });
     if (page.items.some((operation) => operation.project_id !== projectID || operation.resource_id !== resourceID)) throw new Error("Operation history scope mismatch");
     return page;
   }, retry: false,
 });
-export const hostingOperationQuery = (projectID: string, resourceID: string, id: string) => queryOptions({
-  queryKey: hostingDeploymentKeys.operation(projectID, resourceID, id),
+export const hostingOperationQuery = (projectID: string, resourceID: string, id: string, actor?: string) => queryOptions({
+  queryKey: hostingDeploymentKeys.operation(projectID, resourceID, id, actor),
   queryFn: async ({ signal }) => {
     const operation = await getHostingOperation(id, { signal });
     if (operation.project_id !== projectID || operation.resource_id !== resourceID || operation.id !== id) throw new Error("Operation scope mismatch");
     return operation;
   }, retry: false,
+});
+
+export const hostingBindingQuery = (projectID: string, resourceID: string, actor: string) => queryOptions({
+  queryKey: ["resourceBinding", projectID, resourceID, actor], retry: false,
+  queryFn: async ({ signal }) => {
+    try {
+      const binding = await getResourceBinding(resourceID, { signal });
+      if (binding.resource_id !== resourceID) throw new Error("Deployment binding scope mismatch");
+      return binding;
+    } catch (cause) { if (cause instanceof ApiError && cause.status === 404) return null; throw cause; }
+  },
 });

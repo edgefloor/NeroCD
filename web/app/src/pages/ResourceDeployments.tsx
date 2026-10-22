@@ -2,8 +2,7 @@ import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
 import { getResource, type Resource } from "@/api/hosting";
-import { resourceBindingQuery } from "@/api/destinations";
-import { cancelHostingOperation, HostingDeploymentError, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, reconcileHostingOperation, requestHostingDeployment, requestHostingReleaseCleanup, type HostingCleanupInput, type HostingRetainedRelease, type HostingOperation, type HostingDeploymentInput } from "@/api/hosting-deployments";
+import { cancelHostingOperation, HostingDeploymentError, hostingBindingQuery, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, reconcileHostingOperation, requestHostingDeployment, requestHostingReleaseCleanup, type HostingCleanupInput, type HostingRetainedRelease, type HostingOperation, type HostingDeploymentInput } from "@/api/hosting-deployments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageNavigation } from "@/components/common/PageNavigation";
@@ -27,15 +26,15 @@ function deploymentError(cause: unknown): string {
   return "The connection ended without a confirmed response. The request may have been accepted. Retry the identical request to recover its operation.";
 }
 
-function OperationDetail({ projectID, resourceID, operationID, writable, owner, blocked, onChanged }: {
-  projectID: string; resourceID: string; operationID: string; writable: boolean; owner: boolean; blocked: boolean; onChanged: () => Promise<void>;
+export function OperationDetail({ actor, projectID, resourceID, operationID, writable, owner, blocked, onChanged }: {
+  actor: string; projectID: string; resourceID: string; operationID: string; writable: boolean; owner: boolean; blocked: boolean; onChanged: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
-  const detail = useQuery({ ...hostingOperationQuery(projectID, resourceID, operationID), refetchInterval: (query) => {
+  const detail = useQuery({ ...hostingOperationQuery(projectID, resourceID, operationID, actor), refetchInterval: (query) => {
     const operation = query.state.data;
     return operation && (!terminalStates.has(operation.state) || operation.reconcile_requested || operation.mutation_hold) ? 5000 : false;
   } });
@@ -64,12 +63,12 @@ function OperationDetail({ projectID, resourceID, operationID, writable, owner, 
       {operation.cleanup_plan ? <p>Retained release cleanup · target {operation.cleanup_plan.target.operation_id}</p> : null}
       <dl className="space-y-1 break-all text-sm">
         <dt>Operation ID</dt><dd>{operation.id}</dd><dt>Recorded update</dt><dd>{operation.updated_at}</dd>
-        <dt>Requested image</dt><dd>{operation.snapshot.image_reference}</dd><dt>Configuration generation</dt><dd>{operation.snapshot.resource_generation}</dd>
+        <dt>{operation.snapshot.local_build ? "Local build / source generation" : "Requested image"}</dt><dd>{operation.snapshot.local_build ? `${operation.snapshot.local_build.artifact.build_id} / ${operation.snapshot.local_build.source_generation}` : operation.snapshot.image_reference}</dd>{operation.snapshot.local_build ? <><dt>Recorded artifact image ID</dt><dd>{operation.snapshot.local_build.artifact.image_id}</dd><dt>Source ID / artifact hash</dt><dd>{operation.snapshot.local_build.artifact.source_id} / {operation.snapshot.local_build.artifact_hash}</dd><dt>Manifest / config digest</dt><dd>{operation.snapshot.local_build.artifact.manifest_digest} / {operation.snapshot.local_build.artifact.config_digest}</dd></> : null}<dt>Configuration generation</dt><dd>{operation.snapshot.resource_generation}</dd>
         <dt>Exact binding</dt><dd>{operation.binding_id}</dd><dt>Destination</dt><dd>{operation.snapshot.destination_id}</dd>
         <dt>Runner</dt><dd>{operation.snapshot.runner_id}</dd><dt>Runtime namespace</dt><dd>{operation.snapshot.runtime_namespace}</dd>
         <dt>Runner-local endpoint</dt><dd>127.0.0.1:{operation.snapshot.host_port} → container {operation.snapshot.container_port}</dd>
         <dt>Readiness request</dt><dd>{operation.snapshot.readiness.path} · {operation.snapshot.readiness.timeout_seconds}s timeout</dd>
-        {operation.release ? <><dt>Resolved image</dt><dd>{operation.release.canonical_image}</dd><dt>Image ID</dt><dd>{operation.release.image_id}</dd></> : null}
+        {operation.release ? <><dt>{operation.release.local_build ? "Released local build" : "Resolved image"}</dt><dd>{operation.release.local_build?.build_id ?? operation.release.canonical_image}</dd><dt>Image ID</dt><dd>{operation.release.image_id}</dd></> : null}
         {operation.run_id ? <><dt>Deployment run</dt><dd>{operation.run_id}</dd></> : null}
         {operation.reconciliation_run_id ? <><dt>Observation run</dt><dd>{operation.reconciliation_run_id}</dd></> : null}
       </dl>
@@ -90,11 +89,11 @@ function OperationDetail({ projectID, resourceID, operationID, writable, owner, 
   </section>;
 }
 
-function RetainedReleases({ resource, writable, blocked, mutationHeld, restoreHeld, onSelected, onChanged }: {
-  resource: Resource; writable: boolean; blocked: boolean; mutationHeld: boolean; restoreHeld: boolean;
+function RetainedReleases({ actor, resource, writable, blocked, mutationHeld, restoreHeld, onSelected, onChanged }: {
+  actor: string; resource: Resource; writable: boolean; blocked: boolean; mutationHeld: boolean; restoreHeld: boolean;
   onSelected: (id: string) => void; onChanged: () => Promise<void>;
 }) {
-  const releases = useQuery(hostingRetainedQuery(resource.project_id, resource.id));
+  const releases = useQuery(hostingRetainedQuery(resource.project_id, resource.id, actor));
   const [target, setTarget] = useState<HostingRetainedRelease>();
   const [confirmed, setConfirmed] = useState(false);
   const [attempt, setAttempt] = useState<HostingCleanupInput>();
@@ -144,7 +143,7 @@ function RetainedReleases({ resource, writable, blocked, mutationHeld, restoreHe
     {releases.isError ? <p role="alert">Unable to refresh retained releases. Cleanup is paused; the selected target is preserved.</p> : null}
     {releases.data?.length === 0 ? <p>No retained releases recorded.</p> : null}
     {releases.data?.map((release) => <article key={release.healthy.operation_id} className="min-w-0 space-y-2 rounded-lg border p-3" aria-label={`Retained release ${release.healthy.operation_id}`}>
-      <dl className="space-y-1 break-all text-sm"><dt>Release operation</dt><dd>{release.healthy.operation_id}</dd><dt>Container</dt><dd>{release.healthy.container_id}</dd><dt>Release state</dt><dd>{release.state}</dd><dt>Recorded retained running</dt><dd>{release.retained_running ? "yes" : "no"}</dd><dt>Image</dt><dd>{release.healthy.release.canonical_image}</dd><dt>Target binding</dt><dd>{release.healthy.snapshot.binding_id}</dd><dt>Destination / runner</dt><dd>{release.healthy.snapshot.destination_id} / {release.healthy.snapshot.runner_id}</dd><dt>Retained local port</dt><dd>127.0.0.1:{release.healthy.snapshot.host_port}</dd><dt>Original readiness request</dt><dd>{release.healthy.snapshot.readiness.path} · {release.healthy.snapshot.readiness.timeout_seconds}s</dd></dl>
+      <dl className="space-y-1 break-all text-sm"><dt>Release operation</dt><dd>{release.healthy.operation_id}</dd><dt>Container</dt><dd>{release.healthy.container_id}</dd><dt>Release state</dt><dd>{release.state}</dd><dt>Recorded retained running</dt><dd>{release.retained_running ? "yes" : "no"}</dd><dt>Image</dt><dd>{release.healthy.release.local_build ? `Local build ${release.healthy.release.local_build.build_id} · ${release.healthy.release.image_id}` : release.healthy.release.canonical_image}</dd><dt>Target binding</dt><dd>{release.healthy.snapshot.binding_id}</dd><dt>Destination / runner</dt><dd>{release.healthy.snapshot.destination_id} / {release.healthy.snapshot.runner_id}</dd><dt>Retained local port</dt><dd>127.0.0.1:{release.healthy.snapshot.host_port}</dd><dt>Original readiness request</dt><dd>{release.healthy.snapshot.readiness.path} · {release.healthy.snapshot.readiness.timeout_seconds}s</dd></dl>
       {release.cleanup_operation_id ? <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all text-left" onClick={() => onSelected(release.cleanup_operation_id!)}>View cleanup operation {release.cleanup_operation_id}</Button> : null}
       {writable && release.state === "retained" ? <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all text-left" disabled={paused || mutationHeld || busy || Boolean(target)} onClick={() => { setTarget(release); setExpected(resource.generation); setAttempt(undefined); setConfirmed(false); setConflict(false); setError(""); }}>Review cleanup {release.healthy.operation_id}</Button> : null}
     </article>)}
@@ -164,9 +163,12 @@ function RetainedReleases({ resource, writable, blocked, mutationHeld, restoreHe
 }
 
 export function ResourceDeployments(props: { resource: Resource; writable: boolean; blocked: boolean }) {
-  return <Deployments key={`${props.resource.project_id}:${props.resource.id}`} {...props} />;
+  const identity = useQuery(principalQuery());
+  if (!identity.data) return <p role={identity.isError ? "alert" : "status"}>{identity.isError ? "Unable to load deployment identity. Reload to refresh access." : "Loading deployment identity..."}</p>;
+  const actor = JSON.stringify([identity.data.provider, identity.data.id]);
+  return <Deployments key={JSON.stringify([actor, props.resource.project_id, props.resource.id, props.writable])} {...props} actor={actor} blocked={props.blocked || identity.isError} />;
 }
-function Deployments({ resource, writable, blocked }: { resource: Resource; writable: boolean; blocked: boolean }) {
+function Deployments({ actor, resource, writable, blocked }: { actor: string; resource: Resource; writable: boolean; blocked: boolean }) {
   const id = useId();
   const client = useQueryClient();
   const active = useRef(true);
@@ -193,8 +195,8 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   const [refreshError, setRefreshError] = useState("");
   const [differentIntent, setDifferentIntent] = useState(false);
   const [restoreRejected, setRestoreRejected] = useState(false);
-  const binding = useQuery(resourceBindingQuery(resource.project_id, resource.id));
-  const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset));
+  const binding = useQuery(hostingBindingQuery(resource.project_id, resource.id, actor));
+  const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset, actor));
   const base = reviewed ?? resource;
   const restoreHeld = restoreRejected || Boolean(history.data?.items.some((operation) => operation.restore_ownership_held));
   const mutationHeld = Boolean(history.data?.items.some((operation) => operation.mutation_hold));
@@ -243,17 +245,17 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
     <h5 className="font-medium">{resource.source.kind === "image" ? "Image deployments" : "Deployment history"}</h5>
-    {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Use Public Git builds to request and review build operations. Deployment of a build artifact is separate and unavailable in this interface. This application cannot use image deployment.</p> : null}
+    {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Use Public Git builds to request and review build operations. Select a successful build in Public Git builds to deploy its recorded local artifact. Review the resulting operation here, then configure the existing HTTPS route after the release settles healthy.</p> : null}
     {restoreHeld ? <p role="alert">Deployment admission blocked after platform restore. Recovery proof is pending; refreshing configuration, retrying, or requesting reconciliation cannot release restored ownership. Your settings are preserved.</p> : null}
     {mutationHeld ? <p role="status">New deployment requests are paused while a recorded mutation hold is retained. An exact retained request can still recover its existing operation. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
     {failed ? <div className="space-y-2"><p role="alert">Unable to refresh deployment information. Draft settings are preserved; actions are paused.</p><Button type="button" variant="outline" onClick={() => { void binding.refetch(); void history.refetch(); if (principal.isError) void principal.refetch(); if (members.isError) void members.refetch(); }}>Retry deployment information</Button></div> : null}
     {history.isPending ? <p role="status">Loading deployment history...</p> : null}
     <Button type="button" variant="outline" disabled={history.isFetching || busy} onClick={() => void history.refetch()}>Refresh deployment history</Button>
     {history.data?.items.length === 0 ? <p className="text-sm">No deployment operations recorded.</p> : null}
-    <ol className="space-y-2" aria-label="Deployment history">{history.data?.items.map((operation) => <li key={operation.id} className="min-w-0 rounded-lg border p-2"><p className="break-all text-sm">{stateText[operation.state] ?? operation.state} · {operation.created_at}</p><p className="break-all text-xs">{operation.snapshot.image_reference} · generation {operation.snapshot.resource_generation}</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all" onClick={() => setSelected(operation.id)}>View operation {operation.id}</Button></li>)}</ol>
+    <ol className="space-y-2" aria-label="Deployment history">{history.data?.items.map((operation) => <li key={operation.id} className="min-w-0 rounded-lg border p-2"><p className="break-all text-sm">{stateText[operation.state] ?? operation.state} · {operation.created_at}</p><p className="break-all text-xs">{operation.snapshot.local_build ? `Local build ${operation.snapshot.local_build.artifact.build_id} · ${operation.snapshot.local_build.artifact.image_id}` : operation.snapshot.image_reference} · generation {operation.snapshot.resource_generation}</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all" onClick={() => setSelected(operation.id)}>View operation {operation.id}</Button></li>)}</ol>
     <PageNavigation label={`deployments for ${resource.name}`} page={history.data} loading={history.isFetching || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))} />
-    {selected ? <OperationDetail key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
-    {binding.data ? <RetainedReleases key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
+    {selected ? <OperationDetail actor={actor} key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
+    {binding.data ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
     {writable && resource.source.kind === "image" ? <form className="space-y-3 rounded-lg border p-3" aria-label={`Deploy image for ${resource.name}`} onSubmit={(event) => void submit(event)}>
       <p className="break-all text-sm">Deploy saved image {base.source.kind === "image" ? base.source.image.reference : "unavailable"} at generation {base.generation} to binding {binding.data?.id ?? "unavailable"}.</p>
       {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
