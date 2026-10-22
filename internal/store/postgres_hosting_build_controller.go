@@ -51,13 +51,34 @@ func (s *PostgresStore) RequestPublicHostingBuild(ctx context.Context, id, resou
 	if s.hostingBuildPolicy == nil || s.hostingJobs == nil {
 		return domain.HostingBuild{}, ErrHostingBuildUnavailable
 	}
-	return s.RequestHostingBuild(ctx, id, resource, actor, domain.HostingBuildInput{ExpectedResourceGeneration: in.ExpectedResourceGeneration, ExpectedSourceGeneration: in.ExpectedSourceGeneration, IdempotencyKey: in.IdempotencyKey}, *s.hostingBuildPolicy, func(ctx context.Context, tx pgx.Tx, b domain.HostingBuild) error {
-		if b.Snapshot.Source.CredentialKind != "public" || b.Snapshot.Grant != nil {
+	if in.GrantID != "" {
+		return domain.HostingBuild{}, ErrConflict
+	}
+	src, err := s.GetHostingBuildSource(ctx, actor, resource)
+	if err != nil {
+		return domain.HostingBuild{}, err
+	}
+	if src.CredentialKind != "public" {
+		return domain.HostingBuild{}, ErrConflict
+	}
+	return s.RequestConfiguredHostingBuild(ctx, id, resource, actor, in, event)
+}
+
+// RequestConfiguredHostingBuild enqueues supported Git intent with its frozen grant.
+func (s *PostgresStore) RequestConfiguredHostingBuild(ctx context.Context, id, resource, actor string, in domain.HostingBuildRequest, event domain.AuditEvent) (domain.HostingBuild, error) {
+	if s.hostingBuildPolicy == nil || s.hostingJobs == nil {
+		return domain.HostingBuild{}, ErrHostingBuildUnavailable
+	}
+	return s.requestHostingBuild(ctx, id, resource, actor, domain.HostingBuildInput(in), *s.hostingBuildPolicy, func(ctx context.Context, tx pgx.Tx, b domain.HostingBuild) error {
+		if !configuredBuildSource(b) {
 			return ErrConflict
+		}
+		if err := checkConfiguredSourceGrant(ctx, tx, b); err != nil {
+			return err
 		}
 		_, err := s.hostingJobs.EnqueueBuildTx(ctx, tx, hostingjobs.PrepareBuildArgs{BuildID: b.ID})
 		return err
-	}, event)
+	}, event, true)
 }
 
 // PrepareBuild is DB-only: dispatch binds exactly one canonical internal task.
@@ -66,8 +87,11 @@ func (s *PostgresStore) PrepareBuild(ctx context.Context, id string) error {
 		return ErrHostingBuildUnavailable
 	}
 	b, err := s.DispatchHostingBuild(ctx, id, func(ctx context.Context, tx pgx.Tx, b domain.HostingBuild) (string, error) {
-		if b.Snapshot.Source.CredentialKind != "public" || b.Snapshot.Grant != nil {
+		if !configuredBuildSource(b) {
 			return "", ErrConflict
+		}
+		if err := checkConfiguredSourceGrant(ctx, tx, b); err != nil {
+			return "", err
 		}
 		if err := currentBuildExecution(ctx, tx, b); err != nil {
 			return "", err
@@ -100,6 +124,10 @@ func (s *PostgresStore) PrepareBuild(ctx context.Context, id string) error {
 		return recordErr
 	}
 	return err
+}
+
+func configuredBuildSource(b domain.HostingBuild) bool {
+	return b.Snapshot.Source.CredentialKind == "public" && b.Snapshot.Grant == nil || b.Snapshot.Source.CredentialKind == "https_basic" && b.Snapshot.Grant != nil && b.Snapshot.Grant.Kind == "https_basic"
 }
 func (s *PostgresStore) buildCreator(ctx context.Context, id string) string {
 	b, err := readBuild(ctx, s.queries, id)
@@ -323,4 +351,25 @@ func (s *PostgresStore) renewHostingBuildLease(ctx context.Context, runner strin
 		return domain.RunLease{}, err
 	}
 	return renewed, nil
+}
+
+// Public API grants retain the exact source generation in their atomic audit.
+func checkConfiguredSourceGrant(ctx context.Context, tx pgx.Tx, b domain.HostingBuild) error {
+	if b.Snapshot.Grant == nil {
+		return nil
+	}
+	audit, err := sqlcgen.New(tx).GetHostingSourceDeliveryAudit(ctx, "aud_"+b.Snapshot.Grant.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	var metadata struct {
+		SourceGeneration int64 `json:"source_generation"`
+	}
+	if audit.Action != "hosting.source_grant.created" || audit.TargetID != b.Snapshot.Grant.ID || audit.ActorID != b.Snapshot.Grant.CreatedBy || json.Unmarshal(audit.Metadata, &metadata) != nil || metadata.SourceGeneration != b.Snapshot.Source.Generation {
+		return ErrConflict
+	}
+	return nil
 }

@@ -217,7 +217,7 @@ func requiresContractAuth(method string, path string) bool {
 
 func requiresContractRunnerAuth(path string) bool {
 	switch path {
-	case "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
+	case "/api/v1/runners/builds/source-credential", "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
 		return true
 	case "/api/v1/runners/hosting/plan", "/api/v1/runners/hosting/prepared", "/api/v1/runners/hosting/apply-begin", "/api/v1/runners/hosting/complete", "/api/v1/runners/hosting/status", "/api/v1/runners/hosting/reconciliation", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete":
 		return true
