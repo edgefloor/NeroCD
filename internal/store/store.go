@@ -120,6 +120,8 @@ type MemoryStore struct {
 	serviceAccounts       []domain.ServiceAccount
 	tokenHashBySessionID  map[string]string
 	projects              []domain.Project
+	projectEnvironments   []domain.ProjectEnvironment
+	resources             []domain.Resource
 	templates             []domain.TaskTemplate
 	repositories          []domain.Repository
 	accessKeys            []domain.AccessKey

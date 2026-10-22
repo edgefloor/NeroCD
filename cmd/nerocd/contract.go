@@ -231,7 +231,7 @@ func mutates(method string, path string) bool {
 
 func validateContractResponses(documented map[string]documentedOperation) error {
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		return err
 	}
@@ -280,6 +280,12 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 		{method: http.MethodGet, path: "/api/v1/capabilities", auth: true, shape: "list"},
 		{method: http.MethodGet, path: "/api/v1/projects", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/projects", body: `{"name":"Contract Project","description":"contract"}`, auth: true, shape: "project"},
+		{method: http.MethodGet, path: "/api/v1/project-environments?project_id=proj_platform", auth: true, shape: "list"},
+		{method: http.MethodPost, path: "/api/v1/project-environments", body: `{"project_id":"proj_platform","name":"staging"}`, auth: true, shape: "project-environment"},
+		{method: http.MethodGet, path: "/api/v1/resources?project_id=proj_platform&project_environment_id=penv_contract", auth: true, shape: "list"},
+		{method: http.MethodPost, path: "/api/v1/resources", body: `{"project_id":"proj_platform","project_environment_id":"penv_contract","name":"api-created","kind":"application","source":{"kind":"image","image":{"reference":"nginx:1.27"}}}`, auth: true, shape: "resource"},
+		{method: http.MethodGet, path: "/api/v1/resources/res_contract", auth: true, shape: "resource"},
+		{method: http.MethodPatch, path: "/api/v1/resources/res_contract", body: `{"name":"renamed","expected_generation":1}`, auth: true, shape: "resource"},
 		{method: http.MethodGet, path: "/api/v1/project-members", auth: true, shape: "list"},
 		{method: http.MethodPost, path: "/api/v1/project-members", body: `{"project_id":"proj_platform","email":"{{contract_email}}","role":"maintainer"}`, auth: true, shape: "project-member"},
 		{method: http.MethodGet, path: "/api/v1/project-role?project_id=proj_platform", auth: true, shape: "project-role"},
@@ -442,13 +448,26 @@ func seedContractMemory(ctx context.Context, mem *store.MemoryStore) error {
 	if _, err := mem.CreateProject(ctx, domain.Project{ID: "proj_platform", Name: "Contract Platform", CreatedAt: now}); err != nil {
 		return err
 	}
+	if _, err := mem.CreateProjectEnvironment(ctx, domain.ProjectEnvironment{ID: "penv_contract", ProjectID: "proj_platform", Name: "production", CreatedAt: now}); err != nil {
+		return err
+	}
+	users, err := mem.ListUsersPage(ctx, store.Page{})
+	if err != nil {
+		return err
+	}
+	if len(users.Items) != 1 {
+		return errors.New("contract hosting fixture requires one bootstrap user")
+	}
+	if _, err := mem.CreateResource(ctx, domain.Resource{ID: "res_contract", ProjectID: "proj_platform", ProjectEnvironmentID: "penv_contract", Name: "web", Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: "localhost:5000/acme/web:v1"}}, CreatedBy: users.Items[0].ID, CreatedAt: now, UpdatedAt: now}); err != nil {
+		return err
+	}
 	if _, err := mem.CreateRepository(ctx, domain.Repository{ID: "repo_platform_runbooks", ProjectID: "proj_platform", Name: "Contract Repository", URL: "https://example.invalid/contract.git", Provider: domain.ProviderGit, DefaultRef: "main", CreatedAt: now}); err != nil {
 		return err
 	}
 	if _, err := mem.CreateTemplate(ctx, domain.TaskTemplate{ID: "tpl_patch", ProjectID: "proj_platform", Name: "Contract Template", Kind: "shell", RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "true"}, Process: &domain.ProcessSpec{Command: []string{"true"}}}, RunnerTags: []string{"local"}, RequiresAck: true}); err != nil {
 		return err
 	}
-	_, err := mem.CreateRun(ctx, domain.TaskRun{ID: "run_001", ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "true"}, Repository: &domain.RepositoryRef{ID: "repo_platform_runbooks", Ref: "main", Path: ""}, Process: &domain.ProcessSpec{Command: []string{"true"}}, Secrets: []domain.SecretBinding{{Name: "contract-secret", Provider: "runner_file", Reference: "contract-secret", Target: "env:CONTRACT_SECRET", Required: true, Version: "v1"}}}, RunnerTags: []string{"local"}, Status: domain.RunQueued, RequestedBy: "contract"})
+	_, err = mem.CreateRun(ctx, domain.TaskRun{ID: "run_001", ProjectID: "proj_platform", RunSpec: domain.RunSpec{Type: domain.RunTypeShell, Inputs: map[string]any{"command": "true"}, Repository: &domain.RepositoryRef{ID: "repo_platform_runbooks", Ref: "main", Path: ""}, Process: &domain.ProcessSpec{Command: []string{"true"}}, Secrets: []domain.SecretBinding{{Name: "contract-secret", Provider: "runner_file", Reference: "contract-secret", Target: "env:CONTRACT_SECRET", Required: true, Version: "v1"}}}, RunnerTags: []string{"local"}, Status: domain.RunQueued, RequestedBy: "contract"})
 	return err
 }
 
@@ -510,6 +529,35 @@ func validatePayloadShape(key string, shape string, payload map[string]any) erro
 			if err := requireString(field); err != nil {
 				return err
 			}
+		}
+	case "project-environment":
+		for _, field := range []string{"id", "project_id", "name", "created_at"} {
+			if err := requireString(field); err != nil {
+				return err
+			}
+		}
+	case "resource":
+		for _, field := range []string{"id", "project_id", "project_environment_id", "name", "kind", "created_by", "created_at", "updated_at"} {
+			if err := requireString(field); err != nil {
+				return err
+			}
+		}
+		if payload["kind"] != "application" {
+			return fmt.Errorf("%s resource kind is invalid", key)
+		}
+		if generation, ok := payload["generation"].(float64); !ok || generation < 1 {
+			return fmt.Errorf("%s resource generation is invalid", key)
+		}
+		raw, err := json.Marshal(payload["source"])
+		if err != nil {
+			return err
+		}
+		var source domain.ResourceSource
+		if err = json.Unmarshal(raw, &source); err != nil {
+			return err
+		}
+		if err = domain.ValidateResourceSource(source); err != nil {
+			return fmt.Errorf("%s resource source: %w", key, err)
 		}
 	case "project-member":
 		for _, field := range []string{"id", "project_id", "user_id", "email", "name", "role", "created_at", "updated_at"} {
