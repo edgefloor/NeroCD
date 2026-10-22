@@ -76,13 +76,17 @@ func stageContext(ctx context.Context, src, dst string, l Limits) (string, error
 		return "", err
 	}
 	defer func() { _ = root.Close() }()
-	if err = os.Mkdir(dst, 0700); err != nil {
+	return stageRoot(ctx, root, dst, l, false)
+}
+
+func stageRoot(ctx context.Context, root *os.Root, dst string, l Limits, assets bool) (string, error) {
+	if err := os.Mkdir(dst, 0700); err != nil {
 		return "", err
 	}
 	h := sha256.New()
 	var total int64
 	count := 0
-	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -90,6 +94,15 @@ func stageContext(ctx context.Context, src, dst string, l Limits) (string, error
 			return err
 		}
 		if p == "." {
+			return nil
+		}
+		if assets && strings.HasPrefix(strings.ToLower(d.Name()), ".nerocd-static.") {
+			return errors.New("reserved static generated filename")
+		}
+		if assets && staticInstruction(d.Name()) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if excluded(d.Name()) {
@@ -112,7 +125,11 @@ func stageContext(ctx context.Context, src, dst string, l Limits) (string, error
 		if strings.ContainsAny(p, "\x00\n\r") || !fs.ValidPath(p) {
 			return errors.New("invalid context path")
 		}
-		_, _ = fmt.Fprintf(h, "%s\x00%o\x00%d\x00", p, info.Mode().Perm()&0755, info.Size())
+		size := info.Size()
+		if assets && info.IsDir() {
+			size = 0
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%o\x00%d\x00", p, info.Mode().Perm()&0755, size)
 		target := filepath.Join(dst, filepath.FromSlash(p))
 		if info.IsDir() {
 			return os.Mkdir(target, info.Mode().Perm()&0755)

@@ -111,6 +111,9 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	} else if !os.IsNotExist(err) {
 		return result, err
 	}
+	if err := validateSourceSettings(parent, r); err != nil {
+		return result, err
+	}
 	hostLock, err := acquireHostLock()
 	if err != nil {
 		return result, err
@@ -129,16 +132,13 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	ctx, cancel := context.WithTimeout(parent, r.Limits.Deadline)
 	defer cancel()
 	dir := filepath.Join(e.config.StateDir, r.BuildID)
-	requestBytes, err := json.Marshal(struct {
-		Request Request
-		Config  Config
-	}{r, e.config})
+	policy := currentContextPolicy(r)
+	requestHash, err := requestIdentity(r, e.config, policy)
 	if err != nil {
 		return result, err
 	}
-	requestHash := sum(requestBytes)
 	if _, err = os.Lstat(dir); err == nil {
-		return e.replay(ctx, dir, requestHash, r)
+		return e.replay(ctx, dir, r)
 	} else if !os.IsNotExist(err) {
 		return result, err
 	}
@@ -161,7 +161,7 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 		return result, errors.New("pinned BuildKit image must be provisioned before admission")
 	}
 	source := filepath.Join(dir, "context")
-	contextHash, err := stageContext(ctx, r.Checkout, source, r.Limits)
+	contextHash, err := stageRequestContext(ctx, r, source, policy)
 	if err != nil {
 		return result, err
 	}
@@ -278,15 +278,14 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 		}
 	}()
 	frontend := DockerfileFrontend
-	filename := "Dockerfile"
+	filename := r.DockerfilePath
+	if filename == "" {
+		filename = "Dockerfile"
+	}
 	switch r.Strategy {
 	case Static:
-		filename = ".nerocd-static.Dockerfile"
-		if _, err = os.Lstat(filepath.Join(source, filename)); !os.IsNotExist(err) {
-			return result, errors.New("reserved static Dockerfile path exists")
-		}
-		content := "FROM " + StaticImage + "\nCOPY --chmod=0755 . /usr/share/nginx/html/\nEXPOSE 80\n"
-		if err = os.WriteFile(filepath.Join(source, filename), []byte(content), 0600); err != nil {
+		source, filename, err = prepareStaticContext(source, r.SPAFallback)
+		if err != nil {
 			return result, err
 		}
 	case Railpack:
@@ -298,6 +297,9 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	}
 	export := filepath.Join(dir, "image.oci.tar")
 	buildArgs := []string{"build", "--no-cache", "--builder", builder, "--platform", r.Platform, "--provenance=false", "--sbom=false", "--progress=plain", "--network=default", "--build-arg", "BUILDKIT_SYNTAX=" + frontend, "--file", filepath.Join(source, filename), "--output", "type=oci,dest=" + export + ",compression=gzip,force-compression=true", source}
+	if r.BuildTarget != "" {
+		buildArgs = append(buildArgs[:len(buildArgs)-1], "--target", r.BuildTarget, source)
+	}
 	if err = e.command(ctx, dir, logs, e.config.BuildxBinary, buildArgs...); err != nil {
 		return result, err
 	}
@@ -314,7 +316,7 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	if _, err = e.docker(ctx, dir, "load", "--input", export); err != nil {
 		return result, err
 	}
-	result = Result{Origin: "local_build", BuildID: r.BuildID, SourceID: r.SourceID, InputID: r.InputID, RequestDigest: requestHash, ContextDigest: contextHash, DaemonID: r.DaemonID, ImageID: identity.Index, IndexDigest: identity.Index, ManifestDigest: identity.Manifest, ConfigDigest: identity.Config, Platform: identity.Platform}
+	result = Result{Origin: "local_build", BuildID: r.BuildID, SourceID: r.SourceID, InputID: r.InputID, RequestDigest: requestHash, ContextDigest: contextHash, DaemonID: r.DaemonID, ImageID: identity.Index, IndexDigest: identity.Index, ManifestDigest: identity.Manifest, ConfigDigest: identity.Config, Platform: identity.Platform, ContextPolicy: policy}
 	// Docker's containerd store identifies OCI imports by descriptor digest;
 	// classic stores may identify the image by its config digest. Every
 	// candidate below comes exclusively from the validated export.
@@ -337,13 +339,20 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	return result, nil
 }
 
-func (e *Engine) replay(ctx context.Context, dir, requestHash string, r Request) (Result, error) {
+func (e *Engine) replay(ctx context.Context, dir string, r Request) (Result, error) {
 	var receipt Result
 	b, err := os.ReadFile(filepath.Join(dir, "receipt.json"))
 	if err != nil {
 		return receipt, errors.New("build ID already used without completed receipt")
 	}
-	if len(b) > 16384 || json.Unmarshal(b, &receipt) != nil || receipt.RequestDigest != requestHash {
+	if len(b) > 16384 || json.Unmarshal(b, &receipt) != nil {
+		return Result{}, errors.New("invalid retained build receipt")
+	}
+	requestHash, err := requestIdentity(r, e.config, receipt.ContextPolicy)
+	if err != nil {
+		return Result{}, err
+	}
+	if receipt.RequestDigest != requestHash || receipt.Origin != "local_build" || receipt.BuildID != r.BuildID || receipt.SourceID != r.SourceID || receipt.InputID != r.InputID || receipt.DaemonID != r.DaemonID || receipt.Platform != r.Platform || !digestPattern.MatchString(receipt.ContextDigest) {
 		return Result{}, errors.New("build ID immutable input mismatch")
 	}
 	temp, err := os.MkdirTemp(e.config.StateDir, "replay-")
@@ -351,7 +360,7 @@ func (e *Engine) replay(ctx context.Context, dir, requestHash string, r Request)
 		return Result{}, err
 	}
 	defer func() { _ = os.RemoveAll(temp) }()
-	digest, err := stageContext(ctx, r.Checkout, filepath.Join(temp, "context"), r.Limits)
+	digest, err := stageRequestContext(ctx, r, filepath.Join(temp, "context"), receipt.ContextPolicy)
 	if err != nil {
 		return Result{}, err
 	}

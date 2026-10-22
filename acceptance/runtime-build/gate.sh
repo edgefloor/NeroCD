@@ -35,7 +35,27 @@ tar -xzf "$fixture_dir/mise.tgz" -C "$fixture_dir" mise/bin/mise
 cp "$fixture_dir/mise/bin/mise" "$fixture_dir/mise-bin"
 chmod 0755 "$fixture_dir/buildx" "$fixture_dir/railpack"
 GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -c -o "$fixture_dir/hostingbuild.test" ./internal/hostingbuild
-printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'COPY buildx railpack mise-bin hostingbuild.test /fixture/' > "$fixture_dir/Dockerfile"
+# Compile the accepted engine independently to produce a genuine legacy receipt.
+legacy_tree="$fixture_dir/legacy"
+mkdir "$legacy_tree"
+git archive d63108b5dc4882fd6471fa8867d7278a3ccced78 go.mod go.sum internal/hostingbuild | tar -x -C "$legacy_tree"
+printf '%s\n' \
+'package hostingbuild' \
+'import("os";"path/filepath";"runtime";"strings";"testing")' \
+'func TestWriteLegacyStaticFixture(t *testing.T){' \
+' if os.Getenv("NEROCD_BUILD_RUNTIME")!="disposable-dind"{t.Fatal("disposable fixture required")}' \
+' for _,p:=range []string{"/legacy/state","/legacy/source"}{if err:=os.MkdirAll(p,0700);err!=nil{t.Fatal(err)}}' \
+' if err:=os.WriteFile("/legacy/source/index.html",[]byte("legacy-static-content\n"),0600);err!=nil{t.Fatal(err)}' \
+' // The accepted static policy included source instructions in its context.' \
+' if err:=os.WriteFile("/legacy/source/Dockerfile",[]byte("legacy source instruction"),0600);err!=nil{t.Fatal(err)}' \
+' e,err:=New(Config{DockerBinary:"/usr/local/bin/docker",Socket:"/var/run/docker.sock",BuildxBinary:"/fixture/buildx",BuildxSHA256:buildxChecksum(runtime.GOARCH),StateDir:"/legacy/state",CgroupRoot:os.Getenv("NEROCD_CGROUP_ROOT"),PlannerImage:os.Getenv("NEROCD_PLANNER_IMAGE")});if err!=nil{t.Fatal(err)}' \
+' setup:=t.TempDir();if err=os.Mkdir(filepath.Join(setup,"docker"),0700);err!=nil{t.Fatal(err)}' \
+' b,err:=e.docker(t.Context(),setup,"info","--format","{{.ID}}");if err!=nil{t.Fatal(err)}' \
+' r,err:=e.Build(t.Context(),Request{BuildID:"legacy-static",Checkout:"/legacy/source",SourceID:"legacy-source",InputID:"legacy-input",DaemonID:strings.TrimSpace(string(b)),Strategy:Static,Platform:"linux/"+runtime.GOARCH,Limits:testLimits()});if err!=nil{t.Fatal(err)}' \
+' t.Logf("accepted legacy static receipt: request=%s context=%s image=%s",r.RequestDigest,r.ContextDigest,r.ImageID)' \
+'}' > "$legacy_tree/internal/hostingbuild/legacy_fixture_test.go"
+GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go -C "$legacy_tree" test -c -o "$fixture_dir/legacy-hostingbuild.test" ./internal/hostingbuild
+printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'COPY buildx railpack mise-bin hostingbuild.test legacy-hostingbuild.test /fixture/' > "$fixture_dir/Dockerfile"
 docker build --label "io.nerocd.runtime-build.owner=$owner" -t "$image" "$fixture_dir"
 docker run --detach --privileged --pid=host --name "$name" --label "io.nerocd.runtime-build.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" >/dev/null
 ready=false
@@ -48,6 +68,7 @@ docker exec "$name" sh -ec 'mkdir /planner; cp /fixture/railpack /planner/railpa
 docker exec "$name" docker pull moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
 docker exec "$name" sh -ec 'mkdir "$1"; printf "+cpu +memory +pids" > "$1/cgroup.subtree_control"' sh "/sys/fs/cgroup/$owner"
 planner_id=$(docker exec "$name" docker image inspect --format '{{.Id}}' nerocd-runtime-planner:fixture)
+docker exec --env NEROCD_BUILD_RUNTIME=disposable-dind --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" "$name" /fixture/legacy-hostingbuild.test -test.v -test.run '^TestWriteLegacyStaticFixture$' -test.timeout=5m
 docker exec --env NEROCD_BUILD_RUNTIME=disposable-dind --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" "$name" /fixture/hostingbuild.test -test.v -test.run '^Test' -test.timeout=18m
 
 docker exec "$name" rmdir "/sys/fs/cgroup/$owner"

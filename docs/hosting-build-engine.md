@@ -45,11 +45,31 @@ A completed `BuildID` replays only when the complete request and operator config
 
 A receipt establishes immutable retained output identity. It does not promise reproducible dependency resolution from mutable package registries or version ranges.
 
+## Build directories and Dockerfile settings
+
+`Request.ContextDir` selects a directory relative to the immutable `Checkout`. Empty means the checkout root. Dockerfile and Railpack adapters receive only that selected sanitized context. `Request.DockerfilePath` selects a regular Dockerfile relative to that context; empty means `Dockerfile`. `Request.BuildTarget` selects a named Dockerfile stage. Dockerfile path and target are accepted only by the Dockerfile adapter. Railpack remains a separate strategy.
+
+Paths must be canonical relative slash paths, at most 512 bytes and 32 components. Absolute paths, `.`, traversal, repeated separators, backslashes, control characters, and credential-directory names are rejected. An explicit `.` is not a default alias; use the empty field. The engine opens selected directories through anchored `os.Root` handles. Every selected path component must be a real directory, and the Dockerfile must be a regular file. Links and special files are rejected. The target is a bounded ASCII identifier passed as a separate `--target` argument.
+
+All optional settings are omitted from JSON when zero. Existing Dockerfile and Railpack requests therefore retain their exact original request hash. Nonzero context, Dockerfile, or target settings participate in request identity. Changing a setting on a completed `BuildID` fails immutable replay rather than rebuilding it.
+
+## Prepared static assets and SPA routes
+
+`Request.PublishDir` selects public assets relative to `ContextDir`. Empty means that selected context's root. This setting applies only to the static adapter. It does not run a frontend compiler, bake environment values into browser assets, or implement environment-driven rebuilds. Supply assets that have already been prepared and contain no production secrets.
+
+New static builds stage only the selected publish directory. They exclude the normal credential filenames plus Dockerfile instructions, `.dockerignore`, files ending in `.conf`, and Compose YAML files. Names beginning with `.nerocd-static.` are reserved and fail staging instead of overwriting source input. Other public files, including JavaScript and JSON assets, remain available. Filename filtering cannot detect a secret committed under an ordinary asset name.
+
+Generated Dockerfile and nginx configuration live beside a separate `public/` directory in the private build context. The generated Dockerfile copies only `public/` into the document root and places nginx configuration in `/etc/nginx/conf.d/`. It removes the base image's default document root first. Source instructions, generated instructions, and generated configuration are not served as public files. Public file and directory modes are normalized to `0755`, as in the accepted static adapter.
+
+`Request.SPAFallback` opts into fallback for missing paths whose final component has no dot. Such a route serves `/index.html`; the selected publish directory must contain a regular `index.html`. A missing asset-like path, such as `/assets/missing.js` or `/missing.html`, returns 404. Existing assets are served normally. An extensionless missing asset also receives the SPA fallback, so use asset extensions when 404 behavior matters. Without the option, missing routes and assets return 404. The caller cannot supply nginx configuration.
+
+The static receipt records `ContextPolicy=static-assets-v1`. That fixed policy is included in the request hash, and `ContextDigest` covers the selected sanitized public assets before generated files are added. Replay reconstructs identity and staging from the owned receipt's policy. A receipt without `ContextPolicy` uses the accepted legacy request serializer and legacy context staging, verifies its retained OCI artifact and daemon image, and returns the original receipt without invoking a builder. It does not adopt the new static packaging policy. Changed settings, changed source/input/config identity, unknown policies, or inconsistent receipt fields fail closed. No existing `BuildID` silently rebuilds during this transition.
+
 ## Adapters
 
 The Dockerfile adapter uses the checkout's `Dockerfile` with the pinned frontend forced through `BUILDKIT_SYNTAX`. It grants no build entitlement and passes no build secrets, SSH socket, custom network, extra context, output destination, or caller build arguments.
 
-The static adapter treats the checkout as already prepared public assets. It generates a reserved Dockerfile with the pinned nginx base and copies the sanitized context with mode `0755`. This makes private staging files readable by nginx. The mode normalization affects all copied asset files and directories. The generated Dockerfile is included in that context. This adapter does not compile a frontend application.
+The static adapter packages the prepared assets and fixed nginx configuration described above, using the pinned nginx base. It performs no frontend compilation.
 
 The Railpack adapter runs `prepare` in a separate helper with a read-only root filesystem, read-only source mount, no Docker socket, no capabilities, no new privileges, a PID cap, and bounded memory-backed temporary/output storage. The helper has ordinary bridge networking for package version metadata. It has no host network or inherited credentials. The source can request language/version planning within Railpack's capabilities. Secrets in the generated plan are rejected. The pinned custom frontend executes the generated plan through the same owned BuildKit engine.
 
@@ -80,3 +100,5 @@ The package has no automatic recovery override. Administrative recovery requires
 The runtime fixture is `acceptance/runtime-build/gate.sh`. Its outer DinD container shares the disposable Docker VM's host PID namespace so the engine can inspect only owned cgroups and process descendants. The engine verifies that an inspected builder PID belongs to the expected owned cgroup before building. A PID namespace or cgroup view that does not match fails preflight. It creates a labeled disposable DinD daemon and publishes no host port. It downloads pinned tools, builds the helper, runs Linux package tests, and exercises real builds and HTTP serving. Its cleanup removes only the labeled fixture container and fixture image. It does not stop user workloads or run Docker prune.
 
 The required candidate checks are package unit tests, race tests, vet, Linux cross-compilation, pinned changed-code lint, and the disposable runtime gate. The gate names descendant CPU/memory enforcement, expanded output rejection, timeout cleanup, lost-daemon cleanup admission, context escape, independent workload survival, and owned-resource cleanup explicitly. Independent code hygiene, specification, and critical security reviews still apply to the final candidate.
+
+The runtime fixture also compiles the accepted engine at `d63108b5dc4882fd6471fa8867d7278a3ccced78` to create a genuine legacy static receipt and OCI artifact. The candidate replays it with the configured Buildx executable temporarily absent, proves no builder appears, and rejects changed settings. Current settings fixtures exercise nested Dockerfile contexts, custom files and named targets, selected publish directories, SPA deep links, missing assets, private/generated-file exclusion, changed-setting conflicts, and survivor HTTP through failed builds.

@@ -86,6 +86,12 @@ type Request struct {
 	Strategy Strategy
 	Platform string
 	Limits   Limits
+	// Optional paths are canonical relative slash paths. Empty selects the accepted default.
+	ContextDir     string `json:",omitempty"`
+	DockerfilePath string `json:",omitempty"`
+	BuildTarget    string `json:",omitempty"`
+	PublishDir     string `json:",omitempty"`
+	SPAFallback    bool   `json:",omitempty"`
 }
 
 // Result is a receipt for an image verified on the fixed daemon. ManifestDigest
@@ -104,6 +110,7 @@ type Result struct {
 	IndexDigest    string `json:"index_digest"`
 	ConfigDigest   string `json:"config_digest"`
 	Platform       string `json:"platform"`
+	ContextPolicy  string `json:"context_policy,omitempty"`
 }
 
 // Engine performs synchronous builds against one fixed local daemon.
@@ -171,6 +178,9 @@ func (r Request) validate(ctx context.Context) error {
 	}
 	if r.Platform != "linux/amd64" && r.Platform != "linux/arm64" {
 		return errors.New("unsupported single Linux platform")
+	}
+	if err := r.validateSettings(); err != nil {
+		return err
 	}
 	l := r.Limits
 	if l.LogBytes > 64<<20 || l.PlanBytes > 16<<20 {
