@@ -170,7 +170,36 @@ test("restored ownership is separate from mutation hold and observation never pr
 test("known mutation hold pauses a new request without claiming restoration or clearing the hold", async () => {
   const held: HostingOperation = { ...operation, state: "reconciliation_required", mutation_hold: true };
   backend((url) => url.includes("/deployments") ? json(page([held])) : undefined); setup();
-  await screen.findByText(/Deployment requests are paused/); acknowledge();
+  await screen.findByText(/New deployment requests are paused/); acknowledge();
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deployment waiting for settlement" }).disabled).toBe(true);
   expect(screen.queryByText(/Recovery proof is pending/)).toBeNull();
+});
+test("lost response then held history permits only the authorized retained exact-key recovery", async () => {
+  const held: HostingOperation = { ...operation, state: "reconciliation_required", mutation_hold: true };
+  let accepted = false;
+  const fetch = backend((url, options) => {
+    if (url.includes("/deployments") && options.method === "POST") {
+      if (!accepted) { accepted = true; throw new TypeError("response lost after acceptance"); }
+      return json(held, 202);
+    }
+    if (url.includes("/deployments")) return json(page(accepted ? [held] : []));
+    if (url.includes("/hosting-operations/")) return json(held);
+  });
+  const view = setup(); acknowledge(); await request();
+  await screen.findByRole("button", { name: "Retry identical deployment request" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh deployment history" }));
+  await screen.findByText(/New deployment requests are paused/);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical deployment request" }).disabled).toBe(false);
+  expect(screen.getByLabelText<HTMLInputElement>("Runner-local host port").disabled).toBe(true);
+  const form = screen.getByRole("form");
+  view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={false} blocked={false} /></QueryClientProvider>);
+  expect(screen.queryByRole("button", { name: "Retry identical deployment request" })).toBeNull();
+  fireEvent.submit(form);
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1);
+  view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable blocked={false} /></QueryClientProvider>);
+  fireEvent.submit(screen.getByRole("form"));
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  const writes = fetch.mock.calls.filter(([, options]) => options.method === "POST");
+  expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deployment waiting for settlement" }).disabled).toBe(true);
 });

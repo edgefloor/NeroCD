@@ -233,9 +233,18 @@ test("manual onboarding deploys a real image through River and the runner, prese
       await persisted.getByLabel("Readiness path", { exact: true }).fill("/unready");
       await persisted.getByLabel("Readiness timeout in seconds", { exact: true }).fill("30");
       await persisted.getByLabel(/I understand that replacing/).check();
-      const heldResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === requestPath);
+      let held: { id: string; binding_id: string } | undefined;
+      let heldRequestBody: string | null = null;
+      await page.route(`**${requestPath}`, async (route) => {
+        if (route.request().method() !== "POST") { await route.continue(); return; }
+        heldRequestBody = route.request().postData();
+        const accepted = await route.fetch(); expect(accepted.status()).toBe(202);
+        held = await accepted.json(); captureOperation(held!);
+        await route.abort("failed");
+      }, { times: 1 });
       await persisted.getByRole("button", { name: "Request image deployment", exact: true }).click();
-      const held = await (await heldResponse).json() as { id: string; binding_id: string }; captureOperation(held);
+      await expect(persisted.getByRole("button", { name: "Retry identical deployment request", exact: true })).toBeVisible();
+      if (!held) throw new Error("task-owned accepted operation was not captured");
       const statusPath = `/api/v1/hosting-operations/${held.id}`;
       await expect.poll(async () => (await (await page.request.get(statusPath)).json() as { state: string }).state).not.toBe("queued");
       const child = spawn(join(runtime(), "nerocd"), agentArguments(agent, true), { env: { ...process.env, NEROCD_MODE: "development", NEROCD_TOKEN: "" }, stdio: "ignore" });
@@ -245,6 +254,15 @@ test("manual onboarding deploys a real image through River and the runner, prese
       try {
         await expect.poll(async () => (await (await page.request.get(statusPath)).json() as { state: string }).state, { intervals: [50, 100, 200], timeout: 15_000 }).toBe("verifying");
         child.kill("SIGKILL"); await closed;
+        await persisted.getByRole("button", { name: "Refresh deployment history", exact: true }).click();
+        await expect(persisted.getByText(/New deployment requests are paused/)).toBeVisible();
+        await expect(persisted.getByLabel("Runner-local host port", { exact: true })).toBeDisabled();
+        await expect(persisted.getByRole("button", { name: "Retry identical deployment request", exact: true })).toBeEnabled();
+        const recoveryResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === requestPath);
+        await persisted.getByRole("button", { name: "Retry identical deployment request", exact: true }).click();
+        const recovered = await recoveryResponse; expect(recovered.status()).toBe(202);
+        expect(recovered.request().postData()).toBe(heldRequestBody);
+        expect((await recovered.json() as { id: string }).id).toBe(held.id);
         const heldDetail = persisted.getByRole("region", { name: "Deployment operation detail", exact: true });
         await heldDetail.getByRole("button", { name: "Refresh operation", exact: true }).click();
         await heldDetail.getByRole("button", { name: "Request cancellation", exact: true }).click();

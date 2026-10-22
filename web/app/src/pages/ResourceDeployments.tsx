@@ -125,7 +125,10 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   const mutationHeld = Boolean(history.data?.items.some((operation) => operation.mutation_hold));
   const failed = binding.isError || history.isError || principal.isError || members.isError;
   const unavailable = blocked || failed || binding.isPending || history.isPending || principal.isPending || members.isPending;
-  const canWrite = writable && !unavailable && !mutationHeld;
+  const canWrite = writable && !unavailable;
+  // An existing exact key is receipt recovery, not new workload admission.
+  // Keep its frozen body available even if refreshed history reveals its hold.
+  const newAdmissionHeld = mutationHeld && !attempt;
   const refreshHistory = async () => { await client.invalidateQueries({ queryKey: hostingDeploymentKeys.history(resource.project_id, resource.id) }); };
   async function reviewCurrent() {
     setRefreshError(""); setCurrent(undefined);
@@ -139,7 +142,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!canWrite || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
+    if (!canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
     submitting.current = true;
     const input = attempt ?? { expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), host_port: Number(hostPort), readiness: { path, timeout_seconds: Number(timeout) } };
     setAttempt(input); setBusy(true); setError("");
@@ -166,7 +169,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
     <h5 className="font-medium">Image deployments</h5>
     {restoreHeld ? <p role="alert">Deployment admission blocked after platform restore. Recovery proof is pending; refreshing configuration, retrying, or requesting reconciliation cannot release restored ownership. Your settings are preserved.</p> : null}
-    {mutationHeld ? <p role="status">Deployment requests are paused while a recorded mutation hold is retained. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
+    {mutationHeld ? <p role="status">New deployment requests are paused while a recorded mutation hold is retained. An exact retained request can still recover its existing operation. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
     {failed ? <div className="space-y-2"><p role="alert">Unable to refresh deployment information. Draft settings are preserved; actions are paused.</p><Button type="button" variant="outline" onClick={() => { void binding.refetch(); void history.refetch(); if (principal.isError) void principal.refetch(); if (members.isError) void members.refetch(); }}>Retry deployment information</Button></div> : null}
     {history.isPending ? <p role="status">Loading deployment history...</p> : null}
     <Button type="button" variant="outline" disabled={history.isFetching || busy} onClick={() => void history.refetch()}>Refresh deployment history</Button>
@@ -185,7 +188,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
       </div>
       <p className="text-xs text-muted-foreground">The readiness path must be relative to the local origin, such as /health. This is a generic HTTP check without revision-specific response headers. Port 127.0.0.1:{hostPort} is local to the runner, not a public application URL.</p>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={(event) => setAcknowledged(event.target.checked)} /><span>I understand that replacing a workload on this fixed host port interrupts service while the old container stops and the new container is verified.</span></label>
-      <Button type="submit" className="h-auto whitespace-normal" disabled={!canWrite || busy || !binding.data || !acknowledged || conflict || restoreHeld}>{restoreHeld ? "Deployment blocked after restore" : mutationHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
+      <Button type="submit" className="h-auto whitespace-normal" disabled={!canWrite || newAdmissionHeld || busy || !binding.data || !acknowledged || conflict || restoreHeld}>{restoreHeld ? "Deployment blocked after restore" : newAdmissionHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
       {attempt ? <p className="break-all text-xs">Request key: {attempt.idempotency_key}. Submitted settings and generation {attempt.expected_generation} are retained{restoreHeld ? ". Deployment admission remains blocked." : " for an identical retry."}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {attempt && !restoreHeld ? <section className="space-y-2" aria-label="Review deployment request">

@@ -43,6 +43,13 @@ submitted settings, generation, and request key. Select **Retry identical
 deployment request** to recover the same operation. Do not create a new request
 just because the first response was lost.
 
+If refreshed history reveals a mutation hold, an authorized operator can still
+retry the retained exact request to recover its existing operation. The settings
+and request key remain locked. This retrieves the earlier receipt; it does not
+admit a new workload change or clear the hold. New requests remain paused, and
+permission, availability, conflict, and restored-ownership restrictions still
+apply to recovery.
+
 A conflict can indicate changed configuration or placement, another operation,
 or a reused request key with different settings. The UI refreshes configuration
 and history without resubmitting. Review both before choosing a separate intent.
