@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { maximumPageOffset } from "@/router/search";
 import { ResourceDestination } from "./ResourceDestination";
+import { ResourceRoutes } from "./ResourceRoutes";
 import { ResourceDeployments } from "./ResourceDeployments";
 
 const pageSize = 20;
@@ -127,6 +128,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
+      <ResourceRoutes resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {canWrite && editing?.id !== resource.id ? <Button type="button" variant="outline" disabled={busy || Boolean(editing)} onClick={() => { setEditing(resource); setNotice(""); }}>Edit configuration</Button> : null}
       {editing?.id === resource.id ? <ApplicationEditor key={resource.id} resource={editing} writable={canWrite} onClose={() => setEditing(undefined)} onSaved={async () => { await refresh(); setNotice("Application configuration updated. Deployment is a separate request."); }} /> : null}
     </article>)}</div>
