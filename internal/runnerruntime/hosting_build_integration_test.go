@@ -85,6 +85,11 @@ func buildRuntimeService(t *testing.T, f *buildFixtureClient) runnerclient.Clien
 		var response any
 		var err error
 		switch r.URL.Path {
+		case "/api/v1/runners/builds/events":
+			var req domain.HostingBuildLogBatch
+			if err = decode(&req); err == nil {
+				response, err = f.BuildEvents(r.Context(), req)
+			}
 		case "/api/v1/runners/builds/status":
 			var req hostingbuildprotocol.StatusRequest
 			if err = decode(&req); err == nil {

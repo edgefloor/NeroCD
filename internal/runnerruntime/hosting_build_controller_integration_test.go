@@ -15,6 +15,7 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
 	"nerocd/internal/runner"
+	"nerocd/internal/store"
 )
 
 func TestHostingBuildProductionControllerCLI(t *testing.T) {
@@ -46,6 +47,8 @@ func TestHostingBuildProductionControllerCLI(t *testing.T) {
 			r := f.resource(t, files, settings)
 			b := f.build(t, r, "actual-"+strategy)
 			before := f.renewals.Load()
+			f.loseLogResponse.Store(true)
+			lostBefore := f.lostLogResponses.Load()
 			if strategy == "static" {
 				f.loseCompletion.Store(true)
 			}
@@ -68,6 +71,26 @@ func TestHostingBuildProductionControllerCLI(t *testing.T) {
 			}
 			if full.State != "succeeded" || full.Artifact == nil || domain.ValidateHostingBuildArtifact(*full.Artifact, full) != nil {
 				t.Fatal("production build did not persist a valid artifact")
+			}
+			if f.lostLogResponses.Load() != lostBefore+1 {
+				t.Fatal("typed log response loss was not exercised")
+			}
+			var logs domain.HostingBuildLogPage
+			f.request(t, "GET", "/api/v1/hosting-builds/"+b.ID+"/logs?after_sequence=0&limit=200", f.admin, nil, http.StatusOK, &logs)
+			if len(logs.Items) < 2 || !logs.Terminal || !logs.HistoryComplete || logs.Gap {
+				t.Fatal("public retained output unavailable")
+			}
+			actualOutput := false
+			for _, item := range logs.Items {
+				if item.Component == "buildkit" || item.Component == "railpack" {
+					actualOutput = true
+				}
+				if strings.Contains(item.Message, f.credential) {
+					t.Fatal("credential reached public logs")
+				}
+			}
+			if !actualOutput {
+				t.Fatal("engine output missing from public logs")
 			}
 			var task, lease, key string
 			var artifacts, receipts int
@@ -109,6 +132,27 @@ func TestHostingBuildProductionControllerCLI(t *testing.T) {
 				t.Fatal("successful build retained unsettled journal")
 			}
 			t.Logf("production %s build=%s image=%s manifest=%s config=%s", strategy, b.ID, full.Artifact.ImageID, full.Artifact.ManifestDigest, full.Artifact.ConfigDigest)
+			if strategy == "static" {
+				// Age only this completed fixture's output, then use the real retention
+				// transaction. Receipts and sequence history must outlive plaintext.
+				if _, err = f.db.Exec(t.Context(), `UPDATE run_logs SET created_at=now()-interval '31 days' WHERE run_id=$1`, b.RunID); err != nil {
+					t.Fatal(err)
+				}
+				policy, err := f.pg.UpdateRunLogRetentionPolicy(t.Context(), domain.RunLogRetentionPolicy{Enabled: true, KeepDays: 30, BatchSize: 1000, UpdatedBy: "usr_bootstrap"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				execution, err := f.pg.ExecuteRunLogRetention(t.Context(), "build-output-retention", store.RunLogRetentionBodyHash(policy), domain.AuditEvent{ID: "build-output-retention-audit", ActorID: "usr_bootstrap", Action: "run_log.retention", TargetID: b.RunID, CreatedAt: time.Now()})
+				if err != nil || execution.Deleted == 0 {
+					t.Fatal("production retention failed", err)
+				}
+				var retained domain.HostingBuildLogPage
+				f.request(t, "GET", "/api/v1/hosting-builds/"+b.ID+"/logs?after_sequence=0&limit=200", f.admin, nil, http.StatusOK, &retained)
+				if len(retained.Items) != 0 || !retained.Gap || retained.DeletedThroughSequence == 0 || !retained.Terminal || !retained.HistoryComplete {
+					t.Fatal("retention lost output cursor evidence")
+				}
+				t.Logf("typed output response-loss, completion ordering and retention cursor passed: build=%s deleted=%d cursor=%d", b.ID, execution.Deleted, retained.NextSequence)
+			}
 		})
 	}
 	t.Run("failed-build-preserves-independent-http", func(t *testing.T) {

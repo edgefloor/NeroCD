@@ -126,7 +126,7 @@ func TestBuildJournalMixedVersionsAndProxyCannotDowngrade(t *testing.T) {
 			}
 		})
 	}
-	for _, version := range []int{1, 2, 3, 4, 7} {
+	for _, version := range []int{1, 2, 3, 4, 8} {
 		intent, _, _ := buildJournalFixture()
 		if validateJournalState(journalState{Version: version, Build: []JournalBuild{intent}}) == nil {
 			t.Fatal("build evidence accepted in wrong format")

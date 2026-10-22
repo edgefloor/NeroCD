@@ -44,6 +44,23 @@ func buildStatusProof(status hostingbuildprotocol.StatusResponse, a domain.Hosti
 // calls the engine. Historical acknowledgments settle matching bodies only;
 // unresolved intent, missing local result or cleanup uncertainty blocks startup.
 func (e *BuildExecutor) Reconcile(ctx context.Context) error {
+	seen := map[domain.HostingBuildAuthority]bool{}
+	for _, entry := range e.journal.Snapshot().BuildLogs {
+		a := entry.Batch.Authority
+		if seen[a] {
+			continue
+		}
+		seen[a] = true
+		unlock, err := e.lock(e.config.SourceRoot, a.BuildID)
+		if err != nil {
+			return err
+		}
+		err = e.replayBuildLogs(ctx, a, true)
+		unlock()
+		if err != nil {
+			return err
+		}
+	}
 	for _, entry := range e.journal.Snapshot().Build {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -138,17 +155,7 @@ func (e *BuildExecutor) reconcileBuildEntry(ctx context.Context, entry runner.Jo
 		if err = buildResultAcknowledged(r, entry); err != nil {
 			return err
 		}
-		if err = e.journal.AckBuild(entry.ID); err != nil {
-			return err
-		}
-		for _, intent := range e.journal.Snapshot().Build {
-			if intent.Phase == "attempt_intent" && buildAuthority(intent.Attempt, intent.BuildID) == a {
-				if err = e.journal.AckBuild(intent.ID); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		return e.journal.AckBuildCompletion(entry.ID, *r.Acknowledgment)
 	}
 	return errors.New("unsupported build journal phase")
 }
