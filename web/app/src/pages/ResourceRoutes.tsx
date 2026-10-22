@@ -25,7 +25,7 @@ function Routes({ resource, writable, blocked, actor }: { resource: Resource; wr
   const id = useId();
   const routes = useQuery({ ...routesQuery(actor, resource.project_id, resource.id), refetchInterval: 5000 });
   const [offset, setOffset] = useState(0);
-  const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset));
+  const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset, actor));
   const [target, setTarget] = useState<HostingRoute>();
   const [hostname, setHostname] = useState("");
   const [path, setPath] = useState("/");
@@ -81,7 +81,7 @@ function Routes({ resource, writable, blocked, actor }: { resource: Resource; wr
         <label className="flex gap-2"><input type="checkbox" checked={generated} disabled={busy || Boolean(attempt)} onChange={(e) => setGenerated(e.target.checked)} />Request generated hostname</label><p className="text-xs">Generated names require the administrator's configured domain and an active wildcard namespace grant for this project. Grants and generated names do not prove DNS ownership or TLS readiness.</p>
         {!generated ? <><label htmlFor={`${id}-host`}>Route hostname</label><Input id={`${id}-host`} required value={hostname} disabled={busy || Boolean(attempt)} onChange={(e) => setHostname(e.target.value)} /></> : null}
         <label htmlFor={`${id}-path`}>Canonical literal path prefix</label><Input id={`${id}-path`} required value={path} disabled={busy || Boolean(attempt)} onChange={(e) => setPath(e.target.value)} />
-        <label htmlFor={`${id}-healthy`}>Expected settled healthy deployment</label><select id={`${id}-healthy`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm" required value={healthy} disabled={busy || Boolean(attempt)} onChange={(e) => setHealthy(e.target.value)}><option value="">Select a settled healthy release</option>{candidates.map((op) => <option key={op.id} value={op.id}>{op.id} · {op.snapshot.image_reference}</option>)}</select>
+        <label htmlFor={`${id}-healthy`}>Expected settled healthy deployment</label><select id={`${id}-healthy`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm" required value={healthy} disabled={busy || Boolean(attempt)} onChange={(e) => setHealthy(e.target.value)}><option value="">Select a settled healthy release</option>{candidates.map((op) => <option key={op.id} value={op.id}>{op.id} · {op.snapshot.local_build ? `Local build ${op.snapshot.local_build.artifact.build_id} · source generation ${op.snapshot.local_build.source_generation} · ${op.snapshot.local_build.artifact.image_id}` : op.snapshot.image_reference}</option>)}</select>
         {candidates.length === 0 ? <p role="status">No settled healthy release on this deployment page. Deploy and verify an image first, or browse deployment history. A saved application or queued deployment is insufficient.</p> : null}
         <PageNavigation label="route deployment prerequisites" page={history.data} loading={history.isFetching || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))} />
       </>}

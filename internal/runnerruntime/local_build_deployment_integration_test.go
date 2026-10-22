@@ -4,9 +4,12 @@ package runnerruntime
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -463,4 +466,237 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 	}
 	probe("local-B\n")
 	t.Logf("real public build→compiled CLI local deployment→ordinary HTTP→managed Traefik/Pebble HTTPS; A=%s B=%s ports=%d/%d, exact response-loss replay, protected cleanup, missing image and failed build preserved B", first.ID, second.ID, first.Snapshot.HostPort, second.Snapshot.HostPort)
+}
+
+// TestLocalBuildBrowser exposes only this disposable fixture's authenticated API
+// and current embedded UI. The host gate publishes its listener on loopback.
+func TestLocalBuildBrowser(t *testing.T) {
+	if os.Getenv("NEROCD_LOCAL_BUILD_RUNTIME") != "disposable-dind" || os.Getenv("NEROCD_LOCAL_BUILD_BROWSER") != "1" {
+		t.Skip("requires opt-in local build browser gate")
+	}
+	f := newControllerBuildFixture(t, domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability)
+	root, err := os.MkdirTemp("/var/lib", "nerocd-browser-proxy-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Error(err)
+		}
+	})
+	roots, publicRoot := controlTrust(t, root)
+	proxyConfig := ProxyConfig{Directory: root, DockerBinary: "/usr/local/bin/docker", DockerSocket: "/var/run/docker.sock", Protocol: domain.HostingProxyCompilerVersion, engineFactory: func(settings hostingproxy.Settings) (managedProxyEngine, error) {
+		if err := os.MkdirAll(filepath.Join(settings.Directory, "certificates"), 0700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(settings.Directory, "certificates/root.pem"), publicRoot, 0600); err != nil {
+			return nil, err
+		}
+		return hostingproxy.NewFixture(settings, "https://localhost:14000/dir", roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
+	}}
+	url, _ := mutableLocalBuildGit(t)
+	var resource domain.Resource
+	f.request(t, "POST", "/api/v1/resources", f.admin, map[string]any{"project_id": f.environment.ProjectID, "project_environment_id": f.environment.ID, "name": "Browser local artifact", "kind": "application", "source": map[string]any{"kind": "git", "git": domain.GitResourceConfiguration{RepositoryURL: url, RequestedRef: "main", CredentialKind: "public", Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}}}, 201, &resource)
+	f.request(t, "POST", "/api/v1/resources/"+resource.ID+"/binding", f.admin, map[string]string{"destination_id": f.target.Destination.ID}, 201, nil)
+	f.request(t, "POST", "/api/v1/project-members", f.admin, map[string]string{"project_id": f.environment.ProjectID, "email": "viewer@example.local", "role": "viewer"}, 200, nil)
+	// Infrastructure setup is separate from the browser's build/deploy/route journey.
+	proxy := controlJSON[domain.HostingProxy](t, f.server.URL, f.admin, "POST", "/api/v1/servers/"+f.target.Server.ID+"/proxy", domain.HostingProxyInput{ControlProjectID: f.environment.ProjectID, IdempotencyKey: "browser-enable-proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
+	controlJSON[domain.HostingHostnameGrant](t, f.server.URL, f.admin, "POST", "/api/v1/servers/"+f.target.Server.ID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: f.environment.ProjectID, Hostname: "local.example.test"}, 201)
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	runProxy := func() error {
+		return RunContext(ctx, Config{Build: &f.config, LocalBuildDeploy: true, Proxy: proxyConfig, Server: f.server.URL, Token: f.credential, RunnerID: f.config.Target.RunnerID, WorkDir: f.work, JournalDir: f.journal, Execute: true, Once: true, CancelPollInterval: 100 * time.Millisecond})
+	}
+	// Wait for real River dispatch before asking the authenticated runner to claim.
+	waitDispatch := func(kind, id string) error {
+		deadline := time.NewTimer(20 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(100 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			if kind == "build" {
+				b, err := f.pg.GetHostingBuild(ctx, "usr_bootstrap", id)
+				if err != nil {
+					return err
+				}
+				if b.RunID != "" {
+					return nil
+				}
+			} else if kind == "deploy" {
+				op, err := f.pg.GetHostingOperation(ctx, id)
+				if err != nil {
+					return err
+				}
+				if op.RunID != "" {
+					return nil
+				}
+			} else {
+				if id == "" {
+					current, err := f.pg.GetHostingProxy(ctx, proxy.ID)
+					if err != nil {
+						return err
+					}
+					id = current.ActiveOperationID
+				}
+				op, err := f.pg.GetHostingProxyOperation(ctx, id)
+				if err == nil && op.RunID != "" {
+					return nil
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-deadline.C:
+				return fmt.Errorf("browser fixture dispatch timeout for %s", kind)
+			case <-tick.C:
+			}
+		}
+	}
+	// River makes the initial proxy operation active when its run is dispatched.
+	initialProxy, err := f.pg.GetHostingProxy(ctx, proxy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = waitDispatch("proxy", initialProxy.ActiveOperationID); err != nil {
+		t.Fatal(err)
+	}
+	if err = runProxy(); err != nil {
+		t.Fatal(err)
+	}
+	type work struct{ kind, id string }
+	queue := make(chan work, 1)
+	results := make(chan error, 1)
+	var seen sync.Map
+	done := make(chan struct{})
+	var finish sync.Once
+	nonce := make([]byte, 24)
+	if _, err = rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	completePath := "/fixture/browser-complete/" + hex.EncodeToString(nonce)
+	origin := os.Getenv("NEROCD_LOCAL_BUILD_BROWSER_ORIGIN")
+	handler := f.server.Config.Handler
+	exposed := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == completePath {
+			if r.Method != "POST" || r.Header.Get("Origin") != origin {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			finish.Do(func() { close(done) })
+			return
+		}
+		if r.Method != "POST" || !(strings.HasSuffix(r.URL.Path, "/builds") || strings.HasSuffix(r.URL.Path, "/deployments/from-build") || strings.HasSuffix(r.URL.Path, "/routes")) {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		recorded := httptest.NewRecorder()
+		handler.ServeHTTP(recorded, r)
+		for key, values := range recorded.Header() {
+			w.Header()[key] = values
+		}
+		w.WriteHeader(recorded.Code)
+		_, _ = w.Write(recorded.Body.Bytes())
+		if recorded.Code != http.StatusAccepted {
+			return
+		}
+		item := work{}
+		if strings.HasSuffix(r.URL.Path, "/builds") {
+			var response struct {
+				Build domain.PublicHostingBuild `json:"build"`
+			}
+			if json.Unmarshal(recorded.Body.Bytes(), &response) != nil {
+				return
+			}
+			item = work{"build", response.Build.ID}
+		} else if strings.HasSuffix(r.URL.Path, "/from-build") {
+			var op domain.HostingOperation
+			if json.Unmarshal(recorded.Body.Bytes(), &op) != nil {
+				return
+			}
+			item = work{"deploy", op.ID}
+		} else {
+			var route domain.HostingRoute
+			if json.Unmarshal(recorded.Body.Bytes(), &route) != nil {
+				return
+			}
+			item = work{"proxy", route.OperationID}
+		}
+		if _, duplicate := seen.LoadOrStore(item.id, true); duplicate {
+			return
+		}
+		select {
+		case queue <- item:
+		case <-ctx.Done():
+		}
+	}))
+	listener, err := net.Listen("tcp", "0.0.0.0:18080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exposed.Listener = listener
+	exposed.Start()
+	t.Cleanup(exposed.Close)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case item := <-queue:
+				err := waitDispatch(item.kind, item.id)
+				if err == nil && item.kind == "proxy" {
+					err = runProxy()
+				} else if err == nil {
+					// Build and local workload execution use the compiled production CLI.
+					command := f.agentCommand(ctx, "--local-build-deploy", "--proxy-state-root", root, "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion)
+					out, runErr := command.CombinedOutput()
+					err = runErr
+					if err != nil {
+						t.Logf("bounded browser CLI diagnostic: %.1500s", out)
+					}
+				}
+				if err != nil {
+					select {
+					case results <- err:
+					case <-ctx.Done():
+					}
+					return
+				}
+			}
+		}
+	}()
+	t.Cleanup(func() { cancel(); <-workerDone })
+	metadata, err := json.Marshal(map[string]string{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "resource_id": resource.ID, "complete_path": completePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("LOCAL_BUILD_BROWSER_READY %s\n", metadata)
+	select {
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	case err = <-results:
+		t.Fatal(err)
+	case <-done:
+	}
+	// The browser reports success only after recorded HTTPS readiness. Independently
+	// probe the actual proxy with its fixture CA and ordinary application bytes.
+	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		_, port, e := net.SplitHostPort(address)
+		if e != nil {
+			return nil, e
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+	}}
+	defer transport.CloseIdleConnections()
+	response, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Get("https://local.example.test/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
+	if err != nil || response.StatusCode != 200 || string(body) != "local-A\n" {
+		t.Fatalf("browser HTTPS actual response %d %q err=%v", response.StatusCode, body, err)
+	}
 }

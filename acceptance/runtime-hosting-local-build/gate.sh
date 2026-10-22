@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Disposable Docker-in-Docker only. Never publishes host ports or prunes Docker.
+# Disposable Docker-in-Docker only. Default mode publishes no host ports.
+# Browser mode publishes its authenticated fixture on host loopback only. Never prunes Docker.
 set -euo pipefail
 repo_root=$(pwd -P)
 case "$repo_root" in */NeroCD*) ;; *) echo 'run from assigned repository root' >&2; exit 1;; esac
 source "$repo_root/acceptance/runtime-hosting-build-controller/helpers.sh"
+browser_mode=${NEROCD_LOCAL_BUILD_BROWSER:-0}
+case "$browser_mode" in 0|1) ;; *) echo 'invalid browser fixture option' >&2; exit 1;; esac
 preload_postgres=${NEROCD_BUILD_CONTROLLER_PRELOAD_POSTGRES:-0}
 case "$preload_postgres" in 0|1) ;; *) echo 'invalid PostgreSQL preload option' >&2; exit 1;; esac
 arch=$(docker info --format '{{.Architecture}}')
@@ -59,7 +62,13 @@ cp db/seeds/dev.sql "$fixture_dir/dev.sql"
 printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'RUN apk add --no-cache git=2.52.0-r0 git-daemon=2.52.0-r0' 'COPY buildx railpack mise-bin hosting-controller.test nerocd dev.sql /fixture/' > "$fixture_dir/Dockerfile"
 docker build --label "io.nerocd.runtime-hosting-local-build.owner=$owner" -t "$image" "$fixture_dir"
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
-container_id=$(docker run --detach --privileged --pid=host --mount "type=bind,src=$repo_root/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly" --add-host example.com:127.0.0.1 --name "$name" --label "io.nerocd.runtime-hosting-local-build.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock)
+run_fixture_container() {
+ # Nonempty positional arguments also work with Bash 3.2 and nounset enabled.
+ set -- --detach --privileged --pid=host --mount "type=bind,src=$repo_root/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly" --add-host example.com:127.0.0.1 --name "$name" --label "io.nerocd.runtime-hosting-local-build.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock
+ if [[ "$browser_mode" == 1 ]]; then set -- --publish 127.0.0.1::18080 "$@"; fi
+ docker run "$@"
+}
+container_id=$(run_fixture_container)
 ready=false
 for _ in $(seq 1 90); do
  if docker exec "$name" docker info >/dev/null 2>&1; then ready=true; break; fi
@@ -77,7 +86,56 @@ for _ in $(seq 1 60); do if controller_postgres_ready "$name" "$pg_id" >/dev/nul
 if [[ "$ready" != true ]]; then echo 'owned PostgreSQL not ready' >&2; exit 1; fi
 printf 'owned PostgreSQL TCP query ready: container=%s database=nerocd_build_controller\n' "$pg_id"
 pg_addr=$(docker exec "$name" docker port "$pg_id" 5432/tcp)
+if [[ "$browser_mode" == 0 ]]; then
 docker exec --env NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind --env "NEROCD_BUILD_CONTROLLER_DATABASE_URL=postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" --env "NEROCD_BUILDX_SHA256=sha256:$buildx_sha" "$name" /fixture/hosting-controller.test -test.v -test.run '^TestLocalBuildProductionHTTPS$' -test.timeout=15m
+else
+ browser_addr=$(docker port "$container_id" 18080/tcp)
+ [[ "$browser_addr" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
+ export NEROCD_LOCAL_BUILD_BROWSER_ORIGIN="http://$browser_addr"
+ export NEROCD_BROWSER_FIXTURE_DSN="postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable"
+ export NEROCD_CGROUP_ROOT="/sys/fs/cgroup/$owner"
+ export NEROCD_PLANNER_IMAGE="$planner_id"
+ export NEROCD_BUILDX_SHA256="sha256:$buildx_sha"
+ # Captured pipes carry fixture metadata directly. No coordination file is used.
+ node --input-type=module -e '
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+const container = process.argv[1];
+const env = process.env;
+const args = ["exec", "--env", "NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind", "--env", "NEROCD_LOCAL_BUILD_BROWSER=1", "--env", `NEROCD_LOCAL_BUILD_BROWSER_ORIGIN=${env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN}`, "--env", `NEROCD_BUILD_CONTROLLER_DATABASE_URL=${env.NEROCD_BROWSER_FIXTURE_DSN}`, "--env", `NEROCD_CGROUP_ROOT=${env.NEROCD_CGROUP_ROOT}`, "--env", `NEROCD_PLANNER_IMAGE=${env.NEROCD_PLANNER_IMAGE}`, "--env", `NEROCD_BUILDX_SHA256=${env.NEROCD_BUILDX_SHA256}`, container, "/fixture/hosting-controller.test", "-test.v", "-test.run", "^(TestControllerBrowserOrigin|TestLocalBuildBrowser)$", "-test.timeout=10m"];
+const fixture = spawn("docker", args, { stdio: ["ignore", "pipe", "inherit"] });
+let browser;
+let buffer = "";
+let ready = false;
+let browserResult;
+const completed = once(fixture, "exit");
+const stop = () => { if (browser && browser.exitCode === null) browser.kill("SIGTERM"); if (fixture.exitCode === null) fixture.kill("SIGTERM"); };
+process.once("SIGTERM", stop); process.once("SIGINT", stop);
+const timer = setTimeout(stop, 9 * 60_000);
+fixture.stdout.on("data", (chunk) => {
+ buffer += chunk.toString();
+ let newline;
+ while ((newline = buffer.indexOf("\n")) !== -1) {
+  const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+  if (!line.startsWith("LOCAL_BUILD_BROWSER_READY ")) { process.stdout.write(line + "\n"); continue; }
+  if (ready) { stop(); continue; }
+  ready = true;
+  let metadata;
+  try { metadata = JSON.parse(line.slice("LOCAL_BUILD_BROWSER_READY ".length)); } catch { stop(); continue; }
+  if (metadata.origin !== env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN) { stop(); continue; }
+  process.stdout.write(`authenticated browser fixture ready at ${metadata.origin}\n`);
+  browser = spawn("bun", ["run", "--cwd", "web/app", "smoke:browser", "local-build-deployments.spec.ts", "--project", "chromium", "--no-deps"], { cwd: process.cwd(), env: { ...env, PLAYWRIGHT_BASE_URL: metadata.origin, NEROCD_LOCAL_BUILD_BROWSER_META: JSON.stringify(metadata) }, stdio: "inherit" });
+  browserResult = once(browser, "exit").then(([code]) => { if (code !== 0) stop(); return code; });
+ }
+});
+try {
+ const [fixtureCode] = await completed;
+ if (fixtureCode !== 0) stop();
+ const browserCode = browserResult ? await browserResult : 1;
+ if (!ready || fixtureCode !== 0 || browserCode !== 0) process.exitCode = 1;
+} finally { clearTimeout(timer); stop(); }
+' "$container_id"
+fi
 if [[ $(docker exec "$name" docker inspect --format '{{.Id}} {{index .Config.Labels "io.nerocd.build-controller.owner"}}' "$pg_id") != "$pg_id $owner" ]]; then echo 'owned PostgreSQL identity mismatch' >&2; exit 1; fi
 docker exec "$name" docker rm --force --volumes "$pg_id"
 pg_id=""

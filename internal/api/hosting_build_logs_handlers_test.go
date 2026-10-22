@@ -111,10 +111,14 @@ func TestHostingBuildLogAPIActualAuthorityAndProjection(t *testing.T) {
 	}
 	viewer := createTestSessionFor(t, s, "viewer@example.local", "viewer")
 	request("GET", path, viewer, "", 403)
+	request("GET", path+"?after_sequence=0&limit=200", viewer, "", 403)
 	if _, err = pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "member_log_viewer", ProjectID: resource.ProjectID, UserID: "usr_viewer", Role: domain.RoleViewer}); err != nil {
 		t.Fatal(err)
 	}
 	request("GET", path, viewer, "", 200)
+	for _, limit := range []int{1, 100, 101, 200} {
+		request("GET", fmt.Sprintf("%s?after_sequence=0&limit=%d", path, limit), viewer, "", 200)
+	}
 	for _, query := range []string{"?after_sequence=-1", "?after_sequence=2147483648", "?limit=201", "?limit=0", "?limit=1&limit=2", "?policy=forged"} {
 		request("GET", path+query, session, "", 400)
 	}

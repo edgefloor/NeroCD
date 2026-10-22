@@ -202,9 +202,8 @@ test("lost response then held history permits only the authorized retained exact
   expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1);
   view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable blocked={false} /></QueryClientProvider>);
   fireEvent.submit(screen.getByRole("form"));
-  await screen.findByRole("region", { name: "Deployment operation detail" });
-  const writes = fetch.mock.calls.filter(([, options]) => options.method === "POST");
-  expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+  expect(screen.queryByRole("button", { name: "Retry identical deployment request" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1);
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deployment waiting for settlement" }).disabled).toBe(true);
 });
 

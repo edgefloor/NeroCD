@@ -12,10 +12,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,7 +122,18 @@ func newControllerBuildFixture(t *testing.T, capabilities ...string) *controller
 		t.Fatal(err)
 	}
 	f := &controllerBuildFixture{t: t, pg: pg, db: database, work: t.TempDir(), initialExpiries: map[string]time.Time{}}
-	handler := api.NewServer(service, slog.Default(), web.Static())
+	cfg, err := controllerBrowserConfig(os.Getenv("NEROCD_LOCAL_BUILD_BROWSER"), os.Getenv("NEROCD_LOCAL_BUILD_BROWSER_ORIGIN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AllowInsecureCookies {
+		// Exercise the actual bootstrap lifecycle so the public sign-in page is
+		// available. The legacy seeded users alone do not complete bootstrap.
+		if _, err := service.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: "browser-bootstrap@example.local", Name: "Browser Fixture Admin", Password: "browser-fixture-password"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := api.NewServerWithConfig(service, slog.Default(), web.Static(), cfg)
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/runners/complete", "/api/v1/runners/events", "/api/v1/runners/events/batch":
@@ -295,6 +308,9 @@ func (f *controllerBuildFixture) request(t *testing.T, method, path, token strin
 		t.Fatal(err)
 	}
 	r.Header.Set("Content-Type", "application/json")
+	if os.Getenv("NEROCD_LOCAL_BUILD_BROWSER") == "1" {
+		r.Header.Set("Origin", os.Getenv("NEROCD_LOCAL_BUILD_BROWSER_ORIGIN"))
+	}
 	if token != "" {
 		r.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -354,4 +370,43 @@ func (f *controllerBuildFixture) agent(ctx context.Context) error {
 		f.t.Logf("agent fixed diagnostic: %.1200s", out)
 	}
 	return err
+}
+
+// This override exists only in the Linux fixture, never in the production server.
+func controllerBrowserConfig(enabled, origin string) (api.ServerConfig, error) {
+	if enabled != "1" {
+		if origin != "" {
+			return api.ServerConfig{}, fmt.Errorf("browser origin requires explicit fixture mode")
+		}
+		return api.ServerConfig{}, nil
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" || origin != "http://"+u.Host {
+		return api.ServerConfig{}, fmt.Errorf("browser fixture requires an exact loopback HTTP origin")
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 || u.Host != "127.0.0.1:"+strconv.Itoa(port) {
+		return api.ServerConfig{}, fmt.Errorf("invalid browser fixture port")
+	}
+	return api.ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin}, nil
+}
+func TestControllerBrowserOrigin(t *testing.T) {
+	for _, origin := range []string{"https://127.0.0.1:1234", "http://localhost:1234", "http://0.0.0.0:1234", "http://127.0.0.1", "http://127.0.0.1:0", "http://127.0.0.1:65536", "http://u@127.0.0.1:1234", "http://127.0.0.1:1234/", "http://127.0.0.1:1234?", "http://127.0.0.1:1234?q=x", "http://127.0.0.1:1234#x", "http://127.0.0.1:1234#", "http://127.0.0.1:01234"} {
+		t.Run(origin, func(t *testing.T) {
+			if _, err := controllerBrowserConfig("1", origin); err == nil {
+				t.Fatal("accepted invalid origin")
+			}
+		})
+	}
+	cfg, err := controllerBrowserConfig("1", "http://127.0.0.1:23123")
+	if err != nil || !cfg.AllowInsecureCookies || cfg.PublicOrigin != "http://127.0.0.1:23123" {
+		t.Fatal("valid loopback origin rejected")
+	}
+	if _, err := controllerBrowserConfig("", "http://127.0.0.1:23123"); err == nil {
+		t.Fatal("origin accepted without opt-in")
+	}
+	cfg, err = controllerBrowserConfig("", "")
+	if err != nil || cfg.AllowInsecureCookies || cfg.PublicOrigin != "" {
+		t.Fatal("default fixture security changed")
+	}
 }
