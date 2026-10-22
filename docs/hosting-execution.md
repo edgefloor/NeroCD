@@ -114,6 +114,15 @@ mutation and restore holds, and absence of conflicting result evidence allow the
 runner to acknowledge its durable cleanup intent on restart. Admitted or uncertain
 cleanup still blocks startup until a verified completion settles ownership.
 
+Lease expiry before cleanup admission may requeue the same immutable target with
+new fenced authority. After admission, expiry marks the operation
+`reconciliation_required` and its task failed while retaining the mutation hold,
+cleanup target and release ownership. This applies to registry-image and local-build
+cleanup. The server cannot dispatch that destructive cleanup again or admit a
+conflicting deployment merely because the lease expired. A previously committed
+exact completion receipt remains replayable; expiry does not recreate cleanup work.
+
+
 **Restore recovery remains blocked in this slice.** A restored binding reports
 `restore_ownership_held: true`. A database backup can predate an admission while
 an old Docker command still runs. An absent admission row, an empty new journal,
