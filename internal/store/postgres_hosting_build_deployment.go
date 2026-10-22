@@ -28,16 +28,11 @@ func (s *PostgresStore) RequestHostingBuildDeployment(ctx context.Context, id, r
 	if err = lockHostingResourceDestination(ctx, tx, resourceID); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	b, r, err := resolveCurrentHostingBuildArtifactTx(ctx, tx, actorID, resourceID, in.BuildID)
+	r, err := lockBuildResourceDestination(ctx, tx, resourceID)
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if r.Generation != in.ExpectedGeneration || b.Snapshot.Source.Generation != in.ExpectedSourceGeneration {
-		return domain.HostingOperation{}, ErrConflict
-	}
-	projectID := r.ProjectID
-	snap := domain.HostingSnapshot{ResourceID: resourceID, ResourceGeneration: r.Generation, BindingID: r.BindingID, DestinationID: r.DestinationID, RuntimeNamespace: r.RuntimeNamespace, ServerID: r.ServerID, RunnerID: r.RunnerID, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness, PolicyVersion: domain.HostingLocalBuildPolicyVersion, LocalBuild: domain.HostingLocalBuildSource{SourceGeneration: in.ExpectedSourceGeneration, ArtifactHash: domain.HostingDocumentHash(*b.Artifact), Artifact: *b.Artifact}}
-	if err = hostingTargetGate(ctx, tx, projectID, snap, true); err != nil {
+	if err = authorizeBuildActor(ctx, tx, actorID, r.ProjectID, "maintainer"); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	var existingID, requestHash string
@@ -58,12 +53,34 @@ func (s *PostgresStore) RequestHostingBuildDeployment(ctx context.Context, id, r
 		if readErr != nil {
 			return op, readErr
 		}
-		if err = authorizeBuildActor(ctx, tx, actorID, projectID, "maintainer"); err != nil {
+		if err = authorizeBuildActor(ctx, tx, actorID, r.ProjectID, "maintainer"); err != nil {
 			return domain.HostingOperation{}, err
 		}
 		return op, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.HostingOperation{}, err
+	}
+	b, r, err := resolveCurrentHostingBuildArtifactTx(ctx, tx, actorID, resourceID, in.BuildID)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if r.Generation != in.ExpectedGeneration || b.Snapshot.Source.Generation != in.ExpectedSourceGeneration {
+		return domain.HostingOperation{}, ErrConflict
+	}
+	projectID := r.ProjectID
+	snap := domain.HostingSnapshot{ResourceID: resourceID, ResourceGeneration: r.Generation, BindingID: r.BindingID, DestinationID: r.DestinationID, RuntimeNamespace: r.RuntimeNamespace, ServerID: r.ServerID, RunnerID: r.RunnerID, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness, PolicyVersion: domain.HostingLocalBuildPolicyVersion, LocalBuild: domain.HostingLocalBuildSource{SourceGeneration: in.ExpectedSourceGeneration, ArtifactHash: domain.HostingDocumentHash(*b.Artifact), Artifact: *b.Artifact}}
+	snap.RuntimeConfiguration, err = lockHostingRuntimeConfiguration(ctx, tx, projectID, resourceID, in.ExpectedRuntimeConfigurationGeneration)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if snap.RuntimeConfiguration.Generation > 0 {
+		snap.PolicyVersion = domain.HostingLocalBuildRuntimePolicyVersion
+	}
+	if err = requireHostingRuntimeAgent(ctx, tx, snap); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = hostingTargetGate(ctx, tx, projectID, snap, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if err = s.resolveHostingReleasePort(ctx, tx, &snap, in.HostPort); err != nil {
@@ -137,6 +154,9 @@ func (s *PostgresStore) RequestHostingBuildDeployment(ctx context.Context, id, r
 	if err = authorizeBuildActor(ctx, tx, actorID, projectID, "maintainer"); err != nil {
 		return domain.HostingOperation{}, err
 	}
+	if err = requireHostingRuntimeAgent(ctx, tx, snap); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -150,6 +170,12 @@ func hostingSnapshotTaskType(snap domain.HostingSnapshot) string {
 	return domain.RunTypeImageDeploy
 }
 func hostingRetainedPolicy(snap domain.HostingSnapshot) string {
+	if snap.RuntimeConfiguration.Generation > 0 {
+		if snap.LocalBuild != (domain.HostingLocalBuildSource{}) {
+			return domain.HostingLocalBuildRuntimePolicyVersion
+		}
+		return domain.HostingRuntimePolicyVersion
+	}
 	if snap.LocalBuild != (domain.HostingLocalBuildSource{}) {
 		return domain.HostingLocalBuildPolicyVersion
 	}
