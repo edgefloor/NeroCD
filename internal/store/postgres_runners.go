@@ -387,6 +387,11 @@ func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.
 			return domain.ClaimedRun{}, fmt.Errorf("create audit event: %w", err)
 		}
 	}
+	if claimedRun.RunSpec.Type == domain.HostingBuildTaskType {
+		if err := s.validateHostingBuildClaim(ctx, tx, *claimedRun, runner.ID, lease); err != nil {
+			return domain.ClaimedRun{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ClaimedRun{}, fmt.Errorf("commit transaction: %w", err)
 	}

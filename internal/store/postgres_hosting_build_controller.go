@@ -145,7 +145,38 @@ func currentBuildExecution(ctx context.Context, tx pgx.Tx, b domain.HostingBuild
 	if r.ProjectID != b.ProjectID || r.Generation != b.Snapshot.ResourceGeneration || !exactBuildResourceSource(r.Source, src) || domain.HostingDocumentHash(src) != domain.HostingDocumentHash(b.Snapshot.Source) {
 		return ErrConflict
 	}
-	return checkBuildPlacement(ctx, tx, b, true)
+	if err = checkBuildPlacement(ctx, tx, b, true); err != nil {
+		return err
+	}
+	// Placement, runner and enrollment locks may wait after the first creator
+	// check. Row locks serialize revocation, but token expiry advances with time.
+	return authorizeBuildActor(ctx, tx, b.CreatedBy, b.ProjectID, "maintainer")
+}
+
+// validateHostingBuildClaim runs in the existing claim transaction after every
+// lease and audit write. Starting another transaction here would wait on our own
+// task lock. The initial candidate gate alone cannot authorize a later commit.
+func (s *PostgresStore) validateHostingBuildClaim(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runner string, lease domain.RunLease) error {
+	if domain.ValidateHostingBuildTask(run) != nil {
+		return ErrConflict
+	}
+	q := sqlcgen.New(tx)
+	id, err := q.GetHostingBuildTask(ctx, sqlcgen.GetHostingBuildTaskParams{RunID: run.ID, RunnerID: runner})
+	if err != nil {
+		return hostingError(err)
+	}
+	b, err := readBuild(ctx, q, id)
+	if err != nil {
+		return err
+	}
+	if b.ID != run.RunSpec.HostingBuildID || b.RunID != run.ID || b.Snapshot.RunnerID != runner || b.State != "queued" {
+		return ErrConflict
+	}
+	if err = currentBuildExecution(ctx, tx, b); err != nil {
+		return err
+	}
+	a := domain.HostingBuildAuthority{BuildID: b.ID, RunID: run.ID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
+	return checkBuildAuthority(ctx, q, runner, a, b, true)
 }
 func (s *PostgresStore) buildClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runner string) (bool, error) {
 	if domain.ValidateHostingBuildTask(run) != nil {
