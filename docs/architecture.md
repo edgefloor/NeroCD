@@ -156,3 +156,26 @@ UI, REST, CLI, webhook and MCP paths use the same authorized application
 operations. Legacy routes remain explicit adapters for a declared support
 window. Coolify feature, migration and unchanged-client compatibility are
 separate claims, each requiring its own evidence.
+
+## Hosting job infrastructure
+
+`internal/hostingjobs` wraps River OSS v0.44.1 with its pgx v5 driver. It owns the
+`hosting_control` queue and typed `hosting.prepare_deployment.v1` arguments,
+which contain only `operation_id`. Transactional insertion shares the caller's
+application database transaction. River does not replace the existing fenced
+runner execution protocol.
+
+This package is infrastructure only. The server does not register or start a
+hosting worker yet. Construction requires a supplied preparation handler and
+never substitutes a no-op. The next consumer must resolve the operation ID to
+an immutable snapshot and an exact destination, then enqueue work for the
+existing runner protocol. It must not execute Docker in the job worker.
+
+The owner migration CLI applies River's pinned migration bundle under the same
+advisory lock as native migrations. Each River version and its adapter checksum
+commit together. Startup never applies migrations. The wrapper validates the
+complete pinned set before its explicit `Start`, but server readiness and
+restore admission holds will be wired with the actual consumer.
+
+See [Hosting job infrastructure](hosting-jobs.md) for lifecycle, compatibility,
+and integration contracts.

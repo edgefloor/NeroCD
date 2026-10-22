@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { assessLicenseDeclaration } from "./license-policy.mjs";
+import { assessLicenseDeclaration, classifyGoLicenseText } from "./license-policy.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const allowedLicenses = new Set(["0BSD", "Apache-2.0", "BlueOak-1.0.0", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "ISC", "MIT", "MIT-0", "MPL-2.0", "OFL-1.1", "Python-2.0", "Unlicense"]);
@@ -30,6 +30,9 @@ const allowedGoDirectDependencies = new Set([
   "github.com/coreos/go-oidc/v3",
   "github.com/getkin/kin-openapi",
   "github.com/jackc/pgx/v5",
+  "github.com/riverqueue/river",
+  "github.com/riverqueue/river/riverdriver/riverpgxv5",
+  "github.com/riverqueue/river/rivertype",
   "github.com/sqlc-dev/sqlc",
   "golang.org/x/oauth2",
   "golang.org/x/sys",
@@ -153,17 +156,7 @@ async function detectGoLicense(moduleDir) {
   if (!licenseFile) {
     return "";
   }
-  const content = (await readFile(join(moduleDir, licenseFile), "utf8")).toLowerCase();
-  if (content.includes("mit license") || (content.includes("permission is hereby granted, free of charge") && content.includes("the software is provided \"as is\""))) {
-    return "MIT";
-  }
-  if (content.includes("apache license") && content.includes("version 2.0")) {
-    return "Apache-2.0";
-  }
-  if (content.includes("redistribution and use in source and binary forms")) {
-    return "BSD-3-Clause";
-  }
-  return "UNKNOWN";
+  return classifyGoLicenseText(await readFile(join(moduleDir, licenseFile), "utf8"));
 }
 
 async function nodePackages() {

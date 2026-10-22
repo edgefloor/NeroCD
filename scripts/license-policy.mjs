@@ -114,3 +114,21 @@ export function assessLicenseDeclaration(value, allowedLicenses) {
         : { expression: declaration },
   };
 }
+
+// Classify canonical Go module license text without expanding the policy allowlist.
+export function classifyGoLicenseText(value) {
+  const content = value.toLowerCase();
+  if (content.includes("mit license") || (content.includes("permission is hereby granted, free of charge") && content.includes("the software is provided \"as is\""))) {
+    return "MIT";
+  }
+  if (content.includes("apache license") && content.includes("version 2.0")) {
+    return "Apache-2.0";
+  }
+  if (content.includes("redistribution and use in source and binary forms")) {
+    return "BSD-3-Clause";
+  }
+  if (/^mozilla public license version 2\.0\r?\n=+\r?\n/.test(content.trimStart()) && /https?:\/\/mozilla\.org\/MPL\/2\.0\//i.test(content)) {
+    return "MPL-2.0";
+  }
+  return "UNKNOWN";
+}
