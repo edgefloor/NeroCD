@@ -3,8 +3,14 @@
 A server gives one enrolled runner a stable hosting identity. Each server has
 one immutable `docker_compose` destination named `default`. To admit a server,
 use an active, credentialed runner with a consumed, nonrevoked enrollment,
-`compose_deploy` capability, and no `shell` capability. A runner can belong to
-one server. These records do not reserve capacity or change legacy scheduling.
+`compose-deploy` capability, and no `shell` capability. Admission also accepts
+the historical `compose_deploy` spelling. Migration 0044 adds canonical
+capability support to databases that already applied migration 0042.
+Apply migration 0044 before starting NeroCD. Startup and readiness reject the
+old admission function.
+
+A runner can belong to one server. These records do not reserve capacity or
+change legacy scheduling.
 
 Global `runner_admin` and `system_admin` principals can list and admit servers,
 inspect destinations, and manage explicit project grants. Project viewers can

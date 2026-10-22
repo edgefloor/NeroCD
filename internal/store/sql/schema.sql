@@ -14,5 +14,6 @@ AND nerocd_service_account_schema_compatible()
 AND nerocd_hosting_schema_compatible()
 AND nerocd_managed_secrets_schema_compatible()
 AND nerocd_destinations_schema_compatible()
+AND nerocd_destination_capability_schema_compatible()
 AND nerocd_legacy_api_token_schema_compatible()
 AND nerocd_hosting_execution_schema_compatible() AS compatible;
