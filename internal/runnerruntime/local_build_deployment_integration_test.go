@@ -138,12 +138,12 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 		}
 		return err
 	}
-	var loseCompletion atomic.Bool
 	var probePreparation atomic.Bool
 	prepared := make(chan domain.HostingOperation, 1)
 	proceed := make(chan struct{})
 	var releasePreparation sync.Once
 	original := f.server.Config.Handler
+	completionLoss := &hostingCompletionLossFixture{original: original}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runners/hosting/prepared" && probePreparation.CompareAndSwap(true, false) {
 			recorded := httptest.NewRecorder()
@@ -167,13 +167,8 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 			_, _ = w.Write(recorded.Body.Bytes())
 			return
 		}
-		if r.URL.Path == "/api/v1/runners/hosting/complete" && loseCompletion.Load() {
-			recorded := httptest.NewRecorder()
-			original.ServeHTTP(recorded, r)
-			if recorded.Code != 200 {
-				t.Errorf("completion fault before commit: %d", recorded.Code)
-			}
-			w.WriteHeader(503)
+		if r.URL.Path == "/api/v1/runners/hosting/complete" {
+			completionLoss.ServeHTTP(w, r)
 			return
 		}
 		original.ServeHTTP(w, r)
@@ -296,7 +291,7 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 	update("local-B\n", false)
 	secondBuild := build("local-build-B")
 	second := deploy(secondBuild, "local-deploy-B")
-	loseCompletion.Store(true)
+	completionLoss.enable()
 	probePreparation.Store(true)
 	completed := make(chan error, 1)
 	go func() { completed <- cli() }()
@@ -318,6 +313,7 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 	if err = f.db.QueryRow(t.Context(), `SELECT id,attempt,fence FROM run_leases WHERE run_id=$1 AND status='active'`, second.RunID).Scan(&authority.LeaseID, &authority.Attempt, &authority.Fence); err != nil {
 		t.Fatal(err)
 	}
+	expectedCompletionAuthority := authority
 	authority.Fence = "stale-" + authority.Fence
 	// Wrong fenced authority is deliberately opaque at the production endpoint.
 	f.request(t, "POST", "/api/v1/runners/hosting/apply-begin", f.credential, authority, 404, nil)
@@ -331,12 +327,57 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 	if completionErr == nil {
 		t.Fatal("lost deployment completion response was not retained")
 	}
-	loseCompletion.Store(false)
+	proof := completionLoss.snapshot()
+	if !proof.Committed || proof.Failure != "" || proof.Request.HostingAuthority != expectedCompletionAuthority || proof.RequestHash != domain.HostingDocumentHash(proof.Request) || proof.Suppressed < 1 {
+		t.Fatalf("completion loss lacked exact real commit proof: %+v", proof)
+	}
+	committed, e := f.pg.GetHostingOperation(t.Context(), second.ID)
+	if e != nil || committed.State != "succeeded" || committed.CompleteReceipt == nil || *committed.CompleteReceipt != proof.Receipt || committed.Result == nil || *committed.Result != proof.Request.Result {
+		t.Fatal("lost response did not follow persisted exact completion", e)
+	}
+	pendingJournal, e := runner.OpenAttemptJournal(f.journal)
+	if e != nil {
+		t.Fatal(e)
+	}
+	pendingResults := 0
+	for _, entry := range pendingJournal.Snapshot().Hosting {
+		if entry.OperationID == second.ID && entry.Phase == "result" {
+			if entry.Result == nil || *entry.Result != proof.Request {
+				t.Error("pending result differs from committed lost response")
+			}
+			pendingResults++
+		}
+	}
+	if e = pendingJournal.Close(); e != nil {
+		t.Fatal(e)
+	}
+	if pendingResults != 1 {
+		t.Fatalf("lost response did not retain exactly one journal result: %d", pendingResults)
+	}
+	t.Logf("real completion committed before response loss: operation=%s receipt=%s request_hash=%s result_hash=%s suppressed_responses=%d; exact journal result remains pending", second.ID, proof.Receipt.ID, proof.RequestHash, proof.Receipt.BodyHash, proof.Suppressed)
+	completionLoss.disable()
 	if err = cli(); err != nil {
 		t.Fatalf("exact local deployment replay: %v", err)
 	}
+	pendingJournal, e = runner.OpenAttemptJournal(f.journal)
+	if e != nil {
+		t.Fatal(e)
+	}
+	pendingAfterReplay := false
+	for _, entry := range pendingJournal.Snapshot().Hosting {
+		if entry.OperationID == second.ID {
+			pendingAfterReplay = true
+		}
+	}
+	if e = pendingJournal.Close(); e != nil {
+		t.Fatal(e)
+	}
+	if pendingAfterReplay {
+		t.Fatal("exact startup replay did not acknowledge local deployment journal")
+	}
+	t.Logf("startup replay acknowledged the exact committed completion: operation=%s receipt=%s", second.ID, proof.Receipt.ID)
 	second, err = f.pg.GetHostingOperation(t.Context(), second.ID)
-	if err != nil || second.State != "succeeded" || second.Result == nil || second.Snapshot.HostPort == first.Snapshot.HostPort {
+	if err != nil || second.State != "succeeded" || second.Result == nil || *second.Result != proof.Request.Result || second.CompleteReceipt == nil || *second.CompleteReceipt != proof.Receipt || second.Snapshot.HostPort == first.Snapshot.HostPort {
 		t.Fatal("second local release did not preserve independent port")
 	}
 	owned = append(owned, second.Result.ContainerID)
