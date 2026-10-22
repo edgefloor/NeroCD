@@ -55,7 +55,7 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	if j.state.Version < 2 {
 		j.state.Version = 2
 	}
-	if hostingJournalNeedsV3(entry) {
+	if hostingJournalNeedsV3(entry) && j.state.Version < 3 {
 		j.state.Version = 3
 	} // Older binaries reject retained release and cleanup authority.
 	j.state.Hosting = append(j.state.Hosting, entry)

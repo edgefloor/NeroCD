@@ -175,6 +175,12 @@ func (p Plan) dynamic() []byte {
 			routers[name+suffix] = router
 		}
 	}
-	b, _ := json.Marshal(map[string]any{"http": map[string]any{"routers": routers, "services": services, "middlewares": middlewares}})
+	http := map[string]any{"routers": routers, "middlewares": middlewares}
+	// Traefik rejects an empty services element. An empty generation still
+	// carries its marker router and middleware so withdrawal is verifiable.
+	if len(services) != 0 {
+		http["services"] = services
+	}
+	b, _ := json.Marshal(map[string]any{"http": http})
 	return b
 }

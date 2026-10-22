@@ -6,9 +6,65 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 
 	"nerocd/internal/domain"
 )
+
+type proxyIdentityResponse struct {
+	RunnerID     string   `json:"runner_id"`
+	Capabilities []string `json:"capabilities"`
+}
+
+func (r *proxyIdentityResponse) decodeResponse(body io.Reader) error {
+	raw, err := io.ReadAll(io.LimitReader(body, maxIdentityResponseBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(raw) > maxIdentityResponseBytes {
+		return errors.New("proxy identity response exceeds limit")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var result proxyIdentityResponse
+	if err = decoder.Decode(&result); err != nil {
+		return err
+	}
+	var extra any
+	if err = decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("proxy identity requires one JSON document")
+	}
+	*r = result
+	return nil
+}
+
+// ProxyIdentity verifies persisted proxy capability without heartbeat or claim.
+// Older servers without capabilities fail closed; Identity remains compatible.
+func (c Client) ProxyIdentity(ctx context.Context) (string, error) {
+	return c.RuntimeIdentity(ctx, true)
+}
+
+// RuntimeIdentity checks authenticated capabilities against local proxy enablement.
+// Legacy identity responses remain valid only when proxy execution is disabled.
+func (c Client) RuntimeIdentity(ctx context.Context, proxyConfigured bool) (string, error) {
+	var result proxyIdentityResponse
+	if err := c.get(ctx, "/api/v1/runners/identity", &result); err != nil {
+		return "", err
+	}
+	// Preserve Identity's established ID contract and registration's opaque
+	// capability names. Only the exact persisted proxy_apply value grants the
+	// additional local execution capability; duplicates do not add authority.
+	if result.RunnerID == "" || strings.TrimSpace(result.RunnerID) != result.RunnerID {
+		return "", errors.New("runner identity response did not include a valid runner_id")
+	}
+	capable := false
+	for _, capability := range result.Capabilities {
+		capable = capable || capability == domain.RunTypeProxyApply
+	}
+	if capable != proxyConfigured {
+		return "", errors.New("authenticated proxy_apply capability does not match explicit local proxy configuration")
+	}
+	return result.RunnerID, nil
+}
 
 type proxyOperationResponse domain.HostingProxyOperation
 

@@ -4036,6 +4036,10 @@ components:
       required: [runner_id]
       properties:
         runner_id: {type: string, minLength: 1}
+        capabilities:
+          type: array
+          description: Current persisted capabilities of this authenticated runner; no heartbeat is performed.
+          items: {type: string}
     HostingIdentifier:
       type: string
       minLength: 1

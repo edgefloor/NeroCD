@@ -68,6 +68,7 @@ type JournalProvenance struct {
 
 // JournalSnapshot is a copy of pending durable attempt mutations.
 type JournalSnapshot struct {
+	Proxy       []JournalProxy      `json:"proxy,omitempty"`
 	Hosting     []JournalHosting    `json:"hosting,omitempty"`
 	Events      []JournalEvent      `json:"events"`
 	Completions []JournalCompletion `json:"completions"`
@@ -75,6 +76,7 @@ type JournalSnapshot struct {
 }
 
 type journalState struct {
+	Proxy       []JournalProxy      `json:"proxy,omitempty"`
 	Hosting     []JournalHosting    `json:"hosting,omitempty"`
 	Version     int                 `json:"version"`
 	Events      []JournalEvent      `json:"events"`
@@ -274,6 +276,11 @@ func (j *AttemptJournal) AckProvenance(id string) error {
 func (j *AttemptJournal) DiscardAttempt(authority AttemptIdentity) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	for _, entry := range j.state.Proxy {
+		if sameAttemptAuthority(entry.Attempt, authority) {
+			return errors.New("proxy mutation evidence requires explicit reconciliation")
+		}
+	}
 	for _, entry := range j.state.Hosting {
 		if sameAttemptAuthority(entry.Attempt, authority) {
 			return errors.New("hosting mutation evidence requires explicit reconciliation")
@@ -319,6 +326,7 @@ func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return JournalSnapshot{
+		Proxy:       cloneProxyEntries(j.state.Proxy),
 		Hosting:     cloneHostingEntries(j.state.Hosting),
 		Events:      append([]JournalEvent(nil), j.state.Events...),
 		Completions: append([]JournalCompletion(nil), j.state.Completions...),
@@ -343,7 +351,7 @@ func NewJournalID(prefix string) (string, error) {
 }
 
 func (j *AttemptJournal) entryCountLocked() int {
-	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting)
+	return len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy)
 }
 
 func (j *AttemptJournal) persistLocked() error {
@@ -358,10 +366,10 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
-	if state.Version != journalFormatVersion && state.Version != 2 && state.Version != 3 {
+	if state.Version != journalFormatVersion && state.Version != 2 && state.Version != 3 && state.Version != 4 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
-	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting) > journalMaxEntries {
+	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
 	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))
@@ -392,7 +400,7 @@ func validateJournalState(state journalState) error {
 		}
 		ids[pending.ID] = struct{}{}
 	}
-	if len(state.Hosting) > 0 && state.Version != 2 && state.Version != 3 {
+	if len(state.Hosting) > 0 && state.Version < 2 {
 		return errors.New("hosting journal requires version2")
 	}
 	for _, entry := range state.Hosting {
@@ -400,6 +408,18 @@ func validateJournalState(state journalState) error {
 			return errors.New("retained release journal requires version 3")
 		}
 		if err := validateJournalHosting(entry); err != nil {
+			return err
+		}
+		if _, exists := ids[entry.ID]; exists {
+			return errors.New("runner journal contains duplicate ids")
+		}
+		ids[entry.ID] = struct{}{}
+	}
+	if len(state.Proxy) > 0 && state.Version < 4 {
+		return errors.New("proxy journal requires version 4")
+	}
+	for _, entry := range state.Proxy {
+		if err := validateJournalProxy(entry); err != nil {
 			return err
 		}
 		if _, exists := ids[entry.ID]; exists {

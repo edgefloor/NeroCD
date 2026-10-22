@@ -48,10 +48,39 @@ func runRunner(args []string) error {
 	journalDir := fs.String("journal-dir", os.Getenv("NEROCD_RUNNER_JOURNAL_DIR"), "owner-only durable runner event/completion journal directory")
 	secretRoot := fs.String("secret-root", os.Getenv("NEROCD_RUNNER_SECRET_ROOT"), "owner-only mode-0700 root for logical runner_file secrets")
 	imageDockerEndpoint := fs.String("image-docker-endpoint", "unix:///var/run/docker.sock", "explicit local Docker Unix socket for image hosting")
+	proxyRoot := fs.String("proxy-state-root", "", "explicit persistent mode-0700 Linux managed proxy root")
+	proxyBinary := fs.String("proxy-docker-binary", "", "absolute managed proxy Docker executable path")
+	proxySocket := fs.String("proxy-docker-socket", "", "absolute managed proxy Docker Unix socket path")
+	proxyProtocol := fs.String("proxy-protocol", "", "explicit managed proxy protocol managed-traefik.file.v1")
 	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	proxyConfig := runnerruntime.ProxyConfig{Directory: *proxyRoot, DockerBinary: *proxyBinary, DockerSocket: *proxySocket, Protocol: *proxyProtocol}
+	if err := proxyConfig.Validate(); err != nil {
+		return err
+	}
+	if proxyConfig.Enabled() && !*execute {
+		return errors.New("managed proxy configuration requires --execute")
+	}
+	registrationCapabilities := splitCSV(*capabilities)
+	capabilitiesSpecified := false
+	fs.Visit(func(option *flag.Flag) {
+		capabilitiesSpecified = capabilitiesSpecified || option.Name == "capabilities"
+	})
+	if proxyConfig.Enabled() && !capabilitiesSpecified {
+		registrationCapabilities = []string{domain.RunTypeProxyApply}
+	}
+	proxyCapability := false
+	for _, capability := range registrationCapabilities {
+		proxyCapability = proxyCapability || capability == domain.RunTypeProxyApply
+	}
+	if proxyCapability && !proxyConfig.Enabled() {
+		return errors.New("proxy_apply requires explicit managed proxy configuration")
+	}
+	if proxyConfig.Enabled() && !proxyCapability {
+		registrationCapabilities = append(registrationCapabilities, domain.RunTypeProxyApply)
 	}
 	if *pollInterval <= 0 {
 		return errors.New("runner --poll-interval must be greater than zero")
@@ -119,7 +148,7 @@ func runRunner(args []string) error {
 		if registrationToken == "" {
 			return errors.New("runner requires registration --token/NEROCD_TOKEN or --credential-file/NEROCD_RUNNER_CREDENTIAL_FILE")
 		}
-		registerBody := runnerRegisterRequest{ID: *id, Name: *name, Tags: splitCSV(*tags), Capabilities: splitCSV(*capabilities)}
+		registerBody := runnerRegisterRequest{ID: *id, Name: *name, Tags: splitCSV(*tags), Capabilities: registrationCapabilities}
 		var registered runnerRegisterResponse
 		if err := postAPIInto(*server+"/api/v1/runners/register", registerBody, registrationToken, &registered); err != nil {
 			return err
@@ -131,14 +160,14 @@ func runRunner(args []string) error {
 	}
 	// Resolve credential authority before runtime can select, open, or replay
 	// a journal. Enrollment IDs and local defaults do not replace this read.
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).Identity(context.Background())
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeIdentity(context.Background(), proxyConfig.Enabled())
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}
 	if idSpecified && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	return runnerruntime.Run(runnerruntime.Config{ImageDockerEndpoint: *imageDockerEndpoint,
+	return runnerruntime.Run(runnerruntime.Config{ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,

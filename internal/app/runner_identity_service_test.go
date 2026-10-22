@@ -42,9 +42,10 @@ func TestCurrentRunnerIdentityRequiresCurrentPersistedAuthorityWithoutWrites(t *
 		t.Fatal(err)
 	}
 	identity, err := service.CurrentRunnerIdentity(ctx)
-	if err != nil || identity.RunnerID != before.ID {
+	if err != nil || identity.RunnerID != before.ID || !reflect.DeepEqual(identity.Capabilities, before.Capabilities) {
 		t.Fatalf("identity=%+v err=%v", identity, err)
 	}
+	identity.Capabilities[0] = "proxy_apply"
 	after, err := mem.GetRunnerByID(t.Context(), before.ID)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatalf("identity changed runner: before=%+v after=%+v err=%v", before, after, err)
