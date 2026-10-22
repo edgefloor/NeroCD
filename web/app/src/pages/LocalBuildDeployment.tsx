@@ -78,7 +78,6 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { setDenied(true); onDenied(); return; }
       if (!body) { setError("Unable to verify saved runtime configuration. No new deployment request was sent. Refresh access and try again."); return; }
       if (cause instanceof HostingDeploymentError && cause.code === "hosting_restore_held") { setRestoreHeld(true); setError(""); }
-      else if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setDenied(true); onDenied(); setError("Deployment permission denied. Reload to refresh project access before another action."); }
       else if (cause instanceof ApiError && cause.status === 409) { setConflict(true); setError("Deployment conflicts with current resource/source generations, exact artifact, placement, runner capability, or a retained request key. Refresh the resource and build history, review the exact successful build, and explicitly select it again. No generation, build, or request was changed automatically."); }
       else if (cause instanceof ApiError && cause.status === 400) { setConflict(true); setError("The server rejected these ports or readiness settings. Reopen this build to review a separate request."); }
       else setError("Deployment delivery is unconfirmed. The operation may already exist. Retry the identical request with its retained build, generations, settings, and key.");
