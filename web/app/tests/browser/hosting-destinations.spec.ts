@@ -25,7 +25,7 @@ async function consumeEnrollmentFromUI(page: Page, runnerID: string, shell = fal
   await form.getByLabel("Runner ID", { exact: true }).fill(runnerID);
   await form.getByLabel("Runner name", { exact: true }).fill(`Host ${runnerID}`);
   await form.getByLabel("Runner tags", { exact: true }).fill(`isolated-${runnerID}`);
-  await form.getByLabel("Runner capabilities", { exact: true }).fill(shell ? "compose-deploy,shell" : "compose-deploy");
+  await form.getByLabel("Runner capabilities", { exact: true }).fill(shell ? "shell" : "compose-deploy");
   const response = page.waitForResponse((result) => result.request().method() === "POST" && new URL(result.url()).pathname === "/api/v1/runner-enrollments");
   await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
   const created = await response; expect(created.status()).toBe(201);
