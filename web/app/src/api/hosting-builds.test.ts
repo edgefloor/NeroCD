@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { buildsQuery, buildQuery, cancelHostingBuild, requestHostingBuild, type HostingBuild } from "./hosting-builds";
+import { buildsQuery, buildQuery, getHostingBuildLogs, cancelHostingBuild, requestHostingBuild, type HostingBuild } from "./hosting-builds";
 const build: HostingBuild = { id: "build-one", project_id: "project", resource_id: "resource", state: "queued", revision: 1, created_by: "user", created_at: "", updated_at: "", snapshot: { resource_generation: 2, source: { source_id: "source", generation: 3, repository_url: "https://github.com/example/web.git", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } }, target: { binding_id: "binding", destination_id: "dest", server_id: "server", runner_id: "runner" } } };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 afterEach(() => vi.unstubAllGlobals());
@@ -20,3 +20,11 @@ test("query caches retain only whitelisted metadata and reject wrong scope", asy
   await expect(buildQuery("actor", "project", "resource", build.id).queryFn!({ signal: new AbortController().signal } as never)).rejects.toThrow("scope mismatch");
 });
 test("503 is preserved as an error rather than an empty successful history", async () => { vi.stubGlobal("fetch", vi.fn(async () => json({ error: "disabled" }, 503))); await expect(buildsQuery("actor", "project", "resource", 0).queryFn!({ signal: new AbortController().signal } as never)).rejects.toMatchObject({ status: 503 }); });
+
+test("output reads encode the build and preserve the server page without caching plaintext", async () => {
+  const page = { items: [], next_sequence: 7, terminal: true };
+  const fetch = vi.fn(async () => json(page)); vi.stubGlobal("fetch", fetch);
+  const signal = new AbortController().signal;
+  expect(await getHostingBuildLogs("build/one", 4, { signal })).toEqual(page);
+  expect(fetch).toHaveBeenCalledWith("/api/v1/hosting-builds/build%2Fone/logs?after_sequence=4&limit=200", expect.objectContaining({ method: "GET", credentials: "include", cache: "no-store", signal }));
+});

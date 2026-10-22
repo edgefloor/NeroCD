@@ -42,3 +42,10 @@ export function buildError(cause: unknown): string {
   }
   return "No confirmed response was received. The build may already exist; retry the identical request to recover it.";
 }
+
+export type HostingBuildLogItem = components["schemas"]["HostingBuildLogItem"];
+export type HostingBuildLogPage = components["schemas"]["HostingBuildLogPage"];
+// Output stays in the mounted viewer, never in the metadata query cache.
+export function getHostingBuildLogs(id: string, afterSequence: number, options?: Options): Promise<HostingBuildLogPage> {
+  return request<HostingBuildLogPage>(`${detailPath(id)}/logs`, { ...options, cache: "no-store", query: { after_sequence: afterSequence, limit: 200 } });
+}
