@@ -90,8 +90,8 @@ func (b *hostingEnvironmentOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-// createWithRuntimeEnvironment qualifies protected Docker stdin delivery. It is
-// deliberately not wired into Apply until runtime value authority is available.
+// createWithRuntimeEnvironment sends authorized runtime values through Docker stdin.
+// The caller supplies the current attempt and original delivery deadline.
 // A failure after launch can still have created a container. Callers must retain
 // that uncertain outcome and must not retry the mutation automatically.
 // Docker's trusted daemon administrator can inspect the resulting Config.Env.

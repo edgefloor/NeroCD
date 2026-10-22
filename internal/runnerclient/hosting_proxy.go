@@ -59,6 +59,18 @@ func (c Client) RuntimeCapabilitiesIdentity(ctx context.Context, proxyConfigured
 // explicit local execution modes. Omitted privateConfigured defaults to false;
 // legacy wrappers require local builds and private Git disabled.
 func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, buildConfigured, localBuildConfigured bool, privateConfigured ...bool) (string, error) {
+	if len(privateConfigured) > 1 {
+		return "", errors.New("invalid private Git configuration")
+	}
+	return c.RuntimeExecutionIdentityWithOptions(ctx, RuntimeExecutionOptions{Proxy: proxyConfigured, Build: buildConfigured, LocalBuild: localBuildConfigured, PrivateGit: len(privateConfigured) == 1 && privateConfigured[0]})
+}
+
+// RuntimeExecutionOptions selects explicitly configured local execution modes.
+type RuntimeExecutionOptions struct{ Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment bool }
+
+// RuntimeExecutionIdentityWithOptions checks every protected execution capability.
+func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options RuntimeExecutionOptions) (string, error) {
+	proxyConfigured, buildConfigured, localBuildConfigured := options.Proxy, options.Build, options.LocalBuild
 	var result proxyIdentityResponse
 	if err := c.get(ctx, "/api/v1/runners/identity", &result); err != nil {
 		return "", err
@@ -69,8 +81,8 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 	if result.RunnerID == "" || strings.TrimSpace(result.RunnerID) != result.RunnerID {
 		return "", errors.New("runner identity response did not include a valid runner_id")
 	}
-	private := len(privateConfigured) == 1 && privateConfigured[0]
-	if len(privateConfigured) > 1 || private && !buildConfigured {
+	private := options.PrivateGit
+	if private && !buildConfigured {
 		return "", errors.New("invalid private Git configuration")
 	}
 	proxyCapable, buildCapable, shellCapable, localBuildCapable, privateCapable := false, false, false, false, false
@@ -80,6 +92,15 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 		buildCapable = buildCapable || capability == domain.HostingBuildTaskType
 		localBuildCapable = localBuildCapable || capability == domain.RunTypeLocalBuildDeploy
 		shellCapable = shellCapable || capability == "shell"
+	}
+	environmentCap, imageCap, releaseCap := false, false, false
+	for _, capability := range result.Capabilities {
+		environmentCap = environmentCap || capability == domain.HostingRuntimeEnvironmentCapability
+		imageCap = imageCap || capability == domain.RunTypeImageDeploy
+		releaseCap = releaseCap || capability == domain.HostingReleasePortsCapability
+	}
+	if environmentCap != options.RuntimeEnvironment || environmentCap && (!imageCap || !releaseCap || shellCapable) {
+		return "", errors.New("authenticated runtime environment capabilities do not match explicit configuration")
 	}
 	if private != privateCapable {
 		return "", errors.New("authenticated private Git capability does not match explicit configuration")

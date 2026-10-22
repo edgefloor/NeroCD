@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingruntimeprotocol"
 	"nerocd/internal/runner"
 	"nerocd/internal/runnerclient"
 )
@@ -35,7 +36,7 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 	return nil
 }
 
-func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string, localEnabled ...bool) error {
+func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string, localEnabled bool, environmentConfig *RuntimeEnvironmentConfig) error {
 	mode := claim.Run.RunSpec.HostingMode
 	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe" && mode != "cleanup") || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
 		return errors.New("invalid typed image task")
@@ -50,8 +51,11 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		return err
 	}
 	local := hostingOperationUsesLocalBuild(op)
-	if local && (len(localEnabled) == 0 || !localEnabled[0]) || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy && !local {
+	if local && !localEnabled || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy && !local {
 		return errors.New("local artifact operation requires exact configured capability and source")
+	}
+	if mode == "deploy" && op.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) && environmentConfig == nil {
+		return errors.New("runtime environment requires explicit configuration")
 	}
 	engine, err := newImageEngine(endpoint)
 	if err != nil {
@@ -72,7 +76,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		return err
 	}
 	failBeforeApply := func() error {
-		_, err := journalHostingResult(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, reporter.WaitEmpty, local)
+		_, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, reporter.WaitEmpty, local, op.Snapshot.RuntimeConfiguration)
 		return err
 	}
 	if op.Release == nil {
@@ -89,6 +93,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		}
 		request := domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_prepared", a.LeaseID, a.Attempt, "release"), Release: release}
 		entry := runner.JournalHosting{ID: request.ReceiptID, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, supervisor), OperationID: a.OperationID, Phase: "prepared", Prepared: &request, CreatedAt: time.Now().UTC()}
+		markHostingRuntimeEntry(&entry, initialSnapshot.RuntimeConfiguration)
 		if _, err = journal.AppendHosting(entry); err != nil {
 			return err
 		}
@@ -129,10 +134,27 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	}
 	intentID := attemptMutationKey("hosting_intent", a.LeaseID, a.Attempt, "apply")
 	intent := runner.JournalHosting{ID: intentID, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, supervisor), OperationID: a.OperationID, Phase: "apply_intent", Plan: op.Plan, CreatedAt: time.Now().UTC()}
+	markHostingRuntimeEntry(&intent, op.Snapshot.RuntimeConfiguration)
+	intent.RuntimeEnvironment = runner.HostingJournalUsesRuntimeEnvironment(intent)
+	if op.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) {
+		intent.DeliveryID, err = newRuntimeDeliveryID()
+		if err != nil {
+			return err
+		}
+	}
 	// The durable local intent precedes admission. A lost admission response can
 	// never cause this attempt to silently forget possible external effects.
 	if _, err = journal.AppendHosting(intent); err != nil {
 		return err
+	}
+	deliveryDeadline := runtimeDeliveryDeadline(supervisor)
+	var environment *hostingruntimeprotocol.Environment
+	if intent.DeliveryID != "" {
+		environment, err = fetchHostingRuntimeEnvironment(supervisor, client, claim.Lease.RunnerID, domain.HostingRuntimeEnvironmentRequest{Authority: a, PlanHash: op.Plan.Hash, RuntimeConfiguration: op.Snapshot.RuntimeConfiguration, DeliveryID: intent.DeliveryID}, *environmentConfig, deliveryDeadline)
+		if err != nil {
+			return err
+		}
+		defer environment.Close()
 	}
 	var admitted domain.HostingOperation
 	if err = retryAttemptRequest(supervisor, func(ctx context.Context) error {
@@ -145,13 +167,19 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	if !admitted.MutationHold || admitted.Plan == nil || admitted.Plan.Hash != op.Plan.Hash {
 		return errors.New("hosting apply admission did not match plan")
 	}
-	result := engine.Apply(supervisor.Context(), op.ID, *op.Plan, func() error {
+	verifying := func() error {
 		return retryAttemptRequest(supervisor, func(ctx context.Context) error {
 			_, err := client.HostingStatus(ctx, domain.HostingStatusRequest{HostingAuthority: a, Phase: "verifying"})
 			return err
 		})
-	})
-	finished, err := journalHostingResult(supervisor, journal, client, a, claim.Lease, result, reporter.WaitEmpty, local)
+	}
+	var result domain.HostingResult
+	if environment != nil {
+		result = engine.ApplyWithRuntimeEnvironment(supervisor.Context(), op.ID, *op.Plan, environment, deliveryDeadline, verifying)
+	} else {
+		result = engine.Apply(supervisor.Context(), op.ID, *op.Plan, verifying)
+	}
+	finished, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, result, reporter.WaitEmpty, local, op.Snapshot.RuntimeConfiguration)
 	if err != nil {
 		return err
 	}
@@ -168,9 +196,14 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 }
 
 func journalHostingResult(supervisor *attemptSupervisor, journal *runner.AttemptJournal, client runnerclient.Client, a domain.HostingAuthority, lease domain.RunLease, result domain.HostingResult, drain func(context.Context) error, localBuild ...bool) (domain.HostingOperation, error) {
+	return journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, lease, result, drain, len(localBuild) > 0 && localBuild[0], domain.HostingRuntimeConfigurationRef{})
+}
+
+func journalHostingResultWithRuntimeEnvironment(supervisor *attemptSupervisor, journal *runner.AttemptJournal, client runnerclient.Client, a domain.HostingAuthority, lease domain.RunLease, result domain.HostingResult, drain func(context.Context) error, localBuild bool, ref domain.HostingRuntimeConfigurationRef) (domain.HostingOperation, error) {
 	request := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_result", a.LeaseID, a.Attempt, "result"), Result: result}
 	entry := runner.JournalHosting{ID: request.ReceiptID, Attempt: journalAttemptIdentity(a.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "result", Result: &request, CreatedAt: time.Now().UTC()}
-	entry.LocalBuild = len(localBuild) > 0 && localBuild[0]
+	entry.LocalBuild = localBuild
+	markHostingRuntimeEntry(&entry, ref)
 	if _, err := journal.AppendHosting(entry); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -456,6 +489,8 @@ func executeHostingCleanup(supervisor *attemptSupervisor, journal *runner.Attemp
 	}
 	intentID := attemptMutationKey("hosting_cleanup_intent", a.LeaseID, a.Attempt, "cleanup")
 	entry := runner.JournalHosting{ID: intentID, Attempt: journalAttemptIdentity(a.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "cleanup_intent", CleanupPlan: op.CleanupPlan, CreatedAt: time.Now().UTC()}
+	markHostingRuntimeEntry(&entry, op.CleanupPlan.Target.Snapshot.RuntimeConfiguration)
+	entry.RuntimeEnvironment = runner.HostingJournalUsesRuntimeEnvironment(entry)
 	if _, err = journal.AppendHosting(entry); err != nil {
 		return err
 	}
@@ -471,7 +506,7 @@ func executeHostingCleanup(supervisor *attemptSupervisor, journal *runner.Attemp
 		return errors.New("cleanup admission changed")
 	}
 	result := engine.Cleanup(supervisor.Context(), expected)
-	finished, err := journalHostingResult(supervisor, journal, client, a, lease, result, reporter.WaitEmpty, hostingOperationUsesLocalBuild(op))
+	finished, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, lease, result, reporter.WaitEmpty, hostingOperationUsesLocalBuild(op), op.CleanupPlan.Target.Snapshot.RuntimeConfiguration)
 	if err != nil {
 		return err
 	}

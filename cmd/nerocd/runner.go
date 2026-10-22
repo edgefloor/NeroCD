@@ -55,6 +55,7 @@ func runRunner(args []string) error {
 	proxySocket := fs.String("proxy-docker-socket", "", "absolute managed proxy Docker Unix socket path")
 	proxyProtocol := fs.String("proxy-protocol", "", "explicit managed proxy protocol managed-traefik.file.v1")
 	buildConfigFile := fs.String("build-config-file", "", "explicit owned mode0600 JSON build execution configuration; disabled when absent")
+	hostingRuntimeEnv := fs.Bool("hosting-runtime-env", false, "explicitly enable protected hosting runtime environment delivery over HTTPS")
 	localBuildDeploy := fs.Bool("local-build-deploy", false, "explicitly enable same-host local build artifact deployment")
 	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
@@ -108,6 +109,17 @@ func runRunner(args []string) error {
 	registrationCapabilities, err = runnerLocalBuildCapabilities(*localBuildDeploy, buildConfig != nil, proxyConfig.Enabled(), capabilitiesSpecified || buildConfig != nil && buildConfig.PrivateGit != nil, registrationCapabilities)
 	if err != nil {
 		return err
+	}
+	registrationCapabilities, err = runnerRuntimeEnvironmentCapabilities(*hostingRuntimeEnv, *execute, *completeStatus, capabilitiesSpecified, registrationCapabilities)
+	if err != nil {
+		return err
+	}
+	var runtimeEnvironment *runnerruntime.RuntimeEnvironmentConfig
+	if *hostingRuntimeEnv {
+		runtimeEnvironment = &runnerruntime.RuntimeEnvironmentConfig{}
+		if err := runnerclient.ValidateRuntimeEnvironmentServer(*server, runnerclient.RuntimeEnvironmentTransport{}); err != nil {
+			return err
+		}
 	}
 	if *pollInterval <= 0 {
 		return errors.New("runner --poll-interval must be greater than zero")
@@ -193,19 +205,19 @@ func runRunner(args []string) error {
 	}
 	// Resolve credential authority before runtime can select, open, or replay
 	// a journal. Enrollment IDs and local defaults do not replace this read.
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentity(context.Background(), proxyConfig.Enabled(), buildConfig != nil, *localBuildDeploy, buildConfig != nil && buildConfig.PrivateGit != nil)
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(context.Background(), runnerclient.RuntimeExecutionOptions{Proxy: proxyConfig.Enabled(), Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}
 	if (idSpecified || buildConfig != nil) && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	runtimeConfig := runnerruntime.Config{LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
+	runtimeConfig := runnerruntime.Config{RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,
 	}
-	if buildConfig != nil || *localBuildDeploy {
+	if buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		return runnerruntime.RunContext(ctx, runtimeConfig)
@@ -219,4 +231,46 @@ func validateRunnerSecretRoot(root string) error {
 		return errors.New("runner --secret-root must be an absolute path")
 	}
 	return nil
+}
+
+func runnerRuntimeEnvironmentCapabilities(enabled, execute bool, complete string, specified bool, capabilities []string) ([]string, error) {
+	has := func(name string) bool {
+		for _, c := range capabilities {
+			if c == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !enabled {
+		if has(domain.HostingRuntimeEnvironmentCapability) {
+			return nil, errors.New("hosting_runtime_env_v1 requires --hosting-runtime-env")
+		}
+		return capabilities, nil
+	}
+	if !execute || complete != "" {
+		return nil, errors.New("runtime environment requires --execute and forbids --complete-status")
+	}
+	if !specified {
+		var configured []string
+		for _, c := range capabilities {
+			if c != "shell" {
+				configured = append(configured, c)
+			}
+		}
+		capabilities = configured
+		if !has(domain.RunTypeImageDeploy) {
+			capabilities = append(capabilities, domain.RunTypeImageDeploy)
+		}
+		if !has(domain.HostingReleasePortsCapability) {
+			capabilities = append(capabilities, domain.HostingReleasePortsCapability)
+		}
+	}
+	if has("shell") || !has(domain.RunTypeImageDeploy) || !has(domain.HostingReleasePortsCapability) {
+		return nil, errors.New("runtime environment requires image_deploy and image_release_ports_v1 without shell")
+	}
+	if !has(domain.HostingRuntimeEnvironmentCapability) {
+		capabilities = append(capabilities, domain.HostingRuntimeEnvironmentCapability)
+	}
+	return capabilities, nil
 }
