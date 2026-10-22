@@ -3,26 +3,35 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
+	"fmt"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/runnerclient"
+	"nerocd/web"
 )
 
 type observationFixtureAgent struct {
@@ -241,6 +250,80 @@ func TestHostingObservationCompiledRunner(t *testing.T) {
 	if got := strings.TrimSpace(string(docker("inspect", "--format", `{{.Id}} {{index .Config.Labels "io.nerocd.binding"}}`, id))); got != id+" "+initial.BindingID {
 		t.Fatal("stop target identity unavailable")
 	}
+	if os.Getenv("NEROCD_OBSERVATION_BROWSER") == "1" {
+		browserAgent := agent
+		browserCurrent := initial
+		runHostingObservationBrowser(ctx, t, server, database, env, resource, initial, func(stage string) map[string]string {
+			switch stage {
+			case "stop":
+				docker("stop", "--time", "1", id)
+				waitStatus("browser verified exit", func(s domain.HostingRuntimeStatus) bool {
+					return s.Freshness == "fresh" && s.ContainerState == "exited" && s.ExitCode != nil
+				})
+			case "disconnect":
+				browserAgent.Stop(t)
+			case "confirm_stale":
+				stale := waitStatus("browser stale", func(s domain.HostingRuntimeStatus) bool {
+					return s.Freshness == "stale" && s.AgentReachability == "unknown"
+				})
+				if stale.ContainerState != "unknown" || stale.Readiness != "unknown" || stale.LastObservation == nil || stale.LastObservation.Observation.ContainerState != "exited" {
+					t.Fatal("browser stale status fabricated current evidence")
+				}
+			case "resume":
+				docker("start", id)
+				browserAgent = start()
+				waitStatus("browser resumed", func(s domain.HostingRuntimeStatus) bool {
+					return s.Freshness == "fresh" && s.Readiness == "ready" && s.ObservedContainerID == id
+				})
+			case "replace":
+				browserAgent.Stop(t)
+				client := runnerclient.New(control.URL, token)
+				client.HTTP = control.Client()
+				challenge, e := client.HostingObservationTargets(ctx, domain.HostingObservationTargetsInput{Limit: 4})
+				if e != nil || len(challenge.Targets) != 1 || challenge.Targets[0].ContainerID != id {
+					t.Fatal("browser old target challenge missing")
+				}
+				old := challenge.Targets[0]
+				setCapability(false)
+				browserCurrent = deploy("browser-replacement")
+				setCapability(true)
+				if !time.Now().Before(old.ExpiresAt) {
+					t.Fatal("browser replacement exceeded challenge window")
+				}
+				if _, e = client.ReportHostingObservation(ctx, domain.HostingRuntimeObservation{BindingID: old.BindingID, SampleID: old.SampleID, ContainerState: "running", Readiness: "ready"}); !runnerclient.HTTPStatus(e, http.StatusConflict) {
+					t.Fatal("browser old target report accepted")
+				}
+				waitStatus("browser changed target", func(s domain.HostingRuntimeStatus) bool {
+					return s.Reason == "target_changed" && s.CurrentContainerID == browserCurrent.Result.ContainerID
+				})
+			case "observe_replacement":
+				browserAgent = start()
+				waitStatus("browser replacement observed", func(s domain.HostingRuntimeStatus) bool {
+					return s.Freshness == "fresh" && s.Readiness == "ready" && s.ObservedContainerID == browserCurrent.Result.ContainerID
+				})
+			}
+			return map[string]string{"container_id": browserCurrent.Result.ContainerID, "operation_id": browserCurrent.ID}
+		})
+		browserAgent.Stop(t)
+		trace, e := os.ReadFile("/fixture/observation-commands")
+		if e != nil || len(trace) == 0 {
+			t.Fatal("browser collector command trace missing")
+		}
+		for _, action := range strings.Fields(string(trace)) {
+			if action != "info" && action != "inspect" && action != "ls" {
+				t.Fatal("browser collector attempted mutation")
+			}
+		}
+		if logs.contains("observation-env-never-inspected") || bytes.Contains(trace, []byte("observation-env-never-inspected")) {
+			t.Fatal("browser observer exposed workload environment")
+		}
+		current, e := server.app.HostingOperation(admin, browserCurrent.ID)
+		if e != nil || current.State != "succeeded" || current.MutationHold {
+			t.Fatal("browser collector changed deployment outcome")
+		}
+		t.Log("real browser and compiled collector: healthy, fixture-stopped/exited, disconnected stale unknown, resumed, replacement history, old target rejection; readonly command trace and canary checks passed")
+		return
+	}
 	docker("stop", "--time", "1", id)
 	stopped := waitStatus("verified exit", func(s domain.HostingRuntimeStatus) bool {
 		return s.Freshness == "fresh" && s.ContainerState == "exited" && s.ExitCode != nil
@@ -316,4 +399,130 @@ func TestHostingObservationCompiledRunner(t *testing.T) {
 		t.Fatal("collector settled or held deployment state")
 	}
 	t.Logf("compiled CLI observer: healthy -> fixture-only stop -> verified exited; SIGTERM joined; stale unknown after %.1fs; resumed; replacement rejects old report; readonly info/inspect/list trace only", stale.ServerTime.Sub(*stopped.ObservedAt).Seconds())
+}
+
+// Browser mode reuses the same collector and fixture-only lifecycle operations.
+// No runtime-status response is fabricated or rewritten by this fixture.
+func runHostingObservationBrowser(ctx context.Context, t *testing.T, server *Server, database *pgxpool.Pool, environment domain.ProjectEnvironment, resource domain.Resource, initial domain.HostingOperation, action func(string) map[string]string) {
+	t.Helper()
+	origin := os.Getenv("NEROCD_OBSERVATION_BROWSER_ORIGIN")
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed == nil {
+		t.Fatal("invalid observation browser origin")
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port < 1 || port > 65535 || parsed.Scheme != "http" || parsed.Host != "127.0.0.1:"+strconv.Itoa(port) || origin != "http://"+parsed.Host {
+		t.Fatal("browser fixture requires an exact loopback HTTP origin")
+	}
+	admin := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+	owner, err := server.app.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: "status-owner@example.local", Name: "Status Fixture Owner", Password: "status-browser-fixture-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range []app.ProjectMemberInput{{ProjectID: environment.ProjectID, Email: owner.Email, Role: "owner"}, {ProjectID: environment.ProjectID, Email: "viewer@example.local", Role: "viewer"}} {
+		if _, err = server.app.UpsertProjectMember(admin, member); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = database.Exec(ctx, `UPDATE users SET global_role='user' WHERE id=$1`, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	hiddenProject, err := server.app.CreateProject(admin, app.ProjectInput{Name: "hidden observation fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hiddenEnvironment, err := server.app.CreateProjectEnvironment(admin, app.ProjectEnvironmentInput{ProjectID: hiddenProject.ID, Name: "hidden"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hiddenResource, err := server.app.CreateResource(admin, app.ResourceInput{ProjectID: hiddenProject.ID, ProjectEnvironmentID: hiddenEnvironment.ID, Name: "hidden status", Kind: "application", Source: resource.Source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	browserAPI := NewServerWithConfig(server.app, slog.Default(), web.Static(), ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
+	browserCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	nonce := make([]byte, 16)
+	if _, err = rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	prefix := "/api/v1/fixture/observation/" + hex.EncodeToString(nonce)
+	type stepRequest struct {
+		name string
+		done chan map[string]string
+	}
+	steps := make(chan stepRequest)
+	done := make(chan struct{})
+	var finish sync.Once
+	ownerOnly := browserAPI.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, err := server.app.CurrentPrincipal(r.Context())
+		if err != nil || principal.ID != owner.ID || r.Method != http.MethodPost || r.Header.Get("Origin") != origin {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.URL.Path == prefix+"/complete" {
+			w.WriteHeader(http.StatusNoContent)
+			finish.Do(func() { close(done) })
+			return
+		}
+		name, ok := strings.CutPrefix(r.URL.Path, prefix+"/step/")
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		step := stepRequest{name: name, done: make(chan map[string]string, 1)}
+		select {
+		case steps <- step:
+		case <-r.Context().Done():
+			return
+		case <-browserCtx.Done():
+			return
+		}
+		select {
+		case result := <-step.done:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(result)
+		case <-r.Context().Done():
+		case <-browserCtx.Done():
+		}
+	}))
+	exposed := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, prefix+"/") {
+			ownerOnly.ServeHTTP(w, r)
+			return
+		}
+		browserAPI.ServeHTTP(w, r)
+	}))
+	listener, err := net.Listen("tcp", "0.0.0.0:18080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exposed.Listener = listener
+	exposed.Start()
+	t.Cleanup(exposed.Close)
+	metadata, err := json.Marshal(map[string]string{"origin": origin, "project_id": environment.ProjectID, "environment": environment.Name, "resource_id": resource.ID, "hidden_resource_id": hiddenResource.ID, "initial_container_id": initial.Result.ContainerID, "initial_operation_id": initial.ID, "complete_path": prefix + "/complete", "step_path": prefix + "/step/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("OBSERVATION_BROWSER_READY %s\n", metadata)
+	expected := []string{"stop", "disconnect", "confirm_stale", "resume", "replace", "observe_replacement"}
+	position := 0
+	for {
+		select {
+		case <-browserCtx.Done():
+			t.Fatal("observation browser fixture timed out")
+		case <-done:
+			if position != len(expected) {
+				t.Fatal("observation browser journey ended before required stages")
+			}
+			return
+		case step := <-steps:
+			if position >= len(expected) || step.name != expected[position] {
+				t.Fatal("observation browser requested an unexpected lifecycle stage")
+			}
+			result := action(step.name)
+			position++
+			step.done <- result
+		}
+	}
 }

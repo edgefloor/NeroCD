@@ -38,3 +38,37 @@ Preserve the complete command output as evidence, including failures, binary
 hashes, fixture identities, schema inventories, and cleanup results. A passing
 gate is evidence for its exact source and binaries; it is not production
 acceptance.
+
+## Real browser qualification
+
+Build the UI before compiling the gate, then enable its browser mode:
+
+```sh
+bun run --cwd web/app build
+NEROCD_OBSERVATION_BROWSER=1 bash acceptance/runtime-hosting-observation/gate.sh
+```
+
+This mode also requires Bun, Node.js, and the existing Playwright Chromium
+installation. It serves the freshly embedded `web.Static` and real API through
+an ephemeral host-loopback port. The collector keeps its test-CA TLS transport.
+The browser uses seeded owner and viewer accounts and an existing fixture
+deployment; it does not qualify account onboarding or fresh source builds.
+Only reference identifiers pass through the fixture pipe. Traces and automatic
+screenshots are disabled so sign-in credentials do not enter browser artifacts.
+The four explicit screenshots contain only the runtime status section.
+
+The browser uses keyboard refresh at widths 320, 390, 430, and 1440 and checks
+overflow. It reads actual status responses through healthy, stopped and exited,
+disconnected and stale, resumed, and replaced container states. Temporary browser
+network disconnection verifies that local freshness expires without a successful
+response. No runtime-status response is mocked. It checks viewer reads,
+unauthenticated and cross-project denial, and the absence of status writes.
+
+Fixture-only POST endpoints sequence the lifecycle actions and completion. They
+require the seeded owner session and exact loopback Origin. Viewer sessions and
+another Origin cannot invoke them. They are compiled only in the integration
+test. Completion and bounded cancellation release the fixture after browser
+failure. To exercise that cleanup path deliberately, add
+`NEROCD_OBSERVATION_BROWSER_FAIL_AFTER_LOGIN=1`; the command must fail and still
+report removal of its owned containers, image, and schema. The original command
+without browser mode remains the collector-only gate.
