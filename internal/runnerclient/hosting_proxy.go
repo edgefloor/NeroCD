@@ -43,25 +43,35 @@ func (c Client) ProxyIdentity(ctx context.Context) (string, error) {
 	return c.RuntimeIdentity(ctx, true)
 }
 
-// RuntimeIdentity checks authenticated capabilities against local proxy enablement.
-// Legacy identity responses remain valid only when proxy execution is disabled.
+// RuntimeIdentity preserves the proxy-only startup contract and requires build
+// execution to be disabled. Build-capable runners need explicit build validation.
 func (c Client) RuntimeIdentity(ctx context.Context, proxyConfigured bool) (string, error) {
+	return c.RuntimeCapabilitiesIdentity(ctx, proxyConfigured, false)
+}
+
+// RuntimeCapabilitiesIdentity checks exact persisted proxy/build capabilities
+// against explicit local configuration. Legacy responses require both disabled.
+func (c Client) RuntimeCapabilitiesIdentity(ctx context.Context, proxyConfigured, buildConfigured bool) (string, error) {
 	var result proxyIdentityResponse
 	if err := c.get(ctx, "/api/v1/runners/identity", &result); err != nil {
 		return "", err
 	}
 	// Preserve Identity's established ID contract and registration's opaque
-	// capability names. Only the exact persisted proxy_apply value grants the
-	// additional local execution capability; duplicates do not add authority.
+	// capability names. Only exact persisted proxy/build names participate in
+	// local configuration checks; duplicates do not change those checks.
 	if result.RunnerID == "" || strings.TrimSpace(result.RunnerID) != result.RunnerID {
 		return "", errors.New("runner identity response did not include a valid runner_id")
 	}
-	capable := false
+	proxyCapable, buildCapable := false, false
 	for _, capability := range result.Capabilities {
-		capable = capable || capability == domain.RunTypeProxyApply
+		proxyCapable = proxyCapable || capability == domain.RunTypeProxyApply
+		buildCapable = buildCapable || capability == domain.HostingBuildTaskType
 	}
-	if capable != proxyConfigured {
+	if proxyCapable != proxyConfigured {
 		return "", errors.New("authenticated proxy_apply capability does not match explicit local proxy configuration")
+	}
+	if buildCapable != buildConfigured {
+		return "", errors.New("authenticated hosting_build_v1 capability does not match explicit local build configuration")
 	}
 	return result.RunnerID, nil
 }
