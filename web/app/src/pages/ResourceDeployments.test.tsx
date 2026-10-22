@@ -8,7 +8,7 @@ import { ResourceDeployments } from "./ResourceDeployments";
 
 const resource: Resource = { id: "resource", project_id: "project", project_environment_id: "env", name: "Web", kind: "application", source: { kind: "image", image: { reference: "team/web:1" } }, generation: 1, created_by: "user", created_at: "", updated_at: "" };
 const binding = { id: "binding", resource_id: "resource", destination_id: "dest", runtime_namespace: "ncd_resource", created_by: "user", created_at: "" };
-const operation: HostingOperation = { id: "hop_one", project_id: "project", resource_id: "resource", binding_id: "binding", state: "queued", snapshot: { resource_id: "resource", resource_generation: 1, image_reference: "team/web:1", binding_id: "binding", destination_id: "dest", server_id: "server", runner_id: "runner", runtime_namespace: "ncd_resource", container_port: 80, host_port: 8080, readiness: { path: "/", timeout_seconds: 30 }, policy_version: "public-image.loopback.v1" }, mutation_hold: false, reconcile_requested: false, created_by: "user", created_at: "2026-10-22T10:00:00Z", updated_at: "2026-10-22T10:00:00Z" };
+const operation: HostingOperation = { id: "hop_one", project_id: "project", resource_id: "resource", binding_id: "binding", state: "queued", snapshot: { resource_id: "resource", resource_generation: 1, image_reference: "team/web:1", binding_id: "binding", destination_id: "dest", server_id: "server", runner_id: "runner", runtime_namespace: "ncd_resource", container_port: 80, host_port: 8080, readiness: { path: "/", timeout_seconds: 30 }, policy_version: "public-image.loopback.v1" }, restore_ownership_held: false, mutation_hold: false, reconcile_requested: false, created_by: "user", created_at: "2026-10-22T10:00:00Z", updated_at: "2026-10-22T10:00:00Z" };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const page = (items: HostingOperation[] = [], offset = 0, total = items.length) => ({ items, count: items.length, total, limit: 20, offset });
 let client: QueryClient;
@@ -37,7 +37,7 @@ async function request() {
 }
 function acknowledge() { fireEvent.click(screen.getByLabelText(/I understand that replacing/)); }
 test("viewer reads persisted history and results without request, cancel, or reconcile controls", async () => {
-  backend((url) => url.includes("/deployments") ? json(page([{ ...operation, state: "succeeded", result: { outcome: "applied", ready: true, restored: false, uncertain: false } }])) : url.includes("/hosting-operations/") ? json({ ...operation, state: "succeeded", result: { outcome: "applied", ready: true, restored: false, uncertain: false } }) : undefined);
+  backend((url) => url.includes("/deployments") ? json(page([{ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }])) : url.includes("/hosting-operations/") ? json({ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }) : undefined);
   setup("viewer"); fireEvent.click(await screen.findByRole("button", { name: "View operation hop_one" }));
   await screen.findByText("Readiness recorded at completion: passed.");
   expect(screen.queryByRole("form")).toBeNull();
@@ -73,6 +73,17 @@ test.each(["disconnect", "503"])("%s retains exactly the same request body and k
   const writes = fetch.mock.calls.filter(([, options]) => options.method === "POST");
   expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
 });
+test("rapid duplicate submissions cannot issue separate deployment intents", async () => {
+  let resolve!: (response: Response) => void;
+  const fetch = backend((url, options) => url.includes("/deployments") && options.method === "POST" ? new Promise<Response>((done) => { resolve = done; }) : undefined);
+  setup(); acknowledge();
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request image deployment" }).disabled).toBe(false));
+  const form = screen.getByRole("form", { name: "Deploy image for Web" });
+  fireEvent.submit(form); fireEvent.submit(form);
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1);
+  await act(async () => resolve(json(operation, 202)));
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+});
 test("409 preserves settings, refetches generation and history, then requires an explicit separate intent", async () => {
   let count = 0;
   const fetch = backend((url, options) => url.includes("/deployments") && options.method === "POST" && ++count === 1 ? json({ code: "conflict", error: "conflict" }, 409) : undefined);
@@ -106,7 +117,7 @@ test.each([["owner", [], true], ["maintainer", [], false], ["", ["system_admin"]
 });
 test("post-admission cancellation keeps uncertainty and mutation hold visible", async () => {
   let canceled = false;
-  const applying = { ...operation, state: "applying", mutation_hold: true };
+  const applying: HostingOperation = { ...operation, state: "applying", mutation_hold: true };
   const fetch = backend((url) => url.endsWith("/cancel") ? (canceled = true, json({ ...applying, state: "cancel_requested" })) : url.includes("/hosting-operations/") ? json(canceled ? { ...applying, state: "cancel_requested" } : applying) : url.includes("/deployments") ? json(page([applying])) : undefined);
   setup(); fireEvent.click(await screen.findByRole("button", { name: "View operation hop_one" }));
   fireEvent.click(await screen.findByRole("button", { name: "Request cancellation" }));
@@ -135,4 +146,31 @@ test("late mutation response cannot select an operation after switching project 
   expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
   expect(screen.queryByText("hop_one")).toBeNull();
   expect(screen.getByLabelText<HTMLInputElement>(/I understand that replacing/).checked).toBe(false);
+});
+test("restore-held admission preserves input without a generation or retry flow", async () => {
+  const fetch = backend((url, options) => url.includes("/deployments") && options.method === "POST" ? json({ code: "hosting_restore_held", error: "restored ownership is held" }, 409) : undefined);
+  setup(); fireEvent.change(screen.getByLabelText("Runner-local host port"), { target: { value: "9081" } }); acknowledge(); await request();
+  await screen.findByText(/Recovery proof is pending/);
+  expect(screen.getByLabelText<HTMLInputElement>("Runner-local host port").value).toBe("9081");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deployment blocked after restore" }).disabled).toBe(true);
+  expect(screen.queryByRole("button", { name: "Retry identical deployment request" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Use reviewed configuration for a new request" })).toBeNull();
+  expect(fetch.mock.calls.some(([url]) => url === "/api/v1/resources/resource")).toBe(false);
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1);
+});
+test("restored ownership is separate from mutation hold and observation never promises an unlock", async () => {
+  const held = { ...operation, state: "succeeded" as const, restore_ownership_held: true, mutation_hold: false };
+  backend((url) => url.includes("/deployments") ? json(page([held])) : url.includes("/hosting-operations/") ? json(held) : undefined);
+  setup("owner"); fireEvent.click(await screen.findByRole("button", { name: "View operation hop_one" }));
+  await screen.findByText(/Trusted local recovery proof is pending/);
+  expect(screen.queryByText(/Mutation hold retained/)).toBeNull();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deployment blocked after restore" }).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Request reconciliation" })).toBeTruthy();
+});
+test("known mutation hold pauses a new request without claiming restoration or clearing the hold", async () => {
+  const held: HostingOperation = { ...operation, state: "reconciliation_required", mutation_hold: true };
+  backend((url) => url.includes("/deployments") ? json(page([held])) : undefined); setup();
+  await screen.findByText(/Deployment requests are paused/); acknowledge();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deployment waiting for settlement" }).disabled).toBe(true);
+  expect(screen.queryByText(/Recovery proof is pending/)).toBeNull();
 });

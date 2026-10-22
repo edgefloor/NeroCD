@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { ApiError } from "./errors";
-import { cancelHostingOperation, getHostingOperation, hostingDeploymentsQuery, hostingOperationQuery, listHostingDeployments, reconcileHostingOperation, requestHostingDeployment } from "./hosting-deployments";
+import { cancelHostingOperation, getHostingOperation, HostingDeploymentError, hostingDeploymentsQuery, hostingOperationQuery, listHostingDeployments, reconcileHostingOperation, requestHostingDeployment } from "./hosting-deployments";
 
 afterEach(() => vi.unstubAllGlobals());
 const input = { expected_generation: 3, idempotency_key: "stable-request", container_port: 80, host_port: 8080, readiness: { path: "/health", timeout_seconds: 30 } };
@@ -36,4 +36,9 @@ test("foreign operation and history responses cannot enter a resource's query da
 test.each([400, 401, 403, 404, 409, 503])("HTTP %s remains an actionable error rather than an empty history", async (status) => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "conflict", error: "unavailable" }), { status })));
   await expect(listHostingDeployments("r", { limit: 20, offset: 0 })).rejects.toBeInstanceOf(ApiError);
+});
+test("deployment admission retains the restore hold code independently of generic conflict", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "hosting_restore_held", error: "recovery proof pending" }), { status: 409, headers: { "X-Request-ID": "restore-request" } })));
+  await expect(requestHostingDeployment("r", input)).rejects.toMatchObject({ status: 409, code: "hosting_restore_held", requestID: "restore-request" });
+  expect(new HostingDeploymentError(409, "held", null, "hosting_restore_held")).toBeInstanceOf(ApiError);
 });

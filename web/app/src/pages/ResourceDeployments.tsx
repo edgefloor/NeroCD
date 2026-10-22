@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
 import { getResource, type Resource } from "@/api/hosting";
 import { resourceBindingQuery } from "@/api/destinations";
-import { cancelHostingOperation, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, reconcileHostingOperation, requestHostingDeployment, type HostingDeploymentInput, type HostingOperation } from "@/api/hosting-deployments";
+import { cancelHostingOperation, HostingDeploymentError, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, reconcileHostingOperation, requestHostingDeployment, type HostingDeploymentInput } from "@/api/hosting-deployments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageNavigation } from "@/components/common/PageNavigation";
@@ -73,6 +73,7 @@ function OperationDetail({ projectID, resourceID, operationID, writable, owner, 
         {operation.reconciliation_run_id ? <><dt>Observation run</dt><dd>{operation.reconciliation_run_id}</dd></> : null}
       </dl>
       {operation.mutation_hold ? <p role="status">Mutation hold retained. Another workload change must wait for the server to settle this operation.</p> : null}
+      {operation.restore_ownership_held ? <p role="alert">Deployment admission blocked after platform restore. Trusted local recovery proof is pending. Reconciliation can observe the target but cannot release restored ownership; there is no administrator unlock action.</p> : null}
       {operation.state === "cancel_requested" || operation.state === "reconciliation_required" ? <p className="text-sm">Apply may have started. Cancellation is not proof of rollback or a stopped workload. An owner can request reconciliation.</p> : null}
       {operation.result ? <section className="space-y-1 text-sm" aria-label="Recorded deployment result">
         <h6 className="font-medium">Recorded deployment result</h6><p>Outcome: {operation.result.outcome}</p>
@@ -116,12 +117,15 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   const [error, setError] = useState("");
   const [refreshError, setRefreshError] = useState("");
   const [differentIntent, setDifferentIntent] = useState(false);
+  const [restoreRejected, setRestoreRejected] = useState(false);
   const binding = useQuery(resourceBindingQuery(resource.project_id, resource.id));
   const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset));
   const base = reviewed ?? resource;
+  const restoreHeld = restoreRejected || Boolean(history.data?.items.some((operation) => operation.restore_ownership_held));
+  const mutationHeld = Boolean(history.data?.items.some((operation) => operation.mutation_hold));
   const failed = binding.isError || history.isError || principal.isError || members.isError;
   const unavailable = blocked || failed || binding.isPending || history.isPending || principal.isPending || members.isPending;
-  const canWrite = writable && !unavailable;
+  const canWrite = writable && !unavailable && !mutationHeld;
   const refreshHistory = async () => { await client.invalidateQueries({ queryKey: hostingDeploymentKeys.history(resource.project_id, resource.id) }); };
   async function reviewCurrent() {
     setRefreshError(""); setCurrent(undefined);
@@ -135,7 +139,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!canWrite || submitting.current || !binding.data || conflict || !acknowledged) return;
+    if (!canWrite || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
     submitting.current = true;
     const input = attempt ?? { expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), host_port: Number(hostPort), readiness: { path, timeout_seconds: Number(timeout) } };
     setAttempt(input); setBusy(true); setError("");
@@ -147,8 +151,12 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
       await refreshHistory();
     } catch (cause) {
       if (!active.current) return;
-      setError(deploymentError(cause));
-      if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await reviewCurrent(); }
+      if (cause instanceof HostingDeploymentError && cause.code === "hosting_restore_held") {
+        setRestoreRejected(true); setError("");
+      } else {
+        setError(deploymentError(cause));
+        if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await reviewCurrent(); }
+      }
     } finally { submitting.current = false; if (active.current) setBusy(false); }
   }
   function newIntent(next?: Resource) {
@@ -157,6 +165,8 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
     <h5 className="font-medium">Image deployments</h5>
+    {restoreHeld ? <p role="alert">Deployment admission blocked after platform restore. Recovery proof is pending; refreshing configuration, retrying, or requesting reconciliation cannot release restored ownership. Your settings are preserved.</p> : null}
+    {mutationHeld ? <p role="status">Deployment requests are paused while a recorded mutation hold is retained. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
     {failed ? <div className="space-y-2"><p role="alert">Unable to refresh deployment information. Draft settings are preserved; actions are paused.</p><Button type="button" variant="outline" onClick={() => { void binding.refetch(); void history.refetch(); if (principal.isError) void principal.refetch(); if (members.isError) void members.refetch(); }}>Retry deployment information</Button></div> : null}
     {history.isPending ? <p role="status">Loading deployment history...</p> : null}
     <Button type="button" variant="outline" disabled={history.isFetching || busy} onClick={() => void history.refetch()}>Refresh deployment history</Button>
@@ -175,15 +185,15 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
       </div>
       <p className="text-xs text-muted-foreground">The readiness path must be relative to the local origin, such as /health. This is a generic HTTP check without revision-specific response headers. Port 127.0.0.1:{hostPort} is local to the runner, not a public application URL.</p>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={(event) => setAcknowledged(event.target.checked)} /><span>I understand that replacing a workload on this fixed host port interrupts service while the old container stops and the new container is verified.</span></label>
-      <Button type="submit" className="h-auto whitespace-normal" disabled={!canWrite || busy || !binding.data || !acknowledged || conflict}>{busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
-      {attempt ? <p className="break-all text-xs">Request key: {attempt.idempotency_key}. Settings and generation {attempt.expected_generation} are locked for an identical retry.</p> : null}
+      <Button type="submit" className="h-auto whitespace-normal" disabled={!canWrite || busy || !binding.data || !acknowledged || conflict || restoreHeld}>{restoreHeld ? "Deployment blocked after restore" : mutationHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
+      {attempt ? <p className="break-all text-xs">Request key: {attempt.idempotency_key}. Submitted settings and generation {attempt.expected_generation} are retained{restoreHeld ? ". Deployment admission remains blocked." : " for an identical retry."}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
-      {attempt ? <section className="space-y-2" aria-label="Review deployment request">
+      {attempt && !restoreHeld ? <section className="space-y-2" aria-label="Review deployment request">
         <Button type="button" variant="outline" disabled={busy} onClick={() => void reviewCurrent()}>Refresh configuration and history</Button>
         {current ? <p className="break-all text-sm">Current saved configuration: generation {current.generation} · {current.source.image.reference}.</p> : null}
         {refreshError ? <p role="alert">{refreshError}</p> : null}
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={differentIntent} disabled={busy} onChange={(event) => setDifferentIntent(event.target.checked)} /><span>I reviewed history and understand the earlier request may already exist. I intend a separate request with the current configuration and a new request key.</span></label>
-        <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={busy || !current || !differentIntent || unavailable} onClick={() => newIntent(current)}>Use reviewed configuration for a new request</Button>
+        <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={busy || !current || !differentIntent || unavailable || mutationHeld} onClick={() => newIntent(current)}>Use reviewed configuration for a new request</Button>
         <p className="text-xs text-muted-foreground">This unlocks settings and requires a new interruption acknowledgment. It never deploys automatically.</p>
       </section> : null}
     </form> : <p className="text-xs text-muted-foreground">Project maintainer access is required to request or cancel deployments.</p>}

@@ -11,6 +11,13 @@ runner with both capabilities. Use the file-based onboarding instructions in
 The runner host needs NeroCD, Docker Engine, and Docker Compose. Preserve its
 credential, work, and journal files, and enable execution with `--execute`.
 Server registration alone does not verify that these prerequisites are ready.
+Image execution uses the local Docker Unix socket, defaulting to
+`unix:///var/run/docker.sock`. If the host uses a different local socket, pass
+its explicit path with `--image-docker-endpoint unix:///absolute/path/to/docker.sock`.
+For subsequent runner starts, omit `--enrollment-file` after its one-time file
+has been consumed. Continue using the same `--credential-file`, work directory,
+and journal directory. Keep the permanent credential out of browser inputs and
+command arguments.
 
 ## Request deployment
 
@@ -76,3 +83,17 @@ reconciliation. It schedules a separate observation against the recorded target;
 it does not authorize replaying a deployment. The UI shows the observation run
 separately from the original deployment run and retains the distinction between
 the recorded deployment result and observation requests.
+
+## Restored ownership remains blocked
+
+After restoring the platform database, a binding can retain a separate restored
+ownership hold, including when it had no operation before the backup. Deployment
+admission returns `hosting_restore_held` until trusted local recovery proof can
+be supported. The UI preserves the submitted settings and shows the blocked
+recovery state. This is not a configuration-generation conflict.
+
+`restore_ownership_held` is independent of `mutation_hold`. A read-only
+reconciliation can observe the target, but cannot clear restored ownership or
+resume deployment admission. This image deployment workflow has no administrator
+unlock action. Do not repeatedly resubmit or replace the request key to bypass
+the hold.
