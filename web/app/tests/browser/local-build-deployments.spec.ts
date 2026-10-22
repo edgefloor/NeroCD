@@ -15,6 +15,8 @@ test("actual public build to local deployment and settled HTTPS route is availab
   test.skip(!process.env.NEROCD_LOCAL_BUILD_BROWSER_META, "requires NEROCD_LOCAL_BUILD_BROWSER=1 acceptance/runtime-hosting-local-build/gate.sh");
   test.setTimeout(480_000);
   const meta = JSON.parse(process.env.NEROCD_LOCAL_BUILD_BROWSER_META!) as { origin: string; project_id: string; resource_id: string; environment: string; complete_path: string };
+  const genericLogRequests: string[] = [];
+  page.on("request", (request) => { if (/\/runs\/[^/]+\/(logs|events)/.test(new URL(request.url()).pathname)) genericLogRequests.push(request.url()); });
   await signIn(page); await page.setViewportSize({ width: 320, height: 1000 });
   async function openResource(target: Page) {
     await target.goto("/projects");
@@ -28,9 +30,23 @@ test("actual public build to local deployment and settled HTTPS route is availab
   await builds.getByLabel(/I reviewed this exact public Git source/).check();
   const buildResponse = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}/builds`);
   await builds.getByRole("button", { name: "Request public Git build", exact: true }).focus(); await page.keyboard.press("Enter");
-  expect((await buildResponse).status()).toBe(202);
+  const createdBuild = await buildResponse; expect(createdBuild.status()).toBe(202);
+  const selectedBuild = (await createdBuild.json() as { build: { id: string } }).build;
   const detail = builds.getByRole("region", { name: "Build operation detail", exact: true });
   await expect(detail.getByText("Succeeded", { exact: true })).toBeVisible({ timeout: 180_000 });
+  const logsPath = `/api/v1/hosting-builds/${selectedBuild.id}/logs`;
+  const outputResponse = page.waitForResponse((r) => new URL(r.url()).pathname === logsPath);
+  await detail.getByRole("button", { name: "Show build output", exact: true }).focus(); await page.keyboard.press("Enter");
+  const output = await outputResponse; expect(output.status()).toBe(200);
+  expect(new URL(output.url()).search).toBe("?after_sequence=0&limit=200");
+  const persisted = await output.json() as { items: { sequence: number; component: string; stream: string; message: string }[] };
+  expect(persisted.items.length).toBeGreaterThan(0);
+  const outputRows = detail.getByRole("list", { name: "Build output rows", exact: true });
+  for (const item of persisted.items) {
+    const rendered = outputRows.getByRole("listitem").filter({ hasText: `Sequence ${item.sequence} ·` });
+    await expect(rendered.locator("pre")).toHaveText(item.message);
+    await expect(rendered).toContainText(`component ${item.component || "unspecified"} · stream ${item.stream}`);
+  }
   const form = detail.getByRole("form", { name: "Deploy selected build", exact: true });
   await form.getByLabel("Build readiness timeout in seconds", { exact: true }).fill("10");
   await form.getByLabel(/I reviewed this exact successful build/).check();
@@ -64,6 +80,8 @@ test("actual public build to local deployment and settled HTTPS route is availab
   await expect(routeArticle.getByText("Trusted HTTPS readiness recorded", { exact: true }).locator("+ dd")).toHaveText("ready", { timeout: 120_000 });
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
+    await expect(outputRows).toBeVisible();
+    await expect(outputRows.getByRole("listitem").first().locator("pre")).toHaveCSS("white-space", "pre-wrap");
     await expect(operationDetail.getByText("Recorded artifact image ID", { exact: true })).toBeVisible();
     await expect(routeArticle.getByText("local.example.test/", { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -76,6 +94,9 @@ test("actual public build to local deployment and settled HTTPS route is availab
     await expect(read.getByRole("button", { name: "Deploy selected build", exact: true })).toHaveCount(0);
     const denied = await viewer.request.post(path, { headers: { Origin: meta.origin, "X-NeroCD-CSRF": "1" }, data: firstBody }); expect(denied.status()).toBe(403);
   } finally { await context.close(); }
+  expect(genericLogRequests).toEqual([]);
+  await detail.getByRole("button", { name: "Close build output", exact: true }).focus(); await page.keyboard.press("Enter");
+  await expect(outputRows).toHaveCount(0);
   // Only terminates the fixture test after assertions, never mutates app state.
   expect((await page.request.post(meta.complete_path, { headers: { Origin: meta.origin } })).status()).toBe(204);
 });

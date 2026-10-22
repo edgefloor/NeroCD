@@ -1,8 +1,8 @@
 # Durable hosting build logs
 
 The server accepts fenced nonsecret build output at
-`POST /api/v1/runners/builds/events`. This backend does not install a runner log
-adapter, streaming transport, or log viewer. Those are separate integrations.
+`POST /api/v1/runners/builds/events`. The resource build detail offers an opt-in viewer for persisted build output.
+Runner delivery and streaming transport are separate from this read interface.
 Existing source/build execution and completion contracts remain unchanged.
 Generic runner event and scalar log endpoints now reject build tasks, including
 nested build authority fields. A client must use the typed endpoint for build
@@ -94,3 +94,26 @@ target, enrollment, grant, cancellation and database-time lease authority after
 all potentially blocking inserts. Legacy append paths acquire the task before
 the log lock, matching completion and retention serialization. PostgreSQL is
 required; memory-backed typed log operations return unavailable before writing.
+
+## Resource build output viewer
+
+Select a build in the resource's Public Git builds section, then choose **Show
+build output**. Project viewers can read output under their current access.
+The viewer reads only the selected build's typed log endpoint. It shows server
+sequence, source component, stream, recorded time, optional source time, and
+plain message text. HTML and ANSI escapes are not interpreted.
+
+An open visible viewer reads one page every three seconds, with at most one read
+in flight. Each read uses the previous server `next_sequence`, with a 200-row
+limit. Terminal output stops polling after the final retained page. Window focus,
+visibility changes, and **Refresh build output** revalidate current access and
+output. A failed read pauses polling until **Retry build output**; the cursor
+remains unchanged. Invalid cursor or page data also pauses reads.
+
+Incomplete server history, a retention gap, additional server pages, shortened
+messages, and local window trimming have separate notices. The local window
+holds at most 500 complete rows and 1 MiB of UTF-8 row data. **Close build
+output** removes this plaintext from the mounted viewer. Reopening starts at
+sequence zero. Output is not stored in the metadata query cache. Changing actor,
+project, resource, or build, losing parent access, or receiving 401, 403, or 404
+also removes displayed plaintext and aborts outstanding reads.
