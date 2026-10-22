@@ -149,8 +149,14 @@ func TestPostgresHostingBuildDeploymentRollbackAndCurrentGenerations(t *testing.
 	if _, err = configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 1, next, destinationEvent("local-source-changed")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.pg.RequestHostingBuildDeployment(ctx, "replay-stale", f.src.ResourceID, "usr_bootstrap", in, destinationEvent("stale")); !errors.Is(err, store.ErrConflict) {
-		t.Fatal("replay bypassed source generation", err)
+	replayed, replayErr := f.pg.RequestHostingBuildDeployment(ctx, "replay-stale", f.src.ResourceID, "usr_bootstrap", in, destinationEvent("stale"))
+	if replayErr != nil || replayed.ID != op.ID || replayed.Snapshot != op.Snapshot {
+		t.Fatal("exact replay replaced historical source", replayed, replayErr)
+	}
+	changed := in
+	changed.IdempotencyKey = "fresh-stale-source"
+	if _, err = f.pg.RequestHostingBuildDeployment(ctx, "fresh-stale", f.src.ResourceID, "usr_bootstrap", changed, destinationEvent("fresh-stale")); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("fresh admission bypassed source generation", err)
 	}
 	if err = f.pg.PrepareDeployment(ctx, op.ID); err != nil {
 		t.Fatal(err)

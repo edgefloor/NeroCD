@@ -4207,6 +4207,11 @@ components:
         - container_port
         - readiness
       properties:
+        expected_runtime_configuration_generation:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Saved runtime generation to admit. Omitted zero requires an untouched configuration; positive generations require hosting_runtime_env_v1 and image_release_ports_v1. This admission reference does not implement container environment delivery.
         expected_generation:
           type: integer
           format: int64
@@ -4233,6 +4238,11 @@ components:
       additionalProperties: false
       required: [build_id, expected_source_generation, expected_generation, idempotency_key, container_port, readiness]
       properties:
+        expected_runtime_configuration_generation:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Saved runtime generation to admit. Omitted zero requires an untouched configuration; positive generations require hosting_runtime_env_v1 and image_release_ports_v1. This admission reference does not implement container environment delivery.
         build_id: {$ref: '#/components/schemas/HostingIdentifier'}
         expected_source_generation: {type: integer, format: int64, minimum: 1}
         expected_generation: {type: integer, format: int64, minimum: 1}
@@ -4270,6 +4280,13 @@ components:
         config_digest: {type: string}
         platform: {type: string}
         context_policy: {type: string}
+    HostingRuntimeConfigurationRef:
+      type: object
+      additionalProperties: false
+      required: [generation, hash]
+      properties:
+        generation: {type: integer, format: int64, minimum: 1}
+        hash: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
     HostingSnapshot:
       type: object
       additionalProperties: false
@@ -4287,6 +4304,7 @@ components:
         - readiness
         - policy_version
       properties:
+        runtime_configuration: {$ref: '#/components/schemas/HostingRuntimeConfigurationRef'}
         local_build: {$ref: '#/components/schemas/HostingLocalBuildSource'}
         resource_id:
           type: string
@@ -4317,6 +4335,8 @@ components:
             - public-image.loopback.v1
             - public-image.release-ports.v1
             - local-build.release-ports.v1
+            - public-image.runtime-env.release-ports.v1
+            - local-build.runtime-env.release-ports.v1
     HostingRelease:
       type: object
       additionalProperties: false
@@ -4434,6 +4454,8 @@ components:
             - image-hosting.v1
             - image-hosting.release-ports.v1
             - local-build-hosting.v1
+            - image-hosting.runtime-env.v1
+            - local-build-hosting.runtime-env.v1
         hash:
           type: string
     HostingReceipt:

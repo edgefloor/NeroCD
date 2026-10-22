@@ -2820,6 +2820,11 @@ export interface components {
             timeout_seconds: number;
         };
         HostingDeploymentInput: {
+            /**
+             * Format: int64
+             * @description Saved runtime generation to admit. Omitted zero requires an untouched configuration; positive generations require hosting_runtime_env_v1 and image_release_ports_v1. This admission reference does not implement container environment delivery.
+             */
+            expected_runtime_configuration_generation?: number;
             /** Format: int64 */
             expected_generation: number;
             idempotency_key: string;
@@ -2829,6 +2834,11 @@ export interface components {
             readiness: components["schemas"]["HostingReadiness"];
         };
         HostingBuildDeploymentInput: {
+            /**
+             * Format: int64
+             * @description Saved runtime generation to admit. Omitted zero requires an untouched configuration; positive generations require hosting_runtime_env_v1 and image_release_ports_v1. This admission reference does not implement container environment delivery.
+             */
+            expected_runtime_configuration_generation?: number;
             build_id: components["schemas"]["HostingIdentifier"];
             /** Format: int64 */
             expected_source_generation: number;
@@ -2863,7 +2873,13 @@ export interface components {
             platform: string;
             context_policy?: string;
         };
+        HostingRuntimeConfigurationRef: {
+            /** Format: int64 */
+            generation: number;
+            hash: string;
+        };
         HostingSnapshot: {
+            runtime_configuration?: components["schemas"]["HostingRuntimeConfigurationRef"];
             local_build?: components["schemas"]["HostingLocalBuildSource"];
             resource_id: string;
             image_reference: string;
@@ -2878,7 +2894,7 @@ export interface components {
             host_port: number;
             readiness: components["schemas"]["HostingReadiness"];
             /** @enum {string} */
-            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1";
+            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1";
         };
         HostingRelease: {
             local_build?: components["schemas"]["HostingLocalBuildArtifact"];
@@ -2924,7 +2940,7 @@ export interface components {
             release: components["schemas"]["HostingRelease"];
             previous_healthy?: components["schemas"]["HostingHealthy"];
             /** @enum {string} */
-            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1";
+            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1";
             hash: string;
         };
         HostingReceipt: {

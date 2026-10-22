@@ -85,29 +85,31 @@ type HostingReadiness struct {
 
 // HostingDeploymentInput is the complete public image deployment request.
 type HostingDeploymentInput struct {
-	ExpectedGeneration int64            `json:"expected_generation"`
-	IdempotencyKey     string           `json:"idempotency_key"`
-	ContainerPort      int              `json:"container_port"`
-	HostPort           int              `json:"host_port"`
-	Readiness          HostingReadiness `json:"readiness"`
+	ExpectedRuntimeConfigurationGeneration int64            `json:"expected_runtime_configuration_generation,omitempty"`
+	ExpectedGeneration                     int64            `json:"expected_generation"`
+	IdempotencyKey                         string           `json:"idempotency_key"`
+	ContainerPort                          int              `json:"container_port"`
+	HostPort                               int              `json:"host_port"`
+	Readiness                              HostingReadiness `json:"readiness"`
 }
 
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
-	ResourceID         string                  `json:"resource_id"`
-	ResourceGeneration int64                   `json:"resource_generation"`
-	ImageReference     string                  `json:"image_reference"`
-	BindingID          string                  `json:"binding_id"`
-	DestinationID      string                  `json:"destination_id"`
-	ServerID           string                  `json:"server_id"`
-	RunnerID           string                  `json:"runner_id"`
-	RuntimeNamespace   string                  `json:"runtime_namespace"`
-	ContainerPort      int                     `json:"container_port"`
-	HostPort           int                     `json:"host_port"`
-	Readiness          HostingReadiness        `json:"readiness"`
-	PolicyVersion      string                  `json:"policy_version"`
-	LocalBuild         HostingLocalBuildSource `json:"local_build,omitzero"`
+	ResourceID           string                         `json:"resource_id"`
+	ResourceGeneration   int64                          `json:"resource_generation"`
+	ImageReference       string                         `json:"image_reference"`
+	BindingID            string                         `json:"binding_id"`
+	DestinationID        string                         `json:"destination_id"`
+	ServerID             string                         `json:"server_id"`
+	RunnerID             string                         `json:"runner_id"`
+	RuntimeNamespace     string                         `json:"runtime_namespace"`
+	ContainerPort        int                            `json:"container_port"`
+	HostPort             int                            `json:"host_port"`
+	Readiness            HostingReadiness               `json:"readiness"`
+	PolicyVersion        string                         `json:"policy_version"`
+	LocalBuild           HostingLocalBuildSource        `json:"local_build,omitzero"`
+	RuntimeConfiguration HostingRuntimeConfigurationRef `json:"runtime_configuration,omitzero"`
 }
 
 // HostingRelease binds registry content and local image identity to one daemon.
@@ -229,7 +231,7 @@ type HostingObservation struct {
 
 // ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
-	if in.ExpectedGeneration < 1 || len(in.IdempotencyKey) < 1 || len(in.IdempotencyKey) > 128 || strings.ContainsFunc(in.IdempotencyKey, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
+	if in.ExpectedRuntimeConfigurationGeneration < 0 || in.ExpectedGeneration < 1 || len(in.IdempotencyKey) < 1 || len(in.IdempotencyKey) > 128 || strings.ContainsFunc(in.IdempotencyKey, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
 		return errors.New("expected_generation and a bounded idempotency_key are required")
 	}
 	if in.ContainerPort < 1 || in.ContainerPort > 65535 || in.HostPort != 0 && in.HostPort < 1024 || in.HostPort > 65535 {
@@ -313,7 +315,11 @@ type HostingStatusRequest struct {
 // CompileRetainedHostingPlan binds all permitted running releases to one daemon.
 // It does not authorize any of those containers for cleanup.
 func CompileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy) (HostingApplyPlan, error) {
-	return compileRetainedHostingPlan(snapshot, release, previous, retained, HostingReleasePolicyVersion, HostingReleaseCompilerVersion)
+	policy, compiler := HostingReleasePolicyVersion, HostingReleaseCompilerVersion
+	if snapshot.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) {
+		policy, compiler = HostingRuntimePolicyVersion, HostingRuntimeCompilerVersion
+	}
+	return compileRetainedHostingPlan(snapshot, release, previous, retained, policy, compiler)
 }
 
 func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy, policy, compiler string) (HostingApplyPlan, error) {

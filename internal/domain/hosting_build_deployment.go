@@ -17,18 +17,19 @@ const (
 
 // HostingBuildDeploymentInput selects only a server-owned successful build.
 type HostingBuildDeploymentInput struct {
-	BuildID                  string           `json:"build_id"`
-	ExpectedSourceGeneration int64            `json:"expected_source_generation"`
-	ExpectedGeneration       int64            `json:"expected_generation"`
-	IdempotencyKey           string           `json:"idempotency_key"`
-	ContainerPort            int              `json:"container_port"`
-	HostPort                 int              `json:"host_port"`
-	Readiness                HostingReadiness `json:"readiness"`
+	ExpectedRuntimeConfigurationGeneration int64            `json:"expected_runtime_configuration_generation,omitempty"`
+	BuildID                                string           `json:"build_id"`
+	ExpectedSourceGeneration               int64            `json:"expected_source_generation"`
+	ExpectedGeneration                     int64            `json:"expected_generation"`
+	IdempotencyKey                         string           `json:"idempotency_key"`
+	ContainerPort                          int              `json:"container_port"`
+	HostPort                               int              `json:"host_port"`
+	Readiness                              HostingReadiness `json:"readiness"`
 }
 
 // DeploymentInput returns the shared bounded port and readiness input.
 func (in HostingBuildDeploymentInput) DeploymentInput() HostingDeploymentInput {
-	return HostingDeploymentInput{ExpectedGeneration: in.ExpectedGeneration, IdempotencyKey: in.IdempotencyKey, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness}
+	return HostingDeploymentInput{ExpectedRuntimeConfigurationGeneration: in.ExpectedRuntimeConfigurationGeneration, ExpectedGeneration: in.ExpectedGeneration, IdempotencyKey: in.IdempotencyKey, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness}
 }
 
 // ValidateHostingBuildDeployment rejects caller authority and incomplete selection.
@@ -87,6 +88,9 @@ func validateLocalBuildRelease(r HostingRelease) error {
 
 // ValidateHostingSnapshotRelease enforces the exclusive registry/local union.
 func ValidateHostingSnapshotRelease(s HostingSnapshot, r HostingRelease) error {
+	if err := ValidateHostingRuntimeConfigurationRef(s); err != nil {
+		return err
+	}
 	if err := ValidateHostingRelease(r); err != nil {
 		return err
 	}
@@ -96,7 +100,7 @@ func ValidateHostingSnapshotRelease(s HostingSnapshot, r HostingRelease) error {
 		}
 		return nil
 	}
-	if s.ImageReference != "" || s.PolicyVersion != HostingLocalBuildPolicyVersion || s.LocalBuild.SourceGeneration < 1 || s.LocalBuild.Artifact != r.LocalBuild || s.LocalBuild.ArtifactHash != HostingDocumentHash(r.LocalBuild) {
+	if s.ImageReference != "" || (s.PolicyVersion != HostingLocalBuildPolicyVersion && s.PolicyVersion != HostingLocalBuildRuntimePolicyVersion) || s.LocalBuild.SourceGeneration < 1 || s.LocalBuild.Artifact != r.LocalBuild || s.LocalBuild.ArtifactHash != HostingDocumentHash(r.LocalBuild) {
 		return errors.New("local snapshot does not match admitted artifact")
 	}
 	return nil
@@ -107,7 +111,11 @@ func CompileLocalBuildHostingPlan(s HostingSnapshot, r HostingRelease, previous 
 	if s.LocalBuild == (HostingLocalBuildSource{}) {
 		return HostingApplyPlan{}, errors.New("local build source required")
 	}
-	return compileRetainedHostingPlan(s, r, previous, retained, HostingLocalBuildPolicyVersion, HostingLocalBuildCompilerVersion)
+	policy, compiler := HostingLocalBuildPolicyVersion, HostingLocalBuildCompilerVersion
+	if s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) {
+		policy, compiler = HostingLocalBuildRuntimePolicyVersion, HostingLocalBuildRuntimeCompilerVersion
+	}
+	return compileRetainedHostingPlan(s, r, previous, retained, policy, compiler)
 }
 
 // ValidateLocalBuildDeploymentTask permits only canonical internal operation tasks.
