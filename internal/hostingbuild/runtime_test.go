@@ -112,7 +112,7 @@ func TestRuntimeBuild(t *testing.T) {
 		src := t.TempDir()
 		makeSettingDir(t, filepath.Join(src, "apps", "web", "docker"))
 		writeTestFile(t, filepath.Join(src, "private.txt"), []byte("outside context"))
-		content := "FROM " + StaticImage + " AS chosen\nCOPY marker /usr/share/nginx/html/index.html\nFROM " + StaticImage + " AS other\nRUN echo wrong-target > /usr/share/nginx/html/index.html\n"
+		content := "FROM " + StaticImage + " AS chosen\nCOPY --chmod=0644 marker /usr/share/nginx/html/index.html\nFROM " + StaticImage + " AS other\nRUN echo wrong-target > /usr/share/nginx/html/index.html\n"
 		writeTestFile(t, filepath.Join(src, "apps", "web", "docker", "Release.Dockerfile"), []byte(content))
 		writeTestFile(t, filepath.Join(src, "apps", "web", "marker"), []byte("selected-target\n"))
 		req := request("nested-dockerfile", Dockerfile, src)
