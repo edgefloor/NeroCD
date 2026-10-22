@@ -7,7 +7,10 @@ image resources keep their existing source and generation behavior.
 
 ## Configuration and authority
 
-`HostingGitSource` is a sidecar with its own immutable generations. It records an
+`HostingGitSource` is an immutable version referenced by a Git application. The
+[public Git configuration workflow](hosting-git-resources.md) atomically writes
+resource configuration and source history. The standalone sidecar writer is
+retired. Each version records an
 exact resource/project, repository URL, requested ref, explicit repository policy,
 credential kind, and accepted engine settings. Settings cover Dockerfile,
 Railpack, and already prepared static files, including bounded relative context,
@@ -16,10 +19,10 @@ validated semantically here; the checkout adapter and engine must still verify
 actual filesystem confinement and file types when used. This store neither
 compiles a frontend nor supplies build arguments or dependency credentials.
 
-Repository policy is trusted operator admission data. A later public API must
-resolve/authorize that policy through operator configuration rather than accept
-arbitrary caller-supplied schemes, hosts, internal CIDRs or SSH fingerprints.
-The internal repository method is not a public network-policy admission API.
+Repository policy is trusted operator admission data. Public resource input never
+accepts caller schemes, hosts, internal CIDRs, or SSH fingerprints as policy. The
+server supplies a bounded public HTTPS host allowlist, defaulting to github.com.
+See the configuration guide for `NEROCD_HOSTING_GIT_ALLOWED_HOSTS`.
 
 Current project maintainers may configure sources and request builds. Current
 project owners create and revoke source grants. Human membership, managed service
@@ -33,8 +36,9 @@ secret version. It contains no credential value or encryption envelope. Public
 sources require no grant and reject an attached grant. A new secret version does
 not revoke an older selected version while the managed secret remains active.
 Secret metadata revocation revokes all versions. Grant rotation uses a new grant
-ID; grants cannot be retargeted. This checkpoint does not deliver a secret to a
-runner or recall a PAT already delivered by some future controller.
+ID; grants cannot be retargeted. The separate managed credential delivery seam
+exists, but public resource configuration does not admit private Git credentials.
+No credential recall is promised after transport delivery.
 
 `HostingBuildPolicy` is trusted in-process operator configuration, never public
 caller authority. It freezes toolchain identity, protocol, Linux architecture,
@@ -71,8 +75,9 @@ resolved as the current deployable artifact after configuration/resource changes
 
 Both controller seams are trusted **DB-only** callbacks receiving the existing
 `pgx.Tx`. They must perform no external effects. A nil callback fails unavailable.
-The enqueue seam must insert real durable work; no River kind or consumer is
-installed here. The dispatch seam must create the new canonical task ID
+The enqueue seam must insert real durable work. The optional River build adapter
+registers its worker only for a handler implementing `BuildHandler`; the server
+does not yet install a production Git build controller. The dispatch seam must create the new canonical task ID
 `build_run_<build-id>` with exactly
 `{"type":"hosting_build_v1","hosting_build_id":"<build-id>"}`, the original
 project/actor, queued state and no preassigned runner. The repository verifies
@@ -132,14 +137,15 @@ cleanup-required history.
 
 ## Remaining integration and evidence
 
-There is no public source-choice/API/UI, managed-secret delivery, atomic River
-enqueuer/controller, typed runner executor, source-to-engine receipt bridge,
-artifact-to-deployment resolver wiring, or end-to-end Git-to-HTTPS acceptance.
-Generic public and nested RunSpec admission must explicitly deny this internal
-type before any executor is registered. Enrollment/claim capability registry,
-internal task decoding, deadline/lease renewal, retry and cleanup recovery must be
-reviewed together. The schema compatibility predicate is available, but adding it
-to global startup/readiness checks is outside this slice's ownership.
+Public source choice, resource API/UI, atomic source versions, managed credential
+delivery, and an optional River build adapter now exist. No production build
+controller, typed runner build executor, source-to-engine receipt bridge,
+artifact-to-deployment wiring, or end-to-end Git-to-HTTPS acceptance is installed.
+Generic public and nested RunSpec admission must continue to deny internal build
+tasks. Enrollment/claim capability registration, internal task decoding,
+deadlines/lease renewal, retry and cleanup recovery need a separate reviewed
+integration. Startup/readiness now require both the accepted build predicate and
+the additive0049 Git resource reference predicate.
 
 The isolated PostgreSQL tests apply all embedded migrations and exercise CAS,
 request replay, DB-only callback rollback, project authorization and cross-project

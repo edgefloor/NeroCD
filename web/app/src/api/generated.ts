@@ -2554,10 +2554,47 @@ export interface components {
             /** @description Repository with an explicit tag or sha256 digest. Registry ports are supported. No registry resolution occurs. */
             reference: string;
         };
-        ResourceSource: {
+        ImageResourceSource: {
             /** @enum {string} */
             kind: "image";
             image: components["schemas"]["ImageSource"];
+        };
+        HostingBuildSettings: {
+            /** @enum {string} */
+            strategy: "dockerfile" | "railpack" | "static";
+            context_dir?: string;
+            dockerfile_path?: string;
+            build_target?: string;
+            publish_dir?: string;
+            spa_fallback?: boolean;
+        };
+        GitResourceInput: {
+            /** @description Public HTTPS URL allowed by the server operator. No credentials or query/fragment components. */
+            repository_url: string;
+            requested_ref: string;
+            /** @enum {string} */
+            credential_kind: "public";
+            settings: components["schemas"]["HostingBuildSettings"];
+        };
+        GitResourceSource: {
+            source_id: string;
+            /** Format: int64 */
+            generation: number;
+            repository_url: string;
+            requested_ref: string;
+            /** @enum {string} */
+            credential_kind: "public" | "https_basic" | "ssh_private_key";
+            settings: components["schemas"]["HostingBuildSettings"];
+        };
+        ResourceSourceInput: components["schemas"]["ImageResourceSource"] | {
+            /** @enum {string} */
+            kind: "git";
+            git: components["schemas"]["GitResourceInput"];
+        };
+        ResourceSource: components["schemas"]["ImageResourceSource"] | {
+            /** @enum {string} */
+            kind: "git";
+            git: components["schemas"]["GitResourceSource"];
         };
         ProjectEnvironmentInput: {
             project_id: string;
@@ -2576,11 +2613,11 @@ export interface components {
             name: string;
             /** @enum {string} */
             kind: "application";
-            source: components["schemas"]["ResourceSource"];
+            source: components["schemas"]["ResourceSourceInput"];
         };
         ResourcePatch: {
             name?: string;
-            source?: components["schemas"]["ResourceSource"];
+            source?: components["schemas"]["ResourceSourceInput"];
             /** Format: int64 */
             expected_generation: number;
         } | unknown | unknown;

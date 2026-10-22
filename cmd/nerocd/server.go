@@ -224,6 +224,7 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 			}
 		}
 		if err := service.ConfigureHostingGitHosts(cfg.hostingGitHosts); err != nil {
+			_ = pg.Close()
 			return nil, nil, err
 		}
 		if err := service.SetLeaseTTL(cfg.leaseTTL); err != nil {

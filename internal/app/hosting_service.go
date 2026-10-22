@@ -259,7 +259,7 @@ func PublicHostingGitPolicy(hosts []string) (source.RepositoryPolicy, error) {
 	for _, host := range hosts {
 		host = strings.ToLower(strings.TrimSpace(host))
 		if len(host) > 253 || !strings.Contains(host, ".") || net.ParseIP(host) != nil || strings.HasSuffix(host, ".") {
-			return source.RepositoryPolicy{}, errors.New("Git repository hosts must be exact public DNS names")
+			return source.RepositoryPolicy{}, errors.New("git repository hosts must be exact public DNS names")
 		}
 		for _, part := range strings.Split(host, ".") {
 			if !label.MatchString(part) {
@@ -277,7 +277,7 @@ func PublicHostingGitPolicy(hosts []string) (source.RepositoryPolicy, error) {
 }
 func (s *Service) publicGitSource(item domain.Resource, input domain.ResourceSource, id string, generation int64) (domain.HostingGitSource, error) {
 	if input.Git == nil || input.Image.Reference != "" || input.Git.SourceID != "" || input.Git.Generation != 0 {
-		return domain.HostingGitSource{}, InvalidInput(errors.New("Git input must contain configuration only"))
+		return domain.HostingGitSource{}, InvalidInput(errors.New("git input must contain configuration only"))
 	}
 	c := input.Git.GitResourceConfiguration
 	if c.CredentialKind != "public" {
@@ -301,7 +301,7 @@ func publicGitResourceSource(src domain.HostingGitSource) domain.ResourceSource 
 }
 func gitResourceError(err error) error {
 	if errors.Is(err, store.ErrGitResourceUnavailable) {
-		return fmt.Errorf("Git resource configuration requires PostgreSQL: %w", hostingjobs.ErrUnavailable)
+		return fmt.Errorf("git resource configuration requires PostgreSQL: %w", hostingjobs.ErrUnavailable)
 	}
 	return err
 }

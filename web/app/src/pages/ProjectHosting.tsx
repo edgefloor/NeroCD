@@ -1,7 +1,7 @@
 import { type FormEvent, useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, type Project } from "@/api";
-import { createProjectEnvironment, createResource, getResource, listProjectEnvironments, listResources, updateResource, type ProjectEnvironment, type Resource } from "@/api/hosting";
+import { createProjectEnvironment, createResource, getResource, listProjectEnvironments, listResources, updateResource, type ProjectEnvironment, type Resource, type ResourceSourceInput } from "@/api/hosting";
 import { PageNavigation } from "@/components/common/PageNavigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { maximumPageOffset } from "@/router/search";
 import { ResourceDestination } from "./ResourceDestination";
 import { ResourceRoutes } from "./ResourceRoutes";
+import { GitApplicationFields, emptyGitDraft, type GitApplicationDraft } from "./GitApplicationFields";
 import { ResourceDeployments } from "./ResourceDeployments";
 
 const pageSize = 20;
@@ -20,26 +21,30 @@ function errorText(error: unknown): string {
   return "The request could not be completed. Check your connection and try again.";
 }
 
-function ApplicationFields({ name, image, setName, setImage, disabled }: {
-  name: string; image: string; setName: (value: string) => void; setImage: (value: string) => void; disabled: boolean;
+function ApplicationFields({ name, image, setName, setImage, disabled, showImage = true }: {
+  name: string; image: string; setName: (value: string) => void; setImage: (value: string) => void; disabled: boolean; showImage?: boolean;
 }) {
   const id = useId();
   return <>
     <div className="space-y-1.5"><label htmlFor={`${id}-name`}>Application name</label><Input id={`${id}-name`} value={name} onChange={(event) => setName(event.target.value)} disabled={disabled} required /></div>
-    <div className="space-y-1.5"><label htmlFor={`${id}-image`}>Image reference</label><Input id={`${id}-image`} value={image} onChange={(event) => setImage(event.target.value)} disabled={disabled} required placeholder="registry.example.com/team/app:1.0" spellCheck={false} /><p className="text-xs text-muted-foreground">Use an explicit image tag or sha256 digest. Saving does not pull or run this image.</p></div>
+    {showImage ? <div className="space-y-1.5"><label htmlFor={`${id}-image`}>Image reference</label><Input id={`${id}-image`} value={image} onChange={(event) => setImage(event.target.value)} disabled={disabled} required placeholder="registry.example.com/team/app:1.0" spellCheck={false} /><p className="text-xs text-muted-foreground">Use an explicit image tag or sha256 digest. Saving does not pull or run this image.</p></div> : null}
   </>;
 }
 
 function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource: Resource; writable: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const [base, setBase] = useState(resource);
   const [name, setName] = useState(resource.name);
-  const [image, setImage] = useState(resource.source.image.reference);
+  const [image, setImage] = useState(resource.source.kind === "image" ? resource.source.image.reference : "");
+  const [git, setGit] = useState<GitApplicationDraft>(resource.source.kind === "git" ? { repository_url: resource.source.git.repository_url, requested_ref: resource.source.git.requested_ref, credential_kind: "public", settings: resource.source.git.settings } : emptyGitDraft());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState(false);
   const [latest, setLatest] = useState<Resource>();
   const [refreshError, setRefreshError] = useState("");
-  const changed = name !== base.name || image !== base.source.image.reference;
+  const baseInput: ResourceSourceInput = base.source.kind === "image" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: "public", settings: base.source.git.settings } };
+  const source: ResourceSourceInput = base.source.kind === "image" ? { kind: "image", image: { reference: image } } : { kind: "git", git };
+  const sourceChanged = JSON.stringify(source) !== JSON.stringify(baseInput);
+  const changed = name !== base.name || sourceChanged;
 
   async function loadLatest() {
     setBusy(true);
@@ -56,11 +61,11 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
     setBusy(true);
     setError("");
     try {
-      const source = { kind: "image" as const, image: { reference: image } };
+
       await updateResource(resource.id, name !== base.name ? {
         expected_generation: base.generation,
         name,
-        ...(image !== base.source.image.reference ? { source } : {}),
+        ...(sourceChanged ? { source } : {}),
       } : { expected_generation: base.generation, source });
       await onSaved();
       onClose();
@@ -77,12 +82,13 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   }
   return <form onSubmit={(event) => void save(event)} className="space-y-3 rounded-xl border p-3" aria-label={`Edit ${resource.name}`} aria-busy={busy}>
     <h4 className="font-medium">Edit application configuration</h4>
-    <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy || !writable} />
+    <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy || !writable} showImage={base.source.kind === "image"} />
+    {base.source.kind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy || !writable} /> : null}
     {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to save application. {error}</p> : null}
     {conflict ? <section className="space-y-2 rounded-lg border p-3" aria-label="Generation conflict">
       <p role="status">The saved configuration changed. Your draft is preserved. Review the current values before saving again.</p>
       {latest ? <>
-        <dl className="space-y-1 break-words text-sm [overflow-wrap:anywhere]"><dt>Current generation</dt><dd>{latest.generation}</dd><dt>Current name</dt><dd>{latest.name}</dd><dt>Current image</dt><dd>{latest.source.image.reference}</dd></dl>
+        <dl className="space-y-1 break-words text-sm [overflow-wrap:anywhere]"><dt>Current generation</dt><dd>{latest.generation}</dd><dt>Current name</dt><dd>{latest.name}</dd><dt>Current source</dt><dd>{latest.source.kind === "image" ? latest.source.image.reference : `${latest.source.git.repository_url} at ${latest.source.git.requested_ref} · source generation ${latest.source.git.generation}`}</dd></dl>
         <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={busy || !writable} onClick={() => { setBase(latest); setConflict(false); setError(""); }}>Keep my draft with generation {latest.generation}</Button>
         <p className="text-xs text-muted-foreground">This enables Save configuration. It does not save automatically.</p>
       </> : null}
@@ -98,6 +104,9 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
   const [offset, setOffset] = useState(0);
   const [name, setName] = useState("");
   const [image, setImage] = useState("");
+  const [sourceKind, setSourceKind] = useState<"image" | "git">("image");
+  const [git, setGit] = useState<GitApplicationDraft>(emptyGitDraft());
+  const sourceSelectID = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -110,8 +119,8 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     if (!canWrite || busy || editing) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      await createResource({ project_id: projectID, project_environment_id: environment.id, name, kind: "application", source: { kind: "image", image: { reference: image } } });
-      setName(""); setImage(""); setNotice("Application configuration saved. Deployment is a separate request.");
+      await createResource({ project_id: projectID, project_environment_id: environment.id, name, kind: "application", source: sourceKind === "image" ? { kind: "image", image: { reference: image } } : { kind: "git", git } });
+      setName(""); setImage(""); setGit(emptyGitDraft()); setNotice("Application configuration saved. Deployment is a separate request.");
       setOffset(0);
       await refresh();
     } catch (cause) { setError(errorText(cause)); }
@@ -124,8 +133,9 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     {resources.data?.items.length === 0 ? <p className="text-sm text-muted-foreground">No saved applications in this environment.</p> : null}
     <div className="space-y-3">{resources.data?.items.map((resource) => <article key={resource.id} className="min-w-0 space-y-3 rounded-xl border p-3" aria-label={resource.name}>
       <h4 className="break-words font-medium [overflow-wrap:anywhere]">{resource.name}</h4>
-      <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{resource.source.image.reference}</p>
+      <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{resource.source.kind === "image" ? resource.source.image.reference : `${resource.source.git.repository_url} · ${resource.source.git.requested_ref}`}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
+      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · Build and deployment unavailable</p> : null}
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceRoutes resource={resource} writable={writable} blocked={blocked || resources.isError} />
@@ -134,8 +144,10 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     </article>)}</div>
     <PageNavigation label="applications" page={resources.data} loading={resources.isFetching || Boolean(editing) || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - pageSize))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + pageSize))} />
     {writable ? <form onSubmit={(event) => void create(event)} aria-label="Create application" aria-busy={busy} className="space-y-3 border-t pt-4">
-      <h4 className="font-medium">Add image application</h4>
-      <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy} />
+      <h4 className="font-medium">Add application</h4>
+      <div className="space-y-1.5"><label htmlFor={sourceSelectID}>Application source</label><select id={sourceSelectID} className={selectClass} value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "image" | "git")}><option value="image">Container image</option><option value="git">Public Git repository</option></select></div>
+      <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy} showImage={sourceKind === "image"} />
+      {sourceKind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy} /> : null}
       <Button type="submit" disabled={!canWrite || busy || Boolean(editing)}>{busy ? "Saving application..." : "Save application"}</Button>
       {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to create application. {error}</p> : null}
     </form> : null}
@@ -186,7 +198,7 @@ export function ProjectHosting({ projects, canOperateProject, unavailable = fals
   const [projectID, setProjectID] = useState("");
   const project = projects.find((item) => item.id === projectID);
   return <Card className="min-w-0" role="region" aria-label="Project hosting">
-    <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save image application configuration in shared project environments, choose placement, and request image deployment separately. Operation history records outcomes; it does not provide continuous runtime health.</p></CardHeader>
+    <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save image or public Git application configuration in shared project environments, choose placement, and request image deployment separately. Operation history records outcomes; it does not provide continuous runtime health.</p></CardHeader>
     <CardContent className="min-w-0 space-y-5">
       <div className="max-w-xl space-y-1.5"><label htmlFor={`${id}-project`}>Hosting project</label><select id={`${id}-project`} className={selectClass} value={project?.id ?? ""} onChange={(event) => setProjectID(event.target.value)}><option value="">Select a project</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
       {project ? <><p className="break-all text-xs text-muted-foreground">Project ID for destination grants: {project.id}</p><ProjectEnvironments key={project.id} projectID={project.id} writable={canOperateProject(project.id)} blocked={unavailable} /></> : <p className="text-sm text-muted-foreground">Choose a project to manage or view saved configuration.</p>}

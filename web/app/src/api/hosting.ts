@@ -3,6 +3,7 @@ import { request, type RequestOptions } from "./client";
 
 export type ProjectEnvironment = components["schemas"]["ProjectEnvironment"];
 export type Resource = components["schemas"]["Resource"];
+export type ResourceSourceInput = components["schemas"]["ResourceSourceInput"];
 export type ResourceSource = components["schemas"]["ResourceSource"];
 type Options = Pick<RequestOptions, "signal">;
 type EnvironmentFilters = paths["/api/v1/project-environments"]["get"]["parameters"]["query"];
@@ -10,8 +11,8 @@ type ResourceFilters = paths["/api/v1/resources"]["get"]["parameters"]["query"];
 // The generated ResourcePatch union includes unknown from the schema's
 // validation clauses. Keep the client boundary narrower than unknown.
 export type ResourcePatch = { expected_generation: number } & (
-  | { name: string; source?: ResourceSource }
-  | { name?: string; source: ResourceSource }
+  | { name: string; source?: ResourceSourceInput }
+  | { name?: string; source: ResourceSourceInput }
 );
 
 export function listProjectEnvironments(query: EnvironmentFilters, options?: Options): Promise<components["schemas"]["ProjectEnvironmentListResponse"]> {

@@ -25,7 +25,7 @@ func (s *Service) RequestHostingDeployment(ctx context.Context, resourceID strin
 		return domain.HostingOperation{}, err
 	}
 	if resource.Source.Kind != "image" {
-		return domain.HostingOperation{}, InvalidInput(errors.New("Git resources cannot use image deployment"))
+		return domain.HostingOperation{}, InvalidInput(errors.New("git resources cannot use image deployment"))
 	}
 	if err = domain.ValidateHostingDeployment(in); err != nil {
 		return domain.HostingOperation{}, InvalidInput(err)

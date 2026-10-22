@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/domain"
+	sources "nerocd/internal/source"
 	"nerocd/internal/store"
 )
 
@@ -95,6 +96,10 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		t.Fatal(err)
 	}
 	if _, err = pg.BindResourceDestination(ctx, store.ResourceBindingInput{ID: "binding_backup", ResourceID: resource.ID, DestinationID: destination.ID, CreatedBy: "usr_bootstrap", CreatedAt: now}, event("binding")); err != nil {
+		t.Fatal(err)
+	}
+	gitConfig := domain.HostingGitSource{ID: "source_git_backup", ResourceID: "res_git_backup", ProjectID: environment.ProjectID, Generation: 1, RepositoryURL: "https://github.com/acme/backup.git", RequestedRef: "main", CredentialKind: "public", Policy: sources.RepositoryPolicy{Version: 1, State: "configured", Mode: "public", AllowedSchemes: []string{"https"}, AllowedHosts: []string{"github.com"}}, Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}
+	if _, err = pg.CreateResource(ctx, domain.Resource{ID: gitConfig.ResourceID, ProjectID: environment.ProjectID, ProjectEnvironmentID: environment.ID, Name: "Git backup", Kind: "application", Source: domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: gitConfig.ID, Generation: 1}}, CreatedBy: "usr_bootstrap", CreatedAt: now, UpdatedAt: now}, store.WithHostingGitSource(gitConfig), store.WithAudit(event("git_resource"))); err != nil {
 		t.Fatal(err)
 	}
 	source, err := pgxpool.New(ctx, sourceURL)
@@ -202,6 +207,10 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		}
 		var held, proxyHeld, revoked, expired bool
 		err = target.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_binding_restore_holds WHERE binding_id='binding_backup'),EXISTS(SELECT 1 FROM hosting_proxy_restore_holds WHERE proxy_id='proxy_backup'),(SELECT revoked_at IS NOT NULL FROM sessions WHERE id='session_backup'),(SELECT status='expired' FROM run_leases WHERE id='lease_backup')`).Scan(&held, &proxyHeld, &revoked, &expired)
+		var sourceConsistent bool
+		if queryErr := target.QueryRow(ctx, `SELECT nerocd_hosting_git_resource_schema_compatible() AND EXISTS(SELECT 1 FROM resources r JOIN hosting_build_sources h ON h.id=r.source->'git'->>'source_id' AND h.generation=(r.source->'git'->>'generation')::bigint JOIN hosting_build_source_versions v ON v.source_id=h.id AND v.generation=h.generation WHERE r.id='res_git_backup' AND v.body->>'repository_url'='https://github.com/acme/backup.git')`).Scan(&sourceConsistent); queryErr != nil || !sourceConsistent {
+			t.Fatal("restored Git source reference/schema", sourceConsistent, queryErr)
+		}
 		target.Close()
 		if err != nil || held == failHold || proxyHeld == failHold || revoked == failHold || expired == failHold {
 			t.Fatalf("restore invalidation atomicity: failure=%s binding=%v proxy=%v revoked=%v expired=%v err=%v", failure, held, proxyHeld, revoked, expired, err)

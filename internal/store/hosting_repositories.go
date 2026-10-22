@@ -8,7 +8,7 @@ import (
 )
 
 // ErrGitResourceUnavailable requires durable PostgreSQL source-version storage.
-var ErrGitResourceUnavailable = errors.New("Git resource configuration requires PostgreSQL")
+var ErrGitResourceUnavailable = errors.New("git resource configuration requires PostgreSQL")
 
 // HostingRepository owns desired hosting configuration and atomic mutation audits.
 type HostingRepository interface {

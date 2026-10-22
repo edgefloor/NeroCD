@@ -131,6 +131,23 @@ func TestPostgresGitResourceDeferredConsistencyAndRetiredWriter(t *testing.T) {
 		t.Fatal("independent sidecar update committed")
 	}
 	// Current scoped audit has resource identity even when caller supplies metadata.
+	audits, err := pg.ListAuditEventsPageForScope(t.Context(), store.AuditAuthorizationScope{ProjectIDs: []string{"proj_platform"}}, store.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, audit := range audits.Items {
+		if audit.TargetID == item.ID && audit.Action == "resource.created" {
+			found = true
+			if audit.Metadata["project_id"] != item.ProjectID || audit.Metadata["untrusted"] != nil {
+				t.Fatal("uncanonical resource audit", audit)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("resource audit invisible in project scope")
+	}
+
 	page, err := pg.ListResources(t.Context(), "proj_platform", "", store.Page{})
 	if err != nil || len(page.Items) != 1 || page.Items[0].Source.Git.SourceID != src.ID {
 		t.Fatal(page, err)

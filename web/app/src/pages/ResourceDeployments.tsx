@@ -217,7 +217,7 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
+    if (resource.source.kind !== "image" || !canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
     submitting.current = true;
     const input = attempt ?? { expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(portMode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
     setAttempt(input); setBusy(true); setError("");
@@ -242,7 +242,8 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
     setAttempt(undefined); setConflict(false); setCurrent(undefined); setAcknowledged(false); setDifferentIntent(false); setError("");
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
-    <h5 className="font-medium">Image deployments</h5>
+    <h5 className="font-medium">{resource.source.kind === "image" ? "Image deployments" : "Deployment history"}</h5>
+    {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Git build and deployment are unavailable until a build controller is connected. This application cannot use image deployment.</p> : null}
     {restoreHeld ? <p role="alert">Deployment admission blocked after platform restore. Recovery proof is pending; refreshing configuration, retrying, or requesting reconciliation cannot release restored ownership. Your settings are preserved.</p> : null}
     {mutationHeld ? <p role="status">New deployment requests are paused while a recorded mutation hold is retained. An exact retained request can still recover its existing operation. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
     {failed ? <div className="space-y-2"><p role="alert">Unable to refresh deployment information. Draft settings are preserved; actions are paused.</p><Button type="button" variant="outline" onClick={() => { void binding.refetch(); void history.refetch(); if (principal.isError) void principal.refetch(); if (members.isError) void members.refetch(); }}>Retry deployment information</Button></div> : null}
@@ -253,8 +254,8 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
     <PageNavigation label={`deployments for ${resource.name}`} page={history.data} loading={history.isFetching || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))} />
     {selected ? <OperationDetail key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
     {binding.data ? <RetainedReleases key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
-    {writable ? <form className="space-y-3 rounded-lg border p-3" aria-label={`Deploy image for ${resource.name}`} onSubmit={(event) => void submit(event)}>
-      <p className="break-all text-sm">Deploy saved image {base.source.image.reference} at generation {base.generation} to binding {binding.data?.id ?? "unavailable"}.</p>
+    {writable && resource.source.kind === "image" ? <form className="space-y-3 rounded-lg border p-3" aria-label={`Deploy image for ${resource.name}`} onSubmit={(event) => void submit(event)}>
+      <p className="break-all text-sm">Deploy saved image {base.source.kind === "image" ? base.source.image.reference : "unavailable"} at generation {base.generation} to binding {binding.data?.id ?? "unavailable"}.</p>
       {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label className="space-y-1" htmlFor={`${id}-container`}>Container port<Input id={`${id}-container`} type="number" min={1} max={65535} required value={containerPort} disabled={busy || Boolean(attempt)} onChange={(event) => { setContainerPort(event.target.value); setAcknowledged(false); }} /></label>
@@ -271,12 +272,12 @@ function Deployments({ resource, writable, blocked }: { resource: Resource; writ
       {error ? <p role="alert">{error}</p> : null}
       {attempt && !restoreHeld ? <section className="space-y-2" aria-label="Review deployment request">
         <Button type="button" variant="outline" disabled={busy} onClick={() => void reviewCurrent()}>Refresh configuration and history</Button>
-        {current ? <p className="break-all text-sm">Current saved configuration: generation {current.generation} · {current.source.image.reference}.</p> : null}
+        {current ? <p className="break-all text-sm">Current saved configuration: generation {current.generation} · {current.source.kind === "image" ? current.source.image.reference : "Git source"}.</p> : null}
         {refreshError ? <p role="alert">{refreshError}</p> : null}
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={differentIntent} disabled={busy} onChange={(event) => setDifferentIntent(event.target.checked)} /><span>I reviewed history and understand the earlier request may already exist. I intend a separate request with the current configuration and a new request key.</span></label>
         <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={busy || !current || !differentIntent || unavailable || mutationHeld} onClick={() => newIntent(current)}>Use reviewed configuration for a new request</Button>
         <p className="text-xs text-muted-foreground">This unlocks settings and requires a new deployment acknowledgment. It never deploys automatically.</p>
       </section> : null}
-    </form> : <p className="text-xs text-muted-foreground">Project maintainer access is required to request or cancel deployments.</p>}
+    </form> : resource.source.kind === "image" ? <p className="text-xs text-muted-foreground">Project maintainer access is required to request or cancel deployments.</p> : null}
   </section>;
 }

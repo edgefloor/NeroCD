@@ -76,6 +76,7 @@ func strictSourceJSON(data []byte, value any) error {
 	return nil
 }
 
+// MarshalJSON emits exactly the selected source variant.
 func (s ResourceSource) MarshalJSON() ([]byte, error) {
 	switch s.Kind {
 	case "image":
@@ -98,6 +99,7 @@ func (s ResourceSource) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("unsupported source kind")
 }
 
+// UnmarshalJSON reads one exclusive persisted or expanded source variant.
 func (s *ResourceSource) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		Kind  string          `json:"kind"`
@@ -124,6 +126,7 @@ func (s *ResourceSource) UnmarshalJSON(data []byte) error {
 	return errors.New("unsupported source kind")
 }
 
+// UnmarshalJSON rejects server-owned fields and ambiguous public source variants.
 func (s *ResourceSourceInput) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		Kind  string          `json:"kind"`
