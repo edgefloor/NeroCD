@@ -131,7 +131,7 @@ func WithSourceCheckout(ctx context.Context, req SourceCheckoutRequest, credenti
 	if req.Policy.CredentialReferenceID != "" && credential == nil {
 		return receipt, sourceError("credential_required")
 	}
-	check := func() error {
+	checkTransport := func() error {
 		if operation.Err() != nil {
 			return sourceError("canceled")
 		}
@@ -140,7 +140,7 @@ func WithSourceCheckout(ctx context.Context, req SourceCheckoutRequest, credenti
 		}
 		return nil
 	}
-	if err = check(); err != nil {
+	if err = checkTransport(); err != nil {
 		return receipt, err
 	}
 	// The lease also cancels an in-flight fetch, rather than checking only between commands.
@@ -166,7 +166,7 @@ func WithSourceCheckout(ctx context.Context, req SourceCheckoutRequest, credenti
 	if req.FrozenCommit != "" && commit != req.FrozenCommit {
 		return receipt, sourceError("commit_mismatch")
 	}
-	if err = check(); err != nil {
+	if err = checkTransport(); err != nil {
 		return receipt, err
 	}
 	tracked, trackErr := command.RunEnvironment(transportCtx, "git", []string{"ls-files", "--stage", "-z"}, req.CheckoutPath, env)
@@ -189,7 +189,7 @@ func WithSourceCheckout(ctx context.Context, req SourceCheckoutRequest, credenti
 	policyJSON, _ := json.Marshal(req.Policy)
 	policySum := sha256.Sum256(policyJSON)
 	receipt = SourceReceipt{req.BuildID, req.SourceID, req.InputID, commit, "sha256:" + hex.EncodeToString(policySum[:]), digest}
-	if err = check(); err != nil {
+	if err = checkTransport(); err != nil {
 		return receipt, err
 	}
 	if err = accept(operation, receipt); err != nil {
@@ -199,14 +199,17 @@ func WithSourceCheckout(ctx context.Context, req SourceCheckoutRequest, credenti
 		return receipt, sourceError("cleanup_unconfirmed")
 	}
 	clear(cred.Bytes)
-	if err = check(); err != nil {
+	if err = checkTransport(); err != nil {
 		return receipt, err
 	}
+	// Credential authority ends only after confirmed transport removal and byte
+	// clearing. The use callback remains bounded by operation, not the retired
+	// transport credential's delivery window.
 	if err = use(operation, req.CheckoutPath, receipt); err != nil {
 		return receipt, sourceError("use_failed")
 	}
-	if err = check(); err != nil {
-		return receipt, err
+	if operation.Err() != nil {
+		return receipt, sourceError("canceled")
 	}
 	return receipt, nil
 }
