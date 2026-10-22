@@ -310,7 +310,8 @@ func TestLocalBuildProductionHTTPS(t *testing.T) {
 		t.Fatal(err)
 	}
 	authority.Fence = "stale-" + authority.Fence
-	f.request(t, "POST", "/api/v1/runners/hosting/apply-begin", f.credential, authority, 409, nil)
+	// Wrong fenced authority is deliberately opaque at the production endpoint.
+	f.request(t, "POST", "/api/v1/runners/hosting/apply-begin", f.credential, authority, 404, nil)
 	if current, e := f.pg.GetHostingOperation(t.Context(), second.ID); e != nil || current.MutationHold {
 		t.Fatal("stale fence acquired mutation authority")
 	}
