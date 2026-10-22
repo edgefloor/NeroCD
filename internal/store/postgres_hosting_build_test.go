@@ -1244,7 +1244,7 @@ func TestPostgresHostingBuildSchemaBindingRestoreAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
 		if _, err := f.db.Exec(cleanup, "DROP DATABASE "+targetID+" WITH (FORCE)"); err != nil {
 			t.Error(err)
