@@ -48,7 +48,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   Journal format 8 stores only nonsecret references and delivery identity.
   Explicitly enabled CLI/API execution applies literals and exact managed-secret
   versions to Docker through protected stdin, with fixed delivery/replay deadlines.
-  Original runner credential rechecks prevent disclosure after credential rotation.
+  After authorization commits and before returning environment bytes, the endpoint
+  rechecks the original runner credential and rejects delivery if it detects rotation.
+  It cannot recall bytes already sent or values delivered to a runner or container.
   Docker administrators can inspect container environment values.
 - Bounded runtime status challenge/report controls and viewer freshness reads,
   through migration 0054. A collector, status UI and disk/CPU metrics are pending.

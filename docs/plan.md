@@ -110,8 +110,10 @@ Runtime source `420300352ba14f40f082c519f6a75d04f82129c1` and original-credentia
 repair `b9836b8a626fc12c5a6e4dde44ebc40e80b870a2` are accepted at
 `0a50debdfa5ab14191e52025cd1bb62684e86cd6`. Explicit CLI/API opt-in applies
 literals and exact managed-secret versions through protected Docker stdin, with
-fixed delivery/replay windows and deadlines. The delivery endpoint rechecks the
-original credential after authorization commit to prevent disclosure after rotation.
+fixed delivery/replay windows and deadlines. After authorization commits and
+before returning environment bytes, the delivery endpoint rechecks the original credential and rejects delivery if it detects
+rotation. It cannot recall bytes already sent or values already delivered to the
+runner or container.
 Status-control source `56baaa7ec5f155ca490fa7cc989833ed92de9189` is accepted at
 `b55bbcf7b2313e32391a4390dcbb8562de2617b5`, including migration 0054.
 It provides bounded challenge/report and viewer freshness controls. Collector
