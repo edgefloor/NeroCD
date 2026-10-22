@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,43 @@ func fixture(t *testing.T) *Environment {
 	}
 	t.Cleanup(e.Close)
 	return e
+}
+
+func TestRuntimeEnvironmentAttemptBounds(t *testing.T) {
+	e := fixture(t)
+	m, err := e.Metadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := domain.HostingRuntimeEnvironmentRequest{Authority: m.Authority, DeliveryID: m.DeliveryID, PlanHash: m.PlanHash, RuntimeConfiguration: m.RuntimeConfiguration}
+	for _, attempt := range []int64{-1, 0, 1, math.MaxInt32, math.MaxInt32 + 1, 1<<32 + 1} {
+		t.Run(fmt.Sprint(attempt), func(t *testing.T) {
+			if int64(int(attempt)) != attempt {
+				t.Skip("attempt is not representable by this architecture's int")
+			}
+			in.Authority.Attempt = int(attempt)
+			valid := attempt >= 1 && attempt <= math.MaxInt32
+			if got := ValidateRequest(in); (got == nil) != valid {
+				t.Fatalf("attempt %d validation=%v valid=%v", attempt, got, valid)
+			}
+			raw, err := json.Marshal(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = ReadRequest(bytes.NewReader(raw)); (err == nil) != valid {
+				t.Fatalf("attempt %d request codec accepted=%v valid=%v", attempt, err == nil, valid)
+			}
+			metadata := m
+			metadata.Authority = in.Authority
+			owned, err := NewEnvironment(metadata, []Entry{})
+			if owned != nil {
+				owned.Close()
+			}
+			if (err == nil) != valid {
+				t.Fatalf("attempt %d metadata accepted=%v valid=%v", attempt, err == nil, valid)
+			}
+		})
+	}
 }
 
 func TestEnvironmentOwnershipCodecAndRedaction(t *testing.T) {

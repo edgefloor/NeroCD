@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -50,6 +51,48 @@ func denyRuntimeDelivery(t *testing.T, f runtimeAdmissionFixture, in domain.Host
 		t.Fatal("denied request returned authorization", err)
 	}
 	got.Close()
+}
+
+func TestPostgresRuntimeDeliveryRejectsAttemptOverflow(t *testing.T) {
+	f, _, in := runtimeDeliveryFixture(t, false)
+	for _, attempt := range []int64{math.MaxInt32 + 1, 1<<32 + 1} {
+		t.Run(fmt.Sprint(attempt), func(t *testing.T) {
+			if int64(int(attempt)) != attempt {
+				t.Skip("attempt is not representable by this architecture's int")
+			}
+			invalid := in
+			invalid.Authority.Attempt = int(attempt)
+			denyRuntimeDelivery(t, f, invalid)
+			var count int
+			if err := f.db.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='hosting.runtime_environment_authorized'`).Scan(&count); err != nil || count != 0 {
+				t.Fatal("invalid attempt created an audit", count, err)
+			}
+			component, err := app.NewHostingRuntimeEnvironmentDelivery(auth.ContextProvider{}, runtimeDeliveryRunner(f.runner), f.pg, nil, time.Now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := auth.WithPrincipal(t.Context(), auth.Principal{ID: f.runner, Provider: domain.PrincipalRunner})
+			out, err := component.Deliver(ctx, invalid)
+			if out != nil {
+				out.Close()
+			}
+			if err != app.ErrHostingRuntimeEnvironmentUnavailable || out != nil {
+				t.Fatal("invalid attempt reached value delivery", err)
+			}
+			if err = f.db.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='hosting.runtime_environment_authorized'`).Scan(&count); err != nil || count != 0 {
+				t.Fatal("invalid service request reached authorization", count, err)
+			}
+		})
+	}
+	// Invalid requests must not claim the delivery ID or prevent valid authority.
+	got, err := f.pg.AuthorizeHostingRuntimeEnvironment(t.Context(), f.runner, in)
+	if err != nil {
+		t.Fatal("valid attempt rejected", err)
+	}
+	defer got.Close()
+	if got.Window.DeliveryID != in.DeliveryID || len(got.Records) != 1 {
+		t.Fatal("valid authorization missing")
+	}
 }
 
 func TestPostgresRuntimeDeliveryOriginalWindowAndAudit(t *testing.T) {

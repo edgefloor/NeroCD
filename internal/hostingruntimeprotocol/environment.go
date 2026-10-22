@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -98,7 +99,7 @@ func digest(s string) bool {
 // ValidateRequest bounds public authority fields before repository access.
 func ValidateRequest(in domain.HostingRuntimeEnvironmentRequest) error {
 	a := in.Authority
-	if a.Attempt < 1 || a.RunID != "run_"+a.OperationID || !domain.ValidHostingRuntimeDeliveryID(in.DeliveryID) || !digest(in.PlanHash) || in.RuntimeConfiguration.Generation < 1 || !digest(in.RuntimeConfiguration.Hash) {
+	if a.Attempt < 1 || a.Attempt > math.MaxInt32 || a.RunID != "run_"+a.OperationID || !domain.ValidHostingRuntimeDeliveryID(in.DeliveryID) || !digest(in.PlanHash) || in.RuntimeConfiguration.Generation < 1 || !digest(in.RuntimeConfiguration.Hash) {
 		return ErrInvalidMessage
 	}
 	for _, s := range []string{a.OperationID, a.RunID, a.LeaseID, a.Fence} {
