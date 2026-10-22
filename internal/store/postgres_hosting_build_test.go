@@ -13,8 +13,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingjobs"
 	"nerocd/internal/source"
 	"nerocd/internal/store"
+	"nerocd/internal/store/sqlcgen"
 )
 
 type buildStoreFixture struct {
@@ -716,5 +718,359 @@ func TestPostgresHostingBuildCleanupReceipts(t *testing.T) {
 	var receipts int
 	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_build_receipts WHERE build_id=$1`, b.ID).Scan(&receipts); err != nil || receipts != 2 {
 		t.Fatal("cleanup history lost", receipts, err)
+	}
+}
+
+// Stop the real image consumer after migration, retaining its transactional
+// enqueuer so image admission itself executes without background dispatch races.
+func enableBuildFixtureImageAdmission(t *testing.T, f buildStoreFixture) {
+	t.Helper()
+	ctx := t.Context()
+	for {
+		tx, err := f.db.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed, err := hostingjobs.MigrateNextTx(ctx, tx)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if !changed {
+			break
+		}
+	}
+	stop, err := f.pg.StartHostingExecution(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if stopErr := stop(cleanup); stopErr != nil {
+			t.Error(stopErr)
+		}
+	})
+	if err = stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresHostingBuildImageAdmissionLockOrder(t *testing.T) {
+	for _, phase := range []string{"request", "dispatch", "source_receipt", "artifact_resolution"} {
+		t.Run(phase, func(t *testing.T) {
+			f := newBuildStoreFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			var action func(context.Context) error
+			switch phase {
+			case "request":
+				action = func(ctx context.Context) error {
+					_, err := f.pg.RequestHostingBuild(ctx, "concurrent", f.src.ResourceID, "usr_bootstrap", buildInput("concurrent"), buildPolicy(), buildEnqueue, destinationEvent("concurrent_request"))
+					return err
+				}
+			case "dispatch":
+				b := f.request(t, "concurrent")
+				action = func(ctx context.Context) error {
+					_, err := f.pg.DispatchHostingBuild(ctx, b.ID, buildDispatch, destinationEvent("concurrent_dispatch"))
+					return err
+				}
+			case "source_receipt":
+				b, a := f.start(t, "concurrent")
+				action = func(ctx context.Context) error {
+					_, err := f.pg.CommitHostingBuildSource(ctx, f.runner, a, "concurrent_source", sourceBuildReceipt(b))
+					return err
+				}
+			case "artifact_resolution":
+				b, a := f.start(t, "concurrent")
+				var err error
+				b, err = f.pg.CommitHostingBuildSource(ctx, f.runner, a, "concurrent_source", sourceBuildReceipt(b))
+				if err != nil {
+					t.Fatal(err)
+				}
+				b, err = f.pg.PrepareHostingBuild(ctx, f.runner, a, b.Revision, "concurrent-daemon")
+				if err != nil {
+					t.Fatal(err)
+				}
+				artifact := buildArtifact(b)
+				b, err = f.pg.CompleteHostingBuild(ctx, f.runner, a, "concurrent_artifact", b.Revision, store.HostingBuildCompletion{State: "succeeded", Artifact: &artifact})
+				if err != nil {
+					t.Fatal(err)
+				}
+				action = func(ctx context.Context) error {
+					_, err := f.pg.ResolveCurrentHostingBuildArtifact(ctx, "usr_bootstrap", f.src.ResourceID, b.ID)
+					return err
+				}
+			}
+			enableBuildFixtureImageAdmission(t, f)
+			barrier, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			imageDone, buildDone := make(chan error, 1), make(chan error, 1)
+			imageStarted, buildStarted := false, false
+			defer func() {
+				cancel()
+				_ = barrier.Rollback(context.Background())
+				for _, pending := range []struct {
+					started bool
+					done    <-chan error
+				}{{imageStarted, imageDone}, {buildStarted, buildDone}} {
+					if pending.started {
+						select {
+						case <-pending.done:
+						case <-time.After(5 * time.Second):
+							t.Error("concurrent admission failed to join")
+						}
+					}
+				}
+			}()
+			if err = sqlcgen.New(barrier).LockHostingExecutionDestination(ctx, "dest_build"); err != nil {
+				t.Fatal(err)
+			}
+			var ownerPID int
+			if err = barrier.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&ownerPID); err != nil {
+				t.Fatal(err)
+			}
+			// Queue the real image request first at its destination advisory lock. Then
+			// queue each build API. Before the repair the build owns the resource while
+			// waiting behind the image, causing a real image/build cycle on release.
+			imageStarted = true
+			go func() {
+				_, imageErr := f.pg.RequestHostingDeployment(ctx, "hop_concurrent_image", f.src.ResourceID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("concurrent_image"))
+				imageDone <- imageErr
+			}()
+			waiters := func(want int) {
+				t.Helper()
+				ticker := time.NewTicker(10 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					var count int
+					if err = f.db.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND wait_event_type='Lock'`, ownerPID).Scan(&count); err != nil {
+						t.Fatal(err)
+					}
+					if count >= want {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-ticker.C:
+					}
+				}
+			}
+			waiters(1)
+			buildStarted = true
+			go func() { buildDone <- action(ctx) }()
+			waiters(2)
+			if err = barrier.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			imageErr := <-imageDone
+			imageStarted = false
+			buildErr := <-buildDone
+			buildStarted = false
+			if imageErr != nil || buildErr != nil {
+				t.Fatalf("concurrent image/build admission failed: image=%v build=%v", imageErr, buildErr)
+			}
+			image, err := f.pg.GetHostingOperation(ctx, "hop_concurrent_image")
+			if err != nil || image.ResourceID != f.src.ResourceID {
+				t.Fatalf("real image request not committed: %+v %v", image, err)
+			}
+		})
+	}
+}
+
+// Retain the independent security regression for authority expiry after writes.
+
+func TestPostgresHostingBuildCompletionExpiresAtAuditWait(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	b, a := f.start(t, "audit-wait")
+	b, err := f.pg.CommitHostingBuildSource(ctx, f.runner, a, "audit_source", sourceBuildReceipt(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err = f.pg.PrepareHostingBuild(ctx, f.runner, a, b.Revision, "audit-daemon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := buildArtifact(b)
+	completion := store.HostingBuildCompletion{State: "succeeded", Artifact: &artifact}
+	receiptID := "audit_success"
+	auditID := "aud_build_" + domain.HostingDocumentHash(struct{ Build, Phase, Receipt string }{b.ID, "complete", receiptID})[7:]
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	var blockerPID int
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = blocker.Exec(ctx, `INSERT INTO audit_events(id,actor_id,action,target_id,metadata,created_at) VALUES($1,'usr_bootstrap','fixture','fixture','{}',clock_timestamp())`, auditID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	joined := false
+	done := make(chan error, 1)
+	go func() {
+		_, e := f.pg.CompleteHostingBuild(ctx, f.runner, a, receiptID, b.Revision, completion)
+		done <- e
+	}()
+	defer func() {
+		cancel()
+		_ = blocker.Rollback(context.Background())
+		if !joined {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("completion failed to join")
+			}
+		}
+	}()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var waiting bool
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, blockerPID).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case e := <-done:
+			joined = true
+			t.Fatalf("completion did not wait at audit insert: %v", e)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	for {
+		var expired bool
+		if err = f.db.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM run_leases WHERE id=$1`, a.LeaseID).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var reportErr error
+	select {
+	case reportErr = <-done:
+		joined = true
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	after, err := f.pg.GetHostingBuild(ctx, "usr_bootstrap", b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipts, artifacts, audits int
+	if err = f.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_build_receipts WHERE build_id=$1 AND phase='complete'),(SELECT count(*) FROM hosting_build_artifacts WHERE build_id=$1),(SELECT count(*) FROM audit_events WHERE id=$2)`, b.ID, auditID).Scan(&receipts, &artifacts, &audits); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("expired during audit wait: error=%v state=%s revision=%d expected_revision=%d complete_receipts=%d artifacts=%d audits=%d", reportErr, after.State, after.Revision, b.Revision, receipts, artifacts, audits)
+	if !errors.Is(reportErr, store.ErrConflict) || after.State != "building" || after.Revision != b.Revision || receipts != 0 || artifacts != 0 || audits != 0 {
+		t.Fatal("expired post-write completion escaped atomic rollback")
+	}
+}
+
+func TestPostgresHostingBuildRejectsPlacementChangedDuringDestinationWait(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	server, dest := createDestinationTarget(t, f.pg, "replacement_build")
+	if _, err := f.db.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,'hosting_build_v1') WHERE id=$1`, server.RunnerID); err != nil {
+		t.Fatal(err)
+	}
+	grantDestination(t, f.pg, dest.ID, f.src.ProjectID, "replacement_grant")
+	// Placement is immutable in production. Disable only this isolated schema's
+	// identity trigger to model a stale read during administrative restoration.
+	if _, err := f.db.Exec(ctx, `ALTER TABLE resource_bindings DISABLE TRIGGER resource_bindings_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if _, err := f.db.Exec(cleanup, `ALTER TABLE resource_bindings ENABLE TRIGGER resource_bindings_immutable`); err != nil {
+			t.Error(err)
+		}
+	})
+	barrier, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	started := false
+	defer func() {
+		cancel()
+		_ = barrier.Rollback(context.Background())
+		if started {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("stale placement request failed to join")
+			}
+		}
+	}()
+	if err = sqlcgen.New(barrier).LockHostingExecutionDestination(ctx, "dest_build"); err != nil {
+		t.Fatal(err)
+	}
+	var ownerPID int
+	if err = barrier.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&ownerPID); err != nil {
+		t.Fatal(err)
+	}
+	started = true
+	go func() {
+		_, requestErr := f.pg.RequestHostingBuild(ctx, "stale-placement", f.src.ResourceID, "usr_bootstrap", buildInput("stale-placement"), buildPolicy(), buildEnqueue, destinationEvent("stale_placement"))
+		done <- requestErr
+	}()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, ownerPID).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE resource_bindings SET destination_id=$1 WHERE id='binding_build'`, dest.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = barrier.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requestErr := <-done
+	started = false
+	if !errors.Is(requestErr, store.ErrConflict) {
+		t.Fatalf("stale placement authorized a new target: %v", requestErr)
+	}
+	var builds int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_builds WHERE id='stale-placement'`).Scan(&builds); err != nil || builds != 0 {
+		t.Fatal("stale placement persisted", builds, err)
 	}
 }

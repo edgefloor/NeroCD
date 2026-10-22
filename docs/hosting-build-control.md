@@ -46,7 +46,8 @@ budgets, trusted toolchain and stable owned checkout path.
 
 ## Requests and dispatch
 
-`RequestHostingBuild` locks current resource, authorization, source, active
+`RequestHostingBuild` first locks the destination advisory key, then current
+resource, authorization, source, active
 project destination grant, immutable target, enrolled runner and source grant /
 secret metadata. The runner needs `hosting_build_v1`, must be active with current
 enrollment credential evidence, and must not have shell capability. The existing
@@ -89,7 +90,13 @@ can later be acknowledged as a terminal failure/cancellation by live authority.
 
 Every runner transition uses build/run/lease/attempt/fence plus exact pinned
 runner, task body and project. Transactions lock task and historical lease first,
-then resource, current authorization, source, placement, credentials and build.
+then destination advisory key, resource, current authorization, source, placement,
+credentials and build. All placement paths, including request, dispatch and current
+artifact resolution, use the existing image admission order of destination before
+resource. An unlocked immutable binding read selects the advisory key only; the
+resource/target join is re-read after locking and every binding/destination/server/
+runner identity must still match. That initial read never authorizes relocation.
+Source/grant configuration and cancellation take no destination lock.
 Fresh authority is checked with `clock_timestamp()` after blocking locks and
 again after state/receipt/artifact/audit writes. An expired lease that waited on a
 row lock cannot commit a new receipt. The additive lease trigger denies raw

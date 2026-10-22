@@ -285,14 +285,35 @@ func (s *PostgresStore) RevokeHostingSourceGrant(ctx context.Context, actor, id 
 	return err
 }
 
+// lockBuildResourceDestination follows image admission's destination-before-resource
+// order. The unlocked immutable placement read selects only the advisory lock;
+// the resource/target join is re-read under the resource lock and must match.
+func lockBuildResourceDestination(ctx context.Context, tx pgx.Tx, resourceID string) (sqlcgen.LockHostingResourceTargetRow, error) {
+	q := sqlcgen.New(tx)
+	var zero sqlcgen.LockHostingResourceTargetRow
+	before, err := q.HostingBuildTarget(ctx, resourceID)
+	if err != nil {
+		return zero, err
+	}
+	if err = q.LockHostingExecutionDestination(ctx, before.DestinationID); err != nil {
+		return zero, err
+	}
+	locked, err := q.LockHostingResourceTarget(ctx, resourceID)
+	if err != nil {
+		return zero, err
+	}
+	if locked.BindingID != before.BindingID || locked.DestinationID != before.DestinationID || locked.ServerID != before.ServerID || locked.RunnerID != before.RunnerID {
+		return zero, ErrConflict
+	}
+	return locked, nil
+}
+
 // lockBuildTarget never changes hosting_binding_state or a workload mutation hold.
+// Callers must already hold lockBuildResourceDestination for src.ResourceID.
 func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource) (sqlcgen.HostingBuildTargetRow, string, error) {
 	q := sqlcgen.New(tx)
 	target, err := q.HostingBuildTarget(ctx, src.ResourceID)
 	if err != nil {
-		return target, "", err
-	}
-	if err = q.LockHostingExecutionDestination(ctx, target.DestinationID); err != nil {
 		return target, "", err
 	}
 	revoked, err := q.LockHostingProjectGrant(ctx, sqlcgen.LockHostingProjectGrantParams{DestinationID: target.DestinationID, ProjectID: src.ProjectID})
@@ -331,7 +352,7 @@ func (s *PostgresStore) RequestHostingBuild(ctx context.Context, id, resourceID,
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingBuild, error) {
 		q := sqlcgen.New(tx)
-		resource, err := q.LockHostingBuildResource(ctx, resourceID)
+		resource, err := lockBuildResourceDestination(ctx, tx, resourceID)
 		if err != nil {
 			return domain.HostingBuild{}, err
 		}
@@ -434,7 +455,7 @@ func (s *PostgresStore) DispatchHostingBuild(ctx context.Context, id string, dis
 		if err != nil {
 			return b, err
 		}
-		if _, err = q.LockHostingBuildResource(ctx, b.ResourceID); err != nil {
+		if _, err = lockBuildResourceDestination(ctx, tx, b.ResourceID); err != nil {
 			return b, err
 		}
 		if err = authorizeBuildActor(ctx, tx, b.CreatedBy, b.ProjectID, "maintainer"); err != nil {
@@ -564,7 +585,7 @@ func (s *PostgresStore) CancelHostingBuild(ctx context.Context, actor, id string
 func (s *PostgresStore) ResolveCurrentHostingBuildArtifact(ctx context.Context, actor, resourceID, id string) (domain.HostingBuildArtifact, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingBuildArtifact, error) {
 		q := sqlcgen.New(tx)
-		r, err := q.LockHostingBuildResource(ctx, resourceID)
+		r, err := lockBuildResourceDestination(ctx, tx, resourceID)
 		if err != nil {
 			return domain.HostingBuildArtifact{}, err
 		}

@@ -14,8 +14,9 @@ import (
 )
 
 // buildRunnerTransaction locks the task and historical lease first, then the
-// resource, authorization, source, placement, credentials, and build row. Every
-// new write must also pass freshBuildAuthority after its last blocking write.
+// destination advisory lock, resource, authorization, source, placement, credentials,
+// and build row. Every new write must also pass freshBuildAuthority after its
+// last blocking write.
 func (s *PostgresStore) buildRunnerTransaction(ctx context.Context, runner string, a domain.HostingBuildAuthority, credentials bool, fn func(pgx.Tx, domain.HostingBuild) (domain.HostingBuild, error)) (domain.HostingBuild, error) {
 	if !buildRecordID(a.BuildID) || a.RunID != "build_run_"+a.BuildID || a.LeaseID == "" || a.Fence == "" || a.Attempt < 1 || a.Attempt > math.MaxInt32 {
 		return domain.HostingBuild{}, ErrConflict
@@ -32,7 +33,7 @@ func (s *PostgresStore) buildRunnerTransaction(ctx context.Context, runner strin
 		if err = checkBuildAuthority(ctx, q, runner, a, b, false); err != nil {
 			return b, err
 		}
-		if _, err = q.LockHostingBuildResource(ctx, b.ResourceID); err != nil {
+		if _, err = lockBuildResourceDestination(ctx, tx, b.ResourceID); err != nil {
 			return b, err
 		}
 		if err = authorizeBuildActor(ctx, tx, b.CreatedBy, b.ProjectID, "maintainer"); err != nil {
