@@ -39,22 +39,21 @@ GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -c -o "$fixture_dir/hostingbui
 legacy_tree="$fixture_dir/legacy"
 mkdir "$legacy_tree"
 git archive d63108b5dc4882fd6471fa8867d7278a3ccced78 go.mod go.sum internal/hostingbuild | tar -x -C "$legacy_tree"
-cat > "$legacy_tree/internal/hostingbuild/legacy_fixture_test.go" <<'GO'
-package hostingbuild
-import("os";"path/filepath";"runtime";"strings";"testing")
-func TestWriteLegacyStaticFixture(t *testing.T){
- if os.Getenv("NEROCD_BUILD_RUNTIME")!="disposable-dind"{t.Fatal("disposable fixture required")}
- for _,p:=range []string{"/legacy/state","/legacy/source"}{if err:=os.MkdirAll(p,0700);err!=nil{t.Fatal(err)}}
- if err:=os.WriteFile("/legacy/source/index.html",[]byte("legacy-static-content\n"),0600);err!=nil{t.Fatal(err)}
- // The accepted static policy included source instructions in its context.
- if err:=os.WriteFile("/legacy/source/Dockerfile",[]byte("legacy source instruction"),0600);err!=nil{t.Fatal(err)}
- e,err:=New(Config{DockerBinary:"/usr/local/bin/docker",Socket:"/var/run/docker.sock",BuildxBinary:"/fixture/buildx",BuildxSHA256:buildxChecksum(runtime.GOARCH),StateDir:"/legacy/state",CgroupRoot:os.Getenv("NEROCD_CGROUP_ROOT"),PlannerImage:os.Getenv("NEROCD_PLANNER_IMAGE")});if err!=nil{t.Fatal(err)}
- setup:=t.TempDir();if err=os.Mkdir(filepath.Join(setup,"docker"),0700);err!=nil{t.Fatal(err)}
- b,err:=e.docker(t.Context(),setup,"info","--format","{{.ID}}");if err!=nil{t.Fatal(err)}
- r,err:=e.Build(t.Context(),Request{BuildID:"legacy-static",Checkout:"/legacy/source",SourceID:"legacy-source",InputID:"legacy-input",DaemonID:strings.TrimSpace(string(b)),Strategy:Static,Platform:"linux/"+runtime.GOARCH,Limits:testLimits()});if err!=nil{t.Fatal(err)}
- t.Logf("accepted legacy static receipt: request=%s context=%s image=%s",r.RequestDigest,r.ContextDigest,r.ImageID)
-}
-GO
+printf '%s\n' \
+'package hostingbuild' \
+'import("os";"path/filepath";"runtime";"strings";"testing")' \
+'func TestWriteLegacyStaticFixture(t *testing.T){' \
+' if os.Getenv("NEROCD_BUILD_RUNTIME")!="disposable-dind"{t.Fatal("disposable fixture required")}' \
+' for _,p:=range []string{"/legacy/state","/legacy/source"}{if err:=os.MkdirAll(p,0700);err!=nil{t.Fatal(err)}}' \
+' if err:=os.WriteFile("/legacy/source/index.html",[]byte("legacy-static-content\n"),0600);err!=nil{t.Fatal(err)}' \
+' // The accepted static policy included source instructions in its context.' \
+' if err:=os.WriteFile("/legacy/source/Dockerfile",[]byte("legacy source instruction"),0600);err!=nil{t.Fatal(err)}' \
+' e,err:=New(Config{DockerBinary:"/usr/local/bin/docker",Socket:"/var/run/docker.sock",BuildxBinary:"/fixture/buildx",BuildxSHA256:buildxChecksum(runtime.GOARCH),StateDir:"/legacy/state",CgroupRoot:os.Getenv("NEROCD_CGROUP_ROOT"),PlannerImage:os.Getenv("NEROCD_PLANNER_IMAGE")});if err!=nil{t.Fatal(err)}' \
+' setup:=t.TempDir();if err=os.Mkdir(filepath.Join(setup,"docker"),0700);err!=nil{t.Fatal(err)}' \
+' b,err:=e.docker(t.Context(),setup,"info","--format","{{.ID}}");if err!=nil{t.Fatal(err)}' \
+' r,err:=e.Build(t.Context(),Request{BuildID:"legacy-static",Checkout:"/legacy/source",SourceID:"legacy-source",InputID:"legacy-input",DaemonID:strings.TrimSpace(string(b)),Strategy:Static,Platform:"linux/"+runtime.GOARCH,Limits:testLimits()});if err!=nil{t.Fatal(err)}' \
+' t.Logf("accepted legacy static receipt: request=%s context=%s image=%s",r.RequestDigest,r.ContextDigest,r.ImageID)' \
+'}' > "$legacy_tree/internal/hostingbuild/legacy_fixture_test.go"
 GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go -C "$legacy_tree" test -c -o "$fixture_dir/legacy-hostingbuild.test" ./internal/hostingbuild
 printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'COPY buildx railpack mise-bin hostingbuild.test legacy-hostingbuild.test /fixture/' > "$fixture_dir/Dockerfile"
 docker build --label "io.nerocd.runtime-build.owner=$owner" -t "$image" "$fixture_dir"
