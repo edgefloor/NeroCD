@@ -189,6 +189,11 @@ func proxyAttemptLock(ctx context.Context, tx pgx.Tx, runner string, a domain.Ho
 	if p.ActiveOperationID != op.ID || op.RunID != a.RunID {
 		return op, p, ErrConflict
 	}
+	// Destination and proxy admission can wait beyond lease expiry. The task
+	// and lease locks are already ours; read current authority after the wait.
+	if err = proxyAuthority(ctx, tx, runner, a, true); err != nil {
+		return op, p, err
+	}
 	return op, p, nil
 }
 
@@ -272,6 +277,10 @@ func (s *PostgresStore) RunnerProxyPrepared(ctx context.Context, runner string, 
 	if err = proxyValidateSnapshot(ctx, tx, preparedProxy, op.Snapshot); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
+	// Snapshot validation acquires resource locks after the proxy lock.
+	if err = proxyAuthority(ctx, tx, runner, in.HostingAuthority, true); err != nil {
+		return domain.HostingProxyOperation{}, err
+	}
 	q := sqlcgen.New(tx)
 	changed, err := q.ProxyPinEngine(ctx, sqlcgen.ProxyPinEngineParams{ID: p.ID, DaemonID: proxyPointer(in.DaemonID), StaticHash: proxyPointer(in.StaticHash)})
 	if err != nil {
@@ -311,6 +320,9 @@ func (s *PostgresStore) RunnerProxyApplyBegin(ctx context.Context, runner string
 		return domain.HostingProxyOperation{}, ErrConflict
 	}
 	if err = proxyValidateSnapshot(ctx, tx, p, op.Snapshot); err != nil {
+		return domain.HostingProxyOperation{}, err
+	}
+	if err = proxyAuthority(ctx, tx, runner, a, true); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
 	authority, err := json.Marshal(a)
@@ -431,6 +443,9 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 		return domain.HostingProxyOperation{}, ErrConflict
 	}
 	if err = proxyValidateResult(op, in.Result); err != nil {
+		return domain.HostingProxyOperation{}, err
+	}
+	if err = proxyAuthority(ctx, tx, runner, in.HostingAuthority, true); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
 	if err = proxyInsertReceipt(ctx, tx, in.HostingAuthority, "complete", in.ReceiptID, in.Result); err != nil {

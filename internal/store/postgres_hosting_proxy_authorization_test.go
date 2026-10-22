@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -11,6 +12,217 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
 )
+
+func TestPostgresProxyAuthorityRecheckedAfterOwnershipWait(t *testing.T) {
+	for _, test := range []struct{ phase, lock, revoke string }{
+		{"prepare", "destination", "expiry"},
+		{"prepare", "proxy", "expiry"},
+		{"prepare", "resource", "expiry"},
+		{"admit", "proxy", "expiry"},
+		{"admit", "resource", "expiry"},
+		{"complete", "proxy", "expiry"},
+		{"prepare", "resource", "capability"},
+		{"admit", "resource", "capability"},
+		{"complete", "proxy", "capability"},
+	} {
+		t.Run(test.phase+"_"+test.lock+"_"+test.revoke, func(t *testing.T) {
+			pg, database, resource, server, destination, healthy := proxyControlFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			route, err := pg.RequestHostingRoute(ctx, resource.ID, "", "pop_wait", "usr_bootstrap", domain.HostingRouteInput{IdempotencyKey: "lock-wait", Hostname: "wait.apps.nerocd.invalid", PathPrefix: "/", ExpectedHealthyOperationID: healthy.ID}, destinationEvent("wait_route"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, op := claimProxyPlan(t, pg, route.OperationID, server.RunnerID)
+			prepared := domain.HostingProxyPreparedRequest{HostingAuthority: a, ReceiptID: "wait_prepare", HostingProxyPreparation: domain.HostingProxyPreparation{DaemonID: healthy.Release.DaemonID, PlanHash: op.Plan.Hash, EngineHash: strings.Repeat("a", 64), StaticHash: strings.Repeat("b", 64)}}
+			if test.phase != "prepare" {
+				if _, err = pg.RunnerProxyPrepared(ctx, server.RunnerID, prepared); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.phase == "complete" {
+				if _, err = pg.RunnerProxyApplyBegin(ctx, server.RunnerID, a); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := pg.GetHostingProxyOperation(ctx, op.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var initialTask, initialLease string
+			if err = database.QueryRow(ctx, `SELECT r.status,l.status FROM run_leases l JOIN task_runs r ON r.id=l.run_id WHERE l.id=$1`, a.LeaseID).Scan(&initialTask, &initialLease); err != nil {
+				t.Fatal(err)
+			}
+			blocker, err := database.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stop()
+				_ = blocker.Rollback(cleanup)
+			}()
+			var blockerPID int
+			if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+				t.Fatal(err)
+			}
+			switch test.lock {
+			case "destination":
+				_, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0))`, destination.ID)
+			case "proxy":
+				_, err = blocker.Exec(ctx, `SELECT id FROM hosting_proxies WHERE id='proxy_fixture' FOR UPDATE`)
+			case "resource":
+				_, err = blocker.Exec(ctx, `SELECT id FROM resources WHERE id=$1 FOR UPDATE`, resource.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.revoke == "expiry" {
+				if _, err = database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, a.LeaseID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			done := make(chan error, 1)
+			var work sync.WaitGroup
+			work.Go(func() {
+				var err error
+				switch test.phase {
+				case "prepare":
+					_, err = pg.RunnerProxyPrepared(ctx, server.RunnerID, prepared)
+				case "admit":
+					_, err = pg.RunnerProxyApplyBegin(ctx, server.RunnerID, a)
+				case "complete":
+					_, err = pg.RunnerProxyComplete(ctx, server.RunnerID, domain.HostingProxyCompleteRequest{HostingAuthority: a, ReceiptID: "wait_complete", Result: domain.HostingProxyResult{Outcome: "applied", LoadedGeneration: op.Generation, PlanHash: op.Plan.Hash, EngineHash: prepared.EngineHash, DaemonID: prepared.DaemonID, Routes: []domain.HostingProxyRouteObservation{{RouteID: route.ID, HTTPReady: true, Certificate: domain.HostingProxyCertificate{Hostname: route.Hostname, Status: "pending"}}}}})
+				}
+				done <- err
+			})
+			defer func() {
+				cancel()
+				cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stop()
+				_ = blocker.Rollback(cleanup)
+				work.Wait()
+			}()
+			ticker := time.NewTicker(10 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				var waiting bool
+				if err = database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, blockerPID).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("operation did not wait on ownership lock: %v", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-ticker.C:
+				}
+			}
+			if test.revoke == "capability" {
+				if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.RunTypeProxyApply); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				for {
+					var expired bool
+					if err = database.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM run_leases WHERE id=$1`, a.LeaseID).Scan(&expired); err != nil {
+						t.Fatal(err)
+					}
+					if expired {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-ticker.C:
+					}
+				}
+			}
+			if err = blocker.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err = <-done; err == nil {
+				t.Fatal("authority lost during ownership wait still authorized a fresh mutation")
+			}
+			after, err := pg.GetHostingProxyOperation(ctx, op.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := pg.GetHostingProxy(ctx, "proxy_fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.State != before.State || after.MutationHold != before.MutationHold || after.CompleteReceipt != nil || (after.PreparedReceipt != nil) != (before.PreparedReceipt != nil) || p.LoadedGeneration != 1 {
+				t.Fatalf("stale transaction changed receipt or ownership: before=%+v after=%+v proxy=%+v", before, after, p)
+			}
+			var task, lease string
+			var admissions int
+			if err = database.QueryRow(ctx, `SELECT r.status,l.status,(SELECT count(*) FROM hosting_proxy_admissions WHERE operation_id=$2) FROM run_leases l JOIN task_runs r ON r.id=l.run_id WHERE l.id=$1`, a.LeaseID, op.ID).Scan(&task, &lease, &admissions); err != nil {
+				t.Fatal(err)
+			}
+			wantAdmissions := 0
+			if test.phase == "complete" {
+				wantAdmissions = 1
+			}
+			if task != initialTask || lease != initialLease || admissions != wantAdmissions {
+				t.Fatalf("rejected transaction changed task, lease or admission: task=%s lease=%s admissions=%d", task, lease, admissions)
+			}
+		})
+	}
+}
+
+func TestPostgresProxyFirstMutationRejectsCanceledOrRestoredAuthority(t *testing.T) {
+	for _, loss := range []string{"cancel", "restore"} {
+		for _, phase := range []string{"prepare", "admit", "complete"} {
+			t.Run(loss+"_"+phase, func(t *testing.T) {
+				pg, database, resource, server, _, healthy := proxyControlFixture(t)
+				ctx := t.Context()
+				route, err := pg.RequestHostingRoute(ctx, resource.ID, "", "pop_loss", "usr_bootstrap", domain.HostingRouteInput{IdempotencyKey: "authority-loss", Hostname: "loss.apps.nerocd.invalid", PathPrefix: "/", ExpectedHealthyOperationID: healthy.ID}, destinationEvent("loss_route"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, op := claimProxyPlan(t, pg, route.OperationID, server.RunnerID)
+				prepared := domain.HostingProxyPreparedRequest{HostingAuthority: a, ReceiptID: "loss_prepare", HostingProxyPreparation: domain.HostingProxyPreparation{DaemonID: healthy.Release.DaemonID, PlanHash: op.Plan.Hash, EngineHash: strings.Repeat("a", 64), StaticHash: strings.Repeat("b", 64)}}
+				if phase != "prepare" {
+					if _, err = pg.RunnerProxyPrepared(ctx, server.RunnerID, prepared); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if phase == "complete" {
+					if _, err = pg.RunnerProxyApplyBegin(ctx, server.RunnerID, a); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if loss == "cancel" {
+					_, err = pg.CancelHostingProxyOperation(ctx, op.ID, "usr_bootstrap", destinationEvent("loss_cancel"))
+				} else {
+					_, err = database.Exec(ctx, `INSERT INTO hosting_proxy_restore_holds(proxy_id) VALUES('proxy_fixture')`)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch phase {
+				case "prepare":
+					_, err = pg.RunnerProxyPrepared(ctx, server.RunnerID, prepared)
+				case "admit":
+					_, err = pg.RunnerProxyApplyBegin(ctx, server.RunnerID, a)
+				case "complete":
+					_, err = pg.RunnerProxyComplete(ctx, server.RunnerID, domain.HostingProxyCompleteRequest{HostingAuthority: a, ReceiptID: "loss_complete", Result: domain.HostingProxyResult{Outcome: "uncertain", PlanHash: op.Plan.Hash, EngineHash: prepared.EngineHash, DaemonID: prepared.DaemonID}})
+				}
+				if err == nil {
+					t.Fatal("canceled or restored authority published a first mutation")
+				}
+				after, err := pg.GetHostingProxyOperation(ctx, op.ID)
+				if err != nil || after.CompleteReceipt != nil || after.MutationHold != (phase == "complete") || after.RestoreOwnershipHeld != (loss == "restore") || phase == "prepare" && after.PreparedReceipt != nil {
+					t.Fatalf("authority loss changed receipts or ownership: %+v %v", after, err)
+				}
+			})
+		}
+	}
+}
 
 func TestPostgresProxyRequiresServerAdminAndControlProjectOwner(t *testing.T) {
 	pg, database, resource, server, _, healthy := proxyControlFixture(t)
