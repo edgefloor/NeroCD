@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -168,3 +169,125 @@ func (r contextReader) Read(p []byte) (int, error) {
 	}
 	return r.reader.Read(p)
 }
+
+const (
+	scanBatchSize    = 128
+	scanWorkLimit    = 1_000_000
+	scanDepthLimit   = 256
+	scanFileLimit    = 1 << 20
+	scanProcessLimit = 4096
+)
+
+// Each scan has finite work even when a build keeps adding entries. Cancellation
+// is checked before and after each bounded ReadDir batch and before each entry.
+// Local filesystem syscalls must return; no abandoned goroutine simulates a timeout.
+type scanBudget struct {
+	ctx       context.Context
+	remaining int
+}
+
+func newScanBudget(ctx context.Context) *scanBudget {
+	return &scanBudget{ctx: ctx, remaining: scanWorkLimit}
+}
+func (b *scanBudget) step() error {
+	if err := b.ctx.Err(); err != nil {
+		return err
+	}
+	if b.remaining == 0 {
+		return errors.New("filesystem scan work budget exceeded")
+	}
+	b.remaining--
+	return nil
+}
+func scanDirectory(b *scanBudget, f *os.File, visit func(fs.DirEntry) error) error {
+	for {
+		if err := b.step(); err != nil {
+			return err
+		}
+		entries, readErr := f.ReadDir(scanBatchSize)
+		if err := b.ctx.Err(); err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := b.step(); err != nil {
+				return err
+			}
+			if err := visit(entry); err != nil {
+				return err
+			}
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+func scanTree(b *scanBudget, rootPath string, visit func(string, fs.FileInfo) error) error {
+	if err := b.step(); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	var walk func(string, int) error
+	walk = func(relative string, depth int) error {
+		if err := b.step(); err != nil {
+			return err
+		}
+		if depth > scanDepthLimit {
+			return errors.New("filesystem scan depth budget exceeded")
+		}
+		info, err := root.Lstat(relative)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err = visit(relative, info); err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return nil
+		}
+		if err = b.step(); err != nil {
+			return err
+		}
+		dir, err := root.Open(relative)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer func() { _ = dir.Close() }()
+		return scanDirectory(b, dir, func(entry fs.DirEntry) error { return walk(path.Join(relative, entry.Name()), depth+1) })
+	}
+	return walk(".", 0)
+}
+func scanReadFile(b *scanBudget, p string) ([]byte, error) {
+	if err := b.step(); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(contextReader{ctx: b.ctx, reader: f}, scanFileLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > scanFileLimit {
+		return nil, errors.New("process metadata scan byte budget exceeded")
+	}
+	if err = b.ctx.Err(); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+func joinMonitor(stop context.CancelFunc, done <-chan error) error { stop(); return <-done }

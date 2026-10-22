@@ -1,6 +1,7 @@
 package hostingbuild
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -104,40 +105,44 @@ func checkGroup(p string, l Limits) error {
 	return nil
 }
 
-func verifyDescendants(pid int, group string, l Limits) error {
-	_, err := inspectDescendants(pid, group, l)
+func verifyDescendants(ctx context.Context, pid int, group string, l Limits) error {
+	_, err := inspectDescendants(ctx, pid, group, l)
 	return err
 }
 
-func inspectDescendants(pid int, group string, l Limits) (int, error) {
+func inspectDescendants(ctx context.Context, pid int, group string, l Limits) (int, error) {
+	budget := newScanBudget(ctx)
+	if err := budget.step(); err != nil {
+		return 0, err
+	}
 	count := 0
 	members := map[int]bool{}
 	if err := checkGroup(filepath.Join("/sys/fs/cgroup", group), l); err != nil {
 		return count, err
 	}
-	err := filepath.WalkDir(filepath.Join("/sys/fs/cgroup", group), func(p string, d fs.DirEntry, walkErr error) error {
-		if os.IsNotExist(walkErr) {
+	err := scanTree(budget, filepath.Join("/sys/fs/cgroup", group), func(relative string, info fs.FileInfo) error {
+		if info.Name() != "cgroup.procs" {
 			return nil
 		}
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.Name() != "cgroup.procs" {
+		b, err := scanReadFile(budget, filepath.Join("/sys/fs/cgroup", group, relative))
+		if os.IsNotExist(err) {
 			return nil
 		}
-		b, readErr := os.ReadFile(p)
-		if os.IsNotExist(readErr) {
-			return nil
-		}
-		if readErr != nil {
-			return readErr
+		if err != nil {
+			return err
 		}
 		for _, field := range strings.Fields(string(b)) {
-			n, parseErr := strconv.Atoi(field)
-			if parseErr != nil {
-				return parseErr
+			if err := budget.step(); err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(field)
+			if err != nil {
+				return err
 			}
 			members[n] = true
+			if len(members) > scanProcessLimit {
+				return errors.New("owned process scan budget exceeded")
+			}
 		}
 		return nil
 	})
@@ -147,16 +152,19 @@ func inspectDescendants(pid int, group string, l Limits) (int, error) {
 	count = len(members)
 	// Inspect only processes inside the owned cgroup and descendants of the
 	// owned builder. /proc children traversal avoids reading unrelated tasks.
-	descendants, err := processDescendants(pid)
+	descendants, err := processDescendantsBudget(budget, pid)
 	if err != nil {
 		return count, err
 	}
 	for n := range descendants {
+		if err := budget.step(); err != nil {
+			return count, err
+		}
 		if !members[n] {
 			count++
 			members[n] = true
 		}
-		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", n))
+		b, err := scanReadFile(budget, fmt.Sprintf("/proc/%d/cgroup", n))
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -171,40 +179,59 @@ func inspectDescendants(pid int, group string, l Limits) (int, error) {
 	return count, nil
 }
 
-func processDescendants(pid int) (map[int]bool, error) {
+func processDescendants(ctx context.Context, pid int) (map[int]bool, error) {
+	return processDescendantsBudget(newScanBudget(ctx), pid)
+}
+func processDescendantsBudget(budget *scanBudget, pid int) (map[int]bool, error) {
 	found := map[int]bool{}
+	queued := map[int]bool{pid: true}
 	queue := []int{pid}
 	for len(queue) > 0 {
+		if err := budget.step(); err != nil {
+			return nil, err
+		}
 		current := queue[0]
 		queue = queue[1:]
-		if found[current] {
-			continue
-		}
 		found[current] = true
-		threads, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", current))
+		dir, err := os.Open(fmt.Sprintf("/proc/%d/task", current))
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		for _, thread := range threads {
-			children, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/children", current, thread.Name()))
+		err = scanDirectory(budget, dir, func(thread fs.DirEntry) error {
+			children, err := scanReadFile(budget, fmt.Sprintf("/proc/%d/task/%s/children", current, thread.Name()))
 			if os.IsNotExist(err) {
-				continue
+				return nil
 			}
 			if err != nil {
-				return nil, err
+				return err
 			}
 			for _, child := range strings.Fields(string(children)) {
+				if err := budget.step(); err != nil {
+					return err
+				}
 				n, err := strconv.Atoi(child)
 				if err != nil {
-					return nil, err
+					return err
 				}
-				if !found[n] {
+				if !queued[n] {
+					if len(queued) >= scanProcessLimit {
+						return errors.New("owned process scan budget exceeded")
+					}
+					queued[n] = true
 					queue = append(queue, n)
 				}
 			}
+			return nil
+		})
+		closeErr := dir.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
 		}
 	}
 	return found, nil
@@ -279,7 +306,7 @@ func createBuildGroup(p string, l Limits) error {
 	}
 	return checkGroup(p, l)
 }
-func (e *Engine) cleanupGroup(r ownedResources) error {
+func (e *Engine) cleanupGroup(ctx context.Context, r ownedResources) error {
 	if r.Group == "" {
 		return nil
 	}
@@ -308,25 +335,26 @@ func (e *Engine) cleanupGroup(r ownedResources) error {
 		if time.Now().After(deadline) {
 			return errors.New("owned cgroup termination unconfirmed")
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	var dirs []string
-	err := filepath.WalkDir(r.Group, func(p string, d fs.DirEntry, walkErr error) error {
-		if os.IsNotExist(walkErr) {
+	budget := newScanBudget(ctx)
+	err := scanTree(budget, r.Group, func(relative string, info fs.FileInfo) error {
+		if !info.IsDir() {
 			return nil
 		}
-		if walkErr != nil {
-			return walkErr
+		p := filepath.Join(r.Group, relative)
+		dirs = append(dirs, p)
+		b, err := scanReadFile(budget, filepath.Join(p, "cgroup.procs"))
+		if err != nil {
+			return err
 		}
-		if d.IsDir() {
-			dirs = append(dirs, p)
-			b, err := os.ReadFile(filepath.Join(p, "cgroup.procs"))
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(string(b)) != "" {
-				return errors.New("owned cgroup still populated")
-			}
+		if strings.TrimSpace(string(b)) != "" {
+			return errors.New("owned cgroup still populated")
 		}
 		return nil
 	})
@@ -334,6 +362,9 @@ func (e *Engine) cleanupGroup(r ownedResources) error {
 		return err
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := budget.step(); err != nil {
+			return err
+		}
 		if err = os.Remove(dirs[i]); err != nil && !os.IsNotExist(err) {
 			return err
 		}

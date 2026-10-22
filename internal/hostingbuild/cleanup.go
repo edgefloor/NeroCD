@@ -75,7 +75,7 @@ func (e *Engine) cleanup(ctx context.Context, dir string, r ownedResources) erro
 		return err
 	}
 	if strings.TrimSpace(string(b)) == "" {
-		return e.cleanupGroup(r)
+		return e.cleanupGroup(ctx, r)
 	}
 	b, err = e.docker(ctx, dir, "volume", "inspect", r.Volume)
 	if err != nil {
@@ -102,5 +102,5 @@ func (e *Engine) cleanup(ctx context.Context, dir string, r ownedResources) erro
 	if strings.TrimSpace(string(b)) != "" {
 		return errors.New("volume removal unconfirmed")
 	}
-	return e.cleanupGroup(r)
+	return e.cleanupGroup(ctx, r)
 }

@@ -273,8 +273,7 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	watchDone := make(chan error, 1)
 	go func() { watchDone <- e.monitor(watchCtx, dir, resources, c, l, group, cancel) }()
 	defer func() {
-		stopWatch()
-		if watchErr := <-watchDone; watchErr != nil {
+		if watchErr := joinMonitor(stopWatch, watchDone); watchErr != nil {
 			retErr = errors.Join(retErr, watchErr)
 		}
 	}()
@@ -302,7 +301,7 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 	if err = e.command(ctx, dir, logs, e.config.BuildxBinary, buildArgs...); err != nil {
 		return result, err
 	}
-	if err = verifyDescendants(c.State.PID, group, l); err != nil {
+	if err = verifyDescendants(ctx, c.State.PID, group, l); err != nil {
 		return result, err
 	}
 	identity, err := validateExport(ctx, export, filepath.Join(dir, "validated"), r.Platform, l)
@@ -401,16 +400,9 @@ func checkFree(p string, l Limits) error {
 	}
 	return nil
 }
-func usage(p string) (int64, error) {
+func usage(ctx context.Context, p string) (int64, error) {
 	var total int64
-	err := filepath.WalkDir(p, func(_ string, d fs.DirEntry, e error) error {
-		if e != nil {
-			return e
-		}
-		i, e := d.Info()
-		if e != nil {
-			return e
-		}
+	err := scanTree(newScanBudget(ctx), p, func(_ string, i fs.FileInfo) error {
 		if i.Mode().IsRegular() {
 			if i.Size() > 1<<50-total {
 				return errors.New("usage overflow")
@@ -421,6 +413,7 @@ func usage(p string) (int64, error) {
 	})
 	return total, err
 }
+
 func (e *Engine) monitor(ctx context.Context, dir string, r ownedResources, c containerInfo, l Limits, group string, cancel context.CancelFunc) error {
 	ticker := time.NewTicker(l.PollInterval)
 	defer ticker.Stop()
@@ -429,13 +422,13 @@ func (e *Engine) monitor(ctx context.Context, dir string, r ownedResources, c co
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			err := verifyDescendants(c.State.PID, group, l)
+			err := verifyDescendants(ctx, c.State.PID, group, l)
 			if err == nil {
 				err = checkFree(e.config.StateDir, l)
 			}
 			var n int64
 			if err == nil {
-				n, err = usage(dir)
+				n, err = usage(ctx, dir)
 				if n > l.UsageBytes {
 					err = errors.New("owned workspace disk budget exceeded")
 				}
@@ -455,7 +448,7 @@ func (e *Engine) monitor(ctx context.Context, dir string, r ownedResources, c co
 							break
 						}
 						var v int64
-						v, err = usage(m.Source)
+						v, err = usage(ctx, m.Source)
 						if err == nil && v > l.UsageBytes-n {
 							err = errors.New("owned builder disk budget exceeded")
 						}
@@ -463,6 +456,9 @@ func (e *Engine) monitor(ctx context.Context, dir string, r ownedResources, c co
 				}
 			}
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return nil
+				}
 				cancel()
 				return err
 			}

@@ -1,6 +1,7 @@
 package hostingbuild
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -65,7 +66,18 @@ func TestDelegationAndCleanupBoundaries(t *testing.T) {
 		t.Fatal("ordinary filesystem accepted as delegated cgroup")
 	}
 	e := &Engine{config: Config{CgroupRoot: dir}}
-	if err := e.cleanupGroup(ownedResources{Token: "0123456789abcdef0123456789abcdef", Group: filepath.Join(dir, "foreign")}); err == nil {
+	if err := e.cleanupGroup(t.Context(), ownedResources{Token: "0123456789abcdef0123456789abcdef", Group: filepath.Join(dir, "foreign")}); err == nil {
 		t.Fatal("foreign cgroup cleanup accepted")
+	}
+}
+
+func TestOwnedProcessScanHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := processDescendants(ctx, os.Getpid()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("process traversal cancellation: %v", err)
+	}
+	if _, err := inspectDescendants(ctx, os.Getpid(), "/unused", testLimits()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cgroup traversal cancellation: %v", err)
 	}
 }

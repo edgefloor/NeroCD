@@ -50,7 +50,7 @@ func (e *Engine) plan(ctx context.Context, dir, source string, r ownedResources,
 		if !c.State.Running {
 			return errors.New("railpack helper exited before output collection")
 		}
-		if err = verifyDescendants(c.State.PID, group, l); err != nil {
+		if err = verifyDescendants(ctx, c.State.PID, group, l); err != nil {
 			return err
 		}
 		b, readErr := e.docker(ctx, dir, "exec", r.Planner, "cat", "/out/status")

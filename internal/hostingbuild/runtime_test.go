@@ -152,7 +152,7 @@ func TestRuntimeBuild(t *testing.T) {
 					if err != nil {
 						continue
 					}
-					count, err := inspectDescendants(c.State.PID, group, req.Limits)
+					count, err := inspectDescendants(t.Context(), c.State.PID, group, req.Limits)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -168,7 +168,7 @@ func TestRuntimeBuild(t *testing.T) {
 							throttled = true
 						}
 					}
-					proofPID, proofGroup := findBuildStep("nerocd-build-step-proof", c.State.PID, group)
+					proofPID, proofGroup := findBuildStep(t.Context(), "nerocd-build-step-proof", c.State.PID, group)
 					inGroup := proofGroup == group || strings.HasPrefix(proofGroup, group+"/")
 					if proofPID > 0 && !sawProof {
 						sawProof = true
@@ -219,7 +219,7 @@ func TestRuntimeBuild(t *testing.T) {
 					if err != nil {
 						continue
 					}
-					pid, runGroup := findBuildStep("nerocd-memory-proof", c.State.PID, group)
+					pid, runGroup := findBuildStep(t.Context(), "nerocd-memory-proof", c.State.PID, group)
 					if pid > 0 && (runGroup == group || strings.HasPrefix(runGroup, group+"/")) {
 						sawRUN = true
 					}
@@ -325,23 +325,24 @@ func TestRuntimeBuild(t *testing.T) {
 }
 
 // The unique argv marker is placed only on the Dockerfile's RUN process.
-func findBuildStep(marker string, rootPID int, group string) (int, string) {
-	processes, _ := processDescendants(rootPID)
+func findBuildStep(ctx context.Context, marker string, rootPID int, group string) (int, string) {
+	processes, _ := processDescendants(ctx, rootPID)
 	if processes == nil {
 		processes = map[int]bool{}
 	}
-	_ = filepath.WalkDir(filepath.Join("/sys/fs/cgroup", group), func(p string, d os.DirEntry, err error) error {
-		if err != nil {
+	budget := newScanBudget(ctx)
+	_ = scanTree(budget, filepath.Join("/sys/fs/cgroup", group), func(p string, info os.FileInfo) error {
+		if info.Name() != "cgroup.procs" {
 			return nil
 		}
-		if d.Name() != "cgroup.procs" {
-			return nil
-		}
-		b, err := os.ReadFile(p)
+		b, err := scanReadFile(budget, filepath.Join("/sys/fs/cgroup", group, p))
 		if err != nil {
-			return nil
+			return err
 		}
 		for _, v := range strings.Fields(string(b)) {
+			if err := budget.step(); err != nil {
+				return err
+			}
 			pid, err := strconv.Atoi(v)
 			if err == nil {
 				processes[pid] = true
@@ -350,7 +351,10 @@ func findBuildStep(marker string, rootPID int, group string) (int, string) {
 		return nil
 	})
 	for pid := range processes {
-		cmd, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+		if err := budget.step(); err != nil {
+			return 0, ""
+		}
+		cmd, err := scanReadFile(budget, filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
 		if err != nil || !strings.Contains(string(cmd), marker) {
 			continue
 		}
