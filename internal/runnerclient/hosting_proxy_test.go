@@ -2,6 +2,7 @@ package runnerclient
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -151,5 +152,82 @@ func TestRuntimeIdentityDecodeStopsBeforePublishingInvalidDocument(t *testing.T)
 	}
 	if response.decodeResponse(strings.NewReader(valid+` {}`)) == nil || response.RunnerID != "" || response.Capabilities != nil {
 		t.Fatal("incomplete document published identity before whole-response validation")
+	}
+}
+
+func TestRuntimeCapabilitiesIdentityChecksProxyAndBuildIndependently(t *testing.T) {
+	for _, serverProxy := range []bool{false, true} {
+		for _, serverBuild := range []bool{false, true} {
+			for _, localProxy := range []bool{false, true} {
+				for _, localBuild := range []bool{false, true} {
+					name := fmt.Sprintf("persisted_%t_%t_local_%t_%t", serverProxy, serverBuild, localProxy, localBuild)
+					t.Run(name, func(t *testing.T) {
+						caps := []string{"CUSTOM", "CUSTOM", " hosting_build_v1 ", "HOSTING_BUILD_V1"}
+						if serverProxy {
+							caps = append(caps, "proxy_apply", "proxy_apply")
+						}
+						if serverBuild {
+							caps = append(caps, "hosting_build_v1", "hosting_build_v1")
+						}
+						requests := 0
+						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							requests++
+							if r.Method != http.MethodGet || r.URL.Path != "/api/v1/runners/identity" || r.Header.Get("Authorization") != "Bearer token" {
+								t.Error("identity performed an unexpected request")
+							}
+							if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner.legacy", "capabilities": caps}); err != nil {
+								t.Error(err)
+							}
+						}))
+						defer server.Close()
+						id, err := New(server.URL, "token").RuntimeCapabilitiesIdentity(t.Context(), localProxy, localBuild)
+						valid := serverProxy == localProxy && serverBuild == localBuild
+						if (err == nil) != valid || valid && id != "runner.legacy" || !valid && id != "" || requests != 1 {
+							t.Fatalf("id=%q err=%v requests=%d", id, err, requests)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestRuntimeCapabilitiesIdentityKeepsLegacyWrappersFailClosed(t *testing.T) {
+	for _, test := range []struct {
+		name, body          string
+		proxy, build, valid bool
+	}{
+		{"legacy disabled", `{"runner_id":"runner"}`, false, false, true},
+		{"legacy build", `{"runner_id":"runner"}`, false, true, false},
+		{"legacy proxy", `{"runner_id":"runner"}`, true, false, false},
+		{"null disabled", `{"runner_id":"runner","capabilities":null}`, false, false, true},
+		{"opaque names", `{"runner_id":"runner","capabilities":["HOSTING_BUILD_V1"," hosting_build_v1 ","hosting_build","CUSTOM","CUSTOM"]}`, false, false, true},
+		{"opaque not build", `{"runner_id":"runner","capabilities":["HOSTING_BUILD_V1"]}`, false, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(test.body)) }))
+			defer server.Close()
+			id, err := New(server.URL, "token").RuntimeCapabilitiesIdentity(t.Context(), test.proxy, test.build)
+			if (err == nil) != test.valid || test.valid && id != "runner" {
+				t.Fatal(id, err)
+			}
+		})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"runner_id":"runner","capabilities":["proxy_apply","hosting_build_v1"]}`))
+	}))
+	defer server.Close()
+	client := New(server.URL, "token")
+	if id, err := client.Identity(t.Context()); err != nil || id != "runner" {
+		t.Fatal("legacy Identity changed", id, err)
+	}
+	if _, err := client.RuntimeIdentity(t.Context(), true); err == nil {
+		t.Fatal("old runtime accepted unconfigured build capability")
+	}
+	if _, err := client.ProxyIdentity(t.Context()); err == nil {
+		t.Fatal("proxy-only wrapper accepted build capability")
+	}
+	if _, err := client.RuntimeCapabilitiesIdentity(t.Context(), true, true); err != nil {
+		t.Fatal(err)
 	}
 }
