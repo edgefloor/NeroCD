@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"nerocd/internal/domain"
@@ -111,6 +112,13 @@ func checkRunnerBuildJSON(d *json.Decoder, depth int) error {
 			name, ok := key.(string)
 			if !ok || seen[strings.ToLower(name)] {
 				return errors.New("duplicate build configuration field")
+			}
+			// The struct-only schema has ASCII names. Reject Unicode aliases
+			// before encoding/json can apply broader Unicode case folding.
+			for _, r := range name {
+				if r > unicode.MaxASCII {
+					return errors.New("non-ASCII build configuration field")
+				}
 			}
 			seen[strings.ToLower(name)] = true
 			if err = checkRunnerBuildJSON(d, depth+1); err != nil {

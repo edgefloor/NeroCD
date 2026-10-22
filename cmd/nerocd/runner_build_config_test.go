@@ -29,6 +29,33 @@ func TestRunnerBuildConfigurationStrictJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerBuildConfigurationRejectsUnicodeKeys(t *testing.T) {
+	for name, raw := range map[string]string{
+		"literal fold alias":  `{"version":1,"source_root":"/expected","ſource_root":"/different"}`,
+		"escaped fold alias":  `{"version":1,"source_root":"/expected","\u017fource_root":"/different"}`,
+		"nested fold alias":   `{"version":1,"engine":{"socket":"/expected","\u017focket":"/different"}}`,
+		"unknown Unicode key": `{"version":1,"policy":{"未知":"value"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeRunnerBuildConfig([]byte(raw)); err == nil {
+				t.Fatal("non-ASCII configuration key accepted")
+			}
+		})
+	}
+}
+
+func TestRunnerBuildConfigurationPreservesUnicodeValues(t *testing.T) {
+	raw := `{"version":1,"\u0073ource_root":"/owned/日本語/ſource","engine":{"socket":"/owned/δοκιμή.sock"},"policy":{"identity":"配置"}}`
+	c, err := decodeRunnerBuildConfig([]byte(raw))
+	if err != nil {
+		t.Fatalf("ASCII schema keys with Unicode values rejected: %v", err)
+	}
+	if c.SourceRoot != "/owned/日本語/ſource" || c.Engine.Socket != "/owned/δοκιμή.sock" || c.Policy.Identity != "配置" {
+		t.Fatal("Unicode configuration values changed")
+	}
+}
+
 func TestRunnerBuildConfigDeniesBeforeEnrollmentOrRegistration(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(http.StatusUnauthorized) }))
