@@ -30,7 +30,7 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	_, _ = b.Buffer.Write(p)
 	return n, nil
 }
-func (e *Engine) daemon(ctx context.Context, p Plan) error {
+func (e *Engine) daemon(ctx context.Context, p Plan) (err error) {
 	transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", e.settings.DockerSocket)
 	}}
@@ -44,13 +44,13 @@ func (e *Engine) daemon(ctx context.Context, p Plan) error {
 	if err != nil {
 		return errors.New("fixed Docker daemon unavailable")
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 	var v struct{ ID, OSType, Architecture string }
 	if resp.StatusCode != 200 || json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&v) != nil {
 		return errors.New("invalid daemon response")
 	}
 	if v.ID != p.identity.DaemonID || v.OSType != "linux" || (v.Architecture != "aarch64" && v.Architecture != "x86_64" && v.Architecture != "arm64" && v.Architecture != "amd64") {
-		return errors.New("Docker daemon identity or platform mismatch")
+		return errors.New("docker daemon identity or platform mismatch")
 	}
 	return nil
 }
@@ -70,10 +70,10 @@ func (e *Engine) command(ctx context.Context, p Plan, args ...string) ([]byte, e
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("Docker %s failed: %w", args[0], err)
+		return nil, fmt.Errorf("docker %s failed: %w", args[0], err)
 	}
 	if stdout.overflow || stderr.overflow {
-		return nil, errors.New("Docker output exceeded bound")
+		return nil, errors.New("docker output exceeded bound")
 	}
 	return stdout.Bytes(), nil
 }

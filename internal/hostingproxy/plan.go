@@ -16,21 +16,33 @@ import (
 	"strings"
 )
 
+// Image pins the official multi-platform Traefik image by immutable OCI digest.
 const Image = "docker.io/library/traefik@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a905f3fdb5b84f2c8619c33368"
 
+// CA selects one of the supported public ACME directories.
 type CA string
 
 const (
-	LetsEncrypt        CA = "letsencrypt"
+	// LetsEncrypt selects the production Let's Encrypt directory.
+	LetsEncrypt CA = "letsencrypt"
+	// LetsEncryptStaging selects the nonproduction Let's Encrypt directory.
 	LetsEncryptStaging CA = "letsencrypt-staging"
 )
 
+// Identity binds a proxy to its immutable hosting placement and exact Docker daemon.
 type Identity struct{ ProxyID, ServerID, DestinationID, RunnerID, DaemonID string }
+
+// Settings contains trusted operator configuration, never project-controlled input.
+// Directory is persistent owner-only state; DockerBinary and DockerSocket are
+// absolute host paths, and ManagementPort binds only to the host loopback.
 type Settings struct {
 	Directory, DockerBinary, DockerSocket, Email string
 	CA                                           CA
 	ManagementPort                               uint16
 }
+
+// Route describes one validated hostname and literal path routed to a loopback host port.
+// The caller derives HostPort from an authorized, settled healthy binding.
 type Route struct {
 	ID, Hostname, PathPrefix string
 	HostPort                 uint16
@@ -45,10 +57,17 @@ type Plan struct {
 	hash, staticHash     string
 }
 
-func (p Plan) Hash() string       { return p.hash }
+// Hash returns the deterministic hash of the complete desired generation.
+func (p Plan) Hash() string { return p.hash }
+
+// StaticHash returns the hash of immutable identity, settings, and image selection.
 func (p Plan) StaticHash() string { return p.staticHash }
+
+// Generation returns the desired configuration generation.
 func (p Plan) Generation() uint64 { return p.generation }
-func (p Plan) Routes() []Route    { return append([]Route(nil), p.routes...) }
+
+// Routes returns a copy of the validated routes in stable ID order.
+func (p Plan) Routes() []Route { return append([]Route(nil), p.routes...) }
 
 var idPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$`)
 var hostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -77,6 +96,10 @@ func validateSettings(s Settings) error {
 	}
 	return nil
 }
+
+// Prepare validates typed input and copies routes into an immutable plan.
+// Generation must exceed previous; applying the plan later requires that previous
+// match the committed receipt, except when replaying the same generation and hash.
 func Prepare(i Identity, s Settings, generation, previous uint64, routes []Route) (Plan, error) {
 	if err := validateSettings(s); err != nil {
 		return Plan{}, err

@@ -9,24 +9,36 @@ import (
 	"time"
 )
 
+// Outcome describes whether a generation was verified, rejected, or left uncertain.
 type Outcome string
 
 const (
-	Applied    Outcome = "applied"
+	// Applied means the desired routing generation loaded; TLS may still be pending.
+	Applied Outcome = "applied"
+	// RolledBack means the previous routing generation was restored and verified.
 	RolledBack Outcome = "rolled_back"
-	Uncertain  Outcome = "uncertain"
-	Refused    Outcome = "refused"
+	// Uncertain requires the caller to retain its fenced proxy hold for reconciliation.
+	Uncertain Outcome = "uncertain"
+	// Refused means validation or admission prevented a new generation mutation.
+	Refused Outcome = "refused"
 )
 
+// Certificate contains public TLS observations and never certificate or account keys.
 type Certificate struct {
 	Hostname, Issuer, Fingerprint, Status string
 	ExpiresAt                             time.Time
 }
+
+// RouteObservation separates loaded HTTP routing from trusted HTTPS readiness.
 type RouteObservation struct {
 	RouteID               string
 	HTTPReady, HTTPSReady bool
 	Certificate           Certificate
 }
+
+// Result reports the desired and last verified routing generation.
+// Outcome remains meaningful when a method also returns an error; callers must
+// retain their hold on Uncertain and must not infer HTTPS readiness from Applied.
 type Result struct {
 	Outcome                             Outcome
 	DesiredGeneration, LoadedGeneration uint64
@@ -44,6 +56,8 @@ type Engine struct {
 	verifyTimeout     time.Duration
 }
 
+// New validates trusted operator settings and requires a Linux host.
+// It performs no installation; each operation acquires its own local state lock.
 func New(s Settings) (*Engine, error) {
 	if err := platform(); err != nil {
 		return nil, err
@@ -59,8 +73,14 @@ func (e *Engine) validate(p Plan) error {
 	}
 	return platform()
 }
+
+// Install creates an absent proxy or verifies a matching installed generation.
+// It refuses foreign containers and occupied ports without replacing them.
 func (e *Engine) Install(ctx context.Context, p Plan) (Result, error) { return e.apply(ctx, p, true) }
-func (e *Engine) Apply(ctx context.Context, p Plan) (Result, error)   { return e.apply(ctx, p, false) }
+
+// Apply replaces the complete routing generation after checking its predecessor.
+// A replay of the same generation and hash verifies and acknowledges existing state.
+func (e *Engine) Apply(ctx context.Context, p Plan) (Result, error) { return e.apply(ctx, p, false) }
 func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -212,6 +232,9 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 	}
 	return e.observation(ctx, p, c.ID), nil
 }
+
+// Observe verifies the committed receipt, owned container, loaded routes, and probes.
+// It never acknowledges unfinished intent or treats an untrusted certificate as ready.
 func (e *Engine) Observe(ctx context.Context, p Plan) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

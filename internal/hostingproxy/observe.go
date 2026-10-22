@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func (e *Engine) raw(ctx context.Context) (map[string]json.RawMessage, error) {
+func (e *Engine) raw(ctx context.Context) (data map[string]json.RawMessage, err error) {
 	t := &http.Transport{Proxy: nil}
 	defer t.CloseIdleConnections()
 	client := &http.Client{Transport: t, Timeout: 2 * time.Second}
@@ -28,11 +28,11 @@ func (e *Engine) raw(ctx context.Context) (map[string]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 	if resp.StatusCode != 200 {
-		return nil, errors.New("Traefik management unavailable")
+		return nil, errors.New("traefik management unavailable")
 	}
-	var data map[string]json.RawMessage
+
 	err = json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&data)
 	return data, err
 }
@@ -55,7 +55,7 @@ func (e *Engine) loaded(ctx context.Context, p Plan) error {
 		LoadBalancer struct{ Servers []struct{ URL string } }
 	}
 	if json.Unmarshal(data["routers"], &routers) != nil || json.Unmarshal(data["services"], &services) != nil {
-		return errors.New("Traefik routers/services unavailable")
+		return errors.New("traefik routers/services unavailable")
 	}
 	count := 0
 	for n := range routers {
@@ -98,7 +98,7 @@ func (e *Engine) loaded(ctx context.Context, p Plan) error {
 		}
 		// The generated response marker proves Host/path selected this generation even for app 401/404.
 		if !e.probe(ctx, p, r, false).HTTPReady {
-			return errors.New("Host/path generation probe failed")
+			return errors.New("host/path generation probe failed")
 		}
 	}
 	return nil
@@ -122,7 +122,12 @@ func (e *Engine) probe(ctx context.Context, p Plan, r Route, secure bool) RouteO
 	if err != nil {
 		return result
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Closing this read-only response cannot invalidate the route header or
+		// verified TLS handshake. The private transport also closes idle
+		// connections on return.
+		_ = resp.Body.Close()
+	}()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.Header.Get("X-NeroCD-Proxy-Generation") != p.hash || resp.Header.Get("X-NeroCD-Proxy-Route") != r.ID {
 		return result
@@ -154,7 +159,7 @@ func (e *Engine) observation(ctx context.Context, p Plan, id string) Result {
 	return result
 }
 
-func (e *Engine) generationProbe(ctx context.Context, p Plan) error {
+func (e *Engine) generationProbe(ctx context.Context, p Plan) (err error) {
 	transport := &http.Transport{Proxy: nil}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
@@ -166,7 +171,7 @@ func (e *Engine) generationProbe(ctx context.Context, p Plan) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 	if resp.Header.Get("X-NeroCD-Proxy-Generation") != p.hash {
 		return errors.New("loaded generation marker mismatch")
 	}
