@@ -1,26 +1,30 @@
 # NeroCD
 
-NeroCD is building a shared workspace where people and AI agents build, test,
-review and deploy software on machines they control. The target is a durable
-Task with retained changes, checks and a working environment that a teammate
-can review and continue after the submitting laptop goes offline.
+NeroCD is building a self-hosted application platform in Go that replaces the
+hosting workflows of Coolify. The active journey is:
 
-The [revision 3 product specification](docs/product-spec.md) defines the complete
-target. The first demonstration is task-to-reviewed-deployment, ordered through
-D0–D3 in the [implementation plan](docs/plan.md). Durable Tasks, Workspaces,
-agent adapters, qualified VM isolation, reservations, shared remote cache and
-private task previews are planned. They are not current support claims.
+> Connect a server → select a repository or image → configure the application → deploy → open its HTTPS URL → operate and recover it.
 
-Direct application hosting remains a separate user journey. Applications,
-databases, Compose, persistent storage, routing, recovery and the complete
-Coolify compatibility target remain in scope. Users will not need a coding
-task or AI agent to host an application. The [workspace capability ledger](docs/workspace-capabilities.md)
-and [hosting compatibility ledger](docs/compatibility.md) track these outcomes separately.
+Hosting requirements R01–R68, acceptance scenarios A01–A37 and the declared
+compatibility matrices lead the [implementation plan](docs/plan.md). Direct
+hosting remains the primary navigation and onboarding journey until the core
+replacement is complete. Deploying or operating an application must not require
+a Task, coding agent, workspace or operational template.
+
+The [complete specification](docs/product-spec.md) also retains revision 3's
+future shared-workspace vision: people and AI agents build, test, review and
+deploy software on machines they control, with durable Tasks and retained work.
+R69–R102/A38–A66 and D0–D3 remain deferred scope. They must not delay hosting.
+The [hosting ledger](docs/compatibility.md) and
+[workspace ledger](docs/workspace-capabilities.md) keep these claims separate.
+Feature parity, migration compatibility and unchanged-client compatibility
+are different outcomes.
 
 ## Available now
 
-Current accepted assessment: `852f8e6b8d5624a95865c276dcea4a239d1f8fea`,
-2026-10-22. Existing Go API/application services, PostgreSQL, River execution,
+Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
+Accepted application/source assessment remains
+`852f8e6b8d5624a95865c276dcea4a239d1f8fea`, 2026-10-22. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - PostgreSQL state, checked migrations through 0051, bootstrap administration,
@@ -60,18 +64,28 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   [API contract](openapi.yaml). Most list APIs use bounded offset pagination;
   the typed build log API uses its documented sequence cursor.
 
-Required work includes durable Tasks/Workspaces and checkpoints, task grants,
-qualified Linux VM execution, machine reservations and budgets, remote artifact
-publication and cache sharing, agent/model adapters, private multi-resource
-previews and human production-plan authorization. Mac, Windows, NAS, GPU and
-cloud-provider qualification have separate planned tracks. A machine pool does
-not combine hosts into shared memory or keep an offline application host running.
+The active sequence is practical repository/image-to-HTTPS hosting and
+operation/recovery, useful stateful hosting, remaining core parity, then migration
+and extended compatibility. Current gaps include onboarding, private Git and
+managed secret delivery, trusted triggers, deployment policy, production TLS
+qualification, runtime logs/status, broader Compose/storage, databases, backups,
+restores, previews, terminals, schedules and notifications.
 
-Hosting gaps include private sources, managed runtime-secret delivery,
-continuous observations and runtime logs, terminals, databases and data
-lifecycle, broader Compose, schedules, notifications, migration and complete
-recovery. Existing same-port replacement can interrupt service. No D0–D3 or
-full Coolify parity milestone is declared complete.
+Remote builders, registry delivery, caching, releases, approvals, permissions and
+observations can advance through a named hosting contract. Before any workspace
+change, record [which hosting requirement needs it now, the minimum scope and
+its acceptance test](docs/plan.md#hosting-dependency-test). General future
+usefulness and sunk effort are insufficient.
+
+Durable collaboration Tasks, coding-agent adapters, attachment, portable
+checkpoints, general reservations, model/GPU services and vendor packages stay
+deferred unless a bounded part passes that test. Existing unaccepted Task
+checkpoints are preserved, not integrated. Trusted-host deployment does not
+wait for a VM backend; untrusted execution stays disabled until its declared
+isolation requirements are satisfied.
+
+Existing fixed-port replacement can interrupt service. No narrow deployment
+demo is complete Coolify parity.
 
 ## Quick start
 

@@ -1,6 +1,7 @@
 # Hosting compatibility ledger
 
-Current accepted NeroCD assessment:
+Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
+Accepted application/source assessment remains
 `852f8e6b8d5624a95865c276dcea4a239d1f8fea`, 2026-10-22.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
@@ -8,12 +9,23 @@ Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
 supplied revision 3 baseline `09d65d4ddcbfdf27e97158a9c08beb02a721818c`
 are historical. Official documentation is separately dated and can change.
 
-This ledger retains the complete direct-hosting target in revision 3 track H.
+This ledger is the active delivery ledger: complete hosting R01–R68/A01–A37
+and the declared matrices first. Direct hosting remains the primary navigation
+and onboarding path; a Task or coding agent is not required.
 The [workspace ledger](workspace-capabilities.md) separately covers Tasks,
 Workspaces, machines, agents, models and shared results. The [plan](plan.md)
-orders the first D0–D3 demonstration while preserving all R01–R102 and A01–A66
+orders practical hosting, stateful hosting, remaining core parity and migration/
+extended compatibility before the deferred D0–D3 workspace gates, preserving
+all R01–R102 and A01–A66
 in the [specification](product-spec.md). Feature, migration and unchanged-client
 compatibility remain separate claims.
+
+Any workspace-track work requires a [named hosting requirement, need now,
+minimum scope and hosting acceptance test](plan.md#hosting-dependency-test).
+Hosting contracts for remote builders, cache, releases, approvals and observations
+can proceed without speculative workspace infrastructure. Trusted-host deployment
+does not require a new VM backend; untrusted execution remains disabled until
+its declared isolation requirements are satisfied.
 
 ## Status and evidence
 

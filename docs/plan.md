@@ -1,86 +1,127 @@
-# Workspace and hosting implementation plan
+# Hosting-first implementation plan
 
-Revision 3 adopts every R01–R102 requirement and A01–A66 scenario in the
-[product specification](product-spec.md). Current accepted baseline:
-`852f8e6b8d5624a95865c276dcea4a239d1f8fea`, assessed on 2026-10-22.
+Active delivery priority: complete the functional self-hosted hosting workflows
+of Coolify at `b12d1386f3d458618b4c579babcd1e339c6c40b3`.
+The [specification](product-spec.md) retains all R01–R102 and A01–A66.
+Prioritize R01–R68, A01–A37 and the declared hosting matrices. The broader
+revision 3 workspace/agent product is subsequent scope, not a prerequisite.
+
+Accepted documentation baseline: `806b57e46db9f920da240ca9ed42f5578d21226a`.
+It changed docs only. Accepted application/source assessment remains
+`852f8e6b8d5624a95865c276dcea4a239d1f8fea`, 2026-10-22, through migration 0051.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
-No delivery dates or performance improvements are asserted.
 
-The first complete demonstration is the [task-to-reviewed-deployment journey](product-spec.md#56-task-to-reviewed-deployment-first-complete-demonstration).
-D0–D3 are the primary delivery gates. Direct hosting remains independently
-accessible and the complete Coolify target stays in track H. Earlier P00–P18
-package names and M0–M4 hosting milestones are historical sequencing vocabulary,
-not a substitute for the new first demonstration. Track P means the owned-machine
-pool; a label such as P05 below identifies an earlier hosting work package.
+## Primary hosting journey
+
+> Connect a server → select a repository or image → configure the application → deploy → open its HTTPS URL → operate and recover it.
+
+Direct hosting is the primary product navigation and onboarding journey until
+core hosting replacement is complete. A Task, coding agent, workspace or
+operational template is never required to deploy or operate an ordinary application.
+R65's richer Task-centered main collaboration view remains a future phase.
+
+Judge progress by complete UI/API workflows, including failure and recovery.
+Module count, lines changed and unit-test totals do not establish parity.
+Feature parity, migration compatibility and unchanged-client compatibility
+remain distinct acceptance claims.
 
 ## Accepted starting point
 
-| Foundation | Accepted bounded behavior | Work still needed for the workspace demonstration |
+| Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
 | Application and persistence | Go API/application/store layers, PostgreSQL through migration 0051, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
-| Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | New durable Task/Workspace model, stable Machine mapping, team access, capacity/trust qualification and reservations |
-| Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Short-lived task/provider grants, managed execution delivery, network/data boundaries and key recovery |
-| Builds | Operator-enabled public HTTPS Git, Dockerfile, Railpack and prepared-static builds into recorded local artifacts | Mutable workspace snapshots, remote publication, shared cache, complete build-input manifest and reuse eligibility |
-| Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Remote image delivery, independent private previews, target-specific plans and protected human production decisions |
-| Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | General task activity, durable checkpoints, command/check evidence and runtime application logs |
-| Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Private preview access/tunnels, broader certificate modes, public DNS/production ACME qualification and continuous observations |
+| Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding and host readiness, complete team/server access and legacy mappings |
+| Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Scoped managed build/runtime delivery, broader variable scopes, provider credentials and key recovery |
+| Builds | Operator-enabled public HTTPS Git, Dockerfile, Railpack and prepared-static builds into recorded local artifacts | Private Git/configuration/provider credentials, compiled static, remote publication and hosting cache |
+| Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
+| Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Runtime application logs, continuous status, resource actions and terminals |
+| Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Public DNS/production ACME qualification, broader certificate modes, continuous observations and hosting preview access |
 
-The [hosting ledger](compatibility.md#accepted-foundations-and-evidence) and
-[workspace ledger](workspace-capabilities.md) carry exact revisions and limits.
-Actual local builds, deployment, route selection and output delivery are
-accepted. They are not a qualified VM sandbox, a shared artifact service or a
-complete workspace product.
 
-## Next implementation slice
+The [hosting ledger](compatibility.md#accepted-foundations-and-evidence)
+contains exact revisions and limits. Public Git builds, same-host artifact
+deployment, explicit route selection and typed build output are accepted.
+Private Git configuration/runtime delivery, production TLS qualification,
+runtime logs/status and the broader hosting workflows remain incomplete.
+Test-only DNS and a trusted CA do not establish public production ACME.
 
-The next frozen backend slice is in progress and unaccepted. It adds durable
-Task metadata and activity. The accompanying Task UI is planned. This makes the
-new collaboration object visible without pretending that a generic run is a
-Workspace or that an agent already executes remotely.
+## Active delivery sequence
 
-1. Freeze the Task/run distinction and same-project link rules before shared
-   schema/API/UI edits. Preserve existing `TaskRun`, template and hosting
-   execution contracts and their identifiers.
-2. Add a project-scoped Task with immutable owner, title, goal, status
-   (`open`, `closed`, `archived`) and revision. Server activity is distinct
-   from user comments. Create/comment receipts provide idempotency; edits use
-   compare-and-swap. Collaborator management, source lineage and review are
-   later parts of the full R69 target.
-3. Link authorized existing runs and project environments using stable
-   identities and project consistency. A link is a relationship, not authority
-   to claim work, mutate a deployment or access a terminal.
-4. Enforce current project viewer reads and maintainer writes through the
-   existing application layer, including same-project run/environment links.
-   Task status changes never mutate execution or resources. Add the planned
-   Task UI only after the accepted backend contract, with the same access rules.
-5. Validate real PostgreSQL persistence and migration, cross-project denial,
-   retries/concurrency, audit/activity behavior, API/client agreement and
-   responsive keyboard-accessible UI. No workspace execution, VM, agent,
-   reservation, task-grant or preview claim belongs to this slice.
-
-This is a partial R69/R74 slice, not completion of either requirement, D0 or
-the first demonstration. Migration 0052 is allocated to this unaccepted slice;
-it is not part of the accepted schema yet. Migration 0051 is already applied
-and must not be edited. Inspect accepted state before allocating later schema.
-
-## Dependency order after Task metadata
-
-| Slice | Required boundary before expansion | Product evidence |
+| Order | Complete hosting outcome | Requirements and acceptance |
 | --- | --- | --- |
-| Machine identity and reservations | Preserve Server/destination IDs and data ownership; qualify one Linux architecture/KVM backend; atomically couple capacity to attempt authority | R03–R07, R70, R76–R79; A39, A42–A44 |
-| Task grants and isolation | Enforce restrictions at host/helper/network/provider boundaries, not only metadata; separate task, preview and production authority | R75, R81–R85; A44–A47 |
-| Workspace and agent | One adapter, one writer, bounded disk, cancellation, durable source checkpoint and explicit continuation limits | R69–R74, R84; A38–A41 |
-| Remote build and artifacts | Frozen effective inputs, authorized bounded publication, registry-backed cache and independent artifact/check reuse records | R13–R16, R87–R92; A48–A53, A65 |
-| Independent review environment | Application plus isolated seeded PostgreSQL, optional worker, private ingress, observations/runtime logs and trusted final-artifact checks | R54–R56, R58–R59, R90, R93; A54–A56 |
-| Review and production plan | Human decision binds the exact artifact, target configuration, required checks and data preconditions; all interfaces enforce it | R17–R24, R85; A46–A47 |
-| Combined demonstration | Exercise disconnect, disappearance, revocation, expiry, missing artifacts and cleanup on the same candidate | D0–D3; applicable A01–A37 and A38–A56, A64–A66 |
+| H1: Practical hosting | Onboarding, repository/image input, private Git, required variables and secret delivery, trusted deploy-on-push, deployment policy, production TLS qualification, runtime logs and continuous status | Applicable R01–R33 and R57–R68; A01–A14, A20, A27–A29, A35 plus their failure/recovery and provider/proxy fixtures |
+| H2: Useful stateful hosting | Compose, persistent storage, PostgreSQL/Redis, application bindings, initial tested catalog, backups and application-verified restores | R34–R53 and related secret/operation rules; A15–A22, A25–A27, A37 |
+| H3: Remaining core parity | PR/MR previews, remote builders/image delivery, provider/build/database coverage, terminals, schedules, notifications and supported UI/API/CLI/MCP operations | Remaining core R01–R68/A01–A32/A35–A37 and declared matrices together on the candidate |
+| H4: Migration and extended compatibility | NeroCD/Coolify migration, unchanged-client adapters where declared and extended infrastructure | R67, specification section 7, A33–A34 and dedicated compatibility matrices |
 
-Model endpoint integration can start independently when its access/usage contract
-is explicit. Managed model installation or GPU access cannot inherit that result.
+Use actual dependencies and verified gaps to select each bounded slice.
+Legacy-ID/permission preservation and data-ownership protection ship with the
+hosting behavior that needs them; H4 does not authorize delaying those safeguards.
+A practical deployment demo alone does not complete Coolify parity.
 
-## First complete demonstration and later tracks
+## Next hosting slice
 
-### D0–D3
+The next proposed H1 slice is private HTTPS Git using the existing managed-secret
+versions, source-grant authorization/decryption component and controlled checkout
+credential window. Current configuration and enabled runtime are public-only;
+the private credential API/client/runtime/UI bridge is missing. This directly
+serves R08–R09, R16, R29 and R31/A03 without a collaboration Task or new generic
+grant platform.
+
+Bound the first contract to explicitly allowed public-DNS HTTPS hosts and scoped
+Basic/PAT credentials. Preserve exact source/resource/project/policy/secret-version
+binding, current authorization and revocation, and clear transport credentials
+before build use. SSH, provider installation integrations, webhooks and internal-LAN
+sources remain separate slices. The Leader must freeze the concrete API/client,
+secret-byte ownership/redaction and UI contracts before writers begin.
+
+Acceptance must demonstrate authorized private checkout through the production
+API and enrolled CLI, no credential leakage, expired/revoked/wrong-scope denial,
+response-loss recovery and confirmed credential cleanup. Combine the accepted
+Dockerfile/Railpack build, same-host artifact deployment and HTTPS route path
+within that named fixture; retain the test-CA versus production-TLS distinction.
+The eventual A03 claim also depends on its complete declared UI workflow.
+This slice is planned, not implemented or accepted by this documentation change.
+
+## Hosting-dependency test
+
+Before starting any workspace-track change, the Leader's brief must state:
+
+1. **Named hosting requirement.** Identify the specific R01–R68 requirement and user workflow it serves.
+2. **Need now.** Show why the current hosting implementation needs it now or how it demonstrably simplifies that implementation now. General future usefulness is insufficient.
+3. **Minimum scope.** Define the smallest required contract and owned change, excluding speculative workspace infrastructure.
+4. **Hosting acceptance.** Name the applicable A01–A37 scenario and concrete test that will prove its value, including failure and recovery where relevant.
+
+Do not start or integrate workspace work without this recorded test. Sunk effort
+does not satisfy it. Remote builders, registry delivery, build caching, immutable
+releases, deployment approvals, permissions and runtime observations can proceed
+when justified by their hosting requirements. They use hosting contracts through
+the existing Go application, PostgreSQL/River and runner authority, without
+requiring a general Task, Workspace, model endpoint or reservation product.
+
+Trusted-host deployment remains supported within its declared limits. Keep
+untrusted execution disabled until its isolation requirements are actually
+satisfied. A qualified VM backend may be implemented for a named untrusted
+hosting/preview workflow, but is not a prerequisite for trusted-host deployment.
+Never weaken isolation, credential or data ownership rules to accelerate parity.
+
+## Preserved deferred checkpoints
+
+| Work | Recoverable checkpoint | Status |
+| --- | --- | --- |
+| Durable Task metadata/activity backend | `6a3d04bc28e950d569cbc7705a5d1dbf8df8c5f5` | Unaccepted and deferred; not merged into the accepted baseline; partial R69/R74 only |
+| Task UI | `560ef12499cd361c7c2eae5a8a7d310c33ce34a7` | Unaccepted and deferred; temporary DTO/backend wiring, Go/browser checks not run; no main-navigation integration |
+
+Preserve these and unrelated work without deletion, reversion or history
+rewriting. Finish only the cleanup needed for coherent recoverable checkpoints.
+Do not integrate them merely because implementation effort has already been spent.
+No Task schema or UI is accepted product support. Check the then-accepted
+migration inventory before any future allocation; a number reserved on an
+unaccepted branch is not an applied migration.
+
+## Deferred workspace gates and full future scope
+
+### D0–D3: deferred workspace demonstration
 
 |Gate                                |Deliverable                                                                                                                                                                   |Exit conditions                                                                                                                               |
 |------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
@@ -89,13 +130,13 @@ is explicit. Managed model installation or GPU access cannot inherit that result
 |D2: Working environment and handoff |App plus seeded isolated PostgreSQL preview, private ingress/TLS, runtime observations/logs, trusted checks against the final artifact, teammate review and supported takeover|Another user opens the task and working application after the agent run ends; evidence and permissions agree; cleanup preserves data ownership|
 |D3: Reviewed deployment             |Target-specific plan, human production approval, same-artifact promotion, mutation fencing and supported failure recovery                                                     |The full journey passes together, including changed-source/plan, lost-worker, revoked-grant, missing-artifact and expiry cases                |
 
-D0 is enabling work. D1 proves retained execution and shared output. D2 proves useful collaboration. D3 completes the first product demonstration. One supported architecture and one backend are sufficient for this milestone, provided limits are explicit.
+These are deferred workspace gates. D0–D3 do not define the first public demonstration, authorize ongoing workspace work or block supported trusted-host deployment. Retain every gate and acceptance target for the later workspace track.
 
-Implement conservative complete-artifact reuse and verification reuse after input/evidence recording is dependable. The initial demonstration may rebuild through shared layer cache and rerun checks. Its schema and UI must already distinguish these outcomes so later reuse does not require misleading history.
+Implement conservative complete-artifact reuse and verification reuse after input/evidence recording is dependable. The deferred workspace demonstration may rebuild through shared layer cache and rerun checks. Its schema and UI must already distinguish these outcomes so later reuse does not require misleading history.
 
-### H, P, M, R, O and V
+### Retained H, P, M, R, O and V scope
 
-These tracks are separate acceptance claims and may advance in parallel when their prerequisites are satisfied.
+H is active. P/M/R/O/V remain future tracks unless a bounded part passes the hosting-dependency test. Existing hosting needs in areas such as cache, observations or restores use their hosting contract, without making the broader workspace product a dependency.
 
 |Track                            |Deliverable                                                                                                                                                               |Completion evidence                                                                                                 |
 |---------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
@@ -106,7 +147,7 @@ These tracks are separate acceptance claims and may advance in parallel when the
 |O: Application care              |Version-specific upgrades, guided data migration, tested restores, database-aware plans, eligible progressive delivery and drift reconciliation                           |Application/version-path fixtures and failure/recovery cases pass                                                   |
 |V: Vendor packages               |Verified package identity, customer-controlled installation/update policy, compatibility and recovery metadata                                                            |Publisher/customer authority, revocation, version pinning and compromised-update scenarios are defined and tested   |
 
-An existing authenticated model endpoint can be connected before managed GPU/model lifecycle is ready. A manually enrolled cloud machine can add capacity before provider provisioning is ready. Neither shortcut should be presented as completion of the broader track.
+Smaller endpoint/cloud steps remain possible future boundaries, but neither general usefulness nor compatibility with a later design justifies starting them now. A current named hosting dependency and its acceptance test are required.
 
 Additional proxy modes, raw Compose, provider/template breadth, multi-server application deployment, Swarm, GitHub Actions runner hosting, external secret/log integrations and requested Coolify API adapters remain visible compatibility entries. A generic shell job does not establish support for these workflows.
 
