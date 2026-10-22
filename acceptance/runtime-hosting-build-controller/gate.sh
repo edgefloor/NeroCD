@@ -3,6 +3,9 @@
 set -euo pipefail
 repo_root=$(pwd -P)
 case "$repo_root" in */NeroCD*) ;; *) echo 'run from assigned repository root' >&2; exit 1;; esac
+source "$repo_root/acceptance/runtime-hosting-build-controller/helpers.sh"
+preload_postgres=${NEROCD_BUILD_CONTROLLER_PRELOAD_POSTGRES:-0}
+case "$preload_postgres" in 0|1) ;; *) echo 'invalid PostgreSQL preload option' >&2; exit 1;; esac
 arch=$(docker info --format '{{.Architecture}}')
 case "$arch" in
  aarch64|arm64) goarch=arm64; railarch=arm64; misearch=arm64; mise_sha=cf9a7c3e64688a7909fa69a4989d3b8daf6dd1b3e583fa0ab7c08139ae6d3dcd; buildx_sha=3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865dfa141c97a; rail_sha=c24a064b586b8f4f8c2fab44dd5ef19253e4c6cc4e1df793b3ae19cd87f7a5d4 ;;
@@ -67,10 +70,12 @@ docker exec "$name" sh -ec 'mkdir /planner; cp /fixture/railpack /planner/railpa
 docker exec "$name" docker pull moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
 docker exec "$name" sh -ec 'mkdir "$1"; printf "+cpu +memory +pids" > "$1/cgroup.subtree_control"' sh "/sys/fs/cgroup/$owner"
 planner_id=$(docker exec "$name" docker image inspect --format '{{.Id}}' nerocd-runtime-planner:fixture)
-pg_id=$(docker exec "$name" docker run --detach --name "$owner-pg" --label "io.nerocd.build-controller.owner=$owner" --publish 127.0.0.1::5432 --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_build_controller postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94)
+pg_image=$(controller_postgres_image "$name" "$goarch" "$preload_postgres")
+pg_id=$(docker exec "$name" docker run --detach --name "$owner-pg" --label "io.nerocd.build-controller.owner=$owner" --publish 127.0.0.1::5432 --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_build_controller "$pg_image")
 ready=false
-for _ in $(seq 1 60); do if docker exec "$name" docker exec "$pg_id" pg_isready -U nerocd >/dev/null 2>&1; then ready=true; break; fi; sleep 1; done
+for _ in $(seq 1 60); do if controller_postgres_ready "$name" "$pg_id" >/dev/null 2>&1; then ready=true; break; fi; sleep 1; done
 if [[ "$ready" != true ]]; then echo 'owned PostgreSQL not ready' >&2; exit 1; fi
+printf 'owned PostgreSQL TCP query ready: container=%s database=nerocd_build_controller\n' "$pg_id"
 pg_addr=$(docker exec "$name" docker port "$pg_id" 5432/tcp)
 docker exec --env NEROCD_BUILD_CONTROLLER_RUNTIME=disposable-dind --env "NEROCD_BUILD_CONTROLLER_DATABASE_URL=postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" --env "NEROCD_BUILDX_SHA256=sha256:$buildx_sha" "$name" /fixture/hosting-controller.test -test.v -test.run '^TestHostingBuildProductionControllerCLI$' -test.timeout=15m
 if [[ $(docker exec "$name" docker inspect --format '{{.Id}} {{index .Config.Labels "io.nerocd.build-controller.owner"}}' "$pg_id") != "$pg_id $owner" ]]; then echo 'owned PostgreSQL identity mismatch' >&2; exit 1; fi
