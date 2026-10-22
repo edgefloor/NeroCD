@@ -56,8 +56,9 @@ func (c Client) RuntimeCapabilitiesIdentity(ctx context.Context, proxyConfigured
 }
 
 // RuntimeExecutionIdentity checks persisted execution capabilities against all
-// explicit local execution modes. Legacy wrappers require local builds disabled.
-func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, buildConfigured, localBuildConfigured bool) (string, error) {
+// explicit local execution modes. Omitted privateConfigured defaults to false;
+// legacy wrappers require local builds and private Git disabled.
+func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, buildConfigured, localBuildConfigured bool, privateConfigured ...bool) (string, error) {
 	var result proxyIdentityResponse
 	if err := c.get(ctx, "/api/v1/runners/identity", &result); err != nil {
 		return "", err
@@ -68,15 +69,20 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 	if result.RunnerID == "" || strings.TrimSpace(result.RunnerID) != result.RunnerID {
 		return "", errors.New("runner identity response did not include a valid runner_id")
 	}
-	proxyCapable, buildCapable, shellCapable, localBuildCapable := false, false, false, false
+	private := len(privateConfigured) == 1 && privateConfigured[0]
+	if len(privateConfigured) > 1 || private && !buildConfigured {
+		return "", errors.New("invalid private Git configuration")
+	}
+	proxyCapable, buildCapable, shellCapable, localBuildCapable, privateCapable := false, false, false, false, false
 	for _, capability := range result.Capabilities {
-		if capability == domain.HostingPrivateGitCapability {
-			return "", errors.New("authenticated private Git capability requires unavailable execution support")
-		}
+		privateCapable = privateCapable || capability == domain.HostingPrivateGitCapability
 		proxyCapable = proxyCapable || capability == domain.RunTypeProxyApply
 		buildCapable = buildCapable || capability == domain.HostingBuildTaskType
 		localBuildCapable = localBuildCapable || capability == domain.RunTypeLocalBuildDeploy
 		shellCapable = shellCapable || capability == "shell"
+	}
+	if private != privateCapable {
+		return "", errors.New("authenticated private Git capability does not match explicit configuration")
 	}
 	if (buildConfigured || localBuildConfigured) && shellCapable {
 		return "", errors.New("authenticated shell capability cannot share configured build execution")

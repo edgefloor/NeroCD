@@ -65,6 +65,11 @@ func runRunner(args []string) error {
 	if err != nil {
 		return err
 	}
+	if buildConfig != nil && buildConfig.PrivateGit != nil {
+		if err := runnerclient.ValidateSourceCredentialServer(*server, runnerclient.SourceCredentialTransport{TrustedLoopbackHTTP: buildConfig.PrivateGit.TrustedLoopbackHTTP}); err != nil {
+			return err
+		}
+	}
 	if buildConfig != nil && (!*execute || *completeStatus != "") {
 		return errors.New("build configuration requires --execute and forbids --complete-status")
 	}
@@ -100,7 +105,7 @@ func runRunner(args []string) error {
 	if err != nil {
 		return err
 	}
-	registrationCapabilities, err = runnerLocalBuildCapabilities(*localBuildDeploy, buildConfig != nil, proxyConfig.Enabled(), capabilitiesSpecified, registrationCapabilities)
+	registrationCapabilities, err = runnerLocalBuildCapabilities(*localBuildDeploy, buildConfig != nil, proxyConfig.Enabled(), capabilitiesSpecified || buildConfig != nil && buildConfig.PrivateGit != nil, registrationCapabilities)
 	if err != nil {
 		return err
 	}
@@ -188,7 +193,7 @@ func runRunner(args []string) error {
 	}
 	// Resolve credential authority before runtime can select, open, or replay
 	// a journal. Enrollment IDs and local defaults do not replace this read.
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentity(context.Background(), proxyConfig.Enabled(), buildConfig != nil, *localBuildDeploy)
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentity(context.Background(), proxyConfig.Enabled(), buildConfig != nil, *localBuildDeploy, buildConfig != nil && buildConfig.PrivateGit != nil)
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}

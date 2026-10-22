@@ -277,3 +277,31 @@ func TestRuntimeBuildIdentityRejectsPersistedShell(t *testing.T) {
 		t.Fatal("persisted shell+build identity accepted")
 	}
 }
+
+func TestRuntimePrivateGitIdentityExactOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		caps                  []string
+		build, private, valid bool
+	}{
+		{[]string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}, true, true, true},
+		{[]string{domain.HostingBuildTaskType}, true, true, false},
+		{[]string{domain.HostingPrivateGitCapability}, false, true, false},
+		{[]string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, "shell"}, true, true, false},
+		{[]string{domain.HostingBuildTaskType, "HOSTING_GIT_HTTPS_BASIC_V1"}, true, true, false},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": tc.caps})
+		}))
+		c := New(server.URL, "fixture")
+		_, err := c.RuntimeExecutionIdentity(t.Context(), false, tc.build, false, tc.private)
+		if (err == nil) != tc.valid {
+			t.Fatal("private identity mismatch", err)
+		}
+		if tc.valid {
+			if _, err = c.RuntimeCapabilitiesIdentity(t.Context(), false, true); err == nil {
+				t.Fatal("legacy helper enabled private")
+			}
+		}
+		server.Close()
+	}
+}

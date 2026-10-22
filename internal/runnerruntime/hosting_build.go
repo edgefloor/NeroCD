@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"nerocd/internal/hostingbuild"
 	"nerocd/internal/hostingbuildprotocol"
 	"nerocd/internal/runner"
+	"nerocd/internal/runnerclient"
 )
 
 // BuildPhaseClient is the authenticated nonsecret build protocol. Implementations
@@ -37,6 +39,7 @@ type BuildTarget struct{ RunnerID, ServerID, DestinationID, BindingID string }
 // BuildConfig contains explicit operator settings. Policy must exactly match the
 // server snapshot. SourceRoot and Engine.StateDir must be separate owned roots.
 type BuildConfig struct {
+	PrivateGit                     *PrivateGitConfig
 	SourceRoot                     string
 	Engine                         hostingbuild.Config
 	Policy                         domain.HostingBuildPolicy
@@ -44,23 +47,31 @@ type BuildConfig struct {
 	StatusInterval, RequestTimeout time.Duration
 }
 
+// PrivateGitConfig enables trusted HTTPS Basic/PAT checkout explicitly.
+// TrustedLoopbackHTTP permits only isolated literal-loopback controller fixtures.
+type PrivateGitConfig struct {
+	TrustedLoopbackHTTP bool `json:"trusted_loopback_http"`
+}
+
 type localBuildEngine interface {
 	Build(context.Context, hostingbuild.Request) (hostingbuild.Result, error)
 }
+type privateBuildCheckout func(context.Context, domain.HostingBuildSnapshot, string, string, func(context.Context) (SourceCredential, error), func(context.Context, domain.HostingBuildSourceReceipt) error, func(context.Context, string) error) error
 type buildCheckout func(context.Context, domain.HostingBuildSnapshot, string, string, func(context.Context, domain.HostingBuildSourceReceipt) error, func(context.Context, string) error) error
 
-// BuildExecutor executes public Git builds only. It never settles a generic run.
+// BuildExecutor executes explicitly configured trusted Git builds. It never settles a generic run.
 // Reconcile must finish before Execute. Host and journal locks prevent concurrent
 // effects; an unresolved intent blocks another execution of the same build.
 type BuildExecutor struct {
-	config     BuildConfig
-	client     BuildPhaseClient
-	journal    *runner.AttemptJournal
-	engine     localBuildEngine
-	checkout   buildCheckout
-	lock       func(string, string) (func(), error)
-	observe    func(context.Context) (string, error)
-	logSecrets []runner.SecretMaterial
+	config          BuildConfig
+	client          BuildPhaseClient
+	journal         *runner.AttemptJournal
+	engine          localBuildEngine
+	checkout        buildCheckout
+	privateCheckout privateBuildCheckout
+	lock            func(string, string) (func(), error)
+	observe         func(context.Context) (string, error)
+	logSecrets      []runner.SecretMaterial
 }
 
 // ComputeBuildToolchainIdentity hashes a versioned inventory without local paths.
@@ -159,6 +170,11 @@ func NewBuildExecutor(c BuildConfig, client BuildPhaseClient, journal *runner.At
 	if _, ok := client.(buildLogClient); !ok {
 		return nil, errors.New("typed build log client required")
 	}
+	if c.PrivateGit != nil {
+		if _, ok := client.(privateBuildCredentialClient); !ok {
+			return nil, errors.New("typed private credential client required")
+		}
+	}
 	engine, err := validatedBuildEngine(c)
 	if err != nil {
 		return nil, err
@@ -171,7 +187,7 @@ func NewBuildExecutor(c BuildConfig, client BuildPhaseClient, journal *runner.At
 	if err = json.Unmarshal(raw, &c); err != nil {
 		return nil, err
 	}
-	e := &BuildExecutor{config: c, client: client, journal: journal, engine: engine, checkout: checkoutPublicBuild, lock: lockBuildSource}
+	e := &BuildExecutor{config: c, client: client, journal: journal, engine: engine, checkout: checkoutPublicBuild, privateCheckout: checkoutBuildWithCredential, lock: lockBuildSource}
 	e.observe = func(ctx context.Context) (string, error) { return observeBuildDaemon(ctx, e.config) }
 	return e, nil
 }
@@ -186,12 +202,12 @@ func (e *BuildExecutor) validateBuild(b domain.HostingBuild, a domain.HostingBui
 	s := b.Snapshot
 	unhashed := s
 	unhashed.InputID = ""
-	if b.ID != a.BuildID || b.RunID != a.RunID || s.BuildID != a.BuildID || b.Revision < 1 || b.ResourceID != s.Source.ResourceID || b.ProjectID != s.Source.ProjectID || s.ResourceGeneration < 1 || s.InputID != domain.HostingDocumentHash(unhashed) || domain.ValidateHostingGitSource(s.Source) != nil || domain.ValidateHostingBuildPolicy(s.Policy) != nil || !reflect.DeepEqual(s.Policy, e.config.Policy) || s.Grant != nil || s.Source.CredentialKind != "public" || s.RunnerID != e.config.Target.RunnerID || s.ServerID != e.config.Target.ServerID || s.DestinationID != e.config.Target.DestinationID || !validBuildPlacementID(s.BindingID) || e.config.Target.BindingID != "" && s.BindingID != e.config.Target.BindingID || snapshot != nil && !reflect.DeepEqual(s, *snapshot) {
+	if b.ID != a.BuildID || b.RunID != a.RunID || s.BuildID != a.BuildID || b.Revision < 1 || b.ResourceID != s.Source.ResourceID || b.ProjectID != s.Source.ProjectID || s.ResourceGeneration < 1 || s.InputID != domain.HostingDocumentHash(unhashed) || domain.ValidateHostingGitSource(s.Source) != nil || domain.ValidateHostingBuildPolicy(s.Policy) != nil || !reflect.DeepEqual(s.Policy, e.config.Policy) || !e.validBuildCredentialSnapshot(s) || s.RunnerID != e.config.Target.RunnerID || s.ServerID != e.config.Target.ServerID || s.DestinationID != e.config.Target.DestinationID || !validBuildPlacementID(s.BindingID) || e.config.Target.BindingID != "" && s.BindingID != e.config.Target.BindingID || snapshot != nil && !reflect.DeepEqual(s, *snapshot) {
 		return errors.New("build immutable snapshot or target mismatch")
 	}
 	u, err := s.Source.Policy.ValidateURL(s.Source.RepositoryURL, false)
 	if err != nil || u.Scheme != "https" {
-		return errors.New("public HTTPS source required")
+		return errors.New("HTTPS source required")
 	}
 	if s.ExpectedDaemonID != "" && b.DaemonID != "" && s.ExpectedDaemonID != b.DaemonID {
 		return errors.New("build daemon identity changed")
@@ -247,10 +263,13 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > e.config.Policy.Limits.Deadline || hostingbuildprotocol.ValidateAuthority(a) != nil || buildAuthority(at, a.BuildID) != a || at.CreatedAt.IsZero() || !at.ExpiresAt.After(at.CreatedAt) {
 		return errors.New("bounded build context and exact attempt required")
 	}
-	output, err := newBuildOutputAdapter(e, a, at)
-	if err != nil {
-		return err
+	if _, ok := e.client.(buildLogClient); !ok {
+		return errors.New("typed build log client required")
 	}
+	if _, ok := e.engine.(buildOutputEngine); !ok {
+		return errors.New("observed build engine required")
+	}
+	var output *buildOutputAdapter
 	unlock, err := e.lock(e.config.SourceRoot, a.BuildID)
 	if err != nil {
 		return err
@@ -297,8 +316,14 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	if response.Acknowledgment != nil || response.Build.State != "sourcing" {
 		return errors.New("source begin response mismatch")
 	}
-	if err = output.Sink(ctx, hostingbuild.Output{Component: hostingbuild.OutputBuild, Stream: hostingbuild.OutputSystem, Data: []byte("Build source acquisition started\n")}); err != nil {
-		return err
+	if s.Source.CredentialKind == "public" {
+		output, err = newBuildOutputAdapter(e, a, at)
+		if err != nil {
+			return err
+		}
+		if err = output.Sink(ctx, hostingbuild.Output{Component: hostingbuild.OutputBuild, Stream: hostingbuild.OutputSystem, Data: []byte("Build source acquisition started\n")}); err != nil {
+			return err
+		}
 	}
 	operation, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -353,7 +378,31 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	var built hostingbuild.Result
 	buildFailed := errors.New("local build failed after confirmed engine cleanup")
 	var current domain.HostingBuild
-	err = e.checkout(operation, s, filepath.Join(e.config.SourceRoot, a.BuildID), "", func(c context.Context, receipt domain.HostingBuildSourceReceipt) error {
+	checkout := e.checkout
+	if s.Source.CredentialKind == "https_basic" {
+		if e.privateCheckout == nil {
+			return errors.New("private checkout unavailable; intent retained")
+		}
+		checkout = func(c context.Context, snapshot domain.HostingBuildSnapshot, path, frozen string, accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {
+			return e.privateCheckout(c, snapshot, path, frozen, func(c context.Context) (SourceCredential, error) {
+				material, err := e.privateBuildCredential(c, a, s, intentID)
+				if err != nil {
+					return SourceCredential{}, err
+				}
+				output, err = newBuildOutputAdapter(e, a, at, runner.SecretMaterial{Value: string(material.Bytes), Encodings: []string{"base64", "base64url", "hex"}}, runner.SecretMaterial{Value: material.Username + ":" + string(material.Bytes), Encodings: []string{"base64", "base64url", "hex"}})
+				if err != nil {
+					material.Close()
+					return SourceCredential{}, err
+				}
+				if err = output.Sink(c, hostingbuild.Output{Component: hostingbuild.OutputBuild, Stream: hostingbuild.OutputSystem, Data: []byte("Build source acquisition started\n")}); err != nil {
+					material.Close()
+					return SourceCredential{}, err
+				}
+				return SourceCredential{Kind: material.Kind, Username: material.Username, Bytes: material.Bytes, UseUntil: material.UseUntil}, nil
+			}, accept, use)
+		}
+	}
+	err = checkout(operation, s, filepath.Join(e.config.SourceRoot, a.BuildID), "", func(c context.Context, receipt domain.HostingBuildSourceReceipt) error {
 		if domain.ValidateHostingBuildSourceReceipt(receipt, s) != nil {
 			return errors.New("source identity mismatch")
 		}
@@ -442,6 +491,9 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	if err != nil && err != buildFailed || observerErr != nil || ctx.Err() != nil {
 		return errors.New("build execution or cleanup unresolved; journal retained")
 	}
+	if output == nil {
+		return errors.New("build output unavailable; intent retained")
+	}
 	if finishErr := output.Finish(ctx); finishErr != nil {
 		return finishErr
 	}
@@ -496,4 +548,69 @@ func buildEngineRequest(s domain.HostingBuildSnapshot, path, daemon string) host
 }
 func buildArtifact(r hostingbuild.Result, b domain.HostingBuild) domain.HostingBuildArtifact {
 	return domain.HostingBuildArtifact{Origin: r.Origin, BuildID: r.BuildID, SourceID: r.SourceID, InputID: r.InputID, SourceReceiptHash: domain.HostingDocumentHash(b.SourceReceipt), ContextDigest: r.ContextDigest, RequestDigest: r.RequestDigest, DaemonID: r.DaemonID, ImageID: r.ImageID, IndexDigest: r.IndexDigest, ManifestDigest: r.ManifestDigest, ConfigDigest: r.ConfigDigest, Platform: r.Platform, ContextPolicy: r.ContextPolicy}
+}
+
+// Private delivery never runs during startup reconciliation. Its request ID is
+// already durable, and retries cannot mint a fresh server-side credential window.
+type privateBuildCredentialClient interface {
+	BuildSourceCredential(context.Context, string, domain.HostingSourceCredentialRequest, runnerclient.SourceCredentialTransport) (hostingbuildprotocol.SourceCredential, error)
+}
+
+func (e *BuildExecutor) validBuildCredentialSnapshot(s domain.HostingBuildSnapshot) bool {
+	if s.Source.CredentialKind == "public" {
+		return s.Grant == nil
+	}
+	if e.config.PrivateGit == nil || s.Source.CredentialKind != "https_basic" || s.Grant == nil {
+		return false
+	}
+	g := s.Grant
+	return g.ID != "" && g.Version == 1 && !g.Revoked && g.Kind == "https_basic" && g.SourceID == s.Source.ID && g.ResourceID == s.Source.ResourceID && g.ProjectID == s.Source.ProjectID && g.RepositoryURL == s.Source.RepositoryURL && g.PolicyHash == domain.HostingDocumentHash(s.Source.Policy) && g.SecretID != "" && g.SecretVersion > 0 && g.CreatedBy != ""
+}
+func (e *BuildExecutor) privateBuildCredential(ctx context.Context, a domain.HostingBuildAuthority, s domain.HostingBuildSnapshot, intentID string) (hostingbuildprotocol.SourceCredential, error) {
+	var zero hostingbuildprotocol.SourceCredential
+	client, ok := e.client.(privateBuildCredentialClient)
+	id, prefixed := strings.CutPrefix(intentID, "build_intent_")
+	if !ok || !prefixed || len(id) != 32 || !domain.ValidHostingSourceDeliveryID(id) || !e.validBuildCredentialSnapshot(s) || e.config.PrivateGit == nil {
+		return zero, errors.New("private credential intent unavailable")
+	}
+	retained := false
+	for _, entry := range e.journal.Snapshot().Build {
+		if entry.ID == intentID && entry.Phase == "attempt_intent" && buildAuthority(entry.Attempt, entry.BuildID) == a && entry.InputHash == domain.HostingDocumentHash(s) {
+			retained = true
+		}
+	}
+	if !retained {
+		return zero, errors.New("private credential intent not durable")
+	}
+	request := domain.HostingSourceCredentialRequest{Authority: a, DeliveryID: id}
+	for attempt := 0; attempt < 3; attempt++ {
+		status, err := e.status(ctx, a, &s)
+		if err != nil || requireLive(status) != nil || status.Build.State != "sourcing" {
+			return zero, errors.New("private credential authority lost")
+		}
+		call, cancel := context.WithTimeout(ctx, e.config.RequestTimeout)
+		material, err := client.BuildSourceCredential(call, e.config.Target.RunnerID, request, runnerclient.SourceCredentialTransport{TrustedLoopbackHTTP: e.config.PrivateGit.TrustedLoopbackHTTP})
+		cancel()
+		if err == nil {
+			if ctx.Err() != nil || material.Authority != a || material.DeliveryID != id || material.RequestHash != hostingbuildprotocol.SourceCredentialRequestHash(e.config.Target.RunnerID, request) || material.Kind != "https_basic" || !hostingbuildprotocol.ValidBasicCredential(material.Username, material.Bytes) || !time.Now().Before(material.UseUntil) || material.UseUntil.After(time.Now().Add(time.Minute)) {
+				material.Close()
+				return zero, errors.New("private credential response mismatch")
+			}
+			return material, nil
+		}
+		material.Close()
+		if ctx.Err() != nil {
+			return zero, ctx.Err()
+		}
+		if attempt < 2 {
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return zero, ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return zero, errors.New("private credential unavailable; intent retained")
 }

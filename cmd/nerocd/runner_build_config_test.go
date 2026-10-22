@@ -121,3 +121,52 @@ func TestRunnerBuildCapabilitiesExplicitAndDisabledByDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerPrivateGitConfigurationAndCapabilities(t *testing.T) {
+	c, err := decodeRunnerBuildConfig([]byte(`{"version":1,"private_git":{"trusted_loopback_http":true}}`))
+	if err != nil || c.PrivateGit == nil || !c.PrivateGit.TrustedLoopbackHTTP {
+		t.Fatal("private opt-in lost", err)
+	}
+	for _, raw := range []string{`{"version":1,"private_git":null}`, `{"version":1,"private_git":{"unknown":true}}`, `{"version":1,"private_git":{"trusted_loopback_http":"true"}}`} {
+		if _, err := decodeRunnerBuildConfig([]byte(raw)); err == nil {
+			t.Fatal("invalid private config accepted")
+		}
+	}
+	for _, caps := range [][]string{nil, {domain.HostingBuildTaskType}, {domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}} {
+		got, err := runnerBuildCapabilities(c, false, len(caps) > 0, caps)
+		if err != nil || !strings.Contains(strings.Join(got, ","), domain.HostingPrivateGitCapability) {
+			t.Fatal("private capability missing", err)
+		}
+	}
+	if _, err := runnerBuildCapabilities(c, false, true, []string{"shell"}); err == nil {
+		t.Fatal("private shell enabled")
+	}
+}
+
+func TestRunnerPrivateGitDefaultLocalDeploymentRegistrationCapabilities(t *testing.T) {
+	for _, proxy := range []bool{false, true} {
+		c := &runnerruntime.BuildConfig{PrivateGit: &runnerruntime.PrivateGitConfig{}}
+		caps, err := runnerBuildCapabilities(c, proxy, false, []string{"shell"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A validated private profile is already selected; local deployment must add
+		// its capability without replacing this profile with a public-only default.
+		caps, err = runnerLocalBuildCapabilities(true, true, proxy, c.PrivateGit != nil, caps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, capability := range caps {
+			got[capability] = true
+		}
+		for _, capability := range []string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.RunTypeLocalBuildDeploy} {
+			if !got[capability] {
+				t.Fatal("fresh registration dropped capability", capability)
+			}
+		}
+		if got["shell"] || got[domain.RunTypeProxyApply] != proxy {
+			t.Fatal("fresh registration weakened execution profile")
+		}
+	}
+}

@@ -5,6 +5,7 @@ package runnerruntime
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
 	"nerocd/internal/hostingjobs"
+	"nerocd/internal/secretcrypto"
 	"nerocd/internal/source"
 	"nerocd/internal/store"
 	"nerocd/web"
@@ -114,7 +116,23 @@ func newControllerBuildFixture(t *testing.T, capabilities ...string) *controller
 		}
 	})
 	policy := source.RepositoryPolicy{Version: 1, State: "configured", Mode: "internal", AllowInternal: true, AllowedSchemes: []string{"https"}, AllowedHosts: []string{"example.com"}, AllowedCIDRs: []string{"127.0.0.0/8"}}
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: controllerFixtureHosting{pg, policy}, Destinations: pg, ManagedSecrets: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	private := false
+	for _, capability := range capabilities {
+		private = private || capability == domain.HostingPrivateGitCapability
+	}
+	var ring *secretcrypto.Keyring
+	if private {
+		key := make([]byte, 32)
+		if _, err = rand.Read(key); err != nil {
+			t.Fatal(err)
+		}
+		ring, err = secretcrypto.New("fixture", map[string][]byte{"fixture": key})
+		clear(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: controllerFixtureHosting{pg, policy}, Destinations: pg, ManagedSecrets: pg, SecretKeyring: ring, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +144,7 @@ func newControllerBuildFixture(t *testing.T, capabilities ...string) *controller
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.TrustedLoopbackSourceCredentialHTTP = private
 	if cfg.AllowInsecureCookies {
 		// Exercise the actual bootstrap lifecycle so the public sign-in page is
 		// available. The legacy seeded users alone do not complete bootstrap.
@@ -224,6 +243,9 @@ func newControllerBuildFixture(t *testing.T, capabilities ...string) *controller
 		t.Fatal(err)
 	}
 	f.config = BuildConfig{SourceRoot: sources, Engine: hostingbuild.Config{DockerBinary: "/usr/local/bin/docker", Socket: "/var/run/docker.sock", BuildxBinary: "/fixture/buildx", BuildxSHA256: os.Getenv("NEROCD_BUILDX_SHA256"), PlannerImage: os.Getenv("NEROCD_PLANNER_IMAGE"), StateDir: filepath.Join(f.work, "state"), CgroupRoot: os.Getenv("NEROCD_CGROUP_ROOT")}, Target: BuildTarget{RunnerID: consumed.Runner.ID, ServerID: f.target.Server.ID, DestinationID: f.target.Destination.ID}, StatusInterval: 200 * time.Millisecond, RequestTimeout: 5 * time.Second}
+	if private {
+		f.config.PrivateGit = &PrivateGitConfig{TrustedLoopbackHTTP: true}
+	}
 	d := "sha256:" + strings.Repeat("a", 64)
 	f.config.Policy = domain.HostingBuildPolicy{Identity: d, Protocol: domain.HostingBuildProtocol, Platform: "linux/" + runtime.GOARCH, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 1 << 30, Deadline: 3 * time.Minute, ContextBytes: 8 << 20, ContextFiles: 1000, PlanBytes: 1 << 20, LogBytes: 8 << 20, ExportBytes: 256 << 20, UnpackedBytes: 512 << 20, UsageBytes: 3 << 30, ReserveBytes: 128 << 20, PollInterval: 100 * time.Millisecond, DiskMode: "monitored"}, SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 8 << 20, MaxWorkspaceBytes: 32 << 20, MinFreeBytes: 128 << 20, MaxEntries: 1000, MaxDepth: 32, PollInterval: 100 * time.Millisecond}}
 	f.config.Policy.ToolchainIdentity, err = ComputeBuildToolchainIdentity(t.Context(), f.config.Engine, f.config.Policy.Platform)
@@ -287,7 +309,11 @@ func newControllerBuildFixture(t *testing.T, capabilities ...string) *controller
 }
 func (f *controllerBuildFixture) writeConfig() {
 	c := f.config
-	raw, err := json.Marshal(map[string]any{"version": 1, "source_root": c.SourceRoot, "engine": map[string]string{"docker_binary": c.Engine.DockerBinary, "socket": c.Engine.Socket, "buildx_binary": c.Engine.BuildxBinary, "buildx_sha256": c.Engine.BuildxSHA256, "planner_image": c.Engine.PlannerImage, "state_dir": c.Engine.StateDir, "cgroup_root": c.Engine.CgroupRoot}, "target": map[string]string{"runner_id": c.Target.RunnerID, "server_id": c.Target.ServerID, "destination_id": c.Target.DestinationID}, "policy": c.Policy, "status_interval_ns": c.StatusInterval, "request_timeout_ns": c.RequestTimeout})
+	document := map[string]any{"version": 1, "source_root": c.SourceRoot, "engine": map[string]string{"docker_binary": c.Engine.DockerBinary, "socket": c.Engine.Socket, "buildx_binary": c.Engine.BuildxBinary, "buildx_sha256": c.Engine.BuildxSHA256, "planner_image": c.Engine.PlannerImage, "state_dir": c.Engine.StateDir, "cgroup_root": c.Engine.CgroupRoot}, "target": map[string]string{"runner_id": c.Target.RunnerID, "server_id": c.Target.ServerID, "destination_id": c.Target.DestinationID}, "policy": c.Policy, "status_interval_ns": c.StatusInterval, "request_timeout_ns": c.RequestTimeout}
+	if c.PrivateGit != nil {
+		document["private_git"] = c.PrivateGit
+	}
+	raw, err := json.Marshal(document)
 	if err != nil {
 		f.t.Fatal(err)
 	}
