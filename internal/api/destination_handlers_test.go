@@ -39,7 +39,7 @@ func TestDestinationAPIEnforcesRolesScopesAndImmutableBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	runnerID := "runner_api_destination"
-	enrollment, err := server.app.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: runnerID, RunnerName: "Destination Runner", Capabilities: []string{"compose_deploy"}})
+	enrollment, err := server.app.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: runnerID, RunnerName: "Destination Runner", Capabilities: []string{domain.RunTypeComposeDeploy}})
 	if err != nil {
 		t.Fatal(err)
 	}

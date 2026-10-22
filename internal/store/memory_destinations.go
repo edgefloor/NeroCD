@@ -29,7 +29,9 @@ func (s *MemoryStore) eligibleDestinationRunnerLocked(id string) bool {
 	eligible := false
 	for _, v := range s.runners {
 		if v.ID == id {
-			eligible = v.Status == domain.RunnerActive && v.TokenHash != "" && contains(v.Capabilities, "compose_deploy") && !contains(v.Capabilities, "shell")
+			// Retain the historical alias while admitting the runner protocol's canonical capability.
+			compose := contains(v.Capabilities, domain.RunTypeComposeDeploy) || contains(v.Capabilities, "compose_deploy")
+			eligible = v.Status == domain.RunnerActive && v.TokenHash != "" && compose && !contains(v.Capabilities, "shell")
 			break
 		}
 	}

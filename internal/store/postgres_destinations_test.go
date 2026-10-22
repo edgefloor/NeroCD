@@ -1,13 +1,108 @@
 package store_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"nerocd/db"
+	"nerocd/internal/domain"
 	"nerocd/internal/store"
 )
+
+func TestPostgresDestinationCapabilityUpgradeFrom0043(t *testing.T) {
+	ctx := t.Context()
+	// The ordinary helper proves a fresh migration succeeds as well.
+	fresh, source := openPostgresIntegrationStore(t, ctx, "dest_cap_fresh")
+	t.Cleanup(func() { closePostgresStore(t, fresh) })
+	createDestinationTarget(t, fresh, "fresh_canonical")
+	schema := fmt.Sprintf("nerocd_dest_cap_upgrade_%d", time.Now().UnixNano())
+	identifier := pgx.Identifier{schema}.Sanitize()
+	if _, err := source.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := source.Exec(cleanup, "DROP SCHEMA "+identifier+" CASCADE"); err != nil {
+			t.Error(err)
+		}
+	})
+	upgradeURL := databaseURLWithSearchPath(t, source.Config().ConnConfig.ConnString(), schema)
+	database, err := pgxpool.New(ctx, upgradeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(database.Close)
+	if err := applyEmbeddedMigrations(ctx, database, "", "0043_legacy_api_token_principals.sql"); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := os.ReadFile("../../db/seeds/dev.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(ctx, string(seed)); err != nil {
+		t.Fatal(err)
+	}
+	// Seed an actual consumed enrollment in the old schema, before the new
+	// store is allowed to open. These are the enrollment creation, runner
+	// issuance, and consumption mutations used by the repository.
+	runnerID := "runner_upgrade_canonical"
+	if _, err := database.Exec(ctx, `INSERT INTO runner_enrollments (id,token_hash,runner_id,runner_name,tags,capabilities,created_by,created_at,expires_at) VALUES ('enroll_upgrade','enroll_hash',$1,'canonical','{}',$2,'usr_bootstrap',now(),now()+interval '1 hour')`, runnerID, []string{domain.RunTypeComposeDeploy}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(ctx, `INSERT INTO runners (id,name,tags,capabilities,status,registered_at,last_heartbeat_at,token_hash) VALUES ($1,'canonical','{}',$2,'active',now(),now(),'credential_hash')`, runnerID, []string{domain.RunTypeComposeDeploy}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(ctx, `UPDATE runner_enrollments SET used_at=now(),consume_request_id='consume_upgrade',credential_hash='credential_hash' WHERE id='enroll_upgrade'`); err != nil {
+		t.Fatal(err)
+	}
+	event := destinationEvent("upgrade_canonical")
+	server := domain.Server{ID: "server_upgrade_canonical", Name: "canonical", RunnerID: runnerID, CreatedBy: event.ActorID, CreatedAt: event.CreatedAt}
+	dest := domain.Destination{ID: "destination_upgrade_canonical", ServerID: server.ID, Name: "default", RuntimeKind: "docker_compose", CreatedAt: event.CreatedAt}
+	_, err = database.Exec(ctx, `INSERT INTO servers (id,name,runner_id,created_by,created_at) VALUES ($1,$2,$3,$4,$5)`, server.ID, server.Name, server.RunnerID, server.CreatedBy, server.CreatedAt)
+	var admissionError *pgconn.PgError
+	if !errors.As(err, &admissionError) || admissionError.Code != "23514" {
+		t.Fatalf("0043 did not reproduce canonical capability rejection: %v", err)
+	}
+	if old, err := store.OpenPostgres(ctx, upgradeURL); err == nil {
+		closePostgresStore(t, old)
+		t.Fatal("missing0044 startup accepted")
+	}
+	if err := applyEmbeddedMigrations(ctx, database, "0043_legacy_api_token_principals.sql", "0044_destination_capability_compatibility.sql"); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := store.OpenPostgres(ctx, upgradeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closePostgresStore(t, upgraded) })
+	if _, _, err := upgraded.CreateServerWithDestination(ctx, server, dest, event); err != nil {
+		t.Fatalf("0044 did not admit the same consumed enrollment: %v", err)
+	}
+	if compatible, err := upgraded.SchemaCompatible(ctx); err != nil || !compatible {
+		t.Fatalf("upgraded schema compatibility=%v err=%v", compatible, err)
+	}
+	oldMigration, err := db.Files.ReadFile("migrations/0042_servers_destinations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAdmission := strings.Split(strings.Split(string(oldMigration), "CREATE FUNCTION nerocd_server_runner_admission()")[1], "CREATE TRIGGER servers_runner_admission")[0]
+	if _, err := database.Exec(ctx, "CREATE OR REPLACE FUNCTION nerocd_server_runner_admission()"+oldAdmission); err != nil {
+		t.Fatal(err)
+	}
+	if compatible, err := upgraded.SchemaCompatible(ctx); err != nil || compatible {
+		t.Fatalf("restored old admission stayed ready=%v err=%v", compatible, err)
+	}
+}
 
 func TestPostgresDestinationConstraintsAndReadiness(t *testing.T) {
 	ctx := t.Context()
@@ -72,7 +167,7 @@ func TestPostgresDestinationMissingMigrationBlocksStartup(t *testing.T) {
 	ctx := t.Context()
 	pg, db := openPostgresIntegrationStore(t, ctx, "dest_missing")
 	t.Cleanup(func() { closePostgresStore(t, pg) })
-	if _, err := db.Exec(ctx, `DROP TABLE resource_bindings,destination_project_grants,destinations,servers; DROP FUNCTION nerocd_destinations_schema_compatible(); DROP FUNCTION nerocd_hosting_target_immutable(); DROP FUNCTION nerocd_destination_grant_identity(); DROP FUNCTION nerocd_server_runner_admission(); DROP FUNCTION nerocd_resource_binding_admission()`); err != nil {
+	if _, err := db.Exec(ctx, `DROP TABLE resource_bindings,destination_project_grants,destinations,servers; DROP FUNCTION nerocd_destinations_schema_compatible(); DROP FUNCTION nerocd_destination_capability_schema_compatible(); DROP FUNCTION nerocd_hosting_target_immutable(); DROP FUNCTION nerocd_destination_grant_identity(); DROP FUNCTION nerocd_server_runner_admission(); DROP FUNCTION nerocd_resource_binding_admission()`); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); ok || err == nil {
@@ -83,6 +178,9 @@ func TestPostgresDestinationMissingMigrationBlocksStartup(t *testing.T) {
 		t.Fatal("missing0042 startup accepted")
 	}
 	if err := applyEmbeddedMigrations(ctx, db, "0041_project_managed_secrets.sql", "0042_servers_destinations.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyEmbeddedMigrations(ctx, db, "0043_legacy_api_token_principals.sql", "0044_destination_capability_compatibility.sql"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {
