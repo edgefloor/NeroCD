@@ -3,6 +3,7 @@ package runnerclient
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,5 +48,65 @@ func TestIdentityFailsClosedOnInvalidResponseAndHTTPFailure(t *testing.T) {
 	id, err := New("http://127.0.0.1:1", "credential").Identity(ctx)
 	if id != "" || !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "credential") {
 		t.Fatalf("canceled transport id=%q err=%v", id, err)
+	}
+}
+
+func TestIdentityRequiresBoundedSingleDocument(t *testing.T) {
+	const limit = 1 << 20
+	valid := `{"runner_id":"runner_actual"}`
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"trailing garbage", valid + " trailing-secret-sentinel", false},
+		{"concatenated object", valid + `{"runner_id":"runner_other"}`, false},
+		{"extra scalar", valid + ` true`, false},
+		{"valid whitespace", " \t\r\n" + valid + " \t\r\n", true},
+		{"exact size bound", valid + strings.Repeat(" ", limit-len(valid)), true},
+		{"over size whitespace", valid + strings.Repeat(" ", limit-len(valid)+1), false},
+		{"over size object", `{"runner_id":"` + strings.Repeat("a", limit) + `"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.body)) }))
+			defer server.Close()
+			id, err := New(server.URL, "runner-credential").Identity(t.Context())
+			if tc.valid {
+				if err != nil || id != "runner_actual" {
+					t.Fatalf("valid document rejected: id=%q err=%v", id, err)
+				}
+			} else {
+				if err == nil || id != "" {
+					t.Fatalf("invalid identity document accepted: id=%q err=%v", id, err)
+				}
+				if strings.Contains(err.Error(), "trailing-secret-sentinel") {
+					t.Fatalf("response reflected in error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+type countedIdentityReader struct {
+	io.Reader
+	bytesRead int
+}
+
+func (r *countedIdentityReader) Read(buffer []byte) (int, error) {
+	n, err := r.Reader.Read(buffer)
+	r.bytesRead += n
+	return n, err
+}
+
+func TestIdentityDecodeStopsAtSizeBound(t *testing.T) {
+	body := &countedIdentityReader{Reader: strings.NewReader(`{"runner_id":"runner_actual"}` + strings.Repeat(" ", 2*maxIdentityResponseBytes))}
+	var response identityResponse
+	if err := response.decodeResponse(body); err == nil {
+		t.Fatal("oversized identity accepted")
+	}
+	if body.bytesRead != maxIdentityResponseBytes+1 {
+		t.Fatalf("read=%d want=%d", body.bytesRead, maxIdentityResponseBytes+1)
+	}
+	if response.RunnerID != "" {
+		t.Fatalf("invalid response published identity %q", response.RunnerID)
 	}
 }

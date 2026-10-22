@@ -170,7 +170,10 @@ func TestRunnerIdentityFailurePreventsJournalAndRuntimeTraffic(t *testing.T) {
 		status                int
 		body                  string
 		explicitID, transport bool
-	}{{"explicit mismatch", 200, `{"runner_id":"runner_actual"}`, true, false}, {"explicit default mismatch", 200, `{"runner_id":"runner_actual"}`, true, false}, {"unauthorized", 401, `{}`, false, false}, {"unsupported server", 404, `{}`, false, false}, {"server failure", 500, `{}`, false, false}, {"empty identity", 200, `{}`, false, false}, {"transport", 0, "", false, true}} {
+	}{{"explicit mismatch", 200, `{"runner_id":"runner_actual"}`, true, false}, {"explicit default mismatch", 200, `{"runner_id":"runner_actual"}`, true, false}, {"unauthorized", 401, `{}`, false, false}, {"unsupported server", 404, `{}`, false, false}, {"server failure", 500, `{}`, false, false}, {"empty identity", 200, `{}`, false, false},
+		{"trailing garbage", 200, `{"runner_id":"runner_actual"} trailing`, false, false},
+		{"concatenated identity", 200, `{"runner_id":"runner_actual"}{"runner_id":"runner_other"}`, false, false},
+		{"oversized identity", 200, `{"runner_id":"runner_actual"}` + strings.Repeat(" ", 1<<20), false, false}, {"transport", 0, "", false, true}} {
 		for _, existing := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/existing=%t", tc.name, existing), func(t *testing.T) {
 				identityDir := t.TempDir()
