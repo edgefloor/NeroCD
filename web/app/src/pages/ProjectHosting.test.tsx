@@ -175,6 +175,17 @@ test("late environment responses cannot leak the previous project's form or sele
 });
 
 const gitResource: api.Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 2, repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
+test("Git create and edit forms describe separately requested builds alongside build controls", async () => {
+ vi.mocked(api.listResources).mockResolvedValue(page([gitResource]));
+ setup(); const editor = await edit();
+ const create = screen.getByRole("form", { name: "Create application" });
+ fireEvent.change(within(create).getByLabelText("Application source"), { target: { value: "git" } });
+ expect(screen.getByText("Build controls for Web")).toBeTruthy();
+ for (const form of [create, editor]) {
+  expect(within(form).getByText(/Saving records configuration only\. Request builds separately when enabled by your operator\. Deploying a build artifact is not available yet\./)).toBeTruthy();
+  expect(within(form).queryByText(/Git builds and deployment are unavailable|build controller is connected/)).toBeNull();
+ }
+});
 test("Git creation sends public configuration without source identity and preserves rejected drafts", async () => {
  setup(); await selectEnvironment();
  const form = screen.getByRole("form", { name: "Create application" });

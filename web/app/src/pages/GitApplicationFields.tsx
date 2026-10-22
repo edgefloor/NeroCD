@@ -24,6 +24,6 @@ export function GitApplicationFields({ value, onChange, disabled }: { value: Git
    <div className="space-y-1.5"><label htmlFor={`${id}-publish`}>Publish directory</label><Input id={`${id}-publish`} value={settings.publish_dir ?? ""} onChange={(event) => setSetting("publish_dir", event.target.value)} disabled={disabled} placeholder="Prepared assets in repository root when empty" spellCheck={false} /></div>
    <label className="flex items-center gap-2"><input type="checkbox" checked={settings.spa_fallback ?? false} disabled={disabled} onChange={(event) => onChange({ ...value, settings: { ...settings, spa_fallback: event.target.checked } })} />SPA fallback</label>
   </> : null}
-  <p className="text-xs text-muted-foreground">Saving records configuration only. Git builds and deployment are unavailable until a build controller is connected. Static assets must already be prepared.</p>
+  <p className="text-xs text-muted-foreground">Saving records configuration only. Request builds separately when enabled by your operator. Deploying a build artifact is not available yet. Static assets must already be prepared.</p>
  </div>;
 }
