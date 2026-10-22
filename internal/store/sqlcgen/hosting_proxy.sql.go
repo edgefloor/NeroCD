@@ -538,6 +538,18 @@ func (q *Queries) ProxyIsTask(ctx context.Context, runID string) (bool, error) {
 	return exists, err
 }
 
+const proxyLegacyTokenValid = `-- name: ProxyLegacyTokenValid :one
+SELECT COALESCE(bool_and(status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())),true)::boolean
+FROM api_tokens WHERE id=$1 AND service_account_id IS NULL
+`
+
+func (q *Queries) ProxyLegacyTokenValid(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, proxyLegacyTokenValid, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const proxyListGrants = `-- name: ProxyListGrants :many
 SELECT id, proxy_id, project_id, hostname, wildcard, granted_by, created_at, revoked_at FROM hosting_proxy_hostname_grants WHERE proxy_id=$1 ORDER BY id
 `
@@ -675,6 +687,18 @@ func (q *Queries) ProxyLock(ctx context.Context, id string) (HostingProxy, error
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const proxyLockLegacyToken = `-- name: ProxyLockLegacyToken :one
+SELECT roles FROM api_tokens WHERE id=$1 AND service_account_id IS NULL
+AND status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE
+`
+
+func (q *Queries) ProxyLockLegacyToken(ctx context.Context, id string) ([]string, error) {
+	row := q.db.QueryRow(ctx, proxyLockLegacyToken, id)
+	var roles []string
+	err := row.Scan(&roles)
+	return roles, err
 }
 
 const proxyLockMember = `-- name: ProxyLockMember :one

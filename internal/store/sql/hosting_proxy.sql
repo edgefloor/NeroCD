@@ -35,6 +35,14 @@ SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2 FOR SHARE;
 -- name: ProxyLockServiceAccount :one
 SELECT sa.project_id,sa.role FROM service_accounts sa JOIN users u ON u.id=sa.owner_user_id WHERE sa.id=$1 AND sa.status='active' AND u.status='active' FOR SHARE OF sa,u;
 
+-- name: ProxyLockLegacyToken :one
+SELECT roles FROM api_tokens WHERE id=$1 AND service_account_id IS NULL
+AND status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE;
+
+-- name: ProxyLegacyTokenValid :one
+SELECT COALESCE(bool_and(status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())),true)::boolean
+FROM api_tokens WHERE id=$1 AND service_account_id IS NULL;
+
 -- name: ProxyLockProject :one
 SELECT id FROM projects WHERE id=$1 AND archived_at IS NULL FOR SHARE;
 
