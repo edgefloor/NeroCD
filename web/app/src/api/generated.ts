@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/runners/hosting/runtime-environment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deliver a prepared hosting runtime environment
+         * @description Prepared deploy authority only. Current actor, runner, lease, destination, configuration and active pinned secret references are rechecked for each request. Audit metadata commits before decryption. The original delivery deadline is at most 60 seconds and capped by lease expiry; retries never extend it. Cache-Control: no-store on every response. Direct TLS or trusted immediate TLS termination required. Values go only through the protected codec. Docker administrators can inspect resulting Config.Env; delivered bytes cannot be instantly revoked.
+         */
+        post: operations["deliverHostingRuntimeEnvironment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/builds/source-credential": {
         parameters: {
             query?: never;
@@ -2356,6 +2376,31 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingRuntimeEnvironmentRequest: {
+            authority: components["schemas"]["HostingAuthority"];
+            plan_hash: string;
+            runtime_configuration: components["schemas"]["HostingRuntimeConfigurationRef"];
+            delivery_id: string;
+        };
+        HostingRuntimeEnvironment: {
+            authority: components["schemas"]["HostingAuthority"];
+            plan_hash: string;
+            runtime_configuration: components["schemas"]["HostingRuntimeConfigurationRef"];
+            delivery_id: string;
+            request_hash: string;
+            /** @enum {string} */
+            purpose: "hosting_container_environment";
+            /** Format: date-time */
+            use_until: string;
+            entries: {
+                name: string;
+                /**
+                 * Format: byte
+                 * @description Base64 UTF-8 environment bytes, decoded size at most 4096. Empty is valid; no NUL, CR or LF. Entire NAME=value newline encoding is at most 256 KiB.
+                 */
+                value: string;
+            }[];
+        };
         HostingSourceGrantRequest: {
             /** Format: int64 */
             expected_resource_generation: number;
@@ -4395,6 +4440,36 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    deliverHostingRuntimeEnvironment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRuntimeEnvironmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Protected environment, at most 512 KiB encoded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeEnvironment"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     deliverHostingSourceCredential: {
         parameters: {
             query?: never;
