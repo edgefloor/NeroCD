@@ -37,6 +37,7 @@ func TestHostingRuntimeLogClosedBoundedInput(t *testing.T) {
 			t.Fatal("strict boundary accepted", body)
 		}
 	}
+	batch.Events = []HostingRuntimeLogEvent{{Component: "application", Stream: "stdout", Message: "nested boundary"}}
 	raw, err := json.Marshal(batch)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +47,10 @@ func TestHostingRuntimeLogClosedBoundedInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := strings.Replace(string(raw), `"stream":"stdout"`, `"stream":"stdout","stream":"stderr"`, 1)
-	if bad != string(raw) && DecodeHostingRuntimeLogsJSON([]byte(bad), &decoded) == nil {
+	if bad == string(raw) {
+		t.Fatal("nested duplicate fixture was not constructed")
+	}
+	if DecodeHostingRuntimeLogsJSON([]byte(bad), &decoded) == nil {
 		t.Fatal("duplicate nested key accepted")
 	}
 }
