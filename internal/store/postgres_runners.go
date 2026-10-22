@@ -434,6 +434,23 @@ func expireLeasesAtDBClock(ctx context.Context, queries *sqlcgen.Queries) error 
 
 // RenewLease implements the corresponding repository operation.
 func (s *PostgresStore) RenewLease(ctx context.Context, runnerID, leaseID, fence string, attempt int, now time.Time, ttl time.Duration) (domain.RunLease, error) {
+
+	// The immutable target relation selects the typed path but grants no authority.
+	// Build renewal serializes with cancellation using the task lock.
+	runID, err := s.queries.GetLeaseRunID(ctx, leaseID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.RunLease{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.RunLease{}, err
+	}
+	buildID, err := s.queries.GetHostingBuildTask(ctx, sqlcgen.GetHostingBuildTaskParams{RunID: runID, RunnerID: runnerID})
+	if err == nil {
+		return s.renewHostingBuildLease(ctx, runnerID, domain.HostingBuildAuthority{BuildID: buildID, RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence}, ttl)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.RunLease{}, err
+	}
 	// The WHERE clause is the fencing CAS: identity, generation, opaque fence and
 	// unexpired active state must all still match at the instant of extension.
 	lease, err := s.queries.RenewAuthorizedLease(ctx, sqlcgen.RenewAuthorizedLeaseParams{TtlMicroseconds: ttl.Microseconds(), LeaseID: leaseID, RunnerID: runnerID, Attempt: int32(attempt), Fence: fence})

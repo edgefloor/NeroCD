@@ -393,3 +393,105 @@ func TestPostgresHostingBuildControllerPreflightFailureIsDurable(t *testing.T) {
 		t.Fatalf("stale config dispatched=%d %v", tasks, err)
 	}
 }
+
+func TestPostgresHostingBuildRenewalSerializesWithCancellation(t *testing.T) {
+	for _, cancelFirst := range []bool{true, false} {
+		name := "renew_first"
+		if cancelFirst {
+			name = "cancel_first"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newBuildStoreFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			b, a := f.start(t, "renew-cancel")
+			var before time.Time
+			if err := f.db.QueryRow(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '30 seconds' WHERE id=$1 RETURNING expires_at`, a.LeaseID).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wg sync.WaitGroup
+			defer func() { cancel(); _ = blocker.Rollback(context.Background()); wg.Wait() }()
+			if _, err = blocker.Exec(ctx, `SELECT id FROM task_runs WHERE id=$1 FOR UPDATE`, a.RunID); err != nil {
+				t.Fatal(err)
+			}
+			type result struct {
+				lease domain.RunLease
+				build domain.HostingBuild
+				err   error
+			}
+			renewDone := make(chan result, 1)
+			cancelDone := make(chan result, 1)
+			renew := func() {
+				wg.Go(func() {
+					lease, e := f.pg.RenewLease(ctx, f.runner, a.LeaseID, a.Fence, a.Attempt, time.Now(), time.Minute)
+					renewDone <- result{lease: lease, err: e}
+				})
+			}
+			cancelBuild := func() {
+				wg.Go(func() {
+					build, e := f.pg.CancelHostingBuild(ctx, "usr_bootstrap", b.ID, b.Revision, destinationEvent("renew_cancel"))
+					cancelDone <- result{build: build, err: e}
+				})
+			}
+			waitForWaiters := func(want int) {
+				t.Helper()
+				deadline := time.Now().Add(3 * time.Second)
+				for time.Now().Before(deadline) {
+					var waiting int
+					if e := f.db.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%LockHostingTaskForAuthority%' AND query NOT LIKE '%pg_stat_activity%'`).Scan(&waiting); e != nil {
+						t.Fatal(e)
+					}
+					if waiting >= want {
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				t.Fatalf("did not observe %d task lock waiters", want)
+			}
+			if cancelFirst {
+				cancelBuild()
+			} else {
+				renew()
+			}
+			waitForWaiters(1)
+			if cancelFirst {
+				renew()
+			} else {
+				cancelBuild()
+			}
+			waitForWaiters(2)
+			if err = blocker.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			canceled := <-cancelDone
+			renewed := <-renewDone
+			if canceled.err != nil || canceled.build.State != "cleanup_required" {
+				t.Fatalf("cancel=%+v", canceled)
+			}
+			var after time.Time
+			if err = f.db.QueryRow(ctx, `SELECT expires_at FROM run_leases WHERE id=$1`, a.LeaseID).Scan(&after); err != nil {
+				t.Fatal(err)
+			}
+			if cancelFirst {
+				if !errors.Is(renewed.err, store.ErrConflict) || !after.Equal(before) {
+					t.Fatalf("cleanup lease extended: before=%s after=%s err=%v", before, after, renewed.err)
+				}
+			} else {
+				if renewed.err != nil || !after.After(before) || !after.Equal(renewed.lease.ExpiresAt) {
+					t.Fatalf("valid renewal failed: before=%s after=%s err=%v", before, after, renewed.err)
+				}
+			}
+			if _, err = f.pg.RenewLease(ctx, f.runner, a.LeaseID, a.Fence, a.Attempt, time.Now(), 2*time.Minute); !errors.Is(err, store.ErrConflict) {
+				t.Fatalf("cleanup renewal=%v", err)
+			}
+			status, err := f.pg.HostingBuildStatus(ctx, f.runner, a)
+			if err != nil || status.MayExecute || !status.CancelRequested {
+				t.Fatalf("cleanup status=%+v %v", status, err)
+			}
+		})
+	}
+}

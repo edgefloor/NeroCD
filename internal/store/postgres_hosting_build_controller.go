@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"nerocd/internal/auth"
@@ -266,4 +267,29 @@ func (s *PostgresStore) ListHostingBuilds(ctx context.Context, actor, resource s
 		}
 		return result, authorizeBuildActor(ctx, tx, actor, r.ProjectID, "viewer")
 	})
+}
+
+// renewHostingBuildLease preserves the ordinary fencing CAS while serializing
+// current build permission with cancellation. Cleanup evidence retains only the
+// previously granted lease window and can never extend it here.
+func (s *PostgresStore) renewHostingBuildLease(ctx context.Context, runner string, a domain.HostingBuildAuthority, ttl time.Duration) (domain.RunLease, error) {
+	var renewed domain.RunLease
+	_, err := s.buildRunnerTransaction(ctx, runner, a, true, func(tx pgx.Tx, b domain.HostingBuild) (domain.HostingBuild, error) {
+		if b.State != "queued" && b.State != "sourcing" && b.State != "building" {
+			return b, ErrConflict
+		}
+		if e := freshBuildAuthority(ctx, tx, runner, a, b); e != nil {
+			return b, e
+		}
+		row, e := sqlcgen.New(tx).RenewAuthorizedLease(ctx, sqlcgen.RenewAuthorizedLeaseParams{LeaseID: a.LeaseID, RunnerID: runner, Attempt: int32(a.Attempt), Fence: a.Fence, TtlMicroseconds: ttl.Microseconds()})
+		if e != nil {
+			return b, hostingError(e)
+		}
+		renewed = runLeaseFromSQLC(row)
+		return b, freshBuildAuthority(ctx, tx, runner, a, b)
+	})
+	if err != nil {
+		return domain.RunLease{}, err
+	}
+	return renewed, nil
 }
