@@ -1,0 +1,134 @@
+# Public Git build executor component
+
+`runnerruntime.BuildExecutor` connects the accepted source checkout adapter,
+local build engine, five authenticated build phase methods and version 5 attempt
+journal. This component is not wired into the runner claim dispatcher or CLI.
+It does not deploy an image, provision HTTPS, deliver private credentials or
+prove the later server controller's lifecycle behavior.
+
+## Operator configuration and calling contract
+
+Construct `BuildConfig` with a private owned mode 0700 `SourceRoot`, separate
+engine state root, fixed Docker binary and Unix socket, verified Buildx binary,
+immutable Railpack planner image and delegated cgroup root. All ancestors must
+be safe administrator-owned paths. The engine retains its existing requirement
+for Linux on the Docker daemon host, host PID and Docker storage visibility,
+rootful Docker and an explicitly delegated cgroup v2 subtree. The Buildx
+container is privileged. This is a trusted build host, not hostile-fork isolation.
+
+`BuildTarget` fixes runner, server, destination and binding. It must come from
+trusted placement, eventually from the authenticated typed claim adapter.
+`BuildConfig.Policy` must equal the complete persisted operator policy, including
+build and acquisition budgets. A matching policy label alone is insufficient.
+No configuration or capability is advertised by default.
+
+`ComputeBuildToolchainIdentity(ctx, engineConfig, platform)` returns the SHA256
+of the versioned `hosting-executor-toolchain.v1` inventory. It includes protocol,
+platform, the actual Docker binary hash with a 128 MiB read bound, configured
+Buildx checksum, pinned BuildKit/frontend/static images and immutable planner
+image. It excludes local paths. The engine independently verifies the actual
+pinned Buildx binary. The operator provisions trusted binaries and planner image;
+this hash does not establish the contents of arbitrary operator-built images.
+Binary and ancestor replacement by the host administrator is outside isolation.
+
+`NewBuildExecutor` validates those prerequisites. `Execute(ctx, authority,
+attempt)` requires the exact fenced tuple and an overall context deadline no
+later than the configured build duration. The caller owns lease renewal and must
+cancel the parent on loss. Historical `AttemptIdentity.ExpiresAt` records the
+initial lease interval. It does not stop a renewed same-tuple lease. Fresh
+authenticated `MayExecute` and the joined status watcher govern permission;
+renewal never extends the operation deadline.
+
+Only public HTTPS Git sources with no credential grant are supported. A fixture
+may explicitly allow its loopback CIDR and isolated TLS CA through a trusted test
+Git wrapper. Production has no request-controlled CA or TLS bypass.
+
+## Effects and receipts
+
+The executor validates the complete immutable snapshot, recomputes its input ID,
+checks source and settings semantics, exact placement and complete operator
+policy before retaining intent. It then:
+
+1. Appends nonsecret attempt intent before beginning source acquisition.
+2. Commits the source receipt only after appending its exact journal request.
+   An exact tuple, receipt ID and body acknowledgment must precede engine use.
+3. Lets the source adapter destroy Git transport files and credential bytes
+   before use. The stable checkout path is `SourceRoot/BuildID`; an exclusive
+   owned flock prevents simultaneous use of the same build ID.
+4. Observes the fixed local daemon using a private empty Docker configuration,
+   explicit Unix socket, minimal environment, bounded output and a cancellable
+   process group. `BuildPrepare` atomically pins that observed daemon at the
+   current revision before engine effects.
+5. Calls the accepted engine with the snapshot's settings and limits. Only a
+   result with a nil error can become an artifact. Source cleanup must also
+   finish successfully before any success completion is retained or sent.
+6. Appends the exact completion, including its revision, before POST. The
+   artifact copies source, input, request, context, daemon, image, OCI index,
+   manifest, config and platform identities directly from validated results.
+   It binds the committed source receipt hash and never invents a RepoDigest.
+7. Removes records only after matching exact completion proof. The controller
+   must settle the generic task atomically with terminal build completion;
+   this executor never sends a separate generic completion.
+
+The joined watcher checks status at the configured interval. Any failed probe,
+withdrawn permission, cancellation or changed snapshot, committed source or
+pinned daemon cancels work. The engine and checkout monitors join before return.
+A known engine failure with confirmed cleanup sends only fixed `build_failed`
+metadata and no artifact. Raw source/build diagnostics never enter completion
+metadata or executor errors.
+
+## Replay and deliberate uncertainty
+
+Call `Reconcile` before normal claims. It resends only exact retained source or
+completion requests and preserves their IDs, bodies, tuples and revisions.
+Status acknowledgment hashes are proof metadata; they settle only matching
+retained bodies. Historical proof can be read after the initial lease expiry,
+but never grants execution permission. A fresh uncommitted completion requires
+current authenticated permission; a cleanup receipt additionally requires
+verified owned cleanup and is not automatically retried here.
+
+A completion record is retained only after local source and engine cleanup.
+Replay refuses residual checkouts or the engine's durable
+`cleanup_unconfirmed.json` marker. It never deletes images, source directories,
+unknown cgroups or engine state to make replay succeed.
+
+An intent without an exact retained completion is deliberately unresolved,
+including a crash after an engine receipt was written but before the runtime
+journal append. Reconcile does not adopt that receipt or rebuild. A lost source
+response can settle the exact source request, but cannot reconstruct the missing
+engine execution boundary. This first component therefore also refuses automatic
+public post-source execution after restart. Private refetch and credential
+redelivery are unsupported. A crash between acknowledging a result record and
+its intent can conservatively retain intent for operator reconciliation.
+
+`cleanup_required` is never success or execution permission. Lease loss and
+source/transport uncertainty retain intent. Later controller cleanup must use
+current fenced authority and independently verified exact owned cleanup. No
+expired dispatched build may be generically requeued. Until that reviewed path
+exists, unresolved records block normal startup rather than hide uncertainty.
+
+## Validation and limits
+
+`acceptance/runtime-hosting-build/gate.sh` runs a separate owned disposable DinD
+fixture with no host port publication. It uses Docker 29.4.0 DinD and Alpine
+3.23.2 by digest, Buildx 0.38.1, BuildKit 0.34.1, Dockerfile frontend 1.28.0,
+Railpack 0.40.1, Mise 2026.9.15 and nginx 1.29.3 Alpine, with the existing engine
+image pins and binary checksums. Git and git-daemon are 2.52.0-r0. The fixture
+asserts authenticated loopback phase traffic, actual TLS Git acquisition and
+Dockerfile/static/Railpack HTTP content; it injects response loss, cancellation,
+lease loss, daemon mismatch and failed builds, checks exact replay and owned
+cleanup, and keeps an independent HTTP workload alive through failures.
+
+Unit/race tests cover snapshot and target rejection, journal append ordering,
+exact replay, mismatched proof, no result adoption, nil-error success, cleanup
+failure, operation deadlines and same-tuple renewal beyond initial expiry.
+Linux tests also exercise source flock/symlink denial and observer cancellation.
+The unchanged engine's separate runtime gate remains the evidence for actual
+aggregate CPU throttling, descendant memory enforcement, bounded OCI output and
+its broader strategy/path cases. This new gate does not replace those tests.
+
+Disk acquisition and build usage are monitored with explicit byte/count/depth
+budgets, free-space reserves and cancellation. Sampling can overshoot; these are
+not filesystem quotas. The accepted engine's cgroup CPU, memory and swap checks
+remain unchanged. No shared server, claim admission, dispatcher, capability
+advertisement or full application build/deploy claim follows from this component.
