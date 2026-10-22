@@ -116,6 +116,9 @@ func (e *imageEngine) inspectImage(ctx context.Context, identity string) (inspec
 // Prepare only pulls and inspects images. The digest comes from this pull's
 // immutable result, never from a later inspection of a moving local tag.
 func (e *imageEngine) Prepare(ctx context.Context, snapshot domain.HostingSnapshot) (domain.HostingRelease, error) {
+	if snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) {
+		return e.prepareLocalBuild(ctx, snapshot)
+	}
 	normalized, err := domain.NormalizeHostingImage(snapshot.ImageReference)
 	if err != nil {
 		return domain.HostingRelease{}, err
@@ -173,7 +176,7 @@ func (e *imageEngine) verifyLocalRelease(ctx context.Context, release domain.Hos
 	if err := e.verifyDaemon(ctx, release.DaemonID); err != nil {
 		return err
 	}
-	image, err := e.inspectImage(ctx, release.CanonicalImage)
+	image, err := e.inspectImage(ctx, hostingReleaseImage(release))
 	if err != nil {
 		return err
 	}
@@ -240,6 +243,11 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 		if err != nil || expected.Hash != hash {
 			return errors.New("invalid retained image apply plan")
 		}
+	case domain.HostingLocalBuildCompilerVersion:
+		expected, err := domain.CompileLocalBuildHostingPlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, plan.RetainedReleases)
+		if err != nil || expected.Hash != hash {
+			return errors.New("invalid local build apply plan")
+		}
 	default:
 		return errors.New("unsupported image compiler version")
 	}
@@ -250,7 +258,7 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 	if err := domain.ValidateHostingDeployment(in); err != nil {
 		return err
 	}
-	return domain.ValidateHostingRelease(plan.Release)
+	return domain.ValidateHostingSnapshotRelease(plan.Snapshot, plan.Release)
 }
 
 // Apply permits fixed-port interruption. A failed pull never reaches this
@@ -315,7 +323,11 @@ func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain
 	}
 	suffix := strings.TrimPrefix(domain.HostingDocumentHash(operationID), "sha256:")[:16]
 	name := plan.Snapshot.RuntimeNamespace + "_" + suffix
-	args := []string{"container", "create", "--name", name, "--restart", "no", "--publish", "127.0.0.1:" + strconv.Itoa(plan.Snapshot.HostPort) + ":" + strconv.Itoa(plan.Snapshot.ContainerPort), "--label", imageBindingLabel + "=" + plan.Snapshot.BindingID, "--label", imageOperationLabel + "=" + operationID, "--label", imageReleaseLabel + "=" + plan.Release.Hash, "--label", imagePlanLabel + "=" + plan.Hash, plan.Release.CanonicalImage}
+	args := []string{"container", "create", "--name", name, "--restart", "no", "--publish", "127.0.0.1:" + strconv.Itoa(plan.Snapshot.HostPort) + ":" + strconv.Itoa(plan.Snapshot.ContainerPort), "--label", imageBindingLabel + "=" + plan.Snapshot.BindingID, "--label", imageOperationLabel + "=" + operationID, "--label", imageReleaseLabel + "=" + plan.Release.Hash, "--label", imagePlanLabel + "=" + plan.Hash}
+	if plan.Release.LocalBuild != (domain.HostingBuildArtifact{}) {
+		args = append(args, "--pull=never")
+	}
+	args = append(args, hostingReleaseImage(plan.Release))
 	raw, err = e.mutate(ctx, plan.Release.DaemonID, args...)
 	if err != nil {
 		result.Uncertain = true
@@ -462,6 +474,9 @@ func (e *imageEngine) Observe(ctx context.Context, operation domain.HostingOpera
 // EnsurePreparedRelease restores a collected cache only by the committed digest.
 // It never resolves the original tag again.
 func (e *imageEngine) EnsurePreparedRelease(ctx context.Context, release domain.HostingRelease) error {
+	if release.LocalBuild != (domain.HostingBuildArtifact{}) {
+		return e.verifyLocalRelease(ctx, release)
+	}
 	if err := e.verifyDaemon(ctx, release.DaemonID); err != nil {
 		return err
 	}
