@@ -13,6 +13,7 @@ import (
 )
 
 type auditPaginationContractStore interface {
+	store.ManagedSecretRepository
 	store.BootstrapRepository
 	store.UserRepository
 	store.SessionRepository
@@ -166,7 +167,7 @@ func auditPaginationContract(t *testing.T, repository auditPaginationContractSto
 		t.Fatalf("actor-only audit authorization scope = %#v, %v", actorOnly, err)
 	}
 
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: repository, Sessions: repository, APITokens: repository, ServiceAccounts: repository, OIDC: repository, Hosting: repository, Projects: repository, Members: repository, Templates: repository, Sources: repository, Runs: repository, Runners: repository, Approvals: repository, Audit: repository, Deployments: repository, Observability: repository, ObservationWriter: repository, ObservationReader: repository, Retention: repository})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: repository, Sessions: repository, APITokens: repository, ServiceAccounts: repository, OIDC: repository, Hosting: repository, ManagedSecrets: repository, Projects: repository, Members: repository, Templates: repository, Sources: repository, Runs: repository, Runners: repository, Approvals: repository, Audit: repository, Deployments: repository, Observability: repository, ObservationWriter: repository, ObservationReader: repository, Retention: repository})
 	if err != nil {
 		t.Fatal(err)
 	}

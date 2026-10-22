@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,6 +23,7 @@ import (
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store"
 	"nerocd/web"
 )
@@ -230,8 +232,16 @@ func mutates(method string, path string) bool {
 }
 
 func validateContractResponses(documented map[string]documentedOperation) error {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	ring, err := secretcrypto.New("contract", map[string][]byte{"contract": key})
+	if err != nil {
+		return err
+	}
 	mem := store.NewMemoryStore()
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, SecretKeyring: ring, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: mem, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
 		return err
 	}
@@ -440,7 +450,7 @@ func validateContractResponses(documented map[string]documentedOperation) error 
 	if code, ok := errorPayload["code"].(string); !ok || code != "unauthenticated" {
 		return errors.New("unauthorized response did not include stable unauthenticated code")
 	}
-	return nil
+	return validateManagedSecretContract(server, token)
 }
 
 func seedContractMemory(ctx context.Context, mem *store.MemoryStore) error {
@@ -783,4 +793,41 @@ func isDocumentedPath(documented map[string]documentedOperation, path string) bo
 		}
 	}
 	return false
+}
+
+func validateManagedSecretContract(server http.Handler, token string) error {
+	path := "/api/v1/managed-secrets"
+	created, err := contractRequest(server, http.MethodPost, path, `{"project_id":"proj_platform","name":"contract managed","value":" contract value\n"}`, token)
+	if err != nil {
+		return err
+	}
+	id, ok := created["id"].(string)
+	if !ok || id == "" {
+		return errors.New("managed secret create missing id")
+	}
+	for _, op := range []struct{ method, path, body string }{
+		{http.MethodGet, path + "?project_id=proj_platform", ""},
+		{http.MethodGet, path + "/" + id, ""},
+		{http.MethodGet, path + "/" + id + "/versions", ""},
+		{http.MethodPost, path + "/" + id + "/versions", `{"expected_version":1,"value":"next value"}`},
+		{http.MethodPost, path + "/" + id + "/reveal", `{"version":1}`},
+		{http.MethodPost, path + "/" + id + "/revoke", `{"expected_version":2}`},
+	} {
+		payload, err := contractRequest(server, op.method, op.path, op.body, token)
+		if err != nil {
+			return err
+		}
+		if strings.HasSuffix(op.path, "/reveal") {
+			if payload["secret_id"] != id || payload["version"] != float64(1) || payload["value"] != " contract value\n" {
+				return errors.New("managed secret reveal contract mismatch")
+			}
+		} else {
+			for _, key := range []string{"value", "envelope", "key_id", "ciphertext"} {
+				if _, ok := payload[key]; ok {
+					return errors.New("managed secret metadata exposed private field")
+				}
+			}
+		}
+	}
+	return nil
 }

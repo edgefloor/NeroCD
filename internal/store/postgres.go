@@ -75,7 +75,7 @@ func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresStore, erro
 	}
 	if compatible == nil || !*compatible {
 		pool.Close()
-		return nil, fmt.Errorf("database schema is incompatible: apply fenced lease, claim cursor, runner replay, runner enrollment, and hosting resource migrations before starting NeroCD")
+		return nil, fmt.Errorf("database schema is incompatible: apply fenced lease, claim cursor, runner replay, runner enrollment, hosting resource, and managed secret migrations before starting NeroCD")
 	}
 	return &PostgresStore{pool: pool, queries: queries}, nil
 }

@@ -21,6 +21,154 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  /api/v1/managed-secrets:
+    get:
+      summary: listManagedSecrets
+      operationId: listManagedSecrets
+      parameters:
+        - name: project_id
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Successful operation; response must not be cached
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecretListResponse"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+    post:
+      summary: createManagedSecret
+      operationId: createManagedSecret
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecretInput"}}}}
+      responses:
+        "201":
+          description: Successful operation; response must not be cached
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecret"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/v1/managed-secrets/{id}:
+    get:
+      summary: getManagedSecret
+      operationId: getManagedSecret
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: Successful operation; response must not be cached
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecret"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+  /api/v1/managed-secrets/{id}/versions:
+    get:
+      summary: listManagedSecretVersions
+      operationId: listManagedSecretVersions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Successful operation; response must not be cached
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecretVersionListResponse"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+    post:
+      summary: rotateManagedSecret
+      operationId: rotateManagedSecret
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecretRotateInput"}}}}
+      responses:
+        "201":
+          description: Successful operation; response must not be cached
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecret"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/v1/managed-secrets/{id}/revoke:
+    post:
+      summary: revokeManagedSecret
+      operationId: revokeManagedSecret
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecretRevokeInput"}}}}
+      responses:
+        "200":
+          description: Successful operation; response must not be cached
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecret"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+  /api/v1/managed-secrets/{id}/reveal:
+    post:
+      summary: revealManagedSecret
+      operationId: revealManagedSecret
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecretRevealInput"}}}}
+      responses:
+        "200":
+          description: Successful operation; response must not be cached
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/ManagedSecretReveal"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   /api/v1/project-environments:
     get:
       summary: List ProjectEnvironment desired configuration
@@ -1863,6 +2011,82 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    ManagedSecret:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, name, current_version, status, created_by, created_at, updated_at]
+      properties:
+        id: {type: string}
+        project_id: {type: string}
+        name: {type: string}
+        current_version: {type: integer, format: int64, minimum: 1}
+        status: {type: string, enum: [active, revoked]}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    ManagedSecretVersion:
+      type: object
+      additionalProperties: false
+      required: [secret_id, version, created_by, created_at]
+      properties:
+        secret_id: {type: string}
+        version: {type: integer, format: int64, minimum: 1}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+    ManagedSecretInput:
+      type: object
+      additionalProperties: false
+      required: [project_id, name, value]
+      properties:
+        project_id: {type: string, minLength: 1}
+        name: {type: string, minLength: 1, maxLength: 128}
+        value: {type: string, minLength: 1, maxLength: 65536, writeOnly: true, description: Exact UTF-8 value; maximum 65536 bytes; whitespace is preserved}
+    ManagedSecretRotateInput:
+      type: object
+      additionalProperties: false
+      required: [expected_version, value]
+      properties:
+        expected_version: {type: integer, format: int64, minimum: 1}
+        value: {type: string, minLength: 1, maxLength: 65536, writeOnly: true, description: Exact UTF-8 value; maximum 65536 bytes}
+    ManagedSecretRevokeInput:
+      type: object
+      additionalProperties: false
+      required: [expected_version]
+      properties:
+        expected_version: {type: integer, format: int64, minimum: 1}
+    ManagedSecretRevealInput:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: {type: integer, format: int64, minimum: 1}
+    ManagedSecretReveal:
+      type: object
+      additionalProperties: false
+      required: [secret_id, version, value]
+      properties:
+        secret_id: {type: string}
+        version: {type: integer, format: int64, minimum: 1}
+        value: {type: string, minLength: 1, maxLength: 65536}
+    ManagedSecretListResponse:
+      type: object
+      required: [items, count, total, limit, offset]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/ManagedSecret"}}
+        count: {type: integer}
+        total: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
+    ManagedSecretVersionListResponse:
+      type: object
+      required: [items, count, total, limit, offset]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/ManagedSecretVersion"}}
+        count: {type: integer}
+        total: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
     ImageSource:
       type: object
       additionalProperties: false

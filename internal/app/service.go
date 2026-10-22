@@ -14,6 +14,7 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/observability"
 	"nerocd/internal/runner"
+	"nerocd/internal/secretcrypto"
 	"nerocd/internal/source"
 	"nerocd/internal/store"
 )
@@ -38,6 +39,8 @@ type Service struct {
 	serviceAccounts      store.ServiceAccountRepository
 	projects             store.ProjectRepository
 	hosting              store.HostingRepository
+	managedSecrets       store.ManagedSecretRepository
+	secretKeyring        *secretcrypto.Keyring
 	members              store.ProjectMemberRepository
 	templates            store.TemplateRepository
 	sources              store.SourceRepository
@@ -72,6 +75,8 @@ type Dependencies struct {
 	OIDC              store.OIDCRepository
 	Projects          store.ProjectRepository
 	Hosting           store.HostingRepository
+	ManagedSecrets    store.ManagedSecretRepository
+	SecretKeyring     *secretcrypto.Keyring
 	Members           store.ProjectMemberRepository
 	Templates         store.TemplateRepository
 	Sources           store.SourceRepository
@@ -107,6 +112,9 @@ func NewService(deps Dependencies) (*Service, error) {
 	}
 	if deps.OIDC == nil {
 		missing = append(missing, "OIDC")
+	}
+	if deps.ManagedSecrets == nil {
+		missing = append(missing, "ManagedSecrets")
 	}
 	if deps.Hosting == nil {
 		missing = append(missing, "Hosting")
@@ -161,6 +169,8 @@ func NewService(deps Dependencies) (*Service, error) {
 		serviceAccounts:      deps.ServiceAccounts,
 		projects:             deps.Projects,
 		hosting:              deps.Hosting,
+		managedSecrets:       deps.ManagedSecrets,
+		secretKeyring:        deps.SecretKeyring,
 		members:              deps.Members,
 		templates:            deps.Templates,
 		sources:              deps.Sources,
