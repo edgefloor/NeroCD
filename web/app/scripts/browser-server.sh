@@ -106,6 +106,9 @@ printf %s "$browser_password" >"$browser_runtime_dir/password"
 printf '%s\n%s\n' "$browser_email" "$browser_password" >"$browser_runtime_dir/credentials"
 browser_oidc_secret=$(od -An -N32 -tx1 /dev/urandom | tr -d '[:space:]')
 printf %s "$browser_oidc_secret" >"$browser_runtime_dir/oidc-client-secret"
+# Test-only encryption key. The runtime directory and existing umask keep this
+# fixture private; cleanup removes it with the task-owned runtime directory.
+node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); fs.writeFileSync(process.argv[1], JSON.stringify({active_key_id:"browser-fixture",keys:{"browser-fixture":crypto.randomBytes(32).toString("base64")}}),{mode:0o600})' "$browser_runtime_dir/secret-keyring.json"
 
 browser_stage=postgres-start
 browser_container_id=$(docker run -d --rm --name "$browser_container_name" --label "$browser_container_label" \
@@ -149,6 +152,6 @@ browser_stage=oidc-provision
 NEROCD_MODE=development NEROCD_DATABASE_URL="$browser_database_url" "$browser_runtime_dir/nerocd" oidc-provision --issuer "$browser_oidc_issuer" --subject nerocd-browser-oidc-subject --email oidc-browser@example.invalid --name "OIDC Browser User"
 NEROCD_MODE=development NEROCD_DATABASE_URL="$browser_database_url" "$browser_runtime_dir/nerocd" oidc-provision --issuer "$browser_oidc_issuer" --subject nerocd-browser-offboarding-subject --email oidc-offboarding@example.invalid --name "OIDC Offboarding Browser User"
 browser_stage=server
-NEROCD_MODE=development NEROCD_DATABASE_URL="$browser_database_url" NEROCD_COOKIE_SECURE=false NEROCD_PUBLIC_ORIGIN="$browser_origin" NEROCD_OIDC_ISSUER_URL="$browser_oidc_issuer" NEROCD_OIDC_CLIENT_ID=nerocd-browser NEROCD_OIDC_CLIENT_SECRET_FILE="$browser_runtime_dir/oidc-client-secret" "$browser_runtime_dir/nerocd" server --addr "127.0.0.1:${browser_port}" &
+NEROCD_MODE=development NEROCD_DATABASE_URL="$browser_database_url" NEROCD_COOKIE_SECURE=false NEROCD_PUBLIC_ORIGIN="$browser_origin" NEROCD_OIDC_ISSUER_URL="$browser_oidc_issuer" NEROCD_OIDC_CLIENT_ID=nerocd-browser NEROCD_OIDC_CLIENT_SECRET_FILE="$browser_runtime_dir/oidc-client-secret" NEROCD_SECRET_KEYRING_FILE="$browser_runtime_dir/secret-keyring.json" "$browser_runtime_dir/nerocd" server --addr "127.0.0.1:${browser_port}" &
 browser_server_pid=$!
 wait "$browser_server_pid"
