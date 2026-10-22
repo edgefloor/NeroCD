@@ -42,7 +42,8 @@ test("current observation ages independently of deployment outcome through real 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     // A tall capture keeps the complete section below the fixed app header;
     // interaction and overflow above still use a 1000px-high viewport.
-    await page.setViewportSize({ width, height: 2400 }); await status.scrollIntoViewIfNeeded();
+    await page.setViewportSize({ width, height: 2400 });
+    await status.evaluate((node) => { node.scrollIntoView({ block: "start" }); window.scrollBy(0, -80); });
     await status.screenshot({ path: info.outputPath(`runtime-status-${width}.png`), animations: "disabled" });
     await page.setViewportSize({ width, height: 1000 });
   }
