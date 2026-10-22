@@ -107,6 +107,104 @@ func TestRuntimeBuild(t *testing.T) {
 		_, _ = e.docker(ctx, setup, "rm", "--force", survivor)
 	})
 	t.Run("dockerfile-http-and-survivor-before-failures", func(t *testing.T) { assertHTTP(t, survivor, "descendant-enforcement\n") })
+
+	t.Run("nested-context-custom-Dockerfile-target", func(t *testing.T) {
+		src := t.TempDir()
+		makeSettingDir(t, filepath.Join(src, "apps", "web", "docker"))
+		writeTestFile(t, filepath.Join(src, "private.txt"), []byte("outside context"))
+		content := "FROM " + StaticImage + " AS chosen\nCOPY marker /usr/share/nginx/html/index.html\nFROM " + StaticImage + " AS other\nRUN echo wrong-target > /usr/share/nginx/html/index.html\n"
+		writeTestFile(t, filepath.Join(src, "apps", "web", "docker", "Release.Dockerfile"), []byte(content))
+		writeTestFile(t, filepath.Join(src, "apps", "web", "marker"), []byte("selected-target\n"))
+		req := request("nested-dockerfile", Dockerfile, src)
+		req.ContextDir = "apps/web"
+		req.DockerfilePath = "docker/Release.Dockerfile"
+		req.BuildTarget = "chosen"
+		result, err := e.Build(t.Context(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := "nerocd-runtime-build-settings"
+		if _, err = e.docker(t.Context(), setup, "run", "--detach", "--name", name, result.ImageID); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _, _ = e.docker(t.Context(), setup, "rm", "--force", name) }()
+		assertHTTP(t, name, "selected-target\n")
+		changed := req
+		changed.BuildTarget = "other"
+		if _, err = e.Build(t.Context(), changed); err == nil {
+			t.Fatal("changed target reused completed ID")
+		}
+		writeTestFile(t, filepath.Join(src, "apps", "web", "docker", "Other.Dockerfile"), []byte(content))
+		changed = req
+		changed.DockerfilePath = "docker/Other.Dockerfile"
+		if _, err = e.Build(t.Context(), changed); err == nil {
+			t.Fatal("changed Dockerfile reused completed ID")
+		}
+		failed := req
+		failed.BuildID = "settings-failed-target"
+		failed.BuildTarget = "absent-stage"
+		if _, err = e.Build(t.Context(), failed); err == nil {
+			t.Fatal("missing stage build succeeded")
+		}
+		assertHTTP(t, survivor, "descendant-enforcement\n")
+		invalid := req
+		invalid.BuildID = "settings-invalid"
+		invalid.ContextDir = "../outside"
+		if _, err = e.Build(t.Context(), invalid); err == nil {
+			t.Fatal("invalid context admitted")
+		}
+		if _, err = os.Stat(filepath.Join(dir, invalid.BuildID)); !os.IsNotExist(err) {
+			t.Fatal("invalid settings created build state")
+		}
+	})
+	t.Run("prepared-static-nested-SPA", func(t *testing.T) {
+		src := t.TempDir()
+		publish := filepath.Join(src, "frontend", "dist")
+		makeSettingDir(t, publish)
+		writeTestFile(t, filepath.Join(publish, "index.html"), []byte("prepared-spa\n"))
+		writeTestFile(t, filepath.Join(publish, "bundle.js"), []byte("public-bundle\n"))
+		writeTestFile(t, filepath.Join(publish, "Dockerfile"), []byte("private instructions"))
+		writeTestFile(t, filepath.Join(publish, "nginx.conf"), []byte("private config"))
+		writeTestFile(t, filepath.Join(src, "private.txt"), []byte("outside publish"))
+		req := request("nested-static-spa", Static, src)
+		req.ContextDir = "frontend"
+		req.PublishDir = "dist"
+		req.SPAFallback = true
+		result, err := e.Build(t.Context(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.ContextPolicy != staticContextPolicy {
+			t.Fatal("static policy not recorded")
+		}
+		name := "nerocd-runtime-build-spa"
+		if _, err = e.docker(t.Context(), setup, "run", "--detach", "--name", name, result.ImageID); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _, _ = e.docker(t.Context(), setup, "rm", "--force", name) }()
+		assertHTTP(t, name, "prepared-spa\n")
+		for path, want := range map[string]string{"/account/deep/link": "prepared-spa\n", "/bundle.js": "public-bundle\n"} {
+			b, err := e.docker(t.Context(), setup, "run", "--rm", "--network", "container:"+name, "--entrypoint", "/bin/busybox", StaticImage, "wget", "-T", "2", "-qO-", "http://127.0.0.1:80"+path)
+			if err != nil || string(b) != want {
+				t.Fatalf("SPA HTTP %s: %q %v", path, b, err)
+			}
+		}
+		for _, path := range []string{"/missing.js", "/private.txt", "/.nerocd-static.conf", "/nginx.conf"} {
+			b, err := e.docker(t.Context(), setup, "run", "--rm", "--network", "container:"+name, "--entrypoint", "/bin/busybox", StaticImage, "wget", "-T", "2", "-SO-", "http://127.0.0.1:80"+path)
+			if err == nil || !strings.Contains(string(b), "404") {
+				t.Fatalf("missing asset %s did not404: %s %v", path, b, err)
+			}
+		}
+		if _, err = e.docker(t.Context(), setup, "run", "--rm", "--network", "none", "--entrypoint", "/bin/sh", result.ImageID, "-ec", "test ! -e /usr/share/nginx/html/Dockerfile && test ! -e /usr/share/nginx/html/nginx.conf && test ! -e /usr/share/nginx/html/.nerocd-static.Dockerfile && test ! -e /usr/share/nginx/html/.nerocd-static.conf && test ! -e /usr/share/nginx/html/private.txt"); err != nil {
+			t.Fatal("nonpublic static files packaged")
+		}
+		changed := req
+		changed.SPAFallback = false
+		if _, err = e.Build(t.Context(), changed); err == nil {
+			t.Fatal("changed SPA setting reused BuildID")
+		}
+		assertHTTP(t, survivor, "descendant-enforcement\n")
+	})
 	for _, strategy := range []Strategy{Static, Railpack} {
 		t.Run(string(strategy), func(t *testing.T) {
 			src := t.TempDir()
@@ -124,6 +222,13 @@ func TestRuntimeBuild(t *testing.T) {
 			}
 			defer func() { _, _ = e.docker(t.Context(), setup, "rm", "--force", name) }()
 			assertHTTP(t, name, "runtime-build-"+string(strategy))
+			if strategy == Static {
+				b, err := e.docker(t.Context(), setup, "run", "--rm", "--network", "container:"+name, "--entrypoint", "/bin/busybox", StaticImage, "wget", "-T", "2", "-SO-", "http://127.0.0.1:80/deep/missing")
+				if err == nil || !strings.Contains(string(b), "404") {
+					t.Fatal("default static unexpectedly enables SPA fallback")
+				}
+			}
+
 		})
 	}
 	t.Run("descendant-cpu-memory-enforcement", func(t *testing.T) {
@@ -380,4 +485,55 @@ func findBuildStep(ctx context.Context, marker string, rootPID int, group string
 		return pid, strings.TrimSpace(strings.TrimPrefix(string(b), "0::"))
 	}
 	return 0, ""
+}
+
+// The gate creates this receipt and OCI artifact using the accepted pre-settings
+// engine compiled from its pinned Git revision, not a simulated current receipt.
+func TestRuntimeLegacyStaticReplay(t *testing.T) {
+	if os.Getenv("NEROCD_BUILD_RUNTIME") != "disposable-dind" {
+		t.Skip("requires disposable legacy artifact fixture")
+	}
+	cfg := Config{DockerBinary: "/usr/local/bin/docker", Socket: "/var/run/docker.sock", BuildxBinary: "/fixture/buildx", BuildxSHA256: buildxChecksum(runtime.GOARCH), StateDir: "/legacy/state", CgroupRoot: os.Getenv("NEROCD_CGROUP_ROOT"), PlannerImage: os.Getenv("NEROCD_PLANNER_IMAGE")}
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile("/legacy/state/legacy-static/receipt.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var previous Result
+	if json.Unmarshal(b, &previous) != nil || previous.ContextPolicy != "" {
+		t.Fatal("not a genuine legacy receipt")
+	}
+	req := Request{BuildID: "legacy-static", Checkout: "/legacy/source", SourceID: "legacy-source", InputID: "legacy-input", DaemonID: previous.DaemonID, Strategy: Static, Platform: "linux/" + runtime.GOARCH, Limits: testLimits()}
+	// An executable cannot be invoked at its configured path during this replay.
+	// Its contents and Config identity remain unchanged, and New already verified it.
+	if err = os.Rename(cfg.BuildxBinary, cfg.BuildxBinary+".replay-disabled"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Rename(cfg.BuildxBinary+".replay-disabled", cfg.BuildxBinary); err != nil {
+			t.Error(err)
+		}
+	}()
+	got, err := e.Build(t.Context(), req)
+	if err != nil || got != previous {
+		t.Fatalf("legacy artifact replay changed or rebuilt: %v", err)
+	}
+	changed := req
+	changed.SPAFallback = true
+	if _, err = e.Build(t.Context(), changed); err == nil {
+		t.Fatal("legacy receipt authorized changed settings")
+	}
+	changed = req
+	changed.InputID = "different-input"
+	if _, err = e.Build(t.Context(), changed); err == nil {
+		t.Fatal("legacy receipt authorized changed source identity")
+	}
+	b, err = e.docker(t.Context(), cfg.StateDir, "ps", "--all", "--quiet", "--filter", "label=io.nerocd.hostingbuild.owner")
+	if err != nil || strings.TrimSpace(string(b)) != "" {
+		t.Fatal("legacy replay created builder")
+	}
+	t.Logf("legacy receipt replayed without builder: request=%s context=%s image=%s", got.RequestDigest, got.ContextDigest, got.ImageID)
 }
