@@ -1199,7 +1199,11 @@ func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 // dependencies so older missing-layer tests can retain their original assertions.
 func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
-	if _, err := db.Exec(t.Context(), `DROP TRIGGER local_build_deployment_lease ON run_leases;
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_build_log_dispatch ON hosting_build_tasks;
+ DROP TABLE hosting_build_log_receipts,hosting_build_log_states;
+ DROP FUNCTION nerocd_build_log_dispatch(),nerocd_build_log_immutable(),nerocd_hosting_build_log_schema_compatible();
+ ALTER TABLE run_logs DROP COLUMN component,DROP COLUMN source_timestamp;
+ DROP TRIGGER local_build_deployment_lease ON run_leases;
  DROP TRIGGER hosting_snapshot_build_consistency ON hosting_snapshots;
  DROP TRIGGER hosting_release_build_consistency ON hosting_releases;
  DROP TABLE hosting_operation_build_artifacts;

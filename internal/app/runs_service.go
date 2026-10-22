@@ -263,6 +263,14 @@ func (s *Service) AppendRunEvents(ctx context.Context, input RunEventBatchInput)
 		}
 		logs = append(logs, domain.RunLog{ID: logID, RunID: runID, Sequence: event.Sequence, RequestedSequence: event.Sequence, Stream: stream, Message: event.Message, CreatedAt: now, EventKey: eventKey, LeaseID: leaseID, Attempt: input.Attempt})
 	}
+	run, err := s.runs.GetRun(ctx, runID)
+	if err != nil {
+		return RunEventBatchAck{}, err
+	}
+	if domain.ContainsHostingBuildExecution(run.RunSpec, run.Workflow) {
+		return RunEventBatchAck{}, store.ErrConflict
+	}
+
 	persisted, err := s.runs.CreateRunLogsForLease(ctx, logs, runID, principal.ID, leaseID, input.Attempt, input.Fence, now)
 	if err != nil {
 		return RunEventBatchAck{}, err

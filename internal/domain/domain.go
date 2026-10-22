@@ -282,16 +282,18 @@ type ClaimedRun struct {
 
 // RunLog is one ordered runner event retained for a task run.
 type RunLog struct {
-	ID                string    `json:"id"`
-	RunID             string    `json:"run_id"`
-	Sequence          int       `json:"sequence"`
-	Stream            string    `json:"stream"`
-	Message           string    `json:"message"`
-	CreatedAt         time.Time `json:"created_at"`
-	EventKey          string    `json:"event_key,omitempty"`
-	LeaseID           string    `json:"lease_id,omitempty"`
-	Attempt           int       `json:"attempt,omitempty"`
-	RequestedSequence int       `json:"requested_sequence,omitempty"`
+	ID                string     `json:"id"`
+	RunID             string     `json:"run_id"`
+	Sequence          int        `json:"sequence"`
+	Stream            string     `json:"stream"`
+	Message           string     `json:"message"`
+	CreatedAt         time.Time  `json:"created_at"`
+	EventKey          string     `json:"event_key,omitempty"`
+	LeaseID           string     `json:"lease_id,omitempty"`
+	Attempt           int        `json:"attempt,omitempty"`
+	RequestedSequence int        `json:"requested_sequence,omitempty"`
+	Component         string     `json:"component,omitempty"`
+	SourceTimestamp   *time.Time `json:"source_timestamp,omitempty"`
 }
 
 // ArtifactRecord records an artifact inspection result for a run.

@@ -3,6 +3,8 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/runners/builds/events"},
+	{Method: http.MethodGet, Path: "/api/v1/hosting-builds/{id}/logs"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/builds"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/builds"},
 	{Method: http.MethodGet, Path: "/api/v1/hosting-builds/{id}"},
@@ -207,6 +209,10 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingBuild
 	case "/api/v1/hosting-builds/{id}/cancel":
 		return s.hostingBuildCancel
+	case "/api/v1/runners/builds/events":
+		return s.runnerBuildEvents
+	case "/api/v1/hosting-builds/{id}/logs":
+		return s.hostingBuildLogs
 	case "/api/v1/runners/builds/status":
 		return s.runnerBuildStatus
 	case "/api/v1/runners/builds/source-begin":

@@ -584,7 +584,7 @@ func TestPostgresHostingBuildDeploymentMissingMigrationAndSchemaBinding(t *testi
 		_ = opened.Close()
 		t.Fatal("missing0050 startup accepted")
 	}
-	if err = applyEmbeddedMigrations(ctx, f.db, "0049_hosting_git_resources.sql", ""); err != nil {
+	if err = applyEmbeddedMigrations(ctx, f.db, "0049_hosting_git_resources.sql", "0050_hosting_build_deployments.sql"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err = f.pg.SchemaCompatible(ctx); err != nil || !ok {

@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/v1/runners/builds/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Append fenced build output
+         * @description Exact persisted runner only. Full tuple and canonical event content bind immutable receipts. Exact committed replay acknowledges historical output; new output requires current authority. Batch limit 64 and 256 KiB encoded JSON.
+         */
+        post: operations["appendHostingBuildLogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting-builds/{id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reconnect to retained build output
+         * @description Current project viewer on every read. Ascending durable server sequence. At most 200 rows and 256 KiB encoded JSON. next_sequence never skips undelivered retained output; truncated means more retained rows, gap means lost or unknown history. Legacy messages are UTF-8 clipped to 16 KiB with message_truncated.
+         */
+        get: operations["listHostingBuildLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/builds": {
         parameters: {
             query?: never;
@@ -2235,6 +2275,53 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingBuildLogEvent: {
+            event_key: string;
+            sequence: number;
+            /** @enum {string} */
+            component: "build" | "buildkit" | "railpack";
+            /** @enum {string} */
+            stream: "system" | "stdout" | "stderr";
+            message: string;
+            /** Format: date-time */
+            source_timestamp?: string;
+        };
+        HostingBuildLogBatch: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            events: components["schemas"]["HostingBuildLogEvent"][];
+        };
+        HostingBuildLogReceipt: {
+            event_key: string;
+            requested_sequence: number;
+            sequence: number;
+            body_hash: string;
+        };
+        HostingBuildLogAck: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            receipts: components["schemas"]["HostingBuildLogReceipt"][];
+        };
+        HostingBuildLogItem: {
+            sequence: number;
+            /** @enum {string} */
+            component: "" | "build" | "buildkit" | "railpack";
+            stream: string;
+            message: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            source_timestamp?: string;
+            message_truncated?: boolean;
+        };
+        HostingBuildLogPage: {
+            items: components["schemas"]["HostingBuildLogItem"][];
+            next_sequence: number;
+            earliest_available_sequence: number;
+            deleted_through_sequence: number;
+            gap: boolean;
+            terminal: boolean;
+            truncated: boolean;
+            history_complete: boolean;
+        };
         HostingBuildRequest: {
             /** Format: int64 */
             expected_resource_generation: number;
@@ -3975,6 +4062,9 @@ export interface components {
             lease_id?: string;
             attempt?: number;
             requested_sequence?: number;
+            component?: string;
+            /** Format: date-time */
+            source_timestamp?: string;
         };
         RunLogInput: {
             run_id: string;
@@ -4117,6 +4207,67 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    appendHostingBuildLogs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildLogBatch"];
+            };
+        };
+        responses: {
+            /** @description Bounded build log result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildLogAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingBuildLogs: {
+        parameters: {
+            query?: {
+                after_sequence?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded build log result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildLogPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     listHostingBuilds: {
         parameters: {
             query?: {
