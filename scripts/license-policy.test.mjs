@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assessLicenseDeclaration } from "./license-policy.mjs";
+import { assessLicenseDeclaration, classifyGoLicenseText } from "./license-policy.mjs";
 
 const allowed = new Set(["Apache-2.0", "MIT"]);
 
@@ -54,4 +54,19 @@ test("preserves compound declarations as CycloneDX expressions", () => {
   assert.deepEqual(assess("(MIT OR Apache-2.0) AND GPL-3.0-only").cycloneDXLicense, {
     expression: "(MIT OR Apache-2.0) AND GPL-3.0-only",
   });
+});
+
+
+test("classifies canonical MPL 2.0 Go module license text without accepting older or unknown licenses", () => {
+  const mpl = "Mozilla Public License Version 2.0\n==================================\n\nThis Source Code Form is subject to http://mozilla.org/MPL/2.0/";
+  assert.equal(classifyGoLicenseText(mpl), "MPL-2.0");
+  assert.equal(classifyGoLicenseText(mpl.replaceAll("2.0", "1.1")), "UNKNOWN");
+  assert.equal(classifyGoLicenseText("Mozilla Public License Version 2.0\n==================================\nmissing terms"), "UNKNOWN");
+  assert.equal(classifyGoLicenseText("unknown private terms"), "UNKNOWN");
+});
+
+test("preserves existing Go license classification", () => {
+  assert.equal(classifyGoLicenseText("MIT License"), "MIT");
+  assert.equal(classifyGoLicenseText("Apache License Version 2.0"), "Apache-2.0");
+  assert.equal(classifyGoLicenseText("Redistribution and use in source and binary forms"), "BSD-3-Clause");
 });
