@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Disposable Docker-in-Docker only. Never publishes host ports or prunes Docker.
+# Disposable Docker-in-Docker only. Default mode publishes no host ports.
+# Browser mode publishes its authenticated fixture on host loopback only. Never prunes Docker.
 set -euo pipefail
 repo_root=$(pwd -P)
 case "$repo_root" in */NeroCD*) ;; *) echo 'run from assigned repository root' >&2; exit 1;; esac
@@ -61,9 +62,13 @@ cp db/seeds/dev.sql "$fixture_dir/dev.sql"
 printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'RUN apk add --no-cache git=2.52.0-r0 git-daemon=2.52.0-r0' 'COPY buildx railpack mise-bin hosting-controller.test nerocd dev.sql /fixture/' > "$fixture_dir/Dockerfile"
 docker build --label "io.nerocd.runtime-hosting-local-build.owner=$owner" -t "$image" "$fixture_dir"
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
-browser_publish=()
-if [[ "$browser_mode" == 1 ]]; then browser_publish=(--publish 127.0.0.1::18080); fi
-container_id=$(docker run "${browser_publish[@]}" --detach --privileged --pid=host --mount "type=bind,src=$repo_root/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly" --add-host example.com:127.0.0.1 --name "$name" --label "io.nerocd.runtime-hosting-local-build.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock)
+run_fixture_container() {
+ # Nonempty positional arguments also work with Bash 3.2 and nounset enabled.
+ set -- --detach --privileged --pid=host --mount "type=bind,src=$repo_root/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly" --add-host example.com:127.0.0.1 --name "$name" --label "io.nerocd.runtime-hosting-local-build.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock
+ if [[ "$browser_mode" == 1 ]]; then set -- --publish 127.0.0.1::18080 "$@"; fi
+ docker run "$@"
+}
+container_id=$(run_fixture_container)
 ready=false
 for _ in $(seq 1 90); do
  if docker exec "$name" docker info >/dev/null 2>&1; then ready=true; break; fi
