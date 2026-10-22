@@ -67,3 +67,26 @@ test("a revoked selected grant blocks a new private request and viewer reads ski
  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request private Git build" }).disabled).toBe(true)); expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);
  view.unmount(); fetch.mockClear(); setupPrivate(false); fireEvent.click(await screen.findByRole("button", { name: "View build build-one" })); await screen.findByRole("button", { name: "Show build output" }); expect(fetch.mock.calls.some(([url]) => url.includes("/source-grants") || url.includes("/managed-secrets"))).toBe(false);
 });
+
+test("viewer history refresh never fetches private source grants", async () => {
+ const fetch = privateBackend(); setupPrivate(false); await screen.findByRole("button", { name: "View build build-one" });
+ const historyReads = () => fetch.mock.calls.filter(([url]) => url.includes("/builds?")).length;
+ const before = historyReads(); fireEvent.click(screen.getByRole("button", { name: "Refresh build history" }));
+ await waitFor(() => expect(historyReads()).toBe(before + 1));
+ expect(fetch.mock.calls.some(([url]) => url.includes("/source-grants") || url.includes("/managed-secrets"))).toBe(false);
+});
+test.each([401, 403, 404])("grant read %s locks manual history refresh until access reset", async (status) => {
+ const fetch = privateBackend((url) => url.includes("/source-grants?") ? json({}, status) : undefined); setupPrivate();
+ const refresh = await screen.findByRole<HTMLButtonElement>("button", { name: "Refresh build history" });
+ await waitFor(() => expect(refresh.disabled).toBe(true)); const calls = fetch.mock.calls.length;
+ fireEvent.click(refresh); await act(async () => {}); expect(fetch.mock.calls).toHaveLength(calls);
+});
+test("blocked private history refresh cannot manually enter disabled grant queries", async () => {
+ const fetch = privateBackend(); const view = setupPrivate(); await privateReview();
+ view.rerender(<QueryClientProvider client={client}><ResourceBuilds resource={privateResource} writable blocked /></QueryClientProvider>);
+ const calls = fetch.mock.calls.length; const refresh = screen.getByRole<HTMLButtonElement>("button", { name: "Refresh build history" }); expect(refresh.disabled).toBe(true); fireEvent.click(refresh); await act(async () => {}); expect(fetch.mock.calls).toHaveLength(calls);
+});
+test("private sourcing state uses a source-neutral label in history and detail", async () => {
+ privateBackend((url) => url.includes("/builds?") || url.includes("/hosting-builds/") ? url.includes("/builds?") ? json({ items: [{ ...build, state: "sourcing" }], count: 1, total: 1, limit: 20, offset: 0 }) : json({ build: { ...build, state: "sourcing", snapshot: { ...build.snapshot, source: { ...build.snapshot.source, credential_kind: "https_basic" } } } }) : undefined); setupPrivate();
+ fireEvent.click(await screen.findByRole("button", { name: "View build build-one" })); await screen.findByText("Acquiring source", { exact: true }); expect(screen.queryByText(/Acquiring public source/)).toBeNull();
+});

@@ -11,7 +11,7 @@ import { BuildLogs } from "./BuildLogs";
 import { eligibleSourceGrant, sourceGrantKeys, sourceGrantsQuery } from "@/api/hosting-source-grants";
 import { ResourceSourceGrants } from "./ResourceSourceGrants";
 import { LocalBuildDeployment } from "./LocalBuildDeployment";
-const names: Record<string, string> = { queued: "Queued", sourcing: "Acquiring public source", building: "Building artifact", succeeded: "Succeeded", failed: "Failed", canceled: "Canceled", cleanup_required: "Cleanup required" };
+const names: Record<string, string> = { queued: "Queued", sourcing: "Acquiring source", building: "Building artifact", succeeded: "Succeeded", failed: "Failed", canceled: "Canceled", cleanup_required: "Cleanup required" };
 const buttonClass = "h-auto max-w-full whitespace-normal break-all";
 function cancellationError(cause: unknown): string {
   if (cause instanceof ApiError) {
@@ -72,16 +72,18 @@ function Builds({ resource, writable, blocked, actor }: { resource: Resource; wr
   const [error, setError] = useState(""), [refreshError, setRefreshError] = useState("");
   const active = useRef(true), submitting = useRef(false), request = useRef<AbortController | null>(null), metadataRequest = useRef<AbortController | null>(null);
   useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); metadataRequest.current?.abort(); client.removeQueries({ queryKey: sourceGrantKeys.resource(actor, resource.project_id, resource.id) }); }; }, []);
-  const history = useQuery({ ...buildsQuery(actor, resource.project_id, resource.id, offset), refetchInterval: (q) => q.state.data?.items.some((b) => !buildTerminal(b.state)) ? 3000 : false });
-  const binding = useQuery(resourceBindingQuery(resource.project_id, resource.id));
+  const history = useQuery({ ...buildsQuery(actor, resource.project_id, resource.id, offset), enabled: !blocked && !denied, refetchInterval: (q) => q.state.status !== "error" && q.state.data?.items.some((b) => !buildTerminal(b.state)) ? 3000 : false });
+  const binding = useQuery({ ...resourceBindingQuery(resource.project_id, resource.id), enabled: !blocked && !denied });
   const source = base.source.kind === "git" ? base.source.git : undefined;
   const privateSource = source?.credential_kind === "https_basic";
-  const grants = useQuery({ ...sourceGrantsQuery(actor, resource.project_id, resource.id, grantOffset), enabled: privateSource && writable && !blocked && !denied });
+  const canReadGrants = privateSource && writable && !blocked && !denied;
+  const grants = useQuery({ ...sourceGrantsQuery(actor, resource.project_id, resource.id, grantOffset), enabled: canReadGrants });
   const currentResource = resource.generation >= base.generation ? resource : base;
   const grant = grants.data?.items.find((item) => item.id === grantID && eligibleSourceGrant(item, base) && eligibleSourceGrant(item, currentResource));
   const sourceChanged = currentResource.generation !== base.generation || currentResource.source.kind !== "git" || currentResource.source.git.source_id !== source?.source_id || currentResource.source.git.generation !== source?.generation || currentResource.source.git.credential_kind !== source?.credential_kind;
   function deny() { request.current?.abort(); metadataRequest.current?.abort(); setDenied(true); setAttempt(undefined); setGrantID(""); setAcknowledged(false); client.removeQueries({ queryKey: sourceGrantKeys.resource(actor, resource.project_id, resource.id) }); }
-  useEffect(() => { if (grants.error instanceof ApiError && [401, 403, 404].includes(grants.error.status)) deny(); }, [grants.error]);
+  const accessDenied = [grants.error, history.error, binding.error].some((cause) => cause instanceof ApiError && [401, 403, 404].includes(cause.status));
+  useEffect(() => { if (accessDenied) deny(); }, [accessDenied]);
   const paused = blocked || denied || history.isError || history.isPending || binding.isError || binding.isPending || (privateSource && writable && (grants.isError || grants.isPending));
   async function refreshCurrent() { const controller = new AbortController(); metadataRequest.current?.abort(); metadataRequest.current = controller; setRefreshError(""); setLatest(undefined); try { const current = await getResource(resource.id, { signal: controller.signal }); if (!active.current || controller.signal.aborted) return; if (current.id !== resource.id || current.project_id !== resource.project_id) throw new Error("Resource scope mismatch"); setLatest(current); await history.refetch(); await binding.refetch(); } catch { if (active.current && !controller.signal.aborted) setRefreshError("Unable to refresh current source. The retained request remains unchanged."); } }
   async function submit() {
@@ -95,7 +97,7 @@ function Builds({ resource, writable, blocked, actor }: { resource: Resource; wr
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Git builds for ${resource.name}`}><h5 className="font-medium">{privateSource ? "Private HTTPS Git builds" : "Public Git builds"}</h5><p className="text-xs text-muted-foreground">Build operations acquire the configured source and produce an artifact. Select a successful build to deploy its recorded local artifact. Select a build to read its persisted output. A successful build does not mean a running application.</p>
     <ResourceSourceGrants actor={actor} resource={resource} blocked={blocked || denied || !writable} onDenied={deny} />
-    <Button className={buttonClass} type="button" variant="outline" disabled={busy} onClick={() => { if (privateSource) void grants.refetch(); void history.refetch(); void binding.refetch(); }}>Refresh build history</Button>
+    <Button className={buttonClass} type="button" variant="outline" disabled={busy || blocked || denied || accessDenied} onClick={() => { if (busy || blocked || denied || accessDenied) return; if (canReadGrants) void grants.refetch(); void history.refetch(); void binding.refetch(); }}>Refresh build history</Button>
     {history.isPending ? <p role="status">Loading build history...</p> : null}{history.isError || binding.isError ? <p role="alert">Unable to refresh build history or placement. Retained metadata may be stale; mutations are paused.</p> : null}
     {history.data?.items.length === 0 ? <p>No build operations recorded.</p> : null}
     <ol className="space-y-2" aria-label="Build history">{history.data?.items.map((b) => <li className="min-w-0 rounded-lg border p-2" key={b.id}><p className="break-all text-sm">{names[b.state] ?? b.state} · {b.created_at} · resource {b.snapshot.resource_generation} / source {b.snapshot.source.generation}</p><Button className={buttonClass} type="button" variant="outline" onClick={() => setSelected(b.id)}>View build {b.id}</Button></li>)}</ol>

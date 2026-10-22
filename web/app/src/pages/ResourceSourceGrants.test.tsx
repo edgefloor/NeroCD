@@ -36,3 +36,28 @@ test("validation rejection preserves references for correction without retaining
 test("secret metadata errors cache only a generic message", async () => {
  backend("owner", (url) => url.includes("/managed-secrets?") ? json({ error: "unexpected-private-response" }, 503) : undefined); setup(); await screen.findByText(/Unable to verify secret metadata/); expect(JSON.stringify(client.getQueryCache().getAll().map((query) => ({ data: query.state.data, error: query.state.error?.message })))).not.toContain("unexpected-private-response");
 });
+
+test("membership loading cannot be bypassed with manual grant refresh", async () => {
+ let resolve!: (response: Response) => void; const fetch = backend("owner", (url) => url.includes("/project-members?") ? new Promise<Response>((done) => { resolve = done; }) : undefined); setup();
+ const refresh = await screen.findByRole<HTMLButtonElement>("button", { name: "Refresh source grants" }); expect(refresh.disabled).toBe(true); fireEvent.click(refresh); expect(fetch.mock.calls.some(([url]) => url.includes("/source-grants"))).toBe(false);
+ await act(async () => resolve(json(page([{ project_id: "project", user_id: "user", role: "owner" }])))); await screen.findByText(/Grant grant · v1/);
+});
+test("membership error refresh verifies access before any grant read", async () => {
+ let memberships = 0; const fetch = backend("owner", (url) => url.includes("/project-members?") && ++memberships === 1 ? json({}, 503) : undefined); setup();
+ await screen.findByText(/Unable to verify source grant access/); const refresh = screen.getByRole<HTMLButtonElement>("button", { name: "Refresh source grants" }); expect(refresh.disabled).toBe(true); fireEvent.click(refresh); expect(fetch.mock.calls.some(([url]) => url.includes("/source-grants"))).toBe(false);
+ fireEvent.click(screen.getByRole("button", { name: "Refresh source grant access" })); await screen.findByText(/Grant grant · v1/); expect(memberships).toBe(2);
+});
+test.each([401, 403, 404])("grant read %s cannot be manually retried without an access reset", async (status) => {
+ const fetch = backend("owner", (url) => url.includes("/source-grants?") ? json({}, status) : undefined); const { denied } = setup();
+ await waitFor(() => expect(denied).toHaveBeenCalled()); expect(screen.queryByRole("button", { name: "Refresh source grants" })).toBeNull(); const calls = fetch.mock.calls.length;
+ await act(async () => {}); expect(fetch.mock.calls).toHaveLength(calls); expect(screen.queryByRole("button", { name: "Refresh source grant access" })).toBeNull();
+});
+
+test("cached owner membership does not authorize grant refresh after access verification fails", async () => {
+ let fail = false; const fetch = backend("owner", (url) => fail && url.includes("/project-members?") ? json({}, 503) : undefined); setup(); await screen.findByText(/Grant grant · v1/);
+ fail = true; await act(async () => client.refetchQueries({ queryKey: ["sourceGrantOwners", actor, "project"] })); await screen.findByText(/Unable to verify source grant access/);
+ expect(client.getQueryData(["sourceGrantOwners", actor, "project"])).toEqual(expect.arrayContaining([expect.objectContaining({ role: "owner" })]));
+ const count = () => fetch.mock.calls.filter(([url]) => url.includes("/source-grants?")).length;
+ const before = count(); const refresh = screen.getByRole<HTMLButtonElement>("button", { name: "Refresh source grants" }); expect(refresh.disabled).toBe(true); fireEvent.click(refresh); expect(count()).toBe(before);
+ fail = false; fireEvent.click(screen.getByRole("button", { name: "Refresh source grant access" })); await waitFor(() => expect(refresh.disabled).toBe(false)); fireEvent.click(refresh); await waitFor(() => expect(count()).toBe(before + 1));
+});
