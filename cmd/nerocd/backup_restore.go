@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/db"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingjobs"
 	"nerocd/internal/runner"
 )
 
@@ -208,9 +209,8 @@ func restoreDatabase(args []string) error {
 	if err != nil {
 		return err
 	}
-	applicationVersion, schemaIdentity, expectedMigrations, err := backupCompatibility()
-	if err != nil || manifest.ApplicationVersion != applicationVersion || manifest.SchemaIdentity != schemaIdentity || strings.Join(manifest.Migrations, "\n") != strings.Join(expectedMigrations, "\n") {
-		return errors.New("backup application or schema compatibility check failed")
+	if err := validateBackupCompatibility(manifest); err != nil {
+		return err
 	}
 	if len(manifest.RunnerFiles) != 0 {
 		if strings.TrimSpace(*runnerRoot) == "" {
@@ -415,6 +415,14 @@ func checksumBackupFile(path string) (backupFile, error) {
 	return backupFile{Path: filepath.Base(path), SHA256: hex.EncodeToString(h.Sum(nil)), Bytes: n}, nil
 }
 
+func validateBackupCompatibility(manifest backupManifest) error {
+	application, schema, migrations, err := backupCompatibility()
+	if err != nil || manifest.ApplicationVersion != application || manifest.SchemaIdentity != schema || strings.Join(manifest.Migrations, "\n") != strings.Join(migrations, "\n") {
+		return errors.New("backup application or schema compatibility check failed")
+	}
+	return nil
+}
+
 func backupCompatibility() (string, string, []string, error) {
 	files, err := migrationFiles()
 	if err != nil {
@@ -430,6 +438,14 @@ func backupCompatibility() (string, string, []string, error) {
 		checksum := sqlChecksum(contents)
 		migrations = append(migrations, name+":"+checksum)
 		_, _ = io.WriteString(identity, name+"\x00"+checksum+"\n")
+	}
+	riverEntries, err := hostingjobs.CompatibilityEntries()
+	if err != nil {
+		return "", "", nil, err
+	}
+	for _, entry := range riverEntries {
+		migrations = append(migrations, entry)
+		_, _ = io.WriteString(identity, entry+"\n")
 	}
 	return version, "sha256:" + hex.EncodeToString(identity.Sum(nil)), migrations, nil
 }
@@ -495,6 +511,11 @@ func backupDatabaseState(ctx context.Context, databaseURL string) ([]string, str
 	if err := pool.QueryRow(ctx, `SELECT current_database()`).Scan(&name); err != nil {
 		return nil, "", err
 	}
+	riverEntries, err := hostingjobs.AppliedCompatibilityEntries(ctx, pool)
+	if err != nil {
+		return nil, "", errors.New("backup River migration compatibility check failed")
+	}
+	versions = append(versions, riverEntries...)
 	return versions, name, nil
 }
 func inventoryRunnerFiles(root string, requirements []runnerFileInventory) ([]runnerFileInventory, error) {

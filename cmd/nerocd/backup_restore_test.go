@@ -358,3 +358,44 @@ func TestRunnerFileCollectorFailsClosedOnMalformedStoredSpecifications(t *testin
 		t.Fatal("over-deep nested workflow was accepted")
 	}
 }
+
+func TestBackupCompatibilityIncludesPinnedRiverAndRejectsOlderArchives(t *testing.T) {
+	application, identity, migrations, err := backupCompatibility()
+	if err != nil {
+		t.Fatal(err)
+	}
+	riverCount := 0
+	for _, entry := range migrations {
+		if strings.HasPrefix(entry, "river/v0.44.1/main/") {
+			riverCount++
+		}
+	}
+	if riverCount != 7 {
+		t.Fatalf("pinned River identity entries=%d", riverCount)
+	}
+	valid := backupManifest{ApplicationVersion: application, SchemaIdentity: identity, Migrations: migrations}
+	if err := validateBackupCompatibility(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"application", "identity", "river hash", "river version", "older backup"} {
+		t.Run(mode, func(t *testing.T) {
+			candidate := valid
+			candidate.Migrations = append([]string(nil), migrations...)
+			switch mode {
+			case "application":
+				candidate.ApplicationVersion = "older"
+			case "identity":
+				candidate.SchemaIdentity = "sha256:older"
+			case "river hash":
+				candidate.Migrations[len(candidate.Migrations)-1] += "changed"
+			case "river version":
+				candidate.Migrations[len(candidate.Migrations)-1] = strings.ReplaceAll(candidate.Migrations[len(candidate.Migrations)-1], "v0.44.1", "v0.43.0")
+			case "older backup":
+				candidate.Migrations = candidate.Migrations[:len(candidate.Migrations)-7]
+			}
+			if err := validateBackupCompatibility(candidate); err == nil {
+				t.Fatal("incompatible backup accepted")
+			}
+		})
+	}
+}

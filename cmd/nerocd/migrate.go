@@ -18,6 +18,7 @@ import (
 
 	"nerocd/db"
 	"nerocd/internal/app"
+	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store"
 )
 
@@ -74,13 +75,14 @@ func migrateDatabase(args []string) error {
 		}
 		source = append(source, Migration{Version: name, SQL: string(content), Checksum: sqlChecksum(content)})
 	}
-	return migrateWithSource(ctx, database, source, MigrationOptions{SetTimeout: 2 * time.Minute, PerMigrationTimeout: 30 * time.Second, LockKey: 768316409})
+	return migrateWithSource(ctx, database, source, MigrationOptions{SetTimeout: 2 * time.Minute, PerMigrationTimeout: 30 * time.Second, LockKey: 768316409, HostingJobs: true})
 }
 
 type Migration struct{ Version, SQL, Checksum string }
 type MigrationOptions struct {
 	SetTimeout, PerMigrationTimeout time.Duration
 	LockKey                         int64
+	HostingJobs                     bool
 }
 
 func migrateWithSource(ctx context.Context, database *pgxpool.Pool, migrations []Migration, options MigrationOptions) error {
@@ -138,6 +140,30 @@ func migrateWithSource(ctx context.Context, database *pgxpool.Pool, migrations [
 		}
 		migrationCancel()
 		fmt.Printf("applied %s\n", migration.Version)
+	}
+	if options.HostingJobs {
+		for {
+			migrationCtx, migrationCancel := context.WithTimeout(ctx, options.PerMigrationTimeout)
+			tx, err := conn.Begin(migrationCtx)
+			if err != nil {
+				migrationCancel()
+				return errors.New("hosting jobs migration transaction failed")
+			}
+			applied, err := hostingjobs.MigrateNextTx(migrationCtx, tx)
+			if err != nil {
+				_ = tx.Rollback(migrationCtx)
+				migrationCancel()
+				return err
+			}
+			if err = tx.Commit(migrationCtx); err != nil {
+				migrationCancel()
+				return errors.New("hosting jobs migration commit failed")
+			}
+			migrationCancel()
+			if !applied {
+				break
+			}
+		}
 	}
 	return nil
 }

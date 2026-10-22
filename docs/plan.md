@@ -229,3 +229,15 @@ Preserve and extend the existing gates in [Makefile](../Makefile), the [runner l
 Run narrow checks during implementation, then the affected integration gates at package boundaries. Run the complete required release checks at milestone/release boundaries. A required check reported `failed` or `not_run` blocks acceptance.
 
 The largest risks are ownership migration, secret material escaping through normalized Compose, uncertainty after Docker mutation, data lifecycle mistakes, and mismatches between generated UI assets and the shipped binary. The proposed order addresses those before broad catalog or provider expansion. It leaves no declared feature silently removed from the campaign, and it makes each release claim depend on demonstrated workflows rather than the amount of code written.
+
+## River infrastructure status
+
+The River OSS adapter provides transactional hosting job insertion, a required
+handler interface, finite retries, bounded shutdown, owner CLI migration, and
+backup migration identity. It is not registered in the runtime server.
+`hosting.prepare_deployment.v1` has no production consumer yet. The next slice
+must persist real operation state, authorize preparation, resolve the immutable
+snapshot and exact destination, and use the existing fenced runner queue.
+Runtime readiness and restore admission must include the queue before that
+consumer is enabled. Native migration 0044 remains available for actual
+operation records; this infrastructure adds no placeholder operation table.
