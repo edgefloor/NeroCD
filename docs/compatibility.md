@@ -124,4 +124,3 @@ Feature equivalence does not imply drop-in Coolify database or API compatibility
 NeroCD upgrades begin in M0 and preserve old IDs, approvals, effective permissions and in-flight execution semantics. Equal environment names are not an automatic grouping rule. Coolify import starts with read-only discovery and a versioned intermediate manifest. Missing secrets remain missing. A33 requires source automation suspension, final data synchronization, explicit traffic handoff, destination automation activation and a recovery policy for writes after cutover.
 
 No migration or unchanged-client compatibility is validated at this baseline. Existing-container adoption is a separate capability; discovered labels do not prove surrender of the previous controller's authority.
-
