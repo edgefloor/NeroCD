@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,80 @@ func TestHostingLogDrainFailureRetainsKnownResultAndApplyIntent(t *testing.T) {
 func TestHostingRestartRetainsUncertainIntentBeforeHeartbeatOrClaim(t *testing.T) {
 	for _, restored := range []bool{false, true} {
 		t.Run(fmt.Sprint(restored), func(t *testing.T) { testHostingRestartRetainsIntent(t, restored) })
+	}
+}
+
+func TestHostingCleanupRestartAcknowledgesOnlyDefinitivelySettledIntent(t *testing.T) {
+	for _, mode := range []string{"canceled", "committed", "admitted", "uncertain", "restored", "wrong-operation", "wrong-plan", "wrong-mode", "canceled-with-result"} {
+		t.Run(mode, func(t *testing.T) {
+			journal, err := runner.OpenAttemptJournal(filepath.Join(t.TempDir(), "journal"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := journal.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			base := imageTestPlan(t)
+			plan, err := domain.CompileHostingCleanupPlan(domain.HostingHealthy{OperationID: "hop_retained", ContainerID: strings.Repeat("c", 64), Snapshot: base.Snapshot, Release: base.Release, PlanHash: base.Hash}, "hop_current")
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			a := runner.AttemptIdentity{RunID: "cleanup_hop_cleanup", LeaseID: "lease_cleanup", Attempt: 1, Fence: "fence_cleanup", CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(-time.Second)}
+			entry := runner.JournalHosting{ID: "intent_cleanup", Attempt: a, OperationID: "hop_cleanup", Phase: "cleanup_intent", CleanupPlan: &plan, CreatedAt: now}
+			if _, err = journal.AppendHosting(entry); err != nil {
+				t.Fatal(err)
+			}
+			serverPlan := plan
+			op := domain.HostingOperation{ID: entry.OperationID, CleanupPlan: &serverPlan, State: "canceled", TaskMode: "cleanup"}
+			switch mode {
+			case "committed":
+				op.State = "succeeded"
+				op.CompleteReceipt = &domain.HostingReceipt{ID: "committed"}
+				op.Result = &domain.HostingResult{Outcome: "succeeded"}
+			case "admitted":
+				op.MutationHold = true
+				op.State = "cancel_requested"
+			case "uncertain":
+				op.State = "reconciliation_required"
+				op.Result = &domain.HostingResult{Outcome: "failed", Uncertain: true}
+			case "restored":
+				op.RestoreOwnershipHeld = true
+			case "wrong-operation":
+				op.ID = "hop_other"
+			case "wrong-plan":
+				serverPlan.Hash = "different"
+			case "wrong-mode":
+				op.TaskMode = "deploy"
+			case "canceled-with-result":
+				op.Result = &domain.HostingResult{Outcome: "failed", Uncertain: true}
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/runners/hosting/status" {
+					t.Errorf("unexpected replay request %s", r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				var request domain.HostingStatusRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				if request.HostingAuthority != (domain.HostingAuthority{OperationID: entry.OperationID, RunID: a.RunID, LeaseID: a.LeaseID, Attempt: a.Attempt, Fence: a.Fence}) {
+					t.Error("cleanup authority changed")
+				}
+				if err := json.NewEncoder(w).Encode(op); err != nil {
+					t.Error(err)
+				}
+			}))
+			t.Cleanup(server.Close)
+			err = reconcileHostingJournal(server.URL, "runner-token", journal, "")
+			settled := mode == "canceled" || mode == "committed"
+			if (err == nil) != settled || (len(journal.Snapshot().Hosting) == 0) != settled {
+				t.Fatalf("mode=%s err=%v retained=%d", mode, err, len(journal.Snapshot().Hosting))
+			}
+		})
 	}
 }
 

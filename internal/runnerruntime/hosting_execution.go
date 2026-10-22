@@ -263,7 +263,15 @@ func reconcileHostingJournal(server, token string, journal *runner.AttemptJourna
 		if err != nil {
 			return err
 		}
-		if op.CleanupPlan == nil || entry.CleanupPlan == nil || op.CleanupPlan.Hash != entry.CleanupPlan.Hash || op.RestoreOwnershipHeld || op.MutationHold || op.CompleteReceipt == nil || op.Result == nil || op.Result.Uncertain || op.Result.Outcome != "succeeded" {
+		if op.ID != entry.OperationID || op.TaskMode != "cleanup" || op.CleanupPlan == nil || entry.CleanupPlan == nil || op.CleanupPlan.Hash != entry.CleanupPlan.Hash || op.RestoreOwnershipHeld || op.MutationHold {
+			return errors.New("cleanup intent retains ownership pending a committed result")
+		}
+		// Cancellation is terminal without a hold only before external admission.
+		// Admitted cancellation retains its hold; restored databases retain their
+		// separate restore hold. No Docker observation substitutes for that proof.
+		notAdmitted := op.State == "canceled" && op.CompleteReceipt == nil && op.Result == nil
+		completed := op.State == "succeeded" && op.CompleteReceipt != nil && op.Result != nil && !op.Result.Uncertain && op.Result.Outcome == "succeeded"
+		if !notAdmitted && !completed {
 			return errors.New("cleanup intent retains ownership pending a committed result")
 		}
 		if err = journal.AckHosting(entry.ID); err != nil {

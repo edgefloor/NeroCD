@@ -109,6 +109,10 @@ caller-supplied container identity. The ledger remains protected until the exact
 successful receipt commits; lost responses, stale authority, restore holds and
 uncertain effects keep ownership held. The original legacy binding port remains
 reserved for compatibility even after its old container is removed.
+If cleanup is canceled before admission, its exact canceled server status, absent
+mutation and restore holds, and absence of conflicting result evidence allow the
+runner to acknowledge its durable cleanup intent on restart. Admitted or uncertain
+cleanup still blocks startup until a verified completion settles ownership.
 
 **Restore recovery remains blocked in this slice.** A restored binding reports
 `restore_ownership_held: true`. A database backup can predate an admission while
