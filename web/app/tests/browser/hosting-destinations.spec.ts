@@ -1,10 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Enrollment tokens are intentionally visible once. Never retain automatic
-// screenshots or traces of this spec; explicit screenshots follow dialog close.
+// screenshots or traces of this spec; dialog screenshots explicitly mask the token.
 test.use({ trace: "off", screenshot: "off" });
 function runtime() {
   const runID = test.info().config.metadata.NEROCD_BROWSER_RUN_ID;
@@ -215,4 +216,42 @@ test("enrollment UI clears an expired token and copy/download controls", async (
   await expect(page.getByLabel("Enrollment secret", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Download once", exact: true })).toHaveCount(0);
   await expect(page.getByText("Enrollment expired. Create a new enrollment before continuing.", { exact: true })).toBeVisible();
+});
+
+
+test("enrollment command follows persisted hosting grants at mobile and desktop widths", async ({ page }, testInfo) => {
+  await adminSignIn(page);
+  // browser-server.sh builds this Go server after the frontend build. Compare
+  // its actual embedded response bytes with the reviewed dist artifacts.
+  const index = readFileSync(join(process.cwd(), "../dist/index.html"));
+  const served = await page.request.get("/");
+  expect(createHash("sha256").update(await served.body()).digest("hex")).toBe(createHash("sha256").update(index).digest("hex"));
+  const script = index.toString("utf8").match(/src="(\/assets\/[^"]+\.js)"/);
+  expect(script).not.toBeNull();
+  const asset = await page.request.get(script![1]);
+  expect(createHash("sha256").update(await asset.body()).digest("hex")).toBe(createHash("sha256").update(readFileSync(join(process.cwd(), "../dist", script![1]))).digest("hex"));
+  const runnerAsset = readdirSync(join(process.cwd(), "../dist/assets")).find((name) => /^RunnersView-.*\.js$/.test(name));
+  expect(runnerAsset).toBeTruthy();
+  const runnerBytes = await page.request.get(`/assets/${runnerAsset}`);
+  expect(createHash("sha256").update(await runnerBytes.body()).digest("hex")).toBe(createHash("sha256").update(readFileSync(join(process.cwd(), "../dist/assets", runnerAsset!))).digest("hex"));
+  await testInfo.attach("embedded-ui-sha256", { body: JSON.stringify({ html: createHash("sha256").update(await served.body()).digest("hex"), runnerAsset, runnerSHA256: createHash("sha256").update(await runnerBytes.body()).digest("hex"), asset: script![1], sha256: createHash("sha256").update(await asset.body()).digest("hex") }), contentType: "application/json" });
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 }); await page.goto("/runners");
+    const form = page.getByRole("form", { name: "Create runner enrollment", exact: true });
+    await form.getByLabel("Runner ID", { exact: true }).fill(`runner_command_${width}_${Date.now()}`);
+    await form.getByLabel("Runner name", { exact: true }).fill("Configured image host");
+    await form.getByRole("button", { name: "Use image hosting with runtime configuration and observations", exact: true }).click();
+    await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "One-time runner enrollment secret", exact: true });
+    await expect(dialog.getByRole("alert")).toContainText("HTTPS");
+    await expect(dialog.getByLabel("Manual runner command", { exact: true })).toHaveCount(0);
+    await dialog.getByLabel("Runner-reachable server URL", { exact: true }).fill("https://controller.example.test");
+    await expect(dialog.getByLabel("Manual runner command", { exact: true })).toContainText("--hosting-runtime-env --hosting-observation --execute");
+    await expect(dialog.getByLabel("Manual runner command", { exact: true })).toContainText("--capabilities 'compose-deploy,image_deploy,image_release_ports_v1,hosting_runtime_env_v1,hosting_observation_v1'");
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`hosting-enrollment-command-${width}.png`), fullPage: true, animations: "disabled", mask: [dialog.getByLabel("Enrollment secret", { exact: true })] });
+    await page.keyboard.press("Escape");
+    await expect(page.getByLabel("Enrollment secret", { exact: true })).toHaveCount(0);
+  }
 });

@@ -22,7 +22,12 @@ persisted project role and cannot administer global server infrastructure.
 ## Manual onboarding through the WebUI
 
 1. As a runner administrator, open **Runners** and create a one-time enrollment.
-   Keep the `compose-deploy` capability and omit `shell`. Use a unique runner ID
+   Choose the basic image hosting preset, or choose **Use image hosting with
+   runtime configuration and observations** for protected runtime values and
+   independent status collection. Both include `compose-deploy`, `image_deploy`,
+   and `image_release_ports_v1` without `shell`. The second also includes
+   `hosting_runtime_env_v1` and `hosting_observation_v1` and requires HTTPS.
+   Use a unique runner ID
    and suitable runner tags. The secret dialog shows the exact runner ID and
    expiry. Save the token once; closing or expiry clears the browser copy.
 2. On the intended host, install NeroCD, Docker Engine, and Docker Compose.
@@ -51,6 +56,7 @@ nerocd runner --server https://nerocd.example.com \
   --credential-file /secure/nerocd-runner.credential \
   --work-dir /var/lib/nerocd/work \
   --journal-dir /var/lib/nerocd/journal \
+  --capabilities 'compose-deploy,image_deploy,image_release_ports_v1' \
   --compose-image-policy pull --execute
 ```
 
@@ -59,6 +65,34 @@ HTTP testing only, explicitly set `NEROCD_MODE=development`; the WebUI command
 includes this prefix for HTTP origins. Keep tokens out of command arguments,
 URLs, shell history, and shared logs. If copying the token fails, the dialog
 reports failure and offers a one-time file download instead.
+
+The dialog derives the command from the returned enrollment's persisted
+capabilities. Editing a draft does not alter those grants. The runtime configuration
+and observations profile adds `--hosting-runtime-env --hosting-observation` to the
+command above and includes both corresponding versioned capabilities in
+`--capabilities`. Use each flag only when its persisted capability is present.
+These modes reject HTTP even with `NEROCD_MODE=development`. Runtime configuration
+also requires `image_deploy` and `image_release_ports_v1`. Neither mode can share
+`shell`.
+
+The dialog withholds a complete command for advanced grants because the enrollment
+does not contain the operator's host configuration:
+
+| Persisted capability | Required operator configuration |
+| --- | --- |
+| `hosting_build_v1` | `--build-config-file` with an owned, nonsymlink regular mode-0600 JSON file. Configure the actual toolchain, target, frozen policy, delegated cgroup and disk limits. See [build setup](hosting-build-runtime.md). |
+| `hosting_git_https_basic_v1` | `hosting_build_v1` and the build configuration's `private_git` opt-in with matching HTTPS source credential policy. See [private Git setup](hosting-build-runtime.md#enable-private-https-git). |
+| `proxy_apply` | Linux, `--proxy-state-root`, `--proxy-docker-binary`, `--proxy-docker-socket`, and `--proxy-protocol managed-traefik.file.v1`. Supply the actual persistent mode-0700 root, Docker executable and local Unix socket. See [proxy setup](hosting-proxy-control.md). |
+| `local_build_deploy_v1` | `--local-build-deploy` and the same runner and Docker daemon as the successful build. A runner that also builds needs its validated build configuration. See [local deployment setup](hosting-local-build-runtime.md). |
+
+Keep credentials out of build configuration. The WebUI does not create these files
+or choose cgroups, proxy paths or credentials. Invalid grant combinations and unknown
+custom capabilities also withhold the command. The one-time token remains available
+until dialog close or expiry so an administrator can finish the documented setup.
+
+Legacy `compose-deploy`, historical `compose_deploy`, and shell enrollments retain
+file-based commands with their exact persisted capabilities. Those commands do not
+qualify a host for the image hosting profile or verify Docker readiness.
 
 These steps register records and save desired placement. They do not automate
 SSH, test the Docker daemon, configure HTTPS, reserve capacity, or deploy an
