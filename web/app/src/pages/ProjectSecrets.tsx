@@ -7,6 +7,7 @@ import { PageNavigation } from "@/components/common/PageNavigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ProtectedSecretValue } from "@/components/common/ProtectedSecretValue";
 import { maximumPageOffset } from "@/router/search";
 
 const pageSize = 20;
@@ -96,7 +97,7 @@ function SecretDetail({ initial, writable, owner, blocked, onChanged, onClose }:
   }
   async function update(kind: "rotate" | "revoke", event: FormEvent) {
     event.preventDefault();
-    if (busy || !canWrite || conflict || (kind === "revoke" && (!owner || !confirmed))) return;
+    if (busy || !canWrite || conflict || (kind === "rotate" && !value) || (kind === "revoke" && (!owner || !confirmed))) return;
     setBusy(true); setError(""); setNotice(""); setRevealVersion(undefined);
     try {
       const result = kind === "rotate" ? await rotateManagedSecret(secret.id, { expected_version: expected, value }) : await revokeManagedSecret(secret.id, { expected_version: expected });
@@ -121,9 +122,9 @@ function SecretDetail({ initial, writable, owner, blocked, onChanged, onClose }:
       <Button type="button" variant="outline" disabled={busy || metadata.isFetching} onClick={() => void loadCurrent()}>Refresh current secret</Button>
     </section> : null}
     {writable && active ? <form aria-label="Rotate secret" autoComplete="off" onSubmit={(event) => void update("rotate", event)} className="space-y-3 border-t pt-3">
-      <label htmlFor={`${id}-value`}>New secret value</label><Input id={`${id}-value`} type="password" autoComplete="new-password" value={value} onChange={(event) => setValue(event.target.value)} disabled={busy || unavailable} required />
+      <ProtectedSecretValue id={`${id}-value`} label="New secret value" value={value} onChange={setValue} disabled={busy || unavailable} />
       <p className="text-xs text-muted-foreground">Creates an immutable version. The value stays hidden and is cleared after this request.</p>
-      <Button type="submit" disabled={busy || !canWrite || conflict}>{busy ? "Updating secret..." : "Rotate secret"}</Button>
+      <Button type="submit" disabled={busy || !canWrite || conflict || !value}>{busy ? "Updating secret..." : "Rotate secret"}</Button>
     </form> : null}
     <section className="space-y-2" aria-label="Secret version history"><h4 className="font-medium">Version history</h4>
       {versions.isError ? <div className="space-y-2"><p role="alert">Unable to load version metadata.</p><Button type="button" variant="outline" onClick={() => void versions.refetch()}>Retry secret versions</Button></div> : null}
@@ -155,7 +156,7 @@ function ProjectSecretList({ projectID, writable, owner, blocked }: { projectID:
   const refresh = async () => { await client.invalidateQueries({ queryKey: listKey(projectID) }); };
   async function create(event: FormEvent) {
     event.preventDefault();
-    if (!writable || unavailable || busy) return;
+    if (!writable || unavailable || busy || !value) return;
     setBusy(true); setError(""); setNotice("");
     try {
       const created = await createManagedSecret({ project_id: projectID, name, value });
@@ -180,9 +181,9 @@ function ProjectSecretList({ projectID, writable, owner, blocked }: { projectID:
       {writable ? <form autoComplete="off" aria-label="Create managed secret" onSubmit={(event) => void create(event)} className="space-y-3 border-t pt-3">
         <h3 className="font-medium">Create managed secret</h3>
         <label htmlFor={`${id}-name`}>Secret name</label><Input id={`${id}-name`} value={name} onChange={(event) => setName(event.target.value)} required disabled={busy} />
-        <label htmlFor={`${id}-value`}>Secret value</label><Input id={`${id}-value`} type="password" autoComplete="new-password" value={value} onChange={(event) => setValue(event.target.value)} required disabled={busy} />
+        <ProtectedSecretValue id={`${id}-value`} label="Secret value" value={value} onChange={setValue} disabled={busy} />
         <p className="text-xs text-muted-foreground">Stored encrypted. Values stay hidden and are cleared after each request. Use 1 to 65536 UTF-8 bytes; whitespace is preserved.</p>
-        <Button type="submit" disabled={busy || unavailable}>{busy ? "Creating secret..." : "Create secret"}</Button>
+        <Button type="submit" disabled={busy || unavailable || !value}>{busy ? "Creating secret..." : "Create secret"}</Button>
         {error ? <p role="alert">{error} Your name is preserved. Re-enter the value to retry.</p> : null}
       </form> : <p className="text-sm text-muted-foreground">You have metadata access. Maintainers can create and rotate secrets. Owners can reveal and revoke them.</p>}
       {notice ? <p role="status">{notice}</p> : null}

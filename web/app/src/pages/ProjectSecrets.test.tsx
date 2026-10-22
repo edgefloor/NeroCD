@@ -26,6 +26,7 @@ function setup(role: ProjectMember["role"] = "owner") {
   fireEvent.change(screen.getByLabelText("Secrets project"), { target: { value: "one" } });
   return { client, members, ...view };
 }
+function pasteValue(label: string, value: string) { fireEvent.paste(screen.getByLabelText(label), { clipboardData: { getData: () => value } }); }
 async function detail() { fireEvent.click(await screen.findByRole("button", { name: "Manage Database" })); await screen.findByText("Version 1"); return screen.getByRole("region", { name: "Secret Database" }); }
 async function reveal() { const region = await detail(); fireEvent.click(within(region).getByRole("button", { name: "Select version 1 to reveal" })); fireEvent.click(screen.getByRole("button", { name: "Reveal value for version 1" })); return region; }
 
@@ -44,10 +45,10 @@ test.each(["viewer", "maintainer", "owner"] as const)("project %s gets only its 
 test("create uses masked input, clears it on success, and never reveals or caches plaintext", async () => {
   const { client } = setup(); await screen.findByRole("button", { name: "Manage Database" });
   vi.mocked(api.createManagedSecret).mockResolvedValue(secret);
-  const value = screen.getByLabelText<HTMLInputElement>("Secret value");
-  expect(value.type).toBe("password");
+  const value = screen.getByLabelText<HTMLTextAreaElement>("Secret value");
+  expect(value.readOnly).toBe(true);
   fireEvent.change(screen.getByLabelText("Secret name"), { target: { value: "Database" } });
-  fireEvent.change(value, { target: { value: "  test-only-value  " } });
+  pasteValue("Secret value", "  test-only-value  ");
   fireEvent.submit(screen.getByRole("form", { name: "Create managed secret" }));
   await screen.findByText("Secret created. Its value is hidden.");
   expect(api.createManagedSecret).toHaveBeenCalledWith({ project_id: "one", name: "Database", value: "  test-only-value  " });
@@ -56,11 +57,34 @@ test("create uses masked input, clears it on success, and never reveals or cache
   expect(JSON.stringify(client.getQueryCache().getAll().map((query) => query.state.data))).not.toContain("test-only-value");
 });
 
+test.each(["LF", "CRLF", "mixed", "large"])("create and rotate preserve exact %s secret values and clear entry afterward", async (kind) => {
+  setup(); await screen.findByRole("button", { name: "Manage Database" });
+  const newline = kind === "CRLF" ? "\r\n" : "\n";
+  const original = kind === "large" ? "key-line\r\n".repeat(6000) : `-----BEGIN TEST-----${newline}  content  ${kind === "mixed" ? "\r\n" : newline}-----END TEST-----${newline}${newline}  `;
+  const rotated = `\ufeff${original} `;
+  vi.mocked(api.createManagedSecret).mockResolvedValue(secret);
+  fireEvent.change(screen.getByLabelText("Secret name"), { target: { value: "Exact value" } });
+  pasteValue("Secret value", original);
+  fireEvent.submit(screen.getByRole("form", { name: "Create managed secret" }));
+  await screen.findByText("Secret created. Its value is hidden.");
+  expect(api.createManagedSecret).toHaveBeenLastCalledWith({ project_id: "one", name: "Exact value", value: original });
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Secret value").value).toBe("");
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Secret value").readOnly).toBe(true);
+  await screen.findByText("Version 1");
+  vi.mocked(api.rotateManagedSecret).mockResolvedValue({ ...secret, current_version: 3 });
+  pasteValue("New secret value", rotated);
+  fireEvent.submit(screen.getByRole("form", { name: "Rotate secret" }));
+  await screen.findByText("Secret rotated. The new value is hidden.");
+  expect(api.rotateManagedSecret).toHaveBeenLastCalledWith(secret.id, { expected_version: 2, value: rotated });
+  expect(screen.getByLabelText<HTMLTextAreaElement>("New secret value").value).toBe("");
+  expect(api.revealManagedSecret).not.toHaveBeenCalled();
+});
+
 test.each([400, 403, 409, 503])("create failure %s preserves the name, clears sensitive input, and never echoes server values", async (status) => {
   setup(); await screen.findByRole("button", { name: "Manage Database" });
   vi.mocked(api.createManagedSecret).mockRejectedValue(new ApiError(status, "private-server-value", null));
   fireEvent.change(screen.getByLabelText("Secret name"), { target: { value: "Draft name" } });
-  fireEvent.change(screen.getByLabelText("Secret value"), { target: { value: "private-input-value" } });
+  pasteValue("Secret value", "private-input-value");
   fireEvent.submit(screen.getByRole("form", { name: "Create managed secret" }));
   await screen.findByRole("alert");
   expect(screen.getByLabelText<HTMLInputElement>("Secret name").value).toBe("Draft name");
@@ -110,10 +134,10 @@ test("mismatched reveal response never displays plaintext", async () => {
 
 test("opening secret details and changing reveal version clear unrelated sensitive drafts", async () => {
   setup(); await screen.findByRole("button", { name: "Manage Database" });
-  fireEvent.change(screen.getByLabelText("Secret value"), { target: { value: "create-draft-test-value" } });
+  pasteValue("Secret value", "create-draft-test-value");
   const region = await detail();
   expect(screen.getByLabelText<HTMLInputElement>("Secret value").value).toBe("");
-  fireEvent.change(screen.getByLabelText("New secret value"), { target: { value: "rotate-draft-test-value" } });
+  pasteValue("New secret value", "rotate-draft-test-value");
   fireEvent.click(within(region).getByRole("button", { name: "Select version 1 to reveal" }));
   expect(screen.getByLabelText<HTMLInputElement>("New secret value").value).toBe("");
   expect(api.revealManagedSecret).not.toHaveBeenCalled();
@@ -123,7 +147,7 @@ test("rotation conflict refetches metadata and requires explicit current-version
   setup(); const region = await detail();
   vi.mocked(api.rotateManagedSecret).mockRejectedValueOnce(new ApiError(409, "stale", null)).mockResolvedValueOnce({ ...secret, current_version: 4 });
   vi.mocked(api.getManagedSecret).mockResolvedValue({ ...secret, current_version: 3 });
-  fireEvent.change(screen.getByLabelText("New secret value"), { target: { value: "rotation-test-value" } });
+  pasteValue("New secret value", "rotation-test-value");
   fireEvent.submit(screen.getByRole("form", { name: "Rotate secret" }));
   await screen.findByRole("button", { name: "Use current version 3" });
   expect(screen.getByLabelText<HTMLInputElement>("New secret value").value).toBe("");
@@ -131,7 +155,7 @@ test("rotation conflict refetches metadata and requires explicit current-version
   expect(api.rotateManagedSecret).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: "Use current version 3" }));
   expect(api.rotateManagedSecret).toHaveBeenCalledTimes(1);
-  fireEvent.change(screen.getByLabelText("New secret value"), { target: { value: "retry-test-value" } });
+  pasteValue("New secret value", "retry-test-value");
   fireEvent.submit(screen.getByRole("form", { name: "Rotate secret" }));
   await screen.findByText("Secret rotated. The new value is hidden.");
   expect(api.rotateManagedSecret).toHaveBeenLastCalledWith(secret.id, { expected_version: 3, value: "retry-test-value" });
@@ -167,7 +191,7 @@ test("project switch clears password input and ignores delayed metadata from the
   vi.mocked(api.listManagedSecrets).mockImplementation(({ project_id }) => project_id === "one" ? new Promise((done) => { resolve = done; }) : Promise.resolve(page([])));
   setup();
   fireEvent.change(screen.getByLabelText("Secret name"), { target: { value: "Unsaved name" } });
-  fireEvent.change(screen.getByLabelText("Secret value"), { target: { value: "switch-test-value" } });
+  pasteValue("Secret value", "switch-test-value");
   fireEvent.change(screen.getByLabelText("Secrets project"), { target: { value: "two" } });
   await screen.findByText("No managed secrets in this project.");
   await act(async () => resolve(page([secret])));
