@@ -1,8 +1,12 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Locator } from "@playwright/test";
 // This scenario requires the registered API/real River/compiled runner fixture.
 // Interception below loses one real committed response; it never fabricates success.
 test.use({ trace: "off", screenshot: "off" });
 type Metadata = { base_url: string; project_id: string; environment_name: string; resource_name: string; resource_id: string; expected_commit_a: string; expected_commit_b: string; expected_commit_c: string; step_path: string };
+async function keyboardActivate(page: Page, button: Locator) {
+  await expect(button).toBeEnabled(); await button.focus();
+  await expect(button).toBeFocused(); await page.keyboard.press("Enter");
+}
 async function signIn(page: Page, viewer = false) {
   const bootstrap = await page.request.get("/api/v1/bootstrap-status", { timeout: 10_000 });
   expect(bootstrap.status(), "fixture bootstrap status must be available before sign-in").toBe(200);
@@ -102,23 +106,23 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
     if (route.request().method() !== "PUT") return route.continue();
     firstBody = route.request().postDataJSON(); const response = await route.fetch(); expect(response.status()).toBe(200); await route.abort("failed");
   }, { times: 1 });
-  await form.getByRole("button", { name: "Save disabled push configuration", exact: true }).focus(); await page.keyboard.press("Enter");
+  await keyboardActivate(page, form.getByRole("button", { name: "Save disabled push configuration", exact: true }));
   await expect(panel.getByRole("button", { name: "Retry identical push decision", exact: true })).toBeEnabled();
   await expect(form.getByRole("combobox", { name: "Automation service account", exact: true })).toBeDisabled();
   const recovered = page.waitForResponse((r) => new URL(r.url()).pathname === policyPath && r.request().method() === "PUT");
-  await panel.getByRole("button", { name: "Retry identical push decision", exact: true }).focus(); await page.keyboard.press("Enter");
+  await keyboardActivate(page, panel.getByRole("button", { name: "Retry identical push decision", exact: true }));
   const recovery = await recovered; expect(recovery.status()).toBe(200); expect(recovery.request().postDataJSON()).toEqual(firstBody);
   expect(firstBody).toMatchObject({ reset_branch_baseline: true, configuration: { automatic_deployment: { mode: "automatic_unprotected", routes: [expect.objectContaining({ route_id: expect.any(String) })] } } });
   expect((firstBody as { request_id: string }).request_id).not.toBe(conflictBody!.request_id);
   const configured = await recovery.json() as { callback_url: string; generation: number; enabled: boolean }; expect(configured.enabled).toBe(false);
   await expect(panel.getByLabel("Server callback URL", { exact: true })).toHaveValue(configured.callback_url);
   const verified = page.waitForResponse((r) => new URL(r.url()).pathname === `${policyPath}/verify` && r.request().method() === "POST");
-  await panel.getByRole("button", { name: "Verify GitHub repository and branch", exact: true }).focus(); await page.keyboard.press("Enter"); expect((await verified).status()).toBe(200);
+  await keyboardActivate(page, panel.getByRole("button", { name: "Verify GitHub repository and branch", exact: true })); expect((await verified).status()).toBe(200);
   await expect(panel.getByRole("button", { name: "Enable build and automatic deployment", exact: true })).toBeEnabled();
   const baseline = await page.request.get(`/api/v1/resources/${meta.resource_id}/builds?limit=20&offset=0`); expect(baseline.status()).toBe(200);
   const initialACount = (await baseline.json() as { items: Array<{ source_receipt?: { commit: string } }> }).items.filter((item) => item.source_receipt?.commit === meta.expected_commit_a).length;
   const enabled = page.waitForResponse((r) => new URL(r.url()).pathname === `${policyPath}/enabled` && r.request().method() === "POST");
-  await panel.getByRole("button", { name: "Enable build and automatic deployment", exact: true }).focus(); await page.keyboard.press("Enter"); expect((await enabled).status()).toBe(200);
+  await keyboardActivate(page, panel.getByRole("button", { name: "Enable build and automatic deployment", exact: true })); expect((await enabled).status()).toBe(200);
   async function step(command: "push-b" | "duplicate-b" | "delayed-a" | "probe-b" | "probe-failed-c" | "push-c" | "complete") { const result = await page.request.post(`${meta.step_path}${command}`, { headers: { Origin: meta.base_url, "X-NeroCD-CSRF": "1" }, timeout: 420_000 }); expect(result.status(), command).toBe(204); }
   await step("push-b"); await step("duplicate-b"); await step("delayed-a");
   let buildB = "";
@@ -147,7 +151,7 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
   await panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true }).click();
   await expect(summary.getByText("Recorded automatic deployment failed", { exact: true })).toBeVisible();
   await expect(summary).toContainText("A failed build is not a deployed release.");
-  for (const width of [320, 390, 430, 1440]) { await page.setViewportSize({ width, height: 1000 }); await expect(panel).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true }).focus(); await page.keyboard.press("Enter"); }
+  for (const width of [320, 390, 430, 1440]) { await page.setViewportSize({ width, height: 1000 }); await expect(panel).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await keyboardActivate(page, panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true })); }
   const viewerContext = await browser.newContext({ baseURL: meta.base_url, viewport: { width: 390, height: 1000 } });
   try {
     const viewer = await viewerContext.newPage(); const viewerReads: string[] = [];
