@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`86825ab17f2e2bb0b2b0a26e6e65e2e2769d8fa3`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0059, bootstrap administration,
+- PostgreSQL state, checked migrations through 0061, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -103,7 +103,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   plans and idempotent apply. Uncertain outcomes remain held. Recovery administrator
   UI is accepted at `d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`, with explicit
   plan review, confirmation and scoped exact retry. Queued convergence is not
-  completed convergence. Automatic deployment, draining, data rollback and
+  completed convergence. Protected deployment approval, draining, data rollback and
   production ACME remain open.
 - Runtime configuration UI for public literals and exact managed-secret versions,
   generation compare-and-swap, idempotent retries and fresh deployment generations.
@@ -141,9 +141,22 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   Signed GitHub.com pushes for one saved branch require independent current-head
   verification. Duplicate commits coalesce, delayed older deliveries are ignored,
   and a failed build preserves the serving release. Owners configure policy and
-  recover deliveries; viewers read history. Deployment remains manual.
+  recover deliveries; viewers read history. Deployment is manual in the default build-only policy.
   Local TLS simulation covers registered API/River, compiled CLI and Docker builds,
-  not live GitHub webhook setup, automatic deployment or complete A09.
+  not live GitHub webhook setup or complete A09. Optional automatic deployment
+  is accepted separately below.
+- [Trusted automatic deployment](docs/hosting-auto-deploy.md) is accepted at
+  `86825ab17f2e2bb0b2b0a26e6e65e2e2769d8fa3`. Optional `automatic_unprotected`
+  follows a verified fixed-branch GitHub push through build, fresh-port deployment
+  and an existing trusted HTTPS route switch. It requires an initial healthy manual
+  release and existing routes. Failed builds/readiness preserve the prior app and
+  unrelated routes. Live GitHub setup, protected approval, remote builders,
+  previews and public ACME remain unsupported.
+- [SSH prerequisite installer](docs/hosting-ssh-bootstrap.md) and
+  [durable control](docs/hosting-ssh-onboarding.md) have accepted bounded evidence
+  on native arm64 Debian 12/systemd. The baseline installer advertises only four
+  capabilities, not build/proxy/log capabilities. The full SSH API/UI journey is
+  active and unaccepted; complete A01 remains open.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
@@ -163,8 +176,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Next are trusted automatic deployment, then protected plans, alongside SSH
-qualification, before production TLS and stateful hosting. Broader
+and extended compatibility. Automatic deployment is accepted within its stated limits. Finish the active
+full SSH flow next, then stateful hosting. Protected plans and production TLS
+remain visible unfinished work. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
 
