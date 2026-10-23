@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Profiler, StrictMode, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { ProtectedSecretValue } from "./ProtectedSecretValue";
@@ -127,4 +127,23 @@ test.each(["unmount", "clear", "replace", "disabled"])("late file content is ign
   if (context === "disabled") rerender(<Harness disabled />);
   await act(async () => resolve(new TextEncoder().encode("late-test-value").buffer));
   expect(changed.mock.calls.some(([value]) => value === "late-test-value")).toBe(false);
+});
+
+
+test("disabling a revealed editor never commits plaintext and reenabling does not reveal it again", () => {
+  const committedValues: string[] = [];
+  const observe = () => { const field = document.querySelector<HTMLTextAreaElement>("textarea"); if (field) committedValues.push(field.value); };
+  const props = { id: "secret", label: "Secret value", value: "test-only-plaintext", onChange: vi.fn() };
+  const ui = (disabled: boolean) => <StrictMode><Profiler id="secret" onRender={observe}><ProtectedSecretValue {...props} disabled={disabled} /></Profiler></StrictMode>;
+  const view = render(ui(false));
+  fireEvent.click(screen.getByRole("button", { name: "Show value to edit" }));
+  expect(textarea().value).toBe(props.value);
+  committedValues.length = 0;
+  view.rerender(ui(true));
+  expect(committedValues.length).toBeGreaterThan(0);
+  expect(committedValues).not.toContain(props.value);
+  view.rerender(ui(false));
+  expect(textarea().value).toBe("••••••••");
+  expect(screen.getByRole("button", { name: "Show value to edit" })).toBeTruthy();
+  expect(props.onChange).not.toHaveBeenCalled();
 });
