@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,9 +27,11 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -508,9 +511,10 @@ func TestServerBootstrapRuntime(t *testing.T) {
 			t.Fatal("browser did not create an actual operation")
 		}
 	}
-	// A transparent byte forwarder delays server chunks after a substantial
-	// upload. Window adjustments still pass. The peer remains real OpenSSH.
-	proxyPort, dropProxyConnections, closeProxy := bootstrapRuntimeTCPForwarder(t, "127.0.0.1:22", int64(len(artifact)))
+	// The dedicated real sshd preserves command output and delays only one exit
+	// status. The transparent forwarder does not throttle artifact/SSH traffic.
+	lossPort, lossDirectory, stopLossSSH := bootstrapRuntimeLossSSH(t, ctx)
+	proxyPort, dropProxyConnections, closeProxy := bootstrapRuntimeTCPForwarder(t, fmt.Sprintf("127.0.0.1:%d", lossPort), 1<<62)
 	defer closeProxy()
 	lossInput := input
 	lossInput.RequestID = uuid()
@@ -531,9 +535,13 @@ func TestServerBootstrapRuntime(t *testing.T) {
 			t.Errorf("restart fixture cleanup: state=%s error=%v", out.State, e)
 		}
 	}()
+	defer stopLossSSH()
 	v = probe(v)
 	v = command(v, "review", func(c *app.ServerBootstrapCommandInput) { c.ProbeReceiptID = v.Probe.ReceiptID })
 	v = wait(v.ID, "restart review", func(v app.ServerBootstrap) bool { return v.Review != nil })
+	if e = os.WriteFile(lossDirectory+"/arm", nil, 0600); e != nil {
+		t.Fatal(e)
+	}
 	grant := false
 	command(v, "install", func(c *app.ServerBootstrapCommandInput) {
 		c.ManifestSHA256 = v.Review.ManifestSHA256
@@ -547,12 +555,31 @@ func TestServerBootstrapRuntime(t *testing.T) {
 		installed, e = serverbootstrap.InspectOwned(attempt, direct, key, serverbootstrap.Ownership{Manifest: lossManifest})
 		done()
 		if e == nil && installed.State == serverbootstrap.OwnedInstalled && installed.ServiceActive {
-			break
+			if completion, readErr := os.ReadFile(lossDirectory + "/complete"); readErr == nil && string(completion) == "0\n" {
+				break
+			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	if e != nil || installed.State != serverbootstrap.OwnedInstalled || !installed.ServiceActive {
-		t.Fatalf("remote install not observed before controller interruption: state=%s error=%v", installed.State, e)
+		current := get(v.ID)
+		t.Logf("recovery observation deadline: operation_state=%s version=%d hold=%t direct_state=%s direct_error_code=%s", current.State, current.Version, current.RemoteHold, installed.State, bootstrapRuntimeErrorCode(e))
+		for _, progress := range current.Progress {
+			t.Logf("recovery command: action=%s status=%s outcome=%s", progress.Action, progress.Status, progress.Outcome)
+		}
+		stored, readErr := pg.GetServerBootstrap(ctx, "usr_bootstrap", v.ID)
+		if readErr == nil {
+			for _, stage := range stored.Commands {
+				t.Logf("recovery authority: action=%s attempt=%d effect_intent=%t lease_expired=%t receipt_present=%t", stage.Command.Action, stage.Attempt, stage.EffectIntent, !stage.ExpiresAt.After(time.Now()), stage.Receipt != nil)
+			}
+		} else {
+			t.Log("recovery authority read failed")
+		}
+		t.Fatal("remote install not observed before controller interruption")
+	}
+	completion, e := os.ReadFile(lossDirectory + "/complete")
+	if e != nil || string(completion) != "0\n" {
+		t.Fatal("unchanged remote command did not finish successfully before response loss")
 	}
 	beforeCut := get(v.ID)
 	for _, progress := range beforeCut.Progress {
@@ -617,6 +644,260 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	t.Logf("execution lifecycle restarted against durable DB; retained hold and uncertain receipt; operator inspection preserved installation=%s operation=%s InvocationID=%s without reinstall", after.InstallationID, after.OperationID, after.InvocationID)
 	if bytes.Contains(logs.snapshot(), key) || bytes.Contains(logs.snapshot(), []byte("nce_")) {
 		t.Fatal("credential in controller logs")
+	}
+}
+
+// Only allowlisted adapter/context codes enter fixture diagnostics.
+func bootstrapRuntimeErrorCode(err error) string {
+	if err == nil {
+		return "none"
+	}
+	var code serverbootstrap.ErrorCode
+	if errors.As(err, &code) {
+		switch code {
+		case serverbootstrap.InvalidArtifact, serverbootstrap.InvalidManifest, serverbootstrap.OwnershipConflict, serverbootstrap.RemoteBusy, serverbootstrap.PartialTransfer, serverbootstrap.RemoteFailure, serverbootstrap.Uncertain:
+			return string(code)
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	return "other"
+}
+
+const bootstrapRuntimeLossWrapper = `#!/bin/bash
+set -euo pipefail
+umask 077
+if [[ ${1-} != child ]]; then
+ exec /usr/bin/timeout --signal=TERM --kill-after=1s 132s /bin/bash "$0" child "$1"
+fi
+directory=$2
+[[ ! -L "$directory/command.sha256" && $(stat -c '%u:%a' "$directory/command.sha256") == 0:600 ]] || exit 126
+expected=$(cat "$directory/command.sha256")
+[[ "$expected" =~ ^[a-f0-9]{64}$ ]] || exit 126
+actual=$(printf %s "${SSH_ORIGINAL_COMMAND-}" | sha256sum | cut -d' ' -f1)
+owned=false
+if [[ "$actual" == "$expected" ]]; then
+ owned=true
+elif [[ ${SSH_ORIGINAL_COMMAND-} != 'env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /bin/sh -s' ]]; then
+ exit 126
+fi
+process_file="$directory/processes/$$"
+(set -C; printf '%s\n' "$PPID" >"$process_file")
+trap 'rm -f -- "$process_file"' EXIT
+set +e
+/bin/sh -c "$SSH_ORIGINAL_COMMAND"
+status=$?
+set -e
+if $owned && [[ -f "$directory/arm" ]] && mkdir "$directory/claimed" 2>/dev/null; then
+ (set -C; printf '%s\n' "$status" >"$directory/complete")
+ for ((attempt=0; attempt<150; attempt++)); do
+  [[ ! -f "$directory/release" ]] || break
+  sleep 0.1
+ done
+fi
+exit "$status"
+`
+
+func bootstrapRuntimeWriteLossWrapper(t *testing.T, directory, commandHash string) string {
+	t.Helper()
+	if len(commandHash) != 64 {
+		t.Fatal("qualified command digest required")
+	}
+	if _, e := hex.DecodeString(commandHash); e != nil {
+		t.Fatal("qualified command digest required")
+	}
+	if e := os.Mkdir(directory+"/processes", 0700); e != nil {
+		t.Fatal(e)
+	}
+	for path, value := range map[string]string{"command.sha256": commandHash, "wrapper": bootstrapRuntimeLossWrapper} {
+		file, e := os.OpenFile(directory+"/"+path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, writeErr := file.WriteString(value)
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			t.Fatal("write owned response-loss fixture")
+		}
+	}
+	return directory + "/wrapper"
+}
+
+func bootstrapRuntimeLossSSH(t *testing.T, ctx context.Context) (int, string, func()) {
+	t.Helper()
+	qualified, e := os.ReadFile("/fixture/owned-command.sha256")
+	if e != nil {
+		t.Fatal("qualified unchanged command digest unavailable")
+	}
+	directory, e := os.MkdirTemp("/fixture", "onboarding-loss-")
+	if e != nil {
+		t.Fatal(e)
+	}
+	wrapper := bootstrapRuntimeWriteLossWrapper(t, directory, strings.TrimSpace(string(qualified)))
+	t.Logf("owned SSH exit-loss endpoint uses qualified unchanged command sha256=%s", strings.TrimSpace(string(qualified)))
+	listener, e := net.Listen("tcp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	configuration := fmt.Sprintf("Port %d\nListenAddress 127.0.0.1\nHostKey /fixture/host\nAuthorizedKeysFile /root/.ssh/authorized_keys\nPermitRootLogin prohibit-password\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nDisableForwarding yes\nPermitUserEnvironment no\nMaxSessions 4\nMaxStartups 4\nLogLevel QUIET\nPidFile %s/sshd.pid\nForceCommand /bin/bash %s %s\n", port, directory, wrapper, directory)
+	if e = os.WriteFile(directory+"/sshd_config", []byte(configuration), 0600); e != nil {
+		t.Fatal(e)
+	}
+	process := exec.CommandContext(ctx, "/usr/sbin/sshd", "-D", "-e", "-f", directory+"/sshd_config")
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	process.WaitDelay = time.Second
+	if e = process.Start(); e != nil {
+		t.Fatal("start owned loopback SSH fault endpoint")
+	}
+	joined := make(chan struct{})
+	go func() { _ = process.Wait(); close(joined) }()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			_ = os.WriteFile(directory+"/release", nil, 0600)
+			// Each wrapper records its own timeout process group before executing
+			// the unchanged command. Verify ownership before signaling that group.
+			entries, readErr := os.ReadDir(directory + "/processes")
+			if readErr != nil {
+				t.Error("read owned SSH fault process identities")
+			}
+			var ownedPIDs []int
+			for _, entry := range entries {
+				raw, readErr := os.ReadFile(directory + "/processes/" + entry.Name())
+				pid, parseErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+				if readErr != nil || parseErr != nil || pid < 2 {
+					t.Error("invalid owned SSH fault process identity")
+					continue
+				}
+				command, readErr := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+				if errors.Is(readErr, os.ErrNotExist) {
+					continue
+				}
+				if readErr != nil || !bytes.Contains(command, []byte(wrapper)) || !bytes.Contains(command, []byte("/usr/bin/timeout")) {
+					t.Error("SSH fault process ownership mismatch")
+					continue
+				}
+				ownedPIDs = append(ownedPIDs, pid)
+				_ = syscall.Kill(-pid, syscall.SIGTERM)
+			}
+			_ = process.Process.Kill()
+			select {
+			case <-joined:
+			case <-time.After(5 * time.Second):
+				t.Error("owned SSH fault daemon did not join")
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				entries, _ = os.ReadDir(directory + "/processes")
+				alive := false
+				for _, pid := range ownedPIDs {
+					if _, e := os.Stat(fmt.Sprintf("/proc/%d", pid)); !errors.Is(e, os.ErrNotExist) {
+						alive = true
+					}
+				}
+				if len(entries) == 0 && !alive {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			if len(entries) != 0 {
+				t.Error("owned SSH fault wrappers did not join")
+				return
+			}
+			for _, pid := range ownedPIDs {
+				if _, e := os.Stat(fmt.Sprintf("/proc/%d", pid)); !errors.Is(e, os.ErrNotExist) {
+					t.Error("owned SSH fault timeout process survived cleanup")
+				}
+			}
+			if connection, e := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond); e == nil {
+				_ = connection.Close()
+				t.Error("owned SSH fault listener survived cleanup")
+			}
+			if e := os.RemoveAll(directory); e != nil {
+				t.Error("remove owned SSH fault directory")
+			}
+		})
+	}
+	t.Cleanup(stop)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		connection, dialErr := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+		if dialErr == nil {
+			_ = connection.Close()
+			return port, directory, stop
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("owned SSH fault endpoint did not become available")
+	return 0, "", stop
+}
+
+func TestServerBootstrapRuntimeLossWrapper(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 22*time.Second)
+	defer cancel()
+	command := "cat; printf diagnostic >&2; exit 7"
+	hash := sha256.Sum256([]byte(command))
+	directory := t.TempDir()
+	wrapper := bootstrapRuntimeWriteLossWrapper(t, directory, hex.EncodeToString(hash[:]))
+	if e := os.WriteFile(directory+"/arm", nil, 0600); e != nil {
+		t.Fatal(e)
+	}
+	payload := bytes.Repeat([]byte("unchanged input\n"), 131072)
+	run := func(directory, wrapper string, release bool) time.Duration {
+		t.Helper()
+		process := exec.CommandContext(ctx, "/bin/bash", wrapper, directory)
+		process.Env = []string{"PATH=/usr/bin:/bin", "SSH_ORIGINAL_COMMAND=" + command}
+		process.Stdin = bytes.NewReader(payload)
+		var stdout, stderr bytes.Buffer
+		process.Stdout, process.Stderr = &stdout, &stderr
+		start := time.Now()
+		if e := process.Start(); e != nil {
+			t.Fatal(e)
+		}
+		if release {
+			deadline := time.Now().Add(2 * time.Second)
+			completed := false
+			for time.Now().Before(deadline) {
+				if raw, e := os.ReadFile(directory + "/complete"); e == nil && string(raw) == "7\n" {
+					completed = true
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !completed {
+				_ = process.Process.Kill()
+				_ = process.Wait()
+				t.Fatal("fixture throttled upload or changed command completion")
+			}
+			if e := os.WriteFile(directory+"/release", nil, 0600); e != nil {
+				t.Fatal(e)
+			}
+		}
+		err := process.Wait()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 7 || !bytes.Equal(stdout.Bytes(), payload) || stderr.String() != "diagnostic" {
+			t.Fatal("wrapper changed command stdin/output/exit status")
+		}
+		return time.Since(start)
+	}
+	run(directory, wrapper, true)
+	_ = os.Remove(directory + "/release")
+	if elapsed := run(directory, wrapper, false); elapsed > time.Second {
+		t.Fatal("one-shot wrapper delayed subsequent command")
+	}
+	timeoutDirectory := t.TempDir()
+	timeoutWrapper := bootstrapRuntimeWriteLossWrapper(t, timeoutDirectory, hex.EncodeToString(hash[:]))
+	if e := os.WriteFile(timeoutDirectory+"/arm", nil, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if elapsed := run(timeoutDirectory, timeoutWrapper, false); elapsed < 15*time.Second || elapsed > 18*time.Second {
+		t.Fatal("wrapper exit-status delay exceeded its fixed bound")
 	}
 }
 

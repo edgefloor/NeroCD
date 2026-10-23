@@ -137,10 +137,16 @@ The onboarding artifact is compiled separately with
 `-ldflags '-X main.version=v0.0.0-fixture'`, matching its qualified policy metadata.
 Its digest and explicit version pin are retained in the run evidence.
 
-The recovery case uses a transparent loopback TCP forwarder to the same real
-sshd. After a substantial upload it delays each server chunk by 500 milliseconds.
-All bytes, including SSH window adjustments, still pass unchanged. It never
-decrypts traffic, changes SSH identity, or substitutes a remote result.
+The recovery case uses a dedicated owned loopback OpenSSH endpoint with the same
+pinned host key and authorized client key. Its forced-command wrapper permits
+only the exact owned-command digest from the actual adapter qualification or the
+literal production probe invocation. It passes stdin, stdout, stderr and the
+actual exit status unchanged. A one-shot arm delays only command exit for at
+most 15 seconds after the real owned command finishes. A nonsecret completion
+marker records its exit status; later inspection does not consume another delay.
+A transparent loopback forwarder carries all bytes without throttling, including
+artifact uploads and SSH window adjustments. It never decrypts traffic, changes
+SSH identity, or substitutes a remote result.
 Independent exact ownership inspection must observe the active service while
 the controller's install receipt remains pending. Otherwise the test fails.
 The test then drops and joins the active owned SSH transport, retaining the
@@ -155,6 +161,11 @@ retained. This proves an execution lifecycle restart
 against the durable database. It does not restart the whole controller process.
 The forwarder binds only loopback, permits four connections, applies 125-second
 connection deadlines, and joins its connections and byte pumps on cancellation.
+The dedicated SSH daemon and wrapper timeout process groups are supervised and
+joined. Cleanup verifies each wrapper process's owned path before signaling it,
+then removes only the unique fixture directory. The wrapper helper check proves
+large-input passthrough, output/status preservation, one-shot release and its
+fixed timeout before the actual recovery run.
 Separate loopback forwarded ports give the true/false grant and browser cases
 separate owned fixture destinations. This respects durable endpoint ownership.
 It is a test arrangement, not a recommendation for production cohosting.
