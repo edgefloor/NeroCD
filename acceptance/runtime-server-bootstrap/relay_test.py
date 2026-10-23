@@ -31,7 +31,7 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
                 code = f"print({identity!r})"
             else:
                 self.assertEqual(args, ("docker", "exec", "--interactive", self.container_id,
-                                        "socat", "STDIO", "TCP:127.0.0.1:22,connect-timeout=5"))
+                                        "socat", "STDIO", f"TCP:127.0.0.1:{self.relay.target_port},connect-timeout=5"))
                 code = "import os; b=os.read(0,65536); os.write(1,b); os.read(0,1)"
                 if self.mode == "hang":
                     code = "import time; time.sleep(30)"
@@ -61,6 +61,28 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
         await self.relay.close()
         with self.assertRaises(OSError):
             await asyncio.open_connection("127.0.0.1", port)
+
+    async def test_https_profile_preserves_identity_and_bounded_transport(self):
+        self.relay = module.Relay(self.container_id, self.owner, connection_timeout=0.2, profile="onboarding-https")
+        port = await self.relay.start()
+        self.assertEqual(port, 19443)
+        self.assertEqual(self.relay.target_port, 19443)
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(b"fixed HTTPS transport")
+        await writer.drain()
+        self.assertEqual(await asyncio.wait_for(reader.readexactly(21), 2), b"fixed HTTPS transport")
+        writer.close()
+        await writer.wait_closed()
+        self.mode = "wrong-identity"
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        self.assertEqual(await asyncio.wait_for(reader.read(), 2), b"")
+        writer.close()
+        await writer.wait_closed()
+        self.assertEqual(sum(call[1] == "exec" for call in self.calls), 1)
+
+    async def test_rejects_arbitrary_transport_profile(self):
+        with self.assertRaises(ValueError):
+            module.Relay(self.container_id, self.owner, profile="5432")
 
     async def test_wrong_start_identity_never_listens_or_executes(self):
         self.mode = "wrong-identity"

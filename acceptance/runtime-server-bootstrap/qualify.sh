@@ -94,6 +94,7 @@ main() {
  if [[ ${NEROCD_BOOTSTRAP_ONBOARDING:-} == owned-systemd-target ]]; then
   GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags nerocd_bootstrap_fixture -c -o "$work/api.test" ./internal/api
   shasum -a 256 "$work/api.test" >"$evidence/onboarding-test-sha256.txt"
+  python3 -B scripts/skills/ui_manifest.py >"$evidence/ui-manifest.json"
  fi
  shasum -a 256 "$work/serverbootstrap.test" >"$evidence/probe-binary-sha256.txt"
  docker version --format 'host Docker={{.Server.Version}} API={{.Server.APIVersion}} arch={{.Server.Arch}}'
@@ -253,9 +254,15 @@ main() {
   # accepted adapter fixture. No host PostgreSQL service or published port.
   docker exec "$pg_id" createdb -U postgres onboarding
   docker exec "$container_id" /bin/sh -ec 'mkdir -p /db/seeds /internal/api; cp /fixture/dev.sql /db/seeds/dev.sql; chmod 0600 /fixture/onboarding-client'
+  docker exec --workdir /internal/api "$container_id" /fixture/api.test -test.v -test.run '^TestServerBootstrapRuntimeForwarderJoins$' -test.timeout=10s >"$evidence/onboarding-forwarder.log" 2>&1 || { cat "$evidence/onboarding-forwarder.log"; return 1; }
+  cat "$evidence/onboarding-forwarder.log"
   shasum -a 256 "$root"/internal/api/server_bootstrap_runtime_integration_test.go "$root"/internal/app/server_bootstrap*.go "$root"/internal/store/postgres_server_bootstrap*.go "$root"/internal/api/server_bootstrap*.go >"$evidence/onboarding-source-sha256.txt"
-  docker exec --workdir /internal/api --env NEROCD_BOOTSTRAP_ONBOARDING=owned-systemd-target --env "NEROCD_BOOTSTRAP_PROBE_FINGERPRINT=$fingerprint" --env "NEROCD_TEST_DATABASE_URL=postgresql://postgres@$pg_address/onboarding?sslmode=disable" "$container_id" /fixture/api.test -test.v -test.run '^TestServerBootstrapRuntime$' -test.timeout=7m >"$evidence/onboarding-runtime.log" 2>&1 || { cat "$evidence/onboarding-runtime.log"; return 1; }
-  cat "$evidence/onboarding-runtime.log"
+  if [[ ${NEROCD_BOOTSTRAP_BROWSER:-} == 1 ]]; then
+   bash "$root/web/app/scripts/hosting-server-bootstrap-fixture.sh" --drive-owned "$container_id" "$owner" "postgresql://postgres@$pg_address/onboarding?sslmode=disable" "$fingerprint" "$evidence" "$work/https-relay-port"
+  else
+   docker exec --workdir /internal/api --env NEROCD_BOOTSTRAP_ONBOARDING=owned-systemd-target --env "NEROCD_BOOTSTRAP_PROBE_FINGERPRINT=$fingerprint" --env "NEROCD_TEST_DATABASE_URL=postgresql://postgres@$pg_address/onboarding?sslmode=disable" "$container_id" /fixture/api.test -test.v -test.run '^TestServerBootstrapRuntime$' -test.timeout=7m >"$evidence/onboarding-runtime.log" 2>&1 || { cat "$evidence/onboarding-runtime.log"; return 1; }
+   cat "$evidence/onboarding-runtime.log"
+  fi
   docker exec "$container_id" /bin/sh -ec 'sha256sum /fixture/sentinel; systemctl show fixture-sentinel -p MainPID --value; systemctl is-active fixture-sentinel; docker inspect --format "{{.Id}} {{.State.Running}}" unrelated-sentinel; wc -l /fixture/marker; systemctl is-active fixture-marker || test "$(systemctl is-active fixture-marker)" = inactive' >"$evidence/sentinels-after-onboarding.txt"
   cmp "$evidence/sentinels-before-probe.txt" "$evidence/sentinels-after-onboarding.txt"
   printf 'PASS: real API/River/SSH/systemd/enrollment/registration/grant/readiness onboarding; same-host fixture TLS only\n'

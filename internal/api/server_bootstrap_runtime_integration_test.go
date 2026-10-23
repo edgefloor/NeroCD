@@ -12,6 +12,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -26,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,7 +51,7 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("owned target root required")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 9*time.Minute)
 	defer cancel()
 	_, pg, database := newHostingBuildAPIFixture(t)
 	key, err := os.ReadFile("/fixture/onboarding-client")
@@ -69,14 +71,14 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var logs bytes.Buffer
+	var logs bootstrapRuntimeLogs
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, SecretKeyring: ring, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal(err)
 	}
 	const origin = "https://127.0.0.1:19443"
-	qualified := app.ServerBootstrapArtifact{ArtifactID: "fixture-arm64", Path: "/fixture/onboarding-agent", Size: int64(len(artifact)), SHA256: hex.EncodeToString(digest[:]), Version: "fixture-v1", Architecture: "arm64", Profile: "prepared_debian12_v1"}
+	qualified := app.ServerBootstrapArtifact{ArtifactID: "fixture-arm64", Path: "/fixture/onboarding-agent", Size: int64(len(artifact)), SHA256: hex.EncodeToString(digest[:]), Version: "v0.0.0-fixture", Architecture: "arm64", Profile: "prepared_debian12_v1"}
 	if err = service.ConfigureServerBootstrap(&app.ServerBootstrapConfig{ControllerOrigin: origin, Artifacts: []app.ServerBootstrapArtifact{qualified}}); err != nil {
 		t.Fatal(err)
 	}
@@ -100,11 +102,13 @@ func TestServerBootstrapRuntime(t *testing.T) {
 			break
 		}
 	}
-	stop, err := pg.StartHostingExecution(ctx)
+	executionCtx, stopExecution := context.WithCancel(ctx)
+	stop, err := pg.StartHostingExecution(executionCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
+		stopExecution()
 		end, done := context.WithTimeout(context.Background(), 10*time.Second)
 		defer done()
 		if e := stop(end); e != nil {
@@ -211,7 +215,7 @@ func TestServerBootstrapRuntime(t *testing.T) {
 			t.Fatalf("%s %s status=%d want=%d closed response=%s", method, path, response.StatusCode, want, out)
 		}
 		if strings.Contains(path, "server-bootstrap") && response.Header.Get("Cache-Control") != "no-store" {
-			t.Fatal("bootstrap response cacheable")
+			t.Fatalf("bootstrap cache contract: %s %s status=%d Cache-Control=%q", method, path, response.StatusCode, response.Header.Get("Cache-Control"))
 		}
 		for _, forbidden := range []string{string(key), "/fixture/onboarding-agent", "enrollment_token", "credential_hash"} {
 			if bytes.Contains(out, []byte(forbidden)) {
@@ -243,8 +247,9 @@ func TestServerBootstrapRuntime(t *testing.T) {
 		r.Header.Set("X-NeroCD-Fixture-Lose", "committed")
 		response, e := client.Do(r)
 		if e == nil {
+			out, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 			_ = response.Body.Close()
-			t.Fatal("committed response was not lost")
+			t.Fatalf("committed response was not lost: %s status=%d response=%s", path, response.StatusCode, out)
 		}
 	}
 	get := func(id string) app.ServerBootstrap {
@@ -259,7 +264,7 @@ func TestServerBootstrapRuntime(t *testing.T) {
 			extra(&input)
 		}
 		code := 202
-		if action == "review" {
+		if action == "review" || action == "cancel" {
 			code = 200
 		}
 		return decode(request("POST", "/api/v1/server-bootstraps/"+v.ID+"/"+action, input, credential, code))
@@ -284,12 +289,25 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	}
 	probe := func(v app.ServerBootstrap) app.ServerBootstrap {
 		t.Helper()
+		previous := ""
+		if v.Probe != nil {
+			previous = v.Probe.ReceiptID
+		}
 		v = command(v, "probe", nil)
-		return wait(v.ID, "real SSH probe", func(v app.ServerBootstrap) bool { return v.Probe != nil && v.Probe.Prerequisites.Qualifies("arm64") })
+		return wait(v.ID, "real SSH probe", func(v app.ServerBootstrap) bool {
+			return v.Probe != nil && v.Probe.ReceiptID != previous && v.Probe.Prerequisites.Qualifies("arm64")
+		})
 	}
 	request("GET", "/api/v1/server-bootstrap-options?project_id=proj_platform", nil, "", 401)
 	request("GET", "/api/v1/server-bootstrap-options?project_id=proj_platform", nil, viewer, 403)
 	request("GET", "/api/v1/server-bootstrap-options?project_id=proj_platform", nil, credential, 200)
+	if _, err = database.Exec(ctx, `UPDATE users SET global_role='user' WHERE id='usr_bootstrap'`); err != nil {
+		t.Fatal(err)
+	}
+	request("GET", "/api/v1/server-bootstrap-options?project_id=proj_platform", nil, credential, 403)
+	if _, err = database.Exec(ctx, `UPDATE users SET global_role='system_admin' WHERE id='usr_bootstrap'`); err != nil {
+		t.Fatal(err)
+	}
 	fingerprint := os.Getenv("NEROCD_BOOTSTRAP_PROBE_FINGERPRINT")
 	target := domain.ServerBootstrapTarget{IP: "127.0.0.1", Port: 22, User: "root", HostFingerprint: fingerprint}
 	input := app.ServerBootstrapCreateInput{RequestID: uuid(), ProjectID: "proj_platform", Name: "actual SSH onboarding", Target: target, SSHSecretID: secret.ID, SSHSecretVersion: 1, ArtifactID: qualified.ArtifactID}
@@ -298,14 +316,23 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	request("POST", "/api/v1/server-bootstraps", unknown, credential, 400)
 	cross := input
 	cross.ProjectID = "proj_security"
+	if _, err = database.Exec(ctx, `DELETE FROM project_members WHERE project_id='proj_security' AND user_id='usr_bootstrap'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE users SET global_role='runner_admin' WHERE id='usr_bootstrap'`); err != nil {
+		t.Fatal(err)
+	}
 	request("POST", "/api/v1/server-bootstraps", cross, credential, 403)
+	if _, err = database.Exec(ctx, `UPDATE users SET global_role='system_admin' WHERE id='usr_bootstrap'`); err != nil {
+		t.Fatal(err)
+	}
 	// Negative host trust remains a real SSH probe, with no replacement adapter.
 	wrong := input
 	wrong.RequestID = uuid()
 	wrong.Target.HostFingerprint = "SHA256:" + strings.Repeat("A", 43)
 	wrongView := decode(request("POST", "/api/v1/server-bootstraps", wrong, credential, 201))
 	wrongView = command(wrongView, "probe", nil)
-	wait(wrongView.ID, "wrong host rejection", func(v app.ServerBootstrap) bool {
+	wrongView = wait(wrongView.ID, "wrong host rejection", func(v app.ServerBootstrap) bool {
 		for _, p := range v.Progress {
 			if p.Action == "probe" && p.Status == "completed" {
 				return p.Outcome == "refused"
@@ -313,7 +340,13 @@ func TestServerBootstrapRuntime(t *testing.T) {
 		}
 		return false
 	})
+	command(wrongView, "cancel", nil)
 	for _, grant := range []bool{true, false} {
+		if !grant {
+			port, close := bootstrapRuntimeTCPResponseLoss(t, "127.0.0.1:22", 1<<62)
+			defer close()
+			input.Target.Port = uint16(port)
+		}
 		input.RequestID = uuid()
 		input.Name = fmt.Sprintf("actual SSH grant %t", grant)
 		loseCommitted("/api/v1/server-bootstraps", input)
@@ -413,11 +446,330 @@ func TestServerBootstrapRuntime(t *testing.T) {
 		}
 		t.Logf("real API/River/SSH/systemd/enrollment/register grant=%t operation=%s server=%s readiness=%s artifact_sha256=%s", grant, v.ID, v.ServerID, readiness.Status, qualified.SHA256)
 	}
+	// A transparent byte forwarder withholds only post-transfer SSH response
+	// bytes. The SSH peer remains the real, fingerprint-verified OpenSSH server.
+	proxyPort, closeProxy := bootstrapRuntimeSSHResponseLoss(t, int64(len(artifact)))
+	defer closeProxy()
+	lossInput := input
+	lossInput.RequestID = uuid()
+	lossInput.Name = "controller execution restart"
+	lossInput.Target.Port = uint16(proxyPort)
+	v := decode(request("POST", "/api/v1/server-bootstraps", lossInput, credential, 201))
+	op, e := pg.GetServerBootstrap(ctx, "usr_bootstrap", v.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	lossManifest := serverbootstrap.InstallManifest{Version: 1, InstallationID: op.IDs.InstallationID, InstallOperationID: op.IDs.InstallOperationID, RunnerID: op.IDs.RunnerID, CredentialReferenceID: op.IDs.CredentialReferenceID, ControllerURL: origin, Artifact: serverbootstrap.Artifact(op.Input.Artifact), CapabilityPreset: domain.ServerBootstrapPreset}
+	direct := serverbootstrap.Target{Address: netip.MustParseAddr("127.0.0.1"), Port: 22, User: "root", HostKeyFingerprint: fingerprint}
+	defer func() {
+		cleanup, done := context.WithTimeout(context.Background(), 15*time.Second)
+		defer done()
+		out, e := serverbootstrap.CleanupOwned(cleanup, direct, key, serverbootstrap.Mutation{OperationID: strings.Repeat("e", 32), Ownership: serverbootstrap.Ownership{Manifest: lossManifest}})
+		if e != nil || out.State != serverbootstrap.OwnedRemoved {
+			t.Errorf("restart fixture cleanup: state=%s error=%v", out.State, e)
+		}
+	}()
+	v = probe(v)
+	v = command(v, "review", func(c *app.ServerBootstrapCommandInput) { c.ProbeReceiptID = v.Probe.ReceiptID })
+	v = wait(v.ID, "restart review", func(v app.ServerBootstrap) bool { return v.Review != nil })
+	grant := false
+	command(v, "install", func(c *app.ServerBootstrapCommandInput) {
+		c.ManifestSHA256 = v.Review.ManifestSHA256
+		c.AcknowledgeInstallAndStart = true
+		c.GrantProject = &grant
+	})
+	var installed serverbootstrap.OwnedInspection
+	deadline := time.Now().Add(40 * time.Second)
+	for time.Now().Before(deadline) {
+		attempt, done := context.WithTimeout(ctx, 2*time.Second)
+		installed, e = serverbootstrap.InspectOwned(attempt, direct, key, serverbootstrap.Ownership{Manifest: lossManifest})
+		done()
+		if e == nil && installed.State == serverbootstrap.OwnedInstalled && installed.ServiceActive {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if e != nil || installed.State != serverbootstrap.OwnedInstalled || !installed.ServiceActive {
+		t.Fatalf("remote install not observed before controller interruption: state=%s error=%v", installed.State, e)
+	}
+	stopExecution()
+	end, finish := context.WithTimeout(context.Background(), 10*time.Second)
+	if e = stop(end); e != nil {
+		finish()
+		t.Fatal(e)
+	}
+	finish()
+	before := get(v.ID)
+	if !before.RemoteHold || before.State == "completed" || before.State == "registered" {
+		t.Fatalf("lost SSH response did not retain intent/hold: state=%s hold=%t", before.State, before.RemoteHold)
+	}
+	executionCtx, stopExecution = context.WithCancel(ctx)
+	stop, e = pg.StartHostingExecution(executionCtx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	v = wait(v.ID, "execution controller restart inspection", func(v app.ServerBootstrap) bool {
+		for _, p := range v.Progress {
+			if p.Action == "inspect" && p.Status == "completed" && p.Outcome == "observed" {
+				return true
+			}
+		}
+		return false
+	})
+	after, e := serverbootstrap.InspectOwned(ctx, direct, key, serverbootstrap.Ownership{Manifest: lossManifest})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if after.InvocationID != installed.InvocationID || after.OperationID != installed.OperationID || after.ManifestSHA256 != installed.ManifestSHA256 || !v.RemoteHold {
+		t.Fatal("restart recovery changed remote identity or released hold")
+	}
+	t.Logf("execution lifecycle restarted against durable DB; retained hold; automatic inspection preserved installation=%s operation=%s InvocationID=%s without reinstall", after.InstallationID, after.OperationID, after.InvocationID)
 	if !lostConsume.Load() {
 		t.Fatal("real enrollment response loss was not exercised")
 	}
-	if bytes.Contains(logs.Bytes(), key) || strings.Contains(logs.String(), "nce_") {
+	if os.Getenv("NEROCD_BOOTSTRAP_BROWSER") == "1" {
+		browserPort, closeBrowserSSH := bootstrapRuntimeTCPResponseLoss(t, "127.0.0.1:22", 1<<62)
+		defer closeBrowserSSH()
+		leaf, e := x509.ParseCertificate(certificate.Certificate[0])
+		if e != nil {
+			t.Fatal(e)
+		}
+		spki := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+		metadata := map[string]string{"origin": origin, "project_id": "proj_platform", "secret_id": secret.ID, "artifact_id": qualified.ArtifactID, "fingerprint": fingerprint, "ssh_port": fmt.Sprint(browserPort), "spki": base64.StdEncoding.EncodeToString(spki[:])}
+		raw, e := json.Marshal(metadata)
+		if e != nil {
+			t.Fatal(e)
+		}
+		fmt.Printf("SERVER_BOOTSTRAP_BROWSER_READY %s\n", raw)
+		for {
+			if _, e = os.Stat("/fixture/onboarding-browser.finish"); e == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal("browser completion deadline")
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
+		// Browser-created operations also require actual enrollment and owned cleanup.
+		page, e := service.ListServerBootstraps(admin, "proj_platform", 100, 0)
+		if e != nil {
+			t.Fatal(e)
+		}
+		found := false
+		for _, item := range page.Items {
+			if item.Name != "browser actual SSH onboarding" {
+				continue
+			}
+			found = true
+			if item.State != "completed" {
+				t.Fatalf("browser operation state=%s", item.State)
+			}
+			op, e := pg.GetServerBootstrap(ctx, "usr_bootstrap", item.ID)
+			if e != nil {
+				t.Fatal(e)
+			}
+			manifest := serverbootstrap.InstallManifest{Version: 1, InstallationID: op.IDs.InstallationID, InstallOperationID: op.IDs.InstallOperationID, RunnerID: op.IDs.RunnerID, CredentialReferenceID: op.IDs.CredentialReferenceID, ControllerURL: origin, Artifact: serverbootstrap.Artifact(op.Input.Artifact), CapabilityPreset: domain.ServerBootstrapPreset}
+			out, e := serverbootstrap.CleanupOwned(ctx, serverbootstrap.Target{Address: netip.MustParseAddr("127.0.0.1"), Port: 22, User: "root", HostKeyFingerprint: fingerprint}, key, serverbootstrap.Mutation{OperationID: strings.Repeat("d", 32), Ownership: serverbootstrap.Ownership{Manifest: manifest}})
+			if e != nil || out.State != serverbootstrap.OwnedRemoved {
+				t.Fatalf("browser owned cleanup failed: state=%s error=%v", out.State, e)
+			}
+		}
+		if !found {
+			t.Fatal("browser did not create an actual operation")
+		}
+	}
+	if bytes.Contains(logs.snapshot(), key) || bytes.Contains(logs.snapshot(), []byte("nce_")) {
 		t.Fatal("credential in controller logs")
+	}
+}
+
+func bootstrapRuntimeSSHResponseLoss(t *testing.T, transferSize int64) (int, func()) {
+	return bootstrapRuntimeTCPResponseLoss(t, "127.0.0.1:22", transferSize)
+}
+
+func bootstrapRuntimeTCPResponseLoss(t *testing.T, destination string, transferSize int64) (int, func()) {
+	t.Helper()
+	host, _, e := net.SplitHostPort(destination)
+	if e != nil || host != "127.0.0.1" || transferSize < 1 {
+		t.Fatal("fixed loopback destination and positive transfer bound required")
+	}
+	listener, e := net.Listen("tcp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var group sync.WaitGroup
+	slots := make(chan struct{}, 4)
+	group.Add(1)
+	go func() {
+		defer group.Done()
+		for {
+			client, e := listener.Accept()
+			if e != nil {
+				return
+			}
+			select {
+			case slots <- struct{}{}:
+			default:
+				_ = client.Close()
+				continue
+			}
+			group.Add(1)
+			go func() {
+				defer group.Done()
+				defer func() { <-slots }()
+				defer client.Close()
+				peer, e := net.DialTimeout("tcp4", destination, 2*time.Second)
+				if e != nil {
+					return
+				}
+				defer peer.Close()
+				connectionCtx, stopConnection := context.WithTimeout(ctx, 125*time.Second)
+				defer stopConnection()
+				_ = client.SetDeadline(time.Now().Add(125 * time.Second))
+				_ = peer.SetDeadline(time.Now().Add(125 * time.Second))
+				var transferred atomic.Int64
+				done := make(chan struct{})
+				watcherDone := make(chan struct{})
+				go func() {
+					defer close(watcherDone)
+					select {
+					case <-connectionCtx.Done():
+						_ = client.Close()
+						_ = peer.Close()
+					case <-done:
+					}
+				}()
+				pumps := make(chan struct{}, 2)
+				go func() {
+					defer func() { pumps <- struct{}{} }()
+					buffer := make([]byte, 32768)
+					for {
+						n, e := client.Read(buffer)
+						if n > 0 {
+							transferred.Add(int64(n))
+							if _, writeErr := peer.Write(buffer[:n]); writeErr != nil {
+								return
+							}
+						}
+						if e != nil {
+							return
+						}
+					}
+				}()
+				go func() {
+					defer func() { pumps <- struct{}{} }()
+					buffer := make([]byte, 32768)
+					for {
+						n, e := peer.Read(buffer)
+						if n > 0 {
+							if transferred.Load() >= transferSize {
+								select {
+								case <-connectionCtx.Done():
+									return
+								case <-done:
+									return
+								}
+							}
+							if _, writeErr := client.Write(buffer[:n]); writeErr != nil {
+								return
+							}
+						}
+						if e != nil {
+							return
+						}
+					}
+				}()
+				<-pumps
+				close(done)
+				_ = client.Close()
+				_ = peer.Close()
+				<-pumps
+				<-watcherDone
+			}()
+		}
+	}()
+	var once sync.Once
+	return listener.Addr().(*net.TCPAddr).Port, func() {
+		once.Do(func() {
+			cancel()
+			_ = listener.Close()
+			finished := make(chan struct{})
+			go func() { group.Wait(); close(finished) }()
+			select {
+			case <-finished:
+			case <-time.After(5 * time.Second):
+				t.Error("fixture SSH forwarder did not join")
+			}
+		})
+	}
+}
+
+type bootstrapRuntimeLogs struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (l *bootstrapRuntimeLogs) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buffer.Write(p)
+}
+func (l *bootstrapRuntimeLogs) snapshot() []byte {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return bytes.Clone(l.buffer.Bytes())
+}
+
+func TestServerBootstrapRuntimeForwarderJoins(t *testing.T) {
+	listener, e := net.Listen("tcp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer listener.Close()
+	peerDone := make(chan struct{})
+	go func() {
+		defer close(peerDone)
+		connection, e := listener.Accept()
+		if e != nil {
+			return
+		}
+		defer connection.Close()
+		_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
+		_, _ = io.Copy(connection, connection)
+	}()
+	port, closeProxy := bootstrapRuntimeTCPResponseLoss(t, listener.Addr().String(), 8)
+	defer closeProxy()
+	client, e := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer client.Close()
+	_ = client.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, e = client.Write([]byte("abc")); e != nil {
+		t.Fatal(e)
+	}
+	buffer := make([]byte, 3)
+	if _, e = io.ReadFull(client, buffer); e != nil || string(buffer) != "abc" {
+		t.Fatalf("transparent initial bytes: %q %v", buffer, e)
+	}
+	if _, e = client.Write([]byte("defgh")); e != nil {
+		t.Fatal(e)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, e = client.Read(buffer); e == nil {
+		t.Fatal("post-transfer response was not withheld")
+	}
+	closeProxy()
+	select {
+	case <-peerDone:
+	case <-time.After(time.Second):
+		t.Fatal("owned peer did not observe joined cancellation")
+	}
+	if connection, e := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), time.Second); e == nil {
+		_ = connection.Close()
+		t.Fatal("forwarder listener survived cleanup")
 	}
 }
 
@@ -439,14 +791,14 @@ func bootstrapRuntimeTLS(t *testing.T) (tls.Certificate, *x509.CertPool) {
 		t.Fatal(e)
 	}
 	encoded := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	// Assert real systemd remains PID 1 before changing this disposable trust file.
+	if out, e := exec.Command("systemctl", "is-system-running").Output(); e != nil || strings.TrimSpace(string(out)) != "running" {
+		t.Fatal("real systemd target required")
+	}
 	if e = os.WriteFile("/etc/ssl/certs/ca-certificates.crt", encoded, 0644); e != nil {
 		t.Fatal(e)
 	}
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(encoded)
-	// Assert real systemd remains PID 1 before changing this disposable trust file.
-	if out, e := exec.Command("systemctl", "is-system-running").Output(); e != nil || strings.TrimSpace(string(out)) != "running" {
-		t.Fatal("real systemd target required")
-	}
 	return tls.Certificate{Certificate: [][]byte{der, caDER}, PrivateKey: key}, roots
 }

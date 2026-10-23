@@ -131,6 +131,41 @@ explicitly by the API client and installed only inside that container for the
 agent. This does not qualify production DNS, TLS issuance, or network reachability.
 The original qualifier remains unchanged unless this opt-in is set.
 
+The recovery case uses a transparent loopback TCP forwarder to the same real
+sshd. It counts encrypted upload bytes and withholds server response bytes after
+the artifact-sized transfer. It never decrypts traffic, changes SSH identity, or
+substitutes a remote result. Independent exact ownership inspection must observe
+the active service before the test stops and joins the hosting execution loop.
+The restarted execution loop recovers from the durable intent after real lease
+expiry. Exact manifest, remote operation and systemd InvocationID must survive
+inspection with the hold retained. This proves an execution lifecycle restart
+against the durable database. It does not restart the whole controller process.
+The forwarder binds only loopback, permits four connections, applies 125-second
+connection deadlines, and joins its connections and byte pumps on cancellation.
+Separate loopback forwarded ports give the true/false grant and browser cases
+separate owned fixture destinations. This respects durable endpoint ownership.
+It is a test arrangement, not a recommendation for production cohosting.
+
+Run `bash web/app/scripts/hosting-server-bootstrap-fixture.sh` from the repository
+root for the additional browser journey. It builds the current UI before
+compiling the embedded API test binary. The browser uses the real production
+handlers for project, existing managed key version, qualified artifact,
+create/probe/review/install and readiness. It drops one committed create response
+and retries the identical body. It checks keyboard review at widths 320, 390,
+430 and 1440, viewer denial, and served asset hashes against `web/dist`.
+
+For this browser fixture only, the Docker-exec TCP relay has a fixed HTTPS
+profile from host loopback port 19443 to target loopback port 19443. The original
+SSH profile and its 180-second lifetime remain the default. The HTTPS profile
+uses the same full ID/name/owner checks, four-connection admission and 25-second
+per-connection deadline, with a 600-second whole-run lifetime. The browser's
+Chromium process trusts the exact ephemeral certificate SPKI from this run.
+It does not use `ignoreHTTPSErrors`, bypass CSP, or change authentication/CSRF
+rules. This is fixture certificate pinning and same-host transport qualification.
+It does not prove production TLS or public reachability. The four-capability
+`hosting_image_v1` preset remains limited to image hosting and readiness; source
+builds, proxy operations and runtime logs require their separate qualification.
+
 Cleanup compares full container, network, and image IDs, exact names, and unique owner labels before deletion.
 Docker volumes have names rather than independent immutable IDs, so cleanup checks their exact names and owner labels.
 Deletion and absence checks fail explicitly even when the cleanup helper runs in a shell `||` list.
