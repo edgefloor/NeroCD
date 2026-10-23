@@ -128,6 +128,7 @@ function setup(
         resource={resource}
         options={authority}
         blocked={false}
+        mutationHeld={false}
         onDenied={denied}
         onSelected={selected}
       />

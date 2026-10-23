@@ -74,6 +74,36 @@ test("configured storage uses server review and clears it on resource generation
   expect(screen.queryByRole("button", { name: "Deploy reviewed image with uploads" })).toBeNull();
   expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(0);
 });
+test("storage receipt retry survives history acquiring the admitted operation mutation hold", async () => {
+  const storage = { storage_id: "storage", generation: 1, hash: "hash" };
+  const options = { resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null };
+  const admitted = { ...operation, mutation_hold: true, snapshot: { ...operation.snapshot, storage } };
+  let held = false, submissions = 0;
+  const fetch = backend((url, init) => {
+    if (url.endsWith("/storage-deployment-options")) return json(options);
+    if (url.endsWith("/deployments") && init.method === "POST") {
+      if (++submissions === 1) { held = true; throw new TypeError("accepted response lost"); }
+      return json(admitted, 202);
+    }
+    if (url.includes("/deployments") && init.method !== "POST") return json(page(held ? [admitted] : []));
+    return undefined;
+  });
+  setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+  await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
+  await screen.findByRole("button", { name: "Retry identical storage deployment request" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh deployment history" }));
+  await screen.findByText(/New deployment requests are paused/);
+  const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical storage deployment request" });
+  expect(retry.disabled).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Review current storage deployment" }).disabled).toBe(true);
+  fireEvent.click(retry);
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  const writes = fetch.mock.calls.filter(([, init]) => init.method === "POST");
+  expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
 test("viewer reads persisted history and results without request, cancel, or reconcile controls", async () => {
   backend((url) => url.includes("/deployments") ? json(page([{ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }])) : url.includes("/hosting-operations/") ? json({ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }) : undefined);
   setup("viewer"); fireEvent.click(await screen.findByRole("button", { name: "View operation hop_one" }));

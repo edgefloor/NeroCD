@@ -114,6 +114,7 @@ export function StorageDeploymentReview({
   bindingID,
   options,
   blocked,
+  mutationHeld,
   onDenied,
   onSelected,
 }: {
@@ -122,6 +123,7 @@ export function StorageDeploymentReview({
   bindingID: string;
   options: StorageDeploymentOptions;
   blocked: boolean;
+  mutationHeld: boolean;
   onDenied: () => void;
   onSelected: (id: string) => Promise<void>;
 }) {
@@ -150,7 +152,7 @@ export function StorageDeploymentReview({
     };
   }, []);
   async function prepare() {
-    if (request.current || blocked) return;
+    if (request.current || blocked || mutationHeld) return;
     const controller = new AbortController();
     request.current = controller;
     setBusy(true);
@@ -259,7 +261,7 @@ export function StorageDeploymentReview({
     }
   }
   async function submit() {
-    if (!review || !confirmed || blocked || conflict || request.current) return;
+    if (!review || !confirmed || blocked || (mutationHeld && !sent) || conflict || request.current) return;
     const controller = new AbortController();
     request.current = controller;
     setBusy(true);
@@ -410,7 +412,7 @@ export function StorageDeploymentReview({
         form={initial ? formID : undefined}
         variant="outline"
         className="h-auto max-w-full whitespace-normal"
-        disabled={blocked || busy || (sent && !conflict)}
+        disabled={blocked || mutationHeld || busy || (sent && !conflict)}
         onClick={initial ? undefined : () => void prepare()}
       >
         {conflict
@@ -504,7 +506,7 @@ export function StorageDeploymentReview({
           <Button
             type="button"
             className="h-auto whitespace-normal"
-            disabled={blocked || busy || conflict || !confirmed}
+            disabled={blocked || (mutationHeld && !sent) || busy || conflict || !confirmed}
             onClick={() => void submit()}
           >
             {busy
