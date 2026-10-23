@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"nerocd/internal/domain"
+	"net/url"
 )
 
 // runtimeLogResponse keeps the log response contract independent of observation
@@ -27,12 +28,12 @@ func (r *runtimeLogResponse[T]) decodeResponse(body io.Reader) error {
 }
 
 // ClaimRuntimeLogSessions renews only process-local collection leases, never demand.
-func (c Client) ClaimRuntimeLogSessions(ctx context.Context, in domain.HostingRuntimeLogClaimInput) (domain.HostingRuntimeLogClaims, error) {
+func (c Client) ClaimRuntimeLogSessions(ctx context.Context, in domain.HostingRuntimeLogClaimInput, options ...RuntimeLogTransport) (domain.HostingRuntimeLogClaims, error) {
 	if err := in.Validate(); err != nil {
 		return domain.HostingRuntimeLogClaims{}, err
 	}
 	response := runtimeLogResponse[domain.HostingRuntimeLogClaims]{limit: 64 << 10}
-	err := c.post(ctx, "/api/v1/runners/runtime-log-sessions/claim", in, &response)
+	err := c.runtimeLogPost(ctx, "/api/v1/runners/runtime-log-sessions/claim", in, &response, options)
 	if err != nil {
 		return domain.HostingRuntimeLogClaims{}, err
 	}
@@ -48,13 +49,13 @@ func (c Client) ClaimRuntimeLogSessions(ctx context.Context, in domain.HostingRu
 }
 
 // AppendRuntimeLogs verifies an acknowledgment against canonical submitted content.
-func (c Client) AppendRuntimeLogs(ctx context.Context, in domain.HostingRuntimeLogBatch) (domain.HostingRuntimeLogAck, error) {
+func (c Client) AppendRuntimeLogs(ctx context.Context, in domain.HostingRuntimeLogBatch, options ...RuntimeLogTransport) (domain.HostingRuntimeLogAck, error) {
 	in, err := in.Canonical()
 	if err != nil {
 		return domain.HostingRuntimeLogAck{}, err
 	}
 	response := runtimeLogResponse[domain.HostingRuntimeLogAck]{limit: 8 << 10}
-	if err = c.post(ctx, "/api/v1/runners/runtime-log-sessions/events", in, &response); err != nil {
+	if err = c.runtimeLogPost(ctx, "/api/v1/runners/runtime-log-sessions/events", in, &response, options); err != nil {
 		return domain.HostingRuntimeLogAck{}, err
 	}
 	ack := response.value
@@ -66,4 +67,29 @@ func (c Client) AppendRuntimeLogs(ctx context.Context, in domain.HostingRuntimeL
 		return domain.HostingRuntimeLogAck{}, errors.New("runtime log acknowledgment mismatch")
 	}
 	return ack, nil
+}
+
+// RuntimeLogTransport permits only explicitly trusted literal-loopback HTTP fixtures.
+type RuntimeLogTransport = ObservationTransport
+
+// ValidateRuntimeLogServer requires an unambiguous HTTPS controller base URL.
+func ValidateRuntimeLogServer(server string, options RuntimeLogTransport) error {
+	u, err := url.Parse(server)
+	if err != nil || u.Path != "" || u.RawPath != "" || ValidateObservationServer(server, options) != nil {
+		return errors.New("invalid runtime log controller transport")
+	}
+	return nil
+}
+func (c Client) runtimeLogPost(ctx context.Context, path string, in, out any, options []RuntimeLogTransport) error {
+	option := RuntimeLogTransport{}
+	if len(options) > 1 {
+		return errors.New("invalid runtime log transport")
+	}
+	if len(options) == 1 {
+		option = options[0]
+	}
+	if err := ValidateRuntimeLogServer(c.Server, option); err != nil {
+		return err
+	}
+	return c.observationPost(ctx, path, in, out, options)
 }

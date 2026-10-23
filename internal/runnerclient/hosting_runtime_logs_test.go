@@ -29,7 +29,7 @@ func TestHostingRuntimeLogClientBoundedIdentityAndAck(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(ack)
 			}))
 			defer server.Close()
-			_, err := New(server.URL, "token").AppendRuntimeLogs(t.Context(), batch)
+			_, err := New(server.URL, "token").AppendRuntimeLogs(t.Context(), batch, RuntimeLogTransport{TrustedLoopbackHTTP: true})
 			if (err != nil) != bad {
 				t.Fatal(err)
 			}
@@ -37,7 +37,7 @@ func TestHostingRuntimeLogClientBoundedIdentityAndAck(t *testing.T) {
 	}
 	for _, body := range []string{`{"targets":[],"next_cursor":"","end_of_sweep":true} {}`, strings.Repeat(" ", 64<<10) + `{}`, `{"targets":[],"next_cursor":"","end_of_sweep":true,"socket":"foreign"}`} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
-		_, err := New(server.URL, "token").ClaimRuntimeLogSessions(t.Context(), domain.HostingRuntimeLogClaimInput{InstanceID: batch.InstanceID, AfterSessionID: "", Limit: 4})
+		_, err := New(server.URL, "token").ClaimRuntimeLogSessions(t.Context(), domain.HostingRuntimeLogClaimInput{InstanceID: batch.InstanceID, AfterSessionID: "", Limit: 4}, RuntimeLogTransport{TrustedLoopbackHTTP: true})
 		server.Close()
 		if err == nil {
 			t.Fatal("invalid response accepted")
@@ -54,7 +54,7 @@ func TestHostingRuntimeLogClientClaimBatchCounter(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(domain.HostingRuntimeLogClaims{Targets: []domain.HostingRuntimeLogClaim{claim}, EndOfSweep: true})
 		}))
-		_, err := New(server.URL, "token").ClaimRuntimeLogSessions(t.Context(), domain.HostingRuntimeLogClaimInput{InstanceID: instance, Limit: 4})
+		_, err := New(server.URL, "token").ClaimRuntimeLogSessions(t.Context(), domain.HostingRuntimeLogClaimInput{InstanceID: instance, Limit: 4}, RuntimeLogTransport{TrustedLoopbackHTTP: true})
 		server.Close()
 		if (err != nil) != (counter < 1 || counter > 2147483647) {
 			t.Fatal(counter, err)
@@ -102,13 +102,13 @@ func TestHostingRuntimeLogAndObservationResponseContractsRemainSeparate(t *testi
 	defer server.Close()
 	client := New(server.URL, "token")
 	client.HTTP = server.Client()
-	if result, err := client.ClaimRuntimeLogSessions(t.Context(), domain.HostingRuntimeLogClaimInput{InstanceID: batch.InstanceID, Limit: 4}); err != nil || len(result.Targets) != 1 || result.Targets[0].NextBatchSequence != 1 {
+	if result, err := client.ClaimRuntimeLogSessions(t.Context(), domain.HostingRuntimeLogClaimInput{InstanceID: batch.InstanceID, Limit: 4}, RuntimeLogTransport{TrustedLoopbackHTTP: true}); err != nil || len(result.Targets) != 1 || result.Targets[0].NextBatchSequence != 1 {
 		t.Fatal("valid log claims rejected", result, err)
 	}
-	if result, err := client.AppendRuntimeLogs(t.Context(), batch); err != nil || result != ack {
+	if result, err := client.AppendRuntimeLogs(t.Context(), batch, RuntimeLogTransport{TrustedLoopbackHTTP: true}); err != nil || result != ack {
 		t.Fatal("valid log ack rejected", result, err)
 	}
-	if result, err := client.HostingObservationTargets(t.Context(), domain.HostingObservationTargetsInput{Limit: 4}); err != nil || !result.EndOfSweep || result.Targets == nil {
+	if result, err := client.HostingObservationTargets(t.Context(), domain.HostingObservationTargetsInput{Limit: 4}, RuntimeLogTransport{TrustedLoopbackHTTP: true}); err != nil || !result.EndOfSweep || result.Targets == nil {
 		t.Fatal("observation targets changed", result, err)
 	}
 	if result, err := client.ReportHostingObservation(t.Context(), observation); err != nil || result != observationAck {
@@ -185,9 +185,9 @@ func TestHostingRuntimeLogClientRejectsMalformedResponseDocuments(t *testing.T) 
 					client := New(server.URL, "token")
 					var err error
 					if kind == "claims" {
-						_, err = client.ClaimRuntimeLogSessions(t.Context(), domain.HostingRuntimeLogClaimInput{InstanceID: batch.InstanceID, Limit: 4})
+						_, err = client.ClaimRuntimeLogSessions(t.Context(), domain.HostingRuntimeLogClaimInput{InstanceID: batch.InstanceID, Limit: 4}, RuntimeLogTransport{TrustedLoopbackHTTP: true})
 					} else {
-						_, err = client.AppendRuntimeLogs(t.Context(), batch)
+						_, err = client.AppendRuntimeLogs(t.Context(), batch, RuntimeLogTransport{TrustedLoopbackHTTP: true})
 					}
 					if (err == nil) != (name == "valid") {
 						t.Fatal("unexpected response acceptance", err)
@@ -195,5 +195,81 @@ func TestHostingRuntimeLogClientRejectsMalformedResponseDocuments(t *testing.T) 
 				})
 			}
 		})
+	}
+}
+
+type runtimeLogCustomTransport struct{}
+
+func (runtimeLogCustomTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	panic("custom transport must not run")
+}
+func TestRuntimeLogProtectedTransportAndCapabilityParity(t *testing.T) {
+	batch, _, _ := runtimeLogResponseFixtures()
+	claim := domain.HostingRuntimeLogClaimInput{InstanceID: batch.InstanceID, Limit: 4}
+	reached := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached++; w.WriteHeader(500) }))
+	defer server.Close()
+	client := New(server.URL, "token")
+	if _, err := client.ClaimRuntimeLogSessions(t.Context(), claim); err == nil {
+		t.Fatal("implicit cleartext claim accepted")
+	}
+	if _, err := client.AppendRuntimeLogs(t.Context(), batch); err == nil {
+		t.Fatal("implicit cleartext append accepted")
+	}
+	if reached != 0 {
+		t.Fatal("plaintext transport reached server")
+	}
+	for _, url := range []string{"http://example.com", "http://localhost:1234", "https://user:password@example.com", "https://example.com/a", "https://example.com?x=1", "https://example.com/#fragment"} {
+		if ValidateRuntimeLogServer(url, RuntimeLogTransport{TrustedLoopbackHTTP: true}) == nil {
+			t.Fatal("ambiguous or remote fixture URL accepted")
+		}
+	}
+	redirected := 0
+	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/elsewhere" {
+			redirected++
+		}
+		http.Redirect(w, r, "/elsewhere", http.StatusTemporaryRedirect)
+	}))
+	defer tlsServer.Close()
+	client = New(tlsServer.URL, "token")
+	client.HTTP = tlsServer.Client()
+	if _, err := client.ClaimRuntimeLogSessions(t.Context(), claim); err == nil {
+		t.Fatal("claim redirect accepted")
+	}
+	if _, err := client.AppendRuntimeLogs(t.Context(), batch); err == nil {
+		t.Fatal("append redirect accepted")
+	}
+	if redirected != 0 {
+		t.Fatal("followed redirected bearer request")
+	}
+	transport := tlsServer.Client().Transport.(*http.Transport).Clone()
+	transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+	transport.TLSClientConfig.InsecureSkipVerify = true
+	for _, bad := range []http.RoundTripper{transport, runtimeLogCustomTransport{}} {
+		client.HTTP = &http.Client{Transport: bad}
+		if _, err := client.ClaimRuntimeLogSessions(t.Context(), claim); err == nil {
+			t.Fatal("unverified claim transport accepted")
+		}
+		if _, err := client.AppendRuntimeLogs(t.Context(), batch); err == nil {
+			t.Fatal("unverified append transport accepted")
+		}
+	}
+	for _, caps := range [][]string{{domain.HostingRuntimeLogsCapability}, {domain.HostingRuntimeLogsCapability, "shell"}, {"image_deploy"}} {
+		identity := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_logs", "capabilities": caps})
+		}))
+		client = New(identity.URL, "token")
+		client.HTTP = identity.Client()
+		_, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{RuntimeLogs: true})
+		if (err == nil) != (len(caps) == 1 && caps[0] == domain.HostingRuntimeLogsCapability) {
+			t.Fatal("persisted capability parity failed")
+		}
+		if caps[0] == domain.HostingRuntimeLogsCapability {
+			if _, err = client.RuntimeExecutionIdentity(t.Context(), false, false, false); err == nil {
+				t.Fatal("disabled logs accepted persisted capability")
+			}
+		}
+		identity.Close()
 	}
 }

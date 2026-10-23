@@ -27,7 +27,7 @@ func validateRuntimeEnvironmentConfig(c Config) error {
 	return runnerclient.ValidateRuntimeEnvironmentServer(c.Server, runnerclient.RuntimeEnvironmentTransport{TrustedLoopbackHTTP: c.RuntimeEnvironment.TrustedLoopbackHTTP})
 }
 func runtimeEnvironmentIdentity(ctx context.Context, c Config) (string, error) {
-	return runnerclient.New(c.Server, c.Token).RuntimeExecutionIdentityWithOptions(ctx, runnerclient.RuntimeExecutionOptions{Proxy: c.Proxy.Enabled(), Build: c.Build != nil, LocalBuild: c.LocalBuildDeploy, PrivateGit: c.Build != nil && c.Build.PrivateGit != nil, RuntimeEnvironment: c.RuntimeEnvironment != nil, Observation: c.HostingObservation != nil})
+	return runnerclient.New(c.Server, c.Token).RuntimeExecutionIdentityWithOptions(ctx, runnerclient.RuntimeExecutionOptions{Proxy: c.Proxy.Enabled(), Build: c.Build != nil, LocalBuild: c.LocalBuildDeploy, PrivateGit: c.Build != nil && c.Build.PrivateGit != nil, RuntimeEnvironment: c.RuntimeEnvironment != nil, Observation: c.HostingObservation != nil, RuntimeLogs: c.HostingRuntimeLogs != nil})
 }
 func markHostingRuntimeEntry(entry *runner.JournalHosting, ref domain.HostingRuntimeConfigurationRef) {
 	entry.RuntimeConfiguration = ref
