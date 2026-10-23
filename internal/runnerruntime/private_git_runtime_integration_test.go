@@ -54,6 +54,23 @@ func (h controllerFixtureHosting) UpdateResource(ctx context.Context, resource d
 	return h.HostingRepository.UpdateResource(ctx, resource, expected, opts...)
 }
 
+// Preserve the actual repository's runtime-configuration interface through the
+// fixture source-policy adapter. No document or authorization result is invented.
+func (h controllerFixtureHosting) GetHostingRuntimeConfiguration(ctx context.Context, actor, resource string) (domain.HostingRuntimeConfiguration, error) {
+	repository, ok := h.HostingRepository.(store.HostingRuntimeConfigurationRepository)
+	if !ok {
+		return domain.HostingRuntimeConfiguration{}, store.ErrHostingRuntimeConfigurationUnavailable
+	}
+	return repository.GetHostingRuntimeConfiguration(ctx, actor, resource)
+}
+func (h controllerFixtureHosting) PutHostingRuntimeConfiguration(ctx context.Context, actor, resource string, input domain.HostingRuntimeConfigurationInput, audit domain.AuditEvent) (domain.HostingRuntimeConfiguration, error) {
+	repository, ok := h.HostingRepository.(store.HostingRuntimeConfigurationRepository)
+	if !ok {
+		return domain.HostingRuntimeConfiguration{}, store.ErrHostingRuntimeConfigurationUnavailable
+	}
+	return repository.PutHostingRuntimeConfiguration(ctx, actor, resource, input, audit)
+}
+
 // The embedded interface keeps this fake bounded to the two methods exercised.
 type privateFixtureResourceRepository struct {
 	store.HostingRepository
@@ -94,6 +111,12 @@ func TestPrivateFixtureSourceRevisionPolicy(t *testing.T) {
 	if repository.options != 2 || repository.expected != 1 || repository.updated.Source.Git.Generation != 1 || repository.updated.Source.Git.RequestedRef != "refs/heads/main" {
 		t.Fatal("source revision did not add exactly its fixture policy option while preserving CAS")
 	}
+	if _, err := adapter.GetHostingRuntimeConfiguration(t.Context(), "actor", original.ID); err != store.ErrHostingRuntimeConfigurationUnavailable {
+		t.Fatal("missing runtime repository fabricated a GET")
+	}
+	if _, err := adapter.PutHostingRuntimeConfiguration(t.Context(), "actor", original.ID, domain.HostingRuntimeConfigurationInput{}, domain.AuditEvent{}); err != store.ErrHostingRuntimeConfigurationUnavailable {
+		t.Fatal("missing runtime repository fabricated a PUT")
+	}
 }
 
 func TestPrivateFixtureResourcePolicyPostgres(t *testing.T) {
@@ -129,7 +152,22 @@ func TestPrivateFixtureResourcePolicyPostgres(t *testing.T) {
 	if resource.Generation != 3 || named.Generation != 2 || domain.HostingDocumentHash(named) != domain.HostingDocumentHash(edited) {
 		t.Fatal("real name-only edit rewrote source")
 	}
-	t.Log("real API/service/PostgreSQL source edit preserves exact trusted fixture policy; name-only edit leaves complete source unchanged")
+	var runtime struct {
+		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
+	}
+	runtimePath := "/api/v1/resources/" + resource.ID + "/runtime-configuration"
+	f.request(t, "GET", runtimePath, "", nil, 401, nil)
+	f.request(t, "GET", runtimePath, f.admin, nil, 200, &runtime)
+	if runtime.Configuration.RuntimeGeneration != 0 || runtime.Configuration.ResourceID != resource.ID || runtime.Configuration.ProjectID != resource.ProjectID || runtime.Configuration.ResourceGeneration != resource.Generation {
+		t.Fatal("real generation-zero runtime metadata mismatch")
+	}
+	var viewer struct {
+		Token string `json:"token"`
+	}
+	f.request(t, "POST", "/api/v1/sessions", "", map[string]string{"email": "viewer@example.local", "password": "viewer"}, 201, &viewer)
+	f.request(t, "GET", runtimePath, viewer.Token, nil, 200, &runtime)
+	f.request(t, "PUT", runtimePath, viewer.Token, domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: resource.Generation, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("a", 32), Entries: []domain.HostingRuntimeEntry{}}, 403, nil)
+	t.Log("real API/service/PostgreSQL source edit preserves exact trusted fixture policy; name-only edit leaves complete source unchanged; generation-zero runtime GET, viewer read/write denial and anonymous denial passed")
 }
 
 // Each private case owns a separate database inside the disposable fixture's
