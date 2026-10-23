@@ -167,6 +167,7 @@ func (c *storageCoordinatorController) serve(w http.ResponseWriter, r *http.Requ
 			op := c.op
 			lease := c.lease
 			lease.ID, lease.RunID, lease.Fence = "lease_observe", "run_observe", "fence_observe"
+			lease.CreatedAt, lease.ExpiresAt, lease.Status = time.Now().UTC(), time.Now().UTC().Add(time.Minute), domain.LeaseActive
 			op.TaskMode, op.ReconciliationRunID, op.ObservationLease = "observe", lease.RunID, &lease
 			write(op)
 			return
@@ -624,5 +625,126 @@ func TestStorageCoordinatorCancellationAfterVolumeInspectionCannotStartWriter(t 
 	err := executeHostingStoragePrepared(s, j, func(context.Context) error { return nil }, runnerclient.New(server.URL, "token"), engine, c.a, c.lease, c.op)
 	if err == nil || c.materializedCalls != 0 || c.applyCalls != 0 || !c.hasPhase("storage_create_intent") {
 		t.Fatalf("cancellation escaped volume phase: %v", err)
+	}
+}
+
+func TestStorageRecoveryRejectedCanceledResultStillReachesOwnerObservation(t *testing.T) {
+	for _, mode := range []string{"stale_conflict", "server_error", "unauthorized", "forbidden", "not_found", "bad_request", "transport", "malformed_success", "changed_status", "conflict_without_owner", "unacknowledged_settled_status"} {
+		t.Run(mode, func(t *testing.T) {
+			f := mountedTestFixture(t, "")
+			j, _ := openStorageCoordinatorJournal(t)
+			c := newStorageCoordinatorController(t, j, f)
+			intent := runner.JournalHosting{ID: "storage_apply", Attempt: journalAttemptIdentity(c.a.RunID, c.lease, nil), OperationID: c.a.OperationID, Phase: "apply_intent", Plan: c.op.Plan, StorageRef: c.op.Snapshot.Storage, CreatedAt: time.Now().UTC()}
+			if _, err := j.AppendHosting(intent); err != nil {
+				t.Fatal(err)
+			}
+			c.op.State, c.op.MutationHold, c.op.ReconcileRequested = "applying", true, true
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/runners/hosting/complete" {
+					c.mu.Lock()
+					c.completeCalls++
+					c.requests = append(c.requests, r.URL.Path)
+					c.mu.Unlock()
+					switch mode {
+					case "server_error":
+						w.WriteHeader(http.StatusServiceUnavailable)
+					case "unauthorized":
+						w.WriteHeader(http.StatusUnauthorized)
+					case "forbidden":
+						w.WriteHeader(http.StatusForbidden)
+					case "not_found":
+						w.WriteHeader(http.StatusNotFound)
+					case "bad_request":
+						w.WriteHeader(http.StatusBadRequest)
+					case "transport":
+						conn, _, err := w.(http.Hijacker).Hijack()
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						_ = conn.Close()
+					case "malformed_success":
+						_, _ = w.Write([]byte(`{"invalid":`))
+					default:
+						w.WriteHeader(http.StatusConflict)
+					}
+					return
+				}
+				c.serve(w, r)
+			}))
+			defer server.Close()
+			client := runnerclient.New(server.URL, "token")
+			s := newAttemptSupervisorFrom(t.Context(), c.lease)
+			s.cancel()
+			result := domain.HostingResult{Outcome: "failed", Uncertain: true, PlanHash: f.plan.Hash, ImageID: f.plan.Release.ImageID, DaemonID: f.plan.Release.DaemonID}
+			if mode == "unacknowledged_settled_status" {
+				result.Outcome, result.Uncertain, result.Ready, result.ContainerID = "succeeded", false, true, f.candidate
+			}
+			_, err := journalHostingResultWithRuntimeEnvironment(s, j, client, c.a, c.lease, result, func(context.Context) error { t.Error("canceled helper drained events"); return nil }, false, domain.HostingRuntimeConfigurationRef{}, c.op.Snapshot.Storage)
+			s.Close()
+			if !errors.Is(err, errLeaseAuthorityLost) || !c.hasPhase("result") || c.completeCalls != 0 {
+				t.Fatalf("canceled live helper did not persist result without publication: %v", err)
+			}
+			before := j.Snapshot().Hosting
+			c.lease.ExpiresAt = time.Now().Add(-time.Second)
+			if mode == "changed_status" {
+				c.op.ID = "different_operation"
+			}
+			if mode == "conflict_without_owner" {
+				c.op.ReconcileRequested = false
+			}
+			if mode == "unacknowledged_settled_status" {
+				c.op.State, c.op.MutationHold, c.op.Result = "succeeded", false, &result
+				c.op.CompleteReceipt = &domain.HostingReceipt{ID: attemptMutationKey("hosting_result", c.a.LeaseID, c.a.Attempt, "result"), BodyHash: domain.HostingDocumentHash(result), CreatedAt: time.Now().UTC()}
+			}
+			observations := 0
+			engine := &storageCoordinatorEngine{observe: func(context.Context, domain.HostingOperation) (domain.HostingObservation, error) {
+				observations++
+				return domain.HostingObservation{NoOwnedContainers: true, DaemonID: f.request.DaemonID}, nil
+			}, apply: func(context.Context, string, domain.HostingApplyPlan, hostingOwnedVolumeRequest, hostingOwnedVolumeEvidence, ...func() error) domain.HostingResult {
+				t.Error("rejected stale result started writer")
+				return domain.HostingResult{Outcome: "failed"}
+			}}
+			err = reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", t.Context(), func(string) (hostingStorageEngine, error) { return engine, nil })
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			wantObservation := mode == "stale_conflict"
+			if err == nil || (observations == 1) != wantObservation || (c.observeCalls == 1) != wantObservation || c.applyCalls != 0 || c.createCalls != 0 || !reflect.DeepEqual(before, j.Snapshot().Hosting) {
+				t.Fatalf("rejected result recovery mode=%s err=%v observations=%d requests=%v", mode, err, observations, c.requests)
+			}
+			if !wantObservation && mode != "changed_status" && mode != "conflict_without_owner" && mode != "unacknowledged_settled_status" && len(c.requests) != 1 {
+				t.Fatalf("unrelated failure bypassed replay: %v", c.requests)
+			}
+		})
+	}
+}
+
+func TestStorageRecoveryPreparedOriginCanObserveAfterOldAuthorityExpires(t *testing.T) {
+	for _, mode := range []string{"expired", "fenced"} {
+		t.Run(mode, func(t *testing.T) {
+			f := mountedTestFixture(t, "")
+			j, _ := openStorageCoordinatorJournal(t)
+			c := newStorageCoordinatorController(t, j, f)
+			c.op.MutationHold, c.op.ReconcileRequested = true, true
+			entry := runner.JournalHosting{ID: "storage_origin", Attempt: journalAttemptIdentity(c.a.RunID, c.lease, nil), OperationID: c.a.OperationID, Phase: "storage_create_intent", Plan: c.op.Plan, StorageRef: c.op.Snapshot.Storage, StorageCreate: &domain.HostingStorageCreateRequest{HostingAuthority: c.a, PlanHash: c.op.Plan.Hash, StorageRef: c.op.Snapshot.Storage, CreationNonce: c.op.Plan.Storage.CreationNonce}, CreatedAt: time.Now().UTC()}
+			if _, err := j.AppendHosting(entry); err != nil {
+				t.Fatal(err)
+			}
+			c.lease.ExpiresAt = time.Now().Add(-time.Second)
+			if mode == "fenced" {
+				c.revoked = true
+			}
+			server := httptest.NewServer(http.HandlerFunc(c.serve))
+			defer server.Close()
+			observations := 0
+			engine := &storageCoordinatorEngine{observe: func(context.Context, domain.HostingOperation) (domain.HostingObservation, error) {
+				observations++
+				return domain.HostingObservation{NoOwnedContainers: true, DaemonID: f.request.DaemonID}, nil
+			}}
+			err := reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", t.Context(), func(string) (hostingStorageEngine, error) { return engine, nil })
+			if err == nil || observations != 1 || c.observeCalls != 1 || c.applyCalls != 0 || c.createCalls != 0 || len(j.Snapshot().Hosting) != 1 {
+				t.Fatalf("prepared origin owner observation blocked by stale deployment mode=%s err=%v requests=%v", mode, err, c.requests)
+			}
+		})
 	}
 }

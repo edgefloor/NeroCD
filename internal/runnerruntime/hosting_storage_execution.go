@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"nerocd/internal/domain"
@@ -227,6 +228,7 @@ func reconcileHostingStorageJournalWithEngine(server, token string, journal *run
 
 func reconcileStorageAttempt(parent context.Context, server, token string, client runnerclient.Client, journal *runner.AttemptJournal, endpoint string, first runner.JournalHosting, open func(string) (hostingStorageEngine, error)) error {
 	a := storageEntryAuthority(first)
+	var rejectedResult error
 	for _, entry := range journal.Snapshot().Hosting {
 		if storageEntryAuthority(entry) != a || entry.Result == nil && entry.Prepared == nil {
 			continue
@@ -241,7 +243,15 @@ func reconcileStorageAttempt(parent context.Context, server, token string, clien
 			op, err := client.HostingComplete(ctx, *entry.Result)
 			cancel()
 			if err != nil {
-				return err
+				// A stale completion can be rejected after its local result was
+				// made durable. Only an explicit conflict permits an exact status
+				// read toward owner observation; transport, decoding, and other
+				// HTTP failures remain failures of this replay.
+				if !runnerHTTPStatus(err, http.StatusConflict) {
+					return err
+				}
+				rejectedResult = err
+				continue
 			}
 			if !storageOperationScopeMatches(op, a, first.StorageRef) || op.CompleteReceipt == nil || op.CompleteReceipt.ID != entry.Result.ReceiptID || op.CompleteReceipt.BodyHash != domain.HostingDocumentHash(entry.Result.Result) {
 				return errors.New("storage completion replay changed receipt")
@@ -265,6 +275,9 @@ func reconcileStorageAttempt(parent context.Context, server, token string, clien
 	}
 	if !storageOperationScopeMatches(op, a, first.StorageRef) {
 		return errors.New("storage recovery target changed")
+	}
+	if rejectedResult != nil && (!op.MutationHold || !op.ReconcileRequested) {
+		return fmt.Errorf("storage completion was not acknowledged; exact result retained: %w", rejectedResult)
 	}
 	if storageOperationSettled(op, a, first.StorageRef) && op.Plan == nil {
 		for _, entry := range journal.Snapshot().Hosting {
@@ -301,6 +314,24 @@ func reconcileStorageAttempt(parent context.Context, server, token string, clien
 		// never received mutation admission. Durable global volume history stays.
 		return retireStorageAttempt(parent, journal, a)
 	}
+	// Owner-requested recovery has separate fresh authority. Reach it before
+	// considering continuation of a prepared deployment whose lease may have
+	// expired, and never use a rejected result as an acknowledgment.
+	if op.MutationHold && op.ReconcileRequested {
+		if err := observeStorageRecovery(parent, client, server, token, endpoint, a, op, open); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		settled, err := client.HostingStatus(ctx, domain.HostingStatusRequest{HostingAuthority: a})
+		cancel()
+		if err != nil {
+			return err
+		}
+		if rejectedResult == nil && storageOperationSettled(settled, a, first.StorageRef) {
+			return retireStorageAttempt(parent, journal, a)
+		}
+		return errors.New("storage owner observation did not establish trusted settlement; exact journal evidence retained")
+	}
 	if op.State == "prepared" && op.Result == nil {
 		lease, fenced, err := probeReplayAuthority(server, token, first.Attempt, parent)
 		if err != nil {
@@ -329,20 +360,6 @@ func reconcileStorageAttempt(parent context.Context, server, token string, clien
 			return err
 		}
 		return executeHostingStoragePrepared(supervisor, journal, reporter.WaitEmpty, client, engine, a, lease, op)
-	}
-	if op.MutationHold && op.ReconcileRequested {
-		if err := observeStorageRecovery(parent, client, server, token, endpoint, a, op, open); err != nil {
-			return err
-		}
-		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
-		settled, err := client.HostingStatus(ctx, domain.HostingStatusRequest{HostingAuthority: a})
-		cancel()
-		if err != nil {
-			return err
-		}
-		if storageOperationSettled(settled, a, first.StorageRef) {
-			return retireStorageAttempt(parent, journal, a)
-		}
 	}
 	return errors.New("storage creation or possible writer remains unresolved; owner-requested read-only recovery is required before new claims")
 }
