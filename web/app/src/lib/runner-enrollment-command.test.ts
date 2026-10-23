@@ -6,7 +6,7 @@ test("configured image hosting generates exactly matching protected flags and fi
   const { command, issues } = runnerEnrollmentCommand("https://control.example.test/", configuredImageHostingCapabilities);
   expect(issues).toEqual([]);
   expect(command).toContain(`--capabilities '${configuredImageHostingCapabilities.join(",")}'`);
-  expect(command).toContain("--hosting-runtime-env --hosting-observation --execute");
+  expect(command).toContain("--hosting-runtime-env --hosting-observation --hosting-runtime-logs --execute");
   expect(command).toContain("--credential-file /secure/nerocd-runner.credential");
   expect(command).not.toContain("--token");
 });
@@ -16,13 +16,14 @@ test.each([imageHostingCapabilities, ["compose-deploy"], ["compose_deploy"], ["s
   expect(command).toContain(`--capabilities '${capabilities.join(",")}'`);
   expect(command).not.toContain("--hosting-");
 });
-test.each([["hosting_observation_v1"], [...imageHostingCapabilities, "hosting_runtime_env_v1"]].map((capabilities) => ({ capabilities })))("independent protected grants enable only matching flags: %j", ({ capabilities }) => {
+test.each([["hosting_runtime_logs_v1"], ["hosting_observation_v1"], [...imageHostingCapabilities, "hosting_runtime_env_v1"]].map((capabilities) => ({ capabilities })))("independent protected grants enable only matching flags: %j", ({ capabilities }) => {
   const { command } = runnerEnrollmentCommand("https://control.example.test", capabilities);
   expect(command?.includes("--hosting-runtime-env")).toBe(capabilities.includes("hosting_runtime_env_v1"));
   expect(command?.includes("--hosting-observation")).toBe(capabilities.includes("hosting_observation_v1"));
+  expect(command?.includes("--hosting-runtime-logs")).toBe(capabilities.includes("hosting_runtime_logs_v1"));
 });
 test.each([
-  ["hosting_runtime_env_v1"], ["image_deploy", "hosting_runtime_env_v1"], [...configuredImageHostingCapabilities, "shell"], ["shell", "hosting_observation_v1"], ["custom"], ["hosting_git_https_basic_v1"],
+  ["hosting_runtime_env_v1"], ["image_deploy", "hosting_runtime_env_v1"], [...configuredImageHostingCapabilities, "shell"], ["shell", "hosting_observation_v1"], ["shell", "hosting_runtime_logs_v1"], ["hosting_runtime_logs_v1", "unknown"], ["custom"], ["hosting_git_https_basic_v1"],
 ].map((capabilities) => ({ capabilities })))("invalid or custom grants withhold a complete command: %j", ({ capabilities }) => {
   const result = runnerEnrollmentCommand("https://control.example.test", capabilities);
   expect(result.command).toBeUndefined(); expect(result.issues.length).toBeGreaterThan(0);
@@ -46,4 +47,9 @@ test("shell quoting preserves literal apostrophes, substitutions, and line break
 });
 test("missing returned metadata cannot certify a command", () => {
   expect(runnerEnrollmentCommand("https://control.example.test", undefined).command).toBeUndefined();
+});
+
+test.each(["http://control.example.test", "http://127.0.0.1:18182"])("runtime logs alone require HTTPS at %s", (origin) => {
+  const result = runnerEnrollmentCommand(origin, ["hosting_runtime_logs_v1"]);
+  expect(result.command).toBeUndefined(); expect(result.issues.join(" ")).toContain("HTTPS");
 });

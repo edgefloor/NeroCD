@@ -33,7 +33,7 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 	t.Setenv("NEROCD_RUNNER_CREDENTIAL_FILE", "")
 	t.Setenv("NEROCD_RUNNER_JOURNAL_DIR", "")
 	t.Setenv("NEROCD_RUNNER_SECRET_ROOT", "")
-	for _, mode := range []string{"matching", "missing runtime flag", "missing observation flag", "missing enrollment file", "persisted mismatch"} {
+	for _, mode := range []string{"matching", "missing runtime flag", "missing observation flag", "missing logs flag", "logs HTTP", "logs shell", "logs unknown", "missing enrollment file", "persisted mismatch"} {
 		t.Run(mode, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.Chmod(directory, 0700); err != nil {
@@ -47,7 +47,13 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 			if err := os.WriteFile(enrollment, []byte("nce_"+strings.Repeat("a", 64)), 0600); err != nil {
 				t.Fatal(err)
 			}
-			capabilities := []string{"compose-deploy", "image_deploy", "image_release_ports_v1", "hosting_runtime_env_v1", "hosting_observation_v1"}
+			capabilities := []string{"compose-deploy", "image_deploy", "image_release_ports_v1", "hosting_runtime_env_v1", "hosting_observation_v1", "hosting_runtime_logs_v1"}
+			if strings.HasPrefix(mode, "logs ") {
+				capabilities = []string{"hosting_runtime_logs_v1"}
+				if mode == "logs unknown" {
+					capabilities = append(capabilities, "unknown")
+				}
+			}
 			persisted := append([]string(nil), capabilities...)
 			if mode == "persisted mismatch" {
 				persisted = persisted[:len(persisted)-1]
@@ -77,7 +83,7 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			// Nonparallel test. Restore only after synchronous runRunner has returned,
-			// which joins its observation collector before unwinding.
+			// which joins its observation and runtime log collectors before unwinding.
 			previous := http.DefaultTransport
 			transport := previous.(*http.Transport).Clone()
 			roots := x509.NewCertPool()
@@ -88,8 +94,15 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 			t.Cleanup(func() { transport.CloseIdleConnections(); http.DefaultTransport = previous })
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			script := `import {configuredImageHostingCapabilities as capabilities, runnerEnrollmentCommand} from "./web/app/src/lib/runner-enrollment-command.ts"; process.stdout.write(JSON.stringify({capabilities,...runnerEnrollmentCommand(process.argv[1],capabilities)}));`
+			script := `import {configuredImageHostingCapabilities as capabilities, runnerEnrollmentCommand} from "./web/app/src/lib/runner-enrollment-command.ts"; const selected = process.argv[2] ? JSON.parse(process.argv[2]) : capabilities; process.stdout.write(JSON.stringify({capabilities:selected,...runnerEnrollmentCommand(process.argv[1],selected)}));`
 			generate := exec.CommandContext(ctx, bun, "-e", script, server.URL)
+			if strings.HasPrefix(mode, "logs ") {
+				selected, err := json.Marshal(capabilities)
+				if err != nil {
+					t.Fatal(err)
+				}
+				generate.Args = append(generate.Args, string(selected))
+			}
 			generate.Dir = root
 			output, err := generate.Output()
 			if err != nil {
@@ -102,6 +115,12 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 			}
 			if err := json.Unmarshal(output, &generated); err != nil {
 				t.Fatal(err)
+			}
+			if mode == "logs unknown" {
+				if generated.Command != "" || !strings.Contains(strings.Join(generated.Issues, " "), "Custom capabilities") {
+					t.Fatalf("unknown grant produced a command: %s", output)
+				}
+				return
 			}
 			if generated.Command == "" || len(generated.Issues) != 0 || strings.Join(generated.Capabilities, ",") != strings.Join(capabilities, ",") {
 				t.Fatalf("unexpected frontend contract: %s", output)
@@ -130,6 +149,9 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 			if mode == "missing runtime flag" {
 				remove = "--hosting-runtime-env"
 			}
+			if mode == "missing logs flag" {
+				remove = "--hosting-runtime-logs"
+			}
 			if mode == "missing observation flag" {
 				remove = "--hosting-observation"
 			}
@@ -146,6 +168,16 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 				for i, arg := range args {
 					if arg == "--enrollment-file" {
 						args[i+1] = filepath.Join(directory, "not-created")
+					}
+				}
+			}
+			if mode == "logs HTTP" || mode == "logs shell" {
+				for i, arg := range args {
+					if mode == "logs HTTP" && arg == "--server" {
+						args[i+1] = strings.Replace(server.URL, "https://", "http://", 1)
+					}
+					if mode == "logs shell" && arg == "--capabilities" {
+						args[i+1] += ",shell"
 					}
 				}
 			}
@@ -172,8 +204,18 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 					t.Fatalf("consumed enrollment remains: %v", statErr)
 				}
 			} else if mode == "persisted mismatch" {
-				if !strings.Contains(err.Error(), "observation capability") || strings.Contains(reached, "heartbeat") {
+				if !strings.Contains(err.Error(), "runtime log capability") || strings.Contains(reached, "heartbeat") {
 					t.Fatalf("mismatch did not fail before runtime: %v paths=%s", err, reached)
+				}
+			} else if mode == "logs HTTP" || mode == "logs shell" {
+				if len(observed) != 0 {
+					t.Fatalf("unsafe logs configuration reached API: %v paths=%s", err, reached)
+				}
+				if mode == "logs HTTP" && !strings.Contains(err.Error(), "invalid runtime log controller transport") {
+					t.Fatalf("unexpected HTTP rejection: %v", err)
+				}
+				if mode == "logs shell" && !strings.Contains(err.Error(), "cannot share explicit shell") {
+					t.Fatalf("unexpected shell rejection: %v", err)
 				}
 			} else if mode == "missing enrollment file" {
 				if len(observed) != 0 || !strings.Contains(err.Error(), "enrollment") {
