@@ -7,19 +7,34 @@ fixture_dir=$(mktemp -d /tmp/nerocd-proxy-recovery.XXXXXX)
 owner=$(basename "$fixture_dir" | tr '[:upper:]' '[:lower:]')
 label=io.nerocd.proxy-recovery.owner
 container_id=''
+owned_volumes=''
 cleanup_container(){
  if [[ -n "$container_id" ]];then
-  [[ $(docker inspect --format "{{.Id}} {{index .Config.Labels \"$label\"}}" "$container_id") == "$container_id $owner" ]]
-  docker inspect --format 'owned final mounts={{json .Mounts}} ports={{json .NetworkSettings.Ports}}' "$container_id"
-  volumes=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}' "$container_id")
-  docker rm --force --volumes "$container_id" >/dev/null
-  if docker inspect "$container_id" >/dev/null 2>&1;then return 1;fi
-  for volume in $volumes;do
-   if docker volume inspect "$volume" >/dev/null 2>&1;then return 1;fi
+  local identity volumes volume volume_identity remaining
+  if ! identity=$(docker inspect --format "{{.Id}} {{index .Config.Labels \"$label\"}}" "$container_id") || [[ "$identity" != "$container_id $owner" ]];then
+   printf 'owned fixture identity unavailable or mismatched; cleanup refused\n' >&2
+   return 1
+  fi
+  if ! volumes=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}' "$container_id") || [[ "$volumes" != "$owned_volumes" ]];then
+   printf 'owned volume inventory unavailable or mismatched; cleanup refused\n' >&2
+   return 1
+  fi
+  for volume in $owned_volumes;do
+   if ! volume_identity=$(docker volume inspect --format '{{.Name}}' "$volume") || [[ "$volume_identity" != "$volume" ]];then
+    printf 'owned volume identity unavailable or mismatched; cleanup refused\n' >&2
+    return 1
+   fi
+  done
+  if ! docker inspect --format 'owned final mounts={{json .Mounts}} ports={{json .NetworkSettings.Ports}}' "$container_id";then return 1;fi
+  if ! docker rm --force --volumes "$container_id" >/dev/null;then return 1;fi
+  if ! remaining=$(docker container ls --all --quiet --no-trunc --filter "id=$container_id") || [[ -n "$remaining" ]];then return 1;fi
+  for volume in $owned_volumes;do
+   if ! remaining=$(docker volume ls --quiet --filter "name=$volume") || [[ -n "$remaining" ]];then return 1;fi
    printf 'owned anonymous volume absent %s\n' "$volume"
   done
   printf 'owned DinD removed %s owner=%s\n' "$container_id" "$owner"
   container_id=''
+  owned_volumes=''
  fi
 }
 cleanup(){
@@ -39,6 +54,7 @@ for version in A B;do GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go build -trimpa
 shasum -a 256 "$fixture_dir/api.test" "$fixture_dir/nerocd-proxy-fixture" "$fixture_dir/backend-A" "$fixture_dir/backend-B"
 for stage in controller browser;do
  container_id=$(docker run --detach --privileged --name "$owner-$stage" --label "$label=$owner" --publish 127.0.0.1::18082 --env DOCKER_TLS_CERTDIR= --mount "type=bind,src=$repo_root,dst=/workspace,readonly" --mount "type=bind,src=$fixture_dir,dst=/fixture,readonly" docker.io/library/docker@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489 --host=unix:///var/run/docker.sock)
+ owned_volumes=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}' "$container_id")
  printf 'owned %s id=%s owner=%s\n' "$stage" "$container_id" "$owner"
  ready=false
  for _ in $(seq 1 60);do if docker exec "$container_id" docker info >/dev/null 2>&1;then ready=true;break;fi;sleep 1;done

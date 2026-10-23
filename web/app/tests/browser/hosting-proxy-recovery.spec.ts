@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 // Real registered API, PostgreSQL/River and compiled-agent rollback/conflict.
@@ -73,3 +74,42 @@ test("administrator reviews exact server plan and recovers genuine metadata conf
   } finally { await ownerContext.close(); await viewerContext.close(); }
   expect((await page.request.post(meta.complete_path, { headers: { ...headers(meta), Origin: "http://127.0.0.1:1" } })).status()).toBe(403); expect((await page.request.post(meta.complete_path, { headers: headers(meta) })).status()).toBe(204);
 });
+
+for (const failure of ["container-inspect", "container-id", "container-owner", "volume-inventory", "volume-set", "volume-inspect", "volume-identity", "none"]) {
+  test(`owned fixture cleanup verifies identity under conditional error handling: ${failure}`, () => {
+    const script = readFileSync("scripts/hosting-proxy-recovery-fixture.sh", "utf8");
+    const cleanup = script.slice(script.indexOf("cleanup_container(){"), script.indexOf("\ncleanup(){"));
+    const result = spawnSync("bash", ["-c", `set -euo pipefail
+container_id=owned
+owned_volumes=owned-volume
+owner=expected
+label=io.nerocd.proxy-recovery.owner
+failure="$1"
+mutated=0
+docker(){
+ if [[ "$1:$2" == volume:inspect ]];then
+  if [[ "$failure" == volume-identity ]];then printf foreign-volume;else printf owned-volume;fi
+  if [[ "$failure" == volume-inspect ]];then return 1;fi
+ elif [[ "$1" == inspect && "$3" == *Mounts* && "$3" == *println* ]];then
+  if [[ "$failure" == volume-set ]];then printf foreign-volume;else printf owned-volume;fi
+  if [[ "$failure" == volume-inventory ]];then return 1;fi
+ elif [[ "$1" == inspect && "$3" == *Labels* ]];then
+  if [[ "$failure" == container-owner ]];then printf 'owned foreign';elif [[ "$failure" == container-id ]];then printf 'foreign expected';else printf 'owned expected';fi
+  if [[ "$failure" == container-inspect ]];then return 1;fi
+ elif [[ "$1" == rm ]];then mutated=1
+ elif [[ "$1:$2" == container:ls || "$1:$2" == volume:ls || "$1" == inspect ]];then :
+ else printf 'unexpected Docker call' >&2;return 1
+ fi
+ return 0
+}
+${cleanup}
+cleanup_result=0
+cleanup_container || cleanup_result=$?
+if [[ "$cleanup_result" == 0 ]];then printf 'cleanup-success mutation=%s' "$mutated";else printf 'cleanup-refused mutation=%s' "$mutated";fi
+`, "cleanup-test", failure], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    if (failure === "none") {
+      expect(result.stdout).toContain("owned anonymous volume absent owned-volume"); expect(result.stdout).toContain("owned DinD removed owned owner=expected"); expect(result.stdout).toContain("cleanup-success mutation=1"); expect(result.stderr).toBe("");
+    } else { expect(result.stdout).toBe("cleanup-refused mutation=0"); expect(result.stderr).toContain("cleanup refused"); }
+  });
+}
