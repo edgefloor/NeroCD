@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"io"
 	"log/slog"
@@ -93,6 +94,13 @@ func TestInstallerControlFixture(t *testing.T) {
 	if err := os.WriteFile("/fixture/enrollment", []byte(enrollment.Token), 0600); err != nil {
 		t.Fatal(err)
 	}
+	lossEnrollment, err := service.CreateRunnerEnrollment(admin, app.RunnerEnrollmentInput{RunnerID: "runner_ssh_loss_fixture", RunnerName: "owned SSH response loss fixture", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, "image_release_ports_v1", "hosting_readiness_v1"}, TTLSeconds: 300})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("/fixture/loss-enrollment", []byte(lossEnrollment.Token), 0600); err != nil {
+		t.Fatal(err)
+	}
 	certificate := fixtureTLS(t)
 	server := api.NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static())
 	var consumes atomic.Int32
@@ -102,8 +110,16 @@ func TestInstallerControlFixture(t *testing.T) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/runners/identity" {
 			response := httptest.NewRecorder()
 			server.ServeHTTP(response, r)
-			if response.Code == http.StatusOK && identities.Add(1) >= 2 {
+			var identity struct {
+				RunnerID string `json:"runner_id"`
+			}
+			if response.Code == http.StatusOK && json.Unmarshal(response.Body.Bytes(), &identity) == nil && identity.RunnerID == "runner_ssh_installer_fixture" && identities.Add(1) >= 2 {
 				if err := os.WriteFile("/fixture/restart.identity", []byte("authenticated\n"), 0600); err != nil {
+					t.Error(err)
+				}
+			}
+			if response.Code == http.StatusOK && identity.RunnerID == "runner_ssh_loss_fixture" {
+				if err := os.WriteFile("/fixture/loss.identity", []byte("authenticated\n"), 0600); err != nil {
 					t.Error(err)
 				}
 			}
@@ -119,7 +135,7 @@ func TestInstallerControlFixture(t *testing.T) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/runner-enrollments/consume" {
 			response := httptest.NewRecorder()
 			server.ServeHTTP(response, r)
-			if response.Code == http.StatusOK {
+			if response.Code == http.StatusOK && r.Header.Get("Authorization") == "Bearer "+enrollment.Token {
 				consumes.Add(1)
 				if lost.CompareAndSwap(false, true) {
 					connection, _, err := w.(http.Hijacker).Hijack()
@@ -179,6 +195,10 @@ func TestInstallerControlFixture(t *testing.T) {
 	}
 	if used != 1 || runners != 1 || consumes.Load() < 2 || !lost.Load() || identities.Load() < 2 {
 		t.Fatalf("real enrollment replay missing: used=%d runners=%d successful-consumes=%d lost=%t", used, runners, consumes.Load(), lost.Load())
+	}
+	var lossUsed int
+	if err := database.QueryRow(ctx, "SELECT count(*) FROM runner_enrollments WHERE runner_id='runner_ssh_loss_fixture' AND used_at IS NOT NULL").Scan(&lossUsed); err != nil || lossUsed != 1 {
+		t.Fatalf("response-loss agent did not enroll: count=%d query-error=%t", lossUsed, err != nil)
 	}
 	t.Logf("real authorized consume committed once; successful exact replay responses=%d; first successful response deliberately lost; one enrolled runner", consumes.Load())
 	if err := os.WriteFile("/fixture/control.done", []byte("pass\n"), 0600); err != nil {

@@ -22,6 +22,17 @@ An additional PostgreSQL container on the same internal bridge supports a real r
 `TestInstallerControlFixture` creates a real authorized enrollment and installs an ephemeral fixture CA in the target trust bundle.
 The first successful consume response is deliberately lost after the real database effect; a successful exact replay is required.
 The test checks enrollment-file transition, credential-mode restart, exact owned cleanup, partial-transfer cleanup, and a symlink collision.
+An exact-unit drop-in collision must preserve the foreign configuration and never execute its replacement command.
+Replacing an own runtime root with a symlink must block restart and cleanup without stopping the agent or removing the link or sentinel target.
+Closed unit-property parser tests also reject reported global or type-wide drop-ins and a foreign loaded fragment.
+It also checks that cleanup retains the own unit's stop failure in its receipt while leaving systemd running with no retained failed own unit.
+An additional genuinely enrolled agent tests SSH response loss with a restricted ephemeral client key.
+Its forced command admits only the exact frozen command hash and exact nonsecret restart request hash.
+Unknown commands or requests fail before execution. Stdin, keys, and tokens are not logged or stored by the wrapper.
+The wrapper records only the bounded public protocol response and child exit status, then delays delivery five seconds.
+The caller has a ten-second deadline and cancels after a separate fixed fixture read observes actual completion.
+Inspection and exact retry must recover the same operation and invocation ID. Wrapper process IDs receive explicit absence checks.
+The wrapper's process group is bounded to 132 seconds plus a one-second kill grace; its children are reaped before cleanup.
 The fixture compares unrelated sentinels after installation and cleanup as well as after the read-only probe.
 Source and agent/test binary hashes bind the evidence to the candidate; this remains a bounded adapter fixture, not complete onboarding.
 
@@ -75,6 +86,13 @@ The final base is the official Debian `bookworm-20261020-slim` image at index di
 The Docker binary donor and preloaded sentinel use official Docker `29.4.0-dind` at index digest
 `sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489`.
 The fixture selects the native architecture and validates the saved sentinel's native config digest before running it.
+The same donor supplies Compose `v5.1.1` (`version --short` reports `5.1.1`). The tested arm64 binary SHA256 is
+`4b5c42952b7dd81f508d01a771df2a9e5dbffe9b8c5c7d983e738504ad38f056`.
+It is initially preloaded outside plugin lookup paths to preserve the missing-plugin probe test.
+Fixed fixture setup then copies it into the system plugin path before the installer test.
+The positive profile requires Debian 12, matching native architecture, systemd running, Docker API 1.54,
+Compose exactly `5.1.1`, and at least 1 GiB free on root. Buildx is not required; no arbitrary minimum is inferred.
+The product installer never installs Docker or plugins.
 
 Direct package pins are systemd `252.39-1~deb12u2`, OpenSSH server and client `1:9.2p1-2+deb12u10`, and socat `1.7.4.4-2`.
 APT verifies Debian's signed repository metadata. Dependency versions are recorded in `packages.txt`.

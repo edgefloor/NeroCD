@@ -115,6 +115,9 @@ else
 fi
 regular "$home/manifest.json" 600 || fail ownership_conflict
 [ "$(sha256sum "$home/manifest.json" | cut -d' ' -f1)" = "$manifest_digest" ] || fail ownership_conflict
+for path in "$home/work" "$home/journal" "$home/secrets"; do
+ if [ -e "$path" ] || [ -L "$path" ]; then directory "$path" || fail ownership_conflict; fi
+done
 if [ ! -e "$home/agent" ]; then
  if [ "$action" = inspect ]; then result staged; exit 0; fi
  if [ "$action" = cleanup ]; then

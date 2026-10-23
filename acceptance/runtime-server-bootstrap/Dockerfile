@@ -12,6 +12,7 @@ RUN printf '#!/bin/sh\nexit 101\n' >/usr/sbin/policy-rc.d \
  && usermod --password '*' root \
  && mkdir -p /fixture /root/.ssh /etc/systemd/system/multi-user.target.wants
 COPY --from=engine /usr/local/bin/docker /usr/local/bin/dockerd /usr/local/bin/containerd /usr/local/bin/containerd-shim-runc-v2 /usr/local/bin/ctr /usr/local/bin/runc /usr/local/bin/docker-init /usr/local/bin/
+COPY --from=engine /usr/local/libexec/docker/cli-plugins/docker-compose /fixture/compose-plugin
 RUN printf '%s\n' 'Port 22' 'HostKey /fixture/host' 'AuthorizedKeysFile /root/.ssh/authorized_keys' 'PermitRootLogin prohibit-password' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'UsePAM no' 'DisableForwarding yes' 'PermitUserEnvironment no' 'LogLevel VERBOSE' > /etc/ssh/sshd_config \
  && printf '%s\n' '[Unit]' 'Description=Private fixture Docker engine' '[Service]' 'ExecStart=/usr/local/bin/dockerd --host=unix:///run/docker.sock --storage-driver=vfs --bridge=none --userland-proxy=false --iptables=false --ip6tables=false --ip-forward=false' 'Delegate=yes' 'KillMode=process' '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/fixture-docker.service \
  && printf '%s\n' '[Unit]' 'Description=Fixed SSH qualification marker' '[Service]' 'Type=oneshot' 'RemainAfterExit=yes' 'ExecStart=/bin/sh -c "echo fixture-marker >>/fixture/marker"' > /etc/systemd/system/fixture-marker.service \

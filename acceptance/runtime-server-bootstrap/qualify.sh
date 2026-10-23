@@ -93,7 +93,7 @@ main() {
  go test -c -o "$work/serverbootstrap.test" ./internal/serverbootstrap
  shasum -a 256 "$work/serverbootstrap.test" >"$evidence/probe-binary-sha256.txt"
  docker version --format 'host Docker={{.Server.Version}} API={{.Server.APIVersion}} arch={{.Server.Arch}}'
- for key in host client wrong-client wrong-host; do ssh-keygen -q -t ed25519 -N '' -f "$work/$key"; done
+ for key in host client loss-client wrong-client wrong-host; do ssh-keygen -q -t ed25519 -N '' -f "$work/$key"; done
  docker build --label "$label=$owner" --tag "$owner:fixture" "$root/acceptance/runtime-server-bootstrap"
  image_id=$(docker image inspect --format '{{.Id}}' "$owner:fixture")
  # The donor is the pinned native sentinel, saved before runtime isolation.
@@ -129,8 +129,12 @@ main() {
  docker volume inspect "$pg_volume" >"$evidence/postgres-volume-inspect.json"
  printf 'owned PostgreSQL container=%s volume=%s internal-only trust-auth disposable fixture\n' "$pg_id" "$pg_volume"
  docker start "$pg_id" >/dev/null
- for _ in $(seq 1 40); do if docker exec "$pg_id" pg_isready -U postgres >/dev/null 2>&1; then break; fi; sleep 0.5; done
- docker exec "$pg_id" pg_isready -U postgres >/dev/null
+ for _ in $(seq 1 120); do if docker exec "$pg_id" pg_isready -U postgres >/dev/null 2>&1; then break; fi; sleep 0.5; done
+ if ! docker exec "$pg_id" pg_isready -U postgres; then
+  docker logs "$pg_id" >"$evidence/postgres-boot.log" 2>&1
+  cat "$evidence/postgres-boot.log"
+  return 1
+ fi
  pg_address=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$pg_id")
  [[ "$pg_address" =~ ^[0-9.]+$ ]]
  if ! container_id=$(docker create --name "$owner" --label "$label=$owner" --network "$network_id" --cgroupns=private --cap-add SYS_ADMIN --cap-add NET_ADMIN --security-opt seccomp=unconfined --tmpfs /run --tmpfs /run/lock --mount "type=volume,src=$volume_id,dst=/var/lib/docker" "$owner:fixture"); then
@@ -145,6 +149,9 @@ main() {
  docker volume inspect "$volume_id" >"$evidence/volume-inspect.json"
  docker cp "$work/host" "$container_id:/fixture/host"
  docker cp "$work/client.pub" "$container_id:/root/.ssh/authorized_keys"
+ printf 'command="/fixture/remote-check.sh response-loss",restrict %s\n' "$(cat "$work/loss-client.pub")" >"$work/loss-authorized-key"
+ docker cp "$work/loss-authorized-key" "$container_id:/fixture/loss-authorized-key"
+ docker cp "$root/acceptance/runtime-server-bootstrap/remote-check.sh" "$container_id:/fixture/remote-check.sh"
  docker cp "$work/sentinel.tar" "$container_id:/fixture/sentinel.tar"
  docker cp "$work/target.test" "$container_id:/fixture/target.test"
  docker cp "$root/db/seeds/dev.sql" "$container_id:/fixture/dev.sql"
@@ -163,14 +170,17 @@ main() {
   echo 'BLOCKED: real systemd/sshd/private Docker did not become ready under frozen isolation'
   return 1
  fi
+ docker exec "$container_id" /bin/sh -c 'chown root:root /fixture/remote-check.sh; chmod 0700 /fixture/remote-check.sh; cat /fixture/loss-authorized-key >>/root/.ssh/authorized_keys; rm /fixture/loss-authorized-key'
  docker exec --detach --env NEROCD_BOOTSTRAP_INSTALL_CONTROL=owned-systemd-target --env "NEROCD_BOOTSTRAP_DATABASE_URL=postgresql://postgres@$pg_address/postgres?sslmode=disable" "$container_id" /bin/sh -c 'exec /fixture/target.test -test.v -test.run "^TestInstallerControlFixture$" -test.timeout=160s >/fixture/control.log 2>&1'
  control_ready=false
  for _ in $(seq 1 100); do if docker exec "$container_id" test -f /fixture/control.ready; then control_ready=true; break; fi; sleep 0.2; done
  if [[ "$control_ready" != true ]]; then docker cp "$container_id:/fixture/control.log" "$evidence/control.log"; cat "$evidence/control.log"; return 1; fi
- docker exec "$container_id" /fixture/target.test -test.v -test.run '^TestOwnedFilesystemBoundaries$' -test.timeout=10s >"$evidence/owned-filesystem.log" 2>&1
+ docker exec "$container_id" /fixture/target.test -test.v -test.run '^TestOwned(FilesystemBoundaries|StopEvidence|UnitState)$' -test.timeout=10s >"$evidence/owned-filesystem.log" 2>&1
  cat "$evidence/owned-filesystem.log"
  docker cp "$container_id:/fixture/enrollment" "$work/enrollment"
  chmod 0600 "$work/enrollment"
+ docker cp "$container_id:/fixture/loss-enrollment" "$work/loss-enrollment"
+ chmod 0600 "$work/loss-enrollment"
  local address port fingerprint
  python3 -B "$root/acceptance/runtime-server-bootstrap/relay.py" "$container_id" "$owner" "$work/relay-port" >"$evidence/relay.log" 2>&1 &
  relay_pid=$!
@@ -210,8 +220,15 @@ main() {
  ssh "${ssh_options[@]}" -o "UserKnownHostsFile=$work/known_hosts" -i "$work/client" root@127.0.0.1 "$snapshot_command" >"$evidence/sentinels-after-probe.txt"
  cmp "$evidence/sentinels-before-probe.txt" "$evidence/sentinels-after-probe.txt"
  printf 'actual Go SSH probe preserves file/service/container/marker sentinels\n'
- NEROCD_BOOTSTRAP_INSTALL_FIXTURE=owned-systemd-target NEROCD_BOOTSTRAP_PROBE_PORT="$port" NEROCD_BOOTSTRAP_PROBE_KEY_FILE="$work/client" NEROCD_BOOTSTRAP_PROBE_FINGERPRINT="$fingerprint" NEROCD_BOOTSTRAP_INSTALL_TOKEN_FILE="$work/enrollment" NEROCD_BOOTSTRAP_INSTALL_ARTIFACT="$work/agent" NEROCD_BOOTSTRAP_INSTALL_ARCH="$donor_arch" "$work/serverbootstrap.test" -test.v -test.run '^TestInstallerPreparedHostFixture$' -test.timeout=110s >"$evidence/go-installer.log" 2>&1 || { cat "$evidence/go-installer.log"; docker cp "$container_id:/fixture/control.log" "$evidence/control.log"; cat "$evidence/control.log"; return 1; }
+ # Prepared-host fixture setup only: the product adapter never installs plugins.
+ docker exec "$container_id" /bin/sh -c 'mkdir -p /usr/local/libexec/docker/cli-plugins; install -m 0755 /fixture/compose-plugin /usr/local/libexec/docker/cli-plugins/docker-compose; sha256sum /usr/local/libexec/docker/cli-plugins/docker-compose; /usr/local/libexec/docker/cli-plugins/docker-compose version' >"$evidence/compose-profile.txt"
+ cat "$evidence/compose-profile.txt"
+ NEROCD_BOOTSTRAP_INSTALL_FIXTURE=owned-systemd-target NEROCD_BOOTSTRAP_PROBE_PORT="$port" NEROCD_BOOTSTRAP_PROBE_KEY_FILE="$work/client" NEROCD_BOOTSTRAP_PROBE_FINGERPRINT="$fingerprint" NEROCD_BOOTSTRAP_INSTALL_TOKEN_FILE="$work/enrollment" NEROCD_BOOTSTRAP_INSTALL_LOSS_TOKEN_FILE="$work/loss-enrollment" NEROCD_BOOTSTRAP_INSTALL_LOSS_KEY_FILE="$work/loss-client" NEROCD_BOOTSTRAP_INSTALL_ARTIFACT="$work/agent" NEROCD_BOOTSTRAP_INSTALL_ARCH="$donor_arch" "$work/serverbootstrap.test" -test.v -test.run '^TestInstallerPreparedHostFixture$' -test.timeout=110s >"$evidence/go-installer.log" 2>&1 || { cat "$evidence/go-installer.log"; docker cp "$container_id:/fixture/control.log" "$evidence/control.log"; cat "$evidence/control.log"; return 1; }
  cat "$evidence/go-installer.log"
+ docker cp "$container_id:/fixture/response-loss.public" "$evidence/ssh-loss-public.json"
+ docker cp "$container_id:/fixture/response-loss.exit" "$evidence/ssh-loss-exit.txt"
+ docker exec "$container_id" /bin/sh -c 'for file in /fixture/response-loss.timeout.pid /fixture/response-loss.child.pid; do pid=$(cat "$file"); case "$pid" in ""|*[!0-9]*) exit 1;; esac; for i in $(seq 1 60); do test ! -e "/proc/$pid" && break; sleep 0.1; done; test ! -e "/proc/$pid" || exit 1; printf "fixture response-loss process pid=%s absent\n" "$pid"; done' >"$evidence/ssh-loss-processes.txt"
+ cat "$evidence/ssh-loss-processes.txt"
  docker exec "$container_id" touch /fixture/control.finish
  control_done=false
  for _ in $(seq 1 50); do if docker exec "$container_id" test -f /fixture/control.done; then control_done=true; break; fi; sleep 0.2; done

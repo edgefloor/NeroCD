@@ -144,8 +144,7 @@ func ownedAction(parent context.Context, target Target, key []byte, action, oper
 	session.Stdin = io.MultiReader(strings.NewReader(header), bytes.NewReader(metadata), io.LimitReader(artifact, manifest.Artifact.Size), bytes.NewReader(enrollment))
 	output := &boundedOutput{closeTransport: raw.Close}
 	session.Stdout, session.Stderr = output, output
-	command := "exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /usr/bin/timeout --signal=TERM --kill-after=5s 120s /bin/sh -c '" + strings.ReplaceAll(ownedRecipe, "'", "'\"'\"'") + "'"
-	runErr := session.Run(command)
+	runErr := session.Run(ownedCommand())
 	if output.exceeded {
 		return OwnedInspection{}, Uncertain
 	}
@@ -181,4 +180,8 @@ func ownedAction(parent context.Context, target Target, key []byte, action, oper
 	default:
 		return OwnedInspection{}, Uncertain
 	}
+}
+
+func ownedCommand() string {
+	return "exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /usr/bin/timeout --signal=TERM --kill-after=5s 120s /bin/sh -c '" + strings.ReplaceAll(ownedRecipe, "'", "'\"'\"'") + "'"
 }

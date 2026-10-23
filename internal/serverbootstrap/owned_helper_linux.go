@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,11 +31,14 @@ type helperRequest struct {
 }
 
 type ownedReceipt struct {
-	OperationID string `json:"operation_id"`
-	Action      string `json:"action"`
-	Manifest    string `json:"manifest_sha256"`
-	Complete    bool   `json:"complete"`
-	Before      string `json:"before_invocation"`
+	OperationID    string `json:"operation_id"`
+	Action         string `json:"action"`
+	Manifest       string `json:"manifest_sha256"`
+	Complete       bool   `json:"complete"`
+	Before         string `json:"before_invocation"`
+	StopResult     string `json:"stop_result,omitempty"`
+	StopExecCode   int    `json:"stop_exec_code,omitempty"`
+	StopExecStatus int    `json:"stop_exec_status,omitempty"`
 }
 
 // ServeOwnedHelper is the fixed root-only shipped-binary protocol bridge. It is
@@ -115,7 +119,86 @@ func verifyHome(home string, manifest InstallManifest) error {
 	if err != nil || string(claim) != wantClaim {
 		return OwnershipConflict
 	}
+	if verifyRuntimePaths(home, false) != nil {
+		return OwnershipConflict
+	}
+	if err := requireOwned(home+"/runner.lock", false, 0600); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return OwnershipConflict
+	}
 	return nil
+}
+
+func verifyRuntimePaths(home string, required bool) error {
+	for _, name := range []string{"work", "journal", "secrets"} {
+		if err := requireOwned(home+"/"+name, true, 0700); err != nil {
+			if !required && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return OwnershipConflict
+		}
+	}
+	return nil
+}
+
+func removeOwnedAt(directory int, name string, isDirectory bool, mode uint32) error {
+	var entry unix.Stat_t
+	if err := unix.Fstatat(directory, name, &entry, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	wantType := uint32(unix.S_IFREG)
+	flags := 0
+	if isDirectory {
+		wantType = unix.S_IFDIR
+		flags = unix.AT_REMOVEDIR
+	}
+	if entry.Uid != 0 || entry.Mode&07777 != mode || entry.Mode&unix.S_IFMT != wantType {
+		return OwnershipConflict
+	}
+	return unix.Unlinkat(directory, name, flags)
+}
+
+func cleanupOwnedHome(home string) error {
+	fd, err := unix.Open(home, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	var opened unix.Stat_t
+	if unix.Fstat(fd, &opened) != nil || opened.Uid != 0 || opened.Mode&07777 != 0700 {
+		return OwnershipConflict
+	}
+	for _, name := range []string{"enrollment", "credential", "runner.lock", "agent", "manifest.json", "claim"} {
+		mode := uint32(0600)
+		if name == "agent" {
+			mode = 0700
+		}
+		if err := removeOwnedAt(fd, name, false, mode); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	// Removing a verified directory entry never traverses a replacement symlink.
+	// Nonempty or unknown data remains in the exact installation directory.
+	for _, name := range []string{"work", "journal", "secrets"} {
+		if err := removeOwnedAt(fd, name, true, 0700); err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, unix.ENOTEMPTY) {
+			return err
+		}
+	}
+	if err := unix.Fsync(fd); err != nil {
+		return err
+	}
+	parent, err := unix.Open(filepath.Dir(home), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(parent) }()
+	var named unix.Stat_t
+	if unix.Fstatat(parent, filepath.Base(home), &named, unix.AT_SYMLINK_NOFOLLOW) != nil || named.Ino != opened.Ino || named.Dev != opened.Dev {
+		return OwnershipConflict
+	}
+	if err := removeOwnedAt(parent, filepath.Base(home), true, 0700); err != nil && !errors.Is(err, unix.ENOTEMPTY) {
+		return err
+	}
+	return unix.Fsync(parent)
 }
 
 func requireOwned(path string, directory bool, mode os.FileMode) error {
@@ -215,6 +298,34 @@ func verifyUnitLink(unitPath string) error {
 	return nil
 }
 
+func removeUnitLink(unitPath string) error {
+	path := "/etc/systemd/system/multi-user.target.wants/" + filepath.Base(unitPath)
+	if err := verifyUnitLink(unitPath); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	fd, err := unix.Open(filepath.Dir(path), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	var entry unix.Stat_t
+	if unix.Fstatat(fd, filepath.Base(path), &entry, unix.AT_SYMLINK_NOFOLLOW) != nil || entry.Uid != 0 || entry.Mode&unix.S_IFMT != unix.S_IFLNK {
+		return OwnershipConflict
+	}
+	link := make([]byte, 512)
+	n, err := unix.Readlinkat(fd, filepath.Base(path), link)
+	if err != nil || string(link[:n]) != unitPath {
+		return OwnershipConflict
+	}
+	if err := unix.Unlinkat(fd, filepath.Base(path), 0); err != nil {
+		return err
+	}
+	return unix.Fsync(fd)
+}
+
 func systemctl(ctx context.Context, arguments ...string) (string, error) {
 	command := exec.CommandContext(ctx, "/usr/bin/systemctl", arguments...)
 	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"}
@@ -237,9 +348,43 @@ func agentUnit(manifest InstallManifest, home string) []byte {
 	return []byte("[Unit]\nDescription=NeroCD owned deployment agent " + manifest.InstallationID + "\nAfter=network.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n[Service]\nType=simple\nUser=root\nUMask=0077\nExecStart=" + home + "/agent bootstrap-agent run-owned " + manifest.InstallationID + "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=15\nKillMode=control-group\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=multi-user.target\n")
 }
 
+func parseStopEvidence(output string) (string, int, int, error) {
+	values := make(map[string]string, 3)
+	for _, line := range strings.Split(output, "\n") {
+		name, value, ok := strings.Cut(line, "=")
+		if !ok || (name != "Result" && name != "ExecMainCode" && name != "ExecMainStatus") {
+			return "", 0, 0, RemoteFailure
+		}
+		if _, duplicate := values[name]; duplicate {
+			return "", 0, 0, RemoteFailure
+		}
+		values[name] = value
+	}
+	if len(values) != 3 {
+		return "", 0, 0, RemoteFailure
+	}
+	switch values["Result"] {
+	case "success", "exit-code", "signal", "core-dump", "watchdog", "timeout", "resources", "protocol", "start-limit-hit", "oom-kill":
+	default:
+		return "", 0, 0, RemoteFailure
+	}
+	code, err := strconv.ParseUint(values["ExecMainCode"], 10, 8)
+	if err != nil || code > 6 {
+		return "", 0, 0, RemoteFailure
+	}
+	status, err := strconv.ParseUint(values["ExecMainStatus"], 10, 8)
+	if err != nil {
+		return "", 0, 0, RemoteFailure
+	}
+	return values["Result"], int(code), int(status), nil
+}
+
 func inspectHelper(ctx context.Context, request helperRequest, digest, home string) (OwnedInspection, ErrorCode) {
 	result := OwnedInspection{InstallationID: request.Manifest.InstallationID, ManifestSHA256: digest, OperationID: request.OperationID, State: OwnedStaged, ArtifactMatches: true}
 	unitPath := "/etc/systemd/system/nerocd-agent-" + request.Manifest.InstallationID + ".service"
+	if _, err := os.Lstat(unitPath + ".d"); !errors.Is(err, os.ErrNotExist) {
+		return OwnedInspection{}, OwnershipConflict
+	}
 	if verifyUnitLink(unitPath) != nil {
 		return OwnedInspection{}, OwnershipConflict
 	}
@@ -253,25 +398,19 @@ func inspectHelper(ctx context.Context, request helperRequest, digest, home stri
 	if err != nil || !bytes.Equal(data, agentUnit(request.Manifest, home)) {
 		return OwnedInspection{}, OwnershipConflict
 	}
+	if verifyRuntimePaths(home, true) != nil {
+		return OwnedInspection{}, OwnershipConflict
+	}
 	result.State = OwnedInstalled
 	unit := filepath.Base(unitPath)
-	state, err := systemctl(ctx, "show", unit, "--property=ActiveState", "--property=InvocationID", "--property=Job")
+	state, err := systemctl(ctx, "show", unit, "--property=ActiveState", "--property=InvocationID", "--property=Job", "--property=FragmentPath", "--property=DropInPaths", "--property=LoadState")
 	if err != nil {
 		return OwnedInspection{}, RemoteFailure
 	}
-	for _, line := range strings.Split(state, "\n") {
-		name, value, _ := strings.Cut(line, "=")
-		switch name {
-		case "ActiveState":
-			result.ServiceActive = value == "active" || value == "activating"
-		case "InvocationID":
-			if value != "" && !operationIDPattern.MatchString(value) {
-				return OwnedInspection{}, RemoteFailure
-			}
-			result.InvocationID = value
-		case "Job":
-			result.ServiceJobPending = value != "" && value != "0"
-		}
+	var code ErrorCode
+	result.ServiceActive, result.InvocationID, result.ServiceJobPending, code = parseUnitState(state, unitPath)
+	if code != "" {
+		return OwnedInspection{}, code
 	}
 	for _, file := range []struct {
 		name string
@@ -284,6 +423,48 @@ func inspectHelper(ctx context.Context, request helperRequest, digest, home stri
 		}
 	}
 	return result, ""
+}
+
+func parseUnitState(output, unitPath string) (bool, string, bool, ErrorCode) {
+	properties := make(map[string]string, 6)
+	for _, line := range strings.Split(output, "\n") {
+		name, value, ok := strings.Cut(line, "=")
+		if !ok || len(line) > 1024 {
+			return false, "", false, RemoteFailure
+		}
+		switch name {
+		case "ActiveState", "InvocationID", "Job", "FragmentPath", "DropInPaths", "LoadState":
+		default:
+			return false, "", false, RemoteFailure
+		}
+		if _, duplicate := properties[name]; duplicate {
+			return false, "", false, RemoteFailure
+		}
+		properties[name] = value
+	}
+	if len(properties) != 6 {
+		return false, "", false, RemoteFailure
+	}
+	if properties["FragmentPath"] != unitPath || properties["DropInPaths"] != "" || properties["LoadState"] != "loaded" {
+		return false, "", false, OwnershipConflict
+	}
+	invocation := properties["InvocationID"]
+	if invocation != "" && !operationIDPattern.MatchString(invocation) {
+		return false, "", false, RemoteFailure
+	}
+	pending := properties["Job"] != "" && properties["Job"] != "0"
+	switch properties["ActiveState"] {
+	case "active":
+		return true, invocation, pending, ""
+	case "inactive", "failed":
+		return false, invocation, pending, ""
+	case "activating", "reloading":
+		return true, invocation, true, ""
+	case "deactivating", "maintenance":
+		return false, invocation, true, ""
+	default:
+		return false, "", false, RemoteFailure
+	}
 }
 
 func handleOwned(ctx context.Context, request helperRequest, digest, home string) (OwnedInspection, ErrorCode) {
@@ -367,7 +548,13 @@ func handleOwned(ctx context.Context, request helperRequest, digest, home string
 		if _, err := systemctl(ctx, "daemon-reload"); err != nil {
 			return OwnedInspection{}, Uncertain
 		}
+		if _, code := inspectHelper(ctx, request, digest, home); code != "" {
+			return OwnedInspection{}, Uncertain
+		}
 		if _, err := systemctl(ctx, "enable", unit); err != nil || verifyUnitLink(unitPath) != nil {
+			return OwnedInspection{}, Uncertain
+		}
+		if syncOwnedDirectory(filepath.Dir(unitPath)) != nil || syncOwnedDirectory(filepath.Dir(unitPath)+"/multi-user.target.wants") != nil {
 			return OwnedInspection{}, Uncertain
 		}
 		if _, err := systemctl(ctx, "start", unit); err != nil {
@@ -386,10 +573,42 @@ func handleOwned(ctx context.Context, request helperRequest, digest, home string
 			if code != "" || stopped.ServiceActive || stopped.ServiceJobPending {
 				return OwnedInspection{}, Uncertain
 			}
-			if _, err := systemctl(ctx, "disable", unit); err != nil {
+			stopOutput, err := systemctl(ctx, "show", unit, "--property=Result", "--property=ExecMainCode", "--property=ExecMainStatus")
+			if err != nil {
 				return OwnedInspection{}, Uncertain
 			}
-			if requireOwned(unitPath, false, 0600) != nil || os.Remove(unitPath) != nil {
+			receipt.StopResult, receipt.StopExecCode, receipt.StopExecStatus, err = parseStopEvidence(stopOutput)
+			if err != nil {
+				return OwnedInspection{}, Uncertain
+			}
+			stoppedReceipt, _ := json.Marshal(receipt)
+			if writeOwned(receiptPath, stoppedReceipt, true) != nil || writeOwned(ops+"/head.json", stoppedReceipt, true) != nil {
+				return OwnedInspection{}, Uncertain
+			}
+			// The existing runner can exit nonzero on requested cancellation.
+			// Clear only this verified stopped unit's retained failure record
+			// before removing its definition; never reset other host services.
+			if _, err := systemctl(ctx, "reset-failed", unit); err != nil {
+				return OwnedInspection{}, Uncertain
+			}
+			// Disable only the exact link created by this protocol. systemctl
+			// disable can also remove administrator-created aliases elsewhere.
+			if err := removeUnitLink(unitPath); err != nil {
+				return OwnedInspection{}, Uncertain
+			}
+			unitDirectory, err := unix.Open(filepath.Dir(unitPath), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if err != nil {
+				return OwnedInspection{}, Uncertain
+			}
+			removeErr := removeOwnedAt(unitDirectory, unit, false, 0600)
+			if removeErr == nil {
+				removeErr = unix.Fsync(unitDirectory)
+			}
+			_ = unix.Close(unitDirectory)
+			if removeErr != nil {
+				return OwnedInspection{}, Uncertain
+			}
+			if err := syncOwnedDirectory(filepath.Dir(unitPath) + "/multi-user.target.wants"); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return OwnedInspection{}, Uncertain
 			}
 			if _, err := systemctl(ctx, "daemon-reload"); err != nil {
@@ -401,26 +620,7 @@ func handleOwned(ctx context.Context, request helperRequest, digest, home string
 		if err != nil || writeOwned(ownedBase+"/receipts/"+request.Manifest.InstallationID+".removed", tombstone, false) != nil {
 			return OwnedInspection{}, Uncertain
 		}
-		for _, name := range []string{"enrollment", "credential", "runner.lock", "agent", "manifest.json", "claim"} {
-			mode := os.FileMode(0600)
-			if name == "agent" {
-				mode = 0700
-			}
-			if err := requireOwned(home+"/"+name, false, mode); err == nil {
-				if os.Remove(home+"/"+name) != nil {
-					return OwnedInspection{}, Uncertain
-				}
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return OwnedInspection{}, OwnershipConflict
-			}
-		}
-		// Unknown or nonempty agent data is retained, never recursively removed.
-		for _, name := range []string{"work", "journal", "secrets"} {
-			if err := os.Remove(home + "/" + name); err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) {
-				return OwnedInspection{}, Uncertain
-			}
-		}
-		if err := os.Remove(home); err != nil && !errors.Is(err, syscall.ENOTEMPTY) {
+		if err := cleanupOwnedHome(home); err != nil {
 			return OwnedInspection{}, Uncertain
 		}
 		inspection = OwnedInspection{InstallationID: request.Manifest.InstallationID, ManifestSHA256: digest, OperationID: request.OperationID, State: OwnedRemoved}
@@ -454,14 +654,15 @@ func RunOwnedAgent(version, installation string) error {
 		return OwnershipConflict
 	}
 	var manifest InstallManifest
-	if json.Unmarshal(data, &manifest) != nil || manifest.InstallationID != installation || manifest.Artifact.Version != version || verifyHome(home, manifest) != nil {
+	if json.Unmarshal(data, &manifest) != nil || manifest.InstallationID != installation || manifest.Artifact.Version != version || verifyHome(home, manifest) != nil || verifyRuntimePaths(home, true) != nil {
 		return OwnershipConflict
 	}
 	fd, err := unix.Open(home+"/runner.lock", unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW, 0600)
 	if err != nil {
 		return OwnershipConflict
 	}
-	if requireOwned(home+"/runner.lock", false, 0600) != nil || unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
+	var opened, named unix.Stat_t
+	if requireOwned(home+"/runner.lock", false, 0600) != nil || unix.Fstat(fd, &opened) != nil || unix.Lstat(home+"/runner.lock", &named) != nil || opened.Ino != named.Ino || opened.Dev != named.Dev || opened.Uid != 0 || opened.Mode&07777 != 0600 || opened.Mode&unix.S_IFMT != unix.S_IFREG || unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
 		_ = unix.Close(fd)
 		return RemoteBusy
 	}

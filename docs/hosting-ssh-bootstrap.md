@@ -99,6 +99,10 @@ The fixed namespace is `/var/lib/nerocd-bootstrap`, with mode-0700 root-owned di
 and credentials. A new artifact is mode 0700. Each installation has an exact unit named
 `nerocd-agent-<installation-id>.service`. Existing foreign, permissive, or symlink paths block installation.
 The transport never adopts an existing installation or replaces another agent.
+An existing exact unit drop-in directory, including a symlink, blocks admission.
+Loaded systemd properties must identify the exact own fragment and no drop-ins, including global or type-wide drop-ins.
+The helper verifies this after daemon reload and before starting the unit; restart and cleanup use the same check.
+Foreign configuration is preserved and never deleted to make admission succeed.
 Only the new own unit is created, enabled, started, restarted, disabled, or removed.
 It does not install packages, Docker, plugins, firewall rules, or host tools; restart Docker; or modify workloads.
 Install first observes Linux architecture, running systemd, and Docker API 1.54 through the unchanged probe.
@@ -107,6 +111,8 @@ The shipped fixed helper runs only as root with the inherited exact bootstrap lo
 The root-owned mode-0600 global lock inode is created exclusively and never unlinked or replaced.
 Immutable ownership and durable per-operation receipts are synced before service side effects.
 An incomplete receipt, a pending systemd job, or a changed owner blocks competing mutations.
+Existing work, journal, and secret roots must remain root-owned mode-0700 directories, with no symlinks.
+Loaded units and the launcher require all three roots. The lock coordinates this protocol; it does not constrain the host administrator.
 Inspection reads evidence without installing, renewing, or clearing an unresolved receipt.
 Database lease expiry cannot establish that a remote process stopped.
 There is no generic unlock or recovery operation in this adapter.
@@ -119,6 +125,11 @@ No enrollment token or generated credential appears in command arguments, unit c
 File presence and an active systemd process are observations; neither proves authenticated enrollment or server readiness.
 
 Cleanup requires exact ownership, stops the own service, and removes only verified known files and empty own data directories.
+Known entries are removed relative to opened no-follow directory descriptors; cleanup never traverses data directories.
+It removes only its exact enabled unit link, preserving administrator-created aliases elsewhere.
+Before removing the unit, cleanup preserves its bounded systemd stop result and exit status in the durable operation receipt.
+It then clears only that verified stopped unit's retained failure record, so requested runner cancellation does not leave the host degraded.
+Other units and unexpected failures are not reset, and the service's accepted exit statuses are unchanged.
 Unknown or nonempty data is retained. A nonsecret tombstone preserves the exact manifest and cleanup operation identity.
 An exact cleanup replay can read that result; a different action or operation cannot borrow it.
 Partial transfers remain staged and cannot execute. Their exact claim supports inspection and bounded cleanup.
@@ -130,6 +141,16 @@ The disposable target shares an internal-only bridge with a separate owned Postg
 The target runs a registered NeroCD HTTPS API on `127.0.0.1:18443`, using an ephemeral fixture CA installed only in that target.
 The fixture creates a real authorized enrollment and deliberately drops the first successful consume response after its database effect.
 It then verifies an exact consume replay, one enrolled identity, credential-mode restart, owned cleanup, and unchanged sentinels.
+The current prepared profile is Debian 12 on the tested native `arm64` host, systemd running, Docker API 1.54,
+Compose exactly `5.1.1`, and at least 1 GiB free on the root filesystem. Buildx is not required.
+The fixture first verifies Compose is missing, then prepares its pinned donor binary before the installer test.
+This preparation is outside the product adapter and does not add a plugin installation feature.
+
+A separate genuinely enrolled fixture agent exercises actual SSH mutation response loss.
+A restricted test key permits only the exact frozen command and exact nonsecret restart request.
+The fixture delays the successful public response; the caller cancels after observing the completed mutation marker.
+Normal-key inspection recovers the original operation, and an exact retry must preserve its invocation ID.
+Unknown commands and other requests are rejected before execution. No production failure switch is added.
 This same-host fixture TLS topology does not qualify production network reachability or production TLS.
 The SSH transport remains the bounded Docker-exec TCP relay described in the fixture contract.
 
