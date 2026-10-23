@@ -12,13 +12,12 @@ import (
 )
 
 func storageContinuitySchema(ctx context.Context, tx pgx.Tx) (bool, error) {
-	var exists bool
-	err := tx.QueryRow(ctx, `SELECT to_regclass(current_schema()||'.hosting_storage_route_continuities') IS NOT NULL`).Scan(&exists)
+	exists, err := sqlcgen.New(tx).StorageContinuitySchemaPresent(ctx)
 	if err != nil || !exists {
 		return exists, err
 	}
-	var compatible bool
-	if err = tx.QueryRow(ctx, `SELECT nerocd_hosting_storage_route_continuity_schema_compatible()`).Scan(&compatible); err != nil {
+	compatible, err := sqlcgen.New(tx).StorageContinuitySchemaCompatible(ctx)
+	if err != nil {
 		return false, err
 	}
 	if !compatible {
@@ -67,8 +66,7 @@ func storageContinuityBarrier(ctx context.Context, tx pgx.Tx, proxy string) erro
 	if err != nil || !exists {
 		return err
 	}
-	var held bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_storage_route_continuities WHERE proxy_id=$1 AND state IN ('reserved','unresolved'))`, proxy).Scan(&held)
+	held, err := sqlcgen.New(tx).StorageContinuityExclusive(ctx, proxy)
 	if err != nil {
 		return err
 	}
@@ -85,8 +83,8 @@ func storageContinuityPendingBarrier(ctx context.Context, tx pgx.Tx, proxy strin
 	if err != nil || !exists {
 		return err
 	}
-	var pending bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_storage_route_continuities WHERE proxy_id=$1 AND state IN ('proxy_pending','proxy_failed'))`, proxy).Scan(&pending); err != nil {
+	pending, err := sqlcgen.New(tx).StorageContinuityProxyPending(ctx, proxy)
+	if err != nil {
 		return err
 	}
 	if pending {
@@ -96,13 +94,11 @@ func storageContinuityPendingBarrier(ctx context.Context, tx pgx.Tx, proxy strin
 }
 
 func storageContinuityRouteUnsettled(ctx context.Context, db sqlcgen.DBTX, row sqlcgen.HostingProxyRoute) (string, error) {
-	var exists bool
-	if err := db.QueryRow(ctx, `SELECT to_regclass(current_schema()||'.hosting_storage_route_continuities') IS NOT NULL`).Scan(&exists); err != nil || !exists {
+	exists, err := sqlcgen.New(db).StorageContinuitySchemaPresent(ctx)
+	if err != nil || !exists {
 		return "", err
 	}
-	var state string
-	err := db.QueryRow(ctx, `SELECT coalesce((SELECT state FROM hosting_storage_route_continuities WHERE proxy_id=$1 AND descriptor->>'resource_id'=$2 AND state IN ('reserved','unresolved','proxy_pending','proxy_failed') ORDER BY created_at DESC LIMIT 1),'')`, row.ProxyID, row.ResourceID).Scan(&state)
-	return state, err
+	return sqlcgen.New(db).StorageContinuityRouteState(ctx, sqlcgen.StorageContinuityRouteStateParams{ProxyID: row.ProxyID, ResourceID: row.ResourceID})
 }
 
 func storageContinuityLoadedScope(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, c domain.HostingStorageRouteContinuity, rows []sqlcgen.HostingProxyRoute, initial bool) error {
@@ -159,12 +155,10 @@ func storageContinuityLoadedScope(ctx context.Context, tx pgx.Tx, p domain.Hosti
 		return ErrConflict
 	}
 	// Preserve the global guard except for this exact resource's loaded routes.
-	var foreign bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(
- SELECT 1 FROM hosting_proxy_routes r JOIN hosting_snapshots s ON s.operation_id=r.selected_release_operation_id WHERE r.enabled AND s.body->>'destination_id'=$1 AND (s.body->>'host_port')::integer=$2 AND NOT(r.proxy_id=$3 AND r.resource_id=$4 AND r.binding_id=$5 AND r.selected_release_operation_id=$6)
- UNION ALL SELECT 1 FROM hosting_proxy_release_references r JOIN hosting_proxy_operations o ON o.id=r.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots s ON s.operation_id=r.release_operation_id WHERE s.body->>'destination_id'=$1 AND (s.body->>'host_port')::integer=$2 AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')) AND NOT(o.id=$7 AND r.release_operation_id=$6 AND r.route_id=ANY($8::text[]))
- UNION ALL SELECT 1 FROM hosting_proxy_switch_prior_references r JOIN hosting_proxy_operations o ON o.id=r.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots s ON s.operation_id=r.prior_release_operation_id WHERE s.body->>'destination_id'=$1 AND (s.body->>'host_port')::integer=$2 AND (p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
-)`, c.DestinationID, c.HostPort, c.ProxyID, c.ResourceID, c.BindingID, c.PreviousHealthy.OperationID, prior.ID, storageContinuityRouteIDs(c)).Scan(&foreign)
+	foreign, err := q.StorageContinuityForeignPortReferenced(ctx, sqlcgen.StorageContinuityForeignPortReferencedParams{
+		DestinationID: c.DestinationID, HostPort: int32(c.HostPort), ProxyID: c.ProxyID, ResourceID: c.ResourceID, BindingID: c.BindingID,
+		PreviousOperationID: c.PreviousHealthy.OperationID, LoadedProxyOperationID: prior.ID, RouteIds: storageContinuityRouteIDs(c),
+	})
 	if err != nil {
 		return err
 	}
@@ -294,12 +288,11 @@ func readStorageContinuity(ctx context.Context, tx pgx.Tx, op domain.HostingOper
 	if !exists {
 		return c, "", ErrConflict
 	}
-	var body, accepted []byte
-	var hash, state, requestHash string
-	err = tx.QueryRow(ctx, `SELECT c.descriptor,c.descriptor_hash,c.state,c.accepted_request,o.request_hash FROM hosting_storage_route_continuities c JOIN hosting_operations o ON o.id=c.operation_id WHERE c.operation_id=$1`, op.ID).Scan(&body, &hash, &state, &accepted, &requestHash)
+	row, err := sqlcgen.New(tx).ReadStorageRouteContinuity(ctx, op.ID)
 	if err != nil {
-		return c, state, err
+		return c, "", err
 	}
+	body, accepted, hash, state, requestHash := row.Descriptor, row.AcceptedRequest, row.DescriptorHash, row.State, row.RequestHash
 	var input domain.HostingDeploymentInput
 	if json.Unmarshal(body, &c) != nil || json.Unmarshal(accepted, &input) != nil || c.OperationID != op.ID || c.ProjectID != op.ProjectID || c.RequestHash != requestHash || domain.HostingDocumentHash(input) != requestHash || hash != op.Snapshot.StorageRouteContinuity.Hash || c.Validate(op.Snapshot) != nil {
 		return c, state, ErrConflict
@@ -327,8 +320,8 @@ func validateStorageContinuityFresh(ctx context.Context, tx pgx.Tx, op domain.Ho
 	if op.Release != nil && op.Release.DaemonID != c.DaemonID {
 		return ErrConflict
 	}
-	var automatic bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_auto_deploy_origins WHERE operation_id=$1 OR deployment_operation_id=$1)`, op.ID).Scan(&automatic); err != nil {
+	automatic, err := sqlcgen.New(tx).StorageContinuityAutomatic(ctx, op.ID)
+	if err != nil {
 		return err
 	}
 	if automatic {
@@ -337,8 +330,8 @@ func validateStorageContinuityFresh(ctx context.Context, tx pgx.Tx, op domain.Ho
 	if op.Plan != nil && (op.Plan.PreviousHealthy == nil || domain.HostingDocumentHash(op.Plan.PreviousHealthy) != domain.HostingDocumentHash(c.PreviousHealthy) || op.Plan.RetainPrevious) {
 		return ErrConflict
 	}
-	var raw []byte
-	if err = tx.QueryRow(ctx, `SELECT healthy FROM hosting_binding_state WHERE binding_id=$1`, op.BindingID).Scan(&raw); err != nil {
+	raw, err := sqlcgen.New(tx).GetHostingHealthy(ctx, op.BindingID)
+	if err != nil {
 		return err
 	}
 	var healthy domain.HostingHealthy
@@ -360,7 +353,7 @@ func (s *PostgresStore) settleStorageContinuity(ctx context.Context, tx pgx.Tx, 
 		if result.Outcome == "failed" && result.Restored && !result.Uncertain {
 			state = "released"
 		}
-		_, err := tx.Exec(ctx, `UPDATE hosting_storage_route_continuities SET state=$2 WHERE operation_id=$1 AND state='reserved'`, op.ID, state)
+		_, err := sqlcgen.New(tx).SetStorageContinuityReservedState(ctx, sqlcgen.SetStorageContinuityReservedStateParams{OperationID: op.ID, State: state})
 		return err
 	}
 	// A metadata conflict cannot erase committed evidence of runtime success.
@@ -375,7 +368,7 @@ func (s *PostgresStore) settleStorageContinuity(ctx context.Context, tx pgx.Tx, 
 	if rollbackErr := nested.Rollback(ctx); rollbackErr != nil {
 		return rollbackErr
 	}
-	_, markErr := tx.Exec(ctx, `UPDATE hosting_storage_route_continuities SET state='unresolved' WHERE operation_id=$1 AND state='reserved'`, op.ID)
+	_, markErr := sqlcgen.New(tx).SetStorageContinuityReservedState(ctx, sqlcgen.SetStorageContinuityReservedStateParams{OperationID: op.ID, State: "unresolved"})
 	return markErr
 }
 
@@ -460,7 +453,7 @@ func (s *PostgresStore) queueStorageContinuity(ctx context.Context, tx pgx.Tx, o
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE hosting_storage_route_continuities SET state='proxy_pending',successor_proxy_operation_id=$2 WHERE operation_id=$1 AND state='reserved'`, op.ID, proxyID)
+	_, err = sqlcgen.New(tx).QueueStorageContinuity(ctx, sqlcgen.QueueStorageContinuityParams{OperationID: op.ID, SuccessorProxyOperationID: hostingStringPointer(proxyID)})
 	return err
 }
 
@@ -473,7 +466,7 @@ func settleStorageContinuityProxy(ctx context.Context, tx pgx.Tx, op domain.Host
 	if result.Outcome == "applied" && result.LoadedGeneration == op.Generation {
 		state = "loaded"
 	}
-	_, err = tx.Exec(ctx, `UPDATE hosting_storage_route_continuities SET state=$2 WHERE successor_proxy_operation_id=$1 AND state='proxy_pending'`, op.ID, state)
+	_, err = sqlcgen.New(tx).SettleStorageContinuityProxy(ctx, sqlcgen.SettleStorageContinuityProxyParams{SuccessorProxyOperationID: hostingStringPointer(op.ID), State: state})
 	return err
 }
 
@@ -481,6 +474,6 @@ func releaseUnmutatedStorageContinuity(ctx context.Context, tx pgx.Tx, op domain
 	if op.Snapshot.StorageRouteContinuity == (domain.HostingStorageRouteContinuityRef{}) || op.MutationHold {
 		return nil
 	}
-	_, err := tx.Exec(ctx, `UPDATE hosting_storage_route_continuities SET state='released' WHERE operation_id=$1 AND state='reserved' AND NOT EXISTS(SELECT 1 FROM hosting_storage_operation_admissions WHERE operation_id=$1) AND NOT EXISTS(SELECT 1 FROM hosting_apply_admissions WHERE operation_id=$1)`, op.ID)
+	_, err := sqlcgen.New(tx).ReleaseUnmutatedStorageContinuity(ctx, op.ID)
 	return err
 }

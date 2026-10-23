@@ -346,7 +346,7 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 		return domain.HostingOperation{}, err
 	}
 	if continuity != nil {
-		if _, err = tx.Exec(ctx, `INSERT INTO hosting_storage_route_continuities(operation_id,proxy_id,descriptor,descriptor_hash,accepted_request) VALUES($1,$2,$3,$4,$5)`, id, continuity.ProxyID, buildJSON(continuity), snap.StorageRouteContinuity.Hash, buildJSON(in)); err != nil {
+		if err = sqlcgen.New(tx).CreateStorageRouteContinuity(ctx, sqlcgen.CreateStorageRouteContinuityParams{OperationID: id, ProxyID: continuity.ProxyID, Descriptor: buildJSON(continuity), DescriptorHash: snap.StorageRouteContinuity.Hash, AcceptedRequest: buildJSON(in)}); err != nil {
 			return domain.HostingOperation{}, hostingError(err)
 		}
 	}
