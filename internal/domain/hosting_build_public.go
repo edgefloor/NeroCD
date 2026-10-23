@@ -29,9 +29,10 @@ type PublicHostingBuild struct {
 
 // PublicHostingBuildSnapshot exposes only source intent and exact placement.
 type PublicHostingBuildSnapshot struct {
-	ResourceGeneration int64                    `json:"resource_generation"`
-	Source             PublicHostingBuildSource `json:"source"`
-	Target             PublicHostingBuildTarget `json:"target"`
+	ResourceGeneration int64                        `json:"resource_generation"`
+	Source             PublicHostingBuildSource     `json:"source"`
+	Target             PublicHostingBuildTarget     `json:"target"`
+	TriggerRevision    *HostingBuildTriggerRevision `json:"trigger_revision,omitempty"`
 }
 
 // PublicHostingBuildSource excludes source transport policy and grants.
@@ -72,6 +73,10 @@ type PublicHostingBuildArtifact struct {
 func PublicBuild(b HostingBuild) PublicHostingBuild {
 	s := b.Snapshot
 	p := PublicHostingBuild{ID: b.ID, ProjectID: b.ProjectID, ResourceID: b.ResourceID, State: b.State, Revision: b.Revision, RunID: b.RunID, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt, FailureCode: b.FailureCode, Snapshot: PublicHostingBuildSnapshot{ResourceGeneration: s.ResourceGeneration, Source: PublicHostingBuildSource{SourceID: s.Source.ID, Generation: s.Source.Generation, RepositoryURL: s.Source.RepositoryURL, RequestedRef: s.Source.RequestedRef, CredentialKind: s.Source.CredentialKind, Settings: s.Source.Settings}, Target: PublicHostingBuildTarget{BindingID: s.BindingID, DestinationID: s.DestinationID, ServerID: s.ServerID, RunnerID: s.RunnerID}}}
+	if s.TriggerRevision != nil {
+		revision := *s.TriggerRevision
+		p.Snapshot.TriggerRevision = &revision
+	}
 	if b.SourceReceipt != nil {
 		p.SourceReceipt = &PublicHostingBuildSourceReceipt{Commit: b.SourceReceipt.Commit, TreeDigest: b.SourceReceipt.TreeDigest}
 	}

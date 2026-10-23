@@ -51,6 +51,7 @@ var _ HostingBuildRepository = (*PostgresStore)(nil)
 // Memory stores deliberately do not implement an executable controller.
 type HostingBuildControllerRepository interface {
 	HostingBuildRepository
+	RequestConfiguredHostingBuildAtRevision(context.Context, string, string, string, domain.HostingBuildRequest, domain.HostingBuildTriggerRevision, domain.AuditEvent) (domain.HostingBuild, error)
 	RequestConfiguredHostingBuild(context.Context, string, string, string, domain.HostingBuildRequest, domain.AuditEvent) (domain.HostingBuild, error)
 	RequestPublicHostingBuild(context.Context, string, string, string, domain.HostingBuildRequest, domain.AuditEvent) (domain.HostingBuild, error)
 	ListHostingBuilds(context.Context, string, string, Page) (PageResult[domain.HostingBuild], error)

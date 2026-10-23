@@ -31,7 +31,7 @@ SELECT s.id FROM project_managed_secrets s JOIN project_managed_secret_versions 
 -- name: HostingBuildTarget :one
 SELECT b.id AS binding_id,b.destination_id,d.server_id,s.runner_id FROM resource_bindings b JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id WHERE b.resource_id=$1;
 -- name: LockHostingBuildRunner :one
-SELECT r.id FROM runners r WHERE r.id=sqlc.arg(runner_id) AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND (NOT sqlc.arg(require_private_git)::boolean OR 'hosting_git_https_basic_v1'=ANY(r.capabilities)) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r;
+SELECT r.id FROM runners r WHERE r.id=sqlc.arg(runner_id) AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND (NOT sqlc.arg(require_private_git)::boolean OR 'hosting_git_https_basic_v1'=ANY(r.capabilities)) AND (NOT sqlc.arg(require_trigger_revision)::boolean OR 'hosting_build_trigger_revision_v1'=ANY(r.capabilities)) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r;
 -- name: HostingBuildObservedDaemon :one
 SELECT coalesce(daemon_id,'')::text FROM hosting_binding_state WHERE binding_id=$1 FOR SHARE;
 -- name: HostingBuildIdempotency :one

@@ -3027,11 +3027,18 @@ export interface components {
             server_id: string;
             runner_id: string;
         };
+        HostingBuildTriggerRevision: {
+            /** @enum {integer} */
+            version: 1;
+            /** @description Immutable full nonzero lowercase Git commit selected by a trusted trigger. */
+            expected_commit: string;
+        };
         PublicHostingBuildSnapshot: {
             /** Format: int64 */
             resource_generation: number;
             source: components["schemas"]["PublicHostingBuildSource"];
             target: components["schemas"]["PublicHostingBuildTarget"];
+            trigger_revision?: components["schemas"]["HostingBuildTriggerRevision"];
         };
         PublicHostingBuildSourceReceipt: {
             commit: string;

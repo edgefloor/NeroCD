@@ -202,7 +202,7 @@ func (e *BuildExecutor) validateBuild(b domain.HostingBuild, a domain.HostingBui
 	s := b.Snapshot
 	unhashed := s
 	unhashed.InputID = ""
-	if b.ID != a.BuildID || b.RunID != a.RunID || s.BuildID != a.BuildID || b.Revision < 1 || b.ResourceID != s.Source.ResourceID || b.ProjectID != s.Source.ProjectID || s.ResourceGeneration < 1 || s.InputID != domain.HostingDocumentHash(unhashed) || domain.ValidateHostingGitSource(s.Source) != nil || domain.ValidateHostingBuildPolicy(s.Policy) != nil || !reflect.DeepEqual(s.Policy, e.config.Policy) || !e.validBuildCredentialSnapshot(s) || s.RunnerID != e.config.Target.RunnerID || s.ServerID != e.config.Target.ServerID || s.DestinationID != e.config.Target.DestinationID || !validBuildPlacementID(s.BindingID) || e.config.Target.BindingID != "" && s.BindingID != e.config.Target.BindingID || snapshot != nil && !reflect.DeepEqual(s, *snapshot) {
+	if b.ID != a.BuildID || b.RunID != a.RunID || s.BuildID != a.BuildID || b.Revision < 1 || b.ResourceID != s.Source.ResourceID || b.ProjectID != s.Source.ProjectID || s.ResourceGeneration < 1 || s.InputID != domain.HostingDocumentHash(unhashed) || domain.ValidateHostingGitSource(s.Source) != nil || domain.ValidateHostingBuildTriggerRevision(s) != nil || domain.ValidateHostingBuildPolicy(s.Policy) != nil || !reflect.DeepEqual(s.Policy, e.config.Policy) || !e.validBuildCredentialSnapshot(s) || s.RunnerID != e.config.Target.RunnerID || s.ServerID != e.config.Target.ServerID || s.DestinationID != e.config.Target.DestinationID || !validBuildPlacementID(s.BindingID) || e.config.Target.BindingID != "" && s.BindingID != e.config.Target.BindingID || snapshot != nil && !reflect.DeepEqual(s, *snapshot) {
 		return errors.New("build immutable snapshot or target mismatch")
 	}
 	u, err := s.Source.Policy.ValidateURL(s.Source.RepositoryURL, false)
@@ -402,7 +402,11 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 			}, accept, use)
 		}
 	}
-	err = checkout(operation, s, filepath.Join(e.config.SourceRoot, a.BuildID), "", func(c context.Context, receipt domain.HostingBuildSourceReceipt) error {
+	frozen, err := buildFrozenCommit(s, "")
+	if err != nil {
+		return err
+	}
+	err = checkout(operation, s, filepath.Join(e.config.SourceRoot, a.BuildID), frozen, func(c context.Context, receipt domain.HostingBuildSourceReceipt) error {
 		if domain.ValidateHostingBuildSourceReceipt(receipt, s) != nil {
 			return errors.New("source identity mismatch")
 		}
@@ -613,4 +617,19 @@ func (e *BuildExecutor) privateBuildCredential(ctx context.Context, a domain.Hos
 		}
 	}
 	return zero, errors.New("private credential unavailable; intent retained")
+}
+
+// buildFrozenCommit keeps trigger intent authoritative across first checkout and replay.
+func buildFrozenCommit(snapshot domain.HostingBuildSnapshot, frozen string) (string, error) {
+	if err := domain.ValidateHostingBuildTriggerRevision(snapshot); err != nil {
+		return "", errors.New("invalid build trigger revision")
+	}
+	if snapshot.TriggerRevision == nil {
+		return frozen, nil
+	}
+	expected := snapshot.TriggerRevision.ExpectedCommit
+	if frozen != "" && frozen != expected {
+		return "", errors.New("build trigger revision mismatch")
+	}
+	return expected, nil
 }

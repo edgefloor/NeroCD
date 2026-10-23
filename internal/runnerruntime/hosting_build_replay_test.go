@@ -12,6 +12,7 @@ import (
 	"nerocd/internal/hostingbuild"
 	"nerocd/internal/hostingbuildprotocol"
 	"reflect"
+	"strings"
 )
 
 func TestBuildExecutorResponseLossReplayNeverRebuilds(t *testing.T) {
@@ -252,5 +253,28 @@ func TestBuildBindingWildcardStillRequiresBinding(t *testing.T) {
 	f.build.Snapshot.InputID = domain.HostingDocumentHash(s)
 	if e.validateBuild(f.build, a, nil) == nil {
 		t.Fatal("wildcard admitted absent binding")
+	}
+}
+
+func TestBuildExecutorTriggerRevisionResultReplayDoesNotCheckout(t *testing.T) {
+	e, client, a, at := buildFixture(t)
+	client.build.Snapshot.TriggerRevision = &domain.HostingBuildTriggerRevision{Version: 1, ExpectedCommit: strings.Repeat("a", 40)}
+	client.build.Snapshot.InputID = ""
+	client.build.Snapshot.InputID = domain.HostingDocumentHash(client.build.Snapshot)
+	client.loseComplete = true
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if e.Execute(ctx, a, at) == nil {
+		t.Fatal("lost completion not exercised")
+	}
+	e.checkout = func(context.Context, domain.HostingBuildSnapshot, string, string, func(context.Context, domain.HostingBuildSourceReceipt) error, func(context.Context, string) error) error {
+		t.Fatal("trigger replay performed checkout")
+		return nil
+	}
+	if err := e.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.journal.Snapshot().Build) != 0 {
+		t.Fatal("trigger result evidence not acknowledged")
 	}
 }

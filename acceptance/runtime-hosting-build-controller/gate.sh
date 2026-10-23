@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root=$(pwd -P)
 case "$repo_root" in */NeroCD*) ;; *) echo 'run from assigned repository root' >&2; exit 1;; esac
 source "$repo_root/acceptance/runtime-hosting-build-controller/helpers.sh"
+scenario=${NEROCD_BUILD_CONTROLLER_SCENARIO:-full}
+case "$scenario" in full|trigger-revision) ;; *) echo 'invalid controller scenario' >&2; exit 1;; esac
 preload_postgres=${NEROCD_BUILD_CONTROLLER_PRELOAD_POSTGRES:-0}
 case "$preload_postgres" in 0|1) ;; *) echo 'invalid PostgreSQL preload option' >&2; exit 1;; esac
 arch=$(docker info --format '{{.Architecture}}')
@@ -55,8 +57,12 @@ cp "$fixture_dir/mise/bin/mise" "$fixture_dir/mise-bin"
 chmod 0755 "$fixture_dir/buildx" "$fixture_dir/railpack"
 GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -c -o "$fixture_dir/hosting-controller.test" ./internal/runnerruntime
 GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -o "$fixture_dir/nerocd" ./cmd/nerocd
+if [[ "$scenario" == trigger-revision ]]; then GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -c -o "$fixture_dir/hosting-store.test" ./internal/store; fi
+shasum -a 256 "$fixture_dir/nerocd" "$fixture_dir/hosting-controller.test"
+if [[ "$scenario" == trigger-revision ]]; then shasum -a 256 "$fixture_dir/hosting-store.test"; fi
 cp db/seeds/dev.sql "$fixture_dir/dev.sql"
 printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'RUN apk add --no-cache git=2.52.0-r0 git-daemon=2.52.0-r0' 'COPY buildx railpack mise-bin hosting-controller.test nerocd dev.sql /fixture/' > "$fixture_dir/Dockerfile"
+if [[ "$scenario" == trigger-revision ]]; then printf '%s\n' 'COPY hosting-store.test /fixture/' 'RUN mkdir -p /fixture/internal/store /fixture/db/seeds && cp /fixture/dev.sql /fixture/db/seeds/dev.sql' >> "$fixture_dir/Dockerfile"; fi
 docker build --label "io.nerocd.runtime-hosting-build-controller.owner=$owner" -t "$image" "$fixture_dir"
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
 container_id=$(docker run --detach --privileged --pid=host --add-host example.com:127.0.0.1 --name "$name" --label "io.nerocd.runtime-hosting-build-controller.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock)
@@ -77,7 +83,13 @@ for _ in $(seq 1 60); do if controller_postgres_ready "$name" "$pg_id" >/dev/nul
 if [[ "$ready" != true ]]; then echo 'owned PostgreSQL not ready' >&2; exit 1; fi
 printf 'owned PostgreSQL TCP query ready: container=%s database=nerocd_build_controller\n' "$pg_id"
 pg_addr=$(docker exec "$name" docker port "$pg_id" 5432/tcp)
-docker exec --env NEROCD_BUILD_CONTROLLER_RUNTIME=disposable-dind --env "NEROCD_BUILD_CONTROLLER_DATABASE_URL=postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" --env "NEROCD_BUILDX_SHA256=sha256:$buildx_sha" "$name" /fixture/hosting-controller.test -test.v -test.run '^TestHostingBuildProductionControllerCLI$' -test.timeout=15m
+if [[ "$scenario" == trigger-revision ]]; then
+ docker exec --workdir /fixture/internal/store --env "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable" "$name" /fixture/hosting-store.test -test.v -test.run '^TestPostgresHostingBuildTriggerRevision' -test.timeout=3m
+ runtime_tests='^(TestHostingBuildTriggerRevisionProductionCLI|TestBuildTriggerRevisionFirstTLSCheckout)$'
+else
+ runtime_tests='^TestHostingBuildProductionControllerCLI$'
+fi
+docker exec --env NEROCD_BUILD_CONTROLLER_RUNTIME=disposable-dind --env "NEROCD_BUILD_CONTROLLER_DATABASE_URL=postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" --env "NEROCD_BUILDX_SHA256=sha256:$buildx_sha" "$name" /fixture/hosting-controller.test -test.v -test.run "$runtime_tests" -test.timeout=15m
 if [[ $(docker exec "$name" docker inspect --format '{{.Id}} {{index .Config.Labels "io.nerocd.build-controller.owner"}}' "$pg_id") != "$pg_id $owner" ]]; then echo 'owned PostgreSQL identity mismatch' >&2; exit 1; fi
 docker exec "$name" docker rm --force --volumes "$pg_id"
 pg_id=""

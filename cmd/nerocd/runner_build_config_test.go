@@ -104,11 +104,11 @@ func TestRunnerBuildCapabilitiesExplicitAndDisabledByDefault(t *testing.T) {
 		{nil, false, true, []string{domain.HostingPrivateGitCapability}, nil, true},
 		{c, false, true, []string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}, nil, true},
 		{c, false, false, []string{domain.HostingPrivateGitCapability}, nil, true},
-		{c, false, false, []string{"shell"}, []string{domain.HostingBuildTaskType}, false},
-		{c, true, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.RunTypeProxyApply}, false},
+		{c, false, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability}, false},
+		{c, true, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.RunTypeProxyApply, domain.HostingBuildTriggerRevisionCapability}, false},
 		{c, false, true, []string{"shell"}, nil, true},
 		{nil, false, true, []string{domain.HostingBuildTaskType}, nil, true},
-		{c, false, true, []string{"opaque"}, []string{"opaque", domain.HostingBuildTaskType}, false},
+		{c, false, true, []string{"opaque"}, []string{"opaque", domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability}, false},
 	} {
 		got, err := runnerBuildCapabilities(tc.config, tc.proxy, tc.specified, tc.caps)
 		if (err != nil) != tc.fail {
@@ -167,6 +167,27 @@ func TestRunnerPrivateGitDefaultLocalDeploymentRegistrationCapabilities(t *testi
 		}
 		if got["shell"] || got[domain.RunTypeProxyApply] != proxy {
 			t.Fatal("fresh registration weakened execution profile")
+		}
+	}
+}
+
+func TestRunnerBuildTriggerRevisionCapability(t *testing.T) {
+	if _, err := runnerBuildCapabilities(nil, false, true, []string{domain.HostingBuildTriggerRevisionCapability}); err == nil {
+		t.Fatal("unconfigured trigger revision capability accepted")
+	}
+	for _, caps := range [][]string{nil, {domain.HostingBuildTaskType}, {domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability}} {
+		got, err := runnerBuildCapabilities(&runnerruntime.BuildConfig{}, false, caps != nil, caps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, capability := range got {
+			if capability == domain.HostingBuildTriggerRevisionCapability {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("revision capability count=%d", count)
 		}
 	}
 }

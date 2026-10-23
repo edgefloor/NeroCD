@@ -292,3 +292,49 @@ func TestHostingBuildProductionControllerCLI(t *testing.T) {
 		t.Fatalf("build entered generic event/completion endpoints %d times", f.generic.Load())
 	}
 }
+
+func TestHostingBuildTriggerRevisionProductionCLI(t *testing.T) {
+	if os.Getenv("NEROCD_BUILD_CONTROLLER_RUNTIME") != "disposable-dind" {
+		t.Skip("requires existing controller gate")
+	}
+	f := newControllerBuildFixture(t, domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy)
+	buildRuntimeDocker(t, "pull", hostingbuild.StaticImage)
+	url, commit, move := controllerTriggerGit(t)
+	r := f.resourceURL(t, url, domain.HostingBuildSettings{Strategy: "static"})
+	b, err := f.pg.RequestConfiguredHostingBuildAtRevision(t.Context(), "trusted-trigger", r.ID, "usr_bootstrap", domain.HostingBuildRequest{ExpectedResourceGeneration: r.Generation, ExpectedSourceGeneration: r.Source.Git.Generation, IdempotencyKey: "trusted-trigger"}, domain.HostingBuildTriggerRevision{Version: 1, ExpectedCommit: commit}, domain.AuditEvent{ID: "audit-trusted-trigger", ActorID: "usr_bootstrap", CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No agent has run. The branch advances after durable admission, before first checkout.
+	move()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	deadline := time.Now().Add(15 * time.Second)
+	for b.RunID == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("trigger dispatch timed out")
+		}
+		time.Sleep(20 * time.Millisecond)
+		b, err = f.pg.GetHostingBuild(ctx, "usr_bootstrap", b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = f.agent(ctx); err != nil {
+		t.Fatal(err)
+	}
+	full, err := f.pg.GetHostingBuild(ctx, "usr_bootstrap", b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.State != "succeeded" || full.SourceReceipt == nil || full.SourceReceipt.Commit != commit || full.Artifact == nil || domain.ValidateHostingBuildArtifact(*full.Artifact, full) != nil {
+		t.Fatal("trigger artifact did not bind admitted commit")
+	}
+	id := buildRuntimeDocker(t, "run", "--detach", "--name", "nerocd-controller-trigger", "--label", "io.nerocd.build-controller.fixture=owned", "--env", "PORT=80", full.Artifact.ImageID)
+	f.containers = append(f.containers, id)
+	buildRuntimeHTTP(t, id, "trigger commit A\n")
+	if err = f.agent(ctx); err != nil {
+		t.Fatal("settled replay", err)
+	}
+	t.Logf("first checkout after branch B retained admitted A commit=%s build=%s image=%s", commit, full.ID, full.Artifact.ImageID)
+}

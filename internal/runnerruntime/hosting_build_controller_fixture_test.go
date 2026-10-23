@@ -8,10 +8,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cgi"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -357,6 +359,11 @@ func (f *controllerBuildFixture) resource(t *testing.T, files map[string]string,
 	t.Helper()
 	url, _ := buildRuntimeGit(t, files)
 	url = strings.Replace(url, "127.0.0.1", "example.com", 1)
+	return f.resourceURL(t, url, settings)
+}
+
+func (f *controllerBuildFixture) resourceURL(t *testing.T, url string, settings domain.HostingBuildSettings) domain.Resource {
+	t.Helper()
 	var r domain.Resource
 	f.request(t, "POST", "/api/v1/resources", f.admin, map[string]any{"project_id": f.environment.ProjectID, "project_environment_id": f.environment.ID, "name": fmt.Sprintf("Git %s %x", settings.Strategy, time.Now().UnixNano()), "kind": "application", "source": map[string]any{"kind": "git", "git": domain.GitResourceConfiguration{RepositoryURL: url, RequestedRef: "main", CredentialKind: "public", Settings: settings}}}, http.StatusCreated, &r)
 	f.request(t, "POST", "/api/v1/resources/"+r.ID+"/binding", f.admin, app.ResourceBindingInput{DestinationID: f.target.Destination.ID}, http.StatusCreated, nil)
@@ -434,5 +441,55 @@ func TestControllerBrowserOrigin(t *testing.T) {
 	cfg, err = controllerBrowserConfig("", "")
 	if err != nil || cfg.AllowInsecureCookies || cfg.PublicOrigin != "" {
 		t.Fatal("default fixture security changed")
+	}
+}
+
+// controllerTriggerGit retains the worktree only inside this disposable fixture.
+func controllerTriggerGit(t *testing.T) (string, string, func()) {
+	t.Helper()
+	actual, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	work := filepath.Join(root, "work")
+	if err = os.Mkdir(work, 0700); err != nil {
+		t.Fatal(err)
+	}
+	checkoutCommand(t, work, "init", "-q", "-b", "main")
+	index := filepath.Join(work, "index.html")
+	if err = os.WriteFile(index, []byte("trigger commit A\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checkoutCommand(t, work, "add", ".")
+	checkoutCommand(t, work, "commit", "-qm", "A")
+	commit := checkoutCommand(t, work, "rev-parse", "HEAD")
+	bare := filepath.Join(root, "repo.git")
+	checkoutCommand(t, root, "clone", "--bare", work, bare)
+	backend := &cgi.Handler{Path: actual, Args: []string{"http-backend"}, Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"}}
+	server := httptest.NewTLSServer(backend)
+	t.Cleanup(server.Close)
+	cert := filepath.Join(root, "ca.pem")
+	if err = os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err = os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexec "+shellQuote(actual)+" -c http.sslCAInfo="+shellQuote(cert)+" \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	return strings.Replace(server.URL, "127.0.0.1", "example.com", 1) + "/repo.git", commit, func() {
+		if err := os.WriteFile(index, []byte("substituted branch B\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		checkoutCommand(t, work, "add", ".")
+		checkoutCommand(t, work, "commit", "-qm", "B")
+		checkoutCommand(t, work, "push", bare, "main")
+		if checkoutCommand(t, work, "rev-parse", "HEAD") == commit {
+			t.Fatal("branch failed to move")
+		}
 	}
 }
