@@ -24,9 +24,13 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`0771f1b56befcd30b195c45121dba4d3efeec974`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`43e9c305f71a267b1d201f7849c12a31f8c532d6`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
+- Hosting navigation leads with Home, Projects and Servers and runners, with
+  direct image/Git application guidance and advanced workflows preserved.
+  Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
+  [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
 - PostgreSQL state, checked migrations through 0057, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
