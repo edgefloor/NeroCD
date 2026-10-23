@@ -728,7 +728,12 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		return domain.HostingOperation{}, err
 	}
 	if replay {
-		return hostingOperation(ctx, tx, in.OperationID)
+		op, readErr := hostingOperation(ctx, tx, in.OperationID)
+		if readErr != nil {
+			return op, readErr
+		}
+		op.TaskMode = "deploy"
+		return op, nil
 	}
 	if err = hostingAuthorityExists(ctx, tx, runnerID, in.HostingAuthority, true); err != nil {
 		return domain.HostingOperation{}, err
@@ -750,6 +755,7 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		if *op.Release != in.Release {
 			return domain.HostingOperation{}, ErrConflict
 		}
+		op.TaskMode = "deploy"
 		return op, nil
 	}
 	if op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) {
@@ -858,6 +864,7 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 			return domain.HostingOperation{}, err
 		}
 	}
+	op.TaskMode = "deploy"
 	return op, tx.Commit(ctx)
 }
 

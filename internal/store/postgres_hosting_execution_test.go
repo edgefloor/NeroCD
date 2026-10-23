@@ -526,6 +526,86 @@ func prepareHostingAttempt(t *testing.T, pg *store.PostgresStore, op domain.Host
 	return a, request
 }
 
+func TestPostgresHostingPreparedReturnsDeployTaskMode(t *testing.T) {
+	for _, path := range []string{"fresh", "receipt-replay", "expired-receipt-replay", "existing-release"} {
+		t.Run(path, func(t *testing.T) {
+			pg, database, resource, server, _ := hostingExecutionFixture(t)
+			ctx := t.Context()
+			op, err := pg.RequestHostingDeployment(ctx, "hop_prepared_mode", resource.ID, "usr_bootstrap", hostingDeploymentRequest(), destinationEvent("prepared_mode"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			op = awaitHostingDispatch(t, pg, op.ID)
+			claim, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+			if _, err = pg.HostingRunnerPlan(ctx, server.RunnerID, a); err != nil {
+				t.Fatal(err)
+			}
+			release := domain.HostingRelease{CanonicalImage: "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat("b", 64), DaemonID: "daemon_image_host", OS: "linux", Architecture: "amd64"}
+			release.Hash = domain.HostingDocumentHash(release)
+			request := domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: "prepared_mode", Release: release}
+			switch path {
+			case "receipt-replay", "expired-receipt-replay":
+				if _, err = pg.HostingPrepared(ctx, server.RunnerID, request); err != nil {
+					t.Fatal(err)
+				}
+				if path == "expired-receipt-replay" {
+					if _, err = database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case "existing-release":
+				// Seed immutable preparation evidence without a receipt to exercise
+				// the existing-release response independently of receipt replay.
+				plan, compileErr := domain.CompileHostingPlan(op.Snapshot, release, nil)
+				if compileErr != nil {
+					t.Fatal(compileErr)
+				}
+				releaseRaw, marshalErr := json.Marshal(release)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				planRaw, marshalErr := json.Marshal(plan)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				if _, err = database.Exec(ctx, `INSERT INTO hosting_releases(operation_id,body,body_hash) VALUES($1,$2,$3)`, op.ID, releaseRaw, release.Hash); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = database.Exec(ctx, `INSERT INTO hosting_apply_plans(operation_id,body,body_hash) VALUES($1,$2,$3)`, op.ID, planRaw, plan.Hash); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := pg.GetHostingOperation(ctx, op.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = pg.HostingPrepared(ctx, "runner_wrong", request); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("wrong runner accepted: %v", err)
+			}
+			forged := request
+			forged.Fence += "_forged"
+			if _, err = pg.HostingPrepared(ctx, server.RunnerID, forged); !errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("forged authority accepted: %v", err)
+			}
+			prepared, err := pg.HostingPrepared(ctx, server.RunnerID, request)
+			if err != nil || prepared.TaskMode != "deploy" || prepared.Release == nil || *prepared.Release != release || prepared.Plan == nil {
+				t.Fatalf("prepared acknowledgement lost deploy plan: mode=%q release=%+v plan=%+v err=%v", prepared.TaskMode, prepared.Release, prepared.Plan, err)
+			}
+			stored, err := pg.GetHostingOperation(ctx, op.ID)
+			if err != nil || stored.TaskMode != "" {
+				t.Fatalf("task mode became persisted operation evidence: mode=%q err=%v", stored.TaskMode, err)
+			}
+			if path != "fresh" && !reflect.DeepEqual(before, stored) {
+				t.Fatal("prepared acknowledgement changed existing durable evidence")
+			}
+		})
+	}
+}
+
 func TestPostgresHostingExecutionAtomicDispatchTargetAndSettlement(t *testing.T) {
 	pg, database, resource, server, _ := hostingExecutionFixture(t)
 	ctx := t.Context()
