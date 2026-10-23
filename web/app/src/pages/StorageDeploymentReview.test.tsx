@@ -66,6 +66,7 @@ function setup(
     init: RequestInit,
   ) => Response | Promise<Response> | undefined,
   authority: StorageDeploymentOptions = options,
+  onRefresh: (signal: AbortSignal) => Promise<void> = async () => {},
 ) {
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     const response = await handler?.(url, init);
@@ -118,7 +119,8 @@ function setup(
   });
   vi.stubGlobal("fetch", fetch);
   const selected = vi.fn(),
-    denied = vi.fn();
+    denied = vi.fn(),
+    refreshed = vi.fn(onRefresh);
   client = new QueryClient();
   const view = render(
     <QueryClientProvider client={client}>
@@ -131,10 +133,11 @@ function setup(
         mutationHeld={false}
         onDenied={denied}
         onSelected={selected}
+        onRefresh={refreshed}
       />
     </QueryClientProvider>,
   );
-  return { fetch, selected, denied, ...view };
+  return { fetch, selected, denied, refreshed, ...view };
 }
 async function review() {
   fireEvent.click(
@@ -427,6 +430,80 @@ test("lost response preserves frozen body and key for explicit identical retry",
   const writes = fetch.mock.calls.filter(([, init]) => init.method === "POST");
   expect(writes).toHaveLength(2);
   expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
+test("accepted receipt remains definitive when history refresh rejects", async () => {
+  const { selected, fetch } = setup(undefined, options, async () => {
+    throw new Error("history unavailable");
+  });
+  await review();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
+  );
+  await screen.findByText(/Deployment request accepted: hop/);
+  await screen.findByText(/was accepted, but history could not be refreshed/);
+  expect(selected).toHaveBeenCalledExactlyOnceWith("hop");
+  expect(screen.queryByText(/Delivery is unconfirmed/)).toBeNull();
+  expect(
+    screen.queryByRole("button", {
+      name: "Retry identical storage deployment request",
+    }),
+  ).toBeNull();
+  expect(
+    fetch.mock.calls.filter(([, init]) => init.method === "POST"),
+  ).toHaveLength(1);
+});
+test("accepted receipt releases submission busy state and bounds stalled refresh", async () => {
+  const { selected } = setup(
+    undefined,
+    options,
+    () => new Promise<void>(() => {}),
+  );
+  await review();
+  vi.useFakeTimers();
+  await act(async () => {
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Deploy reviewed image with uploads",
+      }),
+    );
+  });
+  expect(screen.getByText(/Deployment request accepted: hop/)).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Requesting storage deployment..." }),
+  ).toBeNull();
+  expect(selected).toHaveBeenCalledExactlyOnceWith("hop");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30_000);
+  });
+  expect(
+    screen.getByText(/was accepted, but history could not be refreshed/),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "Review current storage deployment",
+    }).disabled,
+  ).toBe(false);
+  expect(screen.queryByText(/Delivery is unconfirmed/)).toBeNull();
+});
+test("retired scope cancels accepted-receipt refresh and ignores a late rejection", async () => {
+  let signal: AbortSignal | undefined;
+  let reject!: (error: Error) => void;
+  const { unmount, selected } = setup(undefined, options, (current) => {
+    signal = current;
+    return new Promise<void>((_, fail) => {
+      reject = fail;
+    });
+  });
+  await review();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
+  );
+  await screen.findByText(/Deployment request accepted: hop/);
+  unmount();
+  expect(signal?.aborted).toBe(true);
+  await act(async () => reject(new Error("late old actor refresh failure")));
+  expect(selected).toHaveBeenCalledExactlyOnceWith("hop");
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 test("a stalled submission returns to exact retry after the bounded timeout", async () => {
   const { fetch } = setup((url) =>

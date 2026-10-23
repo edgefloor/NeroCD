@@ -186,7 +186,8 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   const active = useRef(true);
   const submitting = useRef(false);
   const request = useRef<AbortController | null>(null);
-  useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); }; }, []);
+  const refreshRequests = useRef(new Set<AbortController>());
+  useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); for (const controller of refreshRequests.current) controller.abort(); refreshRequests.current.clear(); }; }, []);
   const principal = useQuery(principalQuery());
   const members = useQuery({ ...allProjectMembersQuery(), staleTime: 10_000 });
   // Mirrors requireProjectRole: only system_admin bypasses persisted membership.
@@ -208,6 +209,9 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   const [refreshError, setRefreshError] = useState("");
   const [differentIntent, setDifferentIntent] = useState(false);
   const [restoreRejected, setRestoreRejected] = useState(false);
+  const [acceptedID, setAcceptedID] = useState("");
+  const acceptedReceipt = useRef("");
+  const [acceptedRefreshError, setAcceptedRefreshError] = useState("");
   const binding = useQuery(hostingBindingQuery(resource.project_id, resource.id, actor));
   const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset, actor));
   const storageOptions = useQuery({ ...storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }), enabled: resource.source.kind === "image" });
@@ -221,7 +225,23 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   // An existing exact key is receipt recovery, not new workload admission.
   // Keep its frozen body available even if refreshed history reveals its hold.
   const newAdmissionHeld = mutationHeld && !attempt;
-  const refreshHistory = async () => { await Promise.all([client.invalidateQueries({ queryKey: hostingDeploymentKeys.history(resource.project_id, resource.id) }), client.invalidateQueries({ queryKey: hostingDeploymentKeys.retained(resource.project_id, resource.id) })]); };
+  const refreshHistory = async (retired?: AbortSignal) => {
+    if (!active.current) throw new DOMException("Deployment scope retired", "AbortError");
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (retired?.aborted) controller.abort();
+    retired?.addEventListener("abort", abort, { once: true });
+    refreshRequests.current.add(controller);
+    const keys = [hostingDeploymentKeys.history(resource.project_id, resource.id, actor), hostingDeploymentKeys.retained(resource.project_id, resource.id, actor)];
+    try {
+      await boundedStorageRequest(async (signal) => {
+        const cancel = () => { for (const queryKey of keys) void client.cancelQueries({ queryKey }); };
+        signal.addEventListener("abort", cancel, { once: true });
+        try { await Promise.all(keys.map((queryKey) => client.invalidateQueries({ queryKey }, { throwOnError: true }))); }
+        finally { signal.removeEventListener("abort", cancel); }
+      }, controller.signal);
+    } finally { retired?.removeEventListener("abort", abort); refreshRequests.current.delete(controller); }
+  };
   async function reviewCurrent() {
     setRefreshError(""); setCurrent(undefined);
     try {
@@ -238,7 +258,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     submitting.current = true;
     let input = attempt;
     const controller = new AbortController(); request.current = controller;
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setAcceptedRefreshError("");
     try {
       if (!input) {
         const authority = await getStorageDeploymentOptions({ actor, project: resource.project_id, resource: resource.id }, controller.signal);
@@ -258,8 +278,8 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
       const operation = await boundedStorageRequest((signal) => requestHostingDeployment(resource.id, frozenInput, { signal }), controller.signal);
       if (!active.current || controller.signal.aborted) return;
       if (operation.project_id !== resource.project_id || operation.resource_id !== resource.id || operation.binding_id !== binding.data.id || (input.expected_runtime_configuration_generation !== undefined && operation.snapshot.runtime_configuration?.generation !== input.expected_runtime_configuration_generation)) throw new Error("Operation scope mismatch");
-      setSelected(operation.id); setAttempt(undefined); setAcknowledged(false); setDifferentIntent(false); setOffset(0);
-      await refreshHistory();
+      setSelected(operation.id); setAcceptedID(operation.id); acceptedReceipt.current = operation.id; setAttempt(undefined); setAcknowledged(false); setDifferentIntent(false); setOffset(0);
+      void refreshHistory().catch(() => { if (active.current && acceptedReceipt.current === operation.id) setAcceptedRefreshError(`Deployment request ${operation.id} was accepted, but history could not be refreshed. Refresh deployment history to inspect its recorded state.`); });
     } catch (cause) {
       if (!active.current || controller.signal.aborted) return;
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { onDenied(); return; }
@@ -278,6 +298,8 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
     <h5 className="font-medium">{resource.source.kind === "image" ? "Image deployments" : "Deployment history"}</h5>
+    {acceptedID ? <p role="status" className="break-all">Deployment request accepted: {acceptedID}. Acceptance does not confirm workload completion or public traffic.</p> : null}
+    {acceptedRefreshError ? <p role="alert">{acceptedRefreshError}</p> : null}
     {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Use Git builds to request and review build operations. Select a successful build in Git builds to deploy its recorded local artifact. Review the resulting operation here, then configure the existing HTTPS route after the release settles healthy.</p> : null}
     {restoreHeld ? <p role="alert">Deployment admission blocked after platform restore. Recovery proof is pending; refreshing configuration, retrying, or requesting reconciliation cannot release restored ownership. Your settings are preserved.</p> : null}
     {mutationHeld ? <p role="status">New deployment requests are paused while a recorded mutation hold is retained. An exact retained request can still recover its existing operation. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
@@ -291,7 +313,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     {binding.data ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
     {resource.source.kind === "image" && storageOptions.isPending ? <p role="status">Checking authoritative storage deployment options...</p> : null}
     {resource.source.kind === "image" && storageOptions.isError ? <><p role="alert">Storage deployment options are unavailable. Deployment is paused; refresh authority before reviewing.</p><Button type="button" variant="outline" disabled={storageOptions.isFetching} onClick={() => void storageOptions.refetch()}>Retry storage deployment options</Button></> : null}
-    {writable && resource.source.kind === "image" && !storageOptions.isError && storageOptions.data && !stateless ? <StorageDeploymentReview key={binding.data?.id ?? "unbound"} bindingID={binding.data?.id ?? ""} scope={{ actor, project: resource.project_id, resource: resource.id }} resource={resource} options={storageOptions.data} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={async (operationID) => { setSelected(operationID); setOffset(0); await refreshHistory(); }} /> : null}
+    {writable && resource.source.kind === "image" && !storageOptions.isError && storageOptions.data && !stateless ? <StorageDeploymentReview key={binding.data?.id ?? "unbound"} bindingID={binding.data?.id ?? ""} scope={{ actor, project: resource.project_id, resource: resource.id }} resource={resource} options={storageOptions.data} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} /> : null}
     {writable && resource.source.kind === "image" && (stateless || storageOptions.isPending) ? <form className="space-y-3 rounded-lg border p-3" aria-label={`Deploy image for ${resource.name}`} onSubmit={(event) => void submit(event)}>
       <p className="text-sm">A new deployment captures the current saved runtime generation and requires a compatible runner. Saving variables does not update the serving release.</p>
       <p className="break-all text-sm">Deploy saved image {base.source.kind === "image" ? base.source.image.reference : "unavailable"} at generation {base.generation} to binding {binding.data?.id ?? "unavailable"}.</p>

@@ -117,6 +117,7 @@ export function StorageDeploymentReview({
   mutationHeld,
   onDenied,
   onSelected,
+  onRefresh,
 }: {
   scope: StorageDeploymentScope;
   resource: Resource;
@@ -125,7 +126,8 @@ export function StorageDeploymentReview({
   blocked: boolean;
   mutationHeld: boolean;
   onDenied: () => void;
-  onSelected: (id: string) => Promise<void>;
+  onSelected: (id: string) => void;
+  onRefresh: (signal: AbortSignal) => Promise<void>;
 }) {
   const [review, setReview] = useState<{
     options: StorageDeploymentOptions;
@@ -142,6 +144,10 @@ export function StorageDeploymentReview({
   const [sent, setSent] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [error, setError] = useState("");
+  const [acceptedID, setAcceptedID] = useState("");
+  const [refreshError, setRefreshError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshRequest = useRef<AbortController | null>(null);
   const request = useRef<AbortController | null>(null);
   const active = useRef(true);
   useEffect(() => {
@@ -149,14 +155,17 @@ export function StorageDeploymentReview({
     return () => {
       active.current = false;
       request.current?.abort();
+      refreshRequest.current?.abort();
     };
   }, []);
   async function prepare() {
-    if (request.current || blocked || mutationHeld) return;
+    if (request.current || blocked || mutationHeld || refreshing) return;
     const controller = new AbortController();
     request.current = controller;
     setBusy(true);
     setError("");
+    setAcceptedID("");
+    setRefreshError("");
     setReview(undefined);
     setConfirmed(false);
     setSent(false);
@@ -258,6 +267,29 @@ export function StorageDeploymentReview({
       if (active.current) setBusy(false);
     }
   }
+  async function refreshAccepted(id: string) {
+    refreshRequest.current?.abort();
+    const controller = new AbortController();
+    refreshRequest.current = controller;
+    setRefreshing(true);
+    setRefreshError("");
+    try {
+      await boundedStorageRequest(
+        (signal) => onRefresh(signal),
+        controller.signal,
+      );
+    } catch {
+      if (active.current && !controller.signal.aborted)
+        setRefreshError(
+          `Deployment request ${id} was accepted, but history could not be refreshed. Refresh history to inspect its recorded state.`,
+        );
+    } finally {
+      if (refreshRequest.current === controller) {
+        refreshRequest.current = null;
+        if (active.current) setRefreshing(false);
+      }
+    }
+  }
   async function submit() {
     if (
       !review ||
@@ -273,6 +305,7 @@ export function StorageDeploymentReview({
     setBusy(true);
     setError("");
     setSent(true);
+    let accepted = "";
     try {
       const operation = await boundedStorageRequest(
         (signal) =>
@@ -303,10 +336,11 @@ export function StorageDeploymentReview({
         throw new Error(
           "Deployment receipt does not match reviewed storage. Delivery remains unconfirmed.",
         );
+      accepted = operation.id;
+      setAcceptedID(operation.id);
       setReview(undefined);
       setConfirmed(false);
       setSent(false);
-      await onSelected(operation.id);
     } catch (cause) {
       if (!active.current || controller.signal.aborted) return;
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
@@ -325,6 +359,10 @@ export function StorageDeploymentReview({
     } finally {
       if (request.current === controller) request.current = null;
       if (active.current) setBusy(false);
+    }
+    if (accepted && active.current && !controller.signal.aborted) {
+      onSelected(accepted);
+      void refreshAccepted(accepted);
     }
   }
   const shown = review?.options ?? options;
@@ -418,7 +456,9 @@ export function StorageDeploymentReview({
         form={initial ? formID : undefined}
         variant="outline"
         className="h-auto max-w-full whitespace-normal"
-        disabled={blocked || mutationHeld || busy || (sent && !conflict)}
+        disabled={
+          blocked || mutationHeld || busy || refreshing || (sent && !conflict)
+        }
         onClick={initial ? undefined : () => void prepare()}
       >
         {conflict
@@ -534,6 +574,27 @@ export function StorageDeploymentReview({
             </p>
           ) : null}
         </>
+      ) : null}
+      {acceptedID ? (
+        <p role="status" className="break-all">
+          Deployment request accepted: {acceptedID}. Acceptance does not confirm
+          workload completion or public traffic.
+        </p>
+      ) : null}
+      {refreshing ? (
+        <p role="status">Refreshing accepted deployment history...</p>
+      ) : null}
+      {refreshError ? <p role="alert">{refreshError}</p> : null}
+      {acceptedID && refreshError ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="h-auto max-w-full whitespace-normal"
+          disabled={refreshing}
+          onClick={() => void refreshAccepted(acceptedID)}
+        >
+          Refresh accepted deployment history
+        </Button>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
     </section>

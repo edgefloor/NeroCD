@@ -12,7 +12,7 @@ const operation: HostingOperation = { id: "hop_one", project_id: "project", reso
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const page = (items: HostingOperation[] = [], offset = 0, total = items.length) => ({ items, count: items.length, total, limit: 20, offset });
 let client: QueryClient;
-afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 function setup(role = "maintainer", globalRoles: string[] = [], automatic = false) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(queryKeys.principal, { id: "user", name: "Operator", email: "operator@example.test", provider: "oidc", roles: globalRoles });
@@ -104,6 +104,48 @@ test("storage receipt retry survives history acquiring the admitted operation mu
   await screen.findByRole("region", { name: "Deployment operation detail" });
   const writes = fetch.mock.calls.filter(([, init]) => init.method === "POST");
   expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
+test("stateless accepted receipt remains selected when the shared history refresh rejects", async () => {
+  const fetch = backend(); setup(); acknowledge();
+  vi.spyOn(client, "invalidateQueries").mockRejectedValue(new Error("history refresh failed"));
+  await request();
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/was accepted, but history could not be refreshed/);
+  expect(screen.getByLabelText<HTMLInputElement>("Container port").disabled).toBe(false);
+  expect(screen.queryByText(/connection ended without a confirmed response/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry identical deployment request" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+});
+test.each(["actor", "resource"])("accepted storage refresh times out and fences late reads after %s changes", async (change) => {
+  const storage: NonNullable<HostingOperation["snapshot"]["storage"]> = { storage_id: "storage", generation: 1, hash: "hash" };
+  const options = { resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null };
+  let admitted = false;
+  let historySignal: AbortSignal | null | undefined;
+  let resolve!: (response: Response) => void;
+  const fetch = backend((url, init) => {
+    if (url.endsWith("/storage-deployment-options")) return json(options);
+    if (url.endsWith("/deployments") && init.method === "POST") { admitted = true; return json({ ...operation, snapshot: { ...operation.snapshot, storage } }, 202); }
+    if (admitted && url.includes("/deployments") && init.method !== "POST") { historySignal = init.signal; return new Promise<Response>((done) => { resolve = done; }); }
+    return undefined;
+  });
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+  await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+  vi.useFakeTimers();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" })); });
+  expect(screen.getByText(/Deployment request accepted: hop_one/)).toBeTruthy();
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(screen.getByText(/was accepted, but history could not be refreshed/)).toBeTruthy();
+  expect(historySignal?.aborted).toBe(true);
+  vi.useRealTimers();
+  if (change === "resource") view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={{ ...resource, id: "other" }} writable blocked={false} /></QueryClientProvider>);
+  else await act(async () => { client.setQueryData(queryKeys.principal, { id: "other", provider: "oidc", roles: [] }); });
+  await waitFor(() => expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull());
+  await act(async () => { resolve(json(page([{ ...operation, mutation_hold: true }]))); });
+  expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull();
+  expect(screen.queryByText(/was accepted, but history could not be refreshed/)).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
 });
 test("viewer reads persisted history and results without request, cancel, or reconcile controls", async () => {
   backend((url) => url.includes("/deployments") ? json(page([{ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }])) : url.includes("/hosting-operations/") ? json({ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }) : undefined);
