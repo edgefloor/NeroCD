@@ -1,10 +1,11 @@
 package api
 
 import (
-	"nerocd/internal/app"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"nerocd/internal/app"
 )
 
 func (s *Server) serverBootstrapOptions(w http.ResponseWriter, r *http.Request) {

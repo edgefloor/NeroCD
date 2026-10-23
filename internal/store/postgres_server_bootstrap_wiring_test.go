@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"testing"
+	"time"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/serverbootstrap"
 	"nerocd/internal/store"
-	"testing"
-	"time"
 )
 
 func bootstrapTrustedProbeReview(t *testing.T, f *bootstrapFixture, op domain.ServerBootstrapOperation) domain.ServerBootstrapOperation {
@@ -76,7 +77,25 @@ func TestPostgresServerBootstrapTypedProbeAndResponseLossRecovery(t *testing.T) 
 	if op.State != "uncertain" || !op.RemoteHold {
 		t.Fatalf("missing retained ownership %+v", op)
 	}
-	inspect := f.claim(t, op, "inspect_owned")
+
+	initialInspect := f.claim(t, op, "inspect_owned")
+	observed := f.receipt(initialInspect, "observed")
+	observed.Owned = &domain.ServerBootstrapOwnedReceipt{InstallationID: op.IDs.InstallationID, ManifestSHA256: op.Review.ManifestSHA256, OperationID: op.IDs.InstallOperationID, State: "staged"}
+	if _, e = f.pg.CompleteServerBootstrapStage(t.Context(), "usr_bootstrap", op.IDs.OperationID, observed, f.event()); e != nil {
+		t.Fatal("noninstalled inspection receipt", e)
+	}
+	op = f.get(t, op.IDs.OperationID)
+	if op.State != "uncertain" || !op.RemoteHold {
+		t.Fatal("noninstalled observation released uncertainty")
+	}
+	next, e := f.pg.RequestServerBootstrapCommand(t.Context(), "usr_bootstrap", op.IDs.OperationID, domain.ServerBootstrapCommand{Key: "explicit-next-inspection", Action: "inspect_owned", ExpectedVersion: op.Version, Deadline: op.CreatedAt.Add(time.Hour)}, f.event())
+	if e != nil {
+		t.Fatal(e)
+	}
+	inspect, e := f.pg.ClaimServerBootstrapStage(t.Context(), "usr_bootstrap", op.IDs.OperationID, next.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
 	receipt := f.receipt(inspect, "observed")
 	receipt.Owned = &domain.ServerBootstrapOwnedReceipt{InstallationID: op.IDs.InstallationID, ManifestSHA256: op.Review.ManifestSHA256, OperationID: "wrong", State: "installed", ArtifactMatches: true, ServiceActive: true}
 	if _, e = f.pg.CompleteServerBootstrapStage(t.Context(), "usr_bootstrap", op.IDs.OperationID, receipt, f.event()); !errors.Is(e, store.ErrConflict) {
@@ -102,6 +121,15 @@ func TestPostgresServerBootstrapTypedProbeAndResponseLossRecovery(t *testing.T) 
 	var pending int
 	if e = f.db.QueryRow(t.Context(), `SELECT count(*) FROM server_bootstrap_commands WHERE operation_id=$1 AND action='install' AND receipt IS NULL`, op.IDs.OperationID).Scan(&pending); e != nil || pending != 0 {
 		t.Fatal("original intent not settled", pending, e)
+	}
+
+	replay := f.receipt(stage, "installed")
+	replay.ManifestSHA256 = op.Review.ManifestSHA256
+	replay.RemoteOperationID = op.IDs.InstallOperationID
+	replay.Owned = receipt.Owned
+	accepted, e := f.pg.CompleteServerBootstrapStage(t.Context(), "usr_bootstrap", op.IDs.OperationID, replay, f.event())
+	if e != nil || accepted.IDs != op.IDs || accepted.State != "installed_waiting_enrollment" || !accepted.RemoteHold {
+		t.Fatal("reconciled original completion replay", accepted.State, e)
 	}
 	// Registration command is now admissible without another install or new grant.
 	f.command(t, op, "register_server", nil)

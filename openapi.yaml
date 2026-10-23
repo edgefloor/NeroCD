@@ -4300,6 +4300,7 @@ components:
         - "name"
         - "target"
         - "artifact_id"
+        - "artifact"
         - "state"
         - "version"
         - "remote_hold"
@@ -4319,6 +4320,8 @@ components:
           "$ref": "#/components/schemas/ServerBootstrapTarget"
         artifact_id:
           type: "string"
+        artifact:
+          "$ref": "#/components/schemas/ServerBootstrapArtifactOption"
         state:
           type: "string"
           enum:

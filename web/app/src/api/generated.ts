@@ -3158,6 +3158,7 @@ export interface components {
             name: string;
             target: components["schemas"]["ServerBootstrapTarget"];
             artifact_id: string;
+            artifact: components["schemas"]["ServerBootstrapArtifactOption"];
             /** @enum {string} */
             state: "draft" | "reviewed" | "running" | "installed_waiting_enrollment" | "registered" | "completed" | "refused" | "canceled" | "uncertain";
             /** Format: int64 */

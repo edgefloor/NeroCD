@@ -4,11 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/netip"
+	"time"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/serverbootstrap"
 	"nerocd/internal/store"
-	"net/netip"
-	"time"
 )
 
 // ProcessServerBootstrap resolves only opaque queued IDs. Every remote call owns
@@ -62,7 +63,16 @@ func (s *Service) ProcessServerBootstrap(ctx context.Context, id string) error {
 			if action == "" {
 				return nil
 			}
-			command := domain.ServerBootstrapCommand{Key: bootstrapSystemCommandID(id, action), Action: action, ExpectedVersion: op.Version, Deadline: op.CreatedAt.Add(domain.ServerBootstrapMaxLifetime)}
+			key := bootstrapSystemCommandID(id, action)
+			// A committed system command owns its original request and CAS version.
+			// Pending commands were selected above. Completed inspection requires
+			// a new explicit operator command if its observation did not settle intent.
+			for _, prior := range op.Commands {
+				if prior.Command.Key == key {
+					return nil
+				}
+			}
+			command := domain.ServerBootstrapCommand{Key: key, Action: action, ExpectedVersion: op.Version, Deadline: op.CreatedAt.Add(domain.ServerBootstrapMaxLifetime)}
 			event, e := s.auditEvent(ctx, actor, "server_bootstrap.command_requested", id, nil)
 			if e != nil {
 				return e

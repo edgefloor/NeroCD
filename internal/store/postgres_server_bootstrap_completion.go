@@ -115,7 +115,7 @@ func (s *PostgresStore) CompleteServerBootstrapStage(ctx context.Context, actor,
 			if in.Outcome != "observed" && in.Outcome != "refused" {
 				return zero, ErrConflict
 			}
-			if row.Action == "inspect_owned" && in.Outcome == "observed" && in.Owned != nil && op.RemoteHold && (op.State == "running" || op.State == "uncertain") {
+			if row.Action == "inspect_owned" && in.Outcome == "observed" && in.Owned != nil && in.Owned.State == "installed" && op.RemoteHold && (op.State == "running" || op.State == "uncertain") {
 				if err = bootstrapReconcileOwned(ctx, tx, op, *in.Owned); err != nil {
 					return zero, err
 				}

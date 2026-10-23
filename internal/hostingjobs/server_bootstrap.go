@@ -3,6 +3,7 @@ package hostingjobs
 import (
 	"context"
 	"errors"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 )

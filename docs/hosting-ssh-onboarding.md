@@ -70,7 +70,10 @@ conflicting installation. `POST /{id}/inspect` invokes the fixed owned-state hel
 reconciliation requires the original durable install intent and an exact matching installation,
 manifest hash, remote operation ID, installed artifact, active service, and no pending service
 job. It closes the original intent and advances to enrollment waiting while retaining the hold.
-An administrator cannot submit these facts through the API. Restored operations remain held and
+An administrator cannot submit these facts through the API. A refused or noninstalled automatic
+inspection retains uncertainty and the hold. The operator can request a new inspection with a
+new command UUID, up to the existing eight-inspection limit. Automatic recovery does not
+repeat a completed inspection. Restored operations remain held and
 never resume remote activity automatically.
 
 The backend tests cover transactional command replay, typed receipt binding, response-loss

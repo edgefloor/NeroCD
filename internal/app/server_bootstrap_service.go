@@ -143,23 +143,24 @@ type ServerBootstrapReview struct {
 
 // ServerBootstrap is the public metadata projection; internal authority never crosses this boundary.
 type ServerBootstrap struct {
-	ID               string                       `json:"id"`
-	ProjectID        string                       `json:"project_id"`
-	Name             string                       `json:"name"`
-	Target           domain.ServerBootstrapTarget `json:"target"`
-	ArtifactID       string                       `json:"artifact_id"`
-	State            string                       `json:"state"`
-	Version          int64                        `json:"version"`
-	RemoteHold       bool                         `json:"remote_hold"`
-	RestoreHeld      bool                         `json:"restore_held"`
-	CreatedAt        time.Time                    `json:"created_at"`
-	Progress         []ServerBootstrapProgress    `json:"progress"`
-	Probe            *ServerBootstrapProbe        `json:"probe,omitempty"`
-	Review           *ServerBootstrapReview       `json:"review,omitempty"`
-	AvailableActions []string                     `json:"available_actions"`
-	ServerID         string                       `json:"server_id,omitempty"`
-	DestinationID    string                       `json:"destination_id,omitempty"`
-	ReadinessState   string                       `json:"readiness_state"`
+	Artifact         ServerBootstrapArtifactOption `json:"artifact"`
+	ID               string                        `json:"id"`
+	ProjectID        string                        `json:"project_id"`
+	Name             string                        `json:"name"`
+	Target           domain.ServerBootstrapTarget  `json:"target"`
+	ArtifactID       string                        `json:"artifact_id"`
+	State            string                        `json:"state"`
+	Version          int64                         `json:"version"`
+	RemoteHold       bool                          `json:"remote_hold"`
+	RestoreHeld      bool                          `json:"restore_held"`
+	CreatedAt        time.Time                     `json:"created_at"`
+	Progress         []ServerBootstrapProgress     `json:"progress"`
+	Probe            *ServerBootstrapProbe         `json:"probe,omitempty"`
+	Review           *ServerBootstrapReview        `json:"review,omitempty"`
+	AvailableActions []string                      `json:"available_actions"`
+	ServerID         string                        `json:"server_id,omitempty"`
+	DestinationID    string                        `json:"destination_id,omitempty"`
+	ReadinessState   string                        `json:"readiness_state"`
 }
 
 // ServerBootstrapList bounds metadata pages and reports whether another page exists.
@@ -370,6 +371,7 @@ func (s *Service) CommandServerBootstrap(ctx context.Context, id, action string,
 }
 func (s *Service) bootstrapProjection(op domain.ServerBootstrapOperation, actor string) ServerBootstrap {
 	out := ServerBootstrap{ID: op.IDs.OperationID, ProjectID: op.Input.ProjectID, Name: op.Input.Name, Target: op.Input.Target, ArtifactID: op.Input.ArtifactID, State: op.State, Version: op.Version, RemoteHold: op.RemoteHold, RestoreHeld: op.RestoreHeld, CreatedAt: op.CreatedAt, Progress: []ServerBootstrapProgress{}, AvailableActions: []string{}, ReadinessState: "not_registered"}
+	out.Artifact = ServerBootstrapArtifactOption{ArtifactID: op.Input.ArtifactID, Version: op.Input.Artifact.Version, Architecture: op.Input.Artifact.Architecture, Size: op.Input.Artifact.Size, SHA256: op.Input.Artifact.SHA256, Profile: "prepared_debian12_v1"}
 	for _, stage := range op.Commands {
 		action := stage.Command.Action
 		switch action {

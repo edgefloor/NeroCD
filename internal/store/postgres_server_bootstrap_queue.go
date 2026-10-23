@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"time"
+
 	"github.com/jackc/pgx/v5"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/serverbootstrap"
@@ -39,7 +42,10 @@ func (s *PostgresStore) ServerBootstrapActor(ctx context.Context, id string) (st
 
 // ListServerBootstraps bounds materialization and rechecks project ownership.
 func (s *PostgresStore) ListServerBootstraps(ctx context.Context, actor, project string, limit, offset int) ([]domain.ServerBootstrapOperation, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5_000_000_000)
+	if limit < 1 || limit > 101 || offset < 0 || offset > 100000 {
+		return nil, ErrConflict
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.ServerBootstrapOperation, error) {
 		if err := proxyAuthorize(ctx, tx, actor, project, domain.RoleOwner, true); err != nil {
@@ -163,7 +169,14 @@ func bootstrapReconcileOwned(ctx context.Context, tx pgx.Tx, op domain.ServerBoo
 	// The exact owned helper receipt closes only the original durable install intent.
 	// Its old lease is never renewed and retained remote ownership is never cleared.
 	receipt, _ := json.Marshal(domain.ServerBootstrapReceipt{Outcome: "installed", ManifestSHA256: owned.ManifestSHA256, RemoteOperationID: owned.OperationID, Owned: &owned})
-	_, e = tx.Exec(ctx, `UPDATE server_bootstrap_commands SET receipt=jsonb_build_object('receipt',$2::jsonb) WHERE operation_id=$1 AND action='install' AND effect_intent AND receipt IS NULL AND lease_expires_at<=clock_timestamp()`, op.IDs.OperationID, receipt)
+	accepted := op
+	accepted.State = "installed_waiting_enrollment"
+	accepted.Version++
+	operation, err := json.Marshal(accepted)
+	if err != nil {
+		return err
+	}
+	_, e = tx.Exec(ctx, `UPDATE server_bootstrap_commands SET receipt=jsonb_build_object('receipt',$2::jsonb || jsonb_build_object('command_id',id,'lease_id',lease_id,'attempt',attempt,'fence',fence),'operation',$3::jsonb) WHERE operation_id=$1 AND action='install' AND effect_intent AND receipt IS NULL AND lease_expires_at<=clock_timestamp()`, op.IDs.OperationID, receipt, operation)
 	return e
 }
 

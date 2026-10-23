@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"nerocd/internal/app"
 	"os"
 	"strings"
+
+	"nerocd/internal/app"
 )
 
 // loadServerBootstrapConfig accepts only an explicitly provisioned operator file.
