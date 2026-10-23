@@ -561,7 +561,7 @@ func privateRuntimeFreshRegistration(t *testing.T, f *controllerBuildFixture, ex
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := map[string]bool{domain.HostingBuildTaskType: true, domain.HostingPrivateGitCapability: true, domain.RunTypeLocalBuildDeploy: true, domain.RunTypeProxyApply: true}
+	expected := map[string]bool{domain.HostingBuildTaskType: true, domain.HostingBuildTriggerRevisionCapability: true, domain.HostingPrivateGitCapability: true, domain.RunTypeLocalBuildDeploy: true, domain.RunTypeProxyApply: true}
 	if len(registered.Capabilities) != len(expected) {
 		t.Fatal("fresh registration capability count changed")
 	}
