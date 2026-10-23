@@ -16,6 +16,9 @@ import (
 // HostingBuildTaskType identifies internal, exactly targeted source/build work.
 const HostingBuildTaskType = "hosting_build_v1"
 
+// HostingBuildTriggerRevisionCapability identifies first-checkout commit pinning support.
+const HostingBuildTriggerRevisionCapability = "hosting_build_trigger_revision_v1"
+
 // HostingPrivateGitCapability identifies runners that implement bounded HTTPS
 // Basic credential acquisition and private checkout. Public build support alone
 // does not advertise this feature.
@@ -113,19 +116,27 @@ type HostingBuildInput struct {
 	GrantID                    string `json:"grant_id,omitempty"`
 }
 
+// HostingBuildTriggerRevision freezes trusted trigger intent before source acquisition.
+// It is not a field in the public build request.
+type HostingBuildTriggerRevision struct {
+	Version        int    `json:"version"`
+	ExpectedCommit string `json:"expected_commit"`
+}
+
 // HostingBuildSnapshot is immutable desired input captured under transaction locks.
 type HostingBuildSnapshot struct {
-	BuildID            string              `json:"build_id"`
-	InputID            string              `json:"input_id"`
-	ResourceGeneration int64               `json:"resource_generation"`
-	Source             HostingGitSource    `json:"source"`
-	BindingID          string              `json:"binding_id"`
-	DestinationID      string              `json:"destination_id"`
-	ServerID           string              `json:"server_id"`
-	RunnerID           string              `json:"runner_id"`
-	ExpectedDaemonID   string              `json:"expected_daemon_id,omitempty"`
-	Policy             HostingBuildPolicy  `json:"operator_policy"`
-	Grant              *HostingSourceGrant `json:"grant,omitempty"`
+	BuildID            string                       `json:"build_id"`
+	InputID            string                       `json:"input_id"`
+	ResourceGeneration int64                        `json:"resource_generation"`
+	Source             HostingGitSource             `json:"source"`
+	BindingID          string                       `json:"binding_id"`
+	DestinationID      string                       `json:"destination_id"`
+	ServerID           string                       `json:"server_id"`
+	RunnerID           string                       `json:"runner_id"`
+	ExpectedDaemonID   string                       `json:"expected_daemon_id,omitempty"`
+	Policy             HostingBuildPolicy           `json:"operator_policy"`
+	Grant              *HostingSourceGrant          `json:"grant,omitempty"`
+	TriggerRevision    *HostingBuildTriggerRevision `json:"trigger_revision,omitempty"`
 }
 
 // HostingBuildAuthority is the full fenced tuple, bound to an owned task target.
@@ -277,9 +288,26 @@ func ValidateHostingBuildPolicy(p HostingBuildPolicy) error {
 	return nil
 }
 
+// ValidateHostingBuildTriggerRevision checks optional trusted intent without
+// changing historical nil-revision source semantics.
+func ValidateHostingBuildTriggerRevision(s HostingBuildSnapshot) error {
+	r := s.TriggerRevision
+	if r == nil {
+		return nil
+	}
+	if r.Version != 1 || !buildCommit.MatchString(r.ExpectedCommit) || strings.Trim(r.ExpectedCommit, "0") == "" {
+		return errors.New("invalid build trigger revision")
+	}
+	configured := strings.ToLower(s.Source.RequestedRef)
+	if buildCommit.MatchString(configured) && configured != r.ExpectedCommit {
+		return errors.New("configured commit does not match trigger revision")
+	}
+	return nil
+}
+
 // ValidateHostingBuildSourceReceipt binds a full commit and tree to the frozen source input.
 func ValidateHostingBuildSourceReceipt(r HostingBuildSourceReceipt, s HostingBuildSnapshot) error {
-	if (buildCommit.MatchString(s.Source.RequestedRef) && r.Commit != s.Source.RequestedRef) || r.BuildID != s.BuildID || r.SourceID != s.Source.ID || r.InputID != s.InputID || !buildCommit.MatchString(r.Commit) || r.PolicyHash != HostingDocumentHash(s.Source.Policy) || !buildDigest.MatchString(r.TreeDigest) {
+	if ValidateHostingBuildTriggerRevision(s) != nil || s.TriggerRevision != nil && r.Commit != s.TriggerRevision.ExpectedCommit || (buildCommit.MatchString(s.Source.RequestedRef) && r.Commit != s.Source.RequestedRef) || r.BuildID != s.BuildID || r.SourceID != s.Source.ID || r.InputID != s.InputID || !buildCommit.MatchString(r.Commit) || r.PolicyHash != HostingDocumentHash(s.Source.Policy) || !buildDigest.MatchString(r.TreeDigest) {
 		return errors.New("source receipt identity mismatch")
 	}
 	return nil
@@ -287,7 +315,7 @@ func ValidateHostingBuildSourceReceipt(r HostingBuildSourceReceipt, s HostingBui
 
 // ValidateHostingBuildArtifact checks local artifact identity against its committed source and daemon.
 func ValidateHostingBuildArtifact(a HostingBuildArtifact, b HostingBuild) error {
-	if b.SourceReceipt == nil || a.Origin != "local_build" || a.BuildID != b.ID || a.SourceID != b.Snapshot.Source.ID || a.InputID != b.Snapshot.InputID || a.SourceReceiptHash != HostingDocumentHash(b.SourceReceipt) || a.DaemonID == "" || a.DaemonID != b.DaemonID || a.Platform != b.Snapshot.Policy.Platform {
+	if b.SourceReceipt == nil || b.Snapshot.TriggerRevision != nil && ValidateHostingBuildSourceReceipt(*b.SourceReceipt, b.Snapshot) != nil || a.Origin != "local_build" || a.BuildID != b.ID || a.SourceID != b.Snapshot.Source.ID || a.InputID != b.Snapshot.InputID || a.SourceReceiptHash != HostingDocumentHash(b.SourceReceipt) || a.DaemonID == "" || a.DaemonID != b.DaemonID || a.Platform != b.Snapshot.Policy.Platform {
 		return errors.New("artifact binding mismatch")
 	}
 	for _, d := range []string{a.ContextDigest, a.RequestDigest, a.ImageID, a.IndexDigest, a.ManifestDigest, a.ConfigDigest} {

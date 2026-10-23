@@ -311,15 +311,22 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 
 // RequestHostingBuild snapshots trusted placement and inputs and invokes a DB-only enqueuer atomically.
 func (s *PostgresStore) RequestHostingBuild(ctx context.Context, id, resourceID, actor string, in domain.HostingBuildInput, policy domain.HostingBuildPolicy, enqueue HostingBuildEnqueueTx, event domain.AuditEvent) (domain.HostingBuild, error) {
-	return s.requestHostingBuild(ctx, id, resourceID, actor, in, policy, enqueue, event, false)
+	return s.requestHostingBuild(ctx, id, resourceID, actor, in, policy, enqueue, event, false, nil)
 }
 
-func (s *PostgresStore) requestHostingBuild(ctx context.Context, id, resourceID, actor string, in domain.HostingBuildInput, policy domain.HostingBuildPolicy, enqueue HostingBuildEnqueueTx, event domain.AuditEvent, configured bool) (domain.HostingBuild, error) {
+func (s *PostgresStore) requestHostingBuild(ctx context.Context, id, resourceID, actor string, in domain.HostingBuildInput, policy domain.HostingBuildPolicy, enqueue HostingBuildEnqueueTx, event domain.AuditEvent, configured bool, revision *domain.HostingBuildTriggerRevision) (domain.HostingBuild, error) {
 	if enqueue == nil {
 		return domain.HostingBuild{}, ErrHostingBuildUnavailable
 	}
 	if !buildRecordID(id) || in.ExpectedResourceGeneration < 1 || in.ExpectedSourceGeneration < 1 || in.IdempotencyKey == "" || len(in.IdempotencyKey) > 128 || strings.TrimSpace(in.IdempotencyKey) != in.IdempotencyKey || domain.ValidateHostingBuildPolicy(policy) != nil {
 		return domain.HostingBuild{}, ErrConflict
+	}
+	if revision != nil {
+		copy := *revision
+		revision = &copy
+		if domain.ValidateHostingBuildTriggerRevision(domain.HostingBuildSnapshot{TriggerRevision: revision}) != nil {
+			return domain.HostingBuild{}, ErrConflict
+		}
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingBuild, error) {
 		q := sqlcgen.New(tx)
@@ -339,6 +346,14 @@ func (s *PostgresStore) requestHostingBuild(ctx context.Context, id, resourceID,
 			Policy domain.HostingBuildPolicy
 			Actor  string
 		}{in, policy, actor})
+		if revision != nil {
+			hash = domain.HostingDocumentHash(struct {
+				Input           domain.HostingBuildInput
+				Policy          domain.HostingBuildPolicy
+				Actor           string
+				TriggerRevision *domain.HostingBuildTriggerRevision
+			}{in, policy, actor, revision})
+		}
 		old, err := q.HostingBuildIdempotency(ctx, sqlcgen.HostingBuildIdempotencyParams{ResourceID: resourceID, IdempotencyKey: in.IdempotencyKey})
 		if err == nil {
 			if old.RequestHash != hash {
@@ -384,7 +399,10 @@ func (s *PostgresStore) requestHostingBuild(ctx context.Context, id, resourceID,
 		if err != nil {
 			return domain.HostingBuild{}, err
 		}
-		snap := domain.HostingBuildSnapshot{BuildID: id, ResourceGeneration: resource.Generation, Source: src, BindingID: target.BindingID, DestinationID: target.DestinationID, ServerID: target.ServerID, RunnerID: target.RunnerID, ExpectedDaemonID: daemon, Policy: policy, Grant: grant}
+		snap := domain.HostingBuildSnapshot{BuildID: id, ResourceGeneration: resource.Generation, Source: src, BindingID: target.BindingID, DestinationID: target.DestinationID, ServerID: target.ServerID, RunnerID: target.RunnerID, ExpectedDaemonID: daemon, Policy: policy, Grant: grant, TriggerRevision: revision}
+		if err = checkBuildTriggerRevision(ctx, tx, snap); err != nil {
+			return domain.HostingBuild{}, err
+		}
 		snap.InputID = domain.HostingDocumentHash(snap)
 		if err = q.InsertHostingBuild(ctx, sqlcgen.InsertHostingBuildParams{ID: id, ResourceID: resourceID, ProjectID: resource.ProjectID, SourceID: src.ID, SourceGeneration: src.Generation, IdempotencyKey: in.IdempotencyKey, RequestHash: hash, Snapshot: buildJSON(snap), SnapshotHash: domain.HostingDocumentHash(snap), CreatedBy: actor}); err != nil {
 			return domain.HostingBuild{}, err
@@ -461,6 +479,9 @@ func (s *PostgresStore) DispatchHostingBuild(ctx context.Context, id string, dis
 		}
 		if b.RunID != "" {
 			return b, authorizeBuildActor(ctx, tx, b.CreatedBy, b.ProjectID, "maintainer")
+		}
+		if err = checkBuildTriggerRevision(ctx, tx, b.Snapshot); err != nil {
+			return b, err
 		}
 		if b.State != "queued" {
 			return b, ErrConflict
@@ -627,4 +648,21 @@ func resolveCurrentHostingBuildArtifactTx(ctx context.Context, tx pgx.Tx, actor,
 		return fail(err)
 	}
 	return b, r, nil
+}
+
+// checkBuildTriggerRevision is a fresh execution gate, not a receipt replay gate.
+func checkBuildTriggerRevision(ctx context.Context, tx pgx.Tx, snapshot domain.HostingBuildSnapshot) error {
+	if domain.ValidateHostingBuildTriggerRevision(snapshot) != nil {
+		return ErrConflict
+	}
+	if snapshot.TriggerRevision == nil {
+		return nil
+	}
+	_, err := sqlcgen.New(tx).LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{
+		RunnerID: snapshot.RunnerID, RequirePrivateGit: snapshot.Source.CredentialKind == "https_basic", RequireTriggerRevision: true,
+	})
+	if err != nil {
+		return ErrConflict
+	}
+	return nil
 }

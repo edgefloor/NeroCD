@@ -66,6 +66,15 @@ func (s *PostgresStore) RequestPublicHostingBuild(ctx context.Context, id, resou
 
 // RequestConfiguredHostingBuild enqueues supported Git intent with its frozen grant.
 func (s *PostgresStore) RequestConfiguredHostingBuild(ctx context.Context, id, resource, actor string, in domain.HostingBuildRequest, event domain.AuditEvent) (domain.HostingBuild, error) {
+	return s.requestConfiguredHostingBuild(ctx, id, resource, actor, in, nil, event)
+}
+
+// RequestConfiguredHostingBuildAtRevision freezes trusted trigger intent before checkout.
+func (s *PostgresStore) RequestConfiguredHostingBuildAtRevision(ctx context.Context, id, resource, actor string, in domain.HostingBuildRequest, revision domain.HostingBuildTriggerRevision, event domain.AuditEvent) (domain.HostingBuild, error) {
+	return s.requestConfiguredHostingBuild(ctx, id, resource, actor, in, &revision, event)
+}
+
+func (s *PostgresStore) requestConfiguredHostingBuild(ctx context.Context, id, resource, actor string, in domain.HostingBuildRequest, revision *domain.HostingBuildTriggerRevision, event domain.AuditEvent) (domain.HostingBuild, error) {
 	if s.hostingBuildPolicy == nil || s.hostingJobs == nil {
 		return domain.HostingBuild{}, ErrHostingBuildUnavailable
 	}
@@ -78,7 +87,7 @@ func (s *PostgresStore) RequestConfiguredHostingBuild(ctx context.Context, id, r
 		}
 		_, err := s.hostingJobs.EnqueueBuildTx(ctx, tx, hostingjobs.PrepareBuildArgs{BuildID: b.ID})
 		return err
-	}, event, true)
+	}, event, true, revision)
 }
 
 // PrepareBuild is DB-only: dispatch binds exactly one canonical internal task.
@@ -174,6 +183,9 @@ func currentBuildExecution(ctx context.Context, tx pgx.Tx, b domain.HostingBuild
 		return ErrConflict
 	}
 	if err = checkBuildPlacement(ctx, tx, b, true); err != nil {
+		return err
+	}
+	if err = checkBuildTriggerRevision(ctx, tx, b.Snapshot); err != nil {
 		return err
 	}
 	// Placement, runner and enrollment locks may wait after the first creator

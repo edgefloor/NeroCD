@@ -3719,6 +3719,18 @@ components:
           "type": "string"
         "runner_id":
           "type": "string"
+    "HostingBuildTriggerRevision":
+      "type": "object"
+      "additionalProperties": false
+      "required": ["version", "expected_commit"]
+      "properties":
+        "version":
+          "type": "integer"
+          "enum": [1]
+        "expected_commit":
+          "type": "string"
+          "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+          "description": "Immutable full nonzero lowercase Git commit selected by a trusted trigger."
     "PublicHostingBuildSnapshot":
       "type": "object"
       "additionalProperties": false
@@ -3731,6 +3743,8 @@ components:
           "$ref": "#/components/schemas/PublicHostingBuildSource"
         "target":
           "$ref": "#/components/schemas/PublicHostingBuildTarget"
+        "trigger_revision":
+          "$ref": "#/components/schemas/HostingBuildTriggerRevision"
     "PublicHostingBuildSourceReceipt":
       "type": "object"
       "additionalProperties": false
