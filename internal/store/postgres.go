@@ -18,6 +18,7 @@ import (
 
 // PostgresStore is a PostgreSQL-backed implementation of the store repositories.
 type PostgresStore struct {
+	serverBootstrapHandler         func(context.Context, string) error
 	hostingBuildPolicy             *domain.HostingBuildPolicy
 	githubPushHandler              func(context.Context, string) error
 	hostingJobs                    *hostingjobs.Client
