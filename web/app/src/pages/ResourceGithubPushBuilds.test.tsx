@@ -1,3 +1,4 @@
+import { Profiler } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
@@ -10,10 +11,11 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const page = (items: unknown[]) => ({ items, count: items.length, total: items.length, limit: 20, offset: 0 });
 let client: QueryClient;
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-function setup(p = policy, r = resource, handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined) {
+function setup(p = policy, r = resource, handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined, onCommit?: () => void) {
  const fetch = vi.fn(async (url: string, options: RequestInit) => await handler?.(url, options) ?? (url.endsWith("/github-push-policy") ? json(p) : url.includes("/deliveries?") ? json({ items: [], next_cursor: "", has_more: false }) : url.includes("/service-accounts?") ? json(page([{ id: "actor", project_id: "project", name: "Build actor", status: "active", role: "maintainer" }, { id: "viewer", project_id: "project", name: "Viewer actor", status: "active", role: "viewer" }])) : url.includes("/managed-secrets?") ? json(page([{ id: "webhook", project_id: "project", name: "Signing secret", status: "active" }, { id: "provider", project_id: "project", name: "Provider secret", status: "active" }])) : url.includes("/versions?") ? json(page([{ secret_id: url.includes("webhook") ? "webhook" : "provider", version: 1 }])) : url.includes("/source-grants?") ? json(page([{ id: "grant", resource_id: "resource", source_id: "source", source_generation: 3, version: 1, kind: "https_basic", revoked: false }])) : json({}))); vi.stubGlobal("fetch", fetch);
  client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
- const view = render(<QueryClientProvider client={client}><ResourceGithubPushBuilds actor="actor-identity" resource={r} blocked={false} /></QueryClientProvider>); return { fetch, ...view };
+ const content = <QueryClientProvider client={client}><ResourceGithubPushBuilds actor="actor-identity" resource={r} blocked={false} /></QueryClientProvider>;
+ const view = render(onCommit ? <Profiler id="push" onRender={onCommit}>{content}</Profiler> : content); return { fetch, ...view };
 }
 async function references(provider = false) {
  await screen.findByRole("option", { name: /Build actor/ }); fireEvent.change(screen.getByLabelText("Automation service account"), { target: { value: "actor" } }); fireEvent.change(screen.getByLabelText("Webhook signing managed secret"), { target: { value: "webhook" } }); await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Webhook signing immutable version").disabled).toBe(false)); fireEvent.change(screen.getByLabelText("Webhook signing immutable version"), { target: { value: "1" } });
@@ -266,4 +268,19 @@ test("automatic configure conflict refreshes the baseline and requires a new exp
   expect(second.configuration.automatic_deployment.expected_loaded_generation).toBe(8);
   expect(first.configuration.automatic_deployment.expected_loaded_generation).toBe(7);
   expect(second.expected_policy_generation).toBe(2);
+});
+
+
+test("a confirmed policy denial never commits retained owner automatic selectors", async () => {
+  let denied = false;
+  const deniedCommits: boolean[] = [];
+  setup(automaticPolicy, resource, (url) => denied && url.endsWith("/github-push-policy") ? json({}, 403) : undefined, () => {
+    if (client.getQueryState(["githubPushPolicy", "actor-identity", "project", "resource"])?.status === "error") deniedCommits.push(Boolean(screen.queryByRole("radio", { name: "Automatic deployment without approval" })));
+  });
+  await automaticReferences();
+  denied = true; fireEvent.click(screen.getByRole("button", { name: "Refresh build-on-push metadata" }));
+  await screen.findByText(/Build-on-push access is unavailable/);
+  expect(deniedCommits.length).toBeGreaterThan(0);
+  expect(deniedCommits.every((shown) => !shown)).toBe(true);
+  expect(screen.queryByRole("form")).toBeNull();
 });
