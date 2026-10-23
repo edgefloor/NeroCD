@@ -53,3 +53,12 @@ test.each(["http://control.example.test", "http://127.0.0.1:18182"])("runtime lo
   const result = runnerEnrollmentCommand(origin, ["hosting_runtime_logs_v1"]);
   expect(result.command).toBeUndefined(); expect(result.issues.join(" ")).toContain("HTTPS");
 });
+
+test("readiness preset derives matching execution flags from persisted grants without a token or one-shot mode", async () => {
+  const { readinessImageHostingCapabilities } = await import("./runner-enrollment-command");
+  const result = runnerEnrollmentCommand("https://control.example.test", readinessImageHostingCapabilities);
+  expect(result.issues).toEqual([]); expect(result.command).toContain("--hosting-readiness"); expect(result.command).toContain("--execute"); expect(result.command).toContain("hosting_readiness_v1");
+  for (const forbidden of ["--once", "--complete-status", "--token", "shell"]) expect(result.command).not.toContain(forbidden);
+  for (const capabilities of [["hosting_readiness_v1", "shell"], ["hosting_readiness_v1", "unknown"]]) expect(runnerEnrollmentCommand("https://control.example.test", capabilities).command).toBeUndefined();
+  expect(runnerEnrollmentCommand("http://localhost:18182", ["hosting_readiness_v1"]).command).toBeUndefined();
+});

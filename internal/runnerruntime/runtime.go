@@ -166,6 +166,7 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
+	HostingReadiness    *HostingReadinessConfig
 	HostingObservation  *HostingObservationConfig
 	HostingRuntimeLogs  *HostingRuntimeLogsConfig
 	RuntimeEnvironment  *RuntimeEnvironmentConfig
@@ -196,6 +197,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if err := validateHostingReadinessConfig(config); err != nil {
+		return err
+	}
 	if err := validateHostingRuntimeLogsConfig(config); err != nil {
 		return err
 	}
@@ -217,7 +221,7 @@ func RunContext(ctx context.Context, config Config) error {
 	if config.Proxy.Enabled() && !config.Execute {
 		return errors.New("configured managed proxy requires execution")
 	}
-	if config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil || config.HostingObservation != nil || config.HostingRuntimeLogs != nil {
+	if config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil || config.HostingObservation != nil || config.HostingRuntimeLogs != nil || config.HostingReadiness != nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -256,10 +260,17 @@ func RunContext(ctx context.Context, config Config) error {
 	}
 	// Preserve legacy uncertain-journal reconciliation before ordinary lifecycle
 	// reads. Configured build/proxy runners authenticate before their replay.
-	if !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil && config.HostingObservation == nil && config.HostingRuntimeLogs == nil {
+	if !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil && config.HostingObservation == nil && config.HostingRuntimeLogs == nil && config.HostingReadiness == nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
+	}
+	if config.HostingReadiness != nil {
+		stop, err := startHostingReadiness(ctx, config, resolvedJournalDir)
+		if err != nil {
+			return err
+		}
+		defer stop()
 	}
 	if config.HostingObservation != nil {
 		stop, err := startHostingObservation(ctx, config)

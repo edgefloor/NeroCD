@@ -66,11 +66,21 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 }
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
-type RuntimeExecutionOptions struct{ Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs bool }
+type RuntimeExecutionOptions struct {
+	Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, Readiness bool
+	ReadinessTrustedLoopbackHTTP                                                                  bool
+}
 
 // RuntimeExecutionIdentityWithOptions checks every protected execution capability.
 func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options RuntimeExecutionOptions) (string, error) {
-	if options.Observation || options.RuntimeLogs {
+	if options.Readiness {
+		secured, closeTransport, err := c.serverReadinessHTTP(ServerReadinessTransport{TrustedLoopbackHTTP: options.ReadinessTrustedLoopbackHTTP})
+		if err != nil {
+			return "", err
+		}
+		defer closeTransport()
+		c = secured
+	} else if options.Observation || options.RuntimeLogs {
 		secured, closeTransport, err := c.observationHTTP()
 		if err != nil {
 			return "", err
@@ -88,6 +98,9 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	// local configuration checks; duplicates do not change those checks.
 	if result.RunnerID == "" || strings.TrimSpace(result.RunnerID) != result.RunnerID {
 		return "", errors.New("runner identity response did not include a valid runner_id")
+	}
+	if options.Readiness && !readinessResponseID.MatchString(result.RunnerID) {
+		return "", errors.New("readiness identity did not include a canonical runner_id")
 	}
 	private := options.PrivateGit
 	if private && !buildConfigured {
@@ -126,6 +139,13 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	}
 	if logCap != options.RuntimeLogs || logCap && shellCapable {
 		return "", errors.New("authenticated runtime log capability does not match explicit configuration")
+	}
+	readinessCap := false
+	for _, capability := range result.Capabilities {
+		readinessCap = readinessCap || capability == domain.ServerReadinessCapability
+	}
+	if readinessCap != options.Readiness || readinessCap && shellCapable {
+		return "", errors.New("authenticated readiness capability does not match explicit configuration")
 	}
 	if private != privateCapable {
 		return "", errors.New("authenticated private Git capability does not match explicit configuration")

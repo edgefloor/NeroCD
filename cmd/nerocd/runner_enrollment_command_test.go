@@ -33,7 +33,7 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 	t.Setenv("NEROCD_RUNNER_CREDENTIAL_FILE", "")
 	t.Setenv("NEROCD_RUNNER_JOURNAL_DIR", "")
 	t.Setenv("NEROCD_RUNNER_SECRET_ROOT", "")
-	for _, mode := range []string{"matching", "missing runtime flag", "missing observation flag", "missing logs flag", "logs HTTP", "logs shell", "logs unknown", "missing enrollment file", "persisted mismatch"} {
+	for _, mode := range []string{"matching", "missing runtime flag", "missing observation flag", "missing logs flag", "logs HTTP", "logs shell", "logs unknown", "missing enrollment file", "persisted mismatch", "readiness matching", "readiness missing flag", "readiness HTTP", "readiness shell", "readiness persisted mismatch"} {
 		t.Run(mode, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.Chmod(directory, 0700); err != nil {
@@ -54,8 +54,11 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 					capabilities = append(capabilities, "unknown")
 				}
 			}
+			if strings.HasPrefix(mode, "readiness ") {
+				capabilities = []string{"compose-deploy", "image_deploy", "image_release_ports_v1", "hosting_readiness_v1"}
+			}
 			persisted := append([]string(nil), capabilities...)
-			if mode == "persisted mismatch" {
+			if mode == "persisted mismatch" || mode == "readiness persisted mismatch" {
 				persisted = persisted[:len(persisted)-1]
 			}
 			var mu sync.Mutex
@@ -96,7 +99,7 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 			defer cancel()
 			script := `import {configuredImageHostingCapabilities as capabilities, runnerEnrollmentCommand} from "./web/app/src/lib/runner-enrollment-command.ts"; const selected = process.argv[2] ? JSON.parse(process.argv[2]) : capabilities; process.stdout.write(JSON.stringify({capabilities:selected,...runnerEnrollmentCommand(process.argv[1],selected)}));`
 			generate := exec.CommandContext(ctx, bun, "-e", script, server.URL)
-			if strings.HasPrefix(mode, "logs ") {
+			if strings.HasPrefix(mode, "logs ") || strings.HasPrefix(mode, "readiness ") {
 				selected, err := json.Marshal(capabilities)
 				if err != nil {
 					t.Fatal(err)
@@ -125,19 +128,21 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 			if generated.Command == "" || len(generated.Issues) != 0 || strings.Join(generated.Capabilities, ",") != strings.Join(capabilities, ",") {
 				t.Fatalf("unexpected frontend contract: %s", output)
 			}
-			// Let the POSIX shell parse the helper's actual quoting, replacing only the
-			// executable with an argv printer. It never starts a runner subprocess.
-			tokenize := exec.CommandContext(ctx, "/bin/sh", "-c", "nerocd() { printf '%s\\0' \"$@\"; }; "+generated.Command)
-			tokenize.Dir = root
-			output, err = tokenize.Output()
-			if err != nil {
-				t.Fatal(err)
+			// The helper emits this bounded grammar. Parse argv without a shell.
+			fields := strings.Fields(strings.TrimPrefix(generated.Command, "NEROCD_MODE=development "))
+			if len(fields) < 2 || fields[0] != "nerocd" || fields[1] != "runner" {
+				t.Fatal("unexpected command grammar")
 			}
-			args := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
-			if len(args) < 2 || args[0] != "runner" {
-				t.Fatalf("bad argv: %q", args)
+			args := fields[2:]
+			for i, field := range args {
+				if strings.HasPrefix(field, "'") && strings.HasSuffix(field, "'") {
+					field = field[1 : len(field)-1]
+				}
+				if strings.ContainsAny(field, "'\";`$\\\n\r") {
+					t.Fatal("unexpected shell syntax")
+				}
+				args[i] = field
 			}
-			args = args[1:]
 			replacements := map[string]string{"--enrollment-file": enrollment, "--credential-file": credential, "--work-dir": work, "--journal-dir": journal}
 			for i := 0; i < len(args); i++ {
 				if replacement, ok := replacements[args[i]]; ok {
@@ -146,6 +151,9 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 				}
 			}
 			remove := ""
+			if mode == "readiness missing flag" {
+				remove = "--hosting-readiness"
+			}
 			if mode == "missing runtime flag" {
 				remove = "--hosting-runtime-env"
 			}
@@ -171,12 +179,12 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 					}
 				}
 			}
-			if mode == "logs HTTP" || mode == "logs shell" {
+			if mode == "logs HTTP" || mode == "logs shell" || mode == "readiness HTTP" || mode == "readiness shell" {
 				for i, arg := range args {
-					if mode == "logs HTTP" && arg == "--server" {
+					if (mode == "logs HTTP" || mode == "readiness HTTP") && arg == "--server" {
 						args[i+1] = strings.Replace(server.URL, "https://", "http://", 1)
 					}
-					if mode == "logs shell" && arg == "--capabilities" {
+					if (mode == "logs shell" || mode == "readiness shell") && arg == "--capabilities" {
 						args[i+1] += ",shell"
 					}
 				}
@@ -189,7 +197,7 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 			observed := append([]string(nil), paths...)
 			mu.Unlock()
 			reached := strings.Join(observed, ",")
-			if mode == "matching" {
+			if mode == "matching" || mode == "readiness matching" {
 				if !strings.Contains(reached, "/api/v1/runners/claim") {
 					t.Fatalf("matching command did not reach claim admission: %v paths=%s", err, reached)
 				}
@@ -203,13 +211,23 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 				if _, statErr := os.Stat(enrollment); !os.IsNotExist(statErr) {
 					t.Fatalf("consumed enrollment remains: %v", statErr)
 				}
-			} else if mode == "persisted mismatch" {
-				if !strings.Contains(err.Error(), "runtime log capability") || strings.Contains(reached, "heartbeat") {
+			} else if mode == "persisted mismatch" || mode == "readiness persisted mismatch" {
+				expected := "runtime log capability"
+				if mode == "readiness persisted mismatch" {
+					expected = "readiness"
+				}
+				if !strings.Contains(err.Error(), expected) || strings.Contains(reached, "heartbeat") {
 					t.Fatalf("mismatch did not fail before runtime: %v paths=%s", err, reached)
 				}
-			} else if mode == "logs HTTP" || mode == "logs shell" {
+			} else if mode == "logs HTTP" || mode == "logs shell" || mode == "readiness HTTP" || mode == "readiness shell" {
 				if len(observed) != 0 {
 					t.Fatalf("unsafe logs configuration reached API: %v paths=%s", err, reached)
+				}
+				if mode == "readiness HTTP" && !strings.Contains(err.Error(), "readiness") {
+					t.Fatalf("unexpected readiness HTTP rejection: %v", err)
+				}
+				if mode == "readiness shell" && !strings.Contains(err.Error(), "shell") {
+					t.Fatalf("unexpected readiness shell rejection: %v", err)
 				}
 				if mode == "logs HTTP" && !strings.Contains(err.Error(), "invalid runtime log controller transport") {
 					t.Fatalf("unexpected HTTP rejection: %v", err)

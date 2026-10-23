@@ -1,7 +1,9 @@
 export const imageHostingCapabilities = ["compose-deploy", "image_deploy", "image_release_ports_v1"];
 export const configuredImageHostingCapabilities = [...imageHostingCapabilities, "hosting_runtime_env_v1", "hosting_observation_v1", "hosting_runtime_logs_v1"];
 
-const supported = new Set(["shell", "compose-deploy", "compose_deploy", "image_deploy", "image_release_ports_v1", "hosting_runtime_env_v1", "hosting_observation_v1", "hosting_runtime_logs_v1", "hosting_build_v1", "hosting_git_https_basic_v1", "proxy_apply", "local_build_deploy_v1"]);
+export const readinessImageHostingCapabilities = [...configuredImageHostingCapabilities, "hosting_readiness_v1"];
+
+const supported = new Set(["hosting_readiness_v1", "shell", "compose-deploy", "compose_deploy", "image_deploy", "image_release_ports_v1", "hosting_runtime_env_v1", "hosting_observation_v1", "hosting_runtime_logs_v1", "hosting_build_v1", "hosting_git_https_basic_v1", "proxy_apply", "local_build_deploy_v1"]);
 export function shellQuote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
 // Capabilities must come from the created enrollment, never the editable form.
@@ -18,6 +20,8 @@ export function runnerEnrollmentCommand(serverURL: string, capabilities: readonl
   const unknown = capabilities.filter((capability) => !supported.has(capability));
   if (unknown.length) issues.push(`Custom capabilities are not verified by this command helper: ${unknown.join(", ")}. Consult the runner configuration before starting it.`);
   if (has("hosting_runtime_env_v1") && (!has("image_deploy") || !has("image_release_ports_v1") || has("shell"))) issues.push("hosting_runtime_env_v1 requires image_deploy and image_release_ports_v1 without shell. Create a corrected enrollment.");
+  if (has("hosting_readiness_v1") && has("shell")) issues.push("hosting_readiness_v1 cannot share shell. Create a corrected enrollment.");
+  if (has("hosting_readiness_v1") && origin && !origin.startsWith("https:")) issues.push("Server readiness requires a runner-reachable HTTPS origin, including in development mode.");
   if (has("hosting_observation_v1") && has("shell")) issues.push("hosting_observation_v1 cannot share shell. Create a corrected enrollment.");
   if (has("hosting_runtime_logs_v1") && has("shell")) issues.push("hosting_runtime_logs_v1 cannot share shell. Create a corrected enrollment.");
   if ((has("hosting_runtime_env_v1") || has("hosting_observation_v1") || has("hosting_runtime_logs_v1")) && origin && !origin.startsWith("https:")) issues.push("Runtime configuration, observations and runtime logs require a runner-reachable HTTPS origin, including in development mode.");
@@ -30,6 +34,6 @@ export function runnerEnrollmentCommand(serverURL: string, capabilities: readonl
   if (has("proxy_apply")) issues.push("Managed proxy execution requires Linux and explicit --proxy-state-root, --proxy-docker-binary, --proxy-docker-socket and --proxy-protocol managed-traefik.file.v1. Supply the actual persistent mode-0700 root, absolute Docker executable and local Unix socket paths.");
   if (has("local_build_deploy_v1")) issues.push("Local build deployment requires --local-build-deploy and the same runner and Docker daemon as the successful build. A runner that also builds needs its validated --build-config-file.");
   if (issues.length) return { issues };
-  const flags = [has("hosting_runtime_env_v1") ? "--hosting-runtime-env" : "", has("hosting_observation_v1") ? "--hosting-observation" : "", has("hosting_runtime_logs_v1") ? "--hosting-runtime-logs" : ""].filter(Boolean);
+  const flags = [has("hosting_readiness_v1") ? "--hosting-readiness" : "", has("hosting_runtime_env_v1") ? "--hosting-runtime-env" : "", has("hosting_observation_v1") ? "--hosting-observation" : "", has("hosting_runtime_logs_v1") ? "--hosting-runtime-logs" : ""].filter(Boolean);
   return { issues, command: `${origin.startsWith("http:") ? "NEROCD_MODE=development " : ""}nerocd runner --server ${shellQuote(origin)} --enrollment-file /secure/nerocd-runner-enrollment.token --credential-file /secure/nerocd-runner.credential --work-dir /var/lib/nerocd/work --journal-dir /var/lib/nerocd/journal --capabilities ${shellQuote(capabilities.join(","))} --compose-image-policy pull ${[...flags, "--execute"].join(" ")}` };
 }
