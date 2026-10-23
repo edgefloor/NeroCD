@@ -62,9 +62,9 @@ test("runtime profile submits its grants but returned metadata alone determines 
 test("runtime profile replaces the draft explicitly without adding flags to a basic returned enrollment", async () => {
   const onEnroll = vi.fn().mockResolvedValue(created());
   render(<RunnersView runners={[]} canAdmin onEnroll={onEnroll} />);
-  fireEvent.click(screen.getByRole("button", { name: "Use image hosting with runtime configuration and observations" })); submit();
+  fireEvent.click(screen.getByRole("button", { name: "Use image hosting with runtime configuration, observations and logs" })); submit();
   const dialog = await screen.findByRole("dialog");
-  expect(onEnroll).toHaveBeenCalledWith(expect.objectContaining({ capabilities: ["compose-deploy", "image_deploy", "image_release_ports_v1", "hosting_runtime_env_v1", "hosting_observation_v1"] }));
+  expect(onEnroll).toHaveBeenCalledWith(expect.objectContaining({ capabilities: ["compose-deploy", "image_deploy", "image_release_ports_v1", "hosting_runtime_env_v1", "hosting_observation_v1", "hosting_runtime_logs_v1"] }));
   expect(within(dialog).getByLabelText("Manual runner command").textContent).not.toContain("--hosting-observation");
 });
 test("advanced enrollment still discloses its token once but withholds an incomplete command", async () => {
@@ -77,4 +77,19 @@ test("advanced enrollment still discloses its token once but withholds an incomp
   expect(within(dialog).getByLabelText("Enrollment secret").textContent).toBe(response.token);
   expect(within(dialog).getByRole("button", { name: "Download once" })).toBeTruthy();
   fireEvent.keyDown(dialog, { key: "Escape" }); await waitFor(() => expect(screen.queryByLabelText("Enrollment secret")).toBeNull());
+});
+
+test("returned runtime log grants enable the collector independently of the submitted draft", async () => {
+  const response = created(); response.enrollment.capabilities = ["hosting_runtime_logs_v1"];
+  render(<RunnersView runners={[]} canAdmin onEnroll={vi.fn().mockResolvedValue(response)} />); submit();
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Runner-reachable server URL"), { target: { value: "http://127.0.0.1:18182" } });
+  expect(within(dialog).queryByLabelText("Manual runner command")).toBeNull();
+  expect(within(dialog).getByRole("alert").textContent).toContain("HTTPS");
+  fireEvent.change(within(dialog).getByLabelText("Runner-reachable server URL"), { target: { value: "https://control.example.test" } });
+  const command = within(dialog).getByLabelText("Manual runner command").textContent!;
+  expect(command).toContain("--capabilities 'hosting_runtime_logs_v1'");
+  expect(command).toContain("--hosting-runtime-logs --execute");
+  expect(command).not.toContain("--hosting-observation");
+  expect(command).not.toContain(response.token);
 });

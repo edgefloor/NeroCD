@@ -240,14 +240,14 @@ test("enrollment command follows persisted hosting grants at mobile and desktop 
     const form = page.getByRole("form", { name: "Create runner enrollment", exact: true });
     await form.getByLabel("Runner ID", { exact: true }).fill(`runner_command_${width}_${Date.now()}`);
     await form.getByLabel("Runner name", { exact: true }).fill("Configured image host");
-    await form.getByRole("button", { name: "Use image hosting with runtime configuration and observations", exact: true }).click();
+    await form.getByRole("button", { name: "Use image hosting with runtime configuration, observations and logs", exact: true }).click();
     await form.getByRole("button", { name: "Create enrollment", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "One-time runner enrollment secret", exact: true });
     await expect(dialog.getByRole("alert")).toContainText("HTTPS");
     await expect(dialog.getByLabel("Manual runner command", { exact: true })).toHaveCount(0);
     await dialog.getByLabel("Runner-reachable server URL", { exact: true }).fill("https://controller.example.test");
-    await expect(dialog.getByLabel("Manual runner command", { exact: true })).toContainText("--hosting-runtime-env --hosting-observation --execute");
-    await expect(dialog.getByLabel("Manual runner command", { exact: true })).toContainText("--capabilities 'compose-deploy,image_deploy,image_release_ports_v1,hosting_runtime_env_v1,hosting_observation_v1'");
+    await expect(dialog.getByLabel("Manual runner command", { exact: true })).toContainText("--hosting-runtime-env --hosting-observation --hosting-runtime-logs --execute");
+    await expect(dialog.getByLabel("Manual runner command", { exact: true })).toContainText("--capabilities 'compose-deploy,image_deploy,image_release_ports_v1,hosting_runtime_env_v1,hosting_observation_v1,hosting_runtime_logs_v1'");
     expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`hosting-enrollment-command-${width}.png`), fullPage: true, animations: "disabled", mask: [dialog.getByLabel("Enrollment secret", { exact: true })] });

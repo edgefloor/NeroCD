@@ -23,10 +23,12 @@ persisted project role and cannot administer global server infrastructure.
 
 1. As a runner administrator, open **Runners** and create a one-time enrollment.
    Choose the basic image hosting preset, or choose **Use image hosting with
-   runtime configuration and observations** for protected runtime values and
-   independent status collection. Both include `compose-deploy`, `image_deploy`,
+   runtime configuration, observations and logs** for protected runtime values and
+   independent status and demand-driven runtime log collection. Both include
+   `compose-deploy`, `image_deploy`,
    and `image_release_ports_v1` without `shell`. The second also includes
-   `hosting_runtime_env_v1` and `hosting_observation_v1` and requires HTTPS.
+   `hosting_runtime_env_v1`, `hosting_observation_v1` and `hosting_runtime_logs_v1`
+   and requires HTTPS.
    Use a unique runner ID
    and suitable runner tags. The secret dialog shows the exact runner ID and
    expiry. Save the token once; closing or expiry clears the browser copy.
@@ -67,13 +69,18 @@ URLs, shell history, and shared logs. If copying the token fails, the dialog
 reports failure and offers a one-time file download instead.
 
 The dialog derives the command from the returned enrollment's persisted
-capabilities. Editing a draft does not alter those grants. The runtime configuration
-and observations profile adds `--hosting-runtime-env --hosting-observation` to the
-command above and includes both corresponding versioned capabilities in
+capabilities. Editing a draft does not alter those grants. The runtime configuration,
+observations and logs profile adds
+`--hosting-runtime-env --hosting-observation --hosting-runtime-logs` to the
+command above and includes the corresponding versioned capabilities in
 `--capabilities`. Use each flag only when its persisted capability is present.
 These modes reject HTTP even with `NEROCD_MODE=development`. Runtime configuration
-also requires `image_deploy` and `image_release_ports_v1`. Neither mode can share
-`shell`.
+also requires `image_deploy` and `image_release_ports_v1`. None of these modes can
+share
+`shell`. Runtime log collection requires execution and forbids `--once` and
+`--complete-status`. It reads container output only while an authorized viewer has
+active log demand. Enrollment alone does not start a log session. See the
+[runtime log workflow](hosting-runtime-logs.md).
 
 The dialog withholds a complete command for advanced grants because the enrollment
 does not contain the operator's host configuration:

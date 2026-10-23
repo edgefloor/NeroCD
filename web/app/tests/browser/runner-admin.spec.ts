@@ -1,7 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+
+// Enrollment secrets appear once. Retain only explicit masked screenshots.
+test.use({ trace: "off", screenshot: "off" });
 
 function browserRuntimeDir(): string {
   const runID = test.info().config.metadata.NEROCD_BROWSER_RUN_ID;
@@ -466,4 +470,42 @@ test("healthy runner details return to their filtered inventory page without rel
     await expect(page.getByRole("button", { name: "First runners page", exact: true })).toBeEnabled();
     expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin);
   }
+});
+
+
+test.describe("runtime log enrollment profile", () => {
+  test("runner administrator gets matching persisted log grants and a protected command", async ({ page }, testInfo) => {
+    await createRunnerAdmin(page);
+    const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+    const index = await page.request.get("/");
+    expect(hash(await index.body())).toBe(hash(readFileSync(join(process.cwd(), "../dist/index.html"))));
+    const asset = readdirSync(join(process.cwd(), "../dist/assets")).find((name) => /^RunnersView-.*\.js$/.test(name));
+    expect(asset).toBeTruthy();
+    const served = await page.request.get(`/assets/${asset}`);
+    expect(hash(await served.body())).toBe(hash(readFileSync(join(process.cwd(), "../dist/assets", asset!))));
+    console.log(JSON.stringify({ fixtureBinarySHA256: hash(readFileSync(join(browserRuntimeDir(), "nerocd"))), indexSHA256: hash(await index.body()), runnerAsset: asset, runnerAssetSHA256: hash(await served.body()) }));
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 1000 }); await page.goto("/runners");
+      const form = page.getByRole("form", { name: "Create runner enrollment", exact: true });
+      await form.getByLabel("Runner ID", { exact: true }).fill(`runner_runtime_logs_${width}_${Date.now()}`);
+      await form.getByLabel("Runner name", { exact: true }).fill("Image host with runtime logs");
+      await form.getByRole("button", { name: "Use image hosting with runtime configuration, observations and logs", exact: true }).click();
+      const created = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/runner-enrollments");
+      await form.getByRole("button", { name: "Create enrollment", exact: true }).press("Enter");
+      const response = await created; expect(response.status()).toBe(201);
+      const body = await response.json() as { enrollment: { capabilities: string[] } };
+      expect(body.enrollment.capabilities).toEqual(["compose-deploy", "image_deploy", "image_release_ports_v1", "hosting_runtime_env_v1", "hosting_observation_v1", "hosting_runtime_logs_v1"]);
+      const dialog = page.getByRole("dialog", { name: "One-time runner enrollment secret", exact: true });
+      await expect(dialog.getByRole("alert")).toContainText("HTTPS");
+      await expect(dialog.getByLabel("Manual runner command", { exact: true })).toHaveCount(0);
+      await dialog.getByLabel("Runner-reachable server URL", { exact: true }).fill("https://controller.example.test");
+      await expect(dialog.getByLabel("Manual runner command", { exact: true })).toContainText("--hosting-runtime-env --hosting-observation --hosting-runtime-logs --execute");
+      await expect(dialog.getByLabel("Manual runner command", { exact: true })).toContainText(`--capabilities '${body.enrollment.capabilities.join(",")}'`);
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`runtime-log-enrollment-${width}.png`), animations: "disabled", mask: [dialog.getByLabel("Enrollment secret", { exact: true })] });
+      await page.keyboard.press("Escape");
+      await expect(page.getByLabel("Enrollment secret", { exact: true })).toHaveCount(0);
+    }
+  });
 });
