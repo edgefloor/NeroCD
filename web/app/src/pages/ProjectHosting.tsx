@@ -13,6 +13,7 @@ import { GitApplicationFields, emptyGitDraft, type GitApplicationDraft } from ".
 import { ResourceBuilds } from "./ResourceBuilds";
 import { ResourceDeployments } from "./ResourceDeployments";
 import { ResourceRuntimeConfiguration } from "./ResourceRuntimeConfiguration";
+import { ResourceRuntimeStatus } from "./ResourceRuntimeStatus";
 
 const pageSize = 20;
 const selectClass = "h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm";
@@ -155,6 +156,8 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · {resource.source.git.credential_kind === "https_basic" ? "Private HTTPS" : "Public Git"} build operations available; artifact deployment is separate</p> : null}
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceBuilds resource={resource} writable={writable} blocked={blocked || resources.isError} />
+      {/* Status verifies its own viewer authority and does not depend on legacy task reads. */}
+      <ResourceRuntimeStatus resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} />
       <ResourceRuntimeConfiguration resource={resource} blocked={blocked || resources.isError || resources.isPending} />
       <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceRoutes resource={resource} writable={writable} blocked={blocked || resources.isError} />

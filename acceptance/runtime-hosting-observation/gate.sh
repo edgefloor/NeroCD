@@ -2,6 +2,8 @@
 # Explicitly owned PostgreSQL32961 and isolated DinD, no shared fixture changes.
 set -euo pipefail
 repo_root=$(pwd -P)
+browser_mode=${NEROCD_OBSERVATION_BROWSER:-0}
+case "$browser_mode" in 0|1) ;; *) echo "invalid observation browser option" >&2;exit 1;; esac
 test -f "$repo_root/internal/runnerruntime/hosting_observation.go"
 python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",32961)); s.close()'
 arch=$(docker info --format '{{.Architecture}}')
@@ -60,7 +62,12 @@ for _ in $(seq 1 60);do if docker exec "$pg_id" pg_isready --host=127.0.0.1 --us
 [[ "$ready" == true ]]
 printf 'owned PostgreSQL schemas before fixture\n'
 docker exec "$pg_id" psql -U nerocd -d nerocd --no-psqlrc -Atc "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' ORDER BY nspname"
-container_id=$(docker run --detach --privileged --name "$owner-dind" --label "$label=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock)
+run_fixture_container(){
+ set -- --detach --privileged --name "$owner-dind" --label "$label=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock
+ if [[ "$browser_mode" == 1 ]]; then set -- --publish 127.0.0.1::18080 "$@"; fi
+ docker run "$@"
+}
+container_id=$(run_fixture_container)
 printf 'owned DinD id=%s owner=%s image=%s\n' "$container_id" "$owner" "$image_id"
 ready=false
 for _ in $(seq 1 60);do if docker exec "$container_id" docker info >/dev/null 2>&1;then ready=true;break;fi;sleep 1;done
@@ -73,5 +80,43 @@ registry_addr=$(docker exec "$container_id" docker port observation-registry 500
 registry_image="$registry_addr/observation:fixture"
 docker exec "$container_id" docker tag observation-probe:fixture "$registry_image"
 docker exec "$container_id" docker push "$registry_image"
-docker exec --env NEROCD_OBSERVATION_RUNTIME=disposable-dind --env "NEROCD_OBSERVATION_IMAGE=$registry_image" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_observation_fixture@host.docker.internal:32961/nerocd?sslmode=disable' "$container_id" /fixture/api.test -test.v -test.run '^TestHostingObservationCompiledRunner$' -test.timeout=3m
+if [[ "$browser_mode" == 0 ]]; then
+ docker exec --env NEROCD_OBSERVATION_RUNTIME=disposable-dind --env "NEROCD_OBSERVATION_IMAGE=$registry_image" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_observation_fixture@host.docker.internal:32961/nerocd?sslmode=disable' "$container_id" /fixture/api.test -test.v -test.run '^TestHostingObservationCompiledRunner$' -test.timeout=3m
+else
+ browser_addr=$(docker port "$container_id" 18080/tcp)
+ [[ "$browser_addr" =~ ^127\.0\.0\.1:[0-9]+$ ]]
+ export NEROCD_OBSERVATION_BROWSER_ORIGIN="http://$browser_addr"
+ export NEROCD_OBSERVATION_IMAGE="$registry_image"
+ # Reference-only metadata travels through the existing fixture pipe bridge.
+ node --input-type=module -e '
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+const env = process.env;
+const fixture = spawn("docker", ["exec", "--env", "NEROCD_OBSERVATION_RUNTIME=disposable-dind", "--env", "NEROCD_OBSERVATION_BROWSER=1", "--env", `NEROCD_OBSERVATION_BROWSER_ORIGIN=${env.NEROCD_OBSERVATION_BROWSER_ORIGIN}`, "--env", `NEROCD_OBSERVATION_IMAGE=${env.NEROCD_OBSERVATION_IMAGE}`, "--env", "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_observation_fixture@host.docker.internal:32961/nerocd?sslmode=disable", process.argv[1], "/fixture/api.test", "-test.v", "-test.run", "^TestHostingObservationCompiledRunner$", "-test.timeout=4m"], { stdio: ["ignore", "pipe", "inherit"] });
+let browser, browserResult, buffer = "", ready = false;
+const completed = once(fixture, "exit");
+const stop = () => { if (browser && browser.exitCode === null) browser.kill("SIGTERM"); if (fixture.exitCode === null) fixture.kill("SIGTERM"); };
+process.once("SIGTERM", stop); process.once("SIGINT", stop);
+const timer = setTimeout(stop, 5 * 60_000);
+fixture.stdout.on("data", (chunk) => {
+ buffer += chunk.toString(); let newline;
+ while ((newline = buffer.indexOf("\n")) !== -1) {
+  const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+  const prefix = "OBSERVATION_BROWSER_READY ";
+  if (!line.startsWith(prefix)) { process.stdout.write(line + "\n"); continue; }
+  if (ready) { stop(); continue; } ready = true;
+  let metadata; try { metadata = JSON.parse(line.slice(prefix.length)); } catch { stop(); continue; }
+  if (metadata.origin !== env.NEROCD_OBSERVATION_BROWSER_ORIGIN) { stop(); continue; }
+  process.stdout.write(`authenticated observation browser fixture ready at ${metadata.origin}\n`);
+  browser = spawn("bun", ["run", "--cwd", "web/app", "smoke:browser", "hosting-runtime-status.spec.ts", "--project", "chromium", "--no-deps"], { cwd: process.cwd(), env: { ...env, PLAYWRIGHT_BASE_URL: metadata.origin, NEROCD_OBSERVATION_BROWSER_META: JSON.stringify(metadata) }, stdio: "inherit" });
+  browserResult = once(browser, "exit").then(([code]) => code);
+ }
+});
+try {
+ const [fixtureCode] = await completed; if (fixtureCode !== 0) stop();
+ const browserCode = browserResult ? await browserResult : 1;
+ if (!ready || fixtureCode !== 0 || browserCode !== 0) process.exitCode = 1;
+} finally { clearTimeout(timer); stop(); }
+' "$container_id"
+fi
 printf 'hosting observation compiled runner gate passed\n'

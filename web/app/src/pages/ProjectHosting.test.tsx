@@ -5,6 +5,7 @@ import { ApiError } from "@/api";
 import * as api from "@/api/hosting";
 import { ProjectHosting } from "./ProjectHosting";
 
+vi.mock("./ResourceRuntimeStatus", () => ({ ResourceRuntimeStatus: ({ resource, blocked }: { resource: { name: string }; blocked: boolean }) => <div data-testid="runtime-status" data-blocked={String(blocked)}>Runtime status for {resource.name}</div> }));
 vi.mock("./ResourceRuntimeConfiguration", () => ({ ResourceRuntimeConfiguration: ({ resource }: { resource: { name: string } }) => <div>Runtime variables for {resource.name}</div> }));
 vi.mock("./ResourceBuilds", () => ({ ResourceBuilds: ({ resource }: { resource: { name: string } }) => <div>Build controls for {resource.name}</div> }));
 vi.mock("./ResourceRoutes", () => ({ ResourceRoutes: ({ resource }: { resource: { name: string } }) => <div>Resource routes for {resource.name}</div> }));
@@ -23,10 +24,10 @@ beforeEach(() => {
   vi.mocked(api.listResources).mockResolvedValue(page([resource]));
 });
 afterEach(() => { cleanup(); for (const client of clients) client.clear(); clients = []; });
-function setup(writable = true) {
+function setup(writable = true, unavailable = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
-  const view = render(<QueryClientProvider client={client}><ProjectHosting projects={projects} canOperateProject={() => writable} /></QueryClientProvider>);
+  const view = render(<QueryClientProvider client={client}><ProjectHosting projects={projects} canOperateProject={() => writable} unavailable={unavailable} /></QueryClientProvider>);
   fireEvent.change(screen.getByLabelText("Hosting project"), { target: { value: "one" } });
   return { client, ...view };
 }
@@ -263,4 +264,18 @@ test("private Git source edits retain access until an explicit public selection"
  expect(vi.mocked(api.updateResource).mock.calls[0]![1]).toMatchObject({ source: { git: { credential_kind: "https_basic", requested_ref: "private-next" } } });
  fireEvent.change(within(form).getByLabelText("Git source access"), { target: { value: "public" } }); fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(2));
  expect(vi.mocked(api.updateResource).mock.calls[1]![1]).toMatchObject({ source: { git: { credential_kind: "public", requested_ref: "private-next" } } });
+});
+test("runtime status remains independent of inherited legacy failures but resource errors block it", async () => {
+  const { client } = setup(true, true); await selectEnvironment();
+  expect(screen.getByTestId("runtime-status").getAttribute("data-blocked")).toBe("false");
+  vi.mocked(api.listResources).mockRejectedValue(new Error("resource unavailable"));
+  await act(async () => { await client.invalidateQueries({ queryKey: ["hostingResources"] }); });
+  await waitFor(() => expect(screen.getByTestId("runtime-status").getAttribute("data-blocked")).toBe("true"));
+});
+test("runtime status clears while the current resource is revalidated", async () => {
+  const { client } = setup(); await selectEnvironment();
+  expect(screen.getByTestId("runtime-status").getAttribute("data-blocked")).toBe("false");
+  vi.mocked(api.listResources).mockImplementation(() => new Promise(() => {}));
+  await act(async () => { void client.invalidateQueries({ queryKey: ["hostingResources"] }); });
+  await waitFor(() => expect(screen.getByTestId("runtime-status").getAttribute("data-blocked")).toBe("true"));
 });

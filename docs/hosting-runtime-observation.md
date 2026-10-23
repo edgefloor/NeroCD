@@ -57,6 +57,30 @@ Observation cannot start, stop, pull, execute in, or replace a container. It doe
 not use deployment `Observe`, settle an operation, or clear a mutation hold.
 Failure to collect evidence cannot grant mutation authority.
 
+## Resource status in the WebUI
+
+Project hosting shows a read-only runtime status section for each resource.
+Current container state and readiness, agent heartbeat, saved placement, settled
+deployment target, and historical observation have separate labels. A successful
+deployment is an earlier operation outcome. It does not establish that a
+container is still running or ready. Unknown agent reachability does not
+establish that a container stopped.
+
+The UI accepts current evidence only when its resource and target identities
+match, its response fields agree, and its age is below thirty seconds. It adds
+request duration and local elapsed time to the server-reported age. Local clock
+movement can expire evidence early but cannot extend its apparent freshness.
+Freshness expires even while a request is disconnected or the tab is hidden.
+Old-target evidence remains explicitly historical after replacement. Unbound
+and never-observed resources show unknown status.
+
+The section polls every ten seconds only while visible. A failed request pauses
+polling until explicit retry and makes retained evidence historical. An access
+failure clears protected evidence. Actor, project, resource, and current
+membership changes abort requests and clear the previous scope. Resource
+viewers can read status; this section has no mutation controls. Its access does
+not depend on legacy task or template requests elsewhere on the page.
+
 ## Verification scope
 
 The isolated acceptance gate in `acceptance/runtime-hosting-observation/` runs a
