@@ -352,3 +352,12 @@ test("changing cached runner details clears the previous revocation confirmation
   fireEvent.click(screen.getByRole("button", { name: "Revoke credential" }));
   expect(screen.getByRole("dialog")).toBeTruthy();
 });
+
+
+test("server readiness preset replaces draft grants without shell", async () => {
+  queryData(["runner_admin"]);
+  const Component = RunnersRoute.options.component!; render(<Component />);
+  fireEvent.click(screen.getByRole("button", { name: "Use image hosting with server readiness" }));
+  expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).toContain("hosting_readiness_v1");
+  expect(screen.getByLabelText<HTMLInputElement>("Runner capabilities").value).not.toContain("shell");
+});

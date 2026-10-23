@@ -9,7 +9,7 @@ import { Select } from "@/components/ui/select";
 import { EmptyState } from "@/components/common/EmptyState";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import type { CreatedRunnerEnrollment, Runner, RunnerDetail } from "@/api";
-import { configuredImageHostingCapabilities, imageHostingCapabilities, runnerEnrollmentCommand } from "@/lib/runner-enrollment-command";
+import { configuredImageHostingCapabilities, imageHostingCapabilities, readinessImageHostingCapabilities, runnerEnrollmentCommand } from "@/lib/runner-enrollment-command";
 import { parseRunnerTags } from "@/lib/runnerTags";
 import { formatDate, matchesQuery } from "@/lib/format";
 
@@ -129,6 +129,8 @@ function EnrollmentForm({ busy, disabled, error, onSubmit }: { busy: boolean; di
         <label className="grid gap-1 text-sm">Capabilities<Input disabled={locked} aria-label="Runner capabilities" value={capabilities} onChange={(event) => setCapabilities(event.target.value)} required /></label>
         <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={locked} onClick={() => setCapabilities(imageHostingCapabilities.join(","))}>Use image hosting capability preset</Button>
         <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={locked} onClick={() => setCapabilities(configuredImageHostingCapabilities.join(","))}>Use image hosting with runtime configuration, observations and logs</Button>
+        <Button type="button" variant="outline" className="h-auto whitespace-normal" disabled={locked} onClick={() => setCapabilities(readinessImageHostingCapabilities.join(","))}>Use image hosting with server readiness</Button>
+        <p className="text-xs text-muted-foreground">Server readiness adds hosting_readiness_v1 and requires HTTPS, enabled execution, Linux with matching native amd64 or arm64 Docker architecture, Docker API 1.54, and at least 1 GiB free in each dedicated work and journal root. It reports prerequisites and cannot authorize deployment or release restore holds.</p>
         <p className="text-xs text-muted-foreground">The runtime configuration, observations and logs profile requires HTTPS and adds hosting_runtime_env_v1, hosting_observation_v1 and hosting_runtime_logs_v1. Runtime logs are collected only while an authorized viewer requests them. It does not configure builds or a managed proxy.</p>
         <p className="text-xs text-muted-foreground">Image hosting requires compose-deploy, image_deploy, and image_release_ports_v1 with no shell capability. The preset replaces this new enrollment's capability draft; it does not change existing runner grants.</p>
         <label className="grid gap-1 text-sm">Enrollment lifetime<Select disabled={locked} aria-label="Enrollment lifetime" value={ttl} onChange={(event) => setTTL(event.target.value)}><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></Select></label>
