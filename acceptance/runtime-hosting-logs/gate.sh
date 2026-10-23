@@ -59,7 +59,11 @@ GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -o "$fixture_dir/pr
 shasum -a 256 "$fixture_dir/nerocd" "$fixture_dir/api.test"
 cp db/seeds/dev.sql "$fixture_dir/dev.sql"
 cp openapi.yaml "$fixture_dir/openapi.yaml"
-printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'COPY api.test nerocd probe openapi.yaml /fixture/' 'COPY dev.sql /workspace/db/seeds/dev.sql' 'WORKDIR /workspace/internal/api' > "$fixture_dir/Dockerfile"
+mkdir -p "$fixture_dir/consumers/cmd/nerocd" "$fixture_dir/consumers/web/static" "$fixture_dir/consumers/web/app/src"
+cp cmd/nerocd/main.go "$fixture_dir/consumers/cmd/nerocd/main.go"
+cp web/static/app.js "$fixture_dir/consumers/web/static/app.js"
+cp web/app/src/api.ts "$fixture_dir/consumers/web/app/src/api.ts"
+printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'COPY api.test nerocd probe openapi.yaml /fixture/' 'COPY dev.sql /workspace/db/seeds/dev.sql' 'COPY consumers /workspace/' 'WORKDIR /workspace/internal/api' > "$fixture_dir/Dockerfile"
 docker build --label "$label=$owner" -t "$image" "$fixture_dir"
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
 pg_id=$(docker run --detach --name "$owner-pg" --label "$label=$owner" --publish 127.0.0.1:32961:5432 --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_logs_fixture --env POSTGRES_DB=nerocd postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94)
@@ -79,7 +83,7 @@ printf 'owned DinD id=%s owner=%s image=%s\n' "$container_id" "$owner" "$image_i
 ready=false
 for _ in $(seq 1 60);do if docker exec "$container_id" docker info >/dev/null 2>&1;then ready=true;break;fi;sleep 1;done
 [[ "$ready" == true ]]
-docker exec "$container_id" /fixture/nerocd contract -openapi /fixture/openapi.yaml
+docker exec --workdir /workspace "$container_id" /fixture/nerocd contract -openapi /fixture/openapi.yaml
 docker exec "$container_id" docker version --format 'Docker client={{.Client.Version}} server={{.Server.Version}}'
 docker exec "$container_id" sh -ec 'mkdir /payload;cp /fixture/probe /payload/probe;printf "FROM scratch\nCOPY probe /probe\nENTRYPOINT [\"/probe\"]\n" >/payload/Dockerfile;docker build -t logs-probe:fixture /payload'
 docker exec "$container_id" docker run --detach --name logs-registry --publish 127.0.0.1::5000 registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
