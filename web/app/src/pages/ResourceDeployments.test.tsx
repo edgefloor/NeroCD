@@ -28,6 +28,7 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
     if (response) return response;
     if (url.includes("/project-members")) return json({ items: client.getQueryData(queryKeys.allProjectMembers) ?? [], limit: 100, offset: 0, count: (client.getQueryData<unknown[]>(queryKeys.allProjectMembers) ?? []).length, total: (client.getQueryData<unknown[]>(queryKeys.allProjectMembers) ?? []).length });
     if (url.endsWith("/me")) return json(client.getQueryData(queryKeys.principal));
+    if (url.endsWith("/storage-deployment-options")) return json({ resource_id: "resource", resource_generation: 1, storage_ref: null, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: false, reason: "storage_unconfigured", routes: [], storage_route_continuity: null });
     if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: { resource_id: "resource", project_id: resource.project_id, resource_generation: 1, runtime_generation: 0, entries: [] } });
     if (url.endsWith("/binding")) return json(binding);
     if (url.includes("/retained-releases")) return json([]);
@@ -44,6 +45,35 @@ async function request() {
   await act(async () => { await Promise.resolve(); });
 }
 function acknowledge() { fireEvent.click(screen.getByLabelText(/I understand that/)); }
+test("storage authority failure never falls back to stateless admission", async () => {
+  const fetch = backend((url) => url.endsWith("/storage-deployment-options") ? json({ error: "authority unavailable" }, 503) : undefined);
+  setup();
+  await screen.findByText(/Storage deployment options are unavailable/);
+  expect(screen.queryByRole("form", { name: "Deploy image for Web" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(0);
+});
+test("new storage created after opening a stateless draft requires storage review before any admission", async () => {
+  let configured = false;
+  const fetch = backend((url) => configured && url.endsWith("/storage-deployment-options") ? json({ resource_id: "resource", resource_generation: 1, storage_ref: { storage_id: "storage", generation: 1, hash: "hash" }, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: false, reason: "no_previous_healthy", routes: [], storage_route_continuity: null }) : undefined);
+  setup(); acknowledge();
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request image deployment" }).disabled).toBe(false));
+  configured = true;
+  fireEvent.submit(screen.getByRole("form", { name: "Deploy image for Web" }));
+  await screen.findByRole("region", { name: "Persistent upload deployment review" });
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(0);
+});
+test("configured storage uses server review and clears it on resource generation change", async () => {
+  const options = { resource_id: "resource", resource_generation: 1, storage_ref: { storage_id: "storage", generation: 1, hash: "hash" }, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null };
+  const fetch = backend((url) => url.endsWith("/storage-deployment-options") ? json(options) : undefined);
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+  await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+  expect(screen.queryByLabelText("Host port allocation")).toBeNull();
+  expect(screen.queryByRole("form", { name: "Deploy image for Web" })).toBeNull();
+  view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={{ ...resource, generation: 2 }} writable blocked={false} /></QueryClientProvider>);
+  expect(screen.queryByRole("button", { name: "Deploy reviewed image with uploads" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(0);
+});
 test("viewer reads persisted history and results without request, cancel, or reconcile controls", async () => {
   backend((url) => url.includes("/deployments") ? json(page([{ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }])) : url.includes("/hosting-operations/") ? json({ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }) : undefined);
   setup("viewer"); fireEvent.click(await screen.findByRole("button", { name: "View operation hop_one" }));
