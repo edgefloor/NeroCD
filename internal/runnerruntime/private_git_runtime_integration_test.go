@@ -33,7 +33,23 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
 	"nerocd/internal/hostingproxy"
+	"nerocd/internal/store"
 )
+
+// Source edits need the same operator-owned loopback policy as creation in this
+// disposable fixture. Production public HTTPS policy remains unchanged. The
+// underlying repository still owns CAS, source revisions and mutation audits.
+func (h controllerFixtureHosting) UpdateResource(ctx context.Context, resource domain.Resource, expected int64, opts ...store.MutationOption) (domain.Resource, error) {
+	previous, err := h.HostingRepository.GetResource(ctx, resource.ID)
+	if err != nil {
+		return domain.Resource{}, err
+	}
+	if resource.Source.Kind == "git" && resource.Source.Git != nil && previous.Source.Git != nil && resource.Source.Git.Generation > previous.Source.Git.Generation {
+		g := resource.Source.Git
+		opts = append(opts, store.WithHostingGitSource(domain.HostingGitSource{ID: g.SourceID, ResourceID: resource.ID, ProjectID: resource.ProjectID, Generation: g.Generation, RepositoryURL: g.RepositoryURL, RequestedRef: g.RequestedRef, CredentialKind: g.CredentialKind, Settings: g.Settings, Policy: h.policy}))
+	}
+	return h.HostingRepository.UpdateResource(ctx, resource, expected, opts...)
+}
 
 // Each private case owns a separate database inside the disposable fixture's
 // PostgreSQL container. Never reapply native migrations to a prior case's schema.
