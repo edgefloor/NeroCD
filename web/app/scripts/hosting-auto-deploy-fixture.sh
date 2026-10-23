@@ -43,7 +43,11 @@ cleanup() {
     else result=1; fi
    fi
    docker exec "$outer" sh -ec 'if [ -d "$1" ]; then rmdir "$1"; fi' sh "/sys/fs/cgroup/$owner" || result=1
+   owned_volumes=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}' "$outer")
    docker rm --force --volumes "$outer" || result=1
+   for volume in $owned_volumes; do
+    if docker volume inspect "$volume" >/dev/null 2>&1; then result=1; else echo "owned anonymous volume absent: $volume"; fi
+   done
    if docker inspect "$outer" >/dev/null 2>&1; then result=1; else echo "owned outer absent: $outer"; fi
   else result=1; fi
  fi
@@ -65,6 +69,10 @@ esac
 # An existing immutable fixture binary may be reused when DNS is unavailable.
 # Both paths must match the architecture-specific pinned digest below.
 if [[ -n "${NEROCD_BUILDX_FIXTURE_BINARY:-}" ]]; then
+ [[ -f "$NEROCD_BUILDX_FIXTURE_BINARY" && ! -L "$NEROCD_BUILDX_FIXTURE_BINARY" ]]
+ binary_bytes=$(wc -c < "$NEROCD_BUILDX_FIXTURE_BINARY")
+ [[ "$binary_bytes" -gt 0 && "$binary_bytes" -le 134217728 ]]
+ printf 'local buildx source=%s bytes=%s\n' "$NEROCD_BUILDX_FIXTURE_BINARY" "$binary_bytes" | tee "$evidence/buildx-source"
  cp "$NEROCD_BUILDX_FIXTURE_BINARY" "$evidence/buildx"
 else
  curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 --header "Cache-Control: no-cache" --header "Pragma: no-cache" "https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-$goarch" --output "$evidence/buildx"
