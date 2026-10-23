@@ -429,3 +429,28 @@ func TestProxyStartupReplayNeverRetriesEffectsOrClearsUncertainty(t *testing.T) 
 		})
 	}
 }
+
+func TestRuntimeIdentityPropagatesVerifiedSwitchOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name                              string
+		configured, advertised, wantError bool
+	}{{"strict_opt_in", true, true, false}, {"legacy_false", false, false, false}, {"unconfigured_strict", false, true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				caps := []string{domain.RunTypeProxyApply}
+				if tc.advertised {
+					caps = append(caps, domain.HostingProxyVerifiedSwitchCapability)
+				}
+				if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_proxy_identity", "capabilities": caps}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			config := Config{Server: server.URL, Token: "fixture", Proxy: ProxyConfig{Directory: t.TempDir(), VerifiedSwitch: tc.configured}}
+			id, err := runtimeEnvironmentIdentity(t.Context(), config)
+			if (err != nil) != tc.wantError || err == nil && id != "runner_proxy_identity" {
+				t.Fatalf("runtime identity id=%s err=%v", id, err)
+			}
+		})
+	}
+}
