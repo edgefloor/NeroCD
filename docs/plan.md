@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`b4951282aefb3ad63d525c9d10037d7120f1d4ba`, 2026-10-23, through migration 0061.
+`8e00631aac26e0787a43398332e31a35980f067d`, 2026-10-23, through migration 0063.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,7 +29,7 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0061, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0063, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | Broader SSH/host qualification, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, protected reveal, private Git credential delivery and bounded managed runtime delivery/execution; separate runner-file execution | Broader delivery and variable scopes, provider coverage and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
@@ -132,7 +132,11 @@ See the [navigation evidence and limits](compatibility.md#accepted-foundations-a
 
 Automatic deployment and SSH onboarding have bounded accepted evidence. Proceed
 to H2 stateful hosting next: managed volumes, storage runtime/UI and PostgreSQL/Redis.
-Storage metadata work is not yet accepted and does not establish a runtime product. Protected plans
+Storage metadata, the private helper and durable materialization admission are
+accepted through `8e00631aac26e0787a43398332e31a35980f067d`, with migrations
+0062–0063. Storage HTTP/UI, coordinator, advertised capability and the mounted
+upload workflow remain absent. Protocol/engine work remains unaccepted;
+PostgreSQL/Redis and complete A19/A26 remain planned. Protected plans
 under R17/R19 and applicable A09/A10 checks, production TLS and remaining parity
 remain separate unfinished work. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.

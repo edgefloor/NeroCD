@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`b4951282aefb3ad63d525c9d10037d7120f1d4ba`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`8e00631aac26e0787a43398332e31a35980f067d`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0061, bootstrap administration,
+- PostgreSQL state, checked migrations through 0063, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -159,6 +159,12 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   accepted at `b4951282aefb3ad63d525c9d10037d7120f1d4ba` for the prepared-host
   fixture, including response-loss inspection recovery. This does not qualify
   live-host/OS breadth, build/proxy/log/storage presets or complete A01.
+- Owned-storage metadata, the private volume helper and durable materialization
+  admission are accepted through `8e00631aac26e0787a43398332e31a35980f067d`.
+  See the [foundation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
+  Storage HTTP/UI, coordinator, advertised capability and mounted-upload workflow
+  remain absent; protocol/engine work is ongoing and unaccepted. PostgreSQL/Redis
+  and complete A19/A26 remain planned.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon

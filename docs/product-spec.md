@@ -5,7 +5,7 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `b4951282aefb3ad63d525c9d10037d7120f1d4ba`, reviewed on 2026-10-23. Native migrations extend through 0061. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `8e00631aac26e0787a43398332e31a35980f067d`, reviewed on 2026-10-23. Native migrations extend through 0063. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -890,7 +890,7 @@ The earlier revision 3 instruction to make Task collaboration and D0–D3 the fi
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0061, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `b4951282aefb3ad63d525c9d10037d7120f1d4ba`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0063, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `8e00631aac26e0787a43398332e31a35980f067d`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -929,6 +929,7 @@ The implementation campaign changed application code and exercised real infrastr
 | Trusted automatic GitHub deployment | Accepted `86825ab17f2e2bb0b2b0a26e6e65e2e2769d8fa3`; [policy and recovery contract](hosting-auto-deploy.md), [real gate](../acceptance/runtime-hosting-auto-deploy/README.md) | Optional `automatic_unprotected` after an initial healthy manual release and existing routes; verified signed fixed-branch push builds the exact source, deploys on a fresh port and switches existing trusted HTTPS routes; duplicate/delayed/superseded work, failed build/readiness preservation, unrelated routes, response loss and restart covered; live GitHub, public ACME, protected approval, remote builders and previews remain unsupported |
 | SSH prerequisite installer and durable control | Installer `b6cd8962aba3894d6ee86cf0ec34530d9b319ccd`; control source `342fb8beb4da5a711bd25716888627e4dfb587f2`, integrated `5bf42af0174caf27a6c0d758242a0e3cf48b4851`; [installer contract](hosting-ssh-bootstrap.md), [durable control contract](hosting-ssh-onboarding.md) | Native arm64 Debian 12/systemd, Docker API 1.54 and Compose 5.1.1 fixture; baseline probe/installer exposes only four capabilities, not build/proxy/log capabilities; full SSH API/UI was absent at this installer checkpoint; bounded workflow acceptance is recorded below; no complete A01 |
 | SSH onboarding API and UI | Source `57093e14d6b65e12305fd44aa61a3dd7b689545b`, accepted `b4951282aefb3ad63d525c9d10037d7120f1d4ba`; [workflow and authority contract](hosting-ssh-onboarding.md), [prepared-host installer limits](hosting-ssh-bootstrap.md) | Real API/River/SSH and browser workflow on prepared Debian 12 native arm64/systemd, Docker API 1.54, Compose 5.1.1 and 1 GiB minimum; operator artifact metadata and pinned SSH identity; response-loss recovery retains installation identity and uses owned inspection; four-capability image-hosting profile only, including `hosting_image_v1`, with no source-build/proxy/log/storage preset; not public ACME, live-host breadth, full OS qualification or complete A01 |
+| Owned-storage foundations | Metadata `13f8e6f952003dc1c36ba467ac4e19817ded6f0c`; private helper `753a027dabc1fb26176bceb9e91579b649ece8a2`; materialization controller `8e00631aac26e0787a43398332e31a35980f067d`; [metadata service](../internal/app/hosting_storage_service.go), [private volume helper](../internal/runnerruntime/hosting_owned_volume.go), [durable admission tests](../internal/store/postgres_hosting_storage_materialization_test.go) | Migrations 0062–0063; accepted desired metadata, private owned-volume helper and durable materialization admission only; no storage HTTP/UI, coordinator, advertised capability or mounted-upload workflow; protocol/engine work remains ongoing and unaccepted; PostgreSQL/Redis, complete A19/A26 and parity remain planned |
 | Compiled Vite SPA qualification | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Exact pinned source compiles with Node 22.22.0, Bun 1.3.6, Vite 8.2.2 and Caddy 2.10.2; runtime 141.87 seconds/default regression 42.72 seconds; genuine parser failure preserves the prior serving application; HTTP browser bridge and independent TLS probe are separate evidence; earlier unexplained failures remain a reliability limit; not complete A04 or production ACME |
 
 Private Railpack qualification is now accepted at
@@ -944,6 +945,20 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
+Storage foundation evidence retains its original boundaries. Metadata promotion
+`13f8e6f952003dc1c36ba467ac4e19817ded6f0c` is recorded in
+`/tmp/nerocd-main-storage-repaired-promotion.json`. Private helper promotion
+`753a027dabc1fb26176bceb9e91579b649ece8a2` retains helper race 65.888 seconds and
+Docker fixture 0.80 seconds in `/tmp/nerocd-main-volume-helper-promotion.json`;
+the helper is not a mounted application workflow. Materialization integration
+`8e00631aac26e0787a43398332e31a35980f067d` records actual PostgreSQL race
+19.772 seconds, domain race 1.507 seconds, focused runtime race 1.373 seconds,
+vet, SQL placement, generated SQLc identity and Go compile in
+`/tmp/nerocd-materialization-integration-handoff.json` and
+`/tmp/nerocd-main-materialization-promotion.json`. Its runtime race skipped Docker;
+helper Docker evidence remains retained at the helper revision. No new mounted
+runtime, UI or application data-persistence qualification is inferred.
+
 SSH onboarding source `57093e14d6b65e12305fd44aa61a3dd7b689545b` is accepted
 at `b4951282aefb3ad63d525c9d10037d7120f1d4ba`. Actual API/River/SSH evidence at
 `10f830f71e88df544864b56ffcd8be9bdb222fa5` passed in 67.94 seconds with browser
@@ -957,8 +972,8 @@ Exact source retention and limits are recorded in
 `/tmp/nerocd-ssh-final-integration-handoff.json` and
 `/tmp/nerocd-main-ssh-final-promotion.json`. These do not claim a new runtime run
 at main. The qualified current artifact was built and served in the integration
-checkout; root ignored assets remain historical. Storage metadata work is not yet
-accepted; managed volumes, storage runtime/UI and PostgreSQL/Redis remain next.
+checkout; root ignored assets remain historical. Storage metadata, the private helper and durable admission are accepted below;
+the mounted workflow, storage HTTP/UI and PostgreSQL/Redis remain next.
 
 Automatic deployment evidence is source-bound: runtime
 `3510437292cb7195a7cda9760b7eb7bf468d7877` passed in 66.85 seconds at
