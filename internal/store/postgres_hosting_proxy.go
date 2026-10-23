@@ -541,6 +541,9 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 			return domain.HostingProxyOperation{}, ErrConflict
 		}
 	}
+	if err = settleStorageContinuityProxy(ctx, tx, op, in.Result); err != nil {
+		return domain.HostingProxyOperation{}, err
+	}
 	return op, tx.Commit(ctx)
 }
 
@@ -747,6 +750,9 @@ func proxyLock(ctx context.Context, tx pgx.Tx, id string) (domain.HostingProxy, 
 	if _, err := sqlcgen.New(tx).ProxyLock(ctx, id); err != nil {
 		return domain.HostingProxy{}, hostingError(err)
 	}
+	if err := storageContinuityBarrier(ctx, tx, id); err != nil {
+		return domain.HostingProxy{}, err
+	}
 	return proxyLoad(ctx, tx, id)
 }
 func proxyOperation(ctx context.Context, db sqlcgen.DBTX, id string) (domain.HostingProxyOperation, error) {
@@ -796,6 +802,22 @@ func proxyRouteStatus(ctx context.Context, db sqlcgen.DBTX, row sqlcgen.HostingP
 	}
 	if op.RestoreOwnershipHeld {
 		record.Route.State = "restore_ownership_held"
+	}
+	// A same-port replacement may have stopped the previously loaded writer.
+	// Historical proxy readiness cannot establish the successor is serving.
+	unsettled, err := storageContinuityRouteUnsettled(ctx, db, row)
+	if err != nil {
+		return record, err
+	}
+	if unsettled != "" {
+		if !op.RestoreOwnershipHeld {
+			record.Route.State = "uncertain"
+		}
+		record.Route.Reason = "storage replacement awaits proxy settlement"
+		if unsettled == "unresolved" || unsettled == "proxy_failed" {
+			record.Route.Reason = "storage replacement requires route reconciliation"
+		}
+		return record, nil
 	}
 	verifiedResult := op.Result != nil && (op.Result.Outcome == "applied" && op.Result.LoadedGeneration == op.Generation || op.Snapshot.VerifiedSwitch != nil && op.Result.Outcome == "rolled_back" && op.Plan != nil && op.Result.LoadedGeneration == op.Plan.PreviousGeneration)
 	if verifiedResult && !op.MutationHold && row.Enabled {
@@ -1197,6 +1219,9 @@ func proxyReleaseQualified(p domain.HostingProxy, row sqlcgen.HostingProxyRoute,
 }
 
 func (s *PostgresStore) queueProxyGeneration(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, operationID, project, routeID, actor, key, requestHash string, audit domain.AuditEvent) (domain.HostingProxyOperation, error) {
+	if err := storageContinuityPendingBarrier(ctx, tx, p.ID); err != nil {
+		return domain.HostingProxyOperation{}, err
+	}
 	if err := proxyOrdinaryMutationAllowed(ctx, tx, p); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}

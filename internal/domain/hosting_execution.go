@@ -85,32 +85,34 @@ type HostingReadiness struct {
 
 // HostingDeploymentInput is the complete public image deployment request.
 type HostingDeploymentInput struct {
-	ExpectedRuntimeConfigurationGeneration int64            `json:"expected_runtime_configuration_generation,omitempty"`
-	ExpectedGeneration                     int64            `json:"expected_generation"`
-	IdempotencyKey                         string           `json:"idempotency_key"`
-	ContainerPort                          int              `json:"container_port"`
-	HostPort                               int              `json:"host_port"`
-	Readiness                              HostingReadiness `json:"readiness"`
+	StorageRouteContinuity                 *HostingStorageRouteContinuityInput `json:"storage_route_continuity,omitempty"`
+	ExpectedRuntimeConfigurationGeneration int64                               `json:"expected_runtime_configuration_generation,omitempty"`
+	ExpectedGeneration                     int64                               `json:"expected_generation"`
+	IdempotencyKey                         string                              `json:"idempotency_key"`
+	ContainerPort                          int                                 `json:"container_port"`
+	HostPort                               int                                 `json:"host_port"`
+	Readiness                              HostingReadiness                    `json:"readiness"`
 }
 
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
-	Storage              HostingStorageRef              `json:"storage,omitzero"`
-	ResourceID           string                         `json:"resource_id"`
-	ResourceGeneration   int64                          `json:"resource_generation"`
-	ImageReference       string                         `json:"image_reference"`
-	BindingID            string                         `json:"binding_id"`
-	DestinationID        string                         `json:"destination_id"`
-	ServerID             string                         `json:"server_id"`
-	RunnerID             string                         `json:"runner_id"`
-	RuntimeNamespace     string                         `json:"runtime_namespace"`
-	ContainerPort        int                            `json:"container_port"`
-	HostPort             int                            `json:"host_port"`
-	Readiness            HostingReadiness               `json:"readiness"`
-	PolicyVersion        string                         `json:"policy_version"`
-	LocalBuild           HostingLocalBuildSource        `json:"local_build,omitzero"`
-	RuntimeConfiguration HostingRuntimeConfigurationRef `json:"runtime_configuration,omitzero"`
+	StorageRouteContinuity HostingStorageRouteContinuityRef `json:"storage_route_continuity,omitzero"`
+	Storage                HostingStorageRef                `json:"storage,omitzero"`
+	ResourceID             string                           `json:"resource_id"`
+	ResourceGeneration     int64                            `json:"resource_generation"`
+	ImageReference         string                           `json:"image_reference"`
+	BindingID              string                           `json:"binding_id"`
+	DestinationID          string                           `json:"destination_id"`
+	ServerID               string                           `json:"server_id"`
+	RunnerID               string                           `json:"runner_id"`
+	RuntimeNamespace       string                           `json:"runtime_namespace"`
+	ContainerPort          int                              `json:"container_port"`
+	HostPort               int                              `json:"host_port"`
+	Readiness              HostingReadiness                 `json:"readiness"`
+	PolicyVersion          string                           `json:"policy_version"`
+	LocalBuild             HostingLocalBuildSource          `json:"local_build,omitzero"`
+	RuntimeConfiguration   HostingRuntimeConfigurationRef   `json:"runtime_configuration,omitzero"`
 }
 
 // HostingRelease binds registry content and local image identity to one daemon.
@@ -234,6 +236,11 @@ type HostingObservation struct {
 
 // ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
+	if in.StorageRouteContinuity != nil {
+		if _, err := CanonicalHostingStorageRouteContinuityInput(*in.StorageRouteContinuity); err != nil || in.HostPort < 1024 {
+			return errors.New("invalid storage route continuity request")
+		}
+	}
 	if in.ExpectedRuntimeConfigurationGeneration < 0 || in.ExpectedGeneration < 1 || len(in.IdempotencyKey) < 1 || len(in.IdempotencyKey) > 128 || strings.ContainsFunc(in.IdempotencyKey, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
 		return errors.New("expected_generation and a bounded idempotency_key are required")
 	}
@@ -297,6 +304,9 @@ func HostingDocumentHash(value any) string {
 
 // CompileHostingPlan hashes the immutable release, target and prior healthy pointer.
 func CompileHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy) (HostingApplyPlan, error) {
+	if err := ValidateHostingStorageRouteContinuitySnapshot(snapshot); err != nil {
+		return HostingApplyPlan{}, err
+	}
 	if err := ValidateHostingSnapshotRelease(snapshot, release); err != nil {
 		return HostingApplyPlan{}, err
 	}
@@ -329,6 +339,9 @@ func CompileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 }
 
 func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy, policy, compiler string) (HostingApplyPlan, error) {
+	if err := ValidateHostingStorageRouteContinuitySnapshot(snapshot); err != nil {
+		return HostingApplyPlan{}, err
+	}
 	if ValidateHostingStorageSnapshot(snapshot) != nil || snapshot.Storage != (HostingStorageRef{}) && policy != HostingOwnedStoragePolicyVersion {
 		return HostingApplyPlan{}, ErrInvalidHostingStorage
 	}

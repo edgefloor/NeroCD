@@ -754,6 +754,17 @@ type HostingStorageReceipt struct {
 	AuditID                    string `json:"audit_id"`
 }
 
+type HostingStorageRouteContinuity struct {
+	OperationID               string          `json:"operation_id"`
+	ProxyID                   string          `json:"proxy_id"`
+	Descriptor                json.RawMessage `json:"descriptor"`
+	DescriptorHash            string          `json:"descriptor_hash"`
+	AcceptedRequest           json.RawMessage `json:"accepted_request"`
+	State                     string          `json:"state"`
+	SuccessorProxyOperationID *string         `json:"successor_proxy_operation_id"`
+	CreatedAt                 time.Time       `json:"created_at"`
+}
+
 type HostingTaskTarget struct {
 	RunID       string `json:"run_id"`
 	OperationID string `json:"operation_id"`

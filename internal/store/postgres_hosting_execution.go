@@ -170,6 +170,13 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if s.hostingJobs == nil {
 		return domain.HostingOperation{}, hostingjobs.ErrUnavailable
 	}
+	if in.StorageRouteContinuity != nil {
+		canonical, err := domain.CanonicalHostingStorageRouteContinuityInput(*in.StorageRouteContinuity)
+		if err != nil {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		in.StorageRouteContinuity = &canonical
+	}
 	if err := domain.ValidateHostingDeployment(in); err != nil {
 		return domain.HostingOperation{}, ErrConflict
 	}
@@ -178,6 +185,11 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 		return domain.HostingOperation{}, err
 	}
 	defer rollbackTransaction(ctx, tx)
+	if in.StorageRouteContinuity != nil {
+		if _, _, err = storageContinuityPrelock(ctx, tx, resourceID); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
 	if err = lockHostingResourceDestination(ctx, tx, resourceID); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -276,6 +288,10 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err = hostingTargetGate(ctx, tx, projectID, snap, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
+	continuity, err := prepareStorageContinuity(ctx, tx, id, projectID, &snap, in)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
 	if err = s.resolveHostingReleasePort(ctx, tx, &snap, in.HostPort); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -328,6 +344,11 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	}
 	if _, err = sqlcgen.New(tx).CreateHostingSnapshot(ctx, sqlcgen.CreateHostingSnapshotParams{OperationID: id, Body: contents, BodyHash: domain.HostingDocumentHash(snap)}); err != nil {
 		return domain.HostingOperation{}, err
+	}
+	if continuity != nil {
+		if err = sqlcgen.New(tx).CreateStorageRouteContinuity(ctx, sqlcgen.CreateStorageRouteContinuityParams{OperationID: id, ProxyID: continuity.ProxyID, Descriptor: buildJSON(continuity), DescriptorHash: snap.StorageRouteContinuity.Hash, AcceptedRequest: buildJSON(in)}); err != nil {
+			return domain.HostingOperation{}, hostingError(err)
+		}
 	}
 	audit.ActorID, audit.Action, audit.TargetID = actorID, "hosting.deployment_requested", id
 	audit.Metadata = map[string]any{"project_id": projectID, "resource_id": resourceID, "binding_id": snap.BindingID}
@@ -454,6 +475,9 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 				return updateErr
 			}
 			if _, releaseErr := sqlcgen.New(tx).ReleaseHostingFailedClaim(ctx, id); releaseErr != nil {
+				return releaseErr
+			}
+			if releaseErr := releaseUnmutatedStorageContinuity(ctx, tx, op); releaseErr != nil {
 				return releaseErr
 			}
 			if auditErr := hostingPhaseAudit(ctx, tx, s.queries, op, op.CreatedBy, "preflight_failed"); auditErr != nil {
@@ -917,7 +941,7 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 		if checkErr != nil {
 			return domain.HostingOperation{}, checkErr
 		}
-		if referenced {
+		if referenced && op.Snapshot.StorageRouteContinuity == (domain.HostingStorageRouteContinuityRef{}) {
 			return domain.HostingOperation{}, ErrConflict
 		}
 	}
@@ -1010,6 +1034,11 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	}
 	if err = sqlcgen.New(tx).LockHostingExecutionDestination(ctx, op.Snapshot.DestinationID); err != nil {
 		return domain.HostingOperation{}, err
+	}
+	if op.Snapshot.StorageRouteContinuity != (domain.HostingStorageRouteContinuityRef{}) {
+		if _, _, err = storageContinuityPrelock(ctx, tx, op.ResourceID); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
 		if err = hostingFreshStorageGate(ctx, tx, op); err != nil {
@@ -1118,6 +1147,9 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 		if _, err = sqlcgen.New(tx).ReleaseHostingFailedClaim(ctx, op.ID); err != nil {
 			return domain.HostingOperation{}, err
 		}
+	}
+	if err = s.settleStorageContinuity(ctx, tx, op, in.Result); err != nil {
+		return domain.HostingOperation{}, err
 	}
 	if err = s.autoWakeup(ctx, tx, op.ResourceID); err != nil {
 		return domain.HostingOperation{}, err
@@ -1294,6 +1326,11 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 	}
 	if local {
 		if err = authorizeBuildActor(ctx, tx, audit.ActorID, op.ProjectID, role); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
+	if !reconcile {
+		if err = releaseUnmutatedStorageContinuity(ctx, tx, op); err != nil {
 			return domain.HostingOperation{}, err
 		}
 	}
@@ -1857,7 +1894,7 @@ func (s *PostgresStore) resolveHostingReleasePort(ctx context.Context, tx pgx.Tx
 	if err != nil {
 		return err
 	}
-	if referenced {
+	if referenced && snap.StorageRouteContinuity == (domain.HostingStorageRouteContinuityRef{}) {
 		return ErrConflict
 	}
 	reusable, err := q.HostingReleaseSlotReusable(ctx, sqlcgen.HostingReleaseSlotReusableParams{DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort), PreviousOperationID: previousID, BindingID: snap.BindingID})
