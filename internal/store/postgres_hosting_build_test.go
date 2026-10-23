@@ -1201,6 +1201,11 @@ func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 // dependencies above 0046 so older missing-layer tests retain their assertions.
 func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
+	// Route continuity depends on hosting operations and proxy tables removed below.
+	if _, err := db.Exec(t.Context(), `DROP TABLE hosting_storage_route_continuities;
+ DROP FUNCTION nerocd_hosting_storage_continuity_immutable(),nerocd_hosting_storage_continuity_consistent(),nerocd_hosting_storage_route_continuity_schema_compatible();`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_storage_lease ON run_leases; DROP FUNCTION nerocd_hosting_storage_lease();
  ALTER TABLE hosting_storage_materializations DROP CONSTRAINT hosting_storage_materialized_receipt_fk,DROP CONSTRAINT hosting_storage_origin_admission_fk;
  DROP TABLE hosting_storage_materialized_receipts,hosting_storage_operation_admissions,hosting_storage_materializations;
