@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { queryKeys } from "@/api";
 import { HostingProxy } from "./HostingProxy";
+vi.mock("./HostingProxyRecovery", () => ({ HostingProxyRecovery: () => <div data-testid="recovery-integration" /> }));
 const proxy = { id: "proxy_one", server_id: "server", control_project_id: "project", destination_id: "dest", runner_id: "runner", configuration: { email: "ops@example.test", ca: "letsencrypt-staging", management_port: 18080 }, enabled: true, desired_generation: 1, loaded_generation: 0, restore_ownership_held: false };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 let client: QueryClient;
