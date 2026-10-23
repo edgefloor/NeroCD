@@ -24,6 +24,11 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
 function setup() { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "u", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={resource} blocked={false} /></QueryClientProvider>); }
 async function click(name: string) { await act(async () => { fireEvent.click(screen.getByRole("button", { name })); }); }
 async function advance(ms: number) { for (let remaining = ms; remaining > 0;) { const step = Math.min(1000, remaining); now += step; wall += step; await act(async () => { await vi.advanceTimersByTimeAsync(step); }); remaining -= step; } }
+function validLateResult(kind: string, options: RequestInit) {
+  const late = structuredClone(session);
+  if (kind === "open") late.request_id = JSON.parse(String(options.body)).request_id;
+  return kind === "read" ? { session: late, items: [{ sequence: 2, component: "application", stream: "stdout", message: "late sensitive row must not return", received_at: time }], next_sequence: 2, earliest_available_sequence: 1, deleted_through_sequence: 0, gap: false, truncated: false, markers: [], sensitive: true } : late;
+}
 test("initial viewer render opens no demand or plaintext; explicit Follow escapes HTML and ANSI", async () => {
   const fetch = backend(); setup(); expect(fetch).not.toHaveBeenCalled(); expect(screen.getByText(/Sensitive application output may contain secrets/)).toBeTruthy();
   await click("Follow runtime logs"); expect(screen.getByText(/<img src=x onerror=alert\(1\)>\\u001b\[31m literal/)).toBeTruthy(); expect(document.querySelector("img")).toBeNull(); expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(true);
@@ -48,13 +53,14 @@ test.each(["open", "read", "renew"])("late %s completion after Stop cannot resto
   setup(); if (kind === "open") pending = true; await click("Follow runtime logs");
   if (kind !== "open") { pending = true; await advance(kind === "renew" ? 10_000 : 3000); }
   const attempt = fetch.mock.calls.filter(([url]) => kind === "open" ? url.endsWith("/runtime-log-sessions") : kind === "read" ? url.includes("/logs?") : url.endsWith("/renew")).at(-1)!;
+  const late = validLateResult(kind, attempt[1]);
   await click("Stop following"); expect(attempt[1].signal?.aborted).toBe(true); const before = screen.queryAllByText(/Server sequence/).length;
-  await act(async () => resolve(json(kind === "read" ? { invalid: "late plaintext" } : original))); expect(screen.queryByText(/Reading or updating/)).toBeNull(); expect(screen.queryAllByText(/Server sequence/)).toHaveLength(before); expect(screen.queryByText("Following requested while visible.")).toBeNull();
+  await act(async () => resolve(json(late))); expect(screen.queryByText(/Reading or updating/)).toBeNull(); expect(screen.queryAllByText(/Server sequence/)).toHaveLength(before); expect(screen.queryByText(/Following requested while visible/)).toBeNull(); expect(screen.queryByText("late sensitive row must not return")).toBeNull(); if (kind !== "open") expect(screen.getByText(/Session state: ended/)).toBeTruthy();
 });
 test("hung read retires at5s, pauses renew and enables explicit retry while late response is ignored", async () => {
   let hang = false, resolve!: (response: Response) => void; const fetch = backend((url) => hang && url.includes("/logs?") ? new Promise<Response>((done) => { resolve = done; }) : undefined); setup(); await click("Follow runtime logs"); hang = true; await advance(3000);
-  const signal = fetch.mock.calls.at(-1)![1].signal; await advance(5000); expect(signal?.aborted).toBe(true); expect(screen.getByRole("alert")).toBeTruthy(); expect(screen.queryByText(/Reading or updating/)).toBeNull(); const count = fetch.mock.calls.length;
-  await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count); hang = false; await click("Retry runtime logs"); await act(async () => resolve(json({ malformed: "old" }))); expect(screen.queryByRole("alert")).toBeNull(); expect(screen.getByText(/Server sequence 1/)).toBeTruthy();
+  const signal = fetch.mock.calls.at(-1)![1].signal, late = validLateResult("read", fetch.mock.calls.at(-1)![1]); await advance(5000); expect(signal?.aborted).toBe(true); expect(screen.getByRole("alert")).toBeTruthy(); expect(screen.queryByText(/Reading or updating/)).toBeNull(); const count = fetch.mock.calls.length;
+  await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count); hang = false; await click("Retry runtime logs"); await act(async () => resolve(json(late))); expect(screen.queryByRole("alert")).toBeNull(); expect(screen.getByText(/Server sequence 1/)).toBeTruthy(); expect(screen.queryByText("late sensitive row must not return")).toBeNull();
 });
 test("hidden return requires explicit Resume and cannot renew expired demand under suspension", async () => {
   const fetch = backend(); setup(); await click("Follow runtime logs"); vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden"); fireEvent(document, new Event("visibilitychange")); const count = fetch.mock.calls.length;
@@ -76,8 +82,9 @@ test.each(["open", "read", "renew"])("scope change clears sensitive state and ig
   const fetch = backend((url) => pending && (kind === "open" ? url.endsWith("/runtime-log-sessions") : kind === "read" ? url.includes("/logs?") : url.endsWith("/renew")) ? new Promise<Response>((done) => { resolve = done; }) : undefined);
   const view = setup(); if (kind === "open") pending = true; await click("Follow runtime logs"); if (kind !== "open") { pending = true; await advance(kind === "renew" ? 10_000 : 3000); }
   const attempt = fetch.mock.calls.filter(([url]) => kind === "open" ? url.endsWith("/runtime-log-sessions") : kind === "read" ? url.includes("/logs?") : url.endsWith("/renew")).at(-1)!;
+  const late = validLateResult(kind, attempt[1]);
   view.rerender(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={{ ...resource, id: "another" }} blocked={false} /></QueryClientProvider>); expect(attempt[1].signal?.aborted).toBe(true);
-  await act(async () => resolve(json(original))); expect(screen.queryByText(/Server sequence/)).toBeNull(); expect(screen.queryByText("op / container")).toBeNull(); const count = fetch.mock.calls.length; await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count);
+  await act(async () => resolve(json(late))); expect(screen.queryByText(/Server sequence/)).toBeNull(); expect(screen.queryByText("op / container")).toBeNull(); const count = fetch.mock.calls.length; await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count);
 });
 test("Hide output clears plaintext and Show controls never reopens a session", async () => {
   const fetch = backend(); setup(); await click("Follow runtime logs"); const count = fetch.mock.calls.length; await click("Hide output"); expect(screen.queryByText(/Server sequence/)).toBeNull(); await click("Show runtime log controls"); await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count);
