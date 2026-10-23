@@ -26,6 +26,7 @@ async function resourceArticle(page: Page, meta: Metadata) {
 test("owner reviews automatic unprotected deployment, B reaches HTTPS automatically, and failed C preserves B", async ({ page, browser }) => {
   test.skip(!process.env.NEROCD_AUTO_DEPLOY_BROWSER_META, "requires actual automatic deployment browser fixture");
   test.setTimeout(960_000);
+  page.setDefaultTimeout(15_000);
   const meta = JSON.parse(process.env.NEROCD_AUTO_DEPLOY_BROWSER_META!) as Metadata;
   expect(new URL(meta.base_url).protocol).toMatch(/^https?:$/);
   expect(new URL(meta.step_path, meta.base_url).origin).toBe(new URL(meta.base_url).origin);
@@ -39,6 +40,11 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
   });
   await signIn(page); await page.setViewportSize({ width: 320, height: 1000 });
   const article = await resourceArticle(page, meta), panel = article.getByRole("region", { name: "Build on push", exact: true });
+  const ownerOptions = await page.request.get(`/api/v1/resources/${meta.resource_id}/github-push-policy`);
+  expect(ownerOptions.status()).toBe(200);
+  const ownerPolicy = await ownerOptions.json() as { can_manage: boolean; owner_automatic_deployment_options?: { available: boolean; reason: string } };
+  expect(ownerPolicy.can_manage).toBe(true);
+  expect(ownerPolicy.owner_automatic_deployment_options, "ordinary owner requires real eligible manual A + loaded HTTPS options").toMatchObject({ available: true, reason: "eligible" });
   const form = panel.getByRole("form", { name: "Configure GitHub build on push", exact: true });
   await expect(form.getByRole("radio", { name: "Build only. Deploy each successful build manually.", exact: true })).toBeChecked();
   async function reviewConfiguration() {
@@ -94,7 +100,7 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
   const initialACount = (await baseline.json() as { items: Array<{ source_receipt?: { commit: string } }> }).items.filter((item) => item.source_receipt?.commit === meta.expected_commit_a).length;
   const enabled = page.waitForResponse((r) => new URL(r.url()).pathname === `${policyPath}/enabled` && r.request().method() === "POST");
   await panel.getByRole("button", { name: "Enable build and automatic deployment", exact: true }).focus(); await page.keyboard.press("Enter"); expect((await enabled).status()).toBe(200);
-  async function step(command: "push-b" | "duplicate-b" | "delayed-a" | "probe-b" | "probe-failed-c" | "push-c" | "complete") { const result = await page.request.post(`${meta.step_path}${command}`, { headers: { Origin: meta.base_url, "X-NeroCD-CSRF": "1" } }); expect(result.status(), command).toBe(204); }
+  async function step(command: "push-b" | "duplicate-b" | "delayed-a" | "probe-b" | "probe-failed-c" | "push-c" | "complete") { const result = await page.request.post(`${meta.step_path}${command}`, { headers: { Origin: meta.base_url, "X-NeroCD-CSRF": "1" }, timeout: 420_000 }); expect(result.status(), command).toBe(204); }
   await step("push-b"); await step("duplicate-b"); await step("delayed-a");
   let buildB = "";
   await expect.poll(async () => {

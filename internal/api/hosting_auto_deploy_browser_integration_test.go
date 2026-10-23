@@ -38,6 +38,15 @@ func TestHostingAutomaticDeploymentBrowser(t *testing.T) {
 	fixture := newAutomaticRuntimeFixture(t)
 	f, ctx := fixture.Control, fixture.ctx
 	preparePushBrowserIdentity(t, ctx, f)
+	var initial domain.GitHubPushPolicy
+	f.request(http.MethodGet, "/api/v1/resources/"+f.resource.ID+"/github-push-policy", f.owner, nil, http.StatusOK, &initial)
+	if initial.OwnerAutomaticDeploymentOptions == nil || !initial.OwnerAutomaticDeploymentOptions.Available {
+		reason := "missing"
+		if initial.OwnerAutomaticDeploymentOptions != nil {
+			reason = initial.OwnerAutomaticDeploymentOptions.Reason
+		}
+		t.Fatal("ordinary-owner identity preparation must retain eligible manual A/HTTPS baseline", reason)
+	}
 	f.api = NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), ServerConfig{PublicOrigin: origin, AllowInsecureCookies: true})
 	nonce := make([]byte, 16)
 	if _, err = rand.Read(nonce); err != nil {
