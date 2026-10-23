@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -458,7 +459,7 @@ func (s *PostgresStore) queueStorageContinuity(ctx context.Context, tx pgx.Tx, o
 	}
 	changed, err := sqlcgen.New(tx).QueueStorageContinuity(ctx, sqlcgen.QueueStorageContinuityParams{OperationID: op.ID, SuccessorProxyOperationID: hostingStringPointer(proxyID), State: sourceState})
 	if err != nil {
-		return err
+		return fmt.Errorf("link storage route continuity: %w", err)
 	}
 	if changed != 1 {
 		return ErrConflict
