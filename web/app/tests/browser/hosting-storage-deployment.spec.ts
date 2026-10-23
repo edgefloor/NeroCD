@@ -201,7 +201,9 @@ test("storage deployment reviews exact authority and separates historical contin
     updated_at: "2026-10-24T00:00:00Z",
   };
   let lost = true,
-    conflict = false;
+    conflict = false,
+    initial = true;
+  let lastReceipt: unknown = operation;
   const writes: string[] = [];
   await page.route(`**${base}/**`, async (route) => {
     const request = route.request(),
@@ -236,7 +238,21 @@ test("storage deployment reviews exact authority and separates historical contin
         created_by: "fixture",
         created_at: "2026-10-24T00:00:00Z",
       });
-    if (path === `${base}/storage-deployment-options`) return reply(options);
+    if (path === `${base}/storage-deployment-options`)
+      return reply(
+        initial
+          ? {
+              ...options,
+              reason: "initial_deployment",
+              previous_healthy_operation_id: null,
+              host_port: null,
+              container_port: null,
+              readiness: null,
+              routes: [],
+              storage_route_continuity: null,
+            }
+          : options,
+      );
     if (path === `${base}/retained-releases`) return reply([]);
     if (path === `${base}/storage-route-continuity/hop_fixture`)
       return reply({
@@ -254,8 +270,21 @@ test("storage deployment reviews exact authority and separates historical contin
         lost = false;
         return route.abort("failed");
       }
+      const chosen = JSON.parse(request.postData()!);
+      lastReceipt = initial
+        ? {
+            ...operation,
+            snapshot: {
+              ...operation.snapshot,
+              host_port: chosen.host_port,
+              container_port: chosen.container_port,
+              readiness: chosen.readiness,
+              storage_route_continuity: undefined,
+            },
+          }
+        : operation;
       return reply(
-        conflict ? { error: "stale authority" } : operation,
+        conflict ? { error: "stale authority" } : lastReceipt,
         conflict ? 409 : 202,
       );
     }
@@ -264,9 +293,130 @@ test("storage deployment reviews exact authority and separates historical contin
   await page.route("**/api/v1/hosting-operations/hop_fixture", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(operation),
+      body: JSON.stringify(lastReceipt),
     }),
   );
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/projects");
+    const hosting = page.getByRole("region", {
+      name: "Project hosting",
+      exact: true,
+    });
+    await hosting
+      .getByLabel("Hosting project", { exact: true })
+      .selectOption(project.id);
+    await hosting.getByRole("button", { name: "Uploads", exact: true }).click();
+    const review = hosting.getByRole("region", {
+      name: "Persistent upload deployment review",
+      exact: true,
+    });
+    await expect(
+      review.getByLabel("Runner-local host port", { exact: true }),
+    ).toHaveValue("");
+    await expect(
+      review.getByLabel("Readiness path", { exact: true }),
+    ).toHaveValue("");
+    await review
+      .getByLabel("Runner-local host port", { exact: true })
+      .fill("9080");
+    await review.getByLabel("Container port", { exact: true }).fill("3000");
+    await review.getByLabel("Readiness path", { exact: true }).fill("/ready");
+    await review
+      .getByLabel("Readiness timeout in seconds", { exact: true })
+      .fill("45");
+    await review
+      .getByRole("button", {
+        name: "Review current storage deployment",
+        exact: true,
+      })
+      .click();
+    await expect(
+      review.getByText("nerocd_uploads_fixture", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      review.getByText("/app/uploads", { exact: true }),
+    ).toBeVisible();
+    await expect(review.getByText(/Application data remains/)).toBeVisible();
+    await expect(
+      review.getByText(/no previous healthy writer is selected/),
+    ).toBeVisible();
+    await expect(
+      review.getByRole("button", {
+        name: "Deploy reviewed image with uploads",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    await review.screenshot({
+      path: info.outputPath(`storage-initial-review-${width}.png`),
+      animations: "disabled",
+    });
+    await review.getByRole("checkbox").check();
+    await review
+      .getByRole("button", {
+        name: "Deploy reviewed image with uploads",
+        exact: true,
+      })
+      .click();
+    if (width === 320) {
+      await expect(review.getByText(/Delivery is unconfirmed/)).toBeVisible();
+      await review
+        .getByRole("button", {
+          name: "Retry identical storage deployment request",
+          exact: true,
+        })
+        .click();
+      expect(writes[1]).toBe(writes[0]);
+      const request = JSON.parse(writes[0]!);
+      expect(request).toMatchObject({
+        host_port: 9080,
+        container_port: 3000,
+        readiness: { path: "/ready", timeout_seconds: 45 },
+      });
+      expect(request).not.toHaveProperty("storage_route_continuity");
+    }
+    if (conflict) {
+      await expect(
+        review.getByRole("button", {
+          name: "Retry identical storage deployment request",
+          exact: true,
+        }),
+      ).toBeDisabled();
+      await review
+        .getByRole("button", {
+          name: "Review current storage and routes for a new request",
+          exact: true,
+        })
+        .click();
+      await expect(review.getByRole("checkbox")).not.toBeChecked();
+      await expect(
+        review.getByLabel("Runner-local host port", { exact: true }),
+      ).toHaveValue("9080");
+    } else {
+      await expect(
+        hosting.getByRole("region", {
+          name: "Recorded deployment result",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        hosting.getByRole("region", {
+          name: "Storage route continuity",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+    }
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    conflict = width === 430;
+  }
+  initial = false;
+  lost = true;
+  conflict = false;
+  writes.length = 0;
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto("/projects");

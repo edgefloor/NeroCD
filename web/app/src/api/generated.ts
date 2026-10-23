@@ -4259,7 +4259,7 @@ export interface components {
             readiness: components["schemas"]["HostingReadiness"] | null;
             available: boolean;
             /** @enum {string} */
-            reason: "available" | "unsupported_source" | "unbound" | "storage_unconfigured" | "runtime_configuration_unsupported" | "no_previous_healthy" | "stale_storage" | "restore_hold" | "busy" | "runner_ineligible" | "proxy_unavailable" | "no_loaded_generation" | "stale_routes" | "https_unavailable" | "foreign_port_reference" | "continuity_unresolved";
+            reason: "available" | "initial_deployment" | "unsupported_source" | "unbound" | "storage_unconfigured" | "runtime_configuration_unsupported" | "no_previous_healthy" | "stale_storage" | "restore_hold" | "busy" | "runner_ineligible" | "proxy_unavailable" | "no_loaded_generation" | "stale_routes" | "https_unavailable" | "foreign_port_reference" | "continuity_unresolved";
             routes: {
                 id: components["schemas"]["HostingIdentifier"];
                 hostname: string;

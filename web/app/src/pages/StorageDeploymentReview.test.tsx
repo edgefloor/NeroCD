@@ -65,11 +65,27 @@ function setup(
     url: string,
     init: RequestInit,
   ) => Response | Promise<Response> | undefined,
+  authority: StorageDeploymentOptions = options,
 ) {
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     const response = await handler?.(url, init);
     if (response) return response;
-    if (url.endsWith("/storage-deployment-options")) return json(options);
+    if (url.endsWith("/storage-deployment-options")) return json(authority);
+    if (url.endsWith("/storage"))
+      return json({
+        id: "storage",
+        project_id: "project",
+        resource_id: "resource",
+        binding_id: "binding",
+        generation: 1,
+        hash: "hash",
+        kind: "platform_managed",
+        driver: "local",
+        access_mode: "read_write",
+        retention: "retain",
+        volume_name: "ncd_uploads",
+        mount_path: "/app/uploads",
+      });
     if (url.endsWith("/runtime-configuration"))
       return json({
         runtime_configuration: {
@@ -78,6 +94,8 @@ function setup(
           runtime_generation: 0,
         },
       });
+    const input =
+      init.method === "POST" ? JSON.parse(init.body as string) : undefined;
     return json(
       {
         id: "hop",
@@ -86,11 +104,13 @@ function setup(
         resource_id: "resource",
         snapshot: {
           resource_generation: 1,
-          host_port: 8080,
-          container_port: 80,
-          readiness: options.readiness,
+          host_port: input?.host_port ?? 8080,
+          container_port: input?.container_port ?? 80,
+          readiness: input?.readiness ?? options.readiness,
           storage: options.storage_ref,
-          storage_route_continuity: { hash: "continuity-hash" },
+          ...(authority.reason === "initial_deployment"
+            ? {}
+            : { storage_route_continuity: { hash: "continuity-hash" } }),
         },
       },
       202,
@@ -106,7 +126,7 @@ function setup(
         bindingID="binding"
         scope={scope}
         resource={resource}
-        options={options}
+        options={authority}
         blocked={false}
         onDenied={denied}
         onSelected={selected}
@@ -124,6 +144,177 @@ async function review() {
   });
   fireEvent.click(screen.getByRole("checkbox"));
 }
+const initialOptions: StorageDeploymentOptions = {
+  ...options,
+  reason: "initial_deployment",
+  previous_healthy_operation_id: null,
+  host_port: null,
+  container_port: null,
+  readiness: null,
+  routes: [],
+  storage_route_continuity: null,
+};
+async function initialReview() {
+  fireEvent.change(screen.getByLabelText("Runner-local host port"), {
+    target: { value: "9080" },
+  });
+  fireEvent.change(screen.getByLabelText("Container port"), {
+    target: { value: "3000" },
+  });
+  fireEvent.change(screen.getByLabelText("Readiness path"), {
+    target: { value: "/ready" },
+  });
+  fireEvent.change(screen.getByLabelText("Readiness timeout in seconds"), {
+    target: { value: "45" },
+  });
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Configure first storage deployment" }),
+  );
+  await screen.findByRole("button", {
+    name: "Deploy reviewed image with uploads",
+  });
+  fireEvent.click(screen.getByRole("checkbox"));
+}
+test("first deployment requires operator settings and reviews exact owned volume and retention", async () => {
+  const { fetch, selected } = setup(undefined, initialOptions);
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Runner-local host port").value,
+  ).toBe("");
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe(
+    "",
+  );
+  expect(
+    screen.queryByRole("button", {
+      name: "Deploy reviewed image with uploads",
+    }),
+  ).toBeNull();
+  await initialReview();
+  expect(screen.getByText("ncd_uploads")).toBeTruthy();
+  expect(screen.getByText("/app/uploads")).toBeTruthy();
+  expect(screen.getByText(/Application data remains/)).toBeTruthy();
+  expect(
+    screen.getByText(/no previous healthy writer is selected/),
+  ).toBeTruthy();
+  expect(
+    fetch.mock.calls.filter(([, init]) => init.method === "POST"),
+  ).toHaveLength(0);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
+  );
+  await vi.waitFor(() => expect(selected).toHaveBeenCalledWith("hop"));
+  const body = JSON.parse(
+    fetch.mock.calls.find(([, init]) => init.method === "POST")![1]
+      .body as string,
+  );
+  expect(body).toMatchObject({
+    expected_generation: 1,
+    host_port: 9080,
+    container_port: 3000,
+    readiness: { path: "/ready", timeout_seconds: 45 },
+  });
+  expect(body).not.toHaveProperty("storage_route_continuity");
+});
+test("initial lost response retains exact chosen settings and key on retry", async () => {
+  let sent = 0;
+  const { fetch, selected } = setup((url) => {
+    if (url.endsWith("/deployments") && ++sent === 1)
+      throw new TypeError("lost");
+    return undefined;
+  }, initialOptions);
+  await initialReview();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Retry identical storage deployment request",
+    }),
+  );
+  await vi.waitFor(() => expect(selected).toHaveBeenCalledWith("hop"));
+  const writes = fetch.mock.calls.filter(([, init]) => init.method === "POST");
+  expect(writes).toHaveLength(2);
+  expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
+test("initial conflict requires explicit fresh review and acknowledgment while preserving settings", async () => {
+  const { fetch } = setup(
+    (url) =>
+      url.endsWith("/deployments") ? json({ error: "stale" }, 409) : undefined,
+    initialOptions,
+  );
+  await initialReview();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Review current storage and routes for a new request",
+    }),
+  );
+  await screen.findByRole("button", {
+    name: "Deploy reviewed image with uploads",
+  });
+  expect(screen.getByRole<HTMLInputElement>("checkbox").checked).toBe(false);
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Runner-local host port").value,
+  ).toBe("9080");
+  expect(
+    fetch.mock.calls.filter(([, init]) => init.method === "POST"),
+  ).toHaveLength(1);
+});
+test("initial authority retirement blocks review and preserves nonsecret input", async () => {
+  const { fetch } = setup(
+    (url) =>
+      url.endsWith("/storage-deployment-options")
+        ? json({
+            ...initialOptions,
+            available: false,
+            reason: "no_previous_healthy",
+          })
+        : undefined,
+    initialOptions,
+  );
+  fireEvent.change(screen.getByLabelText("Runner-local host port"), {
+    target: { value: "9080" },
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  await screen.findByRole("alert");
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Runner-local host port").value,
+  ).toBe("9080");
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(
+    fetch.mock.calls.filter(([, init]) => init.method === "POST"),
+  ).toHaveLength(0);
+});
+test("initial stalled metadata read times out without admission and preserves chosen settings", async () => {
+  setup(
+    (url) =>
+      url.endsWith("/storage") ? new Promise<Response>(() => {}) : undefined,
+    initialOptions,
+  );
+  vi.useFakeTimers();
+  fireEvent.change(screen.getByLabelText("Runner-local host port"), {
+    target: { value: "9080" },
+  });
+  fireEvent.change(screen.getByLabelText("Container port"), {
+    target: { value: "3000" },
+  });
+  fireEvent.change(screen.getByLabelText("Readiness path"), {
+    target: { value: "/ready" },
+  });
+  fireEvent.change(screen.getByLabelText("Readiness timeout in seconds"), {
+    target: { value: "45" },
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30_000);
+  });
+  expect(screen.getByRole("alert").textContent).toContain("30 seconds");
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe(
+    "/ready",
+  );
+  expect(screen.queryByRole("checkbox")).toBeNull();
+});
 test("review freezes exact fixed port, full route selection and key before explicit submission", async () => {
   const { fetch, selected } = setup();
   await review();
@@ -304,17 +495,15 @@ test.each([
   async (state, text) => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          json({
-            resource_id: "resource",
-            operation_id: "hop",
-            state,
-            reason: state === "loaded" ? "loaded_historical" : "pending",
-            ...(state === "loaded" ? { loaded_generation: 8 } : {}),
-          }),
-        ),
+      vi.fn().mockResolvedValue(
+        json({
+          resource_id: "resource",
+          operation_id: "hop",
+          state,
+          reason: state === "loaded" ? "loaded_historical" : "pending",
+          ...(state === "loaded" ? { loaded_generation: 8 } : {}),
+        }),
+      ),
     );
     client = new QueryClient();
     render(

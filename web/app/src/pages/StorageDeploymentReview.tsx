@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "@/api/errors";
 import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
@@ -10,9 +10,13 @@ import {
   boundedStorageRequest,
   getStorageContinuityStatus,
   getStorageDeploymentOptions,
+  getInitialDeploymentStorage,
+  validStorageReadiness,
   type StorageDeploymentOptions,
   type StorageDeploymentScope,
 } from "@/api/hosting-storage-deployment";
+import type { HostingStorage } from "@/api/hosting-storage";
+import { Input } from "@/components/ui/input";
 import type { Resource } from "@/api/hosting";
 import { Button } from "@/components/ui/button";
 
@@ -124,7 +128,13 @@ export function StorageDeploymentReview({
   const [review, setReview] = useState<{
     options: StorageDeploymentOptions;
     input: HostingDeploymentInput;
+    storage?: HostingStorage;
   }>();
+  const formID = useId();
+  const [hostPort, setHostPort] = useState("");
+  const [containerPort, setContainerPort] = useState("");
+  const [readinessPath, setReadinessPath] = useState("");
+  const [readinessTimeout, setReadinessTimeout] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
@@ -176,12 +186,50 @@ export function StorageDeploymentReview({
           "Storage deployment requires the supported untouched runtime configuration.",
         );
       if (!active.current || controller.signal.aborted) return;
+      const initial = current.reason === "initial_deployment";
+      const settings = initial
+        ? {
+            host_port: Number(hostPort),
+            container_port: Number(containerPort),
+            readiness: {
+              path: readinessPath,
+              timeout_seconds: Number(readinessTimeout),
+            },
+          }
+        : {
+            host_port: current.host_port!,
+            container_port: current.container_port!,
+            readiness: { ...current.readiness! },
+          };
+      if (
+        initial &&
+        (!Number.isInteger(settings.host_port) ||
+          settings.host_port < 1024 ||
+          settings.host_port > 65535 ||
+          !Number.isInteger(settings.container_port) ||
+          settings.container_port < 1 ||
+          settings.container_port > 65535 ||
+          !validStorageReadiness(
+            settings.readiness.path,
+            settings.readiness.timeout_seconds,
+          ))
+      )
+        throw new Error(
+          "Enter an explicit host port, container port, origin-relative readiness path and timeout before reviewing the first deployment.",
+        );
+      const storage = initial
+        ? await getInitialDeploymentStorage(
+            scope,
+            current,
+            bindingID,
+            controller.signal,
+          )
+        : undefined;
+      if (!active.current || controller.signal.aborted) return;
       const input: HostingDeploymentInput = {
         expected_generation: current.resource_generation,
         idempotency_key: crypto.randomUUID(),
-        host_port: current.host_port!,
-        container_port: current.container_port!,
-        readiness: { ...current.readiness! },
+        ...settings,
         ...(current.storage_route_continuity
           ? {
               storage_route_continuity: structuredClone(
@@ -190,7 +238,11 @@ export function StorageDeploymentReview({
             }
           : {}),
       };
-      setReview({ options: structuredClone(current), input });
+      setReview({
+        options: structuredClone(current),
+        input,
+        ...(storage ? { storage: structuredClone(storage) } : {}),
+      });
     } catch (cause) {
       if (!active.current || controller.signal.aborted) return;
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status))
@@ -268,17 +320,85 @@ export function StorageDeploymentReview({
     }
   }
   const shown = review?.options ?? options;
+  const initial = shown.reason === "initial_deployment";
   return (
     <section
       className="min-w-0 space-y-3 rounded-lg border p-3"
       aria-label="Persistent upload deployment review"
     >
       <h6 className="font-medium">Deploy image with persistent uploads</h6>
-      <p>
-        The previous writer must stop before replacement readiness, interrupting
-        service. The retained upload volume is reused. Image rollback does not
-        undo writes made to uploads.
-      </p>
+      {initial ? (
+        <p>
+          This first deployment creates the configured platform-owned upload
+          volume. Data retention is retain. Existing uploads and image files are
+          not imported. Image rollback does not undo upload writes. Public
+          routes and HTTPS are not created by this request.
+        </p>
+      ) : (
+        <p>
+          The previous writer must stop before replacement readiness,
+          interrupting service. The retained upload volume is reused. Image
+          rollback does not undo writes made to uploads.
+        </p>
+      )}
+      {initial ? (
+        <form
+          id={formID}
+          className="grid min-w-0 gap-3 sm:grid-cols-2"
+          aria-label="Configure first storage deployment"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void prepare();
+          }}
+        >
+          <label className="space-y-1">
+            Runner-local host port
+            <Input
+              type="number"
+              min={1024}
+              max={65535}
+              required
+              value={hostPort}
+              disabled={busy || Boolean(review)}
+              onChange={(event) => setHostPort(event.target.value)}
+            />
+          </label>
+          <label className="space-y-1">
+            Container port
+            <Input
+              type="number"
+              min={1}
+              max={65535}
+              required
+              value={containerPort}
+              disabled={busy || Boolean(review)}
+              onChange={(event) => setContainerPort(event.target.value)}
+            />
+          </label>
+          <label className="space-y-1">
+            Readiness path
+            <Input
+              required
+              maxLength={1024}
+              value={readinessPath}
+              disabled={busy || Boolean(review)}
+              onChange={(event) => setReadinessPath(event.target.value)}
+            />
+          </label>
+          <label className="space-y-1">
+            Readiness timeout in seconds
+            <Input
+              type="number"
+              min={1}
+              max={120}
+              required
+              value={readinessTimeout}
+              disabled={busy || Boolean(review)}
+              onChange={(event) => setReadinessTimeout(event.target.value)}
+            />
+          </label>
+        </form>
+      ) : null}
       {!shown.available ? (
         <p role="status">
           Storage deployment unavailable: {shown.reason}. Server authority must
@@ -286,11 +406,12 @@ export function StorageDeploymentReview({
         </p>
       ) : null}
       <Button
-        type="button"
+        type={initial ? "submit" : "button"}
+        form={initial ? formID : undefined}
         variant="outline"
         className="h-auto max-w-full whitespace-normal"
         disabled={blocked || busy || (sent && !conflict)}
-        onClick={() => void prepare()}
+        onClick={initial ? undefined : () => void prepare()}
       >
         {conflict
           ? "Review current storage and routes for a new request"
@@ -311,8 +432,33 @@ export function StorageDeploymentReview({
               {shown.storage_ref?.storage_id} / {shown.storage_ref?.generation}{" "}
               / {shown.storage_ref?.hash}
             </dd>
-            <dt>Previous healthy writer</dt>
-            <dd>{shown.previous_healthy_operation_id}</dd>
+            {review.storage ? (
+              <>
+                <dt>Platform-owned upload volume</dt>
+                <dd>{review.storage.volume_name}</dd>
+                <dt>Container mount path</dt>
+                <dd>{review.storage.mount_path}</dd>
+                <dt>Data retention</dt>
+                <dd>
+                  {review.storage.retention}. Application data remains after
+                  deployment failure, image rollback and retained-container
+                  cleanup.
+                </dd>
+              </>
+            ) : null}
+            {initial ? (
+              <>
+                <dt>Deployment stage</dt>
+                <dd>
+                  First deployment; no previous healthy writer is selected.
+                </dd>
+              </>
+            ) : (
+              <>
+                <dt>Previous healthy writer</dt>
+                <dd>{shown.previous_healthy_operation_id}</dd>
+              </>
+            )}
             <dt>Fixed runner-local endpoint</dt>
             <dd>
               127.0.0.1:{String(review.input.host_port)} → container{" "}
@@ -350,9 +496,9 @@ export function StorageDeploymentReview({
               onChange={(event) => setConfirmed(event.target.checked)}
             />
             <span>
-              I reviewed this exact image, retained upload storage, fixed port
-              and complete route selection. I accept interruption and understand
-              image rollback does not undo upload writes.
+              {initial
+                ? "I reviewed this exact image, platform-owned upload volume, mount path, retain policy, ports and readiness. I understand existing uploads are not imported and image rollback does not undo upload writes."
+                : "I reviewed this exact image, retained upload storage, fixed port and complete route selection. I accept interruption and understand image rollback does not undo upload writes."}
             </span>
           </label>
           <Button

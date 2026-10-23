@@ -4,6 +4,7 @@ import {
   boundedStorageRequest,
   getStorageContinuityStatus,
   getStorageDeploymentOptions,
+  getInitialDeploymentStorage,
   storageDeploymentOptionsQuery,
   type StorageDeploymentOptions,
 } from "./hosting-storage-deployment";
@@ -39,9 +40,90 @@ export const storageOptions: StorageDeploymentOptions = {
     ],
   },
 };
+const initialOptions: StorageDeploymentOptions = {
+  ...storageOptions,
+  reason: "initial_deployment",
+  previous_healthy_operation_id: null,
+  host_port: null,
+  container_port: null,
+  readiness: null,
+  routes: [],
+  storage_route_continuity: null,
+};
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+test("initial authority has current storage and no invented predecessor, ports or readiness", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(new Response(JSON.stringify(initialOptions))),
+  );
+  expect(await getStorageDeploymentOptions(scope)).toEqual(initialOptions);
+});
+test.each([
+  { ...initialOptions, available: false },
+  { ...initialOptions, reason: "no_previous_healthy" },
+  { ...initialOptions, storage_ref: null },
+  { ...initialOptions, previous_healthy_operation_id: "hop_old" },
+  { ...initialOptions, host_port: 8080 },
+  { ...initialOptions, container_port: 80 },
+  { ...initialOptions, readiness: { path: "/", timeout_seconds: 30 } },
+  { ...initialOptions, routes: storageOptions.routes },
+  {
+    ...initialOptions,
+    storage_route_continuity: storageOptions.storage_route_continuity,
+  },
+  { ...initialOptions, unexpected: "not part of frozen DTO" },
+  { ...storageOptions, reason: "future_reason" },
+  {
+    ...storageOptions,
+    readiness: { path: "//foreign.test", timeout_seconds: 30 },
+  },
+])(
+  "closed initial and replacement shapes reject ambiguous authority %#",
+  async (body) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify(body))),
+    );
+    await expect(getStorageDeploymentOptions(scope)).rejects.toThrow();
+  },
+);
+test("initial volume review verifies current storage identity, scope, binding and retain policy", async () => {
+  const storage = {
+    id: "storage",
+    project_id: "project",
+    resource_id: "resource",
+    binding_id: "binding",
+    generation: 1,
+    hash: "storage-hash",
+    kind: "platform_managed",
+    driver: "local",
+    access_mode: "read_write",
+    retention: "retain",
+    volume_name: "ncd_uploads",
+    mount_path: "/app/uploads",
+  };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(storage)))
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ ...storage, retention: "delete" })),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ ...storage, hash: "foreign" })),
+    );
+  vi.stubGlobal("fetch", fetch);
+  expect(
+    await getInitialDeploymentStorage(scope, initialOptions, "binding"),
+  ).toEqual(storage);
+  await expect(
+    getInitialDeploymentStorage(scope, initialOptions, "binding"),
+  ).rejects.toThrow();
+  await expect(
+    getInitialDeploymentStorage(scope, initialOptions, "binding"),
+  ).rejects.toThrow();
 });
 test("storage reads encode targets, isolate actor and project, and disable caching", async () => {
   const fetch = vi
@@ -138,19 +220,17 @@ test.each([
   async (state) => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          new Response(
-            JSON.stringify({
-              resource_id: "resource",
-              operation_id: "hop/one",
-              state,
-              reason: state === "loaded" ? "loaded_historical" : "pending",
-              ...(state === "loaded" ? { loaded_generation: 8 } : {}),
-            }),
-          ),
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            resource_id: "resource",
+            operation_id: "hop/one",
+            state,
+            reason: state === "loaded" ? "loaded_historical" : "pending",
+            ...(state === "loaded" ? { loaded_generation: 8 } : {}),
+          }),
         ),
+      ),
     );
     expect((await getStorageContinuityStatus(scope, "hop/one")).state).toBe(
       state,
