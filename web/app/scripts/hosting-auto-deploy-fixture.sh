@@ -62,7 +62,13 @@ case "$arch" in
  amd64|x86_64) goarch=amd64; buildx_sha=e25d5cd675092bb5d1d03632fdc46cdf3fede7b514dc5f023a105e00d3ce5ad4;;
  *) echo 'unsupported native Docker architecture' >&2; exit 1;;
 esac
-curl --fail --silent --show-error --location --header "Cache-Control: no-cache" --header "Pragma: no-cache" "https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-$goarch" --output "$evidence/buildx"
+# An existing immutable fixture binary may be reused when DNS is unavailable.
+# Both paths must match the architecture-specific pinned digest below.
+if [[ -n "${NEROCD_BUILDX_FIXTURE_BINARY:-}" ]]; then
+ cp "$NEROCD_BUILDX_FIXTURE_BINARY" "$evidence/buildx"
+else
+ curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 --header "Cache-Control: no-cache" --header "Pragma: no-cache" "https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-$goarch" --output "$evidence/buildx"
+fi
 printf '%s  %s\n' "$buildx_sha" "$evidence/buildx" | shasum -a 256 --check
 chmod 0755 "$evidence/buildx"
 GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -tags nerocd_proxy_fixture -c -o "$evidence/api.test" ./internal/api
