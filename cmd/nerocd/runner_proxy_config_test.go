@@ -33,3 +33,19 @@ func TestRunnerVerifiedSwitchCapabilityRequiresExplicitConfiguration(t *testing.
 		t.Fatal("flag without proxy configuration accepted")
 	}
 }
+
+func TestVerifiedProxyOnlyUsesSignalContext(t *testing.T) {
+	if !runnerNeedsSignalContext(false, false, false, true) {
+		t.Fatal("strict proxy-only mode bypasses signal cancellation")
+	}
+	if runnerNeedsSignalContext(false, false, false, false) {
+		t.Fatal("legacy runner signal behavior changed")
+	}
+	for n := range 3 {
+		modes := [3]bool{}
+		modes[n] = true
+		if !runnerNeedsSignalContext(modes[0], modes[1], modes[2], false) {
+			t.Fatal("existing signal mode changed")
+		}
+	}
+}

@@ -255,7 +255,7 @@ func runRunner(args []string) error {
 	if *hostingObservation || *hostingRuntimeLogs {
 		return runnerruntime.RunContext(identityContext, runtimeConfig)
 	}
-	if buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv {
+	if runnerNeedsSignalContext(buildConfig != nil, *localBuildDeploy, *hostingRuntimeEnv, *proxyVerifiedSwitch) {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		return runnerruntime.RunContext(ctx, runtimeConfig)

@@ -16,3 +16,7 @@ func runnerProxyVerifiedSwitchCapabilities(enabled, proxyConfigured bool, capabi
 	}
 	return capabilities, nil
 }
+
+func runnerNeedsSignalContext(buildConfigured, localBuild, runtimeEnvironment, verifiedSwitch bool) bool {
+	return buildConfigured || localBuild || runtimeEnvironment || verifiedSwitch
+}
