@@ -40,7 +40,7 @@ import (
 // disposable fixture. Production public HTTPS policy remains unchanged. The
 // underlying repository still owns CAS, source revisions and mutation audits.
 func (h controllerFixtureHosting) UpdateResource(ctx context.Context, resource domain.Resource, expected int64, opts ...store.MutationOption) (domain.Resource, error) {
-	previous, err := h.HostingRepository.GetResource(ctx, resource.ID)
+	previous, err := h.GetResource(ctx, resource.ID)
 	if err != nil {
 		return domain.Resource{}, err
 	}
@@ -49,6 +49,48 @@ func (h controllerFixtureHosting) UpdateResource(ctx context.Context, resource d
 		opts = append(opts, store.WithHostingGitSource(domain.HostingGitSource{ID: g.SourceID, ResourceID: resource.ID, ProjectID: resource.ProjectID, Generation: g.Generation, RepositoryURL: g.RepositoryURL, RequestedRef: g.RequestedRef, CredentialKind: g.CredentialKind, Settings: g.Settings, Policy: h.policy}))
 	}
 	return h.HostingRepository.UpdateResource(ctx, resource, expected, opts...)
+}
+
+// The embedded interface keeps this fake bounded to the two methods exercised.
+type privateFixtureResourceRepository struct {
+	store.HostingRepository
+	previous, updated domain.Resource
+	expected          int64
+	options           int
+}
+
+func (r *privateFixtureResourceRepository) GetResource(context.Context, string) (domain.Resource, error) {
+	return r.previous, nil
+}
+func (r *privateFixtureResourceRepository) UpdateResource(_ context.Context, value domain.Resource, expected int64, opts ...store.MutationOption) (domain.Resource, error) {
+	r.updated, r.expected, r.options = value, expected, len(opts)
+	return value, nil
+}
+func TestPrivateFixtureSourceRevisionPolicy(t *testing.T) {
+	original := domain.Resource{ID: "resource_fixture", Generation: 1, Name: "before", Source: domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: "source_fixture", Generation: 1, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: "https://example.com/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "railpack"}}}}}
+	repository := &privateFixtureResourceRepository{previous: original}
+	adapter := controllerFixtureHosting{HostingRepository: repository}
+	named := original
+	named.Name = "after"
+	audit := store.WithAudit(domain.AuditEvent{})
+	if _, err := adapter.UpdateResource(t.Context(), named, 1, audit); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := json.Marshal(original.Source)
+	after, _ := json.Marshal(repository.updated.Source)
+	if string(before) != string(after) || repository.options != 1 || repository.expected != 1 || repository.updated.Name != "after" {
+		t.Fatal("name-only fixture update rewrote source/options or lost CAS")
+	}
+	changed := named
+	git := *named.Source.Git
+	git.Generation = 2
+	changed.Source.Git = &git
+	if _, err := adapter.UpdateResource(t.Context(), changed, 1, audit); err != nil {
+		t.Fatal(err)
+	}
+	if repository.options != 2 || repository.expected != 1 || repository.updated.Source.Git.Generation != 2 {
+		t.Fatal("source revision did not add exactly its fixture policy option while preserving CAS")
+	}
 }
 
 // Each private case owns a separate database inside the disposable fixture's
