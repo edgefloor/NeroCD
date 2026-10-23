@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { queryKeys } from "@/api";
 import type { Resource } from "@/api/hosting";
 import { ResourceRoutes } from "./ResourceRoutes";
+vi.mock("./ResourceRouteSwitch", () => ({ ResourceRouteSwitch: () => <div data-testid="route-switch-panel" /> }));
 const resource: Resource = { id: "resource", project_id: "project", project_environment_id: "env", name: "Web", kind: "application", source: { kind: "image", image: { reference: "web:1" } }, generation: 1, created_by: "user", created_at: "", updated_at: "" };
 const route = { id: "route_one", resource_id: "resource", hostname: "web.example.test", path_prefix: "/", version: 1, selected_release_operation_id: "hop_healthy", enabled: true, state: "pending", operation_id: "pop_one", http_ready: false, https_ready: false, certificate: { hostname: "web.example.test", status: "pending" } };
 const healthy = { id: "hop_healthy", project_id: "project", resource_id: "resource", state: "succeeded", snapshot: { image_reference: "web:1" }, result: { ready: true, uncertain: false }, mutation_hold: false, restore_ownership_held: false };

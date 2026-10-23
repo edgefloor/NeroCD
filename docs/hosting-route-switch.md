@@ -93,6 +93,37 @@ conditions again after ownership waits. Unrelated routes remain in the complete
 snapshot. Ordinary route edits are refused while a strict operation is pending
 or held, so they cannot publish a candidate before its verification completes.
 
+## Operator workflow
+
+Open **Projects**, select the hosting project and environment, then use
+**Switch existing routes to a release** below the application's ordinary route
+controls. Current viewers can read scoped choices and operation receipts;
+maintainers can review and confirm a switch. This panel never reads the
+administrator-wide proxy inventory to obtain project choices.
+
+Select existing enabled routes and an eligible release from the server's current
+page. Review each hostname, path, version, before and after release, and loaded
+generation. Confirmation creates one frozen in-memory request with a fresh
+idempotency key. A missing response can mean the request was accepted. The only
+retry offered sends that exact body and key. A conflict requires refreshing the
+server choices, reviewing again, and confirming a new intent; it never submits
+automatically. Target pagination does not infer eligibility from deployment
+history or permit manually entered generations.
+
+A reload or background identity/membership verification clears the local intent
+and aborts outstanding reads and writes. Current scoped `pending_operation_id`
+then recovers accepted work through the exact resource operation endpoint.
+Project, resource, actor, provider, and permission changes cannot revive the old
+response. No intent or sensitive operation data is saved to browser storage.
+
+Pending or unresolved work pauses a separate switch. Failed status reads report
+current state as unknown, retaining any receipt only as historical evidence.
+Original engine outcome, metadata conflict, mutation ownership, and restore
+ownership are displayed separately. Neither a successful status read nor a
+historical rollback establishes current HTTPS health, rolls back application
+data, or releases a hold. This operator workflow has no reconciliation or unlock
+control.
+
 ## Revocation, metadata, and unresolved ownership
 
 Disabling the proxy or withdrawing a hostname or destination grant commits the
@@ -200,3 +231,22 @@ Traefik/Pebble inside a task-owned Linux DinD daemon. Its constructor selects
 The ordinary binary has no fixture constructor or environment CA override. This
 fixture is local test-CA evidence; it does not establish public production ACME
 issuance or R17 automatic deployment orchestration.
+
+The operator gate is `bash web/app/scripts/hosting-route-switch-fixture.sh` from
+this worktree root, after `bun run --cwd web/app build`. It first reruns the
+original compiled controller fixture, then starts a separate labelled disposable
+DinD daemon for the browser journey. The browser stage uses real cookie sessions,
+the registered API, transactional River dispatch, and the compiled opt-in agent.
+Fixed nonce controls require the fixture maintainer session and exact loopback
+Origin. They advance only the fixture's known work or inject declared backend
+failure/cancellation; they cannot select arbitrary commands or resources.
+
+The browser journey checks explicit review at 320, 390, 430 and 1440 pixels,
+keyboard confirmation, embedded asset hashes, real API rejection of a synthetically stale request,
+one operation after deliberately lost transport response, pending recovery,
+distinct locally trusted A/B HTTPS, unrelated-route preservation, verified A
+rollback after B failure, durable uncertain ownership after publication
+interruption, and real viewer/cross-project denials. Local test CA evidence does
+not qualify production TLS. Synthetic metadata-conflict and access-refetch
+lifecycle tests separately qualify UI rendering and late-response fencing; they
+do not fabricate runtime rollback or hold evidence.

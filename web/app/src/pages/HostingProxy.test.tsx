@@ -82,3 +82,12 @@ test("grant failure retains input and requires refreshed grants before another s
   await screen.findByText(/hostname grants do not accept an idempotency key/); expect(screen.getByLabelText<HTMLInputElement>("Hostname or namespace root").value).toBe("example.test"); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Grant hostname authority" }).disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Refresh proxy information" })); await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Grant hostname authority" }).disabled).toBe(false)); expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(1);
 });
+
+test("metadata conflict preserves the original engine outcome and ownership warning", async () => {
+  backend((url) => url.includes("/proxy-operations/") ? json({ id: "pop_one", state: "uncertain", generation: 2, snapshot: { server_id: "server" }, mutation_hold: true, restore_ownership_held: false, metadata_conflict: true, result: { outcome: "rolled_back", loaded_generation: 1, routes: [] } }) : url.endsWith("/proxy") ? json({ ...proxy, active_operation_id: "pop_one" }) : undefined);
+  setup();
+  await screen.findByText("Historical engine outcome: rolled_back");
+  expect(screen.getByText(/Route metadata conflict. Keep ownership held/)).toBeTruthy();
+  expect(screen.getByText(/Proxy mutation ownership remains held/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /reconcile|unlock/i })).toBeNull();
+});

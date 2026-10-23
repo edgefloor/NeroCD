@@ -35,3 +35,8 @@ test("route lists reject foreign resource payloads and scope keys include actor/
   expect(query.queryKey).toEqual(["hostingRoutes", "actor", "project", "own"]);
   await expect(query.queryFn!({ signal: new AbortController().signal } as never)).rejects.toThrow("scope mismatch");
 });
+
+test("safe projection retains metadata conflict and original engine outcome without snapshots", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => response({ id: "op", state: "uncertain", metadata_conflict: true, mutation_hold: true, restore_ownership_held: false, result: { outcome: "rolled_back" }, snapshot: { secret: "excluded" } })));
+  const query = routeOperationQuery("actor", "project", "own", "op"); expect(await query.queryFn!({ signal: new AbortController().signal } as never)).toEqual({ id: "op", state: "uncertain", metadata_conflict: true, engine_outcome: "rolled_back", mutation_hold: true, restore_ownership_held: false, routes: [] });
+});
