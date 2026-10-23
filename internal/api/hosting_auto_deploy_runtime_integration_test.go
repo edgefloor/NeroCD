@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -357,6 +358,7 @@ func automaticRuntimeGit(t *testing.T) ([4]string, func(int), [2]string) {
 type automaticApplyBarrier struct {
 	entered, release, finished chan struct{}
 	status                     atomic.Int32
+	authority                  domain.HostingAuthority
 }
 
 type automaticRuntimeFixture struct {
@@ -455,6 +457,18 @@ func newAutomaticRuntimeFixture(t *testing.T) *automaticRuntimeFixture {
 	out.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runners/hosting/apply-begin" {
 			if barrier := out.applyBarrier.Swap(nil); barrier != nil {
+				// Retain only the bounded, nonsecret exact authority tuple needed
+				// to distinguish cancellation from a generic missing endpoint.
+				raw, readErr := io.ReadAll(io.LimitReader(r.Body, 8193))
+				closeErr := r.Body.Close()
+				if readErr != nil || closeErr != nil || len(raw) > 8192 || json.Unmarshal(raw, &barrier.authority) != nil {
+					barrier.status.Store(http.StatusBadRequest)
+					close(barrier.entered)
+					close(barrier.finished)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(raw))
 				close(barrier.entered)
 				defer close(barrier.finished)
 				select {
@@ -900,8 +914,9 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("superseded first-mutation request did not finish")
 	}
-	if barrier.status.Load() != http.StatusConflict {
-		t.Fatal("superseded first mutation was not denied", barrier.status.Load())
+	denial := barrier.status.Load()
+	if denial != http.StatusConflict && denial != http.StatusNotFound {
+		t.Fatal("superseded first mutation was not denied", denial)
 	}
 	if err = control.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_apply_admissions WHERE operation_id=$1`, blockedID).Scan(&receipts); err != nil || receipts != 0 {
 		t.Fatal("superseded operation obtained a Docker mutation admission", receipts, err)
@@ -909,6 +924,17 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 	blocked, err := control.pg.GetHostingOperation(f.ctx, blockedID)
 	if err != nil || blocked.MutationHold || blocked.Result != nil {
 		t.Fatal("superseded operation retained host effects", err)
+	}
+	if denial == http.StatusNotFound {
+		a := barrier.authority
+		if blocked.State != "canceled" || blocked.ID != a.OperationID || blocked.RunID != a.RunID || a.LeaseID == "" || a.Attempt < 1 || a.Fence == "" {
+			t.Fatal("404 lacked exact canceled old-operation authority")
+		}
+		var task, lease string
+		err = control.db.QueryRow(f.ctx, `SELECT task.status,lease.status FROM task_runs task JOIN hosting_task_targets target ON target.run_id=task.id JOIN run_leases lease ON lease.run_id=task.id WHERE task.id=$1 AND target.operation_id=$2 AND target.runner_id=$3 AND task.run_spec->>'hosting_operation_id'=$2 AND lease.id=$4 AND lease.runner_id=$3 AND lease.attempt=$5 AND lease.fence=$6`, a.RunID, a.OperationID, control.target.Server.RunnerID, a.LeaseID, a.Attempt, a.Fence).Scan(&task, &lease)
+		if err != nil || task != "canceled" || lease != "canceled" {
+			t.Fatal("404 lacked matching canceled task and exact terminal lease", err)
+		}
 	}
 	// Check real Docker, not only stored status: the superseded exact E image
 	// has no container. Its different content cannot alias the serving B image.
@@ -920,7 +946,7 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 		t.Fatal("superseded apply created an actual E container", err)
 	}
 	f.ProbeHTTPS("push fixture B\n")
-	t.Logf("actual first-mutation denial: operation=%s HTTP409 no apply admission, no hold or Docker candidate; original B and unrelated HTTPS preserved", blockedID)
+	t.Logf("actual first-mutation denial: operation=%s HTTP%d no apply admission, no hold or Docker candidate; 404 requires exact canceled operation/task/lease; original B and unrelated HTTPS preserved", blockedID, denial)
 	mode, err := os.Stat(f.credential)
 	if err != nil || mode.Mode().Perm() != 0600 {
 		t.Fatal("owned credential mode changed", err)

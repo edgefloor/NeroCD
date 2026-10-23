@@ -35,7 +35,8 @@ source D builds a 503 workload and must never switch. Both preserve B's HTTPS. D
 C's durably acknowledged failure must allow D to execute on the same running
 agent PID, with no intervening restart. A final fixed first-apply barrier accepts
 a fresh fixed E operation, records a newer signed fixed F desired revision before admission, and
-requires HTTP 409, no mutation receipt/hold, no actual Docker candidate, and
+requires HTTP 409, or HTTP 404 backed by the exact canceled operation, task,
+lease, attempt, and fence. Both require no mutation receipt/hold, no actual Docker candidate, and
 preserved B/unrelated HTTPS.
 
 Git retains its exact `https://github.com/acme/push-fixture.git` origin and normal

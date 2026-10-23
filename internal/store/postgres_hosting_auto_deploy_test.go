@@ -587,3 +587,27 @@ func TestPostgresAutomaticDeploymentPolicyReadResourceProjectBinding(t *testing.
 		}
 	}
 }
+
+func TestPostgresAutomaticDeploymentCanceledBeforeFirstMutationReturnsNotFound(t *testing.T) {
+	f := enabledAutomaticFixture(t)
+	ctx := t.Context()
+	policy := f.push(t, 220, strings.Repeat("b", 40))
+	f.finishBuild(t, policy.LastBuildID, strings.Repeat("b", 40))
+	if err := f.pg.PrepareHostingAutoDeploy(ctx, f.src.ResourceID); err != nil {
+		t.Fatal(err)
+	}
+	authority, _ := f.prepareAutomaticDeployment(t, f.status(t).DeploymentOperationID)
+	f.push(t, 221, strings.Repeat("c", 40))
+	if err := f.pg.PrepareHostingAutoDeploy(ctx, f.src.ResourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pg.HostingApplyBegin(ctx, f.runner, authority); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("canceled exact authority was not rejected before mutation", err)
+	}
+	var operation, task, lease string
+	var admitted, held bool
+	err := f.db.QueryRow(ctx, `SELECT operation.state,task.status,lease.status,EXISTS(SELECT 1 FROM hosting_apply_admissions WHERE operation_id=operation.id),EXISTS(SELECT 1 FROM hosting_binding_state WHERE hold_operation_id=operation.id) FROM hosting_operations operation JOIN task_runs task ON task.id=operation.run_id JOIN hosting_task_targets target ON target.run_id=task.id AND target.operation_id=operation.id JOIN run_leases lease ON lease.run_id=task.id WHERE operation.id=$1 AND task.id=$2 AND target.runner_id=$3 AND lease.runner_id=$3 AND lease.id=$4 AND lease.attempt=$5 AND lease.fence=$6`, authority.OperationID, authority.RunID, f.runner, authority.LeaseID, authority.Attempt, authority.Fence).Scan(&operation, &task, &lease, &admitted, &held)
+	if err != nil || operation != "canceled" || task != "canceled" || lease != "canceled" || admitted || held {
+		t.Fatal("canceled-authority denial lacks exact unadmitted proof", err)
+	}
+}
