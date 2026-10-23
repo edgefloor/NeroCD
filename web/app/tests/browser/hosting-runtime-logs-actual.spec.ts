@@ -65,6 +65,9 @@ test("settled deployment streams fresh Docker stdout and stderr through compiled
   await press(logs, "Stop following"); expect((await closed).status()).toBe(200); await expect(logs.getByText(/Historical output; no live-follow claim/)).toBeVisible();
   const stopped = await (await page.request.get(`/api/v1/runtime-log-sessions/${session}/logs?limit=200`)).json(); expect(stopped.session.state).toBe("ended"); expect(stopped.session.ended_at).toBeTruthy();
   const renewedSession = await follow(); expect(renewedSession).not.toBe(session);
+  // Admission precedes attachment. Wait for this new collector stream before
+  // bursting, otherwise Docker's bounded initial tail can skip most of the burst.
+  await expect(rows.getByText(/stdout line/).first()).toBeVisible({ timeout: 20_000 });
   await step("burst"); await expect(logs.getByText(/Retention prefix removed/)).toBeVisible({ timeout: 25_000 });
   await step("disconnect"); await step("resume"); await expect(logs.getByText(/Source gap: collection coverage is incomplete/)).toBeVisible({ timeout: 25_000 });
   // A hidden viewport stops renewals. Real elapsed time expires admitted demand.
