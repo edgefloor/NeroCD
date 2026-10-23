@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { HostingServers, eligibleHostingRunner } from "./HostingServers";
 import type { Runner } from "@/api";
+vi.mock("./ServerReadiness", () => ({ ServerReadiness: ({ serverID, blocked }: { serverID: string; blocked: boolean }) => <div data-testid="readiness-panel" data-server={serverID} data-blocked={String(blocked)}>Readiness for {serverID}</div> }));
 vi.mock("./HostingProxy", () => ({ HostingProxy: ({ serverID }: { serverID: string }) => <div>Managed proxy for {serverID}</div> }));
 const runner: Runner = { id: "runner_one", name: "Compose runner", status: "active", capabilities: ["compose-deploy"], tags: [], registered_at: "", last_heartbeat_at: "" };
 const server = { id: "server_one", name: "Production host", runner_id: runner.id, created_by: "admin", created_at: "" };
@@ -54,6 +55,7 @@ test("an admin grants a project outside membership and revokes without deleting 
   });
   vi.stubGlobal("fetch", fetch); setup(); fireEvent.click(await screen.findByRole("button", { name: "View server destination" }));
   await screen.findByLabelText("Project ID to grant");
+  expect(screen.getByTestId("readiness-panel").getAttribute("data-server")).toBe(server.id);
   fireEvent.change(screen.getByLabelText("Project ID to grant"), { target: { value: "project_external" } });
   fireEvent.submit(screen.getByRole("form", { name: "Grant destination to project" }));
   await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>("Project ID to grant").value).toBe(""));
