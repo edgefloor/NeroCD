@@ -51,21 +51,8 @@ func (s *PostgresStore) ListServerBootstraps(ctx context.Context, actor, project
 		if err := proxyAuthorize(ctx, tx, actor, project, domain.RoleOwner, true); err != nil {
 			return nil, err
 		}
-		rows, err := tx.Query(ctx, `SELECT id FROM server_bootstrap_operations WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, project, limit, offset)
+		ids, err := sqlcgen.New(tx).BootstrapListIDs(ctx, sqlcgen.BootstrapListIDsParams{ProjectID: project, Limit: int32(limit), Offset: int32(offset)})
 		if err != nil {
-			return nil, err
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err = rows.Scan(&id); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err = rows.Err(); err != nil {
 			return nil, err
 		}
 		out := make([]domain.ServerBootstrapOperation, 0, len(ids))
@@ -94,21 +81,8 @@ func (s *PostgresStore) recoverServerBootstrapDispatch(ctx context.Context) erro
 		return nil
 	}
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
-		rows, e := tx.Query(ctx, `SELECT o.id FROM server_bootstrap_operations o WHERE NOT o.restore_held AND o.created_at + interval '1 hour'>clock_timestamp() AND ((o.state='installed_waiting_enrollment' OR o.state='registered' AND EXISTS(SELECT 1 FROM server_bootstrap_commands g WHERE g.operation_id=o.id AND g.action='install' AND g.body->>'grant_project'='true')) OR EXISTS(SELECT 1 FROM server_bootstrap_commands c WHERE c.operation_id=o.id AND c.receipt IS NULL AND c.deadline>clock_timestamp() AND c.attempt<8 AND (c.lease_expires_at IS NULL OR c.lease_expires_at<=clock_timestamp()))) ORDER BY md5(o.id || floor(extract(epoch FROM clock_timestamp())/5)::text) LIMIT 64`)
+		ids, e := sqlcgen.New(tx).BootstrapDueOperations(ctx)
 		if e != nil {
-			return false, e
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if e = rows.Scan(&id); e != nil {
-				rows.Close()
-				return false, e
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if e = rows.Err(); e != nil {
 			return false, e
 		}
 		for _, id := range ids {
@@ -158,8 +132,7 @@ func bootstrapReconcileOwned(ctx context.Context, tx pgx.Tx, op domain.ServerBoo
 	if json.Unmarshal(raw, &review) != nil || review.Review == nil || owned.InstallationID != op.IDs.InstallationID || owned.OperationID != op.IDs.InstallOperationID || owned.ManifestSHA256 != review.Review.ManifestSHA256 || owned.State != "installed" || !owned.ArtifactMatches || owned.ServiceJobPending || !owned.ServiceActive {
 		return ErrConflict
 	}
-	var intent bool
-	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM server_bootstrap_commands WHERE operation_id=$1 AND action='install' AND effect_intent AND (lease_expires_at<=clock_timestamp() OR receipt IS NOT NULL))`, op.IDs.OperationID).Scan(&intent)
+	intent, e := q.BootstrapHasSettledIntent(ctx, op.IDs.OperationID)
 	if e != nil {
 		return e
 	}
@@ -176,7 +149,7 @@ func bootstrapReconcileOwned(ctx context.Context, tx pgx.Tx, op domain.ServerBoo
 	if err != nil {
 		return err
 	}
-	_, e = tx.Exec(ctx, `UPDATE server_bootstrap_commands SET receipt=jsonb_build_object('receipt',$2::jsonb || jsonb_build_object('command_id',id,'lease_id',lease_id,'attempt',attempt,'fence',fence),'operation',$3::jsonb) WHERE operation_id=$1 AND action='install' AND effect_intent AND receipt IS NULL AND lease_expires_at<=clock_timestamp()`, op.IDs.OperationID, receipt, operation)
+	e = q.BootstrapReconcileIntent(ctx, sqlcgen.BootstrapReconcileIntentParams{Receipt: receipt, Operation: operation, OperationID: op.IDs.OperationID})
 	return e
 }
 
@@ -191,7 +164,5 @@ func (s *PostgresStore) ServerBootstrapEnrollmentConsumed(ctx context.Context, a
 	if e != nil {
 		return false, e
 	}
-	var consumed bool
-	e = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runner_enrollments e JOIN runners r ON r.id=e.runner_id WHERE e.id=$1 AND e.runner_id=$2 AND e.used_at IS NOT NULL AND e.consume_request_id IS NOT NULL AND e.credential_hash=r.token_hash AND r.status='active')`, op.IDs.EnrollmentID, op.IDs.RunnerID).Scan(&consumed)
-	return consumed, e
+	return s.queries.BootstrapEnrollmentConsumed(ctx, sqlcgen.BootstrapEnrollmentConsumedParams{ID: op.IDs.EnrollmentID, RunnerID: op.IDs.RunnerID})
 }

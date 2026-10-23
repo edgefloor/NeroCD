@@ -123,6 +123,11 @@ func TestServerBootstrapPostgresReviewedGrantAndEnrollmentResume(t *testing.T) {
 			if e != nil || replayed.ID != view.ID {
 				t.Fatal("create response-loss replay", e)
 			}
+
+			page, e := s.ListServerBootstraps(ctx, "proj_platform", 1, 0)
+			if e != nil || len(page.Items) != 1 || page.Items[0].ID != view.ID || page.HasMore {
+				t.Fatalf("bootstrap SQLC list %+v %v", page, e)
+			}
 			command := ServerBootstrapCommandInput{CommandID: "00000000-0000-4000-8000-000000000002", ExpectedVersion: view.Version}
 			view, e = s.CommandServerBootstrap(ctx, view.ID, "probe", command)
 			if e != nil {
