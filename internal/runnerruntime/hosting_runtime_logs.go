@@ -200,7 +200,7 @@ type runtimeLogQueue struct {
 	bytes  atomic.Int64
 }
 
-func (q *runtimeLogQueue) push(event domain.HostingRuntimeLogEvent) error {
+func (q *runtimeLogQueue) push(ctx context.Context, event domain.HostingRuntimeLogEvent) error {
 	cost := int64(len(event.Message) + 128)
 	if q.bytes.Add(cost) > 64<<10 {
 		q.bytes.Add(-cost)
@@ -209,9 +209,9 @@ func (q *runtimeLogQueue) push(event domain.HostingRuntimeLogEvent) error {
 	select {
 	case q.events <- event:
 		return nil
-	default:
+	case <-ctx.Done():
 		q.bytes.Add(-cost)
-		return errRuntimeLogSource
+		return ctx.Err()
 	}
 }
 func (q *runtimeLogQueue) take(event domain.HostingRuntimeLogEvent) {
@@ -242,7 +242,7 @@ func (c *runtimeLogCollector) session(parent context.Context, grant runtimeLogGr
 	go func() {
 		defer close(readerDone)
 		defer func() { _ = body.Close() }()
-		_ = readRuntimeDockerLogs(ctx, body, identity.TTY, c.token, queue.push)
+		_ = readRuntimeDockerLogs(ctx, body, identity.TTY, c.token, func(event domain.HostingRuntimeLogEvent) error { return queue.push(ctx, event) })
 	}()
 	defer func() { cancel(); _ = body.Close(); <-readerDone }()
 	flush := time.NewTicker(time.Second)

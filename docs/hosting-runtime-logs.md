@@ -73,8 +73,9 @@ universal redaction of application secrets it has never received. Runtime log
 text is sensitive application content and never belongs in ordinary logs,
 audit metadata, output files, or the attempt journal.
 
-Each redacted queue is bounded to 64 KiB and 64 events. A serialized sink applies
-backpressure by closing the source on overflow. Batches contain at most 64 events
+Each redacted queue is bounded to 64 KiB and 64 queued events. A full event
+channel blocks cancellably within that byte budget, including the pending event.
+Byte-budget overflow closes the source. The sink serializes publication. Batches contain at most 64 events
 and remain below the encoded 256 KiB API limit. Disconnect and overflow create
 source gaps. Reacquisition requests a bounded tail again and may duplicate
 messages. Server event sequence establishes accepted publication order, not

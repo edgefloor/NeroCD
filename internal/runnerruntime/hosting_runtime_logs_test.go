@@ -257,7 +257,7 @@ func TestRuntimeLogQueueBound(t *testing.T) {
 	queue := runtimeLogQueue{events: make(chan domain.HostingRuntimeLogEvent, 64)}
 	event := domain.HostingRuntimeLogEvent{Message: strings.Repeat("x", 16384)}
 	accepted := 0
-	for queue.push(event) == nil {
+	for queue.push(t.Context(), event) == nil {
 		accepted++
 	}
 	if accepted != 3 || queue.bytes.Load() > 64<<10 {
@@ -410,4 +410,47 @@ func TestRuntimeLogLostRenewalResponseIncludedInCooldown(t *testing.T) {
 			t.Fatal("cooldown ignored an accepted renewal hidden by response loss")
 		}
 	})
+}
+
+func TestRuntimeLogQueueFullChannelBackpressureAndCancel(t *testing.T) {
+	for _, mode := range []string{"drain", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			queue := runtimeLogQueue{events: make(chan domain.HostingRuntimeLogEvent, 64)}
+			event := domain.HostingRuntimeLogEvent{Message: "redacted short line\n"}
+			for range 64 {
+				if err := queue.push(ctx, event); err != nil {
+					t.Fatal(err)
+				}
+			}
+			entered, done := make(chan struct{}), make(chan error, 1)
+			go func() { close(entered); done <- queue.push(ctx, event) }()
+			<-entered
+			select {
+			case <-done:
+				t.Fatal("full event channel dropped source instead of applying backpressure")
+			case <-time.After(20 * time.Millisecond):
+			}
+			if queue.bytes.Load() > 64<<10 {
+				t.Fatal("pending event escaped byte reservation")
+			}
+			if mode == "cancel" {
+				cancel()
+			} else {
+				queue.take(<-queue.events)
+			}
+			select {
+			case err := <-done:
+				if (err != nil) != (mode == "cancel") {
+					t.Fatal("wrong bounded handoff result", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("blocked queue send did not wake")
+			}
+			if queue.bytes.Load() > 64<<10 {
+				t.Fatal("queue grew beyond byte budget")
+			}
+		})
+	}
 }
