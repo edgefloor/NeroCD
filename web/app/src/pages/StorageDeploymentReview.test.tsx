@@ -8,6 +8,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import type { Resource } from "@/api/hosting";
+import { ApiError } from "@/api/errors";
 import type { StorageDeploymentOptions } from "@/api/hosting-storage-deployment";
 import {
   StorageContinuityDetail,
@@ -488,7 +489,7 @@ test("accepted receipt releases submission busy state and bounds stalled refresh
 test("retired scope cancels accepted-receipt refresh and ignores a late rejection", async () => {
   let signal: AbortSignal | undefined;
   let reject!: (error: Error) => void;
-  const { unmount, selected } = setup(undefined, options, (current) => {
+  const { unmount, selected, denied } = setup(undefined, options, (current) => {
     signal = current;
     return new Promise<void>((_, fail) => {
       reject = fail;
@@ -501,8 +502,9 @@ test("retired scope cancels accepted-receipt refresh and ignores a late rejectio
   await screen.findByText(/Deployment request accepted: hop/);
   unmount();
   expect(signal?.aborted).toBe(true);
-  await act(async () => reject(new Error("late old actor refresh failure")));
+  await act(async () => reject(new ApiError(403, "late old actor denial", null)));
   expect(selected).toHaveBeenCalledExactlyOnceWith("hop");
+  expect(denied).not.toHaveBeenCalled();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 test("a stalled submission returns to exact retry after the bounded timeout", async () => {

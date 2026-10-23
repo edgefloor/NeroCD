@@ -279,7 +279,12 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
       if (!active.current || controller.signal.aborted) return;
       if (operation.project_id !== resource.project_id || operation.resource_id !== resource.id || operation.binding_id !== binding.data.id || (input.expected_runtime_configuration_generation !== undefined && operation.snapshot.runtime_configuration?.generation !== input.expected_runtime_configuration_generation)) throw new Error("Operation scope mismatch");
       setSelected(operation.id); setAcceptedID(operation.id); acceptedReceipt.current = operation.id; setAttempt(undefined); setAcknowledged(false); setDifferentIntent(false); setOffset(0);
-      void refreshHistory().catch(() => { if (active.current && acceptedReceipt.current === operation.id) setAcceptedRefreshError(`Deployment request ${operation.id} was accepted, but history could not be refreshed. Refresh deployment history to inspect its recorded state.`); });
+      void refreshHistory().catch((cause) => {
+        if (!active.current) return;
+        if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { onDenied(); return; }
+        if (acceptedReceipt.current !== operation.id) return;
+        setAcceptedRefreshError(`Deployment request ${operation.id} was accepted, but history could not be refreshed. Refresh deployment history to inspect its recorded state.`);
+      });
     } catch (cause) {
       if (!active.current || controller.signal.aborted) return;
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { onDenied(); return; }

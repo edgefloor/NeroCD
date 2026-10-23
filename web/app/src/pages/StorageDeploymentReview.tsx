@@ -278,11 +278,15 @@ export function StorageDeploymentReview({
         (signal) => onRefresh(signal),
         controller.signal,
       );
-    } catch {
-      if (active.current && !controller.signal.aborted)
-        setRefreshError(
-          `Deployment request ${id} was accepted, but history could not be refreshed. Refresh history to inspect its recorded state.`,
-        );
+    } catch (cause) {
+      if (!active.current || controller.signal.aborted) return;
+      if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
+        onDenied();
+        return;
+      }
+      setRefreshError(
+        `Deployment request ${id} was accepted, but history could not be refreshed. Refresh history to inspect its recorded state.`,
+      );
     } finally {
       if (refreshRequest.current === controller) {
         refreshRequest.current = null;
