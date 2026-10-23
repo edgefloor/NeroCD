@@ -43,3 +43,9 @@ type HostingProxyRepository interface {
 type HostingRouteSwitchRepository interface {
 	RequestHostingRouteSwitch(context.Context, string, string, string, domain.HostingRouteSwitchInput, domain.AuditEvent) (domain.HostingProxyOperation, error)
 }
+
+// HostingRouteSwitchReadRepository reads authorized resource state in one snapshot.
+type HostingRouteSwitchReadRepository interface {
+	HostingRouteSwitchOptions(context.Context, string, string, string) (domain.HostingRouteSwitchOptions, error)
+	HostingRouteSwitchOperation(context.Context, string, string, string) (domain.HostingProxyOperationView, error)
+}

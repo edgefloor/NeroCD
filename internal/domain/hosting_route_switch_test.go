@@ -23,6 +23,41 @@ func switchSnapshot() HostingProxySnapshot {
 	return HostingProxySnapshot{ProxyID: "proxy", ServerID: "server", DestinationID: "destination", RunnerID: "runner", Generation: 5, Configuration: HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}, Routes: []HostingProxyRouteTarget{b, a}, VerifiedSwitch: &HostingVerifiedSwitch{Version: 1, ExpectedLoadedGeneration: 3, PriorAppliedProxyOperationID: "operation_a", Routes: []HostingVerifiedSwitchRoute{{RouteID: a.RouteID, PriorVersion: 7, PriorTarget: prior}}}}
 }
 
+func TestRouteSwitchOperationSafeSummary(t *testing.T) {
+	snapshot := switchSnapshot()
+	op := HostingProxyOperation{ID: "pop_switch", ProjectID: "project", State: "uncertain", MetadataConflict: true, MutationHold: true, Snapshot: snapshot, Result: &HostingProxyResult{Outcome: "rolled_back", DaemonID: "private_daemon"}}
+	view, ok := HostingRouteSwitchOperationView(op, "resource", "project", []HostingRoute{{ID: "route_a", ResourceID: "resource"}, {ID: "private_route", ResourceID: "other"}})
+	if !ok || view.EngineOutcome != "rolled_back" || view.State != "uncertain" || !view.MetadataConflict || !view.MutationHold || view.Switch == nil || len(view.Switch.Routes) != 1 || len(view.Routes) != 1 {
+		t.Fatalf("view %+v %v", view, ok)
+	}
+	change := view.Switch.Routes[0]
+	if change.BeforeReleaseOperationID != "release_a" || change.AfterReleaseOperationID != "release_b" {
+		t.Fatalf("summary %+v", change)
+	}
+	encoded, _ := json.Marshal(view)
+	for _, private := range []string{"private_daemon", "private_route", "other.example.test", "snapshot", "plan", "host_port", "binding_id"} {
+		if strings.Contains(string(encoded), private) {
+			t.Fatalf("leak %s: %s", private, encoded)
+		}
+	}
+	if _, ok := HostingRouteSwitchOperationView(op, "other", "project", nil); ok {
+		t.Fatal("foreign resource switch projected")
+	}
+	if _, ok := HostingRouteSwitchOperationView(op, "resource", "foreign_project", nil); ok {
+		t.Fatal("foreign project switch projected")
+	}
+	op.Result.Outcome = "refused"
+	view, ok = HostingRouteSwitchOperationView(op, "resource", "project", nil)
+	if !ok || view.EngineOutcome != "refused" {
+		t.Fatal(view)
+	}
+	op.Result.Outcome = "private_unbounded_result"
+	view, ok = HostingRouteSwitchOperationView(op, "resource", "project", nil)
+	if !ok || view.EngineOutcome != "" {
+		t.Fatal(view)
+	}
+}
+
 func TestVerifiedRouteSwitch(t *testing.T) {
 	t.Run("switch_legacy_bytes", func(t *testing.T) {
 		snapshot := switchSnapshot()

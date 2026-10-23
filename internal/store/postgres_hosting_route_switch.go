@@ -3,12 +3,14 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store/sqlcgen"
@@ -527,3 +529,317 @@ func (s *PostgresStore) proxyFinishDeferredWithdrawal(ctx context.Context, tx pg
 }
 
 var _ HostingRouteSwitchRepository = (*PostgresStore)(nil)
+
+// switchReadScope deliberately uses no row locks. All reads share one short,
+// repeatable, read-only snapshot, including durable identity and membership.
+func switchReadScope(ctx context.Context, tx pgx.Tx, resource, actor string) (string, error) {
+	var project string
+	if err := tx.QueryRow(ctx, `SELECT r.project_id FROM resources r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND p.archived_at IS NULL`, resource).Scan(&project); err != nil {
+		return "", hostingError(err)
+	}
+	var allowed bool
+	err := tx.QueryRow(ctx, `SELECT CASE
+ WHEN EXISTS(SELECT 1 FROM users WHERE id=$1 AND status='active' AND archived_at IS NULL) THEN
+ EXISTS(SELECT 1 FROM users u WHERE u.id=$1 AND (u.global_role='system_admin' OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=$2 AND m.user_id=u.id AND m.role IN ('owner','maintainer','viewer'))))
+ WHEN EXISTS(SELECT 1 FROM api_tokens WHERE id=$1 AND service_account_id IS NULL AND status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())) THEN
+ EXISTS(SELECT 1 FROM api_tokens WHERE id=$1 AND 'system_admin'=ANY(roles))
+ ELSE EXISTS(SELECT 1 FROM service_accounts sa JOIN users u ON u.id=sa.owner_user_id WHERE sa.id=$1 AND sa.status='active' AND u.status='active' AND sa.project_id=$2 AND sa.role IN ('owner','maintainer','viewer')) END`, actor, project).Scan(&allowed)
+	if err != nil {
+		return "", err
+	}
+	if !allowed {
+		return "", auth.ErrForbidden
+	}
+	return project, nil
+}
+
+func (s *PostgresStore) switchReadTransaction(ctx context.Context) (pgx.Tx, error) {
+	return s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+}
+
+// HostingRouteSwitchOperation never uses the administrator's unscoped operation view.
+func (s *PostgresStore) HostingRouteSwitchOperation(ctx context.Context, resource, actor, operation string) (domain.HostingProxyOperationView, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	tx, err := s.switchReadTransaction(ctx)
+	if err != nil {
+		return domain.HostingProxyOperationView{}, err
+	}
+	defer rollbackTransaction(ctx, tx)
+	project, err := switchReadScope(ctx, tx, resource, actor)
+	if err != nil {
+		return domain.HostingProxyOperationView{}, err
+	}
+	op, err := proxyOperation(ctx, tx, operation)
+	if err != nil {
+		return domain.HostingProxyOperationView{}, err
+	}
+	view, ok := domain.HostingRouteSwitchOperationView(op, resource, project, nil)
+	if !ok {
+		return domain.HostingProxyOperationView{}, ErrNotFound
+	}
+	for _, target := range op.Snapshot.Routes {
+		if target.ResourceID != resource || target.ProjectID != project {
+			continue
+		}
+		row, err := sqlcgen.New(tx).ProxyGetRoute(ctx, target.RouteID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return domain.HostingProxyOperationView{}, err
+		}
+		if row.ResourceID == resource && row.ProjectID == project {
+			record, err := proxyRouteStatus(ctx, tx, row)
+			if err != nil {
+				return domain.HostingProxyOperationView{}, err
+			}
+			view.Routes = append(view.Routes, record.Route)
+		}
+	}
+	if err := proxyCheckLegacyToken(ctx, tx, actor); err != nil {
+		return domain.HostingProxyOperationView{}, err
+	}
+	return view, tx.Commit(ctx)
+}
+
+// switchReadRouteTarget mirrors locked route admission without acquiring locks.
+func switchReadRouteTarget(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, row sqlcgen.HostingProxyRoute) (domain.HostingProxyRouteTarget, string, error) {
+	q := sqlcgen.New(tx)
+	placement, err := q.ProxyResourceTarget(ctx, row.ResourceID)
+	if err != nil {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", hostingError(err)
+	}
+	if placement.ProjectID != row.ProjectID || placement.BindingID != row.BindingID || placement.DestinationID != p.DestinationID || placement.ServerID != p.ServerID || placement.RunnerID != p.RunnerID {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", ErrConflict
+	}
+	grant, err := q.ProxyGetGrant(ctx, row.GrantID)
+	if err != nil {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", hostingError(err)
+	}
+	if grant.ProxyID != p.ID || grant.ProjectID != row.ProjectID || grant.RevokedAt != nil || !domain.HostingHostnameGranted(grant.Hostname, grant.Wildcard, row.Hostname) {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", ErrConflict
+	}
+	destination, err := q.GetDestinationProjectGrant(ctx, sqlcgen.GetDestinationProjectGrantParams{DestinationID: p.DestinationID, ProjectID: row.ProjectID})
+	if err != nil {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", hostingError(err)
+	}
+	if destination.RevokedAt != nil {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", ErrConflict
+	}
+	busy, err := q.HostingBindingBusy(ctx, row.BindingID)
+	if err != nil {
+		return domain.HostingProxyRouteTarget{}, "", err
+	}
+	if busy {
+		return domain.HostingProxyRouteTarget{}, "busy", ErrConflict
+	}
+	var restore bool
+	var hold *string
+	if err := tx.QueryRow(ctx, `SELECT restore_admitted,hold_operation_id FROM hosting_binding_state WHERE binding_id=$1`, row.BindingID).Scan(&restore, &hold); err != nil {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", hostingError(err)
+	}
+	held, err := q.HostingBindingRestoreHeld(ctx, row.BindingID)
+	if err != nil {
+		return domain.HostingProxyRouteTarget{}, "", err
+	}
+	if !restore || hold != nil || held {
+		return domain.HostingProxyRouteTarget{}, "restore_hold", ErrHostingRestoreHold
+	}
+	release, err := q.ProxyReleaseTarget(ctx, row.SelectedReleaseOperationID)
+	if err != nil {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", hostingError(err)
+	}
+	var healthy domain.HostingHealthy
+	if json.Unmarshal(release.Body, &healthy) != nil || !proxyReleaseQualified(p, row, release.State, release.RetainedRunning, healthy) {
+		return domain.HostingProxyRouteTarget{}, "stale_routes", ErrConflict
+	}
+	return domain.HostingProxyRouteTarget{RouteID: row.ID, ProjectID: row.ProjectID, ResourceID: row.ResourceID, BindingID: row.BindingID, ReleaseOperationID: row.SelectedReleaseOperationID, Hostname: row.Hostname, PathPrefix: row.PathPrefix, HostPort: uint16(healthy.Snapshot.HostPort)}, "", nil
+}
+
+// HostingRouteSwitchOptions reads options without reservations, jobs or mutations.
+func (s *PostgresStore) HostingRouteSwitchOptions(ctx context.Context, resource, actor, after string) (domain.HostingRouteSwitchOptions, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	view := domain.HostingRouteSwitchOptions{ResourceID: resource, Routes: make([]domain.HostingRouteSwitchRoute, 0), Targets: make([]domain.HostingRouteSwitchTarget, 0), Reason: "unbound"}
+	tx, err := s.switchReadTransaction(ctx)
+	if err != nil {
+		return view, err
+	}
+	defer rollbackTransaction(ctx, tx)
+	project, err := switchReadScope(ctx, tx, resource, actor)
+	if err != nil {
+		return view, err
+	}
+	finish := func(reason string) (domain.HostingRouteSwitchOptions, error) {
+		view.Reason = reason
+		view.Available = reason == "available"
+		if err := proxyCheckLegacyToken(ctx, tx, actor); err != nil {
+			return domain.HostingRouteSwitchOptions{}, err
+		}
+		return view, tx.Commit(ctx)
+	}
+	q := sqlcgen.New(tx)
+	placement, err := q.ProxyResourceTarget(ctx, resource)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return finish("unbound")
+	}
+	if err != nil {
+		return view, err
+	}
+	proxyRow, err := q.ProxyGetByServer(ctx, placement.ServerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return finish("proxy_unavailable")
+	}
+	if err != nil {
+		return view, err
+	}
+	p, err := proxyLoad(ctx, tx, proxyRow.ID)
+	if err != nil {
+		return view, err
+	}
+	if p.LoadedGeneration > 0 {
+		generation := p.LoadedGeneration
+		view.LoadedGeneration = &generation
+	}
+	enabledRows, err := tx.Query(ctx, `SELECT id FROM hosting_proxy_routes WHERE proxy_id=$1 AND enabled ORDER BY id LIMIT 33`, p.ID)
+	if err != nil {
+		return view, err
+	}
+	ids, err := pgx.CollectRows(enabledRows, pgx.RowTo[string])
+	if err != nil {
+		return view, err
+	}
+	if len(ids) > domain.HostingProxyMaxRoutes {
+		return finish("proxy_unavailable")
+	}
+	rows := make([]sqlcgen.HostingProxyRoute, 0, len(ids))
+	for _, id := range ids {
+		row, err := q.ProxyGetRoute(ctx, id)
+		if err != nil {
+			return view, err
+		}
+		rows = append(rows, row)
+	}
+	for _, r := range rows {
+		if r.Enabled && r.ResourceID == resource && r.ProjectID == project && r.BindingID == placement.BindingID {
+			view.Routes = append(view.Routes, domain.HostingRouteSwitchRoute{ID: r.ID, Hostname: r.Hostname, PathPrefix: r.PathPrefix, Version: r.Version, SelectedReleaseOperationID: r.SelectedReleaseOperationID})
+		}
+	}
+	if !p.Enabled || p.DaemonID == "" || p.DestinationID != placement.DestinationID || p.RunnerID != placement.RunnerID {
+		return finish("proxy_unavailable")
+	}
+	if p.RestoreOwnershipHeld {
+		return finish("restore_hold")
+	}
+	pending, err := q.ProxyPending(ctx, p.ID)
+	if err != nil {
+		return view, err
+	}
+	if pending || p.ActiveOperationID != "" || p.HoldOperationID != "" {
+		// Only an exact own-resource strict switch may supply a recovery ID.
+		var id string
+		err := tx.QueryRow(ctx, `SELECT o.id FROM hosting_proxy_operations o WHERE o.proxy_id=$1 AND o.project_id=$2 AND o.snapshot->'verified_switch'->'routes'->0->'prior_target'->>'resource_id'=$3 AND (o.id=$4 OR o.id=$5 OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')) ORDER BY o.generation LIMIT 1`, p.ID, project, resource, p.ActiveOperationID, p.HoldOperationID).Scan(&id)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return view, err
+		}
+		if err == nil {
+			op, err := proxyOperation(ctx, tx, id)
+			if err != nil {
+				return view, err
+			}
+			if _, ok := domain.HostingRouteSwitchOperationView(op, resource, project, nil); ok {
+				view.PendingOperationID = id
+			}
+		}
+		return finish("busy")
+	}
+	eligible, err := q.ProxyVerifiedSwitchRunnerEligible(ctx, p.RunnerID)
+	if err != nil {
+		return view, err
+	}
+	if !eligible {
+		return finish("runner_ineligible")
+	}
+	if p.LoadedGeneration < 1 {
+		return finish("no_loaded_generation")
+	}
+	if len(view.Routes) == 0 {
+		return finish("no_routes")
+	}
+	prior, err := proxyLoadedPredecessor(ctx, tx, p)
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+		return finish("stale_routes")
+	}
+	if err != nil {
+		return view, err
+	}
+	current := make([]domain.HostingProxyRouteTarget, 0, len(rows))
+	for _, r := range rows {
+		if !r.Enabled {
+			continue
+		}
+		target, reason, err := switchReadRouteTarget(ctx, tx, p, r)
+		if err != nil {
+			if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrHostingRestoreHold) {
+				if r.ResourceID != resource && (reason == "restore_hold" || reason == "busy") {
+					reason = "busy"
+				}
+				return finish(reason)
+			}
+			return view, err
+		}
+		current = append(current, target)
+	}
+	if !reflect.DeepEqual(proxySortedTargets(current), proxySortedTargets(prior.Snapshot.Routes)) {
+		return finish("stale_routes")
+	}
+	// Qualify and bound in SQL before decoding. A lookahead advertises another page.
+	candidates, err := tx.Query(ctx, `SELECT rel.operation_id,rel.state,rel.retained_running,rel.body
+ FROM hosting_retained_releases rel JOIN hosting_operations o ON o.id=rel.operation_id
+ WHERE o.project_id=$1 AND o.resource_id=$2 AND o.binding_id=$3 AND rel.binding_id=$3
+ AND rel.destination_id=$4 AND rel.state IN ('healthy','retained') AND rel.retained_running
+ AND rel.body->'snapshot'->>'resource_id'=$2 AND rel.body->'snapshot'->>'binding_id'=$3
+ AND rel.body->'snapshot'->>'destination_id'=$4 AND rel.body->'snapshot'->>'server_id'=$5
+ AND rel.body->'snapshot'->>'runner_id'=$6 AND rel.body->'release'->>'daemon_id'=$7
+ AND rel.operation_id>$8 ORDER BY rel.operation_id LIMIT 51`, project, resource, placement.BindingID, p.DestinationID, p.ServerID, p.RunnerID, p.DaemonID, after)
+	if err != nil {
+		return view, err
+	}
+	defer candidates.Close()
+	for candidates.Next() {
+		var id, state string
+		var running bool
+		var raw []byte
+		if err := candidates.Scan(&id, &state, &running, &raw); err != nil {
+			return view, err
+		}
+		var healthy domain.HostingHealthy
+		row := sqlcgen.HostingProxyRoute{ResourceID: resource, BindingID: placement.BindingID, SelectedReleaseOperationID: id}
+		if json.Unmarshal(raw, &healthy) != nil || !proxyReleaseQualified(p, row, state, running, healthy) {
+			candidates.Close()
+			view.Targets = make([]domain.HostingRouteSwitchTarget, 0)
+			return finish("proxy_unavailable")
+		}
+		if len(view.Targets) == domain.HostingRouteSwitchTargetPageSize {
+			cursor := view.Targets[len(view.Targets)-1].OperationID
+			view.NextAfterOperationID = &cursor
+			continue
+		}
+		kind := "retained"
+		if state == "healthy" {
+			kind = "current_healthy"
+		}
+		view.Targets = append(view.Targets, domain.HostingRouteSwitchTarget{OperationID: id, Kind: kind, ResolvedImageIdentity: healthy.Release.ImageID, SourceGeneration: healthy.Snapshot.LocalBuild.SourceGeneration})
+	}
+	if err := candidates.Err(); err != nil {
+		return view, err
+	}
+	candidates.Close()
+	if len(view.Targets) == 0 && after == "" {
+		return finish("no_targets")
+	}
+	return finish("available")
+}
+
+var _ HostingRouteSwitchReadRepository = (*PostgresStore)(nil)

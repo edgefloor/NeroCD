@@ -40,6 +40,43 @@ running release on the same binding and daemon. Selecting a retained release doe
 not restart it, rebuild it, or deliver its historical secrets. The response is
 the existing project-safe operation view, including for an administrator.
 
+Current project viewers can read switch choices through
+`GET /api/v1/resources/{id}/route-switches`. The response contains the resource's
+enabled desired routes, exact versions and selected release IDs, and nullable
+`loaded_generation`. It includes only live healthy or retained-running release
+choices on the current resource, binding, placement, and pinned daemon. Each
+choice contains its operation ID, `current_healthy` or `retained` kind, immutable
+image identity, and source generation when available. Historical deployment
+success alone does not qualify a target.
+
+Target pages contain at most 50 entries in operation-ID order. A non-null
+`next_after_operation_id` is the cursor for the next request's
+`after_operation_id` query parameter. Cursors are format-validated and compared
+only inside the authorized resource scope. An empty continuation page does not
+mean that the resource has no targets on earlier pages. An empty initial page
+returns `no_targets`; an exhausted continuation retains `available` when the
+request context remains valid. Malformed eligible ledger evidence fails closed
+with `proxy_unavailable`, without returning partial choices.
+
+`available` and the bounded `reason` describe the context at read time. An own
+pending strict switch may expose `pending_operation_id` for recovery. A hold on
+another resource exposes only `busy`. These reads use a single, bounded,
+repeatable read-only database snapshot, including current actor and project
+authority. They reserve no ports and create no operations, jobs, or audit events.
+POST remains the admission authority and rechecks every permission and CAS.
+
+`GET /api/v1/resources/{id}/route-switches/{operation_id}` recovers an exact
+strict switch for that resource after a lost response. Current viewers and
+administrators receive the same resource-safe DTO. The optional immutable
+`switch` summary records the expected loaded generation and each selected
+route's before and after release IDs. `engine_outcome` preserves the original
+`applied`, `rolled_back`, `refused`, or `uncertain` result independently of current
+`state`, `metadata_conflict`, and ownership holds. A rolled-back result can
+therefore coexist with current uncertainty and a metadata conflict. This read
+does not resolve that conflict. Both GET responses use `Cache-Control: no-store`.
+Neither response contains raw snapshots, engine configuration, placement,
+daemon identity, ports, lease authority, or other resources' route details.
+
 The runner must advertise `hosting_proxy_verified_switch_v1` and start with
 `--proxy-verified-switch` plus the existing explicit proxy configuration. Agents
 without that opt-in cannot admit or execute a strict operation. The optional

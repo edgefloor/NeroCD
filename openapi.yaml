@@ -489,6 +489,26 @@ paths:
             schema:
               "$ref": "#/components/schemas/HostingRouteInput"
   "/api/v1/resources/{id}/route-switches":
+    get:
+      operationId: getHostingRouteSwitchOptions
+      summary: Read resource-safe verified route switch choices
+      description: Current project viewers may read a consistent read-only snapshot. POST independently rechecks authority and CAS. Targets use live healthy or retained-running ledger qualification. Pages contain at most 50 targets ordered by operation ID; next_after_operation_id requests the next page. Availability describes request context, not permission to submit any arbitrary target. An empty continuation page does not imply the resource has no targets. Responses are no-store.
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+        - {name: after_operation_id, in: query, required: false, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+      responses:
+        "200":
+          description: Resource-safe choices
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingRouteSwitchOptions"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
     post:
       operationId: "requestHostingRouteSwitch"
       summary: "Switch existing routes with verified HTTPS and rollback"
@@ -519,6 +539,27 @@ paths:
           "$ref": "#/components/responses/Error"
         "503":
           "$ref": "#/components/responses/Error"
+  "/api/v1/resources/{id}/route-switches/{operation_id}":
+    get:
+      operationId: getHostingRouteSwitchOperation
+      summary: Read an exact resource switch after a lost response
+      description: Current resource-project viewers receive the same safe DTO as administrators. Only strict switches selecting this resource are visible. Immutable engine outcome is separate from current uncertainty, metadata conflict and ownership holds. This read cannot reconcile or clear a conflict. Responses are no-store.
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+        - {name: operation_id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+      responses:
+        "200":
+          description: Safe resource switch status
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingProxyOperationView"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   "/api/v1/routes/{id}":
     get:
       operationId: "getHostingRoute"
@@ -4081,6 +4122,60 @@ components:
           type: "string"
         host_port:
           type: "integer"
+    HostingRouteSwitchOptions:
+      type: object
+      additionalProperties: false
+      required: [resource_id, loaded_generation, routes, targets, available, reason, next_after_operation_id]
+      properties:
+        resource_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        loaded_generation: {type: [integer, "null"], format: int64, minimum: 1}
+        available: {type: boolean}
+        reason: {type: string, enum: [available, unbound, proxy_unavailable, busy, restore_hold, runner_ineligible, no_loaded_generation, stale_routes, no_routes, no_targets]}
+        pending_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        next_after_operation_id: {type: [string, "null"]}
+        routes:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, hostname, path_prefix, version, selected_release_operation_id]
+            properties:
+              id: {$ref: "#/components/schemas/HostingIdentifier"}
+              hostname: {type: string}
+              path_prefix: {type: string}
+              version: {type: integer, format: int64, minimum: 1}
+              selected_release_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        targets:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [operation_id, kind]
+            properties:
+              operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+              kind: {type: string, enum: [current_healthy, retained]}
+              resolved_image_identity: {type: string, maxLength: 71}
+              source_generation: {type: integer, format: int64, minimum: 1}
+    HostingRouteSwitchSummary:
+      type: object
+      additionalProperties: false
+      required: [expected_loaded_generation, routes]
+      properties:
+        expected_loaded_generation: {type: integer, format: int64, minimum: 1}
+        routes:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [route_id, before_release_operation_id, after_release_operation_id]
+            properties:
+              route_id: {$ref: "#/components/schemas/HostingIdentifier"}
+              before_release_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+              after_release_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
     HostingRouteSwitchInput:
       type: object
       additionalProperties: false
@@ -4262,7 +4357,7 @@ components:
       properties:
         metadata_conflict:
           type: boolean
-          description: "Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no recovery API exists."
+          description: "Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no reconciliation API exists."
         id:
           type: "string"
         proxy_id:
@@ -4300,9 +4395,15 @@ components:
       additionalProperties: false
       required: ["id", "state", "mutation_hold", "restore_ownership_held", "routes"]
       properties:
+        engine_outcome:
+          type: string
+          enum: [applied, rolled_back, refused, uncertain]
+          description: Original immutable engine outcome, independent of current state or metadata conflict.
+        switch:
+          $ref: "#/components/schemas/HostingRouteSwitchSummary"
         metadata_conflict:
           type: boolean
-          description: "Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no recovery API exists."
+          description: "Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no reconciliation API exists."
         id:
           type: "string"
         state:

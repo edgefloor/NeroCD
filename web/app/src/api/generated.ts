@@ -766,13 +766,37 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Read resource-safe verified route switch choices
+         * @description Current project viewers may read a consistent read-only snapshot. POST independently rechecks authority and CAS. Targets use live healthy or retained-running ledger qualification. Pages contain at most 50 targets ordered by operation ID; next_after_operation_id requests the next page. Availability describes request context, not permission to submit any arbitrary target. An empty continuation page does not imply the resource has no targets. Responses are no-store.
+         */
+        get: operations["getHostingRouteSwitchOptions"];
         put?: never;
         /**
          * Switch existing routes with verified HTTPS and rollback
          * @description Requires current resource-project maintainer authority and active destination and hostname grants. Selects only a settled healthy or exact retained-running release on the same binding and pinned daemon. Route IDs, versions and selected releases are compared atomically with the exact loaded generation. Hostnames, paths and ports cannot be supplied. Returns only project-safe operation status. Metadata conflicts retain a visible mutation hold; physical withdrawal can remain deferred under uncertainty.
          */
         post: operations["requestHostingRouteSwitch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/route-switches/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read an exact resource switch after a lost response
+         * @description Current resource-project viewers receive the same safe DTO as administrators. Only strict switches selecting this resource are visible. Immutable engine outcome is separate from current uncertainty, metadata conflict and ownership holds. This read cannot reconcile or clear a conflict. Responses are no-store.
+         */
+        get: operations["getHostingRouteSwitchOperation"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3552,6 +3576,41 @@ export interface components {
             path_prefix: string;
             host_port: number;
         };
+        HostingRouteSwitchOptions: {
+            resource_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            loaded_generation: number | null;
+            available: boolean;
+            /** @enum {string} */
+            reason: "available" | "unbound" | "proxy_unavailable" | "busy" | "restore_hold" | "runner_ineligible" | "no_loaded_generation" | "stale_routes" | "no_routes" | "no_targets";
+            pending_operation_id?: components["schemas"]["HostingIdentifier"];
+            next_after_operation_id: string | null;
+            routes: {
+                id: components["schemas"]["HostingIdentifier"];
+                hostname: string;
+                path_prefix: string;
+                /** Format: int64 */
+                version: number;
+                selected_release_operation_id: components["schemas"]["HostingIdentifier"];
+            }[];
+            targets: {
+                operation_id: components["schemas"]["HostingIdentifier"];
+                /** @enum {string} */
+                kind: "current_healthy" | "retained";
+                resolved_image_identity?: string;
+                /** Format: int64 */
+                source_generation?: number;
+            }[];
+        };
+        HostingRouteSwitchSummary: {
+            /** Format: int64 */
+            expected_loaded_generation: number;
+            routes: {
+                route_id: components["schemas"]["HostingIdentifier"];
+                before_release_operation_id: components["schemas"]["HostingIdentifier"];
+                after_release_operation_id: components["schemas"]["HostingIdentifier"];
+            }[];
+        };
         HostingRouteSwitchInput: {
             idempotency_key: string;
             /** Format: int64 */
@@ -3638,7 +3697,7 @@ export interface components {
             fence: string;
         };
         HostingProxyOperation: {
-            /** @description Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no recovery API exists. */
+            /** @description Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no reconciliation API exists. */
             metadata_conflict?: boolean;
             id: string;
             proxy_id: string;
@@ -3659,7 +3718,13 @@ export interface components {
         };
         /** @description Contains only authorized own-route status, without placement, snapshots, engine configuration, lease authority or other project identities. */
         HostingProxyOperationView: {
-            /** @description Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no recovery API exists. */
+            /**
+             * @description Original immutable engine outcome, independent of current state or metadata conflict.
+             * @enum {string}
+             */
+            engine_outcome?: "applied" | "rolled_back" | "refused" | "uncertain";
+            switch?: components["schemas"]["HostingRouteSwitchSummary"];
+            /** @description Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no reconciliation API exists. */
             metadata_conflict?: boolean;
             id: string;
             state: string;
@@ -6611,6 +6676,36 @@ export interface operations {
             503: components["responses"]["Error"];
         };
     };
+    getHostingRouteSwitchOptions: {
+        parameters: {
+            query?: {
+                after_operation_id?: components["schemas"]["HostingIdentifier"];
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resource-safe choices */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRouteSwitchOptions"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     requestHostingRouteSwitch: {
         parameters: {
             query?: never;
@@ -6640,6 +6735,35 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingRouteSwitchOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+                operation_id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe resource switch status */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperationView"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
