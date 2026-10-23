@@ -38,13 +38,14 @@ import (
 
 // Source edits need the same operator-owned loopback policy as creation in this
 // disposable fixture. Production public HTTPS policy remains unchanged. The
-// underlying repository still owns CAS, source revisions and mutation audits.
+// service passes the current generation; the repository advances it after
+// comparing configuration and still owns CAS, source revisions and audits.
 func (h controllerFixtureHosting) UpdateResource(ctx context.Context, resource domain.Resource, expected int64, opts ...store.MutationOption) (domain.Resource, error) {
 	previous, err := h.GetResource(ctx, resource.ID)
 	if err != nil {
 		return domain.Resource{}, err
 	}
-	if resource.Source.Kind == "git" && resource.Source.Git != nil && previous.Source.Git != nil && resource.Source.Git.Generation > previous.Source.Git.Generation {
+	if resource.Source.Kind == "git" && resource.Source.Git != nil && previous.Source.Git != nil && resource.Source.Git.SourceID == previous.Source.Git.SourceID && domain.HostingDocumentHash(resource.Source.Git.GitResourceConfiguration) != domain.HostingDocumentHash(previous.Source.Git.GitResourceConfiguration) {
 		g := resource.Source.Git
 		opts = append(opts, store.WithHostingGitSource(domain.HostingGitSource{ID: g.SourceID, ResourceID: resource.ID, ProjectID: resource.ProjectID, Generation: g.Generation, RepositoryURL: g.RepositoryURL, RequestedRef: g.RequestedRef, CredentialKind: g.CredentialKind, Settings: g.Settings, Policy: h.policy}))
 	}
@@ -83,14 +84,50 @@ func TestPrivateFixtureSourceRevisionPolicy(t *testing.T) {
 	}
 	changed := named
 	git := *named.Source.Git
-	git.Generation = 2
+	git.RequestedRef = "refs/heads/main"
 	changed.Source.Git = &git
 	if _, err := adapter.UpdateResource(t.Context(), changed, 1, audit); err != nil {
 		t.Fatal(err)
 	}
-	if repository.options != 2 || repository.expected != 1 || repository.updated.Source.Git.Generation != 2 {
+	if repository.options != 2 || repository.expected != 1 || repository.updated.Source.Git.Generation != 1 || repository.updated.Source.Git.RequestedRef != "refs/heads/main" {
 		t.Fatal("source revision did not add exactly its fixture policy option while preserving CAS")
 	}
+}
+
+func TestPrivateFixtureResourcePolicyPostgres(t *testing.T) {
+	if os.Getenv("NEROCD_LOCAL_BUILD_RUNTIME") != "disposable-dind" {
+		t.Skip("requires owned local build fixture")
+	}
+	privateRuntimeDatabase(t)
+	f := newControllerBuildFixture(t, domain.HostingPrivateGitCapability, domain.HostingBuildTaskType)
+	configuration := domain.GitResourceConfiguration{RepositoryURL: "https://example.com/fixture-policy.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "railpack"}}
+	var resource domain.Resource
+	f.request(t, "POST", "/api/v1/resources", f.admin, map[string]any{"project_id": f.environment.ProjectID, "project_environment_id": f.environment.ID, "name": "policy probe", "kind": "application", "source": map[string]any{"kind": "git", "git": configuration}}, 201, &resource)
+	before, err := f.pg.GetHostingBuildSource(t.Context(), "usr_bootstrap", resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Policy.Mode != "internal" || !before.Policy.AllowInternal {
+		t.Fatal("creation fixture policy missing")
+	}
+	configuration.RequestedRef = "refs/heads/main"
+	f.request(t, "PATCH", "/api/v1/resources/"+resource.ID, f.admin, map[string]any{"expected_generation": resource.Generation, "source": map[string]any{"kind": "git", "git": configuration}}, 200, &resource)
+	edited, err := f.pg.GetHostingBuildSource(t.Context(), "usr_bootstrap", resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.Generation != 2 || edited.Generation != 2 || edited.RequestedRef != configuration.RequestedRef || domain.HostingDocumentHash(edited.Policy) != domain.HostingDocumentHash(before.Policy) {
+		t.Fatal("real source edit lost fixture policy or generation")
+	}
+	f.request(t, "PATCH", "/api/v1/resources/"+resource.ID, f.admin, map[string]any{"expected_generation": resource.Generation, "name": "renamed policy probe"}, 200, &resource)
+	named, err := f.pg.GetHostingBuildSource(t.Context(), "usr_bootstrap", resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.Generation != 3 || named.Generation != 2 || domain.HostingDocumentHash(named) != domain.HostingDocumentHash(edited) {
+		t.Fatal("real name-only edit rewrote source")
+	}
+	t.Log("real API/service/PostgreSQL source edit preserves exact trusted fixture policy; name-only edit leaves complete source unchanged")
 }
 
 // Each private case owns a separate database inside the disposable fixture's
@@ -881,6 +918,17 @@ func TestPrivateGitBrowser(t *testing.T) {
 				return
 			case item := <-queue:
 				err := waitDispatch(item.kind, item.id)
+				if err == nil && item.kind == "build" {
+					full, readErr := f.pg.GetHostingBuild(ctx, "usr_bootstrap", item.id)
+					if readErr != nil {
+						err = readErr
+					} else {
+						policy := full.Snapshot.Source.Policy
+						if policy.Mode != "internal" || !policy.AllowInternal || len(policy.AllowedHosts) != 1 || policy.AllowedHosts[0] != "example.com" || len(policy.AllowedCIDRs) != 1 || policy.AllowedCIDRs[0] != "127.0.0.0/8" {
+							err = fmt.Errorf("fixture edited source policy mismatch before compiled build")
+						}
+					}
+				}
 				if err == nil && item.kind == "proxy" {
 					err = runProxy()
 				} else if err == nil {
