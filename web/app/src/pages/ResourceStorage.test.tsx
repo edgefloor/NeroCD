@@ -297,3 +297,149 @@ test("hung save releases exact retry after 30 seconds and ignores an older late 
   });
   expect(screen.getByLabelText("Configured storage metadata")).toBeTruthy();
 });
+
+test("hung conflict refresh releases its busy state and fences late completion during retry", async () => {
+  const pending: ((value: Response) => void)[] = [];
+  const { fetch } = setup("owner", (url, options) =>
+    options.method === "POST"
+      ? json({}, 409)
+      : url === "/api/v1/resources/r"
+        ? new Promise<Response>((done) => {
+            pending.push(done);
+          })
+        : undefined,
+  );
+  await consent();
+  submit();
+  await screen.findByRole("alert");
+  const refresh = screen.getByRole<HTMLButtonElement>("button", {
+    name: "Refresh storage configuration for review",
+  });
+  vi.useFakeTimers();
+  fireEvent.click(refresh);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30000);
+  });
+  expect(refresh.disabled).toBe(false);
+  expect(screen.getByText(/Configuration refresh timed out/)).toBeTruthy();
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Container mount path").value,
+  ).toBe("/app/uploads");
+  expect(
+    fetch.mock.calls.find(([url]) => url === "/api/v1/resources/r")![1].signal
+      ?.aborted,
+  ).toBe(true);
+  expect(screen.queryByText(/Current resource generation/)).toBeNull();
+  fireEvent.click(refresh);
+  await act(async () => {
+    pending[0]!(json({ ...resource, generation: 99 }));
+  });
+  expect(refresh.disabled).toBe(true);
+  expect(screen.queryByText("Current resource generation 99")).toBeNull();
+  await act(async () => {
+    pending[1]!(json({ ...resource, generation: 4 }));
+  });
+  expect(screen.getByText("Current resource generation 4")).toBeTruthy();
+  expect(refresh.disabled).toBe(false);
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Keep mount with reviewed generation for a separate save",
+    }),
+  );
+  fireEvent.click(screen.getByRole("checkbox"));
+  submit();
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(writes(fetch)).toHaveLength(2);
+  expect(
+    JSON.parse(writes(fetch)[1]![1].body as string)
+      .expected_resource_generation,
+  ).toBe(4);
+});
+
+test.each(["storage", "binding"])(
+  "conflict refresh deadline also cancels stalled %s metadata reads",
+  async (target) => {
+    let refreshing = false;
+    let resolve!: (value: Response) => void;
+    const { fetch } = setup("owner", (url, options) =>
+      options.method === "POST"
+        ? json({}, 409)
+        : refreshing && url.endsWith(`/${target}`)
+          ? new Promise<Response>((done) => {
+              resolve = done;
+            })
+          : undefined,
+    );
+    await consent();
+    submit();
+    await screen.findByRole("alert");
+    const refresh = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Refresh storage configuration for review",
+    });
+    refreshing = true;
+    vi.useFakeTimers();
+    fireEvent.click(refresh);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(refresh.disabled).toBe(false);
+    expect(screen.getByText(/Configuration refresh timed out/)).toBeTruthy();
+    expect(screen.queryByText(/Current resource generation/)).toBeNull();
+    const reads = fetch.mock.calls.filter(([url]) =>
+      url.endsWith(`/${target}`),
+    );
+    expect(reads.at(-1)![1].signal?.aborted).toBe(true);
+    await act(async () => {
+      resolve(
+        target === "storage"
+          ? json(saved)
+          : json({ id: "other", resource_id: "r", destination_id: "foreign" }),
+      );
+    });
+    expect(screen.queryByLabelText("Configured storage metadata")).toBeNull();
+    expect(screen.queryByText(/Current resource generation/)).toBeNull();
+    refreshing = false;
+    fireEvent.click(refresh);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Current resource generation 4")).toBeTruthy();
+  },
+);
+
+test("unmount aborts a conflict refresh and rejects its late generation", async () => {
+  let resolve!: (value: Response) => void;
+  const { fetch } = setup("owner", (url, options) =>
+    options.method === "POST"
+      ? json({}, 409)
+      : url === "/api/v1/resources/r"
+        ? new Promise<Response>((done) => {
+            resolve = done;
+          })
+        : undefined,
+  );
+  await consent();
+  submit();
+  await screen.findByRole("alert");
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Refresh storage configuration for review",
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.some(([url]) => url === "/api/v1/resources/r"),
+    ).toBe(true),
+  );
+  cleanup();
+  expect(
+    fetch.mock.calls.find(([url]) => url === "/api/v1/resources/r")![1].signal
+      ?.aborted,
+  ).toBe(true);
+  await act(async () => {
+    resolve(json({ ...resource, generation: 99 }));
+  });
+  expect(screen.queryByText(/Current resource generation/)).toBeNull();
+});

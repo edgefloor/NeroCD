@@ -6,6 +6,7 @@ import { getResourceBinding } from "@/api/destinations";
 import {
   createHostingStorage,
   scopedStorage,
+  storageKey,
   storageQuery,
   storageRequestID,
   type HostingStorageInput,
@@ -287,31 +288,80 @@ function StorageValues({
     }
   }
   async function refreshGeneration() {
-    if (busy || paused || accessDenied) return;
+    if (busy || paused || accessDenied || authorityLost.current || lock.current)
+      return;
+    const transport = new AbortController();
+    controller.current = transport;
+    lock.current = true;
     setBusy(true);
+    setReviewedGeneration(undefined);
+    setError("");
+    let stop: () => void = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      stop = () => {
+        // Cancel scoped query reads too, so a late response cannot update their
+        // caches or keep the form paused after this refresh has timed out.
+        void client.cancelQueries({
+          queryKey: storageKey(actor, resource.project_id, resource.id),
+          exact: true,
+        });
+        void client.cancelQueries({
+          queryKey: ["storageBinding", actor, resource.project_id, resource.id],
+          exact: true,
+        });
+        reject(new Error("Storage refresh stopped"));
+      };
+      transport.signal.addEventListener("abort", stop, { once: true });
+    });
+    const deadline = window.setTimeout(() => transport.abort(), 30000);
+    const isCurrent = () =>
+      active.current &&
+      !authorityLost.current &&
+      controller.current === transport &&
+      !transport.signal.aborted;
     try {
-      const latest = await getResource(resource.id);
-      if (!active.current) return;
+      const latest = await Promise.race([
+        getResource(resource.id, { signal: transport.signal }),
+        aborted,
+      ]);
+      if (!isCurrent()) return;
       if (
         latest.id !== resource.id ||
         latest.project_id !== resource.project_id
       )
         throw new Error("Storage resource scope mismatch");
+      const currentStorage = await Promise.race([storage.refetch(), aborted]);
+      if (!isCurrent()) return;
+      if (currentStorage.isError) throw currentStorage.error;
+      const currentBinding = await Promise.race([binding.refetch(), aborted]);
+      if (!isCurrent()) return;
+      if (currentBinding.isError) throw currentBinding.error;
       setReviewedGeneration(latest.generation);
-      await storage.refetch();
-      await binding.refetch();
     } catch (cause) {
-      if (active.current) {
+      if (
+        active.current &&
+        !authorityLost.current &&
+        controller.current === transport
+      ) {
         if (denied(cause)) setAccessDenied(true);
         else
           setError(
-            "Unable to refresh current configuration. Nothing was resubmitted.",
+            transport.signal.aborted
+              ? "Configuration refresh timed out. Your draft is preserved. Retry the refresh; nothing was resubmitted."
+              : "Unable to refresh current configuration. Nothing was resubmitted.",
           );
       }
     } finally {
-      if (active.current) setBusy(false);
+      window.clearTimeout(deadline);
+      transport.signal.removeEventListener("abort", stop);
+      if (controller.current === transport) {
+        controller.current = undefined;
+        lock.current = false;
+        if (active.current) setBusy(false);
+      }
     }
   }
+
   if (accessDenied || denied(storage.error) || denied(binding.error))
     return (
       <p role="alert">
