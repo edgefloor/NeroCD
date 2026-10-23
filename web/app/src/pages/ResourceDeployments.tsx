@@ -237,7 +237,17 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
       await boundedStorageRequest(async (signal) => {
         const cancel = () => { for (const queryKey of keys) void client.cancelQueries({ queryKey }); };
         signal.addEventListener("abort", cancel, { once: true });
-        try { await Promise.all(keys.map((queryKey) => client.invalidateQueries({ queryKey }, { throwOnError: true }))); }
+        try {
+          const denied = (cause: unknown) => cause instanceof ApiError && [401, 403, 404].includes(cause.status);
+          // Inspect each current read while siblings are pending. An earlier
+          // ordinary failure must not consume a later permission denial.
+          const results = await Promise.allSettled(keys.map(async (queryKey) => {
+            try { await client.invalidateQueries({ queryKey }, { throwOnError: true }); }
+            catch (cause) { if (active.current && !signal.aborted && denied(cause)) onDenied(); throw cause; }
+          }));
+          for (const result of results) if (result.status === "rejected" && denied(result.reason)) throw result.reason;
+          for (const result of results) if (result.status === "rejected") throw result.reason;
+        }
         finally { signal.removeEventListener("abort", cancel); }
       }, controller.signal);
     } finally { retired?.removeEventListener("abort", abort); refreshRequests.current.delete(controller); }
