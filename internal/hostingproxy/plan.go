@@ -55,6 +55,13 @@ type Plan struct {
 	generation, previous uint64
 	routes               []Route
 	hash, staticHash     string
+	verification         *verificationPolicy
+}
+
+// verificationPolicy is durable, versioned intent, bound into the strict hash.
+type verificationPolicy struct {
+	Version          uint8
+	RequiredRouteIDs []string
 }
 
 // Hash returns the deterministic hash of the complete desired generation.
@@ -146,6 +153,66 @@ func Prepare(i Identity, s Settings, generation, previous uint64, routes []Route
 		Routes               []Route
 	}{p.staticHash, generation, previous, p.routes})
 	return p, nil
+}
+
+// PrepareVerifiedSwitch prepares an opt-in switch of existing routes' host ports.
+// Apply verifies selected HTTP and trusted HTTPS routes before and after mutation;
+// Install never accepts this plan. Unselected routes must remain unchanged.
+func PrepareVerifiedSwitch(i Identity, s Settings, generation, previous uint64, routes []Route, requiredRouteIDs []string) (Plan, error) {
+	p, err := Prepare(i, s, generation, previous, routes)
+	if err != nil {
+		return Plan{}, err
+	}
+	if previous == 0 || len(requiredRouteIDs) == 0 || len(requiredRouteIDs) > len(routes) {
+		return Plan{}, errors.New("verified switch requires a predecessor and selected existing routes")
+	}
+	ids := append([]string(nil), requiredRouteIDs...)
+	sort.Strings(ids)
+	routeIDs := make(map[string]bool, len(routes))
+	for _, r := range p.routes {
+		routeIDs[r.ID] = true
+	}
+	for n, id := range ids {
+		if !routeIDs[id] || n > 0 && ids[n-1] == id {
+			return Plan{}, errors.New("verified switch route IDs must be present and unique")
+		}
+	}
+	p.verification = &verificationPolicy{Version: 1, RequiredRouteIDs: ids}
+	p.hash = digest(struct {
+		Plan         string
+		Verification *verificationPolicy
+	}{p.hash, p.verification})
+	return p, nil
+}
+
+func (p Plan) required(id string) bool {
+	if p.verification == nil {
+		return false
+	}
+	n := sort.SearchStrings(p.verification.RequiredRouteIDs, id)
+	return n < len(p.verification.RequiredRouteIDs) && p.verification.RequiredRouteIDs[n] == id
+}
+
+func (p Plan) switchPredecessor(old receipt, install bool) error {
+	if p.verification == nil {
+		return nil
+	}
+	if install || old.Generation == 0 || old.Generation != p.previous || old.Phase != "committed" || len(old.Routes) != len(p.routes) || len(old.Hash) != sha256.Size*2 {
+		return errors.New("verified switch requires an installed committed predecessor with identical route scope")
+	}
+	if b, err := hex.DecodeString(old.Hash); err != nil || hex.EncodeToString(b) != old.Hash {
+		return errors.New("verified switch predecessor hash is invalid")
+	}
+	for n, r := range p.routes {
+		prior := old.Routes[n]
+		if p.required(r.ID) {
+			r.HostPort = prior.HostPort
+		}
+		if r != prior {
+			return errors.New("verified switch may only change selected existing routes' host ports")
+		}
+	}
+	return nil
 }
 func (p Plan) name() string   { return "nerocd-proxy-" + p.identity.ProxyID }
 func (p Plan) prefix() string { return fmt.Sprintf("g%d-%s", p.generation, p.hash[:16]) }

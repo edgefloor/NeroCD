@@ -4,12 +4,47 @@ package hostingproxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
+
+func TestReceiptPersistsStrictIntentWithoutChangingLegacyShape(t *testing.T) {
+	s, err := openStorage(context.Background(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	legacy := receipt{Identity: testIdentity(), Generation: 1, Hash: digest("legacy"), Phase: "committed"}
+	if err = s.save(legacy); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.read("receipt.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(b, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := fields["Verification"]; present {
+		t.Fatal("legacy receipt shape changed")
+	}
+	strict := legacy
+	strict.Phase = "intent"
+	strict.Verification = &verificationPolicy{Version: 1, RequiredRouteIDs: []string{"a", "b"}}
+	if err = s.save(strict); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := s.load()
+	if err != nil || !reflect.DeepEqual(reloaded, strict) {
+		t.Fatalf("strict intent round trip: %+v %v", reloaded, err)
+	}
+}
 
 func TestStorageSafety(t *testing.T) {
 	t.Run("mode", func(t *testing.T) {

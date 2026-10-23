@@ -17,6 +17,7 @@ type receipt struct {
 	Generation       uint64
 	Routes           []Route
 	Phase            string
+	Verification     *verificationPolicy `json:",omitempty"`
 }
 type storage struct {
 	root *os.Root

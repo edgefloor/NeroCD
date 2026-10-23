@@ -1,6 +1,7 @@
 package hostingproxy
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
@@ -88,6 +89,9 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 	if err = e.validate(p); err != nil {
 		return result, err
 	}
+	if install && p.verification != nil {
+		return result, errors.New("verified switch cannot install a proxy")
+	}
 	s, err := openStorage(ctx, e.settings.Directory)
 	if err != nil {
 		return result, err
@@ -118,6 +122,10 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 		result.ContainerID = c.ID
 	}
 	if old.Hash == p.hash && old.Generation == p.generation {
+		if !reflect.DeepEqual(old.Verification, p.verification) {
+			result.Outcome = Uncertain
+			return result, errors.New("generation verification policy mismatch")
+		}
 		if c == nil {
 			return result, errors.New("recorded proxy container missing; explicit recovery required")
 		}
@@ -129,11 +137,14 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 			result.Outcome = Uncertain
 			return result, errors.New("unfinished generation requires explicit recovery")
 		}
-		return e.observation(ctx, p, c.ID), nil
+		return e.verifiedObservation(ctx, p, c.ID)
 	}
 
 	if old.Generation != p.previous {
 		return result, errors.New("stale previous generation")
+	}
+	if err = p.switchPredecessor(old, install); err != nil {
+		return result, err
 	}
 	if c == nil {
 		if !install || old.Generation != 0 {
@@ -148,7 +159,27 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 	if err = e.daemon(ctx, p); err != nil {
 		return result, err
 	}
-	next := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: "intent"}
+	previous := p
+	previous.generation = old.Generation
+	previous.hash = old.Hash
+	previous.routes = append([]Route(nil), old.Routes...)
+	if p.verification != nil {
+		// The selected old routes must be a recoverable baseline before intent.
+		if err = e.loaded(ctx, previous); err != nil {
+			return result, errors.New("verified switch predecessor is not loaded")
+		}
+		if _, err = e.verifiedObservation(ctx, previous, c.ID); err != nil {
+			return result, errors.New("verified switch predecessor HTTP or trusted HTTPS is not ready")
+		}
+		b, x := s.read("dynamic/routes.yml")
+		if x != nil || !bytes.Equal(b, previous.dynamic()) {
+			return result, errors.New("verified switch predecessor file differs from loaded receipt")
+		}
+	}
+	if err = ctx.Err(); err != nil {
+		return result, err
+	}
+	next := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: "intent", Verification: p.verification}
 	// An intent precedes external effects. Any lost response after this point is uncertain.
 	if err = s.save(next); err != nil {
 		result.Outcome = Uncertain
@@ -185,6 +216,9 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 			return result, x
 		}
 	}
+	if err = ctx.Err(); err != nil {
+		return result, err
+	}
 	if err = s.atomic("dynamic/routes.yml", p.dynamic()); err != nil {
 		return result, err
 	}
@@ -198,39 +232,67 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 		}
 		result.ContainerID = c.ID
 	}
-	if err = e.waitLoaded(ctx, p); err != nil {
+	verified, err := e.waitVerified(ctx, p, c.ID)
+	if err != nil {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
 		if old.Generation == 0 {
 			return result, err
 		}
-		previous := p
-		previous.generation = old.Generation
-		previous.hash = old.Hash
-		previous.routes = append([]Route(nil), old.Routes...)
 		b, x := s.read("previous.json")
 		if x != nil {
+			return result, x
+		}
+		if x = ctx.Err(); x != nil {
 			return result, x
 		}
 		if x = s.atomic("dynamic/routes.yml", b); x != nil {
 			return result, x
 		}
-		if x = e.waitLoaded(ctx, previous); x != nil {
+		restored, x := e.waitVerified(ctx, previous, c.ID)
+		if x != nil {
 			return result, errors.New("rollback not verified; retain controller hold")
 		}
-		if x = s.save(old); x != nil {
+		if x = ctx.Err(); x != nil {
 			return result, x
 		}
-		result.Outcome = RolledBack
+		outcome, x := persistRollbackReceipt(ctx, p.verification != nil, func() error { return s.save(old) })
+		if x != nil {
+			return result, x
+		}
+		result.Outcome = outcome
 		result.LoadedGeneration = old.Generation
+		if p.verification != nil {
+			result.Routes = restored.Routes
+		}
 		return result, errors.New("candidate rejected; previous generation restored")
+	}
+	if err = ctx.Err(); err != nil {
+		return result, err
 	}
 	next.Phase = "committed"
 	if err = s.save(next); err != nil {
 		return result, err
 	}
-	return e.observation(ctx, p, c.ID), nil
+	if err = ctx.Err(); err != nil {
+		return result, err
+	}
+	if p.verification == nil {
+		return e.observation(ctx, p, c.ID), nil
+	}
+	return verified, nil
+}
+
+// persistRollbackReceipt keeps durable restoration separate from acknowledgment.
+func persistRollbackReceipt(ctx context.Context, strict bool, save func() error) (Outcome, error) {
+	if err := save(); err != nil {
+		return Uncertain, err
+	}
+	if strict && ctx.Err() != nil {
+		return Uncertain, ctx.Err()
+	}
+	return RolledBack, nil
 }
 
 // Observe verifies the committed receipt, owned container, loaded routes, and probes.
@@ -251,7 +313,7 @@ func (e *Engine) Observe(ctx context.Context, p Plan) (Result, error) {
 	if err != nil {
 		return result, err
 	}
-	if r.Identity != p.identity || r.Hash != p.hash || r.Generation != p.generation || r.Phase != "committed" {
+	if r.Identity != p.identity || r.Hash != p.hash || r.Generation != p.generation || r.Phase != "committed" || !reflect.DeepEqual(r.Verification, p.verification) {
 		return result, errors.New("generation receipt not committed or mismatched")
 	}
 	if err = s.checkFile("certificates/acme.json"); err != nil {
@@ -264,7 +326,7 @@ func (e *Engine) Observe(ctx context.Context, p Plan) (Result, error) {
 	if err = e.loaded(ctx, p); err != nil {
 		return result, err
 	}
-	return e.observation(ctx, p, c.ID), nil
+	return e.verifiedObservation(ctx, p, c.ID)
 }
 func (e *Engine) waitLoaded(ctx context.Context, p Plan) error {
 	ctx, cancel := context.WithTimeout(ctx, e.verifyTimeout)
@@ -279,4 +341,44 @@ func (e *Engine) waitLoaded(ctx context.Context, p Plan) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// waitVerified uses one bounded verification window and no background retries.
+// Legacy plans retain their loaded-generation and TLS-pending success contract.
+func (e *Engine) waitVerified(ctx context.Context, p Plan, id string) (Result, error) {
+	if p.verification == nil {
+		return Result{}, e.waitLoaded(ctx, p)
+	}
+	ctx, cancel := context.WithTimeout(ctx, e.verifyTimeout)
+	defer cancel()
+	for {
+		if err := e.loaded(ctx, p); err == nil {
+			if result, err := e.verifiedObservation(ctx, p, id); err == nil {
+				return result, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (e *Engine) verifiedObservation(ctx context.Context, p Plan, id string) (Result, error) {
+	result := e.observation(ctx, p, id)
+	if p.verification == nil {
+		return result, nil
+	}
+	for _, route := range result.Routes {
+		if p.required(route.RouteID) && (!route.HTTPReady || !route.HTTPSReady) {
+			result.Outcome = Uncertain
+			return result, errors.New("selected route HTTP or trusted HTTPS verification failed; retain controller hold")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		result.Outcome = Uncertain
+		return result, err
+	}
+	return result, nil
 }
