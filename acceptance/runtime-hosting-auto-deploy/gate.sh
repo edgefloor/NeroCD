@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Disposable trusted-source Linux qualification. Never uses the host Docker socket.
+set -euo pipefail
+repo_root=$(pwd -P)
+test -f "$repo_root/internal/api/hosting_auto_deploy_runtime_integration_test.go"
+[[ -z $(git status --porcelain) ]] || { echo 'gate requires a clean committed checkout' >&2; exit 1; }
+head_before=$(git rev-parse HEAD)
+tree_before=$(git rev-parse HEAD^{tree})
+evidence=$(mktemp -d /tmp/nerocd-auto-deploy-runtime.XXXXXX)
+owner=$(basename "$evidence" | tr '[:upper:]' '[:lower:]')
+label=io.nerocd.auto-deploy.owner
+outer=''
+pg=''
+exec > >(tee "$evidence/gate.log") 2>&1
+printf 'evidence=%s\nhead=%s\ntree=%s\n' "$evidence" "$head_before" "$tree_before"
+git status --porcelain > "$evidence/status-before"
+git ls-files -s internal/api/hosting_auto_deploy_runtime_integration_test.go internal/store/postgres_hosting_auto_deploy_controller.go internal/store/postgres_hosting_auto_deploy.go internal/hostingjobs/auto_deploy.go acceptance/runtime-hosting-auto-deploy/gate.sh > "$evidence/source-blobs"
+cleanup() {
+ result=$?
+ trap - EXIT INT TERM
+ if [[ -n "$outer" ]]; then
+  if [[ $(docker inspect --format "{{.Id}} {{index .Config.Labels \"$label\"}}" "$outer" 2>/dev/null || true) == "$outer $owner" ]]; then
+   if ! docker exec "$outer" sh -ec '
+    for exe in /proc/[0-9]*/exe; do
+     if [ "$(readlink "$exe" 2>/dev/null || true)" = /fixture/api.test ]; then pid=${exe#/proc/}; pid=${pid%/exe}; kill -TERM "$pid"; fi
+    done
+    for tick in $(seq 1 200); do
+     live=false
+     for exe in /proc/[0-9]*/exe; do
+      case $(readlink "$exe" 2>/dev/null || true) in /fixture/api.test|/fixture/nerocd-proxy-fixture) live=true;; esac
+     done
+     if [ "$live" = false ]; then exit 0; fi
+     sleep 0.1
+    done
+    exit 1'; then
+    echo 'owned processes did not join; preserving exact daemon for inspection' >&2
+    exit 1
+   fi
+   docker exec "$outer" docker ps -a --no-trunc --format '{{.ID}} {{.Names}} {{.Status}}' > "$evidence/inner-final" || result=1
+   if [[ -n "$pg" ]]; then
+    if [[ $(docker exec "$outer" docker inspect --format "{{.Id}} {{index .Config.Labels \"$label\"}}" "$pg" 2>/dev/null || true) == "$pg $owner" ]]; then
+     docker exec "$outer" docker rm --force --volumes "$pg" || result=1
+    else result=1; fi
+   fi
+   docker exec "$outer" sh -ec 'if [ -d "$1" ]; then rmdir "$1"; fi' sh "/sys/fs/cgroup/$owner" || result=1
+   docker rm --force --volumes "$outer" || result=1
+   if docker inspect "$outer" >/dev/null 2>&1; then result=1; else echo "owned outer absent: $outer"; fi
+  else result=1; fi
+ fi
+ git status --porcelain > "$evidence/status-after"
+ git rev-parse HEAD > "$evidence/head-after"
+ git rev-parse HEAD^{tree} > "$evidence/tree-after"
+ [[ $(cat "$evidence/head-after") == "$head_before" && $(cat "$evidence/tree-after") == "$tree_before" && ! -s "$evidence/status-after" ]] || result=1
+ printf 'gate_exit=%s\nouter_id=%s\ninner_pg_id=%s\n' "$result" "$outer" "$pg" > "$evidence/result"
+ echo "gate exit=$result evidence=$evidence"
+ exit "$result"
+}
+trap cleanup EXIT INT TERM
+arch=$(docker info --format '{{.Architecture}}')
+case "$arch" in
+ arm64|aarch64) goarch=arm64; buildx_sha=3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865dfa141c97a;;
+ amd64|x86_64) goarch=amd64; buildx_sha=e25d5cd675092bb5d1d03632fdc46cdf3fede7b514dc5f023a105e00d3ce5ad4;;
+ *) echo 'unsupported native Docker architecture' >&2; exit 1;;
+esac
+curl --fail --silent --show-error --location "https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-$goarch" --output "$evidence/buildx"
+printf '%s  %s\n' "$buildx_sha" "$evidence/buildx" | shasum -a 256 --check
+chmod 0755 "$evidence/buildx"
+GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -tags nerocd_proxy_fixture -c -o "$evidence/api.test" ./internal/api
+GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go build -tags nerocd_proxy_fixture -trimpath -o "$evidence/nerocd-proxy-fixture" ./cmd/nerocd
+shasum -a 256 "$evidence/api.test" "$evidence/nerocd-proxy-fixture" "$evidence/buildx" | tee "$evidence/binary-sha256"
+name="$owner-dind"
+[[ -z $(docker ps -aq --filter "name=^/$name$") ]]
+outer=$(docker run --detach --privileged --add-host github.com:127.0.0.1 --name "$name" --label "$label=$owner" --env DOCKER_TLS_CERTDIR= docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489 dockerd --host=unix:///var/run/docker.sock)
+docker inspect --format '{{.Id}} pidmode={{.HostConfig.PidMode}} mounts={{json .Mounts}} labels={{json .Config.Labels}} ports={{json .NetworkSettings.Ports}}' "$outer" | tee "$evidence/outer-identity"
+ready=false
+for _ in $(seq 1 60); do if docker exec "$outer" docker info >/dev/null 2>&1; then ready=true; break; fi; sleep 1; done
+[[ "$ready" == true ]]
+docker exec "$outer" sh -ec 'test "$(docker info --format "{{.CgroupVersion}}")" = 2; mkdir "$1"; printf "+cpu +memory +pids" > "$1/cgroup.subtree_control"' sh "/sys/fs/cgroup/$owner"
+docker exec "$outer" apk add --no-cache git=2.52.0-r0 git-daemon=2.52.0-r0
+docker exec "$outer" mkdir -p /fixture /workspace/db/seeds /workspace/internal/api /workspace/acceptance/runtime-proxy-control
+docker cp "$evidence/api.test" "$outer:/fixture/api.test"
+docker cp "$evidence/nerocd-proxy-fixture" "$outer:/fixture/nerocd-proxy-fixture"
+docker cp "$evidence/buildx" "$outer:/fixture/buildx"
+docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
+docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
+for image in \
+ postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94 \
+ alpine:3.23.2@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62 \
+ moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c \
+ nginx:1.29.3-alpine@sha256:b3c656d55d7ad751196f21b7fd2e8d4da9cb430e32f646adcf92441b72f82b14 \
+ docker.io/library/traefik@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a905f3fdb5b84f2c8619c33368 \
+ ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199; do docker exec "$outer" docker pull "$image"; done
+planner=$(docker exec "$outer" docker image inspect --format '{{.Id}}' alpine:3.23.2@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62)
+# The planner identity is required but Dockerfile strategy never invokes Railpack.
+pg=$(docker exec "$outer" docker run --detach --name "$owner-pg" --label "$label=$owner" --network host --tmpfs /var/lib/postgresql/data:rw --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_auto_deploy postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94)
+echo "owned inner PostgreSQL id=$pg owner=$owner private-port=5432 no-published-port"
+ready=false
+for _ in $(seq 1 60); do
+ if [[ $(docker exec "$outer" docker exec --env PGPASSWORD=isolated_fixture_only "$pg" psql --host=127.0.0.1 --username=nerocd --dbname=nerocd_auto_deploy --no-psqlrc --tuples-only --no-align --command='SELECT current_database()' 2>/dev/null || true) == nerocd_auto_deploy ]]; then ready=true; break; fi
+ sleep 1
+done
+[[ "$ready" == true ]]
+docker exec --workdir /workspace/internal/api --env NEROCD_AUTO_DEPLOY_RUNTIME=disposable-dind --env "NEROCD_BUILDX_SHA256=sha256:$buildx_sha" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_auto_deploy?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run '^TestHostingAutomaticDeploymentCompiledRunner$' -test.timeout=24m
+printf 'actual automatic deployment compiled Linux/API/fixture-CA HTTPS gate passed\n'
