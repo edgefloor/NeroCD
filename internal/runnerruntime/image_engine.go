@@ -196,6 +196,7 @@ type imageContainer struct {
 	State struct {
 		Running bool `json:"Running"`
 	} `json:"State"`
+	Mounts     []imageMount `json:"Mounts"`
 	HostConfig struct {
 		PortBindings map[string][]struct {
 			HostIP   string `json:"HostIp"`
@@ -229,12 +230,20 @@ func (e *imageEngine) mutate(ctx context.Context, daemon string, args ...string)
 	return e.docker(ctx, args...)
 }
 func verifyImagePlan(plan domain.HostingApplyPlan) error {
+	if !domain.HostingPlanFamilyMatches(plan.Snapshot, plan) {
+		return errors.New("image plan policy family mismatch")
+	}
 	hash := plan.Hash
 	plan.Hash = ""
 	if hash == "" || hash != domain.HostingDocumentHash(plan) || !imageNamespace.MatchString(plan.Snapshot.RuntimeNamespace) {
 		return errors.New("invalid immutable image apply plan")
 	}
 	switch plan.CompilerVersion {
+	case domain.HostingOwnedStorageCompilerVersion:
+		expected, err := domain.CompileHostingOwnedStoragePlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, plan.RetainedReleases, *plan.Storage)
+		if err != nil || expected.Hash != hash {
+			return errors.New("invalid owned storage image apply plan")
+		}
 	case domain.HostingCompilerVersion:
 		if plan.Snapshot.PolicyVersion != domain.HostingPolicyVersion || plan.RetainPrevious || len(plan.RetainedReleases) != 0 {
 			return errors.New("retained release fields require versioned image protocol")
@@ -266,15 +275,18 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 // method. Unknown command outcomes are retained for reconciliation; only a
 // known readiness failure enters bounded restoration of the prior workload.
 func (e *imageEngine) Apply(ctx context.Context, operationID string, plan domain.HostingApplyPlan, verifying ...func() error) domain.HostingResult {
-	return e.apply(ctx, operationID, plan, nil, time.Time{}, verifying...)
+	return e.apply(ctx, operationID, plan, nil, time.Time{}, nil, verifying...)
 }
 
 // ApplyWithRuntimeEnvironment borrows protected bytes only during container creation.
 func (e *imageEngine) ApplyWithRuntimeEnvironment(ctx context.Context, operationID string, plan domain.HostingApplyPlan, environment *hostingruntimeprotocol.Environment, localDeadline time.Time, verifying ...func() error) domain.HostingResult {
-	return e.apply(ctx, operationID, plan, environment, localDeadline, verifying...)
+	return e.apply(ctx, operationID, plan, environment, localDeadline, nil, verifying...)
 }
-func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain.HostingApplyPlan, environment *hostingruntimeprotocol.Environment, localDeadline time.Time, verifying ...func() error) domain.HostingResult {
+func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain.HostingApplyPlan, environment *hostingruntimeprotocol.Environment, localDeadline time.Time, storage *ownedStorageExecution, verifying ...func() error) domain.HostingResult {
 	result := domain.HostingResult{Outcome: "failed", DaemonID: plan.Release.DaemonID, PlanHash: plan.Hash, ImageID: plan.Release.ImageID}
+	if storage == nil && (plan.Storage != nil || plan.Snapshot.Storage != (domain.HostingStorageRef{})) {
+		return result
+	}
 	currentEnvironment := plan.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{})
 	var metadata hostingruntimeprotocol.Metadata
 	if currentEnvironment {
@@ -287,6 +299,14 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 		return result
 	}
 	if verifyImagePlan(plan) != nil || e.verifyLocalRelease(ctx, plan.Release) != nil {
+		return result
+	}
+	previousID := ""
+	if plan.PreviousHealthy != nil {
+		previousID = plan.PreviousHealthy.ContainerID
+	}
+	if storage != nil && storage.verify(ctx, e, plan, nil, previousID) != nil {
+		result.Uncertain = true
 		return result
 	}
 	if plan.PreviousHealthy != nil {
@@ -326,7 +346,7 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 				return result
 			}
 			delete(known, id)
-		} else if container.State.Running {
+		} else if storage != nil || container.State.Running {
 			result.Uncertain = true
 			return result
 		}
@@ -354,12 +374,23 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 			result.Uncertain = true
 			return result
 		}
+		if storage != nil && storage.confirmStopped(ctx, e, *plan.PreviousHealthy) != nil {
+			result.Uncertain = true
+			return result
+		}
+	}
+	if storage != nil && storage.verify(ctx, e, plan, nil, "") != nil {
+		result.Uncertain = true
+		return result
 	}
 	suffix := strings.TrimPrefix(domain.HostingDocumentHash(operationID), "sha256:")[:16]
 	name := plan.Snapshot.RuntimeNamespace + "_" + suffix
 	args := []string{"container", "create", "--name", name, "--restart", "no", "--publish", "127.0.0.1:" + strconv.Itoa(plan.Snapshot.HostPort) + ":" + strconv.Itoa(plan.Snapshot.ContainerPort), "--label", imageBindingLabel + "=" + plan.Snapshot.BindingID, "--label", imageOperationLabel + "=" + operationID, "--label", imageReleaseLabel + "=" + plan.Release.Hash, "--label", imagePlanLabel + "=" + plan.Hash}
 	if plan.Release.LocalBuild != (domain.HostingBuildArtifact{}) {
 		args = append(args, "--pull=never")
+	}
+	if storage != nil {
+		args = append(args, "--mount", "type=volume,src="+plan.Storage.VolumeName+",dst="+plan.Storage.MountPath+",volume-nocopy")
 	}
 	args = append(args, hostingReleaseImage(plan.Release))
 	if currentEnvironment {
@@ -396,6 +427,16 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 		result.Uncertain = true
 		return result
 	}
+	var candidate *domain.HostingHealthy
+	if storage != nil {
+		candidate = storage.healthy(operationID, result.ContainerID, plan)
+		// Docker can implicitly create a missing named volume. Verify the pinned
+		// volume again after create and before admitting any application writer.
+		if storage.verify(ctx, e, plan, candidate, "") != nil {
+			result.Uncertain = true
+			return result
+		}
+	}
 	if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "start", result.ContainerID); err != nil {
 		result.Uncertain = true
 		return result
@@ -406,7 +447,13 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 			return result
 		}
 	}
-	if err = e.readiness(ctx, plan, operationID, result.ContainerID); err == nil {
+	storageCheck := func(context.Context) error { return nil }
+	if storage != nil {
+		storageCheck = func(checkContext context.Context) error {
+			return storage.verify(checkContext, e, plan, candidate, result.ContainerID)
+		}
+	}
+	if err = e.readiness(ctx, plan, operationID, result.ContainerID, storageCheck); err == nil {
 		result.Outcome = "succeeded"
 		result.Ready = true
 		return result
@@ -415,9 +462,17 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 		result.Uncertain = true
 		return result
 	}
+	if storage != nil && storageCheck(ctx) != nil {
+		result.Uncertain = true
+		return result
+	}
 	// Readiness failed after known successful start. Preserve the stopped prior
 	// container and recover it only while this attempt still owns live authority.
 	if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "stop", "--time", "5", result.ContainerID); err != nil {
+		result.Uncertain = true
+		return result
+	}
+	if storage != nil && storage.confirmStopped(ctx, e, *candidate) != nil {
 		result.Uncertain = true
 		return result
 	}
@@ -430,6 +485,10 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 		return result
 	}
 	if !plan.RetainPrevious {
+		if storage != nil && storage.verify(ctx, e, plan, nil, "") != nil {
+			result.Uncertain = true
+			return result
+		}
 		if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "start", plan.PreviousHealthy.ContainerID); err != nil {
 			result.Uncertain = true
 			return result
@@ -439,7 +498,16 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 	restored.Snapshot = plan.PreviousHealthy.Snapshot
 	restored.Release = plan.PreviousHealthy.Release
 	restored.Hash = plan.PreviousHealthy.PlanHash
-	if err = e.readiness(ctx, restored, plan.PreviousHealthy.OperationID, plan.PreviousHealthy.ContainerID); err != nil {
+	restored.Storage = nil
+	if plan.PreviousHealthy.Storage != nil {
+		restored.Storage = &plan.PreviousHealthy.Storage.Plan
+	}
+	if storage != nil {
+		storageCheck = func(checkContext context.Context) error {
+			return storage.verify(checkContext, e, plan, nil, plan.PreviousHealthy.ContainerID)
+		}
+	}
+	if err = e.readiness(ctx, restored, plan.PreviousHealthy.OperationID, plan.PreviousHealthy.ContainerID, storageCheck); err != nil {
 		result.Uncertain = true
 		return result
 	}
@@ -447,7 +515,7 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 	return result
 }
 
-func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPlan, operationID, containerID string) error {
+func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPlan, operationID, containerID string, checks ...func(context.Context) error) error {
 	deadline, cancel := context.WithTimeout(ctx, time.Duration(plan.Snapshot.Readiness.TimeoutSeconds)*time.Second)
 	defer cancel()
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, DisableKeepAlives: true}
@@ -455,6 +523,11 @@ func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPla
 	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	probeURL := "http://127.0.0.1:" + strconv.Itoa(plan.Snapshot.HostPort) + plan.Snapshot.Readiness.Path
 	for {
+		for _, check := range checks {
+			if err := check(deadline); err != nil {
+				return err
+			}
+		}
 		if err := e.verifyDaemon(deadline, plan.Release.DaemonID); err != nil {
 			return err
 		}
@@ -475,6 +548,11 @@ func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPla
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 			_ = response.Body.Close()
 			if response.StatusCode >= 200 && response.StatusCode <= 399 {
+				for _, check := range checks {
+					if err := check(deadline); err != nil {
+						return err
+					}
+				}
 				return nil
 			}
 		}
@@ -499,6 +577,12 @@ func (e *imageEngine) Observe(ctx context.Context, operation domain.HostingOpera
 	expected := operation.ReconciliationHealthy
 	if operation.Result != nil && operation.Plan != nil && operation.Release != nil {
 		expected = &domain.HostingHealthy{Snapshot: operation.Snapshot, OperationID: operation.ID, ContainerID: operation.Result.ContainerID, Release: *operation.Release, PlanHash: operation.Plan.Hash}
+		if operation.Snapshot.Storage != (domain.HostingStorageRef{}) && operation.Result.Outcome == "succeeded" {
+			if operation.ReconciliationHealthy == nil || operation.ReconciliationHealthy.ContainerID != expected.ContainerID || operation.ReconciliationHealthy.PlanHash != expected.PlanHash || operation.ReconciliationHealthy.Snapshot != expected.Snapshot || operation.ReconciliationHealthy.OperationID != expected.OperationID || operation.ReconciliationHealthy.Release != expected.Release {
+				return observation, errors.New("durable healthy storage origin evidence missing")
+			}
+			expected.Storage = operation.ReconciliationHealthy.Storage
+		}
 		if operation.Result.Outcome != "succeeded" {
 			if !operation.Result.Restored || operation.Plan.PreviousHealthy == nil {
 				return observation, errors.New("no durable prior healthy result")
@@ -518,7 +602,21 @@ func (e *imageEngine) Observe(ctx context.Context, operation domain.HostingOpera
 		return observation, nil
 	}
 	plan := domain.HostingApplyPlan{Snapshot: expected.Snapshot, Release: expected.Release, Hash: expected.PlanHash}
-	if err = e.readiness(ctx, plan, expected.OperationID, expected.ContainerID); err != nil {
+	check := func(context.Context) error { return nil }
+	if domain.ValidateHostingHealthyStorage(*expected) != nil {
+		return observation, errors.New("healthy storage evidence changed")
+	}
+	if expected.Storage != nil {
+		plan.Storage = &expected.Storage.Plan
+		var known []domain.HostingHealthy
+		if operation.Plan != nil {
+			known = storagePlanUsers(*operation.Plan)
+		}
+		check = func(checkContext context.Context) error {
+			return e.verifyStorageObservation(checkContext, *expected, known)
+		}
+	}
+	if err = e.readiness(ctx, plan, expected.OperationID, expected.ContainerID, check); err != nil {
 		return observation, err
 	}
 	observation.ContainerID = expected.ContainerID
@@ -552,7 +650,7 @@ func (e *imageEngine) EnsurePreparedRelease(ctx context.Context, release domain.
 func (e *imageEngine) Cleanup(ctx context.Context, plan domain.HostingCleanupPlan) domain.HostingResult {
 	result := domain.HostingResult{Outcome: "failed", DaemonID: plan.Target.Release.DaemonID, ImageID: plan.Target.Release.ImageID, ContainerID: plan.Target.ContainerID, PlanHash: plan.Hash}
 	expected, err := domain.CompileHostingCleanupPlan(plan.Target, plan.CurrentHealthyOperationID)
-	if err != nil || expected.Hash != plan.Hash || !dockerObjectID.MatchString(plan.Target.ContainerID) || !imageNamespace.MatchString(plan.Target.Snapshot.RuntimeNamespace) {
+	if err != nil || expected.Hash != plan.Hash || domain.ValidateHostingHealthyStorage(plan.Target) != nil || !dockerObjectID.MatchString(plan.Target.ContainerID) || !imageNamespace.MatchString(plan.Target.Snapshot.RuntimeNamespace) {
 		return result
 	}
 	absent := func() (bool, error) {
@@ -584,6 +682,10 @@ func (e *imageEngine) Cleanup(ctx context.Context, plan domain.HostingCleanupPla
 			return result
 		}
 		target := plan.Target
+		if target.Storage != nil && (!storageContainerMatches(container, target) || e.verifyHealthyStorageVolume(ctx, target) != nil) {
+			result.Uncertain = true
+			return result
+		}
 		ports := container.HostConfig.PortBindings[strconv.Itoa(target.Snapshot.ContainerPort)+"/tcp"]
 		if !ownedImageContainer(container, target.Snapshot.BindingID, target.OperationID, target.Release.Hash, target.PlanHash) || container.Image != target.Release.ImageID || len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(target.Snapshot.HostPort) {
 			result.Uncertain = true
@@ -594,6 +696,10 @@ func (e *imageEngine) Cleanup(ctx context.Context, plan domain.HostingCleanupPla
 				result.Uncertain = true
 				return result
 			}
+		}
+		if target.Storage != nil && (&ownedStorageExecution{}).confirmStopped(ctx, e, target) != nil {
+			result.Uncertain = true
+			return result
 		}
 		if _, err = e.mutate(ctx, target.Release.DaemonID, "container", "rm", target.ContainerID); err != nil {
 			result.Uncertain = true
