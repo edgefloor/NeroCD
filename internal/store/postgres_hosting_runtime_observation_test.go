@@ -500,6 +500,10 @@ func TestPostgresHostingObservationSerializesGrantRevocation(t *testing.T) {
 		}
 	}()
 	waitObservationBlock(t, ctx, f, blocker.Conn().PgConn().PID(), "resources")
+	var reportPID uint32
+	if err = f.db.QueryRow(ctx, `SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%resources%'`, blocker.Conn().PgConn().PID()).Scan(&reportPID); err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		_, e := f.pg.RevokeDestinationProject(ctx, f.destination.ID, f.resource.ProjectID, destinationEvent("observation_revoke"))
 		revoke <- e
@@ -508,7 +512,7 @@ func TestPostgresHostingObservationSerializesGrantRevocation(t *testing.T) {
 	defer tick.Stop()
 	for {
 		var waiting bool
-		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%LockHostingDestination%' AND query NOT LIKE '%pg_stat_activity%')`).Scan(&waiting); err != nil {
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)) AND (query LIKE '%LockHostingDestination%' OR query LIKE '%LockHostingExecutionDestination%') AND query NOT LIKE '%pg_stat_activity%')`, reportPID).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
