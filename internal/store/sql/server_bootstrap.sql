@@ -64,3 +64,49 @@ UPDATE server_bootstrap_commands AS c SET receipt=jsonb_build_object('command_id
 UPDATE runner_enrollments SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE used_at IS NULL AND id=(SELECT o.body->'ids'->>'enrollment_id' FROM server_bootstrap_operations o WHERE o.id=$1);
 -- name: BootstrapReadLock :one
 SELECT * FROM server_bootstrap_operations WHERE id=$1 FOR SHARE;
+
+-- name: BootstrapListIDs :many
+SELECT id FROM server_bootstrap_operations
+WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3;
+
+-- name: BootstrapDueOperations :many
+SELECT o.id FROM server_bootstrap_operations o
+WHERE NOT o.restore_held AND o.created_at + interval '1 hour'>clock_timestamp()
+AND (
+  o.state='installed_waiting_enrollment'
+  OR o.state='registered' AND EXISTS(
+    SELECT 1 FROM server_bootstrap_commands g
+    WHERE g.operation_id=o.id AND g.action='install' AND g.body->>'grant_project'='true'
+  )
+  OR EXISTS(
+    SELECT 1 FROM server_bootstrap_commands c
+    WHERE c.operation_id=o.id AND c.receipt IS NULL AND c.deadline>clock_timestamp()
+    AND c.attempt<8 AND (c.lease_expires_at IS NULL OR c.lease_expires_at<=clock_timestamp())
+  )
+)
+ORDER BY md5(o.id || floor(extract(epoch FROM clock_timestamp())/5)::text) LIMIT 64;
+
+-- name: BootstrapHasSettledIntent :one
+SELECT EXISTS(
+  SELECT 1 FROM server_bootstrap_commands
+  WHERE operation_id=$1 AND action='install' AND effect_intent
+  AND (lease_expires_at<=clock_timestamp() OR receipt IS NOT NULL)
+)::boolean;
+
+-- name: BootstrapReconcileIntent :exec
+UPDATE server_bootstrap_commands
+SET receipt=jsonb_build_object(
+  'receipt',sqlc.arg(receipt)::jsonb || jsonb_build_object(
+    'command_id',id,'lease_id',lease_id,'attempt',attempt,'fence',fence
+  ),
+  'operation',sqlc.arg(operation)::jsonb
+)
+WHERE operation_id=sqlc.arg(operation_id) AND action='install' AND effect_intent
+AND receipt IS NULL AND lease_expires_at<=clock_timestamp();
+
+-- name: BootstrapEnrollmentConsumed :one
+SELECT EXISTS(
+  SELECT 1 FROM runner_enrollments e JOIN runners r ON r.id=e.runner_id
+  WHERE e.id=$1 AND e.runner_id=$2 AND e.used_at IS NOT NULL
+  AND e.consume_request_id IS NOT NULL AND e.credential_hash=r.token_hash AND r.status='active'
+)::boolean;
