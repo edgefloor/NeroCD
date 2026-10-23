@@ -367,8 +367,11 @@ func (s *Server) validatePagination(r *http.Request) error {
 	// or trusting a caller-provided Pattern. Authentication still runs on dispatch.
 	if r.Method == http.MethodGet {
 		_, pattern := s.mux.Handler(r)
-		if pattern == "GET /api/v1/hosting-builds/{id}/logs" {
+		switch pattern {
+		case "GET /api/v1/hosting-builds/{id}/logs":
 			limit = domain.HostingBuildLogReadLimit
+		case "GET /api/v1/runtime-log-sessions/{id}/logs":
+			limit = domain.HostingRuntimeLogReadLimit
 		}
 	}
 	query := r.URL.Query()
