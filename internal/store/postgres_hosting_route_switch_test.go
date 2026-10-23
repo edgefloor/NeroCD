@@ -560,12 +560,17 @@ func TestPostgresVerifiedSwitchConcurrentDestinationWithdrawal(t *testing.T) {
 }
 
 func TestPostgresVerifiedSwitchAuthorityAfterAdmissionAuditWait(t *testing.T) {
-	for _, revoke := range []string{"expiry", "capability"} {
+	for _, revoke := range []string{"expiry", "capability", "token_expiry"} {
 		t.Run(revoke, func(t *testing.T) {
 			f := switchControlFixture(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
-			op, err := f.pg.RequestHostingRouteSwitch(ctx, f.resource.ID, "pop_audit_wait_switch", "usr_bootstrap", f.input("audit-wait"), destinationEvent("audit_wait_switch"))
+			actor := "usr_bootstrap"
+			if revoke == "token_expiry" {
+				principal, _ := proxyLegacyToken(t, f.pg, proxyTokenApplication(t, f.pg), "tok_strict_admission", []string{domain.RoleSystemAdmin})
+				actor = principal.ID
+			}
+			op, err := f.pg.RequestHostingRouteSwitch(ctx, f.resource.ID, "pop_audit_wait_switch", actor, f.input("audit-wait"), destinationEvent("audit_wait_switch"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -596,6 +601,11 @@ func TestPostgresVerifiedSwitchAuthorityAfterAdmissionAuditWait(t *testing.T) {
 			}
 			if revoke == "expiry" {
 				if _, err = f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, a.LeaseID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if revoke == "token_expiry" {
+				if _, err = f.db.Exec(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, actor); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -635,7 +645,11 @@ func TestPostgresVerifiedSwitchAuthorityAfterAdmissionAuditWait(t *testing.T) {
 			} else {
 				for {
 					var expired bool
-					if err = f.db.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM run_leases WHERE id=$1`, a.LeaseID).Scan(&expired); err != nil {
+					query, identity := `SELECT expires_at<=clock_timestamp() FROM run_leases WHERE id=$1`, a.LeaseID
+					if revoke == "token_expiry" {
+						query, identity = `SELECT expires_at<=clock_timestamp() FROM api_tokens WHERE id=$1`, actor
+					}
+					if err = f.db.QueryRow(ctx, query, identity).Scan(&expired); err != nil {
 						t.Fatal(err)
 					}
 					if expired {

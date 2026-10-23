@@ -364,6 +364,9 @@ func (s *PostgresStore) RunnerProxyApplyBegin(ctx context.Context, runner string
 		if err = proxyAuthority(ctx, tx, runner, a, true); err != nil {
 			return domain.HostingProxyOperation{}, err
 		}
+		if err = proxyCheckLegacyToken(ctx, tx, op.CreatedBy); err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
 	}
 	return op, tx.Commit(ctx)
 }
