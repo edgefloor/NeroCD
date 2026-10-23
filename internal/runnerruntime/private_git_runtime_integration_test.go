@@ -165,6 +165,8 @@ func TestPrivateFixtureResourcePolicyPostgres(t *testing.T) {
 		Token string `json:"token"`
 	}
 	f.request(t, "POST", "/api/v1/sessions", "", map[string]string{"email": "viewer@example.local", "password": "viewer"}, 201, &viewer)
+	f.request(t, "GET", runtimePath, viewer.Token, nil, 403, nil)
+	f.request(t, "POST", "/api/v1/project-members", f.admin, map[string]string{"project_id": resource.ProjectID, "email": "viewer@example.local", "role": "viewer"}, 200, nil)
 	f.request(t, "GET", runtimePath, viewer.Token, nil, 200, &runtime)
 	f.request(t, "PUT", runtimePath, viewer.Token, domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: resource.Generation, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("a", 32), Entries: []domain.HostingRuntimeEntry{}}, 403, nil)
 	t.Log("real API/service/PostgreSQL source edit preserves exact trusted fixture policy; name-only edit leaves complete source unchanged; generation-zero runtime GET, viewer read/write denial and anonymous denial passed")
