@@ -246,7 +246,9 @@ func TestAutomaticDeploymentGitBridgeFixedTarget(t *testing.T) {
 	}
 }
 
-func automaticRuntimeGit(t *testing.T) ([4]string, func(int)) {
+// The four public revisions serve the reusable UI journey. Two later fixed
+// private revisions exercise supersession without replaying an accepted commit.
+func automaticRuntimeGit(t *testing.T) ([4]string, func(int), [2]string) {
 	t.Helper()
 	root := t.TempDir()
 	work := filepath.Join(root, "work")
@@ -271,10 +273,10 @@ func automaticRuntimeGit(t *testing.T) ([4]string, func(int)) {
 		return strings.TrimSpace(string(out))
 	}
 	run(work, "init", "-q", "-b", "main")
-	var commits [4]string
-	for i, letter := range []string{"A", "B", "C", "D"} {
+	var commits [6]string
+	for i, letter := range []string{"A", "B", "C", "D", "E", "F"} {
 		dockerfile := "FROM " + hostingbuild.StaticImage + "\nCOPY index.html /usr/share/nginx/html/index.html\n"
-		if i == 2 {
+		if i == 2 || i == 5 {
 			dockerfile += "RUN false\n"
 		}
 		if i == 3 {
@@ -349,7 +351,7 @@ func automaticRuntimeGit(t *testing.T) ([4]string, func(int)) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
-	return commits, func(i int) { run(bare, "update-ref", "refs/heads/main", commits[i]) }
+	return [4]string{commits[0], commits[1], commits[2], commits[3]}, func(i int) { run(bare, "update-ref", "refs/heads/main", commits[i]) }, [2]string{commits[4], commits[5]}
 }
 
 type automaticApplyBarrier struct {
@@ -360,6 +362,7 @@ type automaticApplyBarrier struct {
 type automaticRuntimeFixture struct {
 	Control                                                      *pushHTTPFixture
 	Commits                                                      [4]string
+	guardCommits                                                 [2]string
 	move                                                         func(int)
 	t                                                            *testing.T
 	ctx                                                          context.Context
@@ -396,7 +399,7 @@ func newAutomaticRuntimeFixture(t *testing.T) *automaticRuntimeFixture {
 		}
 	})
 	roots, publicRoot := automaticFixtureTrust(t, root)
-	commits, move := automaticRuntimeGit(t)
+	commits, move, guards := automaticRuntimeGit(t)
 	engine := hostingbuild.Config{DockerBinary: "/usr/local/bin/docker", Socket: "/var/run/docker.sock", BuildxBinary: "/fixture/buildx", BuildxSHA256: os.Getenv("NEROCD_BUILDX_SHA256"), PlannerImage: os.Getenv("NEROCD_PLANNER_IMAGE"), StateDir: filepath.Join(root, "build-state"), CgroupRoot: os.Getenv("NEROCD_CGROUP_ROOT")}
 	policy := pushTestPolicy()
 	policy.Platform = "linux/" + runtime.GOARCH
@@ -448,7 +451,7 @@ func newAutomaticRuntimeFixture(t *testing.T) *automaticRuntimeFixture {
 	if _, err = f.service.BindResourceDestination(admin, unrelated.ID, app.ResourceBindingInput{DestinationID: f.target.Destination.ID}); err != nil {
 		t.Fatal(err)
 	}
-	out := &automaticRuntimeFixture{Control: f, Commits: commits, move: move, t: t, ctx: ctx, root: root, logs: &runtimeFixtureLog{}, roots: roots, unrelated: unrelated, buildConfig: filepath.Join(root, "build.json"), credential: filepath.Join(root, "credential"), apiCA: filepath.Join(root, "api-ca.pem"), proxyRoots: filepath.Join(root, "proxy-roots.pem"), proxyState: filepath.Join(root, "proxy")}
+	out := &automaticRuntimeFixture{Control: f, Commits: commits, guardCommits: guards, move: move, t: t, ctx: ctx, root: root, logs: &runtimeFixtureLog{}, roots: roots, unrelated: unrelated, buildConfig: filepath.Join(root, "build.json"), credential: filepath.Join(root, "credential"), apiCA: filepath.Join(root, "api-ca.pem"), proxyRoots: filepath.Join(root, "proxy-roots.pem"), proxyState: filepath.Join(root, "proxy")}
 	out.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runners/hosting/apply-begin" {
 			if barrier := out.applyBarrier.Swap(nil); barrier != nil {
@@ -841,7 +844,7 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 	}
 	f.ProbeHTTPS("push fixture B\n")
 	// Pause one accepted operation before its first API mutation admission. The
-	// fixed signed newer desired revision must retire it without Docker effects.
+	// fresh fixed signed newer desired revision must retire it without Docker effects.
 	barrier := &automaticApplyBarrier{entered: make(chan struct{}), release: make(chan struct{}), finished: make(chan struct{})}
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(barrier.release) }) }
@@ -855,24 +858,35 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 	if err = f.StartRunner(); err != nil {
 		t.Fatal(err)
 	}
-	f.SignedPush(216, 1)
+	guardPush := func(delivery, index int) {
+		f.move(4 + index)
+		control.mu.Lock()
+		control.head = f.guardCommits[index]
+		control.mu.Unlock()
+		var policy domain.GitHubPushPolicy
+		control.request(http.MethodGet, path, control.owner, nil, http.StatusOK, &policy)
+		control.push(policy, delivery, f.guardCommits[index])
+	}
+	guardPush(216, 0)
 	select {
 	case <-barrier.entered:
+	case <-f.ctx.Done():
+		t.Fatal("actual first-mutation barrier context canceled")
 	case <-time.After(4 * time.Minute):
 		t.Fatal("actual accepted automatic apply did not reach first-mutation barrier")
 	}
 	var pending domain.GitHubPushPolicy
 	control.request(http.MethodGet, path, control.owner, nil, http.StatusOK, &pending)
-	if pending.AutomaticDeployment == nil || pending.AutomaticDeployment.DesiredCommit != f.Commits[1] || pending.AutomaticDeployment.DeploymentOperationID == "" {
-		t.Fatal("barrier did not bind an accepted exact B automatic operation")
+	if pending.AutomaticDeployment == nil || pending.AutomaticDeployment.DesiredCommit != f.guardCommits[0] || pending.AutomaticDeployment.DeploymentOperationID == "" {
+		t.Fatal("barrier did not bind an accepted exact E automatic operation")
 	}
 	blockedID := pending.AutomaticDeployment.DeploymentOperationID
-	f.SignedPush(217, 2)
+	guardPush(217, 1)
 	until := time.Now().Add(3 * time.Second)
 	for {
 		var latest domain.GitHubPushPolicy
 		control.request(http.MethodGet, path, control.owner, nil, http.StatusOK, &latest)
-		if latest.DesiredCommit == f.Commits[2] && latest.AutomaticDeployment != nil && latest.AutomaticDeployment.DesiredCommit == f.Commits[2] {
+		if latest.DesiredCommit == f.guardCommits[1] && latest.AutomaticDeployment != nil && latest.AutomaticDeployment.DesiredCommit == f.guardCommits[1] {
 			break
 		}
 		if time.Now().After(until) {
@@ -896,11 +910,14 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 	if err != nil || blocked.MutationHold || blocked.Result != nil {
 		t.Fatal("superseded operation retained host effects", err)
 	}
-	// Check real Docker, not only stored status: the exact previously serving B
-	// remains the sole container for its image; no new candidate was created.
-	containers, err := exec.CommandContext(f.ctx, "/usr/local/bin/docker", "ps", "-aq", "--no-trunc", "--filter", "ancestor="+b.Artifact.ImageID).Output()
-	if err != nil || strings.TrimSpace(string(containers)) != deployment.Result.ContainerID {
-		t.Fatal("superseded apply changed actual B containers", err)
+	// Check real Docker, not only stored status: the superseded exact E image
+	// has no container. Its different content cannot alias the serving B image.
+	if blocked.Snapshot.LocalBuild.Artifact.ImageID == "" || blocked.Snapshot.LocalBuild.Artifact.ImageID == b.Artifact.ImageID {
+		t.Fatal("guard revision did not produce its own distinct exact artifact")
+	}
+	containers, err := exec.CommandContext(f.ctx, "/usr/local/bin/docker", "ps", "-aq", "--no-trunc", "--filter", "ancestor="+blocked.Snapshot.LocalBuild.Artifact.ImageID).Output()
+	if err != nil || strings.TrimSpace(string(containers)) != "" {
+		t.Fatal("superseded apply created an actual E container", err)
 	}
 	f.ProbeHTTPS("push fixture B\n")
 	t.Logf("actual first-mutation denial: operation=%s HTTP409 no apply admission, no hold or Docker candidate; original B and unrelated HTTPS preserved", blockedID)

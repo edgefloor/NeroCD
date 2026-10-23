@@ -34,7 +34,7 @@ operation IDs. Source C executes `RUN false` and produces no artifact or deploy;
 source D builds a 503 workload and must never switch. Both preserve B's HTTPS. Duplicate B and delayed A deliveries do not replace B.
 C's durably acknowledged failure must allow D to execute on the same running
 agent PID, with no intervening restart. A final fixed first-apply barrier accepts
-a B operation, records a newer signed C desired revision before admission, and
+a fresh fixed E operation, records a newer signed fixed F desired revision before admission, and
 requires HTTP 409, no mutation receipt/hold, no actual Docker candidate, and
 preserved B/unrelated HTTPS.
 
