@@ -60,6 +60,8 @@ test("owner configures signed push builds, manually deploys B, and sees failed C
   const verified = page.waitForResponse((r) => new URL(r.url()).pathname === `${policyPath}/verify` && r.request().method() === "POST");
   await panel.getByRole("button", { name: "Verify GitHub repository and branch", exact: true }).focus(); await page.keyboard.press("Enter"); expect((await verified).status()).toBe(200);
   await expect(panel.getByRole("button", { name: "Enable build on push", exact: true })).toBeEnabled();
+  const baseline = await page.request.get(`/api/v1/resources/${meta.resource_id}/builds?limit=20&offset=0`); expect(baseline.status()).toBe(200);
+  const initialACount = (await baseline.json() as { items: Array<{ source_receipt?: { commit: string } }> }).items.filter((item) => item.source_receipt?.commit === meta.expected_commit_a).length;
   const enabled = page.waitForResponse((r) => new URL(r.url()).pathname === `${policyPath}/enabled` && r.request().method() === "POST");
   await panel.getByRole("button", { name: "Enable build on push", exact: true }).focus(); await page.keyboard.press("Enter"); expect((await enabled).status()).toBe(200);
   async function step(command: "push-b" | "duplicate-b" | "delayed-a" | "fail-next-build" | "push-c" | "complete") { const result = await page.request.post(`${meta.step_path}${command}`, { headers: { Origin: meta.base_url, "X-NeroCD-CSRF": "1" } }); expect(result.status(), command).toBe(204); }
@@ -75,10 +77,10 @@ test("owner configures signed push builds, manually deploys B, and sees failed C
   const buildHistory = await page.request.get(`/api/v1/resources/${meta.resource_id}/builds?limit=20&offset=0`); expect(buildHistory.status()).toBe(200);
   const recorded = (await buildHistory.json() as { items: Array<{ source_receipt?: { commit: string } }> }).items;
   expect(recorded.filter((item) => item.source_receipt?.commit === meta.expected_commit_b)).toHaveLength(1);
-  expect(recorded.some((item) => item.source_receipt?.commit === meta.expected_commit_a)).toBe(false);
+  expect(recorded.filter((item) => item.source_receipt?.commit === meta.expected_commit_a)).toHaveLength(initialACount);
   const deliveryHistory = await page.request.get(`${policyPath}/deliveries?limit=20`); expect(deliveryHistory.status()).toBe(200);
-  const delivered = (await deliveryHistory.json() as { items: Array<{ after_commit: string; state: string; build_id: string }> }).items;
-  const delayed = delivered.find((item) => item.after_commit === meta.expected_commit_a); expect(delayed).toBeTruthy(); expect(["obsolete", "ignored", "coalesced"]).toContain(delayed!.state); expect(["", buildB]).toContain(delayed!.build_id);
+  const delivered = (await deliveryHistory.json() as { items: Array<{ after_commit: string; verified_commit: string; state: string; build_id: string }> }).items;
+  const delayed = delivered.find((item) => item.after_commit === meta.expected_commit_a); expect(delayed).toBeTruthy(); expect(delayed!.state).toBe("coalesced"); expect(delayed!.verified_commit).toBe(meta.expected_commit_b); expect(delayed!.build_id).toBe(buildB);
   await panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true }).click();
   await expect(panel.getByRole("list", { name: "GitHub push deliveries", exact: true })).toContainText(meta.expected_commit_b);
   await article.getByRole("button", { name: "Refresh build history", exact: true }).click(); await article.getByRole("button", { name: `View build ${buildB}`, exact: true }).click();
