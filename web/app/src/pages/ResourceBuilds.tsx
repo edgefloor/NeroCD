@@ -10,6 +10,7 @@ import { maximumPageOffset } from "@/router/search";
 import { BuildLogs } from "./BuildLogs";
 import { eligibleSourceGrant, sourceGrantKeys, sourceGrantsQuery } from "@/api/hosting-source-grants";
 import { ResourceSourceGrants, useSourceGrantAccess } from "./ResourceSourceGrants";
+import { ResourceGithubPushBuilds } from "./ResourceGithubPushBuilds";
 import { LocalBuildDeployment } from "./LocalBuildDeployment";
 const names: Record<string, string> = { queued: "Queued", sourcing: "Acquiring source", building: "Building artifact", succeeded: "Succeeded", failed: "Failed", canceled: "Canceled", cleanup_required: "Cleanup required" };
 const buttonClass = "h-auto max-w-full whitespace-normal break-all";
@@ -60,7 +61,7 @@ function BuildIdentity(props: { resource: Resource; writable: boolean; blocked: 
   const principal = useQuery(principalQuery());
   if (!principal.data) return <p role={principal.isError ? "alert" : "status"}>{principal.isError ? "Unable to load build identity. Reload to refresh access." : "Loading build identity..."}</p>;
   const actor = JSON.stringify([principal.data.provider, principal.data.id]);
-  return <Builds key={JSON.stringify([actor, props.resource.project_id, props.resource.id, props.writable])} {...props} actor={actor} blocked={props.blocked || principal.isError} />;
+  return <><ResourceGithubPushBuilds actor={actor} resource={props.resource} blocked={props.blocked || principal.isError} /><Builds key={JSON.stringify([actor, props.resource.project_id, props.resource.id, props.writable])} {...props} actor={actor} blocked={props.blocked || principal.isError} /></>;
 }
 function Builds({ resource, writable, blocked, actor }: { resource: Resource; writable: boolean; blocked: boolean; actor: string }) {
   const client = useQueryClient();
