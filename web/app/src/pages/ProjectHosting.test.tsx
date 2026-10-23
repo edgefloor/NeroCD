@@ -6,6 +6,7 @@ import * as api from "@/api/hosting";
 import { ProjectHosting } from "./ProjectHosting";
 
 vi.mock("./ResourceRuntimeStatus", () => ({ ResourceRuntimeStatus: ({ resource, blocked }: { resource: { name: string }; blocked: boolean }) => <div data-testid="runtime-status" data-blocked={String(blocked)}>Runtime status for {resource.name}</div> }));
+vi.mock("./ResourceRuntimeLogs", () => ({ ResourceRuntimeLogs: ({ resource, blocked }: { resource: { name: string }; blocked: boolean }) => <div data-testid="runtime-logs" data-blocked={String(blocked)}>Runtime logs for {resource.name}</div> }));
 vi.mock("./ResourceRuntimeConfiguration", () => ({ ResourceRuntimeConfiguration: ({ resource }: { resource: { name: string } }) => <div>Runtime variables for {resource.name}</div> }));
 vi.mock("./ResourceBuilds", () => ({ ResourceBuilds: ({ resource }: { resource: { name: string } }) => <div>Build controls for {resource.name}</div> }));
 vi.mock("./ResourceRoutes", () => ({ ResourceRoutes: ({ resource }: { resource: { name: string } }) => <div>Resource routes for {resource.name}</div> }));
@@ -268,9 +269,11 @@ test("private Git source edits retain access until an explicit public selection"
 test("runtime status remains independent of inherited legacy failures but resource errors block it", async () => {
   const { client } = setup(true, true); await selectEnvironment();
   expect(screen.getByTestId("runtime-status").getAttribute("data-blocked")).toBe("false");
+  expect(screen.getByTestId("runtime-logs").getAttribute("data-blocked")).toBe("false");
   vi.mocked(api.listResources).mockRejectedValue(new Error("resource unavailable"));
   await act(async () => { await client.invalidateQueries({ queryKey: ["hostingResources"] }); });
   await waitFor(() => expect(screen.getByTestId("runtime-status").getAttribute("data-blocked")).toBe("true"));
+  expect(screen.getByTestId("runtime-logs").getAttribute("data-blocked")).toBe("true");
 });
 test("runtime status clears while the current resource is revalidated", async () => {
   const { client } = setup(); await selectEnvironment();

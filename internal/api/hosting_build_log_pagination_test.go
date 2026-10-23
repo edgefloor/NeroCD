@@ -78,3 +78,57 @@ func TestHostingBuildLogPaginationPreservesBoundsAndLegacyRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestHostingRuntimeLogPaginationUsesOnlyRegisteredGETRoute(t *testing.T) {
+	server, _ := newTestServer()
+	token := createTestSession(t, server)
+	for _, query := range []string{"", "?limit=100", "?limit=101", "?limit=200", "?after_sequence=0&limit=200"} {
+		t.Run("accepted"+query, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/runtime-log-sessions/rls_test/logs"+query, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			// Authorized dispatch reaches the deliberately unavailable memory log
+			// repository, proving both pagination boundaries accepted the request.
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("got%d body%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	for _, query := range []string{"?limit=201", "?limit=-1", "?limit=1.5", "?limit=bad", "?limit=", "?limit=1&limit=2"} {
+		t.Run("rejected"+query, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/runtime-log-sessions/rls_test/logs"+query, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("got%d body%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	for _, path := range []string{"/api/v1/runtime-log-sessions/rls_test/logs-more", "/api/v1/runtime-log-sessions/rls_test/logs/extra", "/api/v1/projects"} {
+		req := httptest.NewRequest(http.MethodGet, path+"?limit=101", nil)
+		req.Pattern = "GET /api/v1/runtime-log-sessions/{id}/logs"
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("lookalike or unrelated route got%d", rec.Code)
+		}
+	}
+	for _, method := range []string{http.MethodHead, http.MethodPost} {
+		req := httptest.NewRequest(method, "/api/v1/runtime-log-sessions/rls_test/logs?limit=101", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("method%s got%d", method, rec.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runtime-log-sessions/rls_test/logs?limit=200", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("typed route bypassed authentication: %d", rec.Code)
+	}
+}

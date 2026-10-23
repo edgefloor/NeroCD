@@ -14,6 +14,7 @@ import { ResourceBuilds } from "./ResourceBuilds";
 import { ResourceDeployments } from "./ResourceDeployments";
 import { ResourceRuntimeConfiguration } from "./ResourceRuntimeConfiguration";
 import { ResourceRuntimeStatus } from "./ResourceRuntimeStatus";
+import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
 
 const pageSize = 20;
 const selectClass = "h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm";
@@ -158,6 +159,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <ResourceBuilds resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {/* Status verifies its own viewer authority and does not depend on legacy task reads. */}
       <ResourceRuntimeStatus resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} />
+      <ResourceRuntimeLogs resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} />
       <ResourceRuntimeConfiguration resource={resource} blocked={blocked || resources.isError || resources.isPending} />
       <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceRoutes resource={resource} writable={writable} blocked={blocked || resources.isError} />
