@@ -994,3 +994,100 @@ func TestPostgresLocalObservationCommittedReplaySurvivesLostAuthority(t *testing
 		t.Fatal("receipt replay duplicated writes", receipts, audits, err)
 	}
 }
+
+// Outer owners may combine admission with their own durable writes. Neither
+// admission nor its exact replay may close that caller-owned transaction.
+func TestPostgresHostingBuildDeploymentOuterTransaction(t *testing.T) {
+	f, b := successfulLocalBuildFixture(t)
+	stop := startBuildController(t, f)
+	ctx := t.Context()
+	if err := stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	counts := func(db interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}) [8]int {
+		t.Helper()
+		var out [8]int
+		err := db.QueryRow(ctx, `SELECT
+   (SELECT count(*) FROM hosting_operations),
+   (SELECT count(*) FROM hosting_snapshots),
+   (SELECT count(*) FROM hosting_operation_build_artifacts),
+   (SELECT count(*) FROM hosting_release_claims),
+   (SELECT count(*) FROM hosting_release_slots),
+   (SELECT count(*) FROM hosting_binding_state),
+   (SELECT count(*) FROM audit_events),
+   (SELECT count(*) FROM river_job)`).Scan(&out[0], &out[1], &out[2], &out[3], &out[4], &out[5], &out[6], &out[7])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	before := counts(f.db)
+	in := localBuildDeploymentInput(b.ID)
+	event := destinationEvent("outer-local-admission")
+	tx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tx.Rollback(cleanup); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Error("outer transaction cleanup", err)
+		}
+	}()
+	pending, replayed, err := store.RequestHostingBuildDeploymentTxForTest(ctx, f.pg, tx, "outer-local-operation", f.src.ResourceID, "usr_bootstrap", in, event)
+	if err != nil || replayed {
+		t.Fatal("outer admission", replayed, err)
+	}
+	inside := counts(tx)
+	if inside[0] != before[0]+1 || inside[7] != before[7]+1 {
+		t.Fatal("missing tentative operation/job", inside, before)
+	}
+	if outside := counts(f.db); outside != before {
+		t.Fatal("uncommitted admission escaped outer transaction", outside, before)
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := counts(f.db); after != before {
+		t.Fatal("outer rollback left operation/snapshot/artifact/port/audit/job", after, before)
+	}
+	tx, err = f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, replayed, err := store.RequestHostingBuildDeploymentTxForTest(ctx, f.pg, tx, pending.ID, f.src.ResourceID, "usr_bootstrap", in, event)
+	if err != nil || replayed {
+		t.Fatal("retry after rollback", replayed, err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	committed := counts(f.db)
+	if committed[0] != before[0]+1 || committed[6] != before[6]+1 || committed[7] != before[7]+1 {
+		t.Fatal("commit effects differ", committed, before)
+	}
+	replay, err := f.pg.RequestHostingBuildDeployment(ctx, "ignored-outer-replay", f.src.ResourceID, "usr_bootstrap", in, destinationEvent("ignored-outer-audit"))
+	if err != nil || replay.ID != admitted.ID || replay.Snapshot != admitted.Snapshot {
+		t.Fatal("public wrapper commit equivalence", err)
+	}
+	tx, err = f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, replayed, err = store.RequestHostingBuildDeploymentTxForTest(ctx, f.pg, tx, "ignored-helper-replay", f.src.ResourceID, "usr_bootstrap", in, destinationEvent("ignored-helper-audit"))
+	if err != nil || !replayed {
+		t.Fatal("helper replay", replayed, err)
+	}
+	if _, err = tx.Exec(ctx, `SELECT 1`); err != nil {
+		t.Fatal("helper replay closed outer transaction", err)
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := counts(f.db); after != committed {
+		t.Fatal("replay changed durable effects", after, committed)
+	}
+}
