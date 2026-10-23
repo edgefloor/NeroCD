@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`aa88f62e76a4ef964900db17bf81515e141da03b`, 2026-10-23, through migration 0055.
+`0a9422194e8bff7485e7fb20c02f74418ea2ce51`, 2026-10-23, through migration 0055.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -34,12 +34,12 @@ remain distinct acceptance claims.
 | Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Scoped managed build/runtime delivery, broader variable scopes, provider credentials and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
 | Admission and protected delivery | Migration 0053 admission and protected runner endpoint; metadata authorization/audit before decryption, bounded original window; journal format 8 persists only nonsecret references and delivery ID | Broader runtime qualification |
-| Runtime execution and status controls | Opt-in CLI/API applies literal/exact managed versions via protected Docker stdin; bounded challenge/report and viewer freshness API, migration 0054 | Runtime logs and disk/CPU metrics |
-| Runtime configuration UI and collector | Accepted authenticated browser deployment journey and opt-in independent Docker/loopback collector; four targets per 10-second cycle with fair selection | Read-only status dashboard is accepted; runtime-log control and migration 0055 are accepted; live collection/viewing remain unimplemented; no per-resource 10-second guarantee |
-| Status dashboard and enrollment commands | Bounded current/stale/historical target display under current viewer authority; enrollment command uses persisted exact capabilities and configuration prerequisites | Runtime-log collector/viewer, SSH automation, complete readiness and general metrics |
+| Runtime execution and status controls | Opt-in CLI/API applies literal/exact managed versions via protected Docker stdin; bounded challenge/report and viewer freshness API, migration 0054 | Broader log qualification and disk/CPU metrics |
+| Runtime configuration UI and collector | Accepted authenticated browser deployment journey and opt-in independent Docker/loopback collector; four targets per 10-second cycle with fair selection | Read-only status dashboard is accepted; runtime-log control and migration 0055 are accepted; bounded live collector/viewer are accepted; no per-resource 10-second guarantee |
+| Status dashboard and enrollment commands | Bounded current/stale/historical target display under current viewer authority; enrollment command uses persisted exact capabilities and configuration prerequisites | Broader log qualification, SSH automation, complete readiness and general metrics |
 | Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack, owner grant selection and Dockerfile UI through exact artifact deployment and test-CA HTTPS | Automatic-builder private UI qualification, provider integrations, compiled static, remote publication and hosting cache |
 | Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
-| Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Runtime application logs, continuous status, resource actions and terminals |
+| Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Broader runtime log/status coverage, resource actions and terminals |
 | Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Public DNS/production ACME qualification, broader certificate modes, continuous observations and hosting preview access |
 
 
@@ -47,7 +47,7 @@ The [hosting ledger](compatibility.md#accepted-foundations-and-evidence)
 contains exact revisions and limits. Public Git builds, same-host artifact
 deployment, explicit route selection and typed build output are accepted.
 Private provider breadth, broader variable/managed-secret delivery, production TLS
-qualification, runtime logs, continuous status collection and the broader hosting
+qualification, broader runtime-log/status coverage and the broader hosting
 workflows remain incomplete.
 Test-only DNS and a trusted CA do not establish public production ACME.
 
@@ -75,9 +75,9 @@ exact local artifact deployment and test-CA HTTPS. See the
 A03 remains partial. The private browser fixture does not qualify an automatic
 builder or provider integrations, and test-CA HTTPS is not production ACME.
 
-The next H1 slice is runtime-log collection and viewing on the accepted control
-API and migration 0055, followed by the other H1 gaps. The adapter is in progress
-and unaccepted; live collection and viewing remain unimplemented. This serves R29–R32,
+The live runtime-log slice is accepted within the limits below. Next H1 work
+includes provider-authenticated deploy-on-push control on the accepted exact-revision
+prerequisite, plus the other hosting gaps. This serves R29–R32,
 R58–R60 and the applicable hosting acceptance scenarios, including A28 and A29.
 Use existing resources, Go application authorization, managed-secret versions,
 PostgreSQL/River and fenced runner execution. Do not require a collaboration
@@ -139,14 +139,28 @@ host readiness remain separate work. Runtime-log control and migration 0055 are
 accepted at `aa88f62e76a4ef964900db17bf81515e141da03b`, including decoder repair
 `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`. Actor sessions, renewal, stop,
 bounded retained reads, exact runner claims/events, counters, replay gaps and purge
-are accepted prerequisites. Live collection/viewing remain unimplemented, and the
-adapter in progress remains unaccepted. The earlier failed integration
+are accepted prerequisites. Live collection and the embedded viewer are accepted
+at `3a2b524ca622a7ebfba761c590803d110192cb9f`. The real registered settled
+deployment fixture verifies fresh Docker stdout/stderr through the compiled
+collector and API into the embedded viewer. Follow admits 30-second demand;
+retention/source gaps and revocation remain explicit. Manual enrollment includes
+`--hosting-runtime-logs` matched to persisted `hosting_runtime_logs_v1`; it does
+not qualify SSH-assisted enrollment or full A01. Known bearer redaction does not
+remove arbitrary application secrets, and delivery is not exactly once. The earlier failed integration
 `3af3fbb3153d0450bf600e62df40a14faf583b72` retains its historical decoder failure;
 the accepted repair resolves that blocker without establishing complete A29. Disk/CPU metrics remain planned.
 Docker administrators can inspect environment values;
 controlled log scans do not prove arbitrary output is secret-free. Broader value
 inheritance, provider delivery, SSH, webhooks and production TLS qualification
 remain separate hosting work.
+
+Exact trigger-revision source `21349d3e2492dca8b8b3ca3d99132085889360e8` is accepted
+at `0a9422194e8bff7485e7fb20c02f74418ea2ce51`. A trusted internal caller freezes
+the intended commit before first checkout, with capability-gated admission and
+execution, revision-bound idempotency and no branch fallback. Manual public API
+requests retain their existing configured source behavior. Provider event
+authentication, webhook installation and concurrent push ordering remain future
+controller work. See the [contract and qualification](hosting-build-trigger-revision.md).
 
 ## Hosting-dependency test
 

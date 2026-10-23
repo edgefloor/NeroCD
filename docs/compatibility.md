@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`aa88f62e76a4ef964900db17bf81515e141da03b`, 2026-10-23.
+`0a9422194e8bff7485e7fb20c02f74418ea2ce51`, 2026-10-23.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -66,7 +66,9 @@ artifact deployment, build output and private Git control-plane contracts:
 | Independent runtime collector | Source `bd9638c227db67e10d1ee9647b40c60c5676f0a5`, accepted `132012237ee484e9cd6fce2fba656966567a1cc8`; [operator contract](hosting-runtime-observation.md), [real gate](../acceptance/runtime-hosting-observation/gate.sh) | Opt-in `--hosting-observation` with matching persisted `hosting_observation_v1` capability; read-only narrow Docker status and loopback readiness; fair selection of four targets per 10-second cycle, not a 10-second per-resource guarantee; no metrics; status UI was absent at that checkpoint and is accepted below |
 | Runtime-status dashboard | Source `e5bc0b6aa85bae5ef409ebf3e8e6758fe30f45f6`, accepted `24c363fd22ac8237a09c12040386a442b0a3ff53`; [status UI](../web/app/src/pages/ResourceRuntimeStatus.tsx), [read contract](hosting-runtime-observation.md#resource-status-in-the-webui) | Bounded read-only current/stale/historical target evidence under current viewer authorization; timeout and retry handling; real compiled collector/browser proof uses seeded accounts/resources/deployment; no general metrics, complete onboarding, public ACME or complete A28 |
 | Enrollment command capability repair | Accepted `1c4e7076cde2c79d2aa3d46eb4de2133d72e8a3e`; [command helper](../web/app/src/lib/runner-enrollment-command.ts) | Command uses exact persisted capabilities and exposes configuration prerequisites; does not qualify SSH-assisted enrollment or complete host readiness |
-| Runtime-log control | Decoder repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`, accepted `aa88f62e76a4ef964900db17bf81515e141da03b`; [API](../internal/api/hosting_runtime_logs_handlers.go), [PostgreSQL tests](../internal/store/postgres_hosting_runtime_logs_test.go) | Migration 0055 and 173-route contract; actor sessions/renewal/stop/bounded retained reads; exact runner claims/events, counters, replay gaps and purge; no live log collector/viewer; adapter in progress is unaccepted; no complete A29 |
+| Runtime-log control | Decoder repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`, accepted `aa88f62e76a4ef964900db17bf81515e141da03b`; [API](../internal/api/hosting_runtime_logs_handlers.go), [PostgreSQL tests](../internal/store/postgres_hosting_runtime_logs_test.go) | Migration 0055 and 173-route contract; actor sessions/renewal/stop/bounded retained reads; exact runner claims/events, counters, replay gaps and purge; live collector/viewer were absent at that checkpoint and are accepted below |
+| Live runtime logs and embedded viewer | Accepted `3a2b524ca622a7ebfba761c590803d110192cb9f`; [collector contract](hosting-runtime-logs.md), [viewer contract](hosting-runtime-log-viewer.md), [real gate](../acceptance/runtime-hosting-logs/gate.sh) | Bounded R59/A29 evidence: registered settled deployment, fresh Docker stdout/stderr, compiled collector, API and embedded viewer; explicit Follow/30-second demand, retention/source gaps and revocation; `--hosting-runtime-logs` must match persisted `hosting_runtime_logs_v1`; trusted Unix Docker with json-file/local drivers; additional TTY proof has synthetic provenance; raw application output can be sensitive, known bearer redaction is bounded and delivery is not exactly once |
+| Exact trigger-revision prerequisite | Source `21349d3e2492dca8b8b3ca3d99132085889360e8`, accepted `0a9422194e8bff7485e7fb20c02f74418ea2ce51`; [contract and qualification](hosting-build-trigger-revision.md) | Trusted internal caller freezes commit before checkout; runner revision capability enforced; revision-bound idempotency; public/private HTTPS checkout preserves selected commit after branch movement and rejects unavailable commits without fallback; no provider event authentication, webhook installation or deploy-on-push controller |
 
 The desired-configuration foundation passed actual PostgreSQL and focused race
 checks, 718 frontend tests, the 163-route contract, generated-output checks and
@@ -87,9 +89,50 @@ controlled output; Docker administrators can inspect environment values.
 The configuration UI and independent collector are now accepted at the revisions
 above. The bounded runtime-status dashboard and enrollment command repair are now
 accepted at the revisions above. Runtime-log control and migration 0055 are now
-accepted at `aa88f62e76a4ef964900db17bf81515e141da03b`. Live log collection and
-viewing remain unimplemented; the adapter in progress is unaccepted. These
-additions do not complete A28, A29 or hosting parity.
+accepted at `aa88f62e76a4ef964900db17bf81515e141da03b`. The live collector,
+embedded viewer and manual enrollment log profile are now accepted at
+`3a2b524ca622a7ebfba761c590803d110192cb9f`. Independent runtime status remains
+accepted. The new path provides bounded R59/A29 coverage, not full Coolify parity.
+Exact trigger-revision source `21349d3e2492dca8b8b3ca3d99132085889360e8` is now
+accepted at `0a9422194e8bff7485e7fb20c02f74418ea2ce51`. This is a trusted internal
+build prerequisite. No provider push controller, event authentication or webhook
+installation is supplied.
+
+Accepted roll-forward evidence records the real 86.96-second combined log gate
+at `3a2b524ca622a7ebfba761c590803d110192cb9f`, including registered settled
+deployment, fresh Docker stdout/stderr, compiled collector, API and embedded
+viewer. The fixture uses seeded accounts, placement and image setup, verified
+test-CA TLS and a trusted Unix Docker daemon with json-file/local drivers.
+Additional TTY evidence uses synthetic provenance. Follow admits 30-second demand;
+retention, source gaps and revocation remain explicit. Known bearer redaction is
+bounded; application stdout may contain sensitive values and delivery is not
+exactly once. Manual enrollment emits the exact log flag/capability agreement;
+SSH automation and full A01 remain unqualified.
+
+Introduced lint reported zero issues, the contract has 173 routes, and the full
+Go build passed. Retained 864 frontend tests and focused race evidence remain
+at `ac598e53466fbe6827e0f4d79723f51df5695a85`; production paths were unchanged
+by the fixture-close repair. Twenty enrollment tests remain attributed to
+`2f15c86f8e6b713eb1a72943fd4646a1b86e2543`.
+At accepted roll-forward, 73 primary HTTP-served assets matched embedded files
+and the 74-file manifest
+`002c9dc9ff0567a822e17c1c4c1cf3f79b0290fd34ffaa29dfdb2134121e3432`.
+The main binary hash at that log checkpoint was
+`cf022655b79acdd6ce86f3efd2cb3e83add878db73cf6347d4d6bbcad6a503c1`.
+That binary and manifest describe the accepted log roll-forward checkpoint.
+The later accepted trigger integration `0a9422194e8bff7485e7fb20c02f74418ea2ce51`
+passed five PostgreSQL tests and a 12.58-second compiled CLI gate: commit A was
+admitted, the branch moved to B, and the runner built/served A. Controlled public
+and private TLS checkout verified exact revision handling and no unavailable-commit
+fallback. These fixtures use trusted routing, seeded initial setup and a test CA;
+they do not qualify provider authentication, production ACME or a complete
+acceptance scenario. Trigger-affected PostgreSQL evidence of 108.392/8.019 seconds
+remains attributed to source `21349d3e2492dca8b8b3ca3d99132085889360e8`.
+Fresh main contract checks passed 173 routes, and 73 HTTP-served assets matched
+embedded files and the 74-file manifest
+`f95e4d116c52dfeadc3ccf3686cf6484e4e654c13255c34bfa84c2e4d2b623a3`.
+Earlier evidence retains its original revision and does not describe the current
+static artifact or imply a rerun.
 
 The earlier integration `3af3fbb3153d0450bf600e62df40a14faf583b72` failed combined
 client decoding checks. Repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff` resolves
@@ -99,12 +142,13 @@ Fresh accepted evidence includes the 1.38-second API/PostgreSQL log round trip,
 full runner-client check. Retained full-store 346.320-second and 811-frontend-test
 evidence remains attributed to `3af3fbb3153d0450bf600e62df40a14faf583b72`; the
 repair did not change the store or frontend paths supporting that evidence.
-The accepted main binary hash is
+The main binary hash at that control checkpoint was
 `586e4a754378f9882a447d088f986ef31f389bb92cd4ec90563fd760277d71a6`.
-The asset manifest remains
+The asset manifest at that control checkpoint was
 `7e8208110b92416f7ed20984141a0f63690bdd138fab331e028b1c8773ba607a`.
 The current contract has 173 routes and accepted migrations extend through 0055.
-These results establish control prerequisites, not live collection or a viewer.
+Those earlier results establish control prerequisites; accepted live collection
+and viewer evidence is recorded above.
 
 At accepted dashboard integration `24c363fd22ac8237a09c12040386a442b0a3ff53`,
 combined evidence records 811 frontend tests in 73 files and a 75.63-second real
@@ -204,13 +248,13 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | Inputs without Git | C2, C3, C8 | partial: public-image API/UI deployment freezes selected output without a repository; stored-Dockerfile product input, pasted Compose and catalog sources planned | A05, A15, A21; no-git-source | P04, P08, P11 |
 | Build placement | C4 | partial: controller dispatches to the exact configured enrolled build agent and fixed daemon; registry publication and dedicated-server image delivery planned | A07, A13; registry-push-pull, architecture-mismatch | P02, P05; tags never relocate stateful destinations |
 | Domains and HTTPS | C5 | partial: standalone Traefik TLS engine and authorized whole-generation backend/dispatch; explicitly capable agent execution and managed routing UI accepted with local test-CA fixtures; public DNS/production ACME and additional proxy modes remain unvalidated | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
-| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup; automatic public traffic switching, push triggers and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
+| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; automatic public traffic switching, provider push controller and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | planned: managed volumes, directories, managed files and external host files | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
 | Databases | C7 | planned: engine-specific lifecycle; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
 | Service catalog | C8 | planned: versioned definitions, stable generated values and explicit upgrades | A21, A22; catalog-version, component-upgrade | P11, P18; initial tested catalog expands through explicit version fixtures |
 | Variables and secrets | C16 | partial: runner_file execution plus encrypted project-managed versions, create/rotate/owner reveal/revoke and protected UI; managed execution delivery, broader scopes, recovery workflows and external providers planned | A03, A18, A35; scope-denial, redaction, key-recovery, revoked-version | P03; separate build/runtime/preview grants; external-provider versions explicit |
-| Ongoing operations | C9 | partial: run logs, runner evidence, typed build output/viewer and opt-in independent runtime collector; accepted bounded runtime-status dashboard; runtime logs and broader resource actions remain unaccepted or planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
+| Ongoing operations | C9 | partial: run logs, runner evidence, typed build output/viewer and opt-in independent runtime collector; accepted bounded runtime-status dashboard; bounded live runtime logs/viewer are accepted; broader resource actions remain planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
 | Recovery | C18–C20, C15 | partial: platform backup identity, image mutation/restore holds, bounded readiness-failure restoration and standalone proxy state recovery; trusted restored-ownership resumption and hosted data recovery planned | A25–A27, A37; resume-failure, new-resource-restore | P10; platform, database, storage and release rollback are distinct |
 | Automation | C21, C22 | planned: resource-bound schedules and durable notifications | A25, A30, A31; notification matrix below | P14; occurrence identity, DST, overlap and missed-run policies required |
 | Programmatic access | C1 | partial: native REST/CLI, generated client, image/secret/placement/retained-cleanup UI and proxy backend API; public source/build API/UI accepted within operator-policy bounds; private-source control API and typed credential client accepted; private HTTPS runtime and bounded UI accepted; complete hosting CLI/MCP planned, managed routing UI accepted within fixture bounds, R65 ongoing | A35, A36; interface-parity, keyboard-mobile | P16; every interface uses the same authorized application operations |

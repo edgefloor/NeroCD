@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`aa88f62e76a4ef964900db17bf81515e141da03b`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`0a9422194e8bff7485e7fb20c02f74418ea2ce51`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - PostgreSQL state, checked migrations through 0055, bootstrap administration,
@@ -62,10 +62,17 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   Disk/CPU metrics remain pending.
 - Runtime-log control through migration 0055: actor sessions, renewal, stop and
   bounded retained reads, plus exact runner claims/events, counters, replay gaps
-  and purge. The decoder repair is accepted; live collection and viewing remain
-  unimplemented. This does not complete A29.
+  and purge. The accepted live adapter and embedded viewer connect fresh Docker stdout/stderr
+  from a registered settled deployment through the compiled collector and API.
+  Choose Follow to admit 30-second demand. Reads show source and retention gaps;
+  access revocation clears sensitive state. Known bearer redaction is bounded,
+  and raw application output can contain secrets. See the
+  [collector](docs/hosting-runtime-logs.md) and
+  [viewer](docs/hosting-runtime-log-viewer.md) limits.
 - Enrollment commands use the exact persisted capabilities and identify runner
-  configuration prerequisites. This does not qualify SSH-assisted enrollment or
+  configuration prerequisites, including `--hosting-runtime-logs` matched to
+  persisted `hosting_runtime_logs_v1` in the manual hosting profile. This does not
+  qualify SSH-assisted enrollment or
   complete host readiness.
 - Runtime configuration UI for public literals and exact managed-secret versions,
   generation compare-and-swap, idempotent retries and fresh deployment generations.
@@ -85,6 +92,11 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   builds, and a Dockerfile WebUI journey through output, same-host deployment and
   test-CA HTTPS. Provider breadth, automatic-builder UI qualification, compiled
   static coverage and complete A03 remain separate work. See the [accepted limits](docs/compatibility.md#accepted-foundations-and-evidence).
+- [Exact trigger revisions](docs/hosting-build-trigger-revision.md) admitted by a
+  trusted internal caller are frozen before checkout and require the runner's
+  revision capability. Public/private HTTPS checkout builds the selected commit
+  even after a branch moves; unavailable commits fail without branch fallback.
+  Provider webhook authentication and deploy-on-push control remain planned.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
@@ -104,9 +116,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. The next H1 work is runtime-log collection and
-viewing on the accepted control API. The adapter is in progress and unaccepted. Other gaps include onboarding,
-broader credentials, trusted triggers, deployment policy, production TLS
+and extended compatibility. The next H1 gaps include the provider-authenticated
+deploy-on-push controller; its exact-revision prerequisite is accepted. Other gaps include onboarding,
+broader credentials, deployment policy, production TLS
 qualification, broader Compose/storage, databases, backups,
 restores, previews, terminals, schedules and notifications.
 
