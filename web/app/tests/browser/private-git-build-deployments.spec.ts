@@ -59,10 +59,15 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  expect(grantResponse.request().postDataJSON()).toMatchObject({ secret_id: meta.secret_id, secret_version: meta.secret_version, expected_resource_generation: 2, expected_source_generation: 2, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
  expect(Object.keys(grantResponse.request().postDataJSON()).sort()).toEqual(["expected_resource_generation", "expected_source_generation", "request_id", "secret_id", "secret_version"]);
  const buildForm = article.getByRole("region", { name: "Request private Git build", exact: true });
+ // Editing saves new generations without silently changing a reviewed build draft.
+ await buildForm.getByRole("button", { name: "Refresh current build source", exact: true }).click();
+ await expect(buildForm.getByRole("region", { name: "Current build source", exact: true })).toContainText("resource generation 2");
+ await buildForm.getByRole("button", { name: "Use reviewed source for a separate build", exact: true }).click();
+ await expect(buildForm.getByText(/Reviewed source:/)).toContainText("resource generation 2 / source generation 2");
  await buildForm.getByRole("combobox", { name: "Private source grant", exact: true }).selectOption(createdGrant.id);
  await buildForm.getByLabel(/I reviewed this exact private HTTPS Git source/).check();
  const buildResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/resources/${meta.resource_id}/builds` && response.request().method() === "POST");
- await buildForm.getByRole("button", { name: "Request private Git build", exact: true }).focus(); await page.keyboard.press("Enter");
+ await expect(buildForm.getByRole("button", { name: "Request private Git build", exact: true })).toBeEnabled(); await buildForm.getByRole("button", { name: "Request private Git build", exact: true }).focus(); await page.keyboard.press("Enter");
  const admission = await buildResponse; expect(admission.status()).toBe(202); expect(admission.request().postDataJSON().grant_id).toBe(createdGrant.id);
  const build = (await admission.json() as { build: { id: string; snapshot: { source: { credential_kind: string } } } }).build; expect(build.snapshot.source.credential_kind).toBe("https_basic");
  const detail = article.getByRole("region", { name: "Build operation detail", exact: true }); await expect(detail.getByText("Succeeded", { exact: true })).toBeVisible({ timeout: 180_000 });
@@ -88,7 +93,7 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  expect((await page.request.post(meta.failure_path, { headers: { Origin: meta.origin } })).status()).toBe(204);
  await buildForm.getByRole("combobox", { name: "Private source grant", exact: true }).selectOption(createdGrant.id); await buildForm.getByLabel(/I reviewed this exact private HTTPS Git source/).check();
  const failedAdmission = page.waitForResponse(r => new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}/builds` && r.request().method() === "POST");
- await buildForm.getByRole("button", { name: "Request private Git build", exact: true }).focus(); await page.keyboard.press("Enter"); const failedResponse = await failedAdmission; expect(failedResponse.status()).toBe(202); const failedID = (await failedResponse.json()).build.id;
+ await expect(buildForm.getByRole("button", { name: "Request private Git build", exact: true })).toBeEnabled(); await buildForm.getByRole("button", { name: "Request private Git build", exact: true }).focus(); await page.keyboard.press("Enter"); const failedResponse = await failedAdmission; expect(failedResponse.status()).toBe(202); const failedID = (await failedResponse.json()).build.id;
  await expect(detail.getByText("Failed", { exact: true })).toBeVisible({ timeout: 180_000 });
  const failed = await (await page.request.get(`/api/v1/hosting-builds/${failedID}`)).json(); expect(failed.build.state).toBe("failed"); expect(failed.build.artifact).toBeUndefined(); expect(failed.build.failure_code).toBe("build_failed");
  await expect(detail.getByRole("button", { name: "Deploy selected build", exact: true })).toHaveCount(0);
