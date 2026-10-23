@@ -117,11 +117,12 @@ test("owner configures signed push builds, manually deploys B, and sees failed C
   const viewerContext = await browser.newContext({ baseURL: meta.base_url, viewport: { width: 390, height: 1000 } });
   try {
     const viewer = await viewerContext.newPage(); const viewerReads: string[] = [];
-    viewer.on("request", (r) => { if (/\/managed-secrets|\/service-accounts|\/source-grants/.test(new URL(r.url()).pathname)) viewerReads.push(r.url()); });
+    viewer.on("request", (r) => { const path = new URL(r.url()).pathname; if (path.startsWith("/api/v1/") && /\/(?:managed-secrets|service-accounts|source-grants)(?:\/|$)/.test(path)) viewerReads.push(r.url()); });
     await signIn(viewer, true); const read = (await resourceArticle(viewer, meta)).getByRole("region", { name: "Build on push", exact: true });
     await expect(read.getByRole("list", { name: "GitHub push deliveries", exact: true })).toBeVisible(); await expect(read.getByRole("form")).toHaveCount(0); expect(viewerReads).toEqual([]);
     const forbidden = await viewer.request.post(`${policyPath}/verify`, { headers: { Origin: meta.base_url, "X-NeroCD-CSRF": "1" }, data: { expected_policy_generation: configured.generation, request_id: crypto.randomUUID() } }); expect(forbidden.status()).toBe(403);
     for (const width of [320, 390, 430, 1440]) { await viewer.setViewportSize({ width, height: 1000 }); expect(await viewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await read.screenshot({ path: `/tmp/nerocd-github-push-ui-viewer-${width}.png` }); }
+    expect(viewerReads).toEqual([]);
   } finally { await viewerContext.close(); }
   expect(commands.filter((command) => command.path === policyPath)).toHaveLength(2); expect(forbiddenReads).toEqual([]);
   await step("complete");
