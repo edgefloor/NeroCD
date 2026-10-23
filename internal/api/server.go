@@ -242,6 +242,9 @@ func (s *Server) clientSource(r *http.Request) string {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") || strings.HasPrefix(r.URL.Path, "/api/v1/servers/") && strings.HasSuffix(r.URL.Path, "/readiness") {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if r.URL.Path == "/api/v1/runners/builds/source-credential" || r.URL.Path == "/api/v1/runners/hosting/runtime-environment" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
@@ -322,6 +325,9 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	limit := maxJSONBodyBytes
+	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") {
+		limit = domain.ServerReadinessJSONLimit
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/resources/") && strings.Contains(r.URL.Path, "/github-push-policy") {
 		limit = domain.GitHubPushControlLimit
 	}
@@ -432,6 +438,8 @@ func requiresAuth(path string) bool {
 
 func requiresRunnerAuth(path string) bool {
 	switch path {
+	case "/api/v1/runner/server-readiness/challenge", "/api/v1/runner/server-readiness/report":
+		return true
 	case "/api/v1/runners/runtime-log-sessions/claim", "/api/v1/runners/runtime-log-sessions/events":
 		return true
 	case "/api/v1/runners/hosting-observations/targets", "/api/v1/runners/hosting-observations/report":

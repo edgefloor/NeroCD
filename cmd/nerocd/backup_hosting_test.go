@@ -107,6 +107,43 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer source.Close()
+
+	// Preserve readiness on both an unused server and a bound server in the backup.
+	// Successful restore must invalidate both pending and accepted state atomically.
+	if _, err = source.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,'hosting_readiness_v1') WHERE id='runner_backup'`); err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := pg.IssueServerReadiness(ctx, runner.ID, "backup_credential")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := domain.ServerReadinessReport{SampleID: challenge.SampleID, Profile: challenge.Profile, OS: "unknown", Architecture: "unknown", Execution: "disabled", Configuration: "mismatch", Docker: "unreachable", DaemonOS: "unknown", DaemonArchitecture: "unknown", CLI: "unknown", WorkRoot: "unknown", JournalRoot: "unknown", Error: "local_check_failed"}
+	if _, err = pg.ReportServerReadiness(ctx, runner.ID, "backup_credential", report); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.IssueServerReadiness(ctx, runner.ID, "backup_credential"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = source.Exec(ctx, `INSERT INTO runner_enrollments(id,token_hash,runner_id,runner_name,tags,capabilities,created_by,created_at,expires_at,used_at,consume_request_id,credential_hash) VALUES('enroll_unused','unused_enroll','runner_unused','unused','{}',ARRAY['compose_deploy','hosting_readiness_v1'],'usr_bootstrap',clock_timestamp(),clock_timestamp()+interval '1 hour',clock_timestamp(),'consume_unused','unused_credential')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = source.Exec(ctx, `INSERT INTO runners(id,name,tags,capabilities,status,registered_at,last_heartbeat_at,token_hash) VALUES('runner_unused','unused','{}',ARRAY['compose_deploy','hosting_readiness_v1'],'active',clock_timestamp(),clock_timestamp(),'unused_credential')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = pg.CreateServerWithDestination(ctx, domain.Server{ID: "server_unused", RunnerID: "runner_unused", Name: "unused", CreatedBy: "usr_bootstrap", CreatedAt: now}, domain.Destination{ID: "dest_unused", ServerID: "server_unused", Name: "default", RuntimeKind: "docker_compose", CreatedAt: now}, event("unused")); err != nil {
+		t.Fatal(err)
+	}
+	unused, err := pg.IssueServerReadiness(ctx, "runner_unused", "unused_credential")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SampleID = unused.SampleID
+	if _, err = pg.ReportServerReadiness(ctx, "runner_unused", "unused_credential", report); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.IssueServerReadiness(ctx, "runner_unused", "unused_credential"); err != nil {
+		t.Fatal(err)
+	}
 	// A disabled configured proxy with no operations still needs restore fencing.
 	if _, err = source.Exec(ctx, `INSERT INTO hosting_proxies(id,server_id,destination_id,runner_id,control_project_id,configuration,enabled,created_by) VALUES('proxy_backup','server_backup','dest_backup','runner_backup','proj_platform','{}',false,'usr_bootstrap')`); err != nil {
 		t.Fatal(err)
@@ -207,6 +244,10 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		}
 		var held, proxyHeld, revoked, expired bool
 		err = target.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_binding_restore_holds WHERE binding_id='binding_backup'),EXISTS(SELECT 1 FROM hosting_proxy_restore_holds WHERE proxy_id='proxy_backup'),(SELECT revoked_at IS NOT NULL FROM sessions WHERE id='session_backup'),(SELECT status='expired' FROM run_leases WHERE id='lease_backup')`).Scan(&held, &proxyHeld, &revoked, &expired)
+		var readinessCount int
+		if queryErr := target.QueryRow(ctx, `SELECT count(*) FROM server_readiness`).Scan(&readinessCount); queryErr != nil || (!failHold && readinessCount != 0) || (failHold && readinessCount != 2) {
+			t.Fatal("readiness restore invalidation", readinessCount, queryErr)
+		}
 		var sourceConsistent bool
 		if queryErr := target.QueryRow(ctx, `SELECT nerocd_hosting_git_resource_schema_compatible() AND EXISTS(SELECT 1 FROM resources r JOIN hosting_build_sources h ON h.id=r.source->'git'->>'source_id' AND h.generation=(r.source->'git'->>'generation')::bigint JOIN hosting_build_source_versions v ON v.source_id=h.id AND v.generation=h.generation WHERE r.id='res_git_backup' AND v.body->>'repository_url'='https://github.com/acme/backup.git')`).Scan(&sourceConsistent); queryErr != nil || !sourceConsistent {
 			t.Fatal("restored Git source reference/schema", sourceConsistent, queryErr)
