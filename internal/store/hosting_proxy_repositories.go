@@ -49,3 +49,10 @@ type HostingRouteSwitchReadRepository interface {
 	HostingRouteSwitchOptions(context.Context, string, string, string) (domain.HostingRouteSwitchOptions, error)
 	HostingRouteSwitchOperation(context.Context, string, string, string) (domain.HostingProxyOperationView, error)
 }
+
+// HostingProxyRecoveryRepository repairs only metadata after accepted terminal effects.
+type HostingProxyRecoveryRepository interface {
+	HostingProxyRecovery(context.Context, string, string) (domain.HostingProxyRecoveryStatus, error)
+	PlanHostingProxyRecovery(context.Context, string, string, string, domain.HostingProxyRecoveryInput, domain.AuditEvent) (domain.HostingProxyRecoveryPlan, error)
+	ApplyHostingProxyRecovery(context.Context, string, string, string, string, domain.HostingProxyRecoveryApplyInput, domain.AuditEvent) (domain.HostingProxyRecoveryResolution, error)
+}

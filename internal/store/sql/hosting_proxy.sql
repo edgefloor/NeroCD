@@ -120,7 +120,7 @@ EXISTS(SELECT 1 FROM hosting_proxy_restore_holds h WHERE h.proxy_id=o.proxy_id) 
 (SELECT body FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='prepared') AS prepared,
 (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='complete') AS complete_receipt,
 (SELECT body FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='complete') AS result
- ,EXISTS(SELECT 1 FROM audit_events WHERE target_id=o.id AND action='hosting.route_switch_metadata_conflict') AS metadata_conflict
+ ,COALESCE((EXISTS(SELECT 1 FROM audit_events WHERE target_id=o.id AND action='hosting.route_switch_metadata_conflict') AND NOT EXISTS(SELECT 1 FROM hosting_proxy_recovery_resolutions WHERE operation_id=o.id)),false)::boolean AS metadata_conflict
 FROM hosting_proxy_operations o WHERE o.id=$1;
 
 -- name: ProxyRouteOperation :one
