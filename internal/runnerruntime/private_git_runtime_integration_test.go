@@ -22,6 +22,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -221,7 +223,162 @@ func privateRuntimeDatabase(t *testing.T) {
 
 }
 
-func privateRuntimeGit(t *testing.T, strategy string) (string, func(string, bool), string, string) {
+const compiledVitePackage = `{
+  "name": "nerocd-compiled-vite-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.6",
+  "engines": {
+    "node": "22.22.0"
+  },
+  "scripts": {
+    "build": "node ./node_modules/vite/bin/vite.js build"
+  },
+  "devDependencies": {
+    "vite": "8.2.2"
+  }
+}
+`
+
+// Frozen with Bun 1.3.6 from exact vite@8.2.2. It is source, not generated output.
+const compiledViteLock = `{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "nerocd-compiled-vite-fixture",
+      "devDependencies": {
+        "vite": "8.2.2",
+      },
+    },
+  },
+  "packages": {
+    "@oxc-project/types": ["@oxc-project/types@0.155.0", "", {}, "sha512-SeE8JPwW1xs1tHeNycjUtUBdhorRa8o4jlvjwk49R7/Z291i+4DQa7JJIgOm/TaYQZx+QrPQbVJ/9c8dMIZN8Q=="],
+
+    "@rolldown/binding-android-arm-eabi": ["@rolldown/binding-android-arm-eabi@1.2.15", "", { "os": "android", "cpu": "arm" }, "sha512-aLcgK9gIJ3YRvrrtfSBbRa27F5WrpiTaPulnFpsHPxpUHgFlSgnU4854MHwoRGEBhfRJDWCS2WQ7lIjskE9Olw=="],
+
+    "@rolldown/binding-android-arm64": ["@rolldown/binding-android-arm64@1.2.15", "", { "os": "android", "cpu": "arm64" }, "sha512-xD7DdZCrbThKuxNg7ooQmvp07ys4J/pnSEMTG3/OdOWl6daC67m/Q4fL78sRHMxTH/N4fGUbYhcPM0MF5WFHkg=="],
+
+    "@rolldown/binding-darwin-arm64": ["@rolldown/binding-darwin-arm64@1.2.15", "", { "os": "darwin", "cpu": "arm64" }, "sha512-m2WuQ6r0B4OTYxyPpNLtXaMRbRDUbG8YQV2Q3KTdSSK8Th6KHCnC8jVCJt8bvYeSB5WivkkNbc85mKadaSdOxA=="],
+
+    "@rolldown/binding-darwin-x64": ["@rolldown/binding-darwin-x64@1.2.15", "", { "os": "darwin", "cpu": "x64" }, "sha512-5RtnsHM36nodM9WbMy+zip0LGS/G+y5wro5RHrpOlr4ac24+1zSi9kiV2MP1myZeZ/ifEHfulQcWjnAXzc2C2A=="],
+
+    "@rolldown/binding-freebsd-x64": ["@rolldown/binding-freebsd-x64@1.2.15", "", { "os": "freebsd", "cpu": "x64" }, "sha512-g3l09pyFqhu+135JKkbkwiKGQmwU5hUMUPJ4VdBADvuqR8d33L6H578rh8m7rtxbdp+VmX/+nzI7nvhSZlzpUQ=="],
+
+    "@rolldown/binding-linux-arm-gnueabihf": ["@rolldown/binding-linux-arm-gnueabihf@1.2.15", "", { "os": "linux", "cpu": "arm" }, "sha512-nIe3VugI97nGQtspPxDqA4sXMUpeiocKIP/CqpY/u/vgbT+alX+cVxu1C/oVBPKg4feNTmYovE91v4DgXvXNwQ=="],
+
+    "@rolldown/binding-linux-arm64-gnu": ["@rolldown/binding-linux-arm64-gnu@1.2.15", "", { "os": "linux", "cpu": "arm64" }, "sha512-iTBjXx+B5QSvgI89lJfmqh4wTh8NabR1YZIIN3hNx4zSG0EVfVqkOvLulNpG4251pbd6/IAmZ/LefVk1Y4rPhw=="],
+
+    "@rolldown/binding-linux-arm64-musl": ["@rolldown/binding-linux-arm64-musl@1.2.15", "", { "os": "linux", "cpu": "arm64" }, "sha512-uN26XOnVR7rqQupG3V9oAG2EGGatWjcJHOeDOHUFCh4TBWmP2tHTFoVN13aYbwfm0aHqJAEmcwhAu6sooIjfqQ=="],
+
+    "@rolldown/binding-linux-ppc64-gnu": ["@rolldown/binding-linux-ppc64-gnu@1.2.15", "", { "os": "linux", "cpu": "ppc64" }, "sha512-9nWkcdd+H+XhaA3fQIwpHnKIrfx/PQ6rO0pivr78Og07tXlUlctBBJoEYLPfhTmCR/QxEVdn6uPjHV5SymPhdw=="],
+
+    "@rolldown/binding-linux-s390x-gnu": ["@rolldown/binding-linux-s390x-gnu@1.2.15", "", { "os": "linux", "cpu": "s390x" }, "sha512-Ggh0ciFjLwIusLSLz7LZYEaGdxOAUJXI+Qu5JCbhPJJHEt8vP+IjRATTJheiJsdzzTYgUiHUiw3X1Ea3ZpMBdA=="],
+
+    "@rolldown/binding-linux-x64-gnu": ["@rolldown/binding-linux-x64-gnu@1.2.15", "", { "os": "linux", "cpu": "x64" }, "sha512-FHg60rS6DBePAYZ9X9F67x+JObFdmgn6tupA1C/a3B+CufFmTD4mX+e8M75tCiAO3foR/6xwVBI0KQiI7sn/rw=="],
+
+    "@rolldown/binding-linux-x64-musl": ["@rolldown/binding-linux-x64-musl@1.2.15", "", { "os": "linux", "cpu": "x64" }, "sha512-/cvV/7v5VGz/moiz0XKRj2dE8DzsKyhIu1KpOvJGPjRywg3yscON889UGvAe8zfiJLHup7VLjBduoGWi3HusWQ=="],
+
+    "@rolldown/binding-openharmony-arm64": ["@rolldown/binding-openharmony-arm64@1.2.15", "", { "os": "none", "cpu": "arm64" }, "sha512-MyzC5Hrv/sm+Z7TSGKP/j8001RO2xQm1zOpCNVL4j0cY/VhBZviludA2YFQ7i4lH6ZAXxQm0lcMdBzM+99mE7w=="],
+
+    "@rolldown/binding-win32-arm64-msvc": ["@rolldown/binding-win32-arm64-msvc@1.2.15", "", { "os": "win32", "cpu": "arm64" }, "sha512-+PgYiS+AH5omy6L45ZLxybasauJaj3M8buoT83D+nzPmCayXlxUV9hydhciCKVyIg0B/v0BtXPDE1uGqNwCPpg=="],
+
+    "@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.2.15", "", { "os": "win32", "cpu": "x64" }, "sha512-HFZd2QNQYn1JbIi+Hpd7H+r/lkWxcfIu28nirZ6eCn2LafuvmExMlb/P96Sfx5tf7pPArw39IdhmCF8vmV+NhQ=="],
+
+    "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
+
+    "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
+
+    "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
+
+    "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
+
+    "lightningcss": ["lightningcss@1.33.0", "", { "dependencies": { "detect-libc": "^2.0.3" }, "optionalDependencies": { "lightningcss-android-arm64": "1.33.0", "lightningcss-darwin-arm64": "1.33.0", "lightningcss-darwin-x64": "1.33.0", "lightningcss-freebsd-x64": "1.33.0", "lightningcss-linux-arm-gnueabihf": "1.33.0", "lightningcss-linux-arm64-gnu": "1.33.0", "lightningcss-linux-arm64-musl": "1.33.0", "lightningcss-linux-x64-gnu": "1.33.0", "lightningcss-linux-x64-musl": "1.33.0", "lightningcss-win32-arm64-msvc": "1.33.0", "lightningcss-win32-x64-msvc": "1.33.0" } }, "sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA=="],
+
+    "lightningcss-android-arm64": ["lightningcss-android-arm64@1.33.0", "", { "os": "android", "cpu": "arm64" }, "sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg=="],
+
+    "lightningcss-darwin-arm64": ["lightningcss-darwin-arm64@1.33.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-Sciaz8eenNTKn9b3t7+xr0ipTp9YxKQY4npwQ3mrRuL0BAVHBLyZxofhaKBAVtzmtRZ/zTyo0/to4B1uWG/Djg=="],
+
+    "lightningcss-darwin-x64": ["lightningcss-darwin-x64@1.33.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-Z5UPAxzrjlWNNyGy6i65cJzzvgJ5D3T6wMvs+gWpY9d7qRhANrxqAp6LhxIgZhWEw18RfJTGcRxjuLIBr+m8XQ=="],
+
+    "lightningcss-freebsd-x64": ["lightningcss-freebsd-x64@1.33.0", "", { "os": "freebsd", "cpu": "x64" }, "sha512-QQM/Ti/hQajJwCY+RiWuCZ9sdtI/XQk7nDK5vC8kkdwixezOlDgvDx7+RT+QjK6FcFT4MpsuoBnHIo/O3StRRg=="],
+
+    "lightningcss-linux-arm-gnueabihf": ["lightningcss-linux-arm-gnueabihf@1.33.0", "", { "os": "linux", "cpu": "arm" }, "sha512-N7FVBe6iS24MlM6R/4RBTxGhQheZGs7tiQ9U32UtF75NzP5Q7xWPRqLBCKxlRQRk3rY1jCIPLzx7WzOhuUIRLQ=="],
+
+    "lightningcss-linux-arm64-gnu": ["lightningcss-linux-arm64-gnu@1.33.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-j2v/itmy4HlNxlc6voKXYgBqNi0Ng2LShg4z7GufpEgs05P+2suBVyi9I6YHq5uoVFx9ETin3eCEhLVyXGQnKg=="],
+
+    "lightningcss-linux-arm64-musl": ["lightningcss-linux-arm64-musl@1.33.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-yiO5ROMuYQgXbC60yjZU5CYSFZGKXL0HFATXt9mHJn1+zW55oCtMI9NfcVhYLMFDL7gV7oBPon/EmMMGg2OvtQ=="],
+
+    "lightningcss-linux-x64-gnu": ["lightningcss-linux-x64-gnu@1.33.0", "", { "os": "linux", "cpu": "x64" }, "sha512-ar+Ju7LmcN0Jo4FpL4hpFybwNG9/3A/Br5KW2n2jyODg3MEZXaDYADdemoNS+BDNfMgKvylJLj4S5tyRActuAg=="],
+
+    "lightningcss-linux-x64-musl": ["lightningcss-linux-x64-musl@1.33.0", "", { "os": "linux", "cpu": "x64" }, "sha512-RYiYbkokw0trfKqqzfF55lginwEPrD3OJDfTuJzFs1MK6iFnDenaz1fqLLtX4ITG3OktJQXOeTaw1awrBAlZPw=="],
+
+    "lightningcss-win32-arm64-msvc": ["lightningcss-win32-arm64-msvc@1.33.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-1K+MPfLSFVpphzpdbfkhlWk6wBrTObBzS2T6db10PNOZgR9GoVsAWzwNyuhUYYbTp23j+4RrncfujZ4uAzXvwA=="],
+
+    "lightningcss-win32-x64-msvc": ["lightningcss-win32-x64-msvc@1.33.0", "", { "os": "win32", "cpu": "x64" }, "sha512-OlEICDx/Xl0FqSp4bry8zFnCvGpig3Gl4gCquvYwHuqJKEC1+n9NgDniFvqHGmMv1ZkqDJrDqKKSykTDX+ehuA=="],
+
+    "nanoid": ["nanoid@3.3.20", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ=="],
+
+    "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
+
+    "picomatch": ["picomatch@4.0.7", "", {}, "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA=="],
+
+    "postcss": ["postcss@8.5.31", "", { "dependencies": { "nanoid": "^3.3.20", "picocolors": "^1.1.1", "source-map-js": "^1.2.2" } }, "sha512-YUbWYCgErwnMAVkjUnYa+KlMBzGpHwiIt/DE7f0G33AuX2LH9UcTk6KgWxd3zRU+pN3u/C+Xl3EnMLM4Hea7Sg=="],
+
+    "rolldown": ["rolldown@1.2.15", "", { "dependencies": { "@oxc-project/types": "=0.155.0", "@rolldown/pluginutils": "^1.0.0" }, "optionalDependencies": { "@rolldown/binding-android-arm-eabi": "1.2.15", "@rolldown/binding-android-arm64": "1.2.15", "@rolldown/binding-darwin-arm64": "1.2.15", "@rolldown/binding-darwin-x64": "1.2.15", "@rolldown/binding-freebsd-x64": "1.2.15", "@rolldown/binding-linux-arm-gnueabihf": "1.2.15", "@rolldown/binding-linux-arm64-gnu": "1.2.15", "@rolldown/binding-linux-arm64-musl": "1.2.15", "@rolldown/binding-linux-ppc64-gnu": "1.2.15", "@rolldown/binding-linux-s390x-gnu": "1.2.15", "@rolldown/binding-linux-x64-gnu": "1.2.15", "@rolldown/binding-linux-x64-musl": "1.2.15", "@rolldown/binding-openharmony-arm64": "1.2.15", "@rolldown/binding-win32-arm64-msvc": "1.2.15", "@rolldown/binding-win32-x64-msvc": "1.2.15" }, "bin": { "rolldown": "./bin/cli.mjs" } }, "sha512-6odND+fel5zVw3I4Yc2e69gvguDnX0CAAGiNDZSq4ik5WUcaLrkD2GLuog0XcODbor31hZ5ayEMgVDno+KPV5g=="],
+
+    "source-map-js": ["source-map-js@1.2.2", "", {}, "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="],
+
+    "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
+
+    "vite": ["vite@8.2.2", "", { "dependencies": { "lightningcss": "^1.33.0", "picomatch": "^4.0.5", "postcss": "^8.5.26", "rolldown": "~1.2.4", "tinyglobby": "^0.2.17" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "peerDependencies": { "@types/node": "^20.19.0 || >=22.12.0", "@vitejs/devtools": "^0.4.0 || ^0.5.0", "esbuild": "^0.27.0 || ^0.28.0", "jiti": ">=1.21.0", "less": "^4.0.0", "sass": "^1.70.0", "sass-embedded": "^1.70.0", "stylus": ">=0.54.8", "sugarss": "^5.0.0", "terser": "^5.16.0", "tsx": "^4.8.1", "yaml": "^2.4.2" }, "optionalPeers": ["@types/node", "@vitejs/devtools", "esbuild", "jiti", "less", "sass", "sass-embedded", "stylus", "sugarss", "terser", "tsx", "yaml"], "bin": { "vite": "bin/vite.js" } }, "sha512-cFKLV/PRgAUlIRm5WjMjJ86jrftzpqcgH+Us+DS8mI3CDNiH30Whrz8uHL3+MOLPAgqbMBAqWdAHAphOAM+z/Q=="],
+  }
+}
+`
+
+func compiledViteSource(fail bool) map[string]string {
+	javascript := `const target = document.getElementById('app'); target.textContent = 'compiled-vite-A'; let count = 0; document.getElementById('increment').addEventListener('click', () => { target.textContent = 'compiled-vite-A clicks=' + (++count); });`
+	if fail {
+		javascript += "\nconst genuineSyntaxFailure = ;\n"
+	}
+	return map[string]string{
+		"package.json":   compiledVitePackage,
+		"bun.lock":       compiledViteLock,
+		"railpack.json":  `{"provider":"node","packages":{"node":"22.22.0","bun":"1.3.6","caddy":"2.10.2"}}`,
+		"index.html":     `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Compiled Vite fixture</title></head><body><main id="app">Waiting for compiled JavaScript</main><button id="increment">Increment compiled counter</button><script type="module" src="/src/main.js"></script></body></html>`,
+		"src/main.js":    javascript,
+		"vite.config.js": "export default { build: { outDir: 'dist' } };\n",
+	}
+}
+
+func TestCompiledViteSourceContract(t *testing.T) {
+	files := compiledViteSource(false)
+	var manifest struct {
+		PackageManager  string            `json:"packageManager"`
+		Engines         map[string]string `json:"engines"`
+		Scripts         map[string]string `json:"scripts"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if json.Unmarshal([]byte(files["package.json"]), &manifest) != nil || manifest.PackageManager != "bun@1.3.6" || manifest.Engines["node"] != "22.22.0" || manifest.DevDependencies["vite"] != "8.2.2" || manifest.Scripts["build"] != "node ./node_modules/vite/bin/vite.js build" {
+		t.Fatal("compiled package contract changed")
+	}
+	if !compiledViteBundlePath.MatchString("/assets/index-ABC.js") {
+		t.Fatal("bundle matcher rejected generated path")
+	}
+	if files["vite.config.js"] != "export default { build: { outDir: 'dist' } };\n" {
+		t.Fatal("Vite selector/config missing")
+	}
+	if len(files) != 6 || strings.Contains(files["index.html"], "compiled-vite-A") || !strings.Contains(files["bun.lock"], "vite@8.2.2") {
+		t.Fatal("compiled source or lock contract changed")
+	}
+	failed := compiledViteSource(true)
+	if failed["railpack.json"] != files["railpack.json"] || failed["bun.lock"] != files["bun.lock"] || !strings.Contains(failed["src/main.js"], "genuineSyntaxFailure = ;") {
+		t.Fatal("failure must reach source compilation")
+	}
+}
+
+func privateRuntimeGit(t *testing.T, strategy string, compiled ...bool) (string, func(string, bool), string, string) {
 	t.Helper()
 	actual, err := exec.LookPath("git")
 	if err != nil {
@@ -240,7 +397,9 @@ func privateRuntimeGit(t *testing.T, strategy string) (string, func(string, bool
 			dockerfile += "RUN exit 9\n"
 		}
 		files := map[string]string{"Dockerfile": dockerfile, "index.html": body}
-		if strategy == "railpack" {
+		if len(compiled) > 0 && compiled[0] {
+			files = compiledViteSource(fail)
+		} else if strategy == "railpack" {
 			delete(files, "Dockerfile")
 			files["Staticfile"] = "root: .\n"
 			if fail {
@@ -252,6 +411,9 @@ func privateRuntimeGit(t *testing.T, strategy string) (string, func(string, bool
 			}
 		}
 		for name, value := range files {
+			if e := os.MkdirAll(filepath.Dir(filepath.Join(work, name)), 0700); e != nil {
+				t.Fatal(e)
+			}
 			if e := os.WriteFile(filepath.Join(work, name), []byte(value), 0600); e != nil {
 				t.Fatal(e)
 			}
@@ -730,6 +892,281 @@ func privateRuntimeNoSecrets(t *testing.T, f *controllerBuildFixture, build stri
 		t.Fatal("private checkout cleanup unconfirmed")
 	}
 }
+
+type compiledViteEvidence struct {
+	HTMLSHA256         string `json:"html_sha256"`
+	BundlePath         string `json:"bundle_path"`
+	BundleSHA256       string `json:"bundle_sha256"`
+	MissingAssetStatus int    `json:"missing_asset_status"`
+}
+
+var compiledViteBundlePath = regexp.MustCompile(`^/assets/[a-zA-Z0-9_-]+\.js$`)
+var compiledViteScript = regexp.MustCompile(`src="(/assets/[a-zA-Z0-9_-]+\.js)"`)
+
+func readCompiledVite(ctx context.Context, client *http.Client, path string) ([]byte, string, int, error) {
+	if path != "/" && path != "/account/deep/link" && path != "/missing.js" && !compiledViteBundlePath.MatchString(path) {
+		return nil, "", 0, fmt.Errorf("unsupported compiled fixture path")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://local.example.test"+path, nil)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	// No caller headers, cookies or credentials cross this fixed upstream boundary.
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, "", 0, fmt.Errorf("compiled fixture HTTPS unavailable")
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil || len(body) > 1<<20 {
+		return nil, "", 0, fmt.Errorf("compiled fixture response limit")
+	}
+	return body, response.Header.Get("Content-Type"), response.StatusCode, nil
+}
+func observeCompiledVite(ctx context.Context, client *http.Client) (compiledViteEvidence, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	html, kind, code, err := readCompiledVite(ctx, client, "/")
+	if err != nil || code != 200 || !strings.Contains(kind, "text/html") || strings.Contains(string(html), "/src/main.js") {
+		return compiledViteEvidence{}, fmt.Errorf("compiled index unavailable")
+	}
+	match := compiledViteScript.FindSubmatch(html)
+	if len(match) != 2 {
+		return compiledViteEvidence{}, fmt.Errorf("generated Vite bundle missing")
+	}
+	bundlePath := string(match[1])
+	bundle, kind, code, err := readCompiledVite(ctx, client, bundlePath)
+	if err != nil || code != 200 || !strings.Contains(kind, "javascript") || !bytes.Contains(bundle, []byte("compiled-vite-A")) {
+		return compiledViteEvidence{}, fmt.Errorf("compiled marker or bundle unavailable")
+	}
+	for _, path := range []string{"/account/deep/link", "/missing.js"} {
+		body, content, status, e := readCompiledVite(ctx, client, path)
+		if e != nil || status != 200 || !strings.Contains(content, "text/html") || !bytes.Equal(body, html) {
+			return compiledViteEvidence{}, fmt.Errorf("unexpected default SPA fallback")
+		}
+	}
+	return compiledViteEvidence{HTMLSHA256: fmt.Sprintf("%x", sha256.Sum256(html)), BundlePath: bundlePath, BundleSHA256: fmt.Sprintf("%x", sha256.Sum256(bundle)), MissingAssetStatus: 200}, nil
+}
+func compiledViteReadBridge(client *http.Client) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "read only", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.RawQuery != "" || len(r.URL.Path) > 256 {
+			http.Error(w, "unsupported path", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		body, kind, code, err := readCompiledVite(ctx, client, r.URL.Path)
+		if err != nil {
+			http.Error(w, "compiled fixture unavailable", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", kind)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(code)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write(body)
+		}
+	})
+}
+func TestCompiledViteBridgeRejectsMutations(t *testing.T) {
+	handler := compiledViteReadBridge(&http.Client{Timeout: time.Second})
+	for _, request := range []*http.Request{httptest.NewRequest(http.MethodPost, "http://127.0.0.1/", nil), httptest.NewRequest(http.MethodGet, "http://127.0.0.1/?upstream=bad", nil)} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusMethodNotAllowed && recorder.Code != http.StatusBadRequest {
+			t.Fatal("unsafe bridge request accepted")
+		}
+	}
+	for _, path := range []string{"https://untrusted.invalid/", "//untrusted.invalid/", "/api/v1/me", "/assets/../../secret.js"} {
+		if _, _, _, err := readCompiledVite(t.Context(), &http.Client{Timeout: time.Second}, path); err == nil {
+			t.Fatal("upstream path escaped")
+		}
+	}
+}
+
+func TestCompiledViteBridgeDropsPrivateHeaders(t *testing.T) {
+	var reads atomic.Int32
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads.Add(1)
+		for _, name := range []string{"Cookie", "Authorization", "Origin", "X-Caller-Header"} {
+			if r.Header.Get(name) != "" {
+				t.Errorf("private header forwarded: %s", name)
+			}
+		}
+		if r.Host != "local.example.test" {
+			t.Error("upstream Host changed")
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Location", "https://untrusted.invalid/")
+		w.WriteHeader(http.StatusFound)
+		_, _ = w.Write([]byte("fixed upstream"))
+	}))
+	defer upstream.Close()
+	transport := upstream.Client().Transport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.TLSClientConfig.ServerName = "example.com"
+	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", strings.TrimPrefix(upstream.URL, "https://"))
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	request.Header.Set("Cookie", "nerocd_session=test-only")
+	request.Header.Set("Authorization", "Bearer test-only")
+	request.Header.Set("Origin", "https://caller.invalid")
+	request.Header.Set("X-Caller-Header", "test-only")
+	response := httptest.NewRecorder()
+	compiledViteReadBridge(client).ServeHTTP(response, request)
+	if reads.Load() != 1 || response.Code != http.StatusFound || response.Header().Get("Location") != "" || response.Body.String() != "fixed upstream" {
+		t.Fatal("bridge redirected or altered fixed upstream")
+	}
+}
+
+// Pinned Node Caddyfile.template listens on PORT and falls back to 80.
+func compiledVitePort(environment string) (int, error) {
+	environment = strings.TrimSpace(environment)
+	if environment == "" {
+		return 80, nil
+	}
+	if !strings.HasPrefix(environment, "PORT=") || strings.ContainsAny(environment, "\r\n") {
+		return 0, fmt.Errorf("invalid fixed image port")
+	}
+	port, err := strconv.Atoi(strings.TrimPrefix(environment, "PORT="))
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("invalid fixed image port")
+	}
+	return port, nil
+}
+func TestCompiledVitePortFromImage(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  int
+	}{{"", 80}, {"PORT=8080", 8080}, {"PORT=80", 80}} {
+		got, err := compiledVitePort(tc.input)
+		if err != nil || got != tc.want {
+			t.Fatal("Caddy effective port", got, err)
+		}
+	}
+	for _, input := range []string{"PORT=0", "PORT=65536", "PORT=80\nPORT=90", "OTHER=8080"} {
+		if _, err := compiledVitePort(input); err == nil {
+			t.Fatal("unsafe port accepted")
+		}
+	}
+}
+
+// Normalize only terminal colors in already-redacted typed fixture output.
+// Preserve all production log bytes and require evidence from the real parser.
+var compiledViteSGR = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func compiledViteSyntaxDiagnostic(text string) bool {
+	plain := compiledViteSGR.ReplaceAllString(text, "")
+	return strings.Contains(plain, "[PARSE_ERROR]") && strings.Contains(plain, "src/main.js:2") && strings.Contains(plain, "genuineSyntaxFailure")
+}
+
+func TestCompiledViteSourceSyntaxDiagnostic(t *testing.T) {
+	// Bounded actual Vite 8.2.2/Rolldown output: every source character is colored.
+	colored := "\u001b[31m[PARSE_ERROR] \u001b[0mUnexpected token\n   \u001b[38;5;246m\u256d\u001b[0m\u001b[38;5;246m\u2500\u001b[0m\u001b[38;5;246m[\u001b[0m ../../../../../private/var/folders/vn/83xc0ss13rsg8dq6f3gng0hr0000gn/T/nerocd-compiled-spa-parser-rp2qe7nt/src/main.js:2:30 \u001b[38;5;246m]\u001b[0m\n   \u001b[38;5;246m\u2502\u001b[0m\n \u001b[38;5;246m2 \u2502\u001b[0m \u001b[38;5;249mc\u001b[0m\u001b[38;5;249mo\u001b[0m\u001b[38;5;249mn\u001b[0m\u001b[38;5;249ms\u001b[0m\u001b[38;5;249mt\u001b[0m\u001b[38;5;249m \u001b[0m\u001b[38;5;249mg\u001b[0m\u001b[38;5;249me\u001b[0m\u001b[38;5;249mn\u001b[0m\u001b[38;5;249mu\u001b[0m\u001b[38;5;249mi\u001b[0m\u001b[38;5;249mn\u001b[0m\u001b[38;5;249me\u001b[0m\u001b[38;5;249mS\u001b[0m\u001b[38;5;249my\u001b[0m\u001b[38;5;249mn\u001b[0m\u001b[38;5;249mt\u001b[0m\u001b[38;5;249ma\u001b[0m\u001b[38;5;249mx\u001b[0m\u001b[38;5;249mF\u001b[0m\u001b[38;5;249ma\u001b[0m\u001b[38;5;249mi\u001b[0m\u001b[38;5;249ml\u001b[0m\u001b[38;5;249mu\u001b[0m\u001b[38;5;249mr\u001b[0m\u001b[38;5;249me\u001b[0m\u001b[38;5;249m \u001b[0m\u001b[38;5;249m=\u001b[0m\u001b[38;5;249m \u001b[0m;\n"
+	if strings.Contains(colored, "genuineSyntaxFailure") || !compiledViteSyntaxDiagnostic(colored) {
+		t.Fatal("colored compiler diagnostic not recognized")
+	}
+	for _, message := range []string{"build_failed", "network error: install failed", "error: timeout", "genuineSyntaxFailure source uploaded", "[PARSE_ERROR] src/other.js:2 genuineSyntaxFailure"} {
+		if compiledViteSyntaxDiagnostic(message) {
+			t.Fatal("non-compiler failure accepted")
+		}
+	}
+}
+
+// Diagnostic-only observer reads bounded counters and owned-container state.
+// It never changes a limit or substitutes for compiled CLI qualification.
+func compiledResourceObserver(parent context.Context, config hostingbuild.Config) func() string {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	evidence := "resource counters unavailable"
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				raw, err := os.ReadFile(filepath.Join(config.StateDir, "cleanup_unconfirmed.json"))
+				if err != nil || len(raw) > 2048 {
+					continue
+				}
+				var marker struct{ Group, Builder, Token string }
+				if json.Unmarshal(raw, &marker) != nil || !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(marker.Token) || marker.Group != filepath.Join(config.CgroupRoot, "build-"+marker.Token) || marker.Builder != "buildx_buildkit_nerocd-"+marker.Token+"0" {
+					continue
+				}
+				counters := make([]string, 0, 3)
+				for _, name := range []string{"memory.events", "memory.peak", "pids.events"} {
+					value, e := os.ReadFile(filepath.Join(marker.Group, name))
+					if e == nil && len(value) < 1024 && regexp.MustCompile(`^[a-z0-9_\s]+$`).Match(value) {
+						counters = append(counters, name+"="+strings.Join(strings.Fields(string(value)), " "))
+					}
+				}
+				inspect, stop := context.WithTimeout(ctx, 2*time.Second)
+				state, e := exec.CommandContext(inspect, "/usr/local/bin/docker", "--host", "unix:///var/run/docker.sock", "inspect", "--format", `{{index .Config.Labels "io.nerocd.hostingbuild.owner"}} {{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}`, marker.Builder).Output()
+				stop()
+				if e == nil && len(state) < 256 && strings.HasPrefix(string(state), marker.Token+" ") {
+					counters = append(counters, "owned_builder_state="+strings.TrimSpace(strings.TrimPrefix(string(state), marker.Token)))
+				}
+				if len(counters) > 0 {
+					evidence = strings.Join(counters, "; ")
+				}
+			}
+		}
+	}()
+	return func() string { cancel(); <-done; return evidence }
+}
+func compiledEngineDiagnostic(t *testing.T, ctx context.Context, f *controllerBuildFixture, snapshot domain.HostingBuildSnapshot, patterns []string) {
+	t.Helper()
+	root := t.TempDir()
+	for name, contents := range compiledViteSource(false) {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Error("diagnostic source directory")
+			return
+		}
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Error("diagnostic source file")
+			return
+		}
+	}
+	engine, err := hostingbuild.New(f.config.Engine)
+	if err != nil {
+		t.Error("diagnostic engine configuration")
+		return
+	}
+	var nonce [16]byte
+	if _, err = rand.Read(nonce[:]); err != nil {
+		t.Error("diagnostic identity")
+		return
+	}
+	request := buildEngineRequest(snapshot, root, snapshot.ExpectedDaemonID)
+	request.BuildID = "build_diagnostic_" + hex.EncodeToString(nonce[:])
+	if request.DaemonID == "" {
+		request.DaemonID = strings.TrimSpace(string(controlDocker(t, "info", "--format", "{{.ID}}")))
+	}
+	stop := compiledResourceObserver(ctx, f.config.Engine)
+	_, err = engine.Build(ctx, request)
+	counters := stop()
+	message := "success (diagnostic only)"
+	if err != nil {
+		message = err.Error()
+	}
+	for _, pattern := range patterns {
+		message = strings.ReplaceAll(message, pattern, "[REDACTED fixture credential]")
+	}
+	t.Logf("diagnostic-only direct real engine same pins/limits error=%.1500s counters=%s", message, counters)
+}
+
 func TestPrivateGitBrowser(t *testing.T) {
 	if os.Getenv("NEROCD_LOCAL_BUILD_RUNTIME") != "disposable-dind" || os.Getenv("NEROCD_PRIVATE_GIT_BROWSER") != "1" {
 		t.Skip("requires opt-in local build browser gate")
@@ -740,6 +1177,10 @@ func TestPrivateGitBrowser(t *testing.T) {
 	}
 	if strategy != "dockerfile" && strategy != "railpack" {
 		t.Fatal("unsupported fixed private browser strategy")
+	}
+	compiledVite := os.Getenv("NEROCD_PRIVATE_GIT_COMPILED_VITE") == "1"
+	if compiledVite && strategy != "railpack" {
+		t.Fatal("compiled Vite requires Railpack")
 	}
 	privateRuntimeDatabase(t)
 	f := newControllerBuildFixture(t, domain.HostingPrivateGitCapability, domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability)
@@ -762,7 +1203,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 		return hostingproxy.NewFixture(settings, "https://localhost:14000/dir", roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
 	}}
-	repositoryURL, updateGit, username, password := privateRuntimeGit(t, strategy)
+	repositoryURL, updateGit, username, password := privateRuntimeGit(t, strategy, compiledVite)
 	secret := privateRuntimeSecret(t, f, domain.Resource{ProjectID: f.environment.ProjectID}, username, password)
 	var ownerID string
 	if err := f.db.QueryRow(t.Context(), `SELECT id FROM users WHERE email='browser-bootstrap@example.local'`).Scan(&ownerID); err != nil {
@@ -770,8 +1211,11 @@ func TestPrivateGitBrowser(t *testing.T) {
 	}
 	patterns := []string{password, username + ":" + password, base64.StdEncoding.EncodeToString([]byte(username + ":" + password)), url.QueryEscape(password), url.PathEscape(password), f.credential, f.admin}
 	var failureEnabled atomic.Bool
+	var diagnosticOnce sync.Once
 	var recordsMu sync.Mutex
 	var buildIDs []string
+	var deploymentIDs []string
+	var effectivePort atomic.Int32
 	var cliOutput []byte
 	f.request(t, "POST", "/api/v1/project-members", f.admin, map[string]string{"project_id": f.environment.ProjectID, "email": "viewer@example.local", "role": "viewer"}, 200, nil)
 	// Infrastructure setup is separate from the browser's build/deploy/route journey.
@@ -847,7 +1291,24 @@ func TestPrivateGitBrowser(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
 	}}
 	defer transport.CloseIdleConnections()
+	compiledClient := &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	var compiledExpected *compiledViteEvidence
+	if compiledVite {
+		transport.TLSClientConfig.ServerName = "local.example.test"
+	}
 	probe := func() {
+		if compiledVite {
+			evidence, e := observeCompiledVite(t.Context(), compiledClient)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if compiledExpected != nil && *compiledExpected != evidence {
+				t.Fatal("failed source replaced compiled HTTPS artifact")
+			}
+			compiledExpected = &evidence
+			t.Logf("verified fixture-CA HTTPS compiled bundle=%s sha256=%s deep_link=200 missing.js=200 HTML", evidence.BundlePath, evidence.BundleSHA256)
+			return
+		}
 		response, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Get("https://local.example.test/")
 		if err != nil {
 			t.Fatal(err)
@@ -882,11 +1343,36 @@ func TestPrivateGitBrowser(t *testing.T) {
 	}
 	completePath := "/api/v1/fixture/private-browser/" + hex.EncodeToString(nonce) + "/complete"
 	failurePath := strings.TrimSuffix(completePath, "/complete") + "/fail-source"
+	compiledProbePath := strings.TrimSuffix(completePath, "/complete") + "/compiled-probe"
+	compiledPortPath := strings.TrimSuffix(completePath, "/complete") + "/compiled-port"
+	appOrigin := ""
+	if compiledVite {
+		appOrigin = os.Getenv("NEROCD_PRIVATE_GIT_APP_ORIGIN")
+		parsed, e := url.Parse(appOrigin)
+		if e != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			t.Fatal("compiled bridge origin must be owned loopback")
+		}
+		appListener, e := net.Listen("tcp4", "0.0.0.0:18081")
+		if e != nil {
+			t.Fatal(e)
+		}
+		bridge := &http.Server{ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 7 * time.Second, Handler: compiledViteReadBridge(compiledClient)}
+		bridgeDone := make(chan error, 1)
+		go func() { bridgeDone <- bridge.Serve(appListener) }()
+		t.Cleanup(func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+			defer stop()
+			_ = bridge.Shutdown(cleanup)
+			if e := <-bridgeDone; e != nil && e != http.ErrServerClosed {
+				t.Error(e)
+			}
+		})
+	}
 	stages := make(chan chan struct{})
 	origin := os.Getenv("NEROCD_LOCAL_BUILD_BROWSER_ORIGIN")
 	handler := f.server.Config.Handler
 	exposed := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == completePath || r.URL.Path == failurePath {
+		if r.URL.Path == completePath || r.URL.Path == failurePath || compiledVite && (r.URL.Path == compiledProbePath || r.URL.Path == compiledPortPath) {
 			cookie, cookieErr := r.Cookie("nerocd_session")
 			authorized := false
 			if cookieErr == nil && r.Header.Get("Authorization") == "" {
@@ -899,6 +1385,60 @@ func TestPrivateGitBrowser(t *testing.T) {
 			}
 			if r.Method != "POST" || r.Header.Get("Origin") != origin || !authorized {
 				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+
+			if compiledVite && r.URL.Path == compiledPortPath {
+				if r.Header.Get("X-NeroCD-CSRF") != "1" || r.ContentLength != 0 {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				recordsMu.Lock()
+				ids := append([]string(nil), buildIDs...)
+				recordsMu.Unlock()
+				if len(ids) != 1 {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+				full, e := f.pg.GetHostingBuild(r.Context(), "usr_bootstrap", ids[0])
+				if e != nil || full.Artifact == nil || !regexp.MustCompile(`^sha256:[a-f0-9]{64}$`).MatchString(full.Artifact.ImageID) {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+				plan, e := os.ReadFile(filepath.Join(f.config.Engine.StateDir, ids[0], "context", "railpack-plan.json"))
+				if e != nil || len(plan) > 1<<20 || !bytes.Contains(plan, []byte(":{$PORT:80}")) {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+				inspect, stop := context.WithTimeout(r.Context(), 3*time.Second)
+				defer stop()
+				raw, e := exec.CommandContext(inspect, "/usr/local/bin/docker", "--host", "unix:///var/run/docker.sock", "image", "inspect", "--format", `{{range .Config.Env}}{{if eq (index (split . "=") 0) "PORT"}}{{println .}}{{end}}{{end}}`, full.Artifact.ImageID).Output()
+				if e != nil || len(raw) > 128 {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+				port, e := compiledVitePort(string(raw))
+				if e != nil {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+				effectivePort.Store(int32(port))
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]int{"application_port": port})
+				return
+			}
+			if compiledVite && r.URL.Path == compiledProbePath {
+				if r.Header.Get("X-NeroCD-CSRF") != "1" || r.ContentLength != 0 {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				evidence, e := observeCompiledVite(r.Context(), compiledClient)
+				if e != nil {
+					http.Error(w, "compiled fixture unavailable", http.StatusBadGateway)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(evidence)
 				return
 			}
 			if r.URL.Path == failurePath {
@@ -954,6 +1494,9 @@ func TestPrivateGitBrowser(t *testing.T) {
 				return
 			}
 			item = work{"deploy", op.ID}
+			recordsMu.Lock()
+			deploymentIDs = append(deploymentIDs, op.ID)
+			recordsMu.Unlock()
 		} else {
 			var route domain.HostingRoute
 			if json.Unmarshal(recorded.Body.Bytes(), &route) != nil {
@@ -1001,7 +1544,15 @@ func TestPrivateGitBrowser(t *testing.T) {
 				} else if err == nil {
 					// Build and local workload execution use the compiled production CLI.
 					command := f.agentCommand(ctx, "--local-build-deploy", "--proxy-state-root", root, "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion)
+					var stopResource func() string
+					if compiledVite && os.Getenv("NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC") == "1" {
+						stopResource = compiledResourceObserver(ctx, f.config.Engine)
+					}
 					out, runErr := command.CombinedOutput()
+					resourceEvidence := ""
+					if stopResource != nil {
+						resourceEvidence = stopResource()
+					}
 					recordsMu.Lock()
 					cliOutput = append(cliOutput, out...)
 					recordsMu.Unlock()
@@ -1021,6 +1572,67 @@ func TestPrivateGitBrowser(t *testing.T) {
 						}
 					}
 					if err != nil {
+						if item.kind == "build" {
+							if compiledVite && os.Getenv("NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC") == "1" {
+								t.Logf("unexpected compiled CLI failure resource evidence: %s", resourceEvidence)
+								diagnosticOnce.Do(func() {
+									full, e := f.pg.GetHostingBuild(ctx, "usr_bootstrap", item.id)
+									if e == nil {
+										compiledEngineDiagnostic(t, ctx, f, full.Snapshot, patterns)
+									}
+								})
+							}
+							if compiledVite {
+								planFile, openErr := os.Open(filepath.Join(f.config.Engine.StateDir, item.id, "context", "railpack-plan.json"))
+								if openErr == nil {
+									raw, readErr := io.ReadAll(io.LimitReader(planFile, (1<<20)+1))
+									_ = planFile.Close()
+									if readErr == nil && len(raw) <= 1<<20 {
+										var summary struct {
+											Steps []struct {
+												Name string `json:"name"`
+											} `json:"steps"`
+										}
+										_ = json.Unmarshal(raw, &summary)
+										var names []string
+										for _, step := range summary.Steps {
+											if len(names) < 20 && regexp.MustCompile(`^[a-z0-9_:-]{1,64}$`).MatchString(step.Name) {
+												names = append(names, step.Name)
+											}
+										}
+										t.Logf("bounded compiled plan diagnostic caddy=%t dist=%t node_pin=%t bun_pin=%t caddy_pin=%t steps=%v", bytes.Contains(raw, []byte("/Caddyfile")), bytes.Contains(raw, []byte("dist")), bytes.Contains(raw, []byte("22.22.0")), bytes.Contains(raw, []byte("1.3.6")), bytes.Contains(raw, []byte("2.10.2")), names)
+									}
+								}
+								if info, e := os.Stat(filepath.Join(f.config.Engine.StateDir, item.id, "image.oci.tar")); e == nil {
+									t.Logf("bounded compiled export bytes=%d limit=%d", info.Size(), f.config.Policy.Limits.ExportBytes)
+								}
+							}
+							diagnosticsCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+							var tail []domain.HostingBuildLogItem
+							cursor := 0
+							for page := 0; page < 10; page++ {
+								output, readErr := f.pg.ListHostingBuildLogs(diagnosticsCtx, "usr_bootstrap", item.id, cursor, 200)
+								if readErr != nil {
+									break
+								}
+								tail = append(tail, output.Items...)
+								if len(tail) > 20 {
+									tail = tail[len(tail)-20:]
+								}
+								if output.NextSequence <= cursor {
+									break
+								}
+								cursor = output.NextSequence
+							}
+							stop()
+							for _, row := range tail {
+								message := row.Message
+								for _, pattern := range patterns {
+									message = strings.ReplaceAll(message, pattern, "[REDACTED fixture credential]")
+								}
+								t.Logf("bounded typed build diagnostic sequence=%d component=%s: %.2000s", row.Sequence, row.Component, message)
+							}
+						}
 						t.Logf("bounded browser CLI diagnostic: %.1500s", out)
 					}
 				}
@@ -1035,7 +1647,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { cancel(); <-workerDone })
-	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "complete_path": completePath, "secret_id": secret.ID, "secret_version": int64(1), "source_repository_url": repositoryURL, "strategy": strategy, "destination_id": f.target.Destination.ID, "failure_path": failurePath})
+	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "complete_path": completePath, "secret_id": secret.ID, "secret_version": int64(1), "source_repository_url": repositoryURL, "strategy": strategy, "destination_id": f.target.Destination.ID, "failure_path": failurePath, "compiled_vite": compiledVite, "compiled_diagnostic": compiledVite && os.Getenv("NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC") == "1", "compiled_probe_path": compiledProbePath, "application_origin": appOrigin, "compiled_port_path": compiledPortPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1077,6 +1689,16 @@ journey:
 		if err != nil {
 			t.Fatal(err)
 		}
+		if i == 0 && compiledVite {
+			if len(deploymentIDs) != 1 || full.Artifact == nil {
+				t.Fatal("compiled deployment missing")
+			}
+			operation, e := f.pg.GetHostingOperation(t.Context(), deploymentIDs[0])
+			if e != nil || operation.State != "succeeded" || operation.Release == nil || operation.Release.LocalBuild != *full.Artifact || operation.Snapshot.LocalBuild.Artifact != *full.Artifact || operation.Snapshot.ContainerPort != int(effectivePort.Load()) || effectivePort.Load() == 0 || full.Artifact.DaemonID != strings.TrimSpace(string(controlDocker(t, "info", "--format", "{{.ID}}"))) || full.Artifact.DaemonID != full.DaemonID || full.Artifact.Platform != f.config.Policy.Platform {
+				t.Fatal("compiled deployment changed artifact daemon/platform")
+			}
+			t.Logf("compiled artifact image=%s daemon=%s platform=%s exact_release=true application_port=%d", full.Artifact.ImageID, full.Artifact.DaemonID, full.Artifact.Platform, effectivePort.Load())
+		}
 		if i == 0 && (full.State != "succeeded" || full.Artifact == nil) {
 			t.Fatal("browser success artifact missing")
 		}
@@ -1084,10 +1706,42 @@ journey:
 			t.Fatal("genuine failed build published an artifact or unexpected status")
 		}
 		privateRuntimeNoSecrets(t, f, id, patterns...)
+		if i == 1 && compiledVite {
+			// A generic build_failed status also covers transport/resource errors.
+			// Require the source-owned invalid syntax to reach the real compiler.
+			var compilerOutput strings.Builder
+			cursor := 0
+			for page := 0; page < 10; page++ {
+				logs, e := f.pg.ListHostingBuildLogs(t.Context(), "usr_bootstrap", id, cursor, 200)
+				if e != nil {
+					t.Fatal("compiled syntax failure output unavailable")
+				}
+				for _, row := range logs.Items {
+					compilerOutput.WriteString(row.Message)
+				}
+				if logs.NextSequence <= cursor {
+					break
+				}
+				cursor = logs.NextSequence
+			}
+			text := compilerOutput.String()
+			if !compiledViteSyntaxDiagnostic(text) {
+				t.Fatal("failed compiled build lacks genuine source syntax diagnostic")
+			}
+			t.Log("compiled failure proved by typed compiler error at genuineSyntaxFailure; no artifact published")
+		}
 		if i == 0 && strategy == "railpack" {
 			plan, err := os.ReadFile(filepath.Join(f.config.Engine.StateDir, id, "context", "railpack-plan.json"))
 			if err != nil || !json.Valid(plan) {
 				t.Fatal("actual pinned planner output plan missing or invalid")
+			}
+			if compiledVite {
+				for _, required := range []string{"22.22.0", "1.3.6", "2.10.2", "bun install --frozen-lockfile", "bun run build", "dist", "/Caddyfile"} {
+					if !bytes.Contains(plan, []byte(required)) {
+						t.Fatalf("resolved compiled plan missing %q", required)
+					}
+				}
+				t.Logf("compiled resolved plan Node=22.22.0 Bun=1.3.6 Caddy=2.10.2 sourceVite=8.2.2 lock_sha256=%x", sha256.Sum256([]byte(compiledViteLock)))
 			}
 			starts := strings.Fields(plannerEvents.String())
 			if len(starts) != 2 {

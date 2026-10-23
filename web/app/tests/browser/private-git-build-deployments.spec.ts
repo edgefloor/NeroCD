@@ -11,7 +11,37 @@ async function signIn(page: Page, viewer = false) {
 }
 test("owner configures private Git strategy, builds and deploys exact artifact, then preserves HTTPS after genuine failure", async ({ page, browser }, info) => {
  test.skip(!process.env.NEROCD_PRIVATE_GIT_BROWSER_META, "requires NEROCD_PRIVATE_GIT_BROWSER=1 acceptance fixture"); test.setTimeout(480_000);
- const meta = JSON.parse(process.env.NEROCD_PRIVATE_GIT_BROWSER_META!) as { origin: string; project_id: string; resource_id: string; environment: string; complete_path: string; secret_id: string; secret_version: number; source_repository_url: string; strategy: "dockerfile" | "railpack"; destination_id: string; failure_path: string };
+ const meta = JSON.parse(process.env.NEROCD_PRIVATE_GIT_BROWSER_META!) as { origin: string; project_id: string; resource_id: string; environment: string; complete_path: string; secret_id: string; secret_version: number; source_repository_url: string; strategy: "dockerfile" | "railpack"; destination_id: string; failure_path: string; compiled_vite?: boolean; compiled_diagnostic?: boolean; compiled_probe_path: string; application_origin: string; compiled_port_path: string };
+ type CompiledEvidence = { html_sha256: string; bundle_path: string; bundle_sha256: string; missing_asset_status: number };
+ let compiledBaseline: CompiledEvidence | undefined;
+ async function compiledApplication() {
+  if (!meta.compiled_vite) return;
+  const origin = new URL(meta.application_origin); expect(origin.protocol).toBe("http:"); expect(origin.hostname).toBe("127.0.0.1");
+  const verified = await page.request.post(meta.compiled_probe_path, { headers: { Origin: meta.origin, "X-NeroCD-CSRF": "1" } }); expect(verified.status()).toBe(200);
+  const evidence = await verified.json() as CompiledEvidence;
+  expect(evidence.bundle_path).toMatch(/^\/assets\/[a-zA-Z0-9_-]+\.js$/); expect(evidence.missing_asset_status).toBe(200);
+  if (compiledBaseline) expect(evidence).toEqual(compiledBaseline); else compiledBaseline = evidence;
+  // Fresh context has no NeroCD session. Browser HTTP reads a fixed bridge whose
+  // upstream is independently verified fixture-CA HTTPS, never mocked content.
+  const appContext = await browser.newContext({ baseURL: meta.application_origin });
+  try {
+   expect(await appContext.cookies()).toEqual([]);
+   const app = await appContext.newPage(); await app.goto("/account/deep/link");
+   await expect(app.locator("#app")).toHaveText("compiled-vite-A");
+   const bundle = await app.request.get(evidence.bundle_path); expect(bundle.status()).toBe(200);
+   expect(createHash("sha256").update(await bundle.body()).digest("hex")).toBe(evidence.bundle_sha256);
+   const missing = await app.request.get("/missing.js"); expect(missing.status()).toBe(200); expect(missing.headers()["content-type"]).toContain("text/html");
+   expect(createHash("sha256").update(await missing.body()).digest("hex")).toBe(evidence.html_sha256);
+   expect((await app.request.post("/", { data: {} })).status()).toBe(405);
+   let clicks = 0;
+   for (const width of [320, 390, 430, 1440]) {
+    await app.setViewportSize({ width, height: 900 }); const increment = app.getByRole("button", { name: "Increment compiled counter", exact: true });
+    await increment.focus(); await app.keyboard.press("Enter"); await expect(app.locator("#app")).toHaveText(`compiled-vite-A clicks=${++clicks}`);
+    expect(await app.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+   }
+   console.log(`compiled Vite browser JS executed from HTTP read bridge; verified upstream HTTPS bundle sha256=${evidence.bundle_sha256}, deep_link=200 missing.js=200 HTML`);
+  } finally { await appContext.close(); }
+ }
  const secretRevealReads: string[] = [], legacyLogReads: string[] = [];
  page.on("request", (request) => { if (/\/reveal(?:\?|$)/.test(request.url())) secretRevealReads.push(request.url()); });
   const assets = JSON.parse(process.env.NEROCD_PRIVATE_GIT_BROWSER_ASSETS!) as { files: Record<string,string> };
@@ -70,14 +100,20 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  await expect(buildForm.getByRole("button", { name: "Request private Git build", exact: true })).toBeEnabled(); await buildForm.getByRole("button", { name: "Request private Git build", exact: true }).focus(); await page.keyboard.press("Enter");
  const admission = await buildResponse; expect(admission.status()).toBe(202); expect(admission.request().postDataJSON().grant_id).toBe(createdGrant.id);
  const build = (await admission.json() as { build: { id: string; snapshot: { source: { credential_kind: string; settings: { strategy: string } } } } }).build; expect(build.snapshot.source.credential_kind).toBe("https_basic"); expect(build.snapshot.source.settings.strategy).toBe(meta.strategy);
- const detail = article.getByRole("region", { name: "Build operation detail", exact: true }); await expect(detail.getByText("Succeeded", { exact: true })).toBeVisible({ timeout: 180_000 });
+ const detail = article.getByRole("region", { name: "Build operation detail", exact: true }); await expect(detail.getByText("Succeeded", { exact: true })).toBeVisible({ timeout: meta.compiled_diagnostic ? 420_000 : 180_000 });
  // Observe legacy log reads for the typed-output journey; sign-in dashboard reads precede this subject.
  page.on("request", (request) => { const path = new URL(request.url()).pathname; if (path === "/api/v1/run-logs" || /\/runs\/[^/]+\/(logs|events)/.test(path)) legacyLogReads.push(request.url()); });
  const outputResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/hosting-builds/${build.id}/logs`);
  await detail.getByRole("button", { name: "Show build output", exact: true }).focus(); await page.keyboard.press("Enter"); const output = await outputResponse; expect(output.status()).toBe(200);
- const persisted = await output.json() as { items: { sequence: number; message: string; component: string }[] }; expect(persisted.items.length).toBeGreaterThan(0); if (meta.strategy === "railpack") { expect(persisted.items.some(item => item.component === "buildkit" && item.message.includes("railpack-plan.json"))).toBe(true); expect(persisted.items.some(item => item.component === "buildkit" && item.message.includes("[railpack]"))).toBe(true); }
+ const persisted = await output.json() as { items: { sequence: number; message: string; component: string }[] }; expect(persisted.items.length).toBeGreaterThan(0); if (meta.compiled_vite) { expect(persisted.items.some(item => item.message.includes("8.2.2") && item.message.includes("vite"))).toBe(true); } if (meta.strategy === "railpack") { expect(persisted.items.some(item => item.component === "buildkit" && item.message.includes("railpack-plan.json"))).toBe(true); expect(persisted.items.some(item => item.component === "buildkit" && item.message.includes("[railpack]"))).toBe(true); }
  const rows = detail.getByRole("list", { name: "Build output rows", exact: true }); for (const item of persisted.items) await expect(rows.getByRole("listitem").filter({ hasText: `Sequence ${item.sequence} ·` }).locator("pre")).toHaveText(item.message);
- const form = detail.getByRole("form", { name: "Deploy selected build", exact: true }); await form.getByLabel("Build readiness timeout in seconds", { exact: true }).fill("10"); await form.getByLabel(/I reviewed this exact successful build/).check();
+ const form = detail.getByRole("form", { name: "Deploy selected build", exact: true });
+ if (meta.compiled_vite) {
+  const effective = await page.request.post(meta.compiled_port_path, { headers: { Origin: meta.origin, "X-NeroCD-CSRF": "1" } }); expect(effective.status()).toBe(200);
+  const port = (await effective.json() as { application_port: number }).application_port; expect(port).toBeGreaterThan(0); expect(port).toBeLessThanOrEqual(65535);
+  await form.getByLabel("Build container port", { exact: true }).fill(String(port));
+  console.log(`compiled Caddy effective application port=${port} from image PORT or pinned template fallback`);
+ } await form.getByLabel("Build readiness timeout in seconds", { exact: true }).fill("10"); await form.getByLabel(/I reviewed this exact successful build/).check();
  const deployPath = `/api/v1/resources/${meta.resource_id}/deployments/from-build`;
  const deployment = page.waitForResponse((response) => new URL(response.url()).pathname === deployPath && response.request().method() === "POST");
  await form.getByRole("button", { name: "Deploy selected build", exact: true }).focus(); await page.keyboard.press("Enter"); const deployed = await deployment; expect(deployed.status()).toBe(202);
@@ -85,6 +121,7 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  const operationDetail = detail.getByRole("region", { name: "Deployment operation detail", exact: true }); await expect(operationDetail.getByText("Readiness recorded at completion: passed.", { exact: true })).toBeVisible({ timeout: 120_000 }); await expect(operationDetail.getByText(operation.snapshot.local_build.artifact.image_id, { exact: true }).first()).toBeVisible();
  const routes = article.getByRole("region", { name: /Routes for / }); await routes.getByRole("button", { name: "Refresh resource routes", exact: true }).click(); await routes.getByLabel("Route hostname", { exact: true }).fill("local.example.test"); await routes.getByRole("combobox", { name: "Expected settled healthy deployment", exact: true }).selectOption(operation.id);
  await routes.getByRole("button", { name: "Save desired route", exact: true }).focus(); await page.keyboard.press("Enter"); const route = routes.getByRole("article").first(); await expect(route.getByText("Trusted HTTPS readiness recorded", { exact: true }).locator("+ dd")).toHaveText("ready", { timeout: 120_000 });
+ await compiledApplication();
  for (const width of [320, 390, 430, 1440]) { await page.setViewportSize({ width, height: 1000 }); await expect(rows).toBeVisible(); await expect(route.getByText("local.example.test/", { exact: true })).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await operationDetail.getByRole("button", { name: "Refresh operation", exact: true }).focus(); await page.keyboard.press("Enter"); await detail.evaluate(node => { node.scrollIntoView({ block: "start" }); window.scrollBy(0,-80); }); await page.screenshot({ path: info.outputPath(`private-${meta.strategy}-${width}.png`), animations: "disabled" }); }
  const context = await browser.newContext({ baseURL: meta.origin, viewport: { width: 390, height: 1000 } });
  try { const viewer = await context.newPage(); await signIn(viewer, true); const read = await openResource(viewer); await read.getByRole("button", { name: `View build ${build.id}`, exact: true }).click(); await expect(read.getByRole("button", { name: "Create source grant", exact: true })).toHaveCount(0); await expect(read.getByRole("button", { name: "Request private Git build", exact: true })).toHaveCount(0); await expect(read.getByRole("button", { name: "Deploy selected build", exact: true })).toHaveCount(0); const denied = await viewer.request.post(grantPath, { headers: { Origin: meta.origin, "X-NeroCD-CSRF": "1" }, data: frozenGrantBody }); expect(denied.status()).toBe(403); expect((await viewer.request.post(meta.failure_path, { headers: { Origin: meta.origin } })).status()).toBe(403); } finally { await context.close(); }
@@ -100,5 +137,6 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  const failureOutput = page.waitForResponse(r => new URL(r.url()).pathname === `/api/v1/hosting-builds/${failedID}/logs`); await detail.getByRole("button", { name: "Show build output", exact: true }).focus(); await page.keyboard.press("Enter"); expect((await failureOutput).status()).toBe(200); await expect(detail.getByRole("list", { name: "Build output rows", exact: true })).toBeVisible();
  await detail.getByRole("button", { name: "Close build output", exact: true }).click();
  expect(legacyLogReads).toEqual([]); expect(secretRevealReads).toEqual([]);
+ await compiledApplication();
  expect((await page.request.post(meta.complete_path, { headers: { Origin: meta.origin } })).status()).toBe(204);
 });
