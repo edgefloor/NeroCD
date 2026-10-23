@@ -714,6 +714,36 @@ type HostingStorage struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type HostingStorageMaterialization struct {
+	StorageID               string          `json:"storage_id"`
+	OriginOperationID       string          `json:"origin_operation_id"`
+	OriginPlanHash          string          `json:"origin_plan_hash"`
+	Origin                  json.RawMessage `json:"origin"`
+	OriginHash              string          `json:"origin_hash"`
+	MaterializedOperationID *string         `json:"materialized_operation_id"`
+	MaterializedReceiptID   *string         `json:"materialized_receipt_id"`
+	CreatedAt               time.Time       `json:"created_at"`
+}
+
+type HostingStorageMaterializedReceipt struct {
+	OperationID string          `json:"operation_id"`
+	StorageID   string          `json:"storage_id"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	AuditID     string          `json:"audit_id"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingStorageOperationAdmission struct {
+	OperationID string          `json:"operation_id"`
+	StorageID   string          `json:"storage_id"`
+	PlanHash    string          `json:"plan_hash"`
+	Authority   json.RawMessage `json:"authority"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
 type HostingStorageReceipt struct {
 	ResourceID                 string `json:"resource_id"`
 	RequestID                  string `json:"request_id"`

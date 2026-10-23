@@ -96,6 +96,7 @@ type HostingDeploymentInput struct {
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
+	Storage              HostingStorageRef              `json:"storage,omitzero"`
 	ResourceID           string                         `json:"resource_id"`
 	ResourceGeneration   int64                          `json:"resource_generation"`
 	ImageReference       string                         `json:"image_reference"`
@@ -126,22 +127,24 @@ type HostingRelease struct {
 
 // HostingHealthy records the last atomically settled healthy workload.
 type HostingHealthy struct {
-	Snapshot    HostingSnapshot `json:"snapshot"`
-	OperationID string          `json:"operation_id"`
-	ContainerID string          `json:"container_id"`
-	Release     HostingRelease  `json:"release"`
-	PlanHash    string          `json:"plan_hash"`
+	Storage     *HostingHealthyStorage `json:"storage,omitempty"`
+	Snapshot    HostingSnapshot        `json:"snapshot"`
+	OperationID string                 `json:"operation_id"`
+	ContainerID string                 `json:"container_id"`
+	Release     HostingRelease         `json:"release"`
+	PlanHash    string                 `json:"plan_hash"`
 }
 
 // HostingApplyPlan is compiled once from an immutable release and target.
 type HostingApplyPlan struct {
-	RetainedReleases []HostingHealthy `json:"retained_releases,omitempty"`
-	RetainPrevious   bool             `json:"retain_previous,omitempty"`
-	Snapshot         HostingSnapshot  `json:"snapshot"`
-	Release          HostingRelease   `json:"release"`
-	PreviousHealthy  *HostingHealthy  `json:"previous_healthy,omitempty"`
-	CompilerVersion  string           `json:"compiler_version"`
-	Hash             string           `json:"hash"`
+	Storage          *HostingStoragePlan `json:"storage,omitempty"`
+	RetainedReleases []HostingHealthy    `json:"retained_releases,omitempty"`
+	RetainPrevious   bool                `json:"retain_previous,omitempty"`
+	Snapshot         HostingSnapshot     `json:"snapshot"`
+	Release          HostingRelease      `json:"release"`
+	PreviousHealthy  *HostingHealthy     `json:"previous_healthy,omitempty"`
+	CompilerVersion  string              `json:"compiler_version"`
+	Hash             string              `json:"hash"`
 }
 
 // HostingReceipt acknowledges one stable, immutable runner document.
@@ -297,8 +300,11 @@ func CompileHostingPlan(snapshot HostingSnapshot, release HostingRelease, previo
 	if err := ValidateHostingSnapshotRelease(snapshot, release); err != nil {
 		return HostingApplyPlan{}, err
 	}
-	if snapshot.PolicyVersion != HostingPolicyVersion {
+	if snapshot.PolicyVersion != HostingPolicyVersion || snapshot.Storage != (HostingStorageRef{}) {
 		return HostingApplyPlan{}, errors.New("unsupported hosting policy")
+	}
+	if previous != nil && (previous.Storage != nil || ValidateHostingHealthyStorage(*previous) != nil) {
+		return HostingApplyPlan{}, ErrInvalidHostingStorage
 	}
 	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: HostingCompilerVersion}
 	plan.Hash = HostingDocumentHash(plan)
@@ -323,6 +329,9 @@ func CompileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 }
 
 func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy, policy, compiler string) (HostingApplyPlan, error) {
+	if ValidateHostingStorageSnapshot(snapshot) != nil || snapshot.Storage != (HostingStorageRef{}) && policy != HostingOwnedStoragePolicyVersion {
+		return HostingApplyPlan{}, ErrInvalidHostingStorage
+	}
 	if err := ValidateHostingSnapshotRelease(snapshot, release); err != nil {
 		return HostingApplyPlan{}, err
 	}
@@ -332,18 +341,34 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: compiler, RetainedReleases: append([]HostingHealthy(nil), retained...)}
 	seen := map[string]bool{}
 	for _, old := range plan.RetainedReleases {
+		if ValidateHostingHealthyStorage(old) != nil || policy != HostingOwnedStoragePolicyVersion && old.Storage != nil {
+			return HostingApplyPlan{}, ErrInvalidHostingStorage
+		}
 		if old.OperationID == "" || seen[old.OperationID] || old.Snapshot.HostPort < 1024 || old.Snapshot.HostPort > 65535 || old.Snapshot.BindingID != snapshot.BindingID || old.Snapshot.DestinationID != snapshot.DestinationID || old.Release.DaemonID != release.DaemonID || old.ContainerID == "" || ValidateHostingSnapshotRelease(old.Snapshot, old.Release) != nil {
 			return HostingApplyPlan{}, errors.New("retained release identity mismatch")
 		}
 		seen[old.OperationID] = true
 	}
 	if previous != nil {
+		if ValidateHostingHealthyStorage(*previous) != nil || policy != HostingOwnedStoragePolicyVersion && previous.Storage != nil {
+			return HostingApplyPlan{}, ErrInvalidHostingStorage
+		}
 		if ValidateHostingSnapshotRelease(previous.Snapshot, previous.Release) != nil || previous.OperationID == "" || previous.Snapshot.HostPort < 1024 || previous.Snapshot.HostPort > 65535 || previous.Snapshot.BindingID != snapshot.BindingID || previous.Snapshot.DestinationID != snapshot.DestinationID || previous.Release.DaemonID != release.DaemonID || previous.ContainerID == "" || seen[previous.OperationID] {
 			return HostingApplyPlan{}, errors.New("previous release identity mismatch")
 		}
 		ownedPrevious := *previous
+		if previous.Storage != nil {
+			storage := *previous.Storage
+			ownedPrevious.Storage = &storage
+		}
 		plan.PreviousHealthy = &ownedPrevious
 		plan.RetainPrevious = previous.Snapshot.HostPort != snapshot.HostPort
+	}
+	for index := range plan.RetainedReleases {
+		if plan.RetainedReleases[index].Storage != nil {
+			storage := *plan.RetainedReleases[index].Storage
+			plan.RetainedReleases[index].Storage = &storage
+		}
 	}
 	sort.Slice(plan.RetainedReleases, func(i, j int) bool {
 		return plan.RetainedReleases[i].OperationID < plan.RetainedReleases[j].OperationID

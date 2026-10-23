@@ -92,6 +92,9 @@ func hostingFreshRuntimeGate(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 	if ref != op.Snapshot.RuntimeConfiguration {
 		return ErrConflict
 	}
+	if err = hostingFreshStorageGate(ctx, tx, op); err != nil {
+		return err
+	}
 	if err = runtimeHostingActorAuthority(ctx, tx, op); err != nil {
 		return err
 	}
