@@ -894,7 +894,7 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	if err = hostingAuthorityExists(ctx, tx, runnerID, a, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	op, err := hostingOperation(ctx, tx, a.OperationID)
+	op, err := hostingTaskOperation(ctx, tx, a)
 	if err != nil {
 		return op, err
 	}
@@ -980,7 +980,7 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	if err = hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "apply_admitted"); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	op, err = hostingOperation(ctx, tx, op.ID)
+	op, err = hostingTaskOperation(ctx, tx, a)
 	if err != nil {
 		return op, err
 	}
@@ -1023,7 +1023,7 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 		return domain.HostingOperation{}, err
 	}
 	if replay {
-		return hostingOperation(ctx, tx, in.OperationID)
+		return hostingTaskOperation(ctx, tx, in.HostingAuthority)
 	}
 	// Only a previously committed matching receipt survives loss of authority.
 	// Every first result remains a fenced mutation, even when a hold exists.
@@ -1164,7 +1164,7 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if err = hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "completed"); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	op, err = hostingOperation(ctx, tx, op.ID)
+	op, err = hostingTaskOperation(ctx, tx, in.HostingAuthority)
 	if err != nil {
 		return op, err
 	}
@@ -1394,7 +1394,7 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 		if committedHash != domain.HostingDocumentHash(in) {
 			return domain.HostingOperation{}, ErrConflict
 		}
-		return hostingOperation(ctx, tx, in.OperationID)
+		return hostingTaskOperation(ctx, tx, in.HostingAuthority)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.HostingOperation{}, err
@@ -1537,7 +1537,7 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	op, err = hostingOperation(ctx, tx, op.ID)
+	op, err = hostingTaskOperation(ctx, tx, in.HostingAuthority)
 	if err != nil {
 		return op, err
 	}
@@ -1649,6 +1649,22 @@ func rejectGenericHostingRun(ctx context.Context, q *sqlcgen.Queries, runID stri
 		return ErrConflict
 	}
 	return nil
+}
+
+// hostingTaskOperation projects the exact durable task relationship onto a
+// runner response. Task mode is not part of stored operation or receipt bodies;
+// historical receipt reads retain their existing authority and expiry rules.
+func hostingTaskOperation(ctx context.Context, tx pgx.Tx, a domain.HostingAuthority) (domain.HostingOperation, error) {
+	op, err := hostingOperation(ctx, tx, a.OperationID)
+	if err != nil {
+		return op, err
+	}
+	mode, err := sqlcgen.New(tx).CheckHostingTaskMode(ctx, sqlcgen.CheckHostingTaskModeParams{RunID: a.RunID, OperationID: a.OperationID})
+	if err != nil {
+		return domain.HostingOperation{}, hostingError(err)
+	}
+	op.TaskMode = mode
+	return op, nil
 }
 
 func hostingRequireMode(ctx context.Context, tx pgx.Tx, a domain.HostingAuthority, expected string) error {
@@ -2183,7 +2199,7 @@ func (s *PostgresStore) admitHostingCleanup(ctx context.Context, tx pgx.Tx, runn
 	if err = hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "cleanup_admitted"); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	updated, err := hostingOperation(ctx, tx, op.ID)
+	updated, err := hostingTaskOperation(ctx, tx, a)
 	if err != nil {
 		return updated, err
 	}
@@ -2237,7 +2253,7 @@ func (s *PostgresStore) completeHostingCleanup(ctx context.Context, tx pgx.Tx, r
 	if err := hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "cleanup_completed"); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	result, err := hostingOperation(ctx, tx, op.ID)
+	result, err := hostingTaskOperation(ctx, tx, in.HostingAuthority)
 	if err != nil {
 		return result, err
 	}

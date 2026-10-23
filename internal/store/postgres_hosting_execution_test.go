@@ -458,8 +458,12 @@ func TestPostgresHostingRetainedReleaseRequiresExactCleanupReceipt(t *testing.T)
 		t.Fatalf("cleanup preparation: %+v %v", prepared, err)
 	}
 	admitted, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
-	if err != nil || !admitted.MutationHold {
+	if err != nil || !admitted.MutationHold || admitted.TaskMode != "cleanup" {
 		t.Fatalf("cleanup admission: %+v %v", admitted, err)
+	}
+	admissionReplay, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
+	if err != nil || admissionReplay.TaskMode != "cleanup" || !reflect.DeepEqual(admitted, admissionReplay) {
+		t.Fatalf("cleanup admission replay lost canonical mode or evidence: %+v %v", admissionReplay, err)
 	}
 	var state string
 	if err = database.QueryRow(ctx, `SELECT state FROM hosting_retained_releases WHERE operation_id=$1`, first.ID).Scan(&state); err != nil || state != "cleanup_pending" {
@@ -473,15 +477,146 @@ func TestPostgresHostingRetainedReleaseRequiresExactCleanupReceipt(t *testing.T)
 	}
 	request := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "exact_cleanup", Result: result}
 	finished, err := pg.HostingComplete(ctx, server.RunnerID, request)
-	if err != nil || finished.MutationHold || finished.State != "succeeded" {
+	if err != nil || finished.MutationHold || finished.State != "succeeded" || finished.TaskMode != "cleanup" {
 		t.Fatalf("cleanup completion: %+v %v", finished, err)
 	}
-	if _, err = pg.HostingComplete(ctx, server.RunnerID, request); err != nil {
-		t.Fatalf("cleanup replay: %v", err)
+	if _, err = database.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	completedReplay, err := pg.HostingComplete(ctx, server.RunnerID, request)
+	if err != nil || completedReplay.TaskMode != "cleanup" || !reflect.DeepEqual(finished, completedReplay) {
+		t.Fatalf("expired cleanup replay changed canonical mode or evidence: %+v %v", completedReplay, err)
 	}
 	if err = database.QueryRow(ctx, `SELECT state FROM hosting_retained_releases WHERE operation_id=$1`, first.ID).Scan(&state); err != nil || state != "removed" {
 		t.Fatalf("target not released after exact receipt: %s %v", state, err)
 	}
+}
+
+func TestPostgresHostingStorageAcknowledgementsPreserveCanonicalTaskModes(t *testing.T) {
+	f := newStorageMaterializationFixture(t)
+	ctx := t.Context()
+	checkMode := func(phase string, op domain.HostingOperation, mode string) {
+		t.Helper()
+		if op.TaskMode != mode || op.ID != f.op.ID || op.Snapshot != f.op.Snapshot || !reflect.DeepEqual(op.Plan, f.op.Plan) {
+			t.Errorf("%s changed authoritative task projection: mode=%q want=%q id=%q", phase, op.TaskMode, mode, op.ID)
+		}
+	}
+	checkMode("prepared", f.op, "deploy")
+	creation, err := f.pg.HostingStorageCreateBegin(ctx, f.runner, f.request())
+	if err != nil || !creation.CreatePermitted || creation.Storage != f.storage {
+		t.Fatalf("creation admission: %+v %v", creation, err)
+	}
+	proof := f.proof(creation)
+	materialized, err := f.pg.HostingStorageMaterialized(ctx, f.runner, proof)
+	if err != nil || materialized.Receipt.BodyHash != domain.HostingDocumentHash(proof) {
+		t.Fatalf("materialization ACK: %+v %v", materialized, err)
+	}
+	materializedReplay, err := f.pg.HostingStorageMaterialized(ctx, f.runner, proof)
+	if err != nil || !reflect.DeepEqual(materialized, materializedReplay) {
+		t.Fatalf("materialization replay changed: %+v %v", materializedReplay, err)
+	}
+	forged := f.authority
+	forged.Fence += "_forged"
+	if _, err = f.pg.HostingApplyBegin(ctx, f.runner, forged); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("forged admission authority accepted: %v", err)
+	}
+	if _, err = f.pg.HostingApplyBegin(ctx, "runner_wrong", f.authority); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wrong admission runner accepted: %v", err)
+	}
+	admitted, err := f.pg.HostingApplyBegin(ctx, f.runner, f.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkMode("apply fresh", admitted, "deploy")
+	admissionReplay, err := f.pg.HostingApplyBegin(ctx, f.runner, f.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkMode("apply replay", admissionReplay, "deploy")
+	if !reflect.DeepEqual(admitted, admissionReplay) {
+		t.Fatal("apply response replay changed durable evidence")
+	}
+	result := domain.HostingResult{Outcome: "succeeded", Ready: true, ContainerID: "container_storage_contract", ImageID: f.op.Release.ImageID, DaemonID: f.op.Release.DaemonID, PlanHash: f.op.Plan.Hash}
+	request := domain.HostingCompleteRequest{HostingAuthority: f.authority, ReceiptID: "storage_complete_contract", Result: result}
+	completed, err := f.pg.HostingComplete(ctx, f.runner, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkMode("complete fresh", completed, "deploy")
+	if completed.MutationHold || completed.Result == nil || *completed.Result != result || completed.CompleteReceipt == nil || completed.CompleteReceipt.BodyHash != domain.HostingDocumentHash(result) {
+		t.Fatal("completion did not retain exact settled receipt")
+	}
+	stored, err := f.pg.GetHostingOperation(ctx, f.op.ID)
+	if err != nil || stored.TaskMode != "" {
+		t.Fatalf("response task mode became persisted evidence: %+v %v", stored, err)
+	}
+	var auditCount int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, f.authority.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	completionReplay, err := f.pg.HostingComplete(ctx, f.runner, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkMode("complete expired replay", completionReplay, "deploy")
+	if !reflect.DeepEqual(completed, completionReplay) {
+		t.Fatal("expired completion replay changed ACK body")
+	}
+	after, err := f.pg.GetHostingOperation(ctx, f.op.ID)
+	if err != nil || !reflect.DeepEqual(stored, after) {
+		t.Fatal("response projection changed persisted completion evidence", err)
+	}
+	var afterAudits int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&afterAudits); err != nil || auditCount != afterAudits {
+		t.Fatalf("replay created audit mutation: %d->%d %v", auditCount, afterAudits, err)
+	}
+	if _, err = f.pg.HostingApplyBegin(ctx, f.runner, f.authority); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expired admission replay revived writer: %v", err)
+	}
+	wrong := request
+	wrong.Fence += "_forged"
+	if _, err = f.pg.HostingComplete(ctx, f.runner, wrong); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("forged completion replay accepted: %v", err)
+	}
+	f.count(t, 1, 1, 1)
+	if _, err = f.pg.RequestHostingReconciliation(ctx, f.op.ID, destinationEvent("storage_contract_observe")); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := f.pg.ClaimRun(ctx, f.runner, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := domain.HostingAuthority{OperationID: f.op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	plan, err := f.pg.HostingRunnerPlan(ctx, f.runner, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkMode("observation plan", plan, "observe")
+	observation := domain.HostingObservation{HostingAuthority: a, BindingID: f.op.BindingID, DaemonID: result.DaemonID, ContainerID: result.ContainerID, ImageID: result.ImageID, PlanHash: result.PlanHash, ReleaseHash: f.op.Release.Hash, Ready: true}
+	observed, err := f.pg.HostingReconciliation(ctx, f.runner, observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkMode("observation fresh", observed, "observe")
+	if _, err = f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	observationReplay, err := f.pg.HostingReconciliation(ctx, f.runner, observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkMode("observation expired replay", observationReplay, "observe")
+	if !reflect.DeepEqual(observed, observationReplay) {
+		t.Fatal("observation replay changed exact evidence")
+	}
+	status, err := f.pg.HostingStatus(ctx, f.runner, domain.HostingStatusRequest{HostingAuthority: f.authority})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkMode("historical deployment status", status, "deploy")
 }
 func awaitHostingDispatch(t *testing.T, pg *store.PostgresStore, id string) domain.HostingOperation {
 	t.Helper()
