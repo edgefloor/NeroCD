@@ -111,6 +111,12 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 			_ = store.Close()
 			return nil, fmt.Errorf("decode runner journal: %w", err)
 		}
+		if j.state.Version == 10 {
+			if err := decodeStorageJournal(contents, &j.state); err != nil {
+				_ = store.Close()
+				return nil, err
+			}
+		}
 		if err := validateJournalState(j.state); err != nil {
 			_ = store.Close()
 			return nil, err
@@ -381,6 +387,9 @@ func (j *AttemptJournal) persistLocked() error {
 		return err
 	}
 	state := j.state
+	if state.Version == 10 && !journalStateUsesStorage(state) {
+		state.Version = 9
+	}
 	if state.Version == 9 {
 		strict := false
 		for _, entry := range state.Proxy {
@@ -405,7 +414,7 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
-	if state.Version < journalFormatVersion || state.Version > 9 {
+	if state.Version < journalFormatVersion || state.Version > 10 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
 	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
@@ -443,6 +452,9 @@ func validateJournalState(state journalState) error {
 		return errors.New("hosting journal requires version2")
 	}
 	for _, entry := range state.Hosting {
+		if state.Version < 10 && HostingJournalUsesStorage(entry) {
+			return errors.New("owned storage journal requires version 10")
+		}
 		if state.Version < 8 && HostingJournalUsesRuntimeEnvironment(entry) {
 			return errors.New("runtime environment journal requires version 8")
 		}
@@ -466,7 +478,7 @@ func validateJournalState(state journalState) error {
 	strictProxy := false
 	for _, entry := range state.Proxy {
 		strictProxy = strictProxy || entry.Plan.Snapshot.VerifiedSwitch != nil
-		if entry.Plan.Snapshot.VerifiedSwitch != nil && state.Version != 9 {
+		if entry.Plan.Snapshot.VerifiedSwitch != nil && state.Version < 9 {
 			return errors.New("verified switch journal requires version 9")
 		}
 		if err := validateJournalProxy(entry); err != nil {
@@ -479,6 +491,9 @@ func validateJournalState(state journalState) error {
 	}
 	if state.Version == 9 && !strictProxy {
 		return errors.New("journal version 9 requires verified switch intent")
+	}
+	if state.Version == 10 && !journalStateUsesStorage(state) {
+		return errors.New("journal version 10 requires owned storage evidence")
 	}
 
 	if err := validateJournalBuildEntries(state); err != nil {

@@ -14,19 +14,23 @@ import (
 // JournalHosting is nonsecret immutable prepare, apply-intent, or result
 // evidence. Apply intent is never discarded merely because its lease is stale.
 type JournalHosting struct {
-	RuntimeEnvironment   bool                                  `json:"runtime_environment,omitempty"`
-	RuntimeConfiguration domain.HostingRuntimeConfigurationRef `json:"runtime_configuration,omitzero"`
-	DeliveryID           string                                `json:"delivery_id,omitempty"`
-	LocalBuild           bool                                  `json:"local_build,omitempty"`
-	ID                   string                                `json:"id"`
-	Attempt              AttemptIdentity                       `json:"attempt_authority"`
-	OperationID          string                                `json:"operation_id"`
-	Phase                string                                `json:"phase"`
-	Prepared             *domain.HostingPreparedRequest        `json:"prepared,omitempty"`
-	CleanupPlan          *domain.HostingCleanupPlan            `json:"cleanup_plan,omitempty"`
-	Plan                 *domain.HostingApplyPlan              `json:"plan,omitempty"`
-	Result               *domain.HostingCompleteRequest        `json:"result,omitempty"`
-	CreatedAt            time.Time                             `json:"created_at"`
+	StorageRef           domain.HostingStorageRef                  `json:"storage_ref,omitzero"`
+	StorageCreate        *domain.HostingStorageCreateRequest       `json:"storage_create,omitempty"`
+	StorageMaterialized  *domain.HostingStorageMaterializedRequest `json:"storage_materialized,omitempty"`
+	StorageMetadata      *domain.HostingStorage                    `json:"storage_metadata,omitempty"`
+	RuntimeEnvironment   bool                                      `json:"runtime_environment,omitempty"`
+	RuntimeConfiguration domain.HostingRuntimeConfigurationRef     `json:"runtime_configuration,omitzero"`
+	DeliveryID           string                                    `json:"delivery_id,omitempty"`
+	LocalBuild           bool                                      `json:"local_build,omitempty"`
+	ID                   string                                    `json:"id"`
+	Attempt              AttemptIdentity                           `json:"attempt_authority"`
+	OperationID          string                                    `json:"operation_id"`
+	Phase                string                                    `json:"phase"`
+	Prepared             *domain.HostingPreparedRequest            `json:"prepared,omitempty"`
+	CleanupPlan          *domain.HostingCleanupPlan                `json:"cleanup_plan,omitempty"`
+	Plan                 *domain.HostingApplyPlan                  `json:"plan,omitempty"`
+	Result               *domain.HostingCompleteRequest            `json:"result,omitempty"`
+	CreatedAt            time.Time                                 `json:"created_at"`
 }
 
 // AppendHosting durably records nonsecret hosting evidence before external mutation or delivery.
@@ -71,6 +75,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	}
 	if HostingJournalUsesRuntimeEnvironment(entry) && j.state.Version < 8 {
 		j.state.Version = 8
+	}
+	if HostingJournalUsesStorage(entry) && j.state.Version < 10 {
+		j.state.Version = 10
 	}
 	j.state.Hosting = append(j.state.Hosting, entry)
 	if err = j.persistLocked(); err != nil {
@@ -235,6 +242,9 @@ func cloneHostingEntries(entries []JournalHosting) []JournalHosting {
 	return copy
 }
 func validateJournalHosting(entry JournalHosting) error {
+	if err := validateHostingJournalStorage(entry); err != nil {
+		return err
+	}
 	if err := validateHostingJournalRuntimeEnvironment(entry); err != nil {
 		return err
 	}
@@ -267,6 +277,8 @@ func validateJournalHosting(entry JournalHosting) error {
 		return errors.New("cleanup journal document in wrong phase")
 	}
 	switch entry.Phase {
+	case "storage_create_intent", "storage_materialized":
+		// The storage validator checks the complete typed document and plan.
 	case "cleanup_intent":
 		if entry.CleanupPlan == nil || entry.Plan != nil || entry.Prepared != nil || entry.Result != nil {
 			return errors.New("invalid cleanup intent")

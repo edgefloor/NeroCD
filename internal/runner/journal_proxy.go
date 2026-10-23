@@ -54,7 +54,7 @@ func (j *AttemptJournal) AppendProxy(entry JournalProxy) (JournalProxy, error) {
 	if j.state.Version < 4 {
 		j.state.Version = 4
 	}
-	if entry.Plan.Snapshot.VerifiedSwitch != nil {
+	if entry.Plan.Snapshot.VerifiedSwitch != nil && j.state.Version < 9 {
 		j.state.Version = 9
 	}
 	j.state.Proxy = append(j.state.Proxy, entry)
