@@ -826,6 +826,16 @@ func (q *Queries) ProxyLockUser(ctx context.Context, id string) (ProxyLockUserRo
 	return i, err
 }
 
+const proxyLockVerifiedSwitchRunner = `-- name: ProxyLockVerifiedSwitchRunner :one
+SELECT id FROM runners WHERE id=$1 AND status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(capabilities) AND 'hosting_proxy_verified_switch_v1'=ANY(capabilities) FOR SHARE
+`
+
+func (q *Queries) ProxyLockVerifiedSwitchRunner(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, proxyLockVerifiedSwitchRunner, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const proxyManagementPortAvailable = `-- name: ProxyManagementPortAvailable :one
 SELECT NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE b.destination_id=$1 AND b.host_port=$2)
 AND NOT EXISTS(SELECT 1 FROM hosting_release_slots s WHERE s.destination_id=$1 AND s.host_port=$2)

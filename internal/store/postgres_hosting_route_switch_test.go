@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
@@ -555,5 +556,215 @@ func TestPostgresVerifiedSwitchConcurrentDestinationWithdrawal(t *testing.T) {
 	current, err := f.pg.GetHostingProxyOperation(t.Context(), op.ID)
 	if err != nil || !current.MutationHold {
 		t.Fatalf("concurrent revocation released hold %+v %v", current, err)
+	}
+}
+
+func TestPostgresVerifiedSwitchAuthorityAfterAdmissionAuditWait(t *testing.T) {
+	for _, revoke := range []string{"expiry", "capability"} {
+		t.Run(revoke, func(t *testing.T) {
+			f := switchControlFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			op, err := f.pg.RequestHostingRouteSwitch(ctx, f.resource.ID, "pop_audit_wait_switch", "usr_bootstrap", f.input("audit-wait"), destinationEvent("audit_wait_switch"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, op := claimProxyPlan(t, f.pg, op.ID, f.server.RunnerID)
+			prepared := domain.HostingProxyPreparedRequest{HostingAuthority: a, ReceiptID: "audit_wait_prepare", HostingProxyPreparation: domain.HostingProxyPreparation{DaemonID: f.a.Release.DaemonID, PlanHash: op.Plan.Hash, EngineHash: strings.Repeat("a", 64), StaticHash: strings.Repeat("b", 64)}}
+			if _, err = f.pg.RunnerProxyPrepared(ctx, f.server.RunnerID, prepared); err != nil {
+				t.Fatal(err)
+			}
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stop()
+				_ = blocker.Rollback(cleanup)
+			}()
+			var key int64
+			var pid int
+			if err = blocker.QueryRow(ctx, `SELECT hashtextextended(current_schema()||':strict-admission-audit',0),pg_backend_pid()`).Scan(&key, &pid); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.db.Exec(ctx, `CREATE FUNCTION strict_admission_audit_wait() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hosting.proxy_apply_admitted' THEN PERFORM pg_advisory_xact_lock(hashtextextended(current_schema()||':strict-admission-audit',0)); END IF; RETURN NEW; END $$; CREATE TRIGGER strict_admission_audit_wait BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION strict_admission_audit_wait()`); err != nil {
+				t.Fatal(err)
+			}
+			if revoke == "expiry" {
+				if _, err = f.db.Exec(ctx, `UPDATE run_leases SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, a.LeaseID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			done := make(chan error, 1)
+			var work sync.WaitGroup
+			work.Go(func() { _, err := f.pg.RunnerProxyApplyBegin(ctx, f.server.RunnerID, a); done <- err })
+			defer func() {
+				cancel()
+				cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stop()
+				_ = blocker.Rollback(cleanup)
+				work.Wait()
+			}()
+			ticker := time.NewTicker(10 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				var waiting bool
+				if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%CreateAuditEvent%')`, pid).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("admission did not wait on audit: %v", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-ticker.C:
+				}
+			}
+			if revoke == "capability" {
+				_, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.server.RunnerID, domain.HostingProxyVerifiedSwitchCapability)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				for {
+					var expired bool
+					if err = f.db.QueryRow(ctx, `SELECT expires_at<=clock_timestamp() FROM run_leases WHERE id=$1`, a.LeaseID).Scan(&expired); err != nil {
+						t.Fatal(err)
+					}
+					if expired {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-ticker.C:
+					}
+				}
+			}
+			if err = blocker.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err = <-done; err == nil {
+				t.Fatal("authority lost during audit still admitted mutation")
+			}
+			current, err := f.pg.GetHostingProxyOperation(ctx, op.ID)
+			if err != nil || current.MutationHold || current.State != "prepared" {
+				t.Fatalf("failed admission committed state %+v %v", current, err)
+			}
+			var count int
+			if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_proxy_admissions WHERE operation_id=$1`, op.ID).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("failed admission persisted ownership count=%d %v", count, err)
+			}
+			if err = f.db.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE id=$1`, "aud_proxy_admit_"+op.ID).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("failed admission retained audit count=%d %v", count, err)
+			}
+
+		})
+	}
+}
+
+func TestPostgresVerifiedSwitchRunnerTailLockWithRenewAndClaim(t *testing.T) {
+	f := switchControlFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	op, err := f.pg.RequestHostingRouteSwitch(ctx, f.resource.ID, "pop_tail_lock", "usr_bootstrap", f.input("tail-lock"), destinationEvent("tail_lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, op := claimProxyPlan(t, f.pg, op.ID, f.server.RunnerID)
+	preparation := domain.HostingProxyPreparedRequest{HostingAuthority: a, ReceiptID: "tail_prepare", HostingProxyPreparation: domain.HostingProxyPreparation{DaemonID: f.a.Release.DaemonID, PlanHash: op.Plan.Hash, EngineHash: strings.Repeat("a", 64), StaticHash: strings.Repeat("b", 64)}}
+	if _, err = f.pg.RunnerProxyPrepared(ctx, f.server.RunnerID, preparation); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var work sync.WaitGroup
+	defer func() {
+		cancel()
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		_ = blocker.Rollback(cleanup)
+		work.Wait()
+	}()
+	var pid int
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = blocker.Exec(ctx, `UPDATE runners SET last_heartbeat_at=clock_timestamp() WHERE id=$1`, f.server.RunnerID); err != nil {
+		t.Fatal(err)
+	}
+	admitted := make(chan error, 1)
+	work.Go(func() { _, err := f.pg.RunnerProxyApplyBegin(ctx, f.server.RunnerID, a); admitted <- err })
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var admissionPID int
+	for {
+		err = f.db.QueryRow(ctx, `SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%ProxyLockVerifiedSwitchRunner%'`, pid).Scan(&admissionPID)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-admitted:
+			t.Fatalf("did not wait for runner update: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	renewed := make(chan error, 1)
+	work.Go(func() {
+		_, err := f.pg.RenewLease(ctx, f.server.RunnerID, a.LeaseID, a.Fence, a.Attempt, time.Now(), time.Minute)
+		renewed <- err
+	})
+	for {
+		var waiting bool
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%RenewAuthorizedLease%')`, admissionPID).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-renewed:
+			t.Fatalf("renewal did not serialize with admission: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	claimed := make(chan error, 1)
+	work.Go(func() { _, err := f.pg.ClaimRun(ctx, f.server.RunnerID, time.Now(), time.Minute); claimed <- err })
+	select {
+	case err = <-claimed:
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("concurrent claim: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("claim waited on held attempt instead of skipping it")
+	}
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-admitted; err != nil {
+		t.Fatalf("admission deadlocked with runner update: %v", err)
+	}
+	if err = <-renewed; err != nil {
+		t.Fatalf("renewal deadlocked with runner admission: %v", err)
+	}
+	current, err := f.pg.GetHostingProxyOperation(ctx, op.ID)
+	if err != nil || !current.MutationHold || current.State != "applying" {
+		t.Fatalf("valid admission failed %+v %v", current, err)
 	}
 }

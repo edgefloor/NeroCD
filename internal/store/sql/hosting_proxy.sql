@@ -209,3 +209,6 @@ SELECT * FROM hosting_proxy_switch_prior_references WHERE operation_id=$1 ORDER 
 
 -- name: ProxyDeferredWithdrawals :many
 SELECT id FROM hosting_proxy_operations WHERE proxy_id=$1 AND generation>$2 AND state='queued' AND NOT (snapshot ? 'verified_switch') ORDER BY generation;
+
+-- name: ProxyLockVerifiedSwitchRunner :one
+SELECT id FROM runners WHERE id=$1 AND status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(capabilities) AND 'hosting_proxy_verified_switch_v1'=ANY(capabilities) FOR SHARE;

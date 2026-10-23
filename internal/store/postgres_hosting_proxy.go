@@ -355,6 +355,16 @@ func (s *PostgresStore) RunnerProxyApplyBegin(ctx context.Context, runner string
 	if err != nil {
 		return op, err
 	}
+	if op.Snapshot.VerifiedSwitch != nil {
+		// Stabilize the current agent through commit, after every potentially
+		// blocking write. Existing task/lease ownership precedes this tail lock.
+		if _, err = q.ProxyLockVerifiedSwitchRunner(ctx, runner); err != nil {
+			return domain.HostingProxyOperation{}, hostingError(err)
+		}
+		if err = proxyAuthority(ctx, tx, runner, a, true); err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
+	}
 	return op, tx.Commit(ctx)
 }
 
