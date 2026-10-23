@@ -9,8 +9,8 @@ const meta: Metadata | undefined = metadata ? JSON.parse(metadata) : undefined;
 // same-host test TLS through a Docker-exec TCP relay, not production TLS proof.
 test.use({ trace: "off", screenshot: "off", actionTimeout: 15_000, navigationTimeout: 15_000, launchOptions: { args: meta ? [`--ignore-certificate-errors-spki-list=${meta.spki}`] : [] } });
 
-async function signIn(page: Page, viewer = false) {
-  await page.goto("/sign-in");
+async function signIn(page: Page, viewer = false, navigate = true) {
+  if (navigate) await page.goto("/sign-in");
   await page.getByLabel("Email", { exact: true }).fill(viewer ? "viewer@example.local" : "admin@example.local");
   await page.getByLabel("Password", { exact: true }).fill(viewer ? "viewer" : "admin");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -26,7 +26,30 @@ test("administrator onboards real prepared SSH target and reads independent read
   test.skip(!meta, "requires scripts/hosting-server-bootstrap-fixture.sh owned runtime");
   test.setTimeout(180_000);
   const m = meta!;
-  await signIn(page);
+  // Capture only public, pre-credential navigation evidence. Request bodies,
+  // authorization headers, cookies and entered values are never recorded.
+  const failed: {path:string;code:string}[]=[];
+  const pageErrors:string[]=[];
+  const observedAssets:{path:string;status:number;content_type:string}[]=[];
+  page.on("requestfailed",request=>{if(failed.length<64)failed.push({path:new URL(request.url()).pathname,code:request.failure()?.errorText.slice(0,128)??"unknown"})});
+  page.on("pageerror",error=>{if(pageErrors.length<16)pageErrors.push(error.name.slice(0,64))});
+  page.on("response",response=>{const path=new URL(response.url()).pathname;if(path.startsWith("/assets/")&&observedAssets.length<64)observedAssets.push({path,status:response.status(),content_type:response.headers()["content-type"]??""})});
+  const navigation=await page.goto("/sign-in");
+  expect(navigation).not.toBeNull();
+  const initialHTML=await navigation!.text();
+  const indexHash=createHash("sha256").update(initialHTML).digest("hex");
+  const publicDOM=await page.evaluate(()=>({origin:location.origin,path:location.pathname,title:document.title,headings:Array.from(document.querySelectorAll("h1,h2,[role=status]"),element=>element.textContent?.slice(0,256)).slice(0,16),body:document.body.innerText.slice(0,2048)}));
+  const initialAssets=[...new Set(initialHTML.match(/\/assets\/[^" ]+\.(?:js|css)/g))];
+  const verifiedAssets:{path:string;status:number;content_type:string;sha256:string;expected:string}[]=[];
+  for(const path of initialAssets){const result=await page.evaluate(async path=>{const response=await fetch(path);const digest=await crypto.subtle.digest("SHA-256",await response.arrayBuffer());return{status:response.status,content_type:response.headers.get("content-type")??"",sha256:Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("")}},path);verifiedAssets.push({path,...result,expected:createHash("sha256").update(readFileSync(`../dist${path}`)).digest("hex")})}
+  const bootstrap=await read(page,"/api/v1/bootstrap-status");
+  const preflight={navigation_status:navigation!.status(),index_sha256:indexHash,publicDOM,bootstrap,failed,page_error_names:pageErrors,observed_assets:observedAssets,verified_assets:verifiedAssets};
+  console.log("SERVER_BOOTSTRAP_PUBLIC_PREFLIGHT "+JSON.stringify(preflight));
+  await info.attach("public-pre-credential-navigation",{body:JSON.stringify(preflight,null,2),contentType:"application/json"});
+  expect(indexHash).toBe(createHash("sha256").update(readFileSync("../dist/index.html")).digest("hex"));
+  for(const asset of verifiedAssets){expect(asset.status,asset.path).toBe(200);expect(asset.sha256,asset.path).toBe(asset.expected)}
+  expect(bootstrap.status).toBe(200);expect(JSON.parse(bootstrap.body).status).toBe("complete");
+  await signIn(page,false,false);
   await page.goto("/runners");
   const panel = page.getByRole("region", { name: "Add server over SSH", exact: true });
   await expect(panel).toBeVisible();
