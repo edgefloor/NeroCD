@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`5687b88465839b8e341181ba8b47f54dc17f006c`, 2026-10-23.
+`d29edb3bc8cde064108891f70713423bb57776a3`, 2026-10-23.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -75,6 +75,8 @@ artifact deployment, build output and private Git control-plane contracts:
 | Direct hosting navigation | Source `32ab3bcd259781c565e2a052dfbba320acd9206e`, accepted `43e9c305f71a267b1d201f7849c12a31f8c532d6`; [navigation metadata](../web/app/src/router/metadata.ts), [Home guidance](../web/app/src/pages/HomeView.tsx), [browser scenarios](../web/app/tests/browser/hosting-navigation.spec.ts) | Home, Projects and Servers and runners lead the Hosting group; advanced workflows remain available; direct image/Git application guidance requires no Task; saving configuration, heartbeat and a saved route do not establish deployment, readiness or HTTPS |
 | Verified existing-route switch engine | Accepted `99250c2634109cdd2008c56dae1b1740d377c0a1`; [engine contract](hosting-route-switch.md), [runtime fixture](../internal/hostingproxy/runtime_test.go) | Opt-in existing-route port switches verify old/new HTTP and trusted TLS, preserve unrelated routes and verify rollback; cancellation or unverified rollback stays `Uncertain`; controller/API admission and agent capability negotiation were absent at this engine checkpoint; accepted controller evidence is below; automatic deployment orchestration remains pending; no production ACME or complete A11/A20 |
 | Guarded verified-route controller | Accepted `5687b88465839b8e341181ba8b47f54dc17f006c`; [request, authority and recovery contract](hosting-route-switch.md), [compiled runner fixture](../internal/api/hosting_route_switch_runtime_integration_test.go) | Migration 0058; resource POST selects exact healthy or retained-running releases for existing routes; explicit agent capability/opt-in, verified HTTP/trusted TLS, prior-generation rollback, lost-response idempotency and cancellation/replay holds; current authority, expiry and revocation checks; metadata conflicts remain held without a reconciliation API; bounded R21/R25/R28 and A11/A20 evidence, not full R21, draining or automatic data rollback |
+| Route-switch reads and operator UI | Read API accepted `fa93d16fa09d5a7929581d5acb206029be9752d0`; UI source `1a555c514a23241bca34224380008dc42edcce49`, accepted `1c6ddb414d984372bb1f081fb6ff23db8bd81f88`; [operator contract](hosting-route-switch.md) | Resource-scoped authoritative options, explicit review, frozen retry intent, pending-operation recovery and visible holds; compiled controller 33.98 seconds/browser 19.6 seconds plus 111 normal browser cases; native Linux arm64 and local test CA; unresolved metadata conflicts remain held |
+| Compiled Vite SPA qualification | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Exact pinned source compiles with Node 22.22.0, Bun 1.3.6, Vite 8.2.2 and Caddy 2.10.2; runtime 141.87 seconds/default regression 42.72 seconds; genuine parser failure preserves the prior serving application; HTTP browser bridge and independent TLS probe are separate evidence; earlier unexplained failures remain a reliability limit; not complete A04 or production ACME |
 
 Private Railpack qualification is now accepted at
 `a92d100c6ba654e6797432e7ef7a6cfd55527272`, tree
@@ -89,6 +91,14 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
+Route-switch metadata-conflict reconciliation remains unaccepted. Its recovery
+candidate failed specification review on concurrent replay and is under repair;
+migration 0059 is not accepted. The accepted migration inventory remains 0058.
+The baseline SQL-policy failure in route-switch read source was confirmed at
+`fa93d16fa09d5a7929581d5acb206029be9752d0`; its repair candidate remains pending.
+No clean whole-suite result is claimed here. R17 automatic deployment, protected
+plans, SSH, production TLS, stateful hosting and remaining parity stay open.
+
 Controller qualification at `b1e42f53d06af36c086d5a8160dba4c17bced8c9`
 has tree `f0d646b8f85f32e82646189d59dc81fe1ac0b61f`, identical to accepted
 `5687b88465839b8e341181ba8b47f54dc17f006c`. Retained route runtime passed in
@@ -102,7 +112,7 @@ Main's 184-route contract and 74-served-asset checks passed in
 `/tmp/nerocd-main-route-control-contract.log` and
 `/tmp/nerocd-main-route-control-served.log`, retaining manifest
 `0e81691a8d4fcb7f1b59facf37ce1d9dc84cf601e87b42f24532778e827b6cd6`.
-The dedicated route-switch UI and read API remain pending. R17 automatic/protected
+The bounded route-switch read API and operator UI are now accepted below. R17 automatic/protected
 plans, SSH, production ACME and stateful hosting remain incomplete.
 
 Navigation evidence at source `32ab3bcd259781c565e2a052dfbba320acd9206e`
@@ -113,7 +123,7 @@ passed fresh 183-route contract and 74-served-asset checks, with manifest
 `0e81691a8d4fcb7f1b59facf37ce1d9dc84cf601e87b42f24532778e827b6cd6`
 and binary `c3c95c79862e0ca396ee0875ca2fb5d5152ad7490b36df5ea74087e2bf4a6e3a`.
 Synthetic fault and actor cases prove client behavior only; real OIDC denial
-evidence remains separate. These retained results do not qualify complete route-switch UI/read API, automatic deployment, protected plans, SSH,
+evidence remains separate. These retained results do not qualify complete route-switch recovery, automatic deployment, protected plans, SSH,
 production ACME or complete hosting parity.
 
 Manual enrollment qualification at `68c403aa6d319dd9a391d6f6eb577336943e355b`
@@ -328,7 +338,7 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | Inputs without Git | C2, C3, C8 | partial: public-image API/UI deployment freezes selected output without a repository; stored-Dockerfile product input, pasted Compose and catalog sources planned | A05, A15, A21; no-git-source | P04, P08, P11 |
 | Build placement | C4 | partial: controller dispatches to the exact configured enrolled build agent and fixed daemon; registry publication and dedicated-server image delivery planned | A07, A13; registry-push-pull, architecture-mismatch | P02, P05; tags never relocate stateful destinations |
 | Domains and HTTPS | C5 | partial: standalone Traefik TLS engine and authorized whole-generation backend/dispatch; explicitly capable agent execution and managed routing UI accepted with local test-CA fixtures; public DNS/production ACME and additional proxy modes remain unvalidated | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
-| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; bounded GitHub build-on-push accepted; verified route-switch engine and guarded controller accepted; dedicated UI/read API, automatic deployment orchestration and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
+| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; bounded GitHub build-on-push accepted; verified route-switch engine and guarded controller accepted; bounded read API/operator UI accepted; conflict reconciliation, automatic deployment orchestration and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | planned: managed volumes, directories, managed files and external host files | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
 | Databases | C7 | planned: engine-specific lifecycle; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
@@ -391,8 +401,8 @@ integration is implemented or validated by this ledger.
 | Dockerfile | C2 | partial, public/private HTTPS path | Production controller/CLI and bounded UI acquire public or granted private HTTPS Git and runs the confined Dockerfile/context/target path into an immutable artifact. Same-host exact artifact deployment and typed output are accepted; build arguments/secrets and remote publication remain planned; build-dockerfile, A02, A06 |
 | Railpack | C12 | partial, public/private CLI and static-provider UI path | Pinned 0.40.1 planner/frontend executes through public or granted private HTTPS Git/controller/CLI with bounded helper and immutable artifact output; upstream Beta label retained. Same-host deployment and typed output are accepted; private CLI credential use is accepted; private static-provider UI qualification is accepted above; full language matrix and remote publication remain planned; build-railpack, A03 |
 | Nixpacks | C2 | planned, separate M3 adapter | Never infer support from Railpack; version/language fixtures; build-nixpacks |
-| Prebuilt static files | C13 | partial, public build path | Public Git/controller/CLI packages selected prepared assets and opt-in SPA fallback with pinned nginx and retained receipts; same-host artifact deployment is accepted; frontend compilation remains planned; build-static, A04 |
-| Compiled static/SPA | C13 | planned, M1 | Explicit build command and output directory; baked configuration requires rebuild; build-spa, A04 |
+| Prebuilt static files | C13 | partial, public build path | Public Git/controller/CLI packages selected prepared assets and opt-in SPA fallback with pinned nginx and retained receipts; same-host artifact deployment is accepted; this row covers prepared assets only; build-static, A04 |
+| Compiled static/SPA | C13 | partial, pinned Vite fixture accepted | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [compiled fixture contract](../acceptance/runtime-hosting-local-build/README.md). Explicit build command/output directory with pinned Node/Bun/Vite/Caddy; parser failure preserves the prior app. Earlier unexplained failures remain a reliability limit; broader frontend coverage, complete A04 and production ACME remain pending; baked configuration requires rebuild; build-spa, A04 |
 | Compose build sections | C3 | planned, P05/P08 | Resolve all required images before mutation; initialization and optional-component semantics; build-compose, A15, A16 |
 | Dedicated builder | C4 | planned, M3 | Authorized registry delivery, cache identity, architecture/pull validation; build-remote, A07 |
 
