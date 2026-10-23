@@ -56,6 +56,9 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			autoAttempt, stopAuto := context.WithTimeout(recoveryCtx, 3*time.Second)
 			_ = s.recoverAutoDeployDispatch(autoAttempt)
 			stopAuto()
+			bootstrapAttempt, stopBootstrap := context.WithTimeout(recoveryCtx, 3*time.Second)
+			_ = s.recoverServerBootstrapDispatch(bootstrapAttempt)
+			stopBootstrap()
 			select {
 			case <-recoveryCtx.Done():
 				return

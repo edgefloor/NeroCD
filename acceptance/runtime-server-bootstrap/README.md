@@ -110,6 +110,91 @@ Each service is checked separately with `systemctl is-active`, followed by a suc
 A multi-unit `systemctl is-active` result alone cannot prove that every listed service is active.
 Only a complete qualification exit of zero counts as a fixture pass.
 
+## Complete API onboarding extension
+
+`NEROCD_BOOTSTRAP_ONBOARDING=owned-systemd-target bash acceptance/runtime-server-bootstrap/qualify.sh`
+also compiles the Linux API fixture and runs it after the adapter qualification.
+It uses a separate database in the same owned PostgreSQL container. Production
+HTTP handlers admit every operation and command. The normal River consumer calls
+the configured production bootstrap processor, which connects to the target's
+real OpenSSH server and starts the transferred agent through systemd. The agent
+consumes enrollment over HTTPS independently of the test driver.
+The fixture completes platform administrator bootstrap through the real service
+and verifies public bootstrap status before starting onboarding. Seeded API test
+users alone do not complete that platform setup requirement.
+
+The extension requires native arm64. It covers explicit true and false project
+grant choices, a later explicit grant, committed create and command response
+loss with exact retries, enrollment response loss, a real expired review and
+fresh probe, rejected artifact and receipt input, viewer denial, registration
+binding, and a separately observed readiness report. It never seeds bootstrap
+operations or submits SSH observations through a test endpoint. Its controller
+and SSH target share the disposable container. The HTTPS test CA is trusted
+explicitly by the API client and installed only inside that container for the
+agent. This does not qualify production DNS, TLS issuance, or network reachability.
+The original qualifier remains unchanged unless this opt-in is set.
+The onboarding artifact is compiled separately with
+`-ldflags '-X main.version=v0.0.0-fixture'`, matching its qualified policy metadata.
+Its digest and explicit version pin are retained in the run evidence.
+
+The recovery case uses a dedicated owned loopback OpenSSH endpoint with the same
+pinned host key and authorized client key. Its forced-command wrapper permits
+only the exact owned-command digest from the actual adapter qualification or the
+literal production probe invocation. It passes stdin, stdout, stderr and the
+actual exit status unchanged. A one-shot arm delays only command exit for at
+most 15 seconds after the real owned command finishes. A nonsecret completion
+marker records its exit status; later inspection does not consume another delay.
+A transparent loopback forwarder carries all bytes without throttling, including
+artifact uploads and SSH window adjustments. It never decrypts traffic, changes
+SSH identity, or substitutes a remote result.
+Independent exact ownership inspection must observe the active service while
+the controller's install receipt remains pending. Otherwise the test fails.
+The test then drops and joins the active owned SSH transport, retaining the
+same bounded listener and target port for recovery. This loses the real pending
+response before the test gracefully stops and joins the hosting execution loop.
+The test requires a committed uncertain install receipt and retained hold before
+restarting execution. After restart, a fresh authorized API command requests
+operator inspection of that settled uncertain result. Automatic recovery of a
+missing receipt is a separate path. Exact manifest, remote operation and systemd
+InvocationID must survive inspection with the hold and original uncertain receipt
+retained. This proves an execution lifecycle restart
+against the durable database. It does not restart the whole controller process.
+The forwarder binds only loopback, permits four connections, applies 125-second
+connection deadlines, and joins its connections and byte pumps on cancellation.
+Cleanup waits for the dedicated SSH daemon parent and checks recorded timeout
+command groups, verifying each recorded process's owned path before signaling it.
+It does not inventory pre-authentication children or qualify a full daemon-group
+join. Remaining or unrecorded child lifetime is bounded by verified removal of
+the owned outer container. Cleanup removes only the unique fixture directory.
+The wrapper helper check proves
+large-input passthrough, output/status preservation, one-shot release and its
+fixed timeout before the actual recovery run.
+Separate loopback forwarded ports give the true/false grant and browser cases
+separate owned fixture destinations. This respects durable endpoint ownership.
+It is a test arrangement, not a recommendation for production cohosting.
+
+Run `bash web/app/scripts/hosting-server-bootstrap-fixture.sh` from the repository
+root for the additional browser journey. It builds the current UI before
+compiling the embedded API test binary. The browser uses the real production
+handlers for project, existing managed key version, qualified artifact,
+create/probe/review/install and readiness. It drops one committed create response
+and retries the identical body. It checks keyboard review at widths 320, 390,
+430 and 1440, viewer denial, and served asset hashes against `web/dist`.
+
+For this browser fixture only, the Docker-exec TCP relay has a fixed HTTPS
+profile from host loopback port 19443 to target loopback port 19443. The original
+SSH profile and its 180-second lifetime remain the default. The HTTPS profile
+uses the same full ID/name/owner checks and 25-second per-connection deadline,
+with sixteen connections and a 600-second whole-run lifetime. Chromium's parallel
+HTTP asset loading requires that bounded HTTPS capacity. The default SSH profile
+retains its four-connection limit. The browser's
+Chromium process trusts the exact ephemeral certificate SPKI from this run.
+It does not use `ignoreHTTPSErrors`, bypass CSP, or change authentication/CSRF
+rules. This is fixture certificate pinning and same-host transport qualification.
+It does not prove production TLS or public reachability. The four-capability
+`hosting_image_v1` preset remains limited to image hosting and readiness; source
+builds, proxy operations and runtime logs require their separate qualification.
+
 Cleanup compares full container, network, and image IDs, exact names, and unique owner labels before deletion.
 Docker volumes have names rather than independent immutable IDs, so cleanup checks their exact names and owner labels.
 Deletion and absence checks fail explicitly even when the cleanup helper runs in a shell `||` list.

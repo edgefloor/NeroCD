@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 class Relay:
-    def __init__(self, container_id, owner, connection_timeout=25):
+    def __init__(self, container_id, owner, connection_timeout=25, profile="ssh"):
         if not re.fullmatch(r"[a-f0-9]{64}", container_id):
             raise ValueError("full container ID required")
         if not re.fullmatch(r"nerocd-server-bootstrap\.[a-z0-9]+", owner):
@@ -16,6 +16,11 @@ class Relay:
         self.container_id = container_id
         self.owner = owner
         self.connection_timeout = connection_timeout
+        if profile not in ("ssh", "onboarding-https"):
+            raise ValueError("unknown fixed fixture relay profile")
+        self.profile = profile
+        self.target_port = 22 if profile == "ssh" else 19443
+        self.max_connections = 4 if profile == "ssh" else 16
         self.tasks = set()
         self.children = set()
         self.server = None
@@ -60,7 +65,7 @@ class Relay:
             await self.reap(process)
 
     def accept(self, reader, writer):
-        if len(self.tasks) >= 4:
+        if len(self.tasks) >= self.max_connections:
             writer.close()
             return
         task = asyncio.create_task(self.connection(reader, writer))
@@ -76,7 +81,7 @@ class Relay:
                     return
                 process = await self.spawn(
                     "docker", "exec", "--interactive", self.container_id,
-                    "socat", "STDIO", "TCP:127.0.0.1:22,connect-timeout=5",
+                    "socat", "STDIO", f"TCP:127.0.0.1:{self.target_port},connect-timeout=5",
                     stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -111,7 +116,7 @@ class Relay:
     async def start(self):
         if not await self.identity():
             raise RuntimeError("fixture identity mismatch before listening")
-        self.server = await asyncio.start_server(self.accept, "127.0.0.1", 0)
+        self.server = await asyncio.start_server(self.accept, "127.0.0.1", 0 if self.profile == "ssh" else 19443)
         return self.server.sockets[0].getsockname()[1]
 
     async def close(self):
@@ -136,7 +141,10 @@ class Relay:
 
 
 async def main():
-    relay = Relay(sys.argv[1], sys.argv[2])
+    if len(sys.argv) not in (4, 5):
+        raise ValueError("container, owner, port file and optional fixed profile required")
+    profile = sys.argv[4] if len(sys.argv) == 5 else "ssh"
+    relay = Relay(sys.argv[1], sys.argv[2], profile=profile)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -145,7 +153,7 @@ async def main():
         port = await relay.start()
         Path(sys.argv[3]).write_text(str(port))
         print(f"fixture Docker-exec TCP relay endpoint=127.0.0.1:{port}", flush=True)
-        await relay.serve_until(stop)
+        await relay.serve_until(stop, lifetime=180 if profile == "ssh" else 600)
     finally:
         await relay.close()
 

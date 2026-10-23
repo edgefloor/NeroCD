@@ -9,6 +9,7 @@ import { PageNavigation } from "@/components/common/PageNavigation";
 import { ServerReadiness } from "./ServerReadiness";
 import { HostingProxy } from "./HostingProxy";
 import { maximumPageOffset } from "@/router/search";
+import { ServerBootstrap } from "@/components/hosting/ServerBootstrap";
 
 export function eligibleHostingRunner(runner: Runner): boolean {
   const capabilities = runner.capabilities ?? [];
@@ -55,7 +56,12 @@ function ServerDetail({ serverID, blocked }: { serverID: string; blocked: boolea
   </section>;
 }
 export function HostingServers({ canAdmin, blocked }: { canAdmin: boolean; blocked: boolean }) {
-  return canAdmin ? <ServerAdministration blocked={blocked} /> : null;
+  return canAdmin ? (
+    <>
+      <ServerBootstrap blocked={blocked} />
+      <ServerAdministration blocked={blocked} />
+    </>
+  ) : null;
 }
 function ServerAdministration({ blocked }: { blocked: boolean }) {
   const client = useQueryClient();

@@ -33,6 +33,7 @@ func WithRequestID(ctx context.Context, requestID string) context.Context {
 
 // Service orchestrates authorized application workflows across injected dependencies.
 type Service struct {
+	serverBootstrap      *ServerBootstrapConfig
 	auth                 auth.Provider
 	users                store.UserRepository
 	sessions             store.SessionRepository

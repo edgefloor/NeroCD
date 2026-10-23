@@ -4,6 +4,210 @@
  */
 
 export interface paths {
+    "/api/v1/server-bootstrap-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * serverBootstrapOptions
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        get: operations["serverBootstrapOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * listServerBootstraps
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        get: operations["listServerBootstraps"];
+        put?: never;
+        /**
+         * createServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        post: operations["createServerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        get: operations["getServerBootstrap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * probeServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        post: operations["probeServerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps/{id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * reviewServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        post: operations["reviewServerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * installServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        post: operations["installServerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps/{id}/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * inspectServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        post: operations["inspectServerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps/{id}/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * registerServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        post: operations["registerServerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps/{id}/grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * grantServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        post: operations["grantServerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server-bootstraps/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * cancelServerBootstrap
+         * @description Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent.
+         */
+        post: operations["cancelServerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner/server-readiness/challenge": {
         parameters: {
             query?: never;
@@ -2844,6 +3048,142 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ServerBootstrapTarget: {
+            ip: string;
+            port: number;
+            /** @enum {string} */
+            user: "root";
+            host_fingerprint: string;
+        };
+        ServerBootstrapArtifactOption: {
+            artifact_id: string;
+            version: string;
+            /** @enum {string} */
+            architecture: "arm64";
+            /** Format: int64 */
+            size: number;
+            sha256: string;
+            /** @enum {string} */
+            profile: "prepared_debian12_v1";
+        };
+        ServerBootstrapOptions: {
+            available: boolean;
+            /** @enum {string} */
+            unavailable_reason: "" | "disabled" | "durable_store_required" | "managed_secrets_unavailable";
+            /** @enum {string} */
+            profile: "prepared_debian12_v1";
+            /** @enum {string} */
+            preset: "hosting_image_v1";
+            artifacts: components["schemas"]["ServerBootstrapArtifactOption"][];
+        };
+        ServerBootstrapCreateInput: {
+            /** Format: uuid */
+            request_id: string;
+            project_id: string;
+            name: string;
+            target: components["schemas"]["ServerBootstrapTarget"];
+            ssh_secret_id: string;
+            /** Format: int64 */
+            ssh_secret_version: number;
+            artifact_id: string;
+        };
+        ServerBootstrapCommandInput: {
+            /** Format: uuid */
+            command_id: string;
+            /** Format: int64 */
+            expected_version: number;
+        };
+        ServerBootstrapReviewInput: {
+            /** Format: uuid */
+            command_id: string;
+            /** Format: int64 */
+            expected_version: number;
+            probe_receipt_id: string;
+        };
+        ServerBootstrapInstallInput: {
+            /** Format: uuid */
+            command_id: string;
+            /** Format: int64 */
+            expected_version: number;
+            manifest_sha256: string;
+            /** @enum {boolean} */
+            acknowledge_install_and_start: true;
+            grant_project: boolean;
+        };
+        ServerBootstrapPrerequisites: {
+            profile: string;
+            os_state: string;
+            os_id: string;
+            os_version: string;
+            architecture: string;
+            systemd_state: string;
+            systemd_status: string;
+            docker_state: string;
+            docker_api_version: string;
+            compose_state: string;
+            compose_version: string;
+            disk_state: string;
+            /** Format: int64 */
+            disk_total_bytes: number;
+            /** Format: int64 */
+            disk_available_bytes: number;
+        };
+        ServerBootstrapProbe: {
+            receipt_id: string;
+            prerequisites: components["schemas"]["ServerBootstrapPrerequisites"];
+            /** Format: date-time */
+            observed_at: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        ServerBootstrapReview: {
+            manifest_sha256: string;
+            probe_receipt_id: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        ServerBootstrapProgress: {
+            command_id: string;
+            /** @enum {string} */
+            action: "probe" | "review" | "install" | "inspect" | "register" | "grant" | "cancel";
+            /** @enum {string} */
+            status: "pending" | "running" | "completed";
+            /** @enum {string} */
+            outcome: "" | "accepted" | "observed" | "refused" | "installed" | "uncertain";
+            receipt_id?: string;
+        };
+        ServerBootstrap: {
+            id: string;
+            project_id: string;
+            name: string;
+            target: components["schemas"]["ServerBootstrapTarget"];
+            artifact_id: string;
+            artifact: components["schemas"]["ServerBootstrapArtifactOption"];
+            /** @enum {string} */
+            state: "draft" | "reviewed" | "running" | "installed_waiting_enrollment" | "registered" | "completed" | "refused" | "canceled" | "uncertain";
+            /** Format: int64 */
+            version: number;
+            remote_hold: boolean;
+            restore_held: boolean;
+            /** Format: date-time */
+            created_at: string;
+            progress: components["schemas"]["ServerBootstrapProgress"][];
+            probe?: components["schemas"]["ServerBootstrapProbe"];
+            review?: components["schemas"]["ServerBootstrapReview"];
+            available_actions: ("probe" | "review" | "install" | "inspect" | "register" | "grant" | "cancel")[];
+            server_id?: string;
+            destination_id?: string;
+            /** @enum {string} */
+            readiness_state: "not_registered" | "check_server_readiness";
+        };
+        ServerBootstrapList: {
+            items: components["schemas"]["ServerBootstrap"][];
+            /** Format: int64 */
+            limit: number;
+            /** Format: int64 */
+            offset: number;
+            has_more: boolean;
+        };
         ServerReadinessReport: {
             sample_id: string;
             /** @enum {string} */
@@ -5529,6 +5869,357 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    serverBootstrapOptions: {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Closed bootstrap metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrapOptions"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listServerBootstraps: {
+        parameters: {
+            query: {
+                project_id: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Closed bootstrap metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrapList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    createServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerBootstrapCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Closed bootstrap metadata */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Closed bootstrap metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    probeServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerBootstrapCommandInput"];
+            };
+        };
+        responses: {
+            /** @description Closed bootstrap metadata */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    reviewServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerBootstrapReviewInput"];
+            };
+        };
+        responses: {
+            /** @description Closed bootstrap metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    installServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerBootstrapInstallInput"];
+            };
+        };
+        responses: {
+            /** @description Closed bootstrap metadata */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    inspectServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerBootstrapCommandInput"];
+            };
+        };
+        responses: {
+            /** @description Closed bootstrap metadata */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    registerServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerBootstrapCommandInput"];
+            };
+        };
+        responses: {
+            /** @description Closed bootstrap metadata */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    grantServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerBootstrapCommandInput"];
+            };
+        };
+        responses: {
+            /** @description Closed bootstrap metadata */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    cancelServerBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerBootstrapCommandInput"];
+            };
+        };
+        responses: {
+            /** @description Closed bootstrap metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerBootstrap"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     issueServerReadiness: {
         parameters: {
             query?: never;

@@ -367,6 +367,64 @@ func (q *Queries) BootstrapCredentialCreate(ctx context.Context, arg BootstrapCr
 	return err
 }
 
+const bootstrapDueOperations = `-- name: BootstrapDueOperations :many
+SELECT o.id FROM server_bootstrap_operations o
+WHERE NOT o.restore_held AND o.created_at + interval '1 hour'>clock_timestamp()
+AND (
+  o.state='installed_waiting_enrollment'
+  OR o.state='registered' AND EXISTS(
+    SELECT 1 FROM server_bootstrap_commands g
+    WHERE g.operation_id=o.id AND g.action='install' AND g.body->>'grant_project'='true'
+  )
+  OR EXISTS(
+    SELECT 1 FROM server_bootstrap_commands c
+    WHERE c.operation_id=o.id AND c.receipt IS NULL AND c.deadline>clock_timestamp()
+    AND c.attempt<8 AND (c.lease_expires_at IS NULL OR c.lease_expires_at<=clock_timestamp())
+  )
+)
+ORDER BY md5(o.id || floor(extract(epoch FROM clock_timestamp())/5)::text) LIMIT 64
+`
+
+func (q *Queries) BootstrapDueOperations(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, bootstrapDueOperations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const bootstrapEnrollmentConsumed = `-- name: BootstrapEnrollmentConsumed :one
+SELECT EXISTS(
+  SELECT 1 FROM runner_enrollments e JOIN runners r ON r.id=e.runner_id
+  WHERE e.id=$1 AND e.runner_id=$2 AND e.used_at IS NOT NULL
+  AND e.consume_request_id IS NOT NULL AND e.credential_hash=r.token_hash AND r.status='active'
+)::boolean
+`
+
+type BootstrapEnrollmentConsumedParams struct {
+	ID       string `json:"id"`
+	RunnerID string `json:"runner_id"`
+}
+
+func (q *Queries) BootstrapEnrollmentConsumed(ctx context.Context, arg BootstrapEnrollmentConsumedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, bootstrapEnrollmentConsumed, arg.ID, arg.RunnerID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const bootstrapEnrollmentLock = `-- name: BootstrapEnrollmentLock :one
 SELECT id, token_hash, runner_id, runner_name, tags, capabilities, created_by, created_at, expires_at, revoked_at, used_at, consume_request_id, credential_hash FROM runner_enrollments WHERE id=$1 FOR UPDATE
 `
@@ -513,6 +571,21 @@ func (q *Queries) BootstrapHasEffectIntent(ctx context.Context, operationID stri
 	return column_1, err
 }
 
+const bootstrapHasSettledIntent = `-- name: BootstrapHasSettledIntent :one
+SELECT EXISTS(
+  SELECT 1 FROM server_bootstrap_commands
+  WHERE operation_id=$1 AND action='install' AND effect_intent
+  AND (lease_expires_at<=clock_timestamp() OR receipt IS NOT NULL)
+)::boolean
+`
+
+func (q *Queries) BootstrapHasSettledIntent(ctx context.Context, operationID string) (bool, error) {
+	row := q.db.QueryRow(ctx, bootstrapHasSettledIntent, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const bootstrapLatestReview = `-- name: BootstrapLatestReview :one
 SELECT body FROM server_bootstrap_commands WHERE operation_id=$1 AND action='review' AND receipt IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 1
 `
@@ -522,6 +595,37 @@ func (q *Queries) BootstrapLatestReview(ctx context.Context, operationID string)
 	var body json.RawMessage
 	err := row.Scan(&body)
 	return body, err
+}
+
+const bootstrapListIDs = `-- name: BootstrapListIDs :many
+SELECT id FROM server_bootstrap_operations
+WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3
+`
+
+type BootstrapListIDsParams struct {
+	ProjectID string `json:"project_id"`
+	Limit     int32  `json:"limit"`
+	Offset    int32  `json:"offset"`
+}
+
+func (q *Queries) BootstrapListIDs(ctx context.Context, arg BootstrapListIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, bootstrapListIDs, arg.ProjectID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const bootstrapLock = `-- name: BootstrapLock :one
@@ -570,6 +674,29 @@ func (q *Queries) BootstrapReadLock(ctx context.Context, id string) (ServerBoots
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const bootstrapReconcileIntent = `-- name: BootstrapReconcileIntent :exec
+UPDATE server_bootstrap_commands
+SET receipt=jsonb_build_object(
+  'receipt',$1::jsonb || jsonb_build_object(
+    'command_id',id,'lease_id',lease_id,'attempt',attempt,'fence',fence
+  ),
+  'operation',$2::jsonb
+)
+WHERE operation_id=$3 AND action='install' AND effect_intent
+AND receipt IS NULL AND lease_expires_at<=clock_timestamp()
+`
+
+type BootstrapReconcileIntentParams struct {
+	Receipt     json.RawMessage `json:"receipt"`
+	Operation   json.RawMessage `json:"operation"`
+	OperationID string          `json:"operation_id"`
+}
+
+func (q *Queries) BootstrapReconcileIntent(ctx context.Context, arg BootstrapReconcileIntentParams) error {
+	_, err := q.db.Exec(ctx, bootstrapReconcileIntent, arg.Receipt, arg.Operation, arg.OperationID)
+	return err
 }
 
 const bootstrapRestoreEnrollments = `-- name: BootstrapRestoreEnrollments :exec

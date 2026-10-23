@@ -91,6 +91,11 @@ main() {
  go version
  go list -m golang.org/x/crypto
  go test -c -o "$work/serverbootstrap.test" ./internal/serverbootstrap
+ if [[ ${NEROCD_BOOTSTRAP_ONBOARDING:-} == owned-systemd-target ]]; then
+  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags nerocd_bootstrap_fixture -c -o "$work/api.test" ./internal/api
+  shasum -a 256 "$work/api.test" >"$evidence/onboarding-test-sha256.txt"
+  python3 -B scripts/skills/ui_manifest.py >"$evidence/ui-manifest.json"
+ fi
  shasum -a 256 "$work/serverbootstrap.test" >"$evidence/probe-binary-sha256.txt"
  docker version --format 'host Docker={{.Server.Version}} API={{.Server.APIVersion}} arch={{.Server.Arch}}'
  for key in host client loss-client wrong-client wrong-host; do ssh-keygen -q -t ed25519 -N '' -f "$work/$key"; done
@@ -101,6 +106,11 @@ main() {
  donor_arch=$(docker image inspect --format '{{.Architecture}}' "$donor")
  [[ "$donor_arch" == arm64 || "$donor_arch" == amd64 ]]
  GOOS=linux GOARCH="$donor_arch" CGO_ENABLED=0 go build -trimpath -o "$work/agent" ./cmd/nerocd
+ if [[ ${NEROCD_BOOTSTRAP_ONBOARDING:-} == owned-systemd-target ]]; then
+  GOOS=linux GOARCH="$donor_arch" CGO_ENABLED=0 go build -trimpath -ldflags '-X main.version=v0.0.0-fixture' -o "$work/onboarding-agent" ./cmd/nerocd
+  shasum -a 256 "$work/onboarding-agent" >"$evidence/onboarding-agent-sha256.txt"
+  printf 'onboarding artifact version=v0.0.0-fixture explicit main.version build pin\n' >"$evidence/onboarding-artifact-version.txt"
+ fi
  GOOS=linux GOARCH="$donor_arch" CGO_ENABLED=0 go test -c -o "$work/target.test" ./internal/serverbootstrap
  shasum -a 256 "$work/agent" "$work/target.test" >"$evidence/installer-binary-sha256.txt"
  postgres='postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94'
@@ -155,6 +165,12 @@ main() {
  docker cp "$work/sentinel.tar" "$container_id:/fixture/sentinel.tar"
  docker cp "$work/target.test" "$container_id:/fixture/target.test"
  docker cp "$root/db/seeds/dev.sql" "$container_id:/fixture/dev.sql"
+ if [[ ${NEROCD_BOOTSTRAP_ONBOARDING:-} == owned-systemd-target ]]; then
+  [[ "$donor_arch" == arm64 ]] || { echo 'onboarding policy requires native arm64'; return 1; }
+  docker cp "$work/api.test" "$container_id:/fixture/api.test"
+  docker cp "$work/onboarding-agent" "$container_id:/fixture/onboarding-agent"
+  docker cp "$work/client" "$container_id:/fixture/onboarding-client"
+ fi
  docker start "$container_id" >/dev/null
  local ready=false
  for _ in $(seq 1 40); do
@@ -238,6 +254,27 @@ main() {
  ssh "${ssh_options[@]}" -o "UserKnownHostsFile=$work/known_hosts" -i "$work/client" root@127.0.0.1 "$snapshot_command" >"$evidence/sentinels-after-installer.txt"
  cmp "$evidence/sentinels-before-probe.txt" "$evidence/sentinels-after-installer.txt"
  printf 'actual installer preserves unrelated file/service/container/marker sentinels\n'
+ if [[ ${NEROCD_BOOTSTRAP_ONBOARDING:-} == owned-systemd-target ]]; then
+  # A different database separates the complete onboarding controller from the
+  # accepted adapter fixture. No host PostgreSQL service or published port.
+  docker exec "$pg_id" createdb -U postgres onboarding
+  docker exec "$container_id" /bin/sh -ec 'mkdir -p /db/seeds /internal/api; cp /fixture/dev.sql /db/seeds/dev.sql; chmod 0600 /fixture/onboarding-client'
+  docker exec "$container_id" /fixture/onboarding-agent version >"$evidence/onboarding-artifact-actual-version.txt"
+  [[ $(cat "$evidence/onboarding-artifact-actual-version.txt") == v0.0.0-fixture ]]
+  docker exec "$container_id" sha256sum /fixture/onboarding-agent >>"$evidence/onboarding-artifact-actual-version.txt"
+  docker exec --workdir /internal/api "$container_id" /fixture/api.test -test.v -test.run '^TestServerBootstrapRuntimeForwarderJoins$' -test.timeout=10s >"$evidence/onboarding-forwarder.log" 2>&1 || { cat "$evidence/onboarding-forwarder.log"; return 1; }
+  cat "$evidence/onboarding-forwarder.log"
+  shasum -a 256 "$root"/internal/api/server_bootstrap_runtime_integration_test.go "$root"/internal/app/server_bootstrap*.go "$root"/internal/store/postgres_server_bootstrap*.go "$root"/internal/api/server_bootstrap*.go >"$evidence/onboarding-source-sha256.txt"
+  if [[ ${NEROCD_BOOTSTRAP_BROWSER:-} == 1 ]]; then
+   bash "$root/web/app/scripts/hosting-server-bootstrap-fixture.sh" --drive-owned "$container_id" "$owner" "postgresql://postgres@$pg_address/onboarding?sslmode=disable" "$fingerprint" "$evidence" "$work/https-relay-port"
+  else
+   docker exec --workdir /internal/api --env NEROCD_BOOTSTRAP_ONBOARDING=owned-systemd-target --env "NEROCD_BOOTSTRAP_PROBE_FINGERPRINT=$fingerprint" --env "NEROCD_TEST_DATABASE_URL=postgresql://postgres@$pg_address/onboarding?sslmode=disable" "$container_id" /fixture/api.test -test.v -test.run '^TestServerBootstrapRuntime$' -test.timeout=7m >"$evidence/onboarding-runtime.log" 2>&1 || { cat "$evidence/onboarding-runtime.log"; return 1; }
+   cat "$evidence/onboarding-runtime.log"
+  fi
+  docker exec "$container_id" /bin/sh -ec 'sha256sum /fixture/sentinel; systemctl show fixture-sentinel -p MainPID --value; systemctl is-active fixture-sentinel; docker inspect --format "{{.Id}} {{.State.Running}}" unrelated-sentinel; wc -l /fixture/marker; systemctl is-active fixture-marker || test "$(systemctl is-active fixture-marker)" = inactive' >"$evidence/sentinels-after-onboarding.txt"
+  cmp "$evidence/sentinels-before-probe.txt" "$evidence/sentinels-after-onboarding.txt"
+  printf 'PASS: real API/River/SSH/systemd/enrollment/registration/grant/readiness onboarding; same-host fixture TLS only\n'
+ fi
  docker cp "$container_id:/fixture-packages.txt" "$evidence/packages.txt"
  printf 'PASS: native SSH/systemd/private Docker prerequisite and bounded installer fixture only; same-host fixture TLS\n'
 }

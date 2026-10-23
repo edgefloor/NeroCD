@@ -48,6 +48,7 @@ type ServerBootstrapArtifact struct {
 
 // ServerBootstrapInput contains only reviewable facts, never key or token bytes.
 type ServerBootstrapInput struct {
+	ArtifactID       string                  `json:"artifact_id,omitempty"`
 	ProjectID        string                  `json:"project_id"`
 	Name             string                  `json:"name"`
 	Target           ServerBootstrapTarget   `json:"target"`
@@ -184,16 +185,20 @@ func (r ServerBootstrapReview) Validate(op ServerBootstrapOperation, now time.Ti
 
 // ServerBootstrapCommand is immutable actor-bound review and request evidence.
 type ServerBootstrapCommand struct {
-	ID              string                 `json:"id"`
-	OperationID     string                 `json:"operation_id"`
-	ActorID         string                 `json:"actor_id"`
-	Key             string                 `json:"key"`
-	RequestHash     string                 `json:"request_hash"`
-	Action          string                 `json:"action"`
-	ExpectedVersion int64                  `json:"expected_version"`
-	Review          *ServerBootstrapReview `json:"review,omitempty"`
-	Deadline        time.Time              `json:"deadline"`
-	CreatedAt       time.Time              `json:"created_at"`
+	ProbeReceiptID      string                 `json:"probe_receipt_id,omitempty"`
+	ManifestSHA256      string                 `json:"manifest_sha256,omitempty"`
+	InstallAcknowledged bool                   `json:"install_acknowledged,omitempty"`
+	GrantProject        *bool                  `json:"grant_project,omitempty"`
+	ID                  string                 `json:"id"`
+	OperationID         string                 `json:"operation_id"`
+	ActorID             string                 `json:"actor_id"`
+	Key                 string                 `json:"key"`
+	RequestHash         string                 `json:"request_hash"`
+	Action              string                 `json:"action"`
+	ExpectedVersion     int64                  `json:"expected_version"`
+	Review              *ServerBootstrapReview `json:"review,omitempty"`
+	Deadline            time.Time              `json:"deadline"`
+	CreatedAt           time.Time              `json:"created_at"`
 }
 
 // ServerBootstrapStage is finite DB-clock authority, never proof a remote process stopped.
@@ -209,14 +214,16 @@ type ServerBootstrapStage struct {
 
 // ServerBootstrapReceipt excludes arbitrary remote output and credential material.
 type ServerBootstrapReceipt struct {
-	CommandID         string          `json:"command_id"`
-	LeaseID           string          `json:"lease_id"`
-	Attempt           int32           `json:"attempt"`
-	Fence             int64           `json:"fence"`
-	Outcome           string          `json:"outcome"`
-	ManifestSHA256    string          `json:"manifest_sha256,omitempty"`
-	RemoteOperationID string          `json:"remote_operation_id,omitempty"`
-	Evidence          json.RawMessage `json:"evidence,omitempty"`
+	Probe             *ServerBootstrapProbeReceipt `json:"probe,omitempty"`
+	Owned             *ServerBootstrapOwnedReceipt `json:"owned,omitempty"`
+	CommandID         string                       `json:"command_id"`
+	LeaseID           string                       `json:"lease_id"`
+	Attempt           int32                        `json:"attempt"`
+	Fence             int64                        `json:"fence"`
+	Outcome           string                       `json:"outcome"`
+	ManifestSHA256    string                       `json:"manifest_sha256,omitempty"`
+	RemoteOperationID string                       `json:"remote_operation_id,omitempty"`
+	Evidence          json.RawMessage              `json:"evidence,omitempty"`
 }
 
 // ServerBootstrapActionAllowed is the complete foundation transition table.
@@ -224,7 +231,7 @@ type ServerBootstrapReceipt struct {
 func ServerBootstrapActionAllowed(action, state string, held bool) bool {
 	switch action {
 	case "probe":
-		return state == "draft"
+		return (state == "draft" || state == "reviewed") && !held
 	case "review":
 		return (state == "draft" || state == "reviewed") && !held
 	case "install":
