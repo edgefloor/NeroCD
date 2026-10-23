@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
 )
@@ -369,4 +370,26 @@ func TestPostgresServerReadinessIssueWaitRevalidatesAuthority(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPostgresServerReadinessDeadlineIncludesFinalUpdate(t *testing.T) {
+	f := newReadinessFixture(t)
+	challenge := f.challenge(t)
+	f.exec(t, `UPDATE server_readiness SET pending_target=jsonb_set(pending_target,'{expires_at}',to_jsonb(clock_timestamp()+interval '400 milliseconds'))`)
+	// Delay only the final acceptance UPDATE, after the initial deadline check.
+	f.exec(t, `CREATE FUNCTION delay_readiness_acceptance() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.accepted_body IS DISTINCT FROM OLD.accepted_body THEN PERFORM pg_sleep(0.6); END IF; RETURN NEW; END $$;
+ CREATE TRIGGER delay_readiness_acceptance BEFORE UPDATE ON server_readiness FOR EACH ROW EXECUTE FUNCTION delay_readiness_acceptance()`)
+	_, err := f.pg.ReportServerReadiness(t.Context(), f.server.RunnerID, f.credential, readinessBody(challenge))
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("accepted sample after final UPDATE crossed original deadline: %v", err)
+	}
+	var pending string
+	var accepted bool
+	if err = f.db.QueryRow(t.Context(), `SELECT pending_target->>'sample_id',accepted_body IS NOT NULL OR accepted_ack IS NOT NULL OR accepted_target IS NOT NULL OR accepted_identity<>'' FROM server_readiness WHERE server_id=$1`, f.server.ID).Scan(&pending, &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if pending != challenge.SampleID || accepted {
+		t.Fatalf("expired acceptance committed: pending=%q accepted=%v", pending, accepted)
+	}
+	f.status(t, "unknown", "no_sample")
 }

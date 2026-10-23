@@ -60,7 +60,8 @@ There is no new permanent daemon baseline. Current binding pins determine daemon
 
 Issue and report lock the runner for SHARE, then the matching used enrollment for SHARE,
 then the readiness row for UPDATE. Row insertion occurs after both authority locks.
-The database clock is read after lock waits. Immutable placement relations require no destination,
+The database clock is read after lock waits. A final-write clock check rolls back an acceptance that crosses the original challenge deadline.
+Immutable placement relations require no destination,
 resource, binding, job, or lease lock. Collection does not use River or append history.
 
 Successful database restore deletes all pending and accepted readiness state, including unused servers.

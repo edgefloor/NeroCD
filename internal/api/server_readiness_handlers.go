@@ -2,8 +2,9 @@ package api
 
 import (
 	"io"
-	"nerocd/internal/domain"
 	"net/http"
+
+	"nerocd/internal/domain"
 )
 
 func decodeServerReadiness(w http.ResponseWriter, r *http.Request, out any) bool {

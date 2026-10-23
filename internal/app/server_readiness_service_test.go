@@ -2,11 +2,12 @@ package app
 
 import (
 	"errors"
+	"testing"
+
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store"
-	"testing"
 )
 
 func TestServerReadinessServiceAuthorization(t *testing.T) {

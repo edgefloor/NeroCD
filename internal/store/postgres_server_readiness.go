@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/store/sqlcgen"
 )
@@ -153,6 +154,15 @@ func (s *PostgresStore) ReportServerReadiness(ctx context.Context, runner, crede
 		}
 		if err = q.AcceptServerReadiness(ctx, sqlcgen.AcceptServerReadinessParams{ServerID: p.server, AcceptedBody: body, AcceptedAck: receipt}); err != nil {
 			return zero, err
+		}
+		// The final write can wait too. Reject expiry transactionally so the
+		// pending challenge and any previous accepted receipt remain unchanged.
+		now, err = q.ServerReadinessClock(ctx)
+		if err != nil {
+			return zero, err
+		}
+		if !target.ExpiresAt.After(now) {
+			return zero, ErrConflict
 		}
 		return ack, nil
 	})

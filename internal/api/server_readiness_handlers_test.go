@@ -4,14 +4,16 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/getkin/kin-openapi/openapi3"
-	"nerocd/internal/app"
-	"nerocd/internal/auth"
-	"nerocd/internal/domain"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/getkin/kin-openapi/openapi3"
+
+	"nerocd/internal/app"
+	"nerocd/internal/auth"
+	"nerocd/internal/domain"
 )
 
 func TestServerReadinessHTTPAuthorizationAndStrictDecoder(t *testing.T) {
