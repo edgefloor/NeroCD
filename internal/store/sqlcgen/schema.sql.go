@@ -10,7 +10,8 @@ import (
 )
 
 const schedulerSchemaCompatible = `-- name: SchedulerSchemaCompatible :one
-SELECT nerocd_hosting_github_push_schema_compatible()
+SELECT nerocd_server_readiness_schema_compatible()
+   AND nerocd_hosting_github_push_schema_compatible()
    AND nerocd_scheduler_schema_compatible()
    AND nerocd_replay_schema_compatible()
    AND nerocd_enrollment_schema_compatible()

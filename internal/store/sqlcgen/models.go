@@ -905,6 +905,16 @@ type Server struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type ServerReadiness struct {
+	ServerID         string `json:"server_id"`
+	PendingTarget    []byte `json:"pending_target"`
+	PendingIdentity  string `json:"pending_identity"`
+	AcceptedTarget   []byte `json:"accepted_target"`
+	AcceptedIdentity string `json:"accepted_identity"`
+	AcceptedBody     []byte `json:"accepted_body"`
+	AcceptedAck      []byte `json:"accepted_ack"`
+}
+
 type Service struct {
 	ID           string    `json:"id"`
 	ProjectID    string    `json:"project_id"`

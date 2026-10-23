@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/api/v1/runner/server-readiness/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * issueServerReadiness
+         * @description Diagnostic basic_image_hosting.v1 only. No deployment admission authority. Cache-Control: no-store. Reports and challenge bodies at most 8 KiB. Challenge deadline ten seconds; accepted sample fresh for thirty seconds without replay extension.
+         */
+        post: operations["issueServerReadiness"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/server-readiness/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * reportServerReadiness
+         * @description Diagnostic basic_image_hosting.v1 only. No deployment admission authority. Cache-Control: no-store. Reports and challenge bodies at most 8 KiB. Challenge deadline ten seconds; accepted sample fresh for thirty seconds without replay extension.
+         */
+        post: operations["reportServerReadiness"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getServerReadiness
+         * @description Diagnostic basic_image_hosting.v1 only. No deployment admission authority. Cache-Control: no-store. Reports and challenge bodies at most 8 KiB. Challenge deadline ten seconds; accepted sample fresh for thirty seconds without replay extension.
+         */
+        get: operations["getServerReadiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/github-push-policy": {
         parameters: {
             query?: never;
@@ -2680,6 +2740,72 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ServerReadinessReport: {
+            sample_id: string;
+            /** @enum {string} */
+            profile: "basic_image_hosting.v1";
+            duration_ms: number;
+            /** @enum {string} */
+            os: "linux" | "unsupported" | "unknown";
+            /** @enum {string} */
+            architecture: "amd64" | "arm64" | "unsupported" | "unknown";
+            /** @enum {string} */
+            execution: "enabled" | "disabled";
+            /** @enum {string} */
+            configuration: "matched" | "mismatch";
+            /** @enum {string} */
+            docker: "available" | "unreachable" | "unsupported_api" | "invalid_response";
+            docker_api_version: string;
+            daemon_id: string;
+            /** @enum {string} */
+            daemon_os: "linux" | "unsupported" | "unknown";
+            /** @enum {string} */
+            daemon_architecture: "amd64" | "arm64" | "unsupported" | "unknown";
+            /** @enum {string} */
+            cli: "available" | "missing" | "unsafe" | "unknown";
+            /** @enum {string} */
+            work_root: "accessible" | "missing" | "unsafe" | "inaccessible" | "unknown";
+            /** @enum {string} */
+            journal_root: "accessible" | "missing" | "unsafe" | "inaccessible" | "unknown";
+            /** Format: int64 */
+            work_free_bytes: number;
+            /** Format: int64 */
+            journal_free_bytes: number;
+            /** @enum {string} */
+            error: "" | "timeout" | "daemon_changed" | "local_check_failed";
+        };
+        ServerReadinessChallenge: {
+            sample_id: string;
+            /** @enum {string} */
+            profile: "basic_image_hosting.v1";
+            server_id: string;
+            destination_id: string;
+            runner_id: string;
+            /** Format: date-time */
+            issued_at: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        ServerReadinessAck: {
+            sample_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            /** @constant */
+            accepted: true;
+        };
+        ServerReadiness: {
+            server_id: string;
+            /** @enum {string} */
+            profile: "basic_image_hosting.v1";
+            /** @enum {string} */
+            status: "unknown" | "blocked" | "ready";
+            /** @enum {string} */
+            reason: "no_sample" | "stale" | "authority_unavailable" | "restore_hold" | "daemon_mismatch" | "prerequisite_failed" | "qualified";
+            sample_id?: string;
+            /** Format: date-time */
+            observed_at?: string;
+            report?: components["schemas"]["ServerReadinessReport"];
+        };
         /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
         GitHubPushSecretRef: {
             id: string;
@@ -5079,6 +5205,97 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    issueServerReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Bounded diagnostic result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerReadinessChallenge"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    reportServerReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerReadinessReport"];
+            };
+        };
+        responses: {
+            /** @description Bounded diagnostic result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerReadinessAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getServerReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded diagnostic result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerReadiness"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     getGitHubPushPolicy: {
         parameters: {
             query?: never;

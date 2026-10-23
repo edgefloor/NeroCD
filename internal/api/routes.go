@@ -3,6 +3,9 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/runner/server-readiness/challenge"},
+	{Method: http.MethodPost, Path: "/api/v1/runner/server-readiness/report"},
+	{Method: http.MethodGet, Path: "/api/v1/servers/{id}/readiness"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/github-push-policy"},
 	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/github-push-policy"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/github-push-policy/verify"},
@@ -314,6 +317,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerIdentity
 	case "/api/v1/servers":
 		return s.hostingServers
+	case "/api/v1/runner/server-readiness/challenge":
+		return s.runnerServerReadinessChallenge
+	case "/api/v1/runner/server-readiness/report":
+		return s.runnerReportServerReadiness
+	case "/api/v1/servers/{id}/readiness":
+		return s.serverReadiness
 	case "/api/v1/servers/{id}":
 		return s.hostingServerByID
 	case "/api/v1/destinations":

@@ -268,6 +268,11 @@ func restoreDatabase(args []string) error {
 	if _, err := tx.Exec(ctx, `UPDATE hosting_binding_state SET restore_admitted=false`); err != nil {
 		return err
 	}
+	// Readiness from a restored database cannot prove current host state, even
+	// for a server that has never hosted a binding.
+	if _, err := tx.Exec(ctx, `DELETE FROM server_readiness`); err != nil {
+		return err
+	}
 	// Even an idle or disabled proxy may have served later generations after
 	// this backup. Restored database state cannot prove its daemon generation.
 	if _, err := tx.Exec(ctx, `INSERT INTO hosting_proxy_restore_holds(proxy_id) SELECT id FROM hosting_proxies ON CONFLICT DO NOTHING`); err != nil {
