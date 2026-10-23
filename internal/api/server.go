@@ -650,7 +650,10 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
-	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable), errors.Is(err, store.ErrHostingRuntimeConfigurationUnavailable), errors.Is(err, store.ErrHostingStorageUnavailable):
+	case errors.Is(err, store.ErrHostingStorageUnavailable):
+		status = http.StatusServiceUnavailable
+		code = "hosting_storage_unavailable"
+	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable), errors.Is(err, store.ErrHostingRuntimeConfigurationUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_unavailable"
 	case errors.Is(err, app.ErrManagedSecretsUnavailable), errors.Is(err, app.ErrHostingSourceCredentialUnavailable), errors.Is(err, app.ErrHostingRuntimeEnvironmentUnavailable):
@@ -696,6 +699,7 @@ func writeError(w http.ResponseWriter, err error) {
 		"bad_request":                    "invalid request",
 		"internal_error":                 "internal server error",
 		"unavailable":                    "managed secrets are unavailable",
+		"hosting_storage_unavailable":    "persistent storage metadata requires compatible PostgreSQL storage",
 		"hosting_unavailable":            "hosting execution requires PostgreSQL and a migrated River consumer",
 	}[code]
 	writeErrorEnvelope(w, status, code, message)

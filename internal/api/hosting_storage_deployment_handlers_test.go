@@ -128,12 +128,34 @@ func TestHostingStorageDeploymentHTTP(t *testing.T) {
 		}
 	}
 	for _, mapping := range []struct {
-		err  error
-		code int
-	}{{store.ErrHostingStorageUnavailable, 503}, {store.ErrNotFound, 404}, {store.ErrConflict, 409}, {auth.ErrForbidden, 403}} {
+		err    error
+		status int
+		code   string
+	}{
+		{store.ErrHostingStorageUnavailable, 503, "hosting_storage_unavailable"},
+		{store.ErrHostingBuildUnavailable, 503, "hosting_unavailable"},
+		{store.ErrHostingRuntimeConfigurationUnavailable, 503, "hosting_unavailable"},
+		{app.ErrManagedSecretsUnavailable, 503, "unavailable"},
+		{store.ErrNotFound, 404, "not_found"},
+		{store.ErrConflict, 409, "conflict"},
+		{auth.ErrForbidden, 403, "forbidden"},
+	} {
 		repo.err = mapping.err
-		if rec := request(http.MethodGet, paths[0], token, ""); rec.Code != mapping.code {
-			t.Fatalf("%v: %d %s", mapping.err, rec.Code, rec.Body.String())
+		for _, path := range paths {
+			rec := request(http.MethodGet, path, token, "")
+			var envelope struct {
+				Code  string `json:"code"`
+				Error string `json:"error"`
+			}
+			if err = json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != mapping.status || envelope.Code != mapping.code {
+				t.Errorf("%s %v: status %d code %q, want status %d code %q", path, mapping.err, rec.Code, envelope.Code, mapping.status, mapping.code)
+			}
+			if mapping.err == store.ErrHostingStorageUnavailable && envelope.Error != "persistent storage metadata requires compatible PostgreSQL storage" {
+				t.Errorf("%s storage message %q", path, envelope.Error)
+			}
 		}
 	}
 }
