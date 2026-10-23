@@ -851,6 +851,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/proxy-operations/{id}/recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read completed metadata recovery eligibility
+         * @description Requires current server administrator and control-project owner authority. Only immutable accepted terminal rolled_back/refused receipts with unresolved metadata conflict qualify. Historical evidence does not assert current TLS or health. Plans expire after 30 database-clock seconds; one unexpired plan per operation. Exact replay never renews expiry or queues again. Uncertain effects, missing receipts and restore recovery are unsupported.
+         */
+        get: operations["getProxyRecovery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proxy-operations/{id}/recovery-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Review a bounded metadata repair
+         * @description Requires current server administrator and control-project owner authority. Only immutable accepted terminal rolled_back/refused receipts with unresolved metadata conflict qualify. Historical evidence does not assert current TLS or health. Plans expire after 30 database-clock seconds; one unexpired plan per operation. Exact replay never renews expiry or queues again. Uncertain effects, missing receipts and restore recovery are unsupported.
+         */
+        post: operations["planProxyRecovery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proxy-operations/{id}/recovery-plans/{plan_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply an exact reviewed metadata repair
+         * @description Requires current server administrator and control-project owner authority. Only immutable accepted terminal rolled_back/refused receipts with unresolved metadata conflict qualify. Historical evidence does not assert current TLS or health. Plans expire after 30 database-clock seconds; one unexpired plan per operation. Exact replay never renews expiry or queues again. Uncertain effects, missing receipts and restore recovery are unsupported.
+         */
+        post: operations["applyProxyRecovery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/proxy-operations/{id}/cancel": {
         parameters: {
             query?: never;
@@ -3496,6 +3556,89 @@ export interface components {
             control_project_id: string;
             configuration: components["schemas"]["HostingProxyConfiguration"];
             idempotency_key: string;
+        };
+        HostingProxyRecoveryInput: {
+            idempotency_key: string;
+            /** Format: int64 */
+            expected_loaded_generation: number;
+            /** Format: int64 */
+            expected_desired_generation: number;
+            expected_complete_receipt_id: components["schemas"]["HostingIdentifier"];
+            expected_complete_receipt_hash: string;
+        };
+        HostingProxyRecoveryApplyInput: {
+            idempotency_key: string;
+            plan_hash: string;
+        };
+        HostingProxyRecoveryRoute: {
+            route_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            version: number;
+            selected_release_operation_id: components["schemas"]["HostingIdentifier"];
+            enabled: boolean;
+            authorized: boolean;
+            prior_target: components["schemas"]["HostingProxyRouteTarget"];
+        };
+        HostingProxyRecoveryReview: {
+            /** @enum {integer} */
+            version: 1;
+            operation_id: components["schemas"]["HostingIdentifier"];
+            proxy_id: components["schemas"]["HostingIdentifier"];
+            actor_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            loaded_generation: number;
+            /** Format: int64 */
+            desired_generation: number;
+            prior_operation_id: components["schemas"]["HostingIdentifier"];
+            prior_snapshot_hash: string;
+            complete_receipt_id: components["schemas"]["HostingIdentifier"];
+            complete_receipt_hash: string;
+            /** @enum {string} */
+            engine_outcome: "rolled_back" | "refused";
+            facts_hash: string;
+            routes: components["schemas"]["HostingProxyRecoveryRoute"][];
+            convergence_routes: components["schemas"]["HostingProxyRouteTarget"][];
+        };
+        HostingProxyRecoveryPlan: {
+            id: components["schemas"]["HostingIdentifier"];
+            review: components["schemas"]["HostingProxyRecoveryReview"];
+            plan_hash: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        HostingProxyRecoveryChange: {
+            route_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            before_version: number;
+            /** Format: int64 */
+            after_version: number;
+            before_release_operation_id: components["schemas"]["HostingIdentifier"];
+            after_release_operation_id: components["schemas"]["HostingIdentifier"];
+            enabled: boolean;
+        };
+        HostingProxyRecoveryResolution: {
+            id: components["schemas"]["HostingIdentifier"];
+            operation_id: components["schemas"]["HostingIdentifier"];
+            plan_id: components["schemas"]["HostingIdentifier"];
+            plan_hash: string;
+            actor_id: components["schemas"]["HostingIdentifier"];
+            /** @enum {string} */
+            engine_outcome: "rolled_back" | "refused";
+            complete_receipt_id: components["schemas"]["HostingIdentifier"];
+            complete_receipt_hash: string;
+            convergence_operation_id: components["schemas"]["HostingIdentifier"];
+            routes: components["schemas"]["HostingProxyRecoveryChange"][];
+            /** Format: date-time */
+            created_at: string;
+        };
+        HostingProxyRecoveryStatus: {
+            operation_id: components["schemas"]["HostingIdentifier"];
+            eligible: boolean;
+            reason: string;
+            review?: components["schemas"]["HostingProxyRecoveryReview"];
+            resolution?: components["schemas"]["HostingProxyRecoveryResolution"];
         };
         HostingProxyMutationInput: {
             idempotency_key: string;
@@ -6877,6 +7020,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostingProxyOperation"] | components["schemas"]["HostingProxyOperationView"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getProxyRecovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read completed metadata recovery eligibility */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyRecoveryStatus"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    planProxyRecovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingProxyRecoveryInput"];
+            };
+        };
+        responses: {
+            /** @description Review a bounded metadata repair */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyRecoveryPlan"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    applyProxyRecovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+                plan_id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingProxyRecoveryApplyInput"];
+            };
+        };
+        responses: {
+            /** @description Apply an exact reviewed metadata repair */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyRecoveryResolution"];
                 };
             };
             400: components["responses"]["Error"];

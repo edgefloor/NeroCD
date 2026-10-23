@@ -670,6 +670,93 @@ paths:
         "503":
           "$ref": "#/components/responses/Error"
       parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+  "/api/v1/proxy-operations/{id}/recovery":
+    get:
+      "operationId": "getProxyRecovery"
+      "summary": "Read completed metadata recovery eligibility"
+      "description": "Requires current server administrator and control-project owner authority. Only immutable accepted terminal rolled_back/refused receipts with unresolved metadata conflict qualify. Historical evidence does not assert current TLS or health. Plans expire after 30 database-clock seconds; one unexpired plan per operation. Exact replay never renews expiry or queues again. Uncertain effects, missing receipts and restore recovery are unsupported."
+      "parameters": [{"name":"id","in":"path","required":true,"schema":{"$ref":"#/components/schemas/HostingIdentifier"}}]
+      "responses":
+        "200":
+          "description": "Read completed metadata recovery eligibility"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingProxyRecoveryStatus"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+  "/api/v1/proxy-operations/{id}/recovery-plans":
+    post:
+      "operationId": "planProxyRecovery"
+      "summary": "Review a bounded metadata repair"
+      "description": "Requires current server administrator and control-project owner authority. Only immutable accepted terminal rolled_back/refused receipts with unresolved metadata conflict qualify. Historical evidence does not assert current TLS or health. Plans expire after 30 database-clock seconds; one unexpired plan per operation. Exact replay never renews expiry or queues again. Uncertain effects, missing receipts and restore recovery are unsupported."
+      "parameters": [{"name":"id","in":"path","required":true,"schema":{"$ref":"#/components/schemas/HostingIdentifier"}}]
+      "responses":
+        "201":
+          "description": "Review a bounded metadata repair"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingProxyRecoveryPlan"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/HostingProxyRecoveryInput"
+  "/api/v1/proxy-operations/{id}/recovery-plans/{plan_id}/apply":
+    post:
+      "operationId": "applyProxyRecovery"
+      "summary": "Apply an exact reviewed metadata repair"
+      "description": "Requires current server administrator and control-project owner authority. Only immutable accepted terminal rolled_back/refused receipts with unresolved metadata conflict qualify. Historical evidence does not assert current TLS or health. Plans expire after 30 database-clock seconds; one unexpired plan per operation. Exact replay never renews expiry or queues again. Uncertain effects, missing receipts and restore recovery are unsupported."
+      "parameters": [{"name":"id","in":"path","required":true,"schema":{"$ref":"#/components/schemas/HostingIdentifier"}},{"name":"plan_id","in":"path","required":true,"schema":{"$ref":"#/components/schemas/HostingIdentifier"}}]
+      "responses":
+        "200":
+          "description": "Apply an exact reviewed metadata repair"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/HostingProxyRecoveryResolution"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/HostingProxyRecoveryApplyInput"
   "/api/v1/proxy-operations/{id}/cancel":
     post:
       operationId: "cancelProxyOperation"
@@ -3957,6 +4044,195 @@ components:
         idempotency_key:
           type: "string"
       description: "Requires an explicit existing control project, server administrator permission and project owner permission; system_admin keeps its existing override. A configured proxy blocks archiving that immutable project even while disabled."
+    HostingProxyRecoveryInput:
+      "type": "object"
+      "additionalProperties": false
+      "required": ["idempotency_key","expected_loaded_generation","expected_desired_generation","expected_complete_receipt_id","expected_complete_receipt_hash"]
+      "properties":
+        "idempotency_key":
+          "type": "string"
+          "minLength": 1
+          "maxLength": 128
+        "expected_loaded_generation":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "expected_desired_generation":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "expected_complete_receipt_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "expected_complete_receipt_hash":
+          "type": "string"
+          "pattern": "^sha256:[0-9a-f]{64}$"
+    HostingProxyRecoveryApplyInput:
+      "type": "object"
+      "additionalProperties": false
+      "required": ["idempotency_key","plan_hash"]
+      "properties":
+        "idempotency_key":
+          "type": "string"
+          "minLength": 1
+          "maxLength": 128
+        "plan_hash":
+          "type": "string"
+          "pattern": "^sha256:[0-9a-f]{64}$"
+    HostingProxyRecoveryRoute:
+      "type": "object"
+      "additionalProperties": false
+      "required": ["route_id","version","selected_release_operation_id","enabled","authorized","prior_target"]
+      "properties":
+        "route_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "version":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "selected_release_operation_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "enabled":
+          "type": "boolean"
+        "authorized":
+          "type": "boolean"
+        "prior_target":
+          "$ref": "#/components/schemas/HostingProxyRouteTarget"
+    HostingProxyRecoveryReview:
+      "type": "object"
+      "additionalProperties": false
+      "required": ["version","operation_id","proxy_id","actor_id","loaded_generation","desired_generation","prior_operation_id","prior_snapshot_hash","complete_receipt_id","complete_receipt_hash","engine_outcome","facts_hash","routes","convergence_routes"]
+      "properties":
+        "version":
+          "type": "integer"
+          "enum": [1]
+        "operation_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "proxy_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "actor_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "loaded_generation":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "desired_generation":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "prior_operation_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "prior_snapshot_hash":
+          "type": "string"
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        "complete_receipt_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "complete_receipt_hash":
+          "type": "string"
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        "engine_outcome":
+          "type": "string"
+          "enum": ["rolled_back","refused"]
+        "facts_hash":
+          "type": "string"
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        "routes":
+          "type": "array"
+          "maxItems": 32
+          "items":
+            "$ref": "#/components/schemas/HostingProxyRecoveryRoute"
+        "convergence_routes":
+          "type": "array"
+          "maxItems": 32
+          "items":
+            "$ref": "#/components/schemas/HostingProxyRouteTarget"
+    HostingProxyRecoveryPlan:
+      "type": "object"
+      "additionalProperties": false
+      "required": ["id","review","plan_hash","created_at","expires_at"]
+      "properties":
+        "id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "review":
+          "$ref": "#/components/schemas/HostingProxyRecoveryReview"
+        "plan_hash":
+          "type": "string"
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        "created_at":
+          "type": "string"
+          "format": "date-time"
+        "expires_at":
+          "type": "string"
+          "format": "date-time"
+    HostingProxyRecoveryChange:
+      "type": "object"
+      "additionalProperties": false
+      "required": ["route_id","before_version","after_version","before_release_operation_id","after_release_operation_id","enabled"]
+      "properties":
+        "route_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "before_version":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "after_version":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "before_release_operation_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "after_release_operation_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "enabled":
+          "type": "boolean"
+    HostingProxyRecoveryResolution:
+      "type": "object"
+      "additionalProperties": false
+      "required": ["id","operation_id","plan_id","plan_hash","actor_id","engine_outcome","complete_receipt_id","complete_receipt_hash","convergence_operation_id","routes","created_at"]
+      "properties":
+        "id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "operation_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "plan_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "plan_hash":
+          "type": "string"
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        "actor_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "engine_outcome":
+          "type": "string"
+          "enum": ["rolled_back","refused"]
+        "complete_receipt_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "complete_receipt_hash":
+          "type": "string"
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        "convergence_operation_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "routes":
+          "type": "array"
+          "maxItems": 32
+          "items":
+            "$ref": "#/components/schemas/HostingProxyRecoveryChange"
+        "created_at":
+          "type": "string"
+          "format": "date-time"
+    HostingProxyRecoveryStatus:
+      "type": "object"
+      "additionalProperties": false
+      "required": ["operation_id","eligible","reason"]
+      "properties":
+        "operation_id":
+          "$ref": "#/components/schemas/HostingIdentifier"
+        "eligible":
+          "type": "boolean"
+        "reason":
+          "type": "string"
+        "review":
+          "$ref": "#/components/schemas/HostingProxyRecoveryReview"
+        "resolution":
+          "$ref": "#/components/schemas/HostingProxyRecoveryResolution"
     HostingProxyMutationInput:
       type: "object"
       additionalProperties: false

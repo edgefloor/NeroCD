@@ -57,6 +57,9 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodDelete, Path: "/api/v1/routes/{id}"},
 	{Method: http.MethodGet, Path: "/api/v1/proxy-operations/{id}"},
 	{Method: http.MethodPost, Path: "/api/v1/proxy-operations/{id}/cancel"},
+	{Method: http.MethodGet, Path: "/api/v1/proxy-operations/{id}/recovery"},
+	{Method: http.MethodPost, Path: "/api/v1/proxy-operations/{id}/recovery-plans"},
+	{Method: http.MethodPost, Path: "/api/v1/proxy-operations/{id}/recovery-plans/{plan_id}/apply"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/proxy/plan"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/proxy/prepared"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/proxy/apply-begin"},
@@ -225,6 +228,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.proxyOperation
 	case "/api/v1/proxy-operations/{id}/cancel":
 		return s.proxyOperationCancel
+	case "/api/v1/proxy-operations/{id}/recovery":
+		return s.hostingProxyRecovery
+	case "/api/v1/proxy-operations/{id}/recovery-plans":
+		return s.hostingProxyRecoveryPlan
+	case "/api/v1/proxy-operations/{id}/recovery-plans/{plan_id}/apply":
+		return s.hostingProxyRecoveryApply
 	case "/api/v1/runners/proxy/plan":
 		return s.runnerProxyPlan
 	case "/api/v1/runners/proxy/prepared":
