@@ -201,7 +201,10 @@ function ProjectBootstrap({
   const client = useQueryClient(),
     id = useId(),
     active = useRef(true),
-    lock = useRef(false);
+    lock = useRef(false),
+    generation = useRef(0),
+    authorityLost = useRef(false),
+    transport = useRef<AbortController | undefined>(undefined);
   const [secretOffset, setSecretOffset] = useState(0),
     [operationOffset, setOperationOffset] = useState(0);
   const [secret, setSecret] = useState(""),
@@ -225,8 +228,42 @@ function ProjectBootstrap({
     active.current = true;
     return () => {
       active.current = false;
+      generation.current++;
+      transport.current?.abort();
+      onRequestHeld(false);
     };
-  }, []);
+  }, [onRequestHeld]);
+  useEffect(
+    () =>
+      client.getQueryCache().subscribe(({ query }) => {
+        const [kind, queryActor, queryProject] = query.queryKey;
+        if (
+          ![
+            "serverBootstrapOptions",
+            "serverBootstraps",
+            "serverBootstrap",
+            "bootstrapSecrets",
+            "bootstrapSecretVersions",
+          ].includes(String(kind)) ||
+          queryActor !== actor ||
+          queryProject !== project ||
+          query.state.status !== "error" ||
+          !(query.state.error instanceof ApiError) ||
+          ![401, 403, 404].includes(query.state.error.status)
+        )
+          return;
+        // Latch before an older write can clear the query error with setQueryData.
+        authorityLost.current = true;
+        generation.current++;
+        transport.current?.abort();
+        lock.current = false;
+        setDenied(true);
+        setAttempt(undefined);
+        setBusy(false);
+        onRequestHeld(false);
+      }),
+    [actor, project, client, onRequestHeld],
+  );
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -324,22 +361,52 @@ function ProjectBootstrap({
     current?.artifact && current.artifact.artifact_id === current.artifact_id,
   );
   async function execute(frozen: Attempt) {
-    if (lock.current || denied || accessError || authorityPending) return;
+    if (
+      lock.current ||
+      authorityLost.current ||
+      denied ||
+      accessError ||
+      authorityPending
+    )
+      return;
+    const requestGeneration = ++generation.current;
+    const controller = new AbortController();
+    transport.current = controller;
+    const isCurrent = () =>
+      active.current &&
+      !authorityLost.current &&
+      generation.current === requestGeneration;
+    let rejectAborted: () => void = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAborted = () => reject(new Error("Onboarding transport stopped"));
+      controller.signal.addEventListener("abort", rejectAborted, {
+        once: true,
+      });
+    });
+    const deadline = window.setTimeout(() => controller.abort(), 30000);
     lock.current = true;
     setBusy(true);
     setError("");
     setAttempt(frozen);
     onRequestHeld(true);
     try {
-      const result =
+      const result = await Promise.race([
         frozen.kind === "create"
-          ? await createServerBootstrap(frozen.body)
-          : await commandServerBootstrap(frozen.id, frozen.action, frozen.body);
-      if (!active.current) return;
+          ? createServerBootstrap(frozen.body, controller.signal)
+          : commandServerBootstrap(
+              frozen.id,
+              frozen.action,
+              frozen.body,
+              controller.signal,
+            ),
+        aborted,
+      ]);
+      if (!isCurrent() || controller.signal.aborted) return;
       if (
         result.project_id !== project ||
         (frozen.kind === "command" && result.id !== frozen.id)
       ) {
+        authorityLost.current = true;
         setDenied(true);
         setAttempt(undefined);
         onRequestHeld(false);
@@ -349,7 +416,7 @@ function ProjectBootstrap({
         queryKey: bootstrapKeys.operation(actor, project, result.id),
         exact: true,
       });
-      if (!active.current) return;
+      if (!isCurrent() || controller.signal.aborted) return;
       client.setQueryData(
         bootstrapKeys.operation(actor, project, result.id),
         result,
@@ -371,7 +438,7 @@ function ProjectBootstrap({
         queryKey: ["serverBootstraps", actor, project],
       });
     } catch (cause) {
-      if (!active.current) return;
+      if (!isCurrent()) return;
       if (cause instanceof ApiError && cause.status === 409) {
         setAttempt(undefined);
         onRequestHeld(false);
@@ -383,10 +450,14 @@ function ProjectBootstrap({
         );
         if (frozen.kind === "command") {
           try {
-            await client.fetchQuery(
-              bootstrapOperationQuery(actor, project, frozen.id),
-            );
+            await Promise.race([
+              client.fetchQuery(
+                bootstrapOperationQuery(actor, project, frozen.id),
+              ),
+              aborted,
+            ]);
           } catch {
+            if (!isCurrent()) return;
             setError(
               "Conflict detected. Unable to refresh current operation; actions are paused until refresh succeeds.",
             );
@@ -396,6 +467,7 @@ function ProjectBootstrap({
         cause instanceof ApiError &&
         [401, 403, 404].includes(cause.status)
       ) {
+        authorityLost.current = true;
         setDenied(true);
         setAttempt(undefined);
         onRequestHeld(false);
@@ -410,11 +482,19 @@ function ProjectBootstrap({
         );
       } else
         setError(
-          "The response was not confirmed. Retry the exact saved request to recover its result. Its selections and request identity are frozen.",
+          "The response was not confirmed. Retry the exact saved request to recover its result. Its selections and request identity are frozen. Ending this browser attempt does not cancel the controller operation.",
         );
     } finally {
-      lock.current = false;
-      if (active.current) setBusy(false);
+      window.clearTimeout(deadline);
+      controller.signal.removeEventListener("abort", rejectAborted);
+      if (generation.current === requestGeneration) {
+        transport.current = undefined;
+        lock.current = false;
+        if (active.current) {
+          setBusy(false);
+          onRequestHeld(false);
+        }
+      }
     }
   }
   function create(event: FormEvent) {

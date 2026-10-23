@@ -72,9 +72,13 @@ export const bootstrapOperationQuery = (
       return result;
     },
   });
-export const createServerBootstrap = (body: BootstrapCreate) =>
+export const createServerBootstrap = (
+  body: BootstrapCreate,
+  signal?: AbortSignal,
+) =>
   request<ServerBootstrap>("/api/v1/server-bootstraps", {
     method: "POST",
+    signal,
     body,
     cache: "no-store",
   });
@@ -82,9 +86,11 @@ export const commandServerBootstrap = (
   id: string,
   action: BootstrapAction,
   body: BootstrapCommand,
+  signal?: AbortSignal,
 ) =>
   request<ServerBootstrap>(`${path(id)}/${action}`, {
     method: "POST",
+    signal,
     body,
     cache: "no-store",
   });
