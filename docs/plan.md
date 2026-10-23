@@ -111,8 +111,9 @@ pending-operation recovery preserve holds. The bounded
 [completed metadata-conflict recovery API](hosting-proxy-recovery.md) is accepted
 at `e097ffa706325f55cab7a7b0416a235a0e9ad151`, through migration 0059. Its repaired
 concurrent replay preserves one resolution and convergence operation. Uncertain
-outcomes remain held. Recovery administrator UI and trusted automatic deployment
-are active unaccepted candidates; protected plans remain pending.
+outcomes remain held. Recovery administrator UI and transaction prerequisites for trusted automatic
+deployment are in progress. Automatic deployment remains unsupported; its
+controller and policy implementation and protected plans remain pending.
 Pinned Vite SPA compilation is accepted at `d29edb3bc8cde064108891f70713423bb57776a3`.
 See the [bounded evidence and reliability limits](compatibility.md#accepted-foundations-and-evidence). Hosting navigation is
 accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`, with Home, Projects and
