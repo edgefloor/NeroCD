@@ -254,6 +254,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/api/v1/managed-secrets" || strings.HasPrefix(r.URL.Path, "/api/v1/managed-secrets/") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	if r.URL.Path == "/api/v1/server-bootstrap-options" || r.URL.Path == "/api/v1/server-bootstraps" || strings.HasPrefix(r.URL.Path, "/api/v1/server-bootstraps/") {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	start := time.Now()
 	requestID := requestID(r)
 	r = r.WithContext(app.WithRequestID(r.Context(), requestID))
