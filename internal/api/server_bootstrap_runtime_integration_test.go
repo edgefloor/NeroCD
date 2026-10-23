@@ -77,6 +77,13 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = service.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: "onboarding-platform@example.local", Name: "Owned platform bootstrap", Password: "onboarding-fixture-platform-bootstrap-password"}); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapStatus, err := service.PublicBootstrapStatus(ctx)
+	if err != nil || bootstrapStatus.Status != "complete" {
+		t.Fatalf("real platform bootstrap did not complete: status=%s error=%v", bootstrapStatus.Status, err)
+	}
 	const origin = "https://127.0.0.1:19443"
 	qualified := app.ServerBootstrapArtifact{ArtifactID: "fixture-arm64", Path: "/fixture/onboarding-agent", Size: int64(len(artifact)), SHA256: hex.EncodeToString(digest[:]), Version: "v0.0.0-fixture", Architecture: "arm64", Profile: "prepared_debian12_v1"}
 	if err = service.ConfigureServerBootstrap(&app.ServerBootstrapConfig{ControllerOrigin: origin, Artifacts: []app.ServerBootstrapArtifact{qualified}}); err != nil {

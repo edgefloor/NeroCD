@@ -7,7 +7,7 @@ const metadata = process.env.NEROCD_SERVER_BOOTSTRAP_BROWSER_META;
 const meta: Metadata | undefined = metadata ? JSON.parse(metadata) : undefined;
 // Chromium trusts only this run's exact ephemeral fixture public key. This is
 // same-host test TLS through a Docker-exec TCP relay, not production TLS proof.
-test.use({ trace: "off", screenshot: "off", launchOptions: { args: meta ? [`--ignore-certificate-errors-spki-list=${meta.spki}`] : [] } });
+test.use({ trace: "off", screenshot: "off", actionTimeout: 15_000, navigationTimeout: 15_000, launchOptions: { args: meta ? [`--ignore-certificate-errors-spki-list=${meta.spki}`] : [] } });
 
 async function signIn(page: Page, viewer = false) {
   await page.goto("/sign-in");

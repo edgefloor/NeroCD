@@ -119,6 +119,9 @@ HTTP handlers admit every operation and command. The normal River consumer calls
 the configured production bootstrap processor, which connects to the target's
 real OpenSSH server and starts the transferred agent through systemd. The agent
 consumes enrollment over HTTPS independently of the test driver.
+The fixture completes platform administrator bootstrap through the real service
+and verifies public bootstrap status before starting onboarding. Seeded API test
+users alone do not complete that platform setup requirement.
 
 The extension requires native arm64. It covers explicit true and false project
 grant choices, a later explicit grant, committed create and command response
