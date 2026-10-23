@@ -224,9 +224,10 @@ func TestHostingRuntimeLogPostgresRegisteredRoundTrip(t *testing.T) {
 	if err = json.Unmarshal(response.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
-	httpServer := httptest.NewServer(s)
+	httpServer := httptest.NewTLSServer(s)
 	defer httpServer.Close()
 	client := runnerclient.New(httpServer.URL, runnerToken)
+	client.HTTP = httpServer.Client()
 	claims, err := client.ClaimRuntimeLogSessions(ctx, domain.HostingRuntimeLogClaimInput{InstanceID: strings.Repeat("d", 32), AfterSessionID: "", Limit: 4})
 	if err != nil || len(claims.Targets) != 1 {
 		t.Fatal(claims, err)
