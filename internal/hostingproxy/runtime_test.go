@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,17 +124,21 @@ func TestRuntimeProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Backends bind the Linux namespace's loopback, exactly as settled binding ports do.
+	health := map[string]*atomic.Int64{}
 	for _, v := range []struct {
 		port string
 		body string
-	}{{"19001", "root"}, {"19002", "api"}} {
+	}{{"19001", "root"}, {"19002", "api"}, {"19003", "replacement"}} {
 		v := v
+		status := &atomic.Int64{}
+		status.Store(404)
+		health[v.port] = status
 		l, err := net.Listen("tcp", "127.0.0.1:"+v.port)
 		if err != nil {
 			t.Fatal(err)
 		}
 		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(404)
+			w.WriteHeader(int(status.Load()))
 			_, _ = fmt.Fprintf(w, "%s:%s", v.body, r.URL.Path)
 		}), ReadHeaderTimeout: time.Second}
 		done := make(chan struct{})
@@ -251,8 +256,8 @@ func TestRuntimeProxy(t *testing.T) {
 	}
 	t.Log("daemon mismatch refused before mutation")
 	// Concurrent engines have one CAS winner. The losing request cannot overwrite it.
-	q, _ := Prepare(identity, s, 2, 1, p.Routes())
-	r, _ := Prepare(identity, s, 3, 1, p.Routes())
+	q, _ := Prepare(identity, s, p.generation+1, p.generation, p.Routes())
+	r, _ := Prepare(identity, s, p.generation+2, p.generation, p.Routes())
 	var wg sync.WaitGroup
 	out := make(chan Result, 2)
 	for _, candidate := range []Plan{q, r} {
@@ -281,7 +286,7 @@ func TestRuntimeProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	current := q
-	if saved.Generation == 3 {
+	if saved.Generation == r.generation {
 		current = r
 	}
 	t.Log("concurrent apply serialized with exactly one generation CAS winner")
@@ -349,6 +354,9 @@ func TestRuntimeProxy(t *testing.T) {
 		t.Fatal("real ACME renewal not observed")
 	}
 	t.Log("short-lived certificate renewed by Traefik startup or periodic renewal, trusted fingerprint changed")
+	// Fault injection replaces the certificate cache, so run it after the
+	// independent legacy renewal assertion rather than perturbing that timer.
+	current = fixtureVerifiedSwitch(t, e, current, health)
 	// Disable issuance before recording the certificate to be recovered. A new
 	// certificate cannot conceal a missing account or certificate backup.
 	fixtureCommand(t, "stop", "pebble")
@@ -487,11 +495,22 @@ func TestRuntimeProxy(t *testing.T) {
 		t.Fatalf("process restart replay failed: %v", err)
 	}
 	t.Log("new engine replay acknowledged same generation/hash")
-	// Cancel after publication while the real proxy is paused. The newly
-	// constructed engine must retain uncertainty even after Traefik loads it.
-	canceled, _ := Prepare(identity, s, current.generation+1, current.generation, current.Routes())
-	fixtureCommand(t, "pause", p.name())
+	// A strict candidate with an unhealthy target cannot commit. Cancel after
+	// publication, or independently break its old backend to prevent rollback.
+	cancelRoutes := current.Routes()
+	for n := range cancelRoutes {
+		if cancelRoutes[n].ID == "root" {
+			cancelRoutes[n].HostPort = 19001
+		}
+	}
+	health["19001"].Store(503)
+	canceled, err := PrepareVerifiedSwitch(identity, s, current.generation+1, current.generation, cancelRoutes, []string{"root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.verifyTimeout = 2 * time.Second
 	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	interrupted := make(chan Result, 1)
 	go func() { v, _ := e.Apply(cancelCtx, canceled); interrupted <- v }()
 	deadline = time.Now().Add(2 * time.Second)
@@ -504,9 +523,12 @@ func TestRuntimeProxy(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	cancel()
+	if os.Getenv("NEROCD_PROXY_SWITCH_FAULT") == "rollback" {
+		health["19003"].Store(503)
+	} else {
+		cancel()
+	}
 	interruptedResult := <-interrupted
-	fixtureCommand(t, "unpause", p.name())
 	if !published || interruptedResult.Outcome != Uncertain {
 		t.Fatalf("interrupted publish %+v", interruptedResult)
 	}
@@ -514,7 +536,20 @@ func TestRuntimeProxy(t *testing.T) {
 	if err == nil || again.Outcome != Uncertain {
 		t.Fatal("unfinished intent acknowledged")
 	}
-	t.Log("cancellation after config publication and fresh-engine observation retained uncertainty")
+	again, err = engine2.Apply(ctx, canceled)
+	if err == nil || again.Outcome != Uncertain {
+		t.Fatal("fresh engine replay downgraded unfinished strict intent")
+	}
+	held, err := openStorage(ctx, s.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := held.load()
+	held.close()
+	if err != nil || intent.Phase != "intent" || !reflect.DeepEqual(intent.Verification, canceled.verification) {
+		t.Fatal("durable strict policy lost")
+	}
+	t.Logf("strict %s after publication retained Uncertain and versioned intent; fresh-engine Observe and replay refused acknowledgement", os.Getenv("NEROCD_PROXY_SWITCH_FAULT"))
 	st, err := os.Stat(filepath.Join(s.Directory, "certificates", "acme.json"))
 	if err != nil || st.Mode().Perm() != 0600 {
 		t.Fatal("ACME permissions")
@@ -523,6 +558,196 @@ func TestRuntimeProxy(t *testing.T) {
 	// Log only metadata, never ACME storage or private certificate keys.
 	metadata, _ := json.Marshal(result.Routes)
 	t.Logf("certificate observations %s", metadata)
+}
+
+func fixtureVerifiedSwitch(t *testing.T, e *Engine, old Plan, health map[string]*atomic.Int64) Plan {
+	t.Helper()
+	ctx := context.Background()
+	routes := old.Routes()
+	for n := range routes {
+		if routes[n].ID == "root" {
+			routes[n].HostPort = 19003
+		}
+	}
+	next, err := PrepareVerifiedSwitch(old.identity, old.settings, old.generation+1, old.generation, routes, []string{"root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(e.settings.Directory, "receipt.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := e.Install(ctx, next); err == nil || result.Outcome != Refused {
+		t.Fatal("strict Install accepted")
+	}
+	// All scope refusals happen without changing the receipt or dynamic file.
+	dynamicBefore, err := os.ReadFile(filepath.Join(e.settings.Directory, "dynamic", "routes.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badRoutes := next.Routes()
+	for n := range badRoutes {
+		if badRoutes[n].ID == "api" {
+			badRoutes[n].HostPort++
+		}
+	}
+	bad, _ := PrepareVerifiedSwitch(old.identity, old.settings, next.generation, old.generation, badRoutes, []string{"root"})
+	if result, err := e.Apply(ctx, bad); err == nil || result.Outcome != Refused {
+		t.Fatal("unselected mutation accepted")
+	}
+	// Loss of trust before publication must refuse even when HTTP is healthy.
+	trustedRoots := e.fixtureRoots
+	e.fixtureRoots = x509.NewCertPool()
+	if result, err := e.Apply(ctx, next); err == nil || result.Outcome != Refused {
+		t.Fatal("untrusted predecessor accepted")
+	}
+	e.fixtureRoots = trustedRoots
+	after, err := os.ReadFile(filepath.Join(e.settings.Directory, "receipt.json"))
+	if err != nil || string(before) != string(after) {
+		t.Fatal("refusal changed receipt")
+	}
+	after, err = os.ReadFile(filepath.Join(e.settings.Directory, "dynamic", "routes.yml"))
+	if err != nil || string(dynamicBefore) != string(after) {
+		t.Fatal("refusal changed routes")
+	}
+	// An unhealthy B is rejected, and A is reported only after both probes pass.
+	health["19003"].Store(503)
+	e.verifyTimeout = 2 * time.Second
+	result, err := e.Apply(ctx, next)
+	if err == nil || result.Outcome != RolledBack || result.LoadedGeneration != old.generation || len(result.Routes) != len(old.routes) {
+		t.Fatalf("strict rollback: %+v %v", result, err)
+	}
+	for _, route := range result.Routes {
+		if route.RouteID == "root" && (!route.HTTPReady || !route.HTTPSReady) {
+			t.Fatal("unverified A reported rolled back")
+		}
+	}
+	after, err = os.ReadFile(filepath.Join(e.settings.Directory, "receipt.json"))
+	if err != nil || string(before) != string(after) {
+		t.Fatal("rollback did not restore exact prior receipt")
+	}
+	t.Log("strict B route-health failure restored exact A receipt and verified HTTP plus trusted HTTPS")
+	fixtureRejectedSwitchCertificate(t, e, old, next, health)
+	health["19003"].Store(404)
+	e.verifyTimeout = 15 * time.Second
+	result, err = e.Apply(ctx, next)
+	if err != nil || result.Outcome != Applied {
+		t.Fatalf("strict switch: %+v %v", result, err)
+	}
+	for _, route := range result.Routes {
+		if route.RouteID == "root" && (!route.HTTPReady || !route.HTTPSReady) {
+			t.Fatal("strict success lacks trusted TLS")
+		}
+	}
+	// Distinct content proves B actually serves the selected route, while the
+	// unselected /api backend and every unrelated route field remain unchanged.
+	for _, tc := range []struct{ path, body string }{{"/", "replacement:/"}, {"/api", "api:/api"}} {
+		req, err := http.NewRequestWithContext(ctx, "GET", "http://app.example.test"+tc.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:80")
+		}}
+		response, err := (&http.Client{Transport: transport, Timeout: time.Second}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		transport.CloseIdleConnections()
+		if err != nil || string(body) != tc.body {
+			t.Fatalf("strict backend content %s: %s %v", tc.path, body, err)
+		}
+	}
+	restarted, err := New(e.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.fixtureCA, restarted.fixtureDockerArgs = e.fixtureCA, e.fixtureDockerArgs
+	restarted.fixtureRoots = trustedRoots
+	if result, err = restarted.Apply(ctx, next); err != nil || result.Outcome != Applied {
+		t.Fatalf("strict replay failed: %+v %v", result, err)
+	}
+	// A fresh process cannot turn an already committed strict plan's failed TLS
+	// observation into legacy Applied/pending, even on an exact replay.
+	restarted.fixtureRoots = x509.NewCertPool()
+	if result, err = restarted.Observe(ctx, next); err == nil || result.Outcome != Uncertain {
+		t.Fatal("strict Observe downgraded failed TLS")
+	}
+	if result, err = restarted.Apply(ctx, next); err == nil || result.Outcome != Uncertain {
+		t.Fatal("strict replay downgraded failed TLS")
+	}
+	t.Log("strict A to B committed after HTTP and trusted HTTPS; B content and unchanged /api proved; fresh-engine replay/Observe rejected failed certificate trust")
+	return next
+}
+
+func fixtureRejectedSwitchCertificate(t *testing.T, e *Engine, old, next Plan, health map[string]*atomic.Int64) {
+	t.Helper()
+	// Keep the private test CA offline so an empty cache cannot conceal loss of
+	// the saved certificate. No production endpoint or public DNS is involved.
+	fixtureCommand(t, "stop", "pebble")
+	t.Cleanup(func() { fixtureCommand(t, "start", "pebble") })
+	acmePath := filepath.Join(e.settings.Directory, "certificates", "acme.json")
+	saved, err := os.ReadFile(acmePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.verifyTimeout = 10 * time.Second
+	type attempt struct {
+		result Result
+		err    error
+	}
+	finished := make(chan attempt, 1)
+	done := make(chan struct{})
+	go func() { defer close(done); result, err := e.Apply(ctx, next); finished <- attempt{result, err} }()
+	t.Cleanup(func() { cancel(); <-done })
+	waitFile := func(hash string) {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			b, err := os.ReadFile(filepath.Join(e.settings.Directory, "dynamic", "routes.yml"))
+			if err == nil && strings.Contains(string(b), hash) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("certificate fault generation was not published")
+	}
+	waitFile(next.hash)
+	fixtureCommand(t, "stop", "--time", "1", old.name())
+	if err = os.WriteFile(acmePath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	health["19003"].Store(404)
+	fixtureCommand(t, "start", old.name())
+	if err = e.waitLoaded(ctx, next); err != nil {
+		t.Fatalf("certificate fault HTTP generation: %v", err)
+	}
+	for _, route := range next.routes {
+		if next.required(route.ID) && e.probe(ctx, next, route, true).HTTPSReady {
+			t.Fatal("default self-signed certificate was trusted")
+		}
+	}
+	waitFile(old.hash)
+	fixtureCommand(t, "stop", "--time", "1", old.name())
+	if err = os.WriteFile(acmePath, saved, 0600); err != nil {
+		t.Fatal(err)
+	}
+	fixtureCommand(t, "start", old.name())
+	got := <-finished
+	if got.err == nil || got.result.Outcome != RolledBack || got.result.LoadedGeneration != old.generation {
+		t.Fatalf("certificate failure rollback: %+v %v", got.result, got.err)
+	}
+	for _, route := range got.result.Routes {
+		if next.required(route.RouteID) && (!route.HTTPReady || !route.HTTPSReady) {
+			t.Fatal("certificate rollback lacked trusted A observations")
+		}
+	}
+	fixtureCommand(t, "start", "pebble")
+	t.Log("strict candidate HTTP loaded with untrusted default certificate; no commit; saved A certificate restored with test CA offline and HTTP/trusted HTTPS verified")
 }
 
 func TestRuntimeLostDockerResponse(t *testing.T) {

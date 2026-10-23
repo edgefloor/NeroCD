@@ -132,6 +132,9 @@ func (e *Engine) probe(ctx context.Context, p Plan, r Route, secure bool) RouteO
 	if resp.Header.Get("X-NeroCD-Proxy-Generation") != p.hash || resp.Header.Get("X-NeroCD-Proxy-Route") != r.ID {
 		return result
 	}
+	if p.required(r.ID) && resp.StatusCode >= http.StatusInternalServerError {
+		return result
+	}
 	if !secure {
 		result.HTTPReady = true
 		return result
