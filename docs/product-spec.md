@@ -5,7 +5,7 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `24c363fd22ac8237a09c12040386a442b0a3ff53`, reviewed on 2026-10-23. Native migrations extend through 0054. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `aa88f62e76a4ef964900db17bf81515e141da03b`, reviewed on 2026-10-23. Native migrations extend through 0055. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -177,7 +177,7 @@ The legacy service/Compose contract remains supported. Its restrictions do not d
 - **Build and deployment input.** The legacy provenance resolver still rejects unsupported Compose builds and mounts. Separately enabled public Git builds execute Dockerfile, pinned Railpack and prepared-static paths. Same-host local artifact deployment is accepted and applies the exact recorded ImageID without rebuilding or pulling. Remote registry publication and shared-cache/reuse guarantees remain planned. N4, N15
 - **Health.** The legacy Compose check uses `X-NeroCD-Revision`; accepted image/local-artifact hosting uses ordinary HTTP readiness. The opt-in independent collector now reads narrow Docker status and loopback readiness. Broader component/TCP/database health and runtime metrics remain targets. N8, N15
 - **Mutation ownership.** Accepted hosting uses resource-binding holds, exact destinations, leases and fenced receipts. Unresolved effects and restored ownership holds remain blocked. A shared environment does not authorize relocation or clearing a hold. N9, N14
-- **Secrets and logs.** Project-managed encrypted secret versions and authorized reveal are accepted. Typed build output has durable receipt/cursor storage, runner delivery, redaction and an opt-in bounded WebUI. Private Git credential delivery and runtime consumption are accepted with live authority, expiry checks and attempt-local redaction; the UI selects grants by metadata without reveal. Desired runtime-configuration API/storage is accepted through migration 0052 with explicit public nonsecret literals and exact managed-secret references, current owner writes/viewer reads, generation compare-and-swap and idempotency. Migration 0053 admission and protected runner delivery are accepted, with metadata audit before decryption and journal format 8 containing only nonsecret references and delivery identity. Opt-in CLI/API execution now applies literals and exact managed-secret versions through protected Docker stdin. Bounded challenge/report and viewer freshness controls are accepted through migration 0054. The configuration UI and opt-in independent collector are accepted within the limits below. The bounded runtime-status dashboard is accepted. Runtime logs, broader managed-secret execution delivery, terminals and broader runtime metrics remain pending. Build logs are not runtime logs. N6, N16
+- **Secrets and logs.** Project-managed encrypted secret versions and authorized reveal are accepted. Typed build output has durable receipt/cursor storage, runner delivery, redaction and an opt-in bounded WebUI. Private Git credential delivery and runtime consumption are accepted with live authority, expiry checks and attempt-local redaction; the UI selects grants by metadata without reveal. Desired runtime-configuration API/storage is accepted through migration 0052 with explicit public nonsecret literals and exact managed-secret references, current owner writes/viewer reads, generation compare-and-swap and idempotency. Migration 0053 admission and protected runner delivery are accepted, with metadata audit before decryption and journal format 8 containing only nonsecret references and delivery identity. Opt-in CLI/API execution now applies literals and exact managed-secret versions through protected Docker stdin. Bounded challenge/report and viewer freshness controls are accepted through migration 0054. The configuration UI and opt-in independent collector are accepted within the limits below. The bounded runtime-status dashboard is accepted. Runtime-log control is accepted through migration 0055; live log collection/viewing, broader managed-secret execution delivery, terminals and broader runtime metrics remain pending. Build logs are not runtime logs. N6, N16
 
 These accepted features preserve the direct hosting journey. They do not supply the Task, Workspace, reservation, task-grant, checkpoint or VM contracts introduced below.
 
@@ -890,7 +890,7 @@ The earlier revision 3 instruction to make Task collaboration and D0–D3 the fi
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `24c363fd22ac8237a09c12040386a442b0a3ff53`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0054, including runtime-configuration admission and bounded status controls. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `aa88f62e76a4ef964900db17bf81515e141da03b`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0055, including runtime-configuration admission and bounded status controls. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -914,6 +914,7 @@ The implementation campaign changed application code and exercised real infrastr
 | Independent runtime collector | Source `bd9638c227db67e10d1ee9647b40c60c5676f0a5`, accepted `132012237ee484e9cd6fce2fba656966567a1cc8`; [operator contract](hosting-runtime-observation.md), [real gate](../acceptance/runtime-hosting-observation/gate.sh) | Opt-in `--hosting-observation` with matching persisted `hosting_observation_v1` capability; read-only narrow Docker status and loopback readiness; fair selection of four targets per 10-second cycle, not a 10-second per-resource guarantee; no metrics; status UI was absent at that checkpoint and is accepted below |
 | Runtime-status dashboard | Source `e5bc0b6aa85bae5ef409ebf3e8e6758fe30f45f6`, accepted `24c363fd22ac8237a09c12040386a442b0a3ff53`; [status UI](../web/app/src/pages/ResourceRuntimeStatus.tsx), [read contract](hosting-runtime-observation.md#resource-status-in-the-webui) | Bounded read-only current/stale/historical target evidence under current viewer authorization; timeout and retry handling; real compiled collector/browser proof uses seeded accounts/resources/deployment; no general metrics, complete onboarding, public ACME or complete A28 |
 | Enrollment command capability repair | Accepted `1c4e7076cde2c79d2aa3d46eb4de2133d72e8a3e`; [command helper](../web/app/src/lib/runner-enrollment-command.ts) | Command uses exact persisted capabilities and exposes configuration prerequisites; does not qualify SSH-assisted enrollment or complete host readiness |
+| Runtime-log control | Decoder repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`, accepted `aa88f62e76a4ef964900db17bf81515e141da03b`; [API](../internal/api/hosting_runtime_logs_handlers.go), [PostgreSQL tests](../internal/store/postgres_hosting_runtime_logs_test.go) | Migration 0055 and 173-route contract; actor sessions/renewal/stop/bounded retained reads; exact runner claims/events, counters, replay gaps and purge; no live log collector/viewer; adapter in progress is unaccepted; no complete A29 |
 
 The desired-configuration foundation passed actual PostgreSQL and focused race
 checks, 718 frontend tests, the 163-route contract, generated-output checks and
@@ -933,10 +934,25 @@ complete A03/A28, production ACME or full hosting parity. Log scans covered only
 controlled output; Docker administrators can inspect environment values.
 The configuration UI and independent collector are now accepted at the revisions
 above. The bounded runtime-status dashboard and enrollment command repair are now
-accepted at the revisions above. Runtime-log control integration remains blocked
-by client decoder incompatibility; migration 0055 is unaccepted and runtime-log
-collection/viewing remain unimplemented. These additions do not complete A28,
-A29 or hosting parity.
+accepted at the revisions above. Runtime-log control and migration 0055 are now
+accepted at `aa88f62e76a4ef964900db17bf81515e141da03b`. Live log collection and
+viewing remain unimplemented; the adapter in progress is unaccepted. These
+additions do not complete A28, A29 or hosting parity.
+
+The earlier integration `3af3fbb3153d0450bf600e62df40a14faf583b72` failed combined
+client decoding checks. Repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff` resolves
+that blocker and passed three independent required reviews before acceptance.
+Fresh accepted evidence includes the 1.38-second API/PostgreSQL log round trip,
+2.756-second API check, 51.261-second relevant PostgreSQL checks and 1.842-second
+full runner-client check. Retained full-store 346.320-second and 811-frontend-test
+evidence remains attributed to `3af3fbb3153d0450bf600e62df40a14faf583b72`; the
+repair did not change the store or frontend paths supporting that evidence.
+The accepted main binary hash is
+`586e4a754378f9882a447d088f986ef31f389bb92cd4ec90563fd760277d71a6`.
+The asset manifest remains
+`7e8208110b92416f7ed20984141a0f63690bdd138fab331e028b1c8773ba607a`.
+The current contract has 173 routes and accepted migrations extend through 0055.
+These results establish control prerequisites, not live collection or a viewer.
 
 At accepted dashboard integration `24c363fd22ac8237a09c12040386a442b0a3ff53`,
 combined evidence records 811 frontend tests in 73 files and a 75.63-second real
@@ -945,8 +961,8 @@ manifest `7e8208110b92416f7ed20984141a0f63690bdd138fab331e028b1c8773ba607a`.
 The qualified main binary hash was
 `30a6768c8e2cec2162bbb853b084f448a2654d8ce72b1d2f2dd14bc16820ec85`.
 The fixture used seeded accounts, resources and deployment. It does not establish
-public ACME, general metrics or complete onboarding. Contract 167 and accepted
-migrations through 0054 remain unchanged. Earlier evidence below retains its
+public ACME, general metrics or complete onboarding. At that dashboard checkpoint, the contract had 167 routes and accepted
+migrations extended through 0054. Earlier evidence below retains its
 original revision and was not rerun by this documentation change.
 
 Accepted UI evidence records a 19.2-second browser run and 26.20-second Go fixture,
@@ -955,7 +971,8 @@ Accepted UI evidence records a 19.2-second browser run and 26.20-second Go fixtu
 The accepted collector's 43.00-second compiled CLI/test-CA/Docker gate verified
 healthy status, stopped/exited state, SIGTERM join, stale/unknown after 30.2
 seconds, resumed collection and rejection of an old report after replacement.
-The contract remains 167 routes and accepted migrations remain through 0054.
+At that collector checkpoint, the contract had 167 routes and accepted migrations
+extended through 0054.
 Full-package lint failed on three existing errcheck findings in unchanged tests;
 lint of introduced changes against the accepted base passed with zero issues.
 These results do not claim whole-package lint is clean.

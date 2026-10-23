@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`24c363fd22ac8237a09c12040386a442b0a3ff53`, 2026-10-23, through migration 0054.
+`aa88f62e76a4ef964900db17bf81515e141da03b`, 2026-10-23, through migration 0055.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,13 +29,13 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0054, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0055, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding and host readiness, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Scoped managed build/runtime delivery, broader variable scopes, provider credentials and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
 | Admission and protected delivery | Migration 0053 admission and protected runner endpoint; metadata authorization/audit before decryption, bounded original window; journal format 8 persists only nonsecret references and delivery ID | Broader runtime qualification |
 | Runtime execution and status controls | Opt-in CLI/API applies literal/exact managed versions via protected Docker stdin; bounded challenge/report and viewer freshness API, migration 0054 | Runtime logs and disk/CPU metrics |
-| Runtime configuration UI and collector | Accepted authenticated browser deployment journey and opt-in independent Docker/loopback collector; four targets per 10-second cycle with fair selection | Read-only status dashboard is accepted; runtime-log migration 0055 remains unaccepted; no per-resource 10-second guarantee |
+| Runtime configuration UI and collector | Accepted authenticated browser deployment journey and opt-in independent Docker/loopback collector; four targets per 10-second cycle with fair selection | Read-only status dashboard is accepted; runtime-log control and migration 0055 are accepted; live collection/viewing remain unimplemented; no per-resource 10-second guarantee |
 | Status dashboard and enrollment commands | Bounded current/stale/historical target display under current viewer authority; enrollment command uses persisted exact capabilities and configuration prerequisites | Runtime-log collector/viewer, SSH automation, complete readiness and general metrics |
 | Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack, owner grant selection and Dockerfile UI through exact artifact deployment and test-CA HTTPS | Automatic-builder private UI qualification, provider integrations, compiled static, remote publication and hosting cache |
 | Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
@@ -75,9 +75,9 @@ exact local artifact deployment and test-CA HTTPS. See the
 A03 remains partial. The private browser fixture does not qualify an automatic
 builder or provider integrations, and test-CA HTTPS is not production ACME.
 
-The next H1 slice is runtime application logs, including unaccepted migration
-0055, followed by the other H1 gaps. Control integration is blocked by a client
-decoder incompatibility; log collection and viewing remain unimplemented. This serves R29–R32,
+The next H1 slice is runtime-log collection and viewing on the accepted control
+API and migration 0055, followed by the other H1 gaps. The adapter is in progress
+and unaccepted; live collection and viewing remain unimplemented. This serves R29–R32,
 R58–R60 and the applicable hosting acceptance scenarios, including A28 and A29.
 Use existing resources, Go application authorization, managed-secret versions,
 PostgreSQL/River and fenced runner execution. Do not require a collaboration
@@ -135,9 +135,14 @@ The bounded read-only runtime-status dashboard is accepted at
 target evidence, revalidates current viewer access and bounds timeout/retry behavior.
 Enrollment command repair `1c4e7076cde2c79d2aa3d46eb4de2133d72e8a3e` uses exact
 persisted capabilities and configuration prerequisites; SSH automation and complete
-host readiness remain separate work. Runtime-log migration 0055 is unaccepted;
-its control integration is blocked by client decoder incompatibility and its
-collector/viewer are unimplemented. Disk/CPU metrics remain planned.
+host readiness remain separate work. Runtime-log control and migration 0055 are
+accepted at `aa88f62e76a4ef964900db17bf81515e141da03b`, including decoder repair
+`0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`. Actor sessions, renewal, stop,
+bounded retained reads, exact runner claims/events, counters, replay gaps and purge
+are accepted prerequisites. Live collection/viewing remain unimplemented, and the
+adapter in progress remains unaccepted. The earlier failed integration
+`3af3fbb3153d0450bf600e62df40a14faf583b72` retains its historical decoder failure;
+the accepted repair resolves that blocker without establishing complete A29. Disk/CPU metrics remain planned.
 Docker administrators can inspect environment values;
 controlled log scans do not prove arbitrary output is secret-free. Broader value
 inheritance, provider delivery, SSH, webhooks and production TLS qualification

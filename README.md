@@ -24,10 +24,10 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`24c363fd22ac8237a09c12040386a442b0a3ff53`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`aa88f62e76a4ef964900db17bf81515e141da03b`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
-- PostgreSQL state, checked migrations through 0054, bootstrap administration,
+- PostgreSQL state, checked migrations through 0055, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -60,6 +60,10 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   read-only dashboard separates current, stale and historical target evidence,
   checks current viewer access and bounds reads with timeout and retry handling.
   Disk/CPU metrics remain pending.
+- Runtime-log control through migration 0055: actor sessions, renewal, stop and
+  bounded retained reads, plus exact runner claims/events, counters, replay gaps
+  and purge. The decoder repair is accepted; live collection and viewing remain
+  unimplemented. This does not complete A29.
 - Enrollment commands use the exact persisted capabilities and identify runner
   configuration prerequisites. This does not qualify SSH-assisted enrollment or
   complete host readiness.
@@ -100,9 +104,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. The next H1 work is runtime logs, whose control
-integration is blocked by a client decoder incompatibility. Log collection and
-viewing remain unimplemented. Other gaps include onboarding,
+and extended compatibility. The next H1 work is runtime-log collection and
+viewing on the accepted control API. The adapter is in progress and unaccepted. Other gaps include onboarding,
 broader credentials, trusted triggers, deployment policy, production TLS
 qualification, broader Compose/storage, databases, backups,
 restores, previews, terminals, schedules and notifications.
