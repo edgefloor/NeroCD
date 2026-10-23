@@ -10,6 +10,23 @@ import (
 	"testing"
 )
 
+func TestVerifiedSwitchIdentityOldAgentDenied(t *testing.T) {
+	for _, tc := range []struct{ flag, capability, valid bool }{{false, false, true}, {true, true, true}, {true, false, false}, {false, true, false}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			caps := []string{domain.RunTypeProxyApply}
+			if tc.capability {
+				caps = append(caps, domain.HostingProxyVerifiedSwitchCapability)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps})
+		}))
+		_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Proxy: true, ProxyVerifiedSwitch: tc.flag})
+		server.Close()
+		if (err == nil) != tc.valid {
+			t.Fatalf("flag=%v capability=%v: %v", tc.flag, tc.capability, err)
+		}
+	}
+}
+
 func TestRuntimeExecutionIdentityRequiresExactLocalConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		caps                       []string

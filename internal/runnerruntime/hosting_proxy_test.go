@@ -26,6 +26,29 @@ type fakeManagedProxy struct {
 	effects  atomic.Int32
 }
 
+func TestVerifiedSwitchCannotUseLegacyAgentOrEngine(t *testing.T) {
+	_, op, _, config, engine := proxyRuntimeFixture(t)
+	prior := op.Plan.Snapshot.Routes[0]
+	prior.ReleaseOperationID = "hop_prior"
+	prior.HostPort--
+	snapshot := op.Plan.Snapshot
+	snapshot.VerifiedSwitch = &domain.HostingVerifiedSwitch{Version: 1, ExpectedLoadedGeneration: 1, PriorAppliedProxyOperationID: "pop_prior", Routes: []domain.HostingVerifiedSwitchRoute{{RouteID: prior.RouteID, PriorVersion: 1, PriorTarget: prior}}}
+	plan, err := domain.CompileHostingProxyPlan(snapshot, 1, "daemon_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err = prepareProxyEngine(t.Context(), config, plan, nil); err == nil {
+		t.Fatal("old agent accepted strict plan")
+	}
+	config.VerifiedSwitch = true
+	if _, _, _, err = prepareProxyEngine(t.Context(), config, plan, nil); err == nil {
+		t.Fatal("unsupported engine silently fell back")
+	}
+	if engine.effects.Load() != 0 {
+		t.Fatal("strict refusal caused external effects")
+	}
+}
+
 func TestProxyCanceledCompletionOnlyReplaysExactCommittedReceipt(t *testing.T) {
 	for _, mode := range []string{"committed", "uncommitted", "wrong_receipt", "wrong_body", "changed_result", "changed_plan", "changed_preparation", "restore", "held", "wrong_tuple"} {
 		t.Run(mode, func(t *testing.T) {

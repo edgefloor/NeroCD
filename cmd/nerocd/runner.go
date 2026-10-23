@@ -54,6 +54,7 @@ func runRunner(args []string) error {
 	proxyBinary := fs.String("proxy-docker-binary", "", "absolute managed proxy Docker executable path")
 	proxySocket := fs.String("proxy-docker-socket", "", "absolute managed proxy Docker Unix socket path")
 	proxyProtocol := fs.String("proxy-protocol", "", "explicit managed proxy protocol managed-traefik.file.v1")
+	proxyVerifiedSwitch := fs.Bool("proxy-verified-switch", false, "explicitly enable verified existing-route switching")
 	buildConfigFile := fs.String("build-config-file", "", "explicit owned mode0600 JSON build execution configuration; disabled when absent")
 	hostingRuntimeLogs := fs.Bool("hosting-runtime-logs", false, "enable demand-driven hosting runtime log collection over HTTPS")
 	hostingObservation := fs.Bool("hosting-observation", false, "enable independent read-only hosting status collection over HTTPS")
@@ -79,7 +80,7 @@ func runRunner(args []string) error {
 	if *localBuildDeploy && (!*execute || *completeStatus != "") {
 		return errors.New("local build deployment requires execution and forbids --complete-status")
 	}
-	proxyConfig := runnerruntime.ProxyConfig{Directory: *proxyRoot, DockerBinary: *proxyBinary, DockerSocket: *proxySocket, Protocol: *proxyProtocol}
+	proxyConfig := runnerruntime.ProxyConfig{Directory: *proxyRoot, DockerBinary: *proxyBinary, DockerSocket: *proxySocket, Protocol: *proxyProtocol, VerifiedSwitch: *proxyVerifiedSwitch}
 	if err := proxyConfig.Validate(); err != nil {
 		return err
 	}
@@ -103,6 +104,10 @@ func runRunner(args []string) error {
 	}
 	if proxyConfig.Enabled() && !proxyCapability {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeProxyApply)
+	}
+	registrationCapabilities, err = runnerProxyVerifiedSwitchCapabilities(*proxyVerifiedSwitch, proxyConfig.Enabled(), registrationCapabilities)
+	if err != nil {
+		return err
 	}
 	registrationCapabilities, err = runnerBuildCapabilities(buildConfig, proxyConfig.Enabled(), capabilitiesSpecified, registrationCapabilities)
 	if err != nil {
@@ -235,7 +240,7 @@ func runRunner(args []string) error {
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{Proxy: proxyConfig.Enabled(), Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}

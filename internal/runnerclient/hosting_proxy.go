@@ -66,7 +66,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 }
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
-type RuntimeExecutionOptions struct{ Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs bool }
+type RuntimeExecutionOptions struct{ Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, ProxyVerifiedSwitch bool }
 
 // RuntimeExecutionIdentityWithOptions checks every protected execution capability.
 func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options RuntimeExecutionOptions) (string, error) {
@@ -94,7 +94,9 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		return "", errors.New("invalid private Git configuration")
 	}
 	proxyCapable, buildCapable, shellCapable, localBuildCapable, privateCapable := false, false, false, false, false
+	verifiedSwitchCapable := false
 	for _, capability := range result.Capabilities {
+		verifiedSwitchCapable = verifiedSwitchCapable || capability == domain.HostingProxyVerifiedSwitchCapability
 		if capability == domain.HostingBuildTriggerRevisionCapability && !buildConfigured {
 			return "", errors.New("authenticated trigger revision capability requires build configuration")
 		}
@@ -103,6 +105,9 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		buildCapable = buildCapable || capability == domain.HostingBuildTaskType
 		localBuildCapable = localBuildCapable || capability == domain.RunTypeLocalBuildDeploy
 		shellCapable = shellCapable || capability == "shell"
+	}
+	if verifiedSwitchCapable != options.ProxyVerifiedSwitch || verifiedSwitchCapable && !proxyConfigured {
+		return "", errors.New("authenticated verified proxy switch capability does not match explicit local configuration")
 	}
 	environmentCap, imageCap, releaseCap := false, false, false
 	for _, capability := range result.Capabilities {

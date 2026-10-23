@@ -12,6 +12,69 @@ import (
 	"nerocd/internal/domain"
 )
 
+func TestVerifiedSwitchJournalRestartAndMixedBuildLogs(t *testing.T) {
+	journal, directory := openBuildJournal(t)
+	journal.state.Version = 8
+	legacy := proxyJournalFixture(t)
+	if _, err := journal.AppendProxy(legacy); err != nil || journal.state.Version != 8 {
+		t.Fatalf("legacy v8 changed: %v", err)
+	}
+	entry := proxyJournalFixture(t)
+	entry.ID = "strict_intent"
+	entry.OperationID = "pop_switch"
+	entry.Attempt.RunID = "proxy_pop_switch"
+	prior := entry.Plan.Snapshot.Routes[0]
+	prior.ReleaseOperationID = "hop_prior"
+	prior.HostPort--
+	entry.Plan.Snapshot.VerifiedSwitch = &domain.HostingVerifiedSwitch{Version: 1, ExpectedLoadedGeneration: 1, PriorAppliedProxyOperationID: "pop_prior", Routes: []domain.HostingVerifiedSwitchRoute{{RouteID: prior.RouteID, PriorVersion: 4, PriorTarget: prior}}}
+	plan, err := domain.CompileHostingProxyPlan(entry.Plan.Snapshot, 1, "daemon_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Plan = plan
+	entry.Preparation.PlanHash = plan.Hash
+	if _, err = journal.AppendProxy(entry); err != nil || journal.state.Version != 9 {
+		t.Fatalf("strict v9: %v", err)
+	}
+	build, _, _ := buildJournalFixture()
+	if _, err = journal.AppendBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = journal.AppendBuildLog(build.Attempt, build.BuildID, "buildkit", "stdout", "mixed output"); err != nil || journal.state.Version != 9 {
+		t.Fatalf("build log downgraded strict journal: %v", err)
+	}
+	invalid := journal.state
+	invalid.Version = 8
+	if validateJournalState(invalid) == nil {
+		t.Fatal("old format accepted strict descriptor")
+	}
+	if err = journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	journal, err = OpenAttemptJournal(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = journal.Close() })
+	if journal.state.Version != 9 || len(journal.Snapshot().Proxy) != 2 || journal.Snapshot().Proxy[1].Plan.Snapshot.VerifiedSwitch == nil {
+		t.Fatal("restart lost strict intent")
+	}
+	if err = journal.AckProxy(entry.ID); err != nil || journal.state.Version != 8 {
+		t.Fatalf("non-strict journal retained v9: %v", err)
+	}
+	if err = journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(directory, "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct{ Version int }
+	if json.Unmarshal(raw, &header) != nil || header.Version != 8 {
+		t.Fatal("legacy payload required v9")
+	}
+}
+
 func proxyJournalFixture(t *testing.T) JournalProxy {
 	t.Helper()
 	now := time.Now().UTC()
