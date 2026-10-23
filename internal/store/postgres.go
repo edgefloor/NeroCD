@@ -83,6 +83,11 @@ func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresStore, erro
 		pool.Close()
 		return nil, fmt.Errorf("database schema is incompatible: apply fenced lease, claim cursor, runner replay, runner enrollment, hosting resource, managed secret, and destination migrations before starting NeroCD")
 	}
+	databaseCompatible, err := queries.HostingDatabaseSchemaCompatible(ctx)
+	if err != nil || !databaseCompatible {
+		pool.Close()
+		return nil, fmt.Errorf("database metadata schema is incompatible: apply hosting database migration before starting NeroCD")
+	}
 	return &PostgresStore{pool: pool, queries: queries}, nil
 }
 
@@ -94,7 +99,14 @@ func (s *PostgresStore) SchemaCompatible(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("check schema compatibility: %w", err)
 	}
-	return compatible != nil && *compatible, nil
+	if compatible == nil || !*compatible {
+		return false, nil
+	}
+	databaseCompatible, err := s.queries.HostingDatabaseSchemaCompatible(ctx)
+	if err != nil {
+		return false, fmt.Errorf("check database metadata schema: %w", err)
+	}
+	return databaseCompatible, nil
 }
 
 func maxSnapshotAge(value float64) float64 {

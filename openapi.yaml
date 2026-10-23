@@ -21,6 +21,50 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  "/api/v1/databases":
+    post:
+      operationId: createHostingDatabase
+      summary: Atomically save a database recipe, retained storage and encrypted credentials
+      description: Requires current project owner and destination grant authority. Exact project-scoped request and actor replay retains the saved credential references. No engine is started, no endpoint is returned, and runtime_state remains adapter_unqualified.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/HostingDatabaseCreateInput"}
+      responses:
+        "201":
+          description: Saved database metadata, including matching replay
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingDatabase"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  "/api/v1/resources/{id}/database":
+    get:
+      operationId: getHostingDatabase
+      summary: Read nonsecret database metadata under current resource and destination authority
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+      responses:
+        "200":
+          description: Database metadata with versioned credential references and unqualified runtime state
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingDatabase"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   "/api/v1/server-bootstrap-options":
     get:
       operationId: "serverBootstrapOptions"
@@ -7331,6 +7375,50 @@ components:
         name: {type: string, minLength: 1, maxLength: 128}
         source: {$ref: "#/components/schemas/ResourceSourceInput"}
         expected_generation: {type: integer, format: int64, minimum: 1}
+    HostingDatabaseCreateInput:
+      type: object
+      additionalProperties: false
+      required: [request_id, project_id, project_environment_id, name, destination_id, engine, recipe_version]
+      properties:
+        request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+        project_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        project_environment_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        name: {type: string, minLength: 1, maxLength: 128}
+        destination_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        engine: {type: string, enum: [postgresql, redis]}
+        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1]}
+      oneOf:
+        - properties:
+            engine: {const: postgresql}
+            recipe_version: {const: postgresql-17.11-bookworm.v1}
+        - properties:
+            engine: {const: redis}
+            recipe_version: {const: redis-8.2.10-bookworm.v1}
+    HostingDatabaseCredentialRef:
+      type: object
+      additionalProperties: false
+      required: [role, username, secret_id, version]
+      properties:
+        role: {type: string, enum: [admin, app, probe]}
+        username: {type: string, enum: [postgres, ncd_app, ncd_probe]}
+        secret_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        version: {type: integer, format: int64, enum: [1]}
+    HostingDatabase:
+      type: object
+      additionalProperties: false
+      required: [resource, binding, storage_ref, engine, recipe_version, credentials, runtime_state]
+      properties:
+        resource: {$ref: "#/components/schemas/Resource"}
+        binding: {$ref: "#/components/schemas/ResourceBinding"}
+        storage_ref: {$ref: "#/components/schemas/HostingStorageRef"}
+        engine: {type: string, enum: [postgresql, redis]}
+        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1]}
+        credentials:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: {$ref: "#/components/schemas/HostingDatabaseCredentialRef"}
+        runtime_state: {type: string, enum: [adapter_unqualified]}
     Resource:
       type: object
       additionalProperties: false
@@ -7340,7 +7428,7 @@ components:
         project_id: {type: string}
         project_environment_id: {type: string}
         name: {type: string}
-        kind: {type: string, enum: [application]}
+        kind: {type: string, enum: [application, database]}
         source: {$ref: "#/components/schemas/ResourceSource"}
         generation: {type: integer, format: int64, minimum: 1}
         created_by: {type: string}

@@ -24,6 +24,9 @@ func (s *Service) RequestHostingDeployment(ctx context.Context, resourceID strin
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}
+	if resource.Kind != "application" {
+		return domain.HostingOperation{}, InvalidInput(errors.New("database resources require a qualified engine operation"))
+	}
 	if resource.Source.Kind != "image" {
 		return domain.HostingOperation{}, InvalidInput(errors.New("git resources cannot use image deployment"))
 	}
