@@ -647,3 +647,136 @@ test("unmount cancels both reads owned by an ordinary refresh", async () => {
     ]),
   ).not.toEqual(saved);
 });
+
+test("initial membership timeout enables explicit access retry and fences its late owner result", async () => {
+  const pending: ((value: Response) => void)[] = [];
+  vi.useFakeTimers();
+  const { fetch } = setup("owner", (url) =>
+    url.includes("/project-members")
+      ? new Promise<Response>((done) => {
+          pending.push(done);
+        })
+      : undefined,
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30001);
+  });
+  const refresh = screen.getByRole<HTMLButtonElement>("button", {
+    name: "Refresh storage access",
+  });
+  expect(refresh.disabled).toBe(false);
+  const reads = () =>
+    fetch.mock.calls.filter(([url]) => url.includes("/project-members"));
+  expect(reads()[0]![1].signal?.aborted).toBe(true);
+  expect(
+    screen.queryByRole("form", { name: "Configure persistent storage" }),
+  ).toBeNull();
+  fireEvent.click(refresh);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  await act(async () => {
+    pending[0]!(
+      json({
+        items: [{ project_id: "p", user_id: "u", role: "owner" }],
+        count: 1,
+        total: 1,
+        offset: 0,
+      }),
+    );
+  });
+  expect(refresh.disabled).toBe(true);
+  expect(reads()[1]![1].signal?.aborted).toBe(false);
+  expect(
+    screen.queryByRole("form", { name: "Configure persistent storage" }),
+  ).toBeNull();
+  await act(async () => {
+    pending[1]!(
+      json({
+        items: [{ project_id: "p", user_id: "u", role: "viewer" }],
+        count: 1,
+        total: 1,
+        offset: 0,
+      }),
+    );
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  expect(refresh.disabled).toBe(false);
+  expect(
+    screen.getByText(
+      "Project owner access is required to configure persistent storage.",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("form", { name: "Configure persistent storage" }),
+  ).toBeNull();
+});
+
+test("membership access refresh timeout masks authority until a fresh explicit retry succeeds", async () => {
+  const pending: ((value: Response) => void)[] = [];
+  let revalidating = false;
+  const { fetch } = setup("owner", (url) =>
+    revalidating && url.includes("/project-members")
+      ? new Promise<Response>((done) => {
+          pending.push(done);
+        })
+      : undefined,
+  );
+  await consent();
+  const refresh = screen.getByRole<HTMLButtonElement>("button", {
+    name: "Refresh storage access",
+  });
+  revalidating = true;
+  vi.useFakeTimers();
+  fireEvent.click(refresh);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30001);
+  });
+  expect(refresh.disabled).toBe(false);
+  expect(
+    screen.queryByRole("form", { name: "Configure persistent storage" }),
+  ).toBeNull();
+  const reads = () =>
+    fetch.mock.calls.filter(([url]) => url.includes("/project-members"));
+  expect(reads()[1]![1].signal?.aborted).toBe(true);
+  fireEvent.click(refresh);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  await act(async () => {
+    pending[0]!(
+      json({
+        items: [{ project_id: "p", user_id: "u", role: "owner" }],
+        count: 1,
+        total: 1,
+        offset: 0,
+      }),
+    );
+  });
+  expect(refresh.disabled).toBe(true);
+  expect(
+    screen.queryByRole("form", { name: "Configure persistent storage" }),
+  ).toBeNull();
+  await act(async () => {
+    pending[1]!(
+      json({
+        items: [{ project_id: "p", user_id: "u", role: "owner" }],
+        count: 1,
+        total: 1,
+        offset: 0,
+      }),
+    );
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  expect(refresh.disabled).toBe(false);
+  expect(
+    screen.getByRole("form", { name: "Configure persistent storage" }),
+  ).toBeTruthy();
+});

@@ -79,24 +79,26 @@ function StorageAccess({
     queryKey: ["storageMembers", actor, resource.project_id],
     retry: false,
     gcTime: 0,
-    queryFn: async ({ signal }) => {
-      const rows = [];
-      let offset = 0;
-      for (;;) {
-        const page = await listProjectMembers(
-          { project_id: resource.project_id, limit: 100, offset },
-          { signal },
-        );
-        if (page.items.some((row) => row.project_id !== resource.project_id))
-          throw new Error("Storage membership scope mismatch");
-        rows.push(...page.items);
-        if (!page.count || page.offset + page.count >= page.total) return rows;
-        const next = page.offset + page.count;
-        if (next <= offset || next > 100000)
-          throw new Error("Storage membership pagination unavailable");
-        offset = next;
-      }
-    },
+    queryFn: ({ signal }) =>
+      boundedStorageRead(signal, async (signal) => {
+        const rows = [];
+        let offset = 0;
+        for (;;) {
+          const page = await listProjectMembers(
+            { project_id: resource.project_id, limit: 100, offset },
+            { signal },
+          );
+          if (page.items.some((row) => row.project_id !== resource.project_id))
+            throw new Error("Storage membership scope mismatch");
+          rows.push(...page.items);
+          if (!page.count || page.offset + page.count >= page.total)
+            return rows;
+          const next = page.offset + page.count;
+          if (next <= offset || next > 100000)
+            throw new Error("Storage membership pagination unavailable");
+          offset = next;
+        }
+      }),
   });
   const owner = Boolean(
     members.data &&
