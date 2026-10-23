@@ -37,6 +37,7 @@ function ProjectsRoute() {
   </section> : null;
   return <div className="grid min-w-0 gap-4">
     {recovery}
+    <ProjectHosting projects={allProjects.data ?? []} unavailable={failed.length > 0} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} />
     {projects.data || !projects.isError ? <ProjectsView
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} q={q}
       snapshot={apiSnapshot({ projects: projects.data, repositories: repositories.data, templates: templates.data, runs: runs.data })}
@@ -44,7 +45,6 @@ function ProjectsRoute() {
       loading={queries.some((query) => query.isPending)}
     /> : null}
     <PageNavigation page={projects.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="projects" loading={projects.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
-    <ProjectHosting projects={allProjects.data ?? []} unavailable={failed.length > 0} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} />
     <ProjectSecrets projects={allProjects.data ?? []} principal={principal.data} members={members.data ?? []} unavailable={failed.length > 0} />
   </div>;
 }

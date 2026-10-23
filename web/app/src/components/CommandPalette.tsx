@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useEffectEvent, useState } from "react";
+import { ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/command";
 import { LogOut, Moon, RefreshCw, Search, Sun } from "lucide-react";
 import type { ApiSnapshot } from "@/api";
-import { navigationForRoles, type ViewKey } from "@/router/metadata";
+import { navigationForRoles, navigationGroups, type ViewKey } from "@/router/metadata";
 
 export function CommandPalette({
   roles = [],
@@ -40,12 +40,27 @@ export function CommandPalette({
   const [searchTerm, setSearchTerm] = useState("");
   const onKeyOpenChange = useEffectEvent(onOpenChange);
   const navItems = navigationForRoles(roles);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const rememberFocus = useEffectEvent((event: Event) => {
+    if (open) return;
+    const target = event.type === "pointerdown" && event.target instanceof Element
+      ? event.target.closest<HTMLElement>("button,a,input,textarea,select,[tabindex]") : document.activeElement;
+    if (target instanceof HTMLElement) returnFocus.current = target;
+  });
+  useEffect(() => {
+    if (open) return;
+    const remember = (event: Event) => rememberFocus(event);
+    document.addEventListener("pointerdown", remember, true);
+    document.addEventListener("focusin", remember, true);
+    return () => { document.removeEventListener("pointerdown", remember, true); document.removeEventListener("focusin", remember, true); };
+  }, [open]);
   useEffect(() => { if (!open) setSearchTerm(""); }, [open]);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
+        if (!open && document.activeElement instanceof HTMLElement) returnFocus.current = document.activeElement;
         onKeyOpenChange(!open);
       }
     };
@@ -54,7 +69,7 @@ export function CommandPalette({
   }, [open]);
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog open={open} onOpenChange={onOpenChange} onCloseAutoFocus={(event) => { event.preventDefault(); if (returnFocus.current?.isConnected) returnFocus.current.focus(); }}>
       <CommandInput
         placeholder="Find a page or action..."
         value={searchTerm}
@@ -62,11 +77,13 @@ export function CommandPalette({
       />
       <CommandList>
         <CommandEmpty>No matching pages or actions.</CommandEmpty>
-        <CommandGroup heading="Navigation">
-          {navItems.map((item) => {
+        {navigationGroups.map((group) => <CommandGroup key={group} heading={group}>
+          {navItems.filter((item) => item.group === group).map((item) => {
             return (
               <CommandItem
                 key={item.key}
+                value={item.label}
+                keywords={[item.key]}
                 onSelect={() => {
                   setView(item.key);
                   onOpenChange(false);
@@ -77,7 +94,7 @@ export function CommandPalette({
               </CommandItem>
             );
           })}
-        </CommandGroup>
+        </CommandGroup>)}
         <CommandSeparator />
         {snapshot && (
           <CommandGroup heading="Quick Actions">
