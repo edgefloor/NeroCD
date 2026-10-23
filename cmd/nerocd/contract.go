@@ -208,6 +208,9 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 }
 
 func requiresContractAuth(method string, path string) bool {
+	if method == http.MethodPost && path == "/api/v1/hosting/github-push/{id}" {
+		return false
+	}
 	publicGet := path == "/api/v1/health" || path == "/api/v1/ready" || path == "/api/v1/bootstrap-status" || path == "/api/v1/oidc/status" || path == "/api/v1/oidc/login" || path == "/api/v1/oidc/callback"
 	if method == http.MethodGet && publicGet {
 		return false

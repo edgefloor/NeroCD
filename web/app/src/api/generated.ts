@@ -4,6 +4,130 @@
  */
 
 export interface paths {
+    "/api/v1/resources/{id}/github-push-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getGitHubPushPolicy
+         * @description Build on push, manual deployment. GitHub.com HTTPS and one exact branch only. Current authority and explicit managed-secret purposes required. No-store responses. Verification has one overall 20-second deadline, each provider request at most five seconds. Signed after commit must equal independently verified current branch HEAD. Fast-forward comparison supports at most 100 commits. Reconfiguration explicitly resets the verified baseline. Pending attempts are bounded to 32 or 24 hours; terminal receipts retained up to 72 hours. Stable commit build identity survives receipt cleanup.
+         */
+        get: operations["getGitHubPushPolicy"];
+        /**
+         * configureGitHubPushPolicy
+         * @description Build on push, manual deployment. GitHub.com HTTPS and one exact branch only. Current authority and explicit managed-secret purposes required. No-store responses. Verification has one overall 20-second deadline, each provider request at most five seconds. Signed after commit must equal independently verified current branch HEAD. Fast-forward comparison supports at most 100 commits. Reconfiguration explicitly resets the verified baseline. Pending attempts are bounded to 32 or 24 hours; terminal receipts retained up to 72 hours. Stable commit build identity survives receipt cleanup.
+         */
+        put: operations["configureGitHubPushPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/github-push-policy/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * verifyGitHubPushPolicy
+         * @description Build on push, manual deployment. GitHub.com HTTPS and one exact branch only. Current authority and explicit managed-secret purposes required. No-store responses. Verification has one overall 20-second deadline, each provider request at most five seconds. Signed after commit must equal independently verified current branch HEAD. Fast-forward comparison supports at most 100 commits. Reconfiguration explicitly resets the verified baseline. Pending attempts are bounded to 32 or 24 hours; terminal receipts retained up to 72 hours. Stable commit build identity survives receipt cleanup.
+         */
+        post: operations["verifyGitHubPushPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/github-push-policy/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * setGitHubPushEnabled
+         * @description Build on push, manual deployment. GitHub.com HTTPS and one exact branch only. Current authority and explicit managed-secret purposes required. No-store responses. Verification has one overall 20-second deadline, each provider request at most five seconds. Signed after commit must equal independently verified current branch HEAD. Fast-forward comparison supports at most 100 commits. Reconfiguration explicitly resets the verified baseline. Pending attempts are bounded to 32 or 24 hours; terminal receipts retained up to 72 hours. Stable commit build identity survives receipt cleanup.
+         */
+        post: operations["setGitHubPushEnabled"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/github-push-policy/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * retryGitHubPushDelivery
+         * @description Build on push, manual deployment. GitHub.com HTTPS and one exact branch only. Current authority and explicit managed-secret purposes required. No-store responses. Verification has one overall 20-second deadline, each provider request at most five seconds. Signed after commit must equal independently verified current branch HEAD. Fast-forward comparison supports at most 100 commits. Reconfiguration explicitly resets the verified baseline. Pending attempts are bounded to 32 or 24 hours; terminal receipts retained up to 72 hours. Stable commit build identity survives receipt cleanup.
+         */
+        post: operations["retryGitHubPushDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/github-push-policy/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * listGitHubPushDeliveries
+         * @description Build on push, manual deployment. GitHub.com HTTPS and one exact branch only. Current authority and explicit managed-secret purposes required. No-store responses. Verification has one overall 20-second deadline, each provider request at most five seconds. Signed after commit must equal independently verified current branch HEAD. Fast-forward comparison supports at most 100 commits. Reconfiguration explicitly resets the verified baseline. Pending attempts are bounded to 32 or 24 hours; terminal receipts retained up to 72 hours. Stable commit build identity survives receipt cleanup.
+         */
+        get: operations["listGitHubPushDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting/github-push/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * receiveGitHubPush
+         * @description Build on push, manual deployment. GitHub.com HTTPS and one exact branch only. Current authority and explicit managed-secret purposes required. No-store responses. Verification has one overall 20-second deadline, each provider request at most five seconds. Signed after commit must equal independently verified current branch HEAD. Fast-forward comparison supports at most 100 commits. Reconfiguration explicitly resets the verified baseline. Pending attempts are bounded to 32 or 24 hours; terminal receipts retained up to 72 hours. Stable commit build identity survives receipt cleanup. HMAC-SHA256 over the exact raw body before JSON parsing. Signature, event and canonical delivery UUID headers must each occur exactly once. Valid signed ping returns 202 ignored. No raw payload, signature, credentials or payload URLs are retained.
+         */
+        post: operations["receiveGitHubPush"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/runtime-log-sessions": {
         parameters: {
             query?: never;
@@ -4955,6 +5079,236 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getGitHubPushPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded metadata; Cache-Control: no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPushPolicy"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    configureGitHubPushPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubPushConfigure"];
+            };
+        };
+        responses: {
+            /** @description Bounded metadata; Cache-Control: no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPushPolicy"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    verifyGitHubPushPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubPushCommand"];
+            };
+        };
+        responses: {
+            /** @description Bounded metadata; Cache-Control: no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPushPolicy"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    setGitHubPushEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubPushEnable"];
+            };
+        };
+        responses: {
+            /** @description Bounded metadata; Cache-Control: no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPushPolicy"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    retryGitHubPushDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubPushRetry"];
+            };
+        };
+        responses: {
+            /** @description Bounded metadata; Cache-Control: no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPushDelivery"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listGitHubPushDeliveries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded metadata; Cache-Control: no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPushDeliveryPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    receiveGitHubPush: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Hub-Signature-256": string;
+                "X-GitHub-Event": string;
+                "X-GitHub-Delivery": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Bounded metadata; Cache-Control: no-store */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPushReceipt"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     openRuntimeLogSession: {
         parameters: {
             query?: never;

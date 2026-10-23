@@ -3,6 +3,9 @@ package githubpush
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -186,4 +189,18 @@ func (c *Client) Verify(ctx context.Context, in Request, credential []byte) (Evi
 	proof.AheadBy = *comparison.Ahead
 	proof.BehindBy = *comparison.Behind
 	return proof, nil
+}
+
+// VerifySignature authenticates exactly the bounded raw bytes before payload parsing.
+func VerifySignature(key, raw []byte, signature string) bool {
+	if len(key) == 0 || len(key) > 65536 || len(raw) > domain.GitHubPushPayloadLimit || len(signature) != 71 || !strings.HasPrefix(signature, "sha256=") || strings.ToLower(signature) != signature {
+		return false
+	}
+	actual, err := hex.DecodeString(signature[7:])
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(raw)
+	return hmac.Equal(actual, mac.Sum(nil))
 }

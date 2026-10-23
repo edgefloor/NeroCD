@@ -329,96 +329,115 @@ func (s *PostgresStore) requestHostingBuild(ctx context.Context, id, resourceID,
 		}
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingBuild, error) {
-		q := sqlcgen.New(tx)
-		resource, err := lockBuildResourceDestination(ctx, tx, resourceID)
-		if err != nil {
-			return domain.HostingBuild{}, err
-		}
-		if err = authorizeBuildActor(ctx, tx, actor, resource.ProjectID, "maintainer"); err != nil {
-			return domain.HostingBuild{}, err
-		}
-		var desired domain.ResourceSource
-		if json.Unmarshal(resource.Source, &desired) != nil || desired.Kind != "git" {
+		return s.requestHostingBuildTx(ctx, tx, id, resourceID, actor, in, policy, enqueue, event, configured, revision)
+	})
+}
+
+// requestHostingBuildTx is the common admission body for manual and verified push builds.
+// Callers retain destination-before-resource lock order and validate frozen input.
+func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id, resourceID, actor string, in domain.HostingBuildInput, policy domain.HostingBuildPolicy, enqueue HostingBuildEnqueueTx, event domain.AuditEvent, configured bool, revision *domain.HostingBuildTriggerRevision) (domain.HostingBuild, error) {
+	if enqueue == nil {
+		return domain.HostingBuild{}, ErrHostingBuildUnavailable
+	}
+	if !buildRecordID(id) || in.ExpectedResourceGeneration < 1 || in.ExpectedSourceGeneration < 1 || in.IdempotencyKey == "" || len(in.IdempotencyKey) > 128 || strings.TrimSpace(in.IdempotencyKey) != in.IdempotencyKey || domain.ValidateHostingBuildPolicy(policy) != nil {
+		return domain.HostingBuild{}, ErrConflict
+	}
+	if revision != nil {
+		copy := *revision
+		revision = &copy
+		if domain.ValidateHostingBuildTriggerRevision(domain.HostingBuildSnapshot{TriggerRevision: revision}) != nil {
 			return domain.HostingBuild{}, ErrConflict
 		}
-		hash := domain.HostingDocumentHash(struct {
-			Input  domain.HostingBuildInput
-			Policy domain.HostingBuildPolicy
-			Actor  string
-		}{in, policy, actor})
-		if revision != nil {
-			hash = domain.HostingDocumentHash(struct {
-				Input           domain.HostingBuildInput
-				Policy          domain.HostingBuildPolicy
-				Actor           string
-				TriggerRevision *domain.HostingBuildTriggerRevision
-			}{in, policy, actor, revision})
+	}
+	q := sqlcgen.New(tx)
+	resource, err := lockBuildResourceDestination(ctx, tx, resourceID)
+	if err != nil {
+		return domain.HostingBuild{}, err
+	}
+	if err = authorizeBuildActor(ctx, tx, actor, resource.ProjectID, "maintainer"); err != nil {
+		return domain.HostingBuild{}, err
+	}
+	var desired domain.ResourceSource
+	if json.Unmarshal(resource.Source, &desired) != nil || desired.Kind != "git" {
+		return domain.HostingBuild{}, ErrConflict
+	}
+	hash := domain.HostingDocumentHash(struct {
+		Input  domain.HostingBuildInput
+		Policy domain.HostingBuildPolicy
+		Actor  string
+	}{in, policy, actor})
+	if revision != nil {
+		hash = domain.HostingDocumentHash(struct {
+			Input           domain.HostingBuildInput
+			Policy          domain.HostingBuildPolicy
+			Actor           string
+			TriggerRevision *domain.HostingBuildTriggerRevision
+		}{in, policy, actor, revision})
+	}
+	old, err := q.HostingBuildIdempotency(ctx, sqlcgen.HostingBuildIdempotencyParams{ResourceID: resourceID, IdempotencyKey: in.IdempotencyKey})
+	if err == nil {
+		if old.RequestHash != hash {
+			return domain.HostingBuild{}, ErrConflict
 		}
-		old, err := q.HostingBuildIdempotency(ctx, sqlcgen.HostingBuildIdempotencyParams{ResourceID: resourceID, IdempotencyKey: in.IdempotencyKey})
-		if err == nil {
-			if old.RequestHash != hash {
-				return domain.HostingBuild{}, ErrConflict
-			}
-			original, readErr := readBuild(ctx, q, old.ID)
-			if readErr != nil {
-				return original, readErr
-			}
-			// Configured private retries require current source intent and the same
-			// atomic grant evidence as admission. Replay never invokes the enqueuer.
-			if configured && original.Snapshot.Source.CredentialKind != "public" {
-				if err = currentBuildExecution(ctx, tx, original); err != nil {
-					return original, err
-				}
-				if err = checkConfiguredSourceGrant(ctx, tx, original); err != nil {
-					return original, err
-				}
-			}
-			if err = checkBuildPlacement(ctx, tx, original, true); err != nil {
+		original, readErr := readBuild(ctx, q, old.ID)
+		if readErr != nil {
+			return original, readErr
+		}
+		// Configured private retries require current source intent and the same
+		// atomic grant evidence as admission. Replay never invokes the enqueuer.
+		if configured && original.Snapshot.Source.CredentialKind != "public" {
+			if err = currentBuildExecution(ctx, tx, original); err != nil {
 				return original, err
 			}
-			return original, authorizeBuildActor(ctx, tx, actor, resource.ProjectID, "maintainer")
+			if err = checkConfiguredSourceGrant(ctx, tx, original); err != nil {
+				return original, err
+			}
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return domain.HostingBuild{}, err
+		if err = checkBuildPlacement(ctx, tx, original, true); err != nil {
+			return original, err
 		}
-		src, err := readBuildSource(ctx, tx, resourceID)
-		if err != nil {
-			return domain.HostingBuild{}, err
-		}
-		if !exactBuildResourceSource(resource.Source, src) || resource.Generation != in.ExpectedResourceGeneration || src.Generation != in.ExpectedSourceGeneration {
-			return domain.HostingBuild{}, ErrConflict
-		}
-		if src.Settings.Strategy == "railpack" && policy.Limits.MemoryBytes < 512<<20 {
-			return domain.HostingBuild{}, ErrConflict
-		}
-		target, daemon, err := lockBuildTarget(ctx, tx, src)
-		if err != nil {
-			return domain.HostingBuild{}, err
-		}
-		grant, err := checkBuildGrant(ctx, tx, in.GrantID, src)
-		if err != nil {
-			return domain.HostingBuild{}, err
-		}
-		snap := domain.HostingBuildSnapshot{BuildID: id, ResourceGeneration: resource.Generation, Source: src, BindingID: target.BindingID, DestinationID: target.DestinationID, ServerID: target.ServerID, RunnerID: target.RunnerID, ExpectedDaemonID: daemon, Policy: policy, Grant: grant, TriggerRevision: revision}
-		if err = checkBuildTriggerRevision(ctx, tx, snap); err != nil {
-			return domain.HostingBuild{}, err
-		}
-		snap.InputID = domain.HostingDocumentHash(snap)
-		if err = q.InsertHostingBuild(ctx, sqlcgen.InsertHostingBuildParams{ID: id, ResourceID: resourceID, ProjectID: resource.ProjectID, SourceID: src.ID, SourceGeneration: src.Generation, IdempotencyKey: in.IdempotencyKey, RequestHash: hash, Snapshot: buildJSON(snap), SnapshotHash: domain.HostingDocumentHash(snap), CreatedBy: actor}); err != nil {
-			return domain.HostingBuild{}, err
-		}
-		b, err := readBuild(ctx, q, id)
-		if err != nil {
-			return b, err
-		}
-		if err = enqueue(ctx, tx, b); err != nil {
-			return b, err
-		}
-		if err = buildAudit(ctx, tx, event, actor, "hosting.build.queued", id); err != nil {
-			return b, err
-		}
-		return b, authorizeBuildActor(ctx, tx, actor, resource.ProjectID, "maintainer")
-	})
+		return original, authorizeBuildActor(ctx, tx, actor, resource.ProjectID, "maintainer")
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.HostingBuild{}, err
+	}
+	src, err := readBuildSource(ctx, tx, resourceID)
+	if err != nil {
+		return domain.HostingBuild{}, err
+	}
+	if !exactBuildResourceSource(resource.Source, src) || resource.Generation != in.ExpectedResourceGeneration || src.Generation != in.ExpectedSourceGeneration {
+		return domain.HostingBuild{}, ErrConflict
+	}
+	if src.Settings.Strategy == "railpack" && policy.Limits.MemoryBytes < 512<<20 {
+		return domain.HostingBuild{}, ErrConflict
+	}
+	target, daemon, err := lockBuildTarget(ctx, tx, src)
+	if err != nil {
+		return domain.HostingBuild{}, err
+	}
+	grant, err := checkBuildGrant(ctx, tx, in.GrantID, src)
+	if err != nil {
+		return domain.HostingBuild{}, err
+	}
+	snap := domain.HostingBuildSnapshot{BuildID: id, ResourceGeneration: resource.Generation, Source: src, BindingID: target.BindingID, DestinationID: target.DestinationID, ServerID: target.ServerID, RunnerID: target.RunnerID, ExpectedDaemonID: daemon, Policy: policy, Grant: grant, TriggerRevision: revision}
+	if err = checkBuildTriggerRevision(ctx, tx, snap); err != nil {
+		return domain.HostingBuild{}, err
+	}
+	snap.InputID = domain.HostingDocumentHash(snap)
+	if err = q.InsertHostingBuild(ctx, sqlcgen.InsertHostingBuildParams{ID: id, ResourceID: resourceID, ProjectID: resource.ProjectID, SourceID: src.ID, SourceGeneration: src.Generation, IdempotencyKey: in.IdempotencyKey, RequestHash: hash, Snapshot: buildJSON(snap), SnapshotHash: domain.HostingDocumentHash(snap), CreatedBy: actor}); err != nil {
+		return domain.HostingBuild{}, err
+	}
+	b, err := readBuild(ctx, q, id)
+	if err != nil {
+		return b, err
+	}
+	if err = enqueue(ctx, tx, b); err != nil {
+		return b, err
+	}
+	if err = buildAudit(ctx, tx, event, actor, "hosting.build.queued", id); err != nil {
+		return b, err
+	}
+	return b, authorizeBuildActor(ctx, tx, actor, resource.ProjectID, "maintainer")
 }
 func buildRecordID(id string) bool {
 	if len(id) < 1 || len(id) > 63 {

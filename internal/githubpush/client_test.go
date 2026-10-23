@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"nerocd/internal/domain"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -124,5 +125,22 @@ func TestRejectInsecureProviderTransport(t *testing.T) {
 	}
 	if _, err = client.Verify(t.Context(), Request{Owner: "acme", Repository: "app", Branch: "main", Private: true}, nil); err == nil {
 		t.Fatal("missing credential used as anonymous")
+	}
+}
+
+func TestSignatureOfficialVectorAndMalformedHeaders(t *testing.T) {
+	key := []byte("It's a Secret to Everybody")
+	raw := []byte("Hello, World!")
+	signature := "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"
+	if !VerifySignature(key, raw, signature) {
+		t.Fatal("official HMAC vector rejected")
+	}
+	for _, header := range []string{"", signature + " ", " " + signature, strings.ToUpper(signature), strings.Replace(signature, "sha256=", "sha256:", 1), signature + "," + signature, "sha256=" + strings.Repeat("a", 64)} {
+		if VerifySignature(key, raw, header) {
+			t.Fatal("malformed or invalid signature accepted")
+		}
+	}
+	if VerifySignature(key, append(raw, '!'), signature) || VerifySignature([]byte("different"), raw, signature) || VerifySignature(nil, raw, signature) || VerifySignature(key, make([]byte, domain.GitHubPushPayloadLimit+1), signature) {
+		t.Fatal("unbound signature accepted")
 	}
 }

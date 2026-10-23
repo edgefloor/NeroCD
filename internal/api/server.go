@@ -297,6 +297,10 @@ func (s *Server) securityHeaders(w http.ResponseWriter) {
 }
 
 func requiresJSONDocument(r *http.Request) bool {
+	// Webhook bytes must reach HMAC verification before JSON interpretation.
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/hosting/github-push/") {
+		return false
+	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
 		return false
 	}
@@ -318,6 +322,9 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	limit := maxJSONBodyBytes
+	if strings.HasPrefix(r.URL.Path, "/api/v1/resources/") && strings.Contains(r.URL.Path, "/github-push-policy") {
+		limit = domain.GitHubPushControlLimit
+	}
 	if r.URL.Path == "/api/v1/runners/runtime-log-sessions/events" {
 		limit = domain.HostingRuntimeLogByteLimit
 	}
@@ -414,6 +421,8 @@ func (s *Server) routes(static fs.FS) {
 
 func requiresAuth(path string) bool {
 	switch path {
+	case "/api/v1/hosting/github-push/{id}":
+		return false
 	case "/api/v1/health", "/api/v1/ready", "/api/v1/bootstrap-status", "/api/v1/oidc/status", "/api/v1/oidc/login", "/api/v1/oidc/callback", "/api/v1/sessions", "/api/v1/browser-sessions", "/api/v1/runner-enrollments/consume":
 		return false
 	default:

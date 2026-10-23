@@ -20,6 +20,7 @@ import (
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/githubpush"
 	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store"
 	"nerocd/web"
@@ -241,6 +242,16 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 			return nil, nil, err
 		}
 		if err := pg.ConfigureHostingBuild(cfg.hostingBuildPolicy); err != nil {
+			_ = pg.Close()
+			return nil, nil, err
+		}
+		pushProvider, err := githubpush.New(nil)
+		if err != nil {
+			_ = pg.Close()
+			return nil, nil, err
+		}
+		service.ConfigureHostingGitHubPush(pushProvider)
+		if err = pg.ConfigureGitHubPushProcessor(service.ProcessGitHubPushDelivery); err != nil {
 			_ = pg.Close()
 			return nil, nil, err
 		}
