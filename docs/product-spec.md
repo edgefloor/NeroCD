@@ -949,8 +949,8 @@ Automatic deployment evidence is source-bound: runtime
 `b9e34d7cd0e4aa6a7531b3150ad75eba6caf4282` passed in 22.5 seconds with Go runtime
 41.61 seconds at `/tmp/nerocd-auto-deploy-browser.Iwkcfa/gate.log`. The later HTTP
 constant and test-only repairs were reviewed with unchanged qualification inputs.
-Fresh accepted-main evidence records 1,123 frontend tests in 88 files, 29 policy
-checks, full Go build, 189-route contract and 74 served asset bytes. Exact revision,
+Fresh accepted-main evidence records 1,123 frontend tests in 88 files, supply-chain policy
+passed for 29 components, full Go build, 189-route contract and 74 served assets matched byte-for-byte. Exact revision,
 tree and retained evidence are in `/tmp/nerocd-auto-ssh-integration-repaired-handoff.json`
 and `/tmp/nerocd-main-auto-ssh-promotion.json`. The qualified current binary and
 dist remain in the integration checkout; root ignored dist is historical and is
