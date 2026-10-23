@@ -116,17 +116,19 @@ outcomes remain held. The recovery administrator UI is accepted at
 confirmation, scoped exact retry and current authorization. Recorded metadata
 settlement does not prove convergence completion. Trusted automatic-deployment
 controller work is active and unaccepted; automatic deployment and protected
-plans remain unsupported. SSH fixture work qualifies only its named test boundary,
-not SSH onboarding.
+plans remain unsupported. SSH fixture qualification is in progress with no
+accepted result. Two initial setup attempts failed; corrected setup is running.
+SSH onboarding remains unqualified.
 Pinned Vite SPA compilation is accepted at `d29edb3bc8cde064108891f70713423bb57776a3`.
 See the [bounded evidence and reliability limits](compatibility.md#accepted-foundations-and-evidence). Hosting navigation is
 accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`, with Home, Projects and
 Servers and runners leading direct hosting and advanced workflows preserved.
 See the [navigation evidence and limits](compatibility.md#accepted-foundations-and-evidence).
 
-Next, qualify SSH onboarding and trusted automatic deployment with protected plans. Follow with automatic deployment and protected plans under R17/R19
-and applicable A09/A10 checks, then production TLS qualification before H2
-stateful hosting. Live GitHub webhook configuration,
+Next, qualify the active trusted automatic-deployment work in its unprotected
+mode, then protected plans under R17/R19 and applicable A09/A10 checks. SSH
+qualification proceeds alongside that work, before production TLS qualification
+and H2 stateful hosting. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.
 Use existing resources, Go application authorization, managed-secret versions,
 PostgreSQL/River and fenced runner execution. Do not require a collaboration

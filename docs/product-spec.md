@@ -954,13 +954,16 @@ checks record the 189-route Go contract and 74 served assets, including
 arm64 with local fixture CA trust, not production TLS or convergence completion.
 
 React Doctor 0.9.18 evidence at `baf2c3a3326dea01ce7ad9142c36daaab81102d8`
-records 122 warnings reduced to 107, including 23 retained selected-rule warnings
-and 84 other warnings. This is a revision-specific result, not removal of all
-selected warnings; the newer recovery integration tree was not scanned.
+records 122 diagnostics reduced to 107: 118 warnings and four errors became
+103 warnings and the same four retained errors. The remaining findings include
+23 selected-rule diagnostics and 84 others. This revision-specific result does
+not remove all selected findings; the newer recovery integration tree was not scanned.
 The [secret-state change and tests](../web/app/src/pages/ProjectSecrets.test.tsx)
 and `/tmp/nerocd-doctor-top-three-evidence/dispositions.json` identify the source
 and retained dispositions. Trusted automatic-deployment controller work remains
-active and unaccepted; SSH fixture work is qualification only, not SSH onboarding.
+active and unaccepted. SSH fixture qualification is in progress with no accepted
+result; two initial setup attempts failed, setup was corrected and the current
+run remains pending. SSH onboarding is not qualified.
 
 Bounded completed metadata-conflict recovery is accepted at
 `e097ffa706325f55cab7a7b0416a235a0e9ad151`, including migration 0059. Source

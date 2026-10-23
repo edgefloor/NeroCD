@@ -163,8 +163,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Next are SSH onboarding, trusted automatic deployment and protected plans,
-then production TLS qualification before stateful hosting. Broader
+and extended compatibility. Next are trusted automatic deployment, then protected plans, alongside SSH
+qualification, before production TLS and stateful hosting. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
 
