@@ -696,6 +696,34 @@ type HostingSourceGrant struct {
 	RevokedAt     *time.Time `json:"revoked_at"`
 }
 
+type HostingStorage struct {
+	ID            string    `json:"id"`
+	ProjectID     string    `json:"project_id"`
+	ResourceID    string    `json:"resource_id"`
+	BindingID     string    `json:"binding_id"`
+	DestinationID string    `json:"destination_id"`
+	Kind          string    `json:"kind"`
+	Driver        string    `json:"driver"`
+	VolumeName    string    `json:"volume_name"`
+	MountPath     string    `json:"mount_path"`
+	AccessMode    string    `json:"access_mode"`
+	Retention     string    `json:"retention"`
+	Generation    int64     `json:"generation"`
+	BodyHash      string    `json:"body_hash"`
+	CreatedBy     string    `json:"created_by"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type HostingStorageReceipt struct {
+	ResourceID                 string `json:"resource_id"`
+	RequestID                  string `json:"request_id"`
+	StorageID                  string `json:"storage_id"`
+	ActorID                    string `json:"actor_id"`
+	RequestHash                string `json:"request_hash"`
+	ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
+	AuditID                    string `json:"audit_id"`
+}
+
 type HostingTaskTarget struct {
 	RunID       string `json:"run_id"`
 	OperationID string `json:"operation_id"`
