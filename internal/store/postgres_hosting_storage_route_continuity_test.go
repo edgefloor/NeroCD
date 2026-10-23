@@ -9,9 +9,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
 )
+
+// cleanupContinuityTransaction bounds cleanup even after the test context is canceled.
+func cleanupContinuityTransaction(t *testing.T, tx pgx.Tx) func() {
+	t.Helper()
+	cleanup := func() {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Errorf("rollback continuity fixture: %v", err)
+		}
+	}
+	t.Cleanup(cleanup)
+	return cleanup
+}
 
 type storageContinuityFixture struct {
 	storageMaterializationFixture
@@ -304,7 +321,7 @@ func TestHostingStorageRouteContinuityPostgresLockOrderBeforeResource(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	cleanupContinuityTransaction(t, tx)
 	if _, err = tx.Exec(t.Context(), `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0))`, f.op.Snapshot.DestinationID); err != nil {
 		t.Fatal(err)
 	}
@@ -312,6 +329,19 @@ func TestHostingStorageRouteContinuityPostgresLockOrderBeforeResource(t *testing
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := f.pg.HostingStorageCreateBegin(ctx, f.runner, next.request()); done <- err }()
+	joined := false
+	t.Cleanup(func() {
+		cancel()
+		if !joined {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("admission goroutine did not exit")
+			}
+		}
+	})
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 	// Query PostgreSQL's waiter state instead of relying on a scheduling sleep.
 	waitCtx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 	defer stop()
@@ -326,17 +356,24 @@ func TestHostingStorageRouteContinuityPostgresLockOrderBeforeResource(t *testing
 		select {
 		case <-waitCtx.Done():
 			t.Fatal("no destination waiter")
-		default:
+		case <-ticker.C:
 		}
 	}
 	probe, err := f.db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	rollbackProbe := cleanupContinuityTransaction(t, probe)
 	_, probeErr := probe.Exec(t.Context(), `SELECT id FROM resources WHERE id=$1 FOR UPDATE NOWAIT`, f.resource.ID)
-	_ = probe.Rollback(context.Background())
+	rollbackProbe()
 	cancel()
-	callErr := <-done
+	var callErr error
+	select {
+	case callErr = <-done:
+		joined = true
+	case <-time.After(5 * time.Second):
+		t.Fatal("admission goroutine did not exit")
+	}
 	if probeErr != nil || callErr == nil {
 		t.Fatalf("resource locked before destination or admission escaped wait: probe=%v call=%v", probeErr, callErr)
 	}
@@ -443,7 +480,7 @@ func TestHostingStorageRouteContinuityPostgresRequiresLoadedHTTPS(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = tx.Rollback(context.Background()) }()
+			cleanupContinuityTransaction(t, tx)
 			if _, err = tx.Exec(t.Context(), `ALTER TABLE hosting_proxy_receipts DISABLE TRIGGER hosting_proxy_receipts_immutable`); err != nil {
 				t.Fatal(err)
 			}
@@ -480,11 +517,7 @@ func TestHostingStorageRouteContinuityPostgresCertificateExpiryAfterOriginWait(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stop()
-		_ = blocker.Rollback(cleanup)
-	})
+	cleanupContinuityTransaction(t, blocker)
 	if _, err = blocker.Exec(ctx, `SELECT storage_id FROM hosting_storage_materializations WHERE storage_id=$1 FOR UPDATE`, f.storage.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -531,8 +564,13 @@ func TestHostingStorageRouteContinuityPostgresCertificateExpiryAfterOriginWait(t
 	if err = blocker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	result := <-done
-	joined = true
+	var result outcome
+	select {
+	case result = <-done:
+		joined = true
+	case <-time.After(5 * time.Second):
+		t.Fatal("admission goroutine did not exit")
+	}
 	if !errors.Is(result.err, store.ErrConflict) || result.ack.CreatePermitted {
 		t.Fatalf("expired certificate survived blocked admission %+v %v", result.ack, result.err)
 	}
