@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`99250c2634109cdd2008c56dae1b1740d377c0a1`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`0771f1b56befcd30b195c45121dba4d3efeec974`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - PostgreSQL state, checked migrations through 0057, bootstrap administration,
@@ -77,8 +77,13 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 - [Server-readiness diagnostic API](docs/server-readiness.md), accepted at
   `3cb62858e3d1e263d89d5e3c6aecd0a30792e938`, records bounded profile evidence
   and derives current authority/freshness status. It does not authorize deployment.
-  Agent collection and UI remain unaccepted pending actual enrollment/browser
-  qualification; complete A01 and SSH onboarding remain open.
+  [Manual UI enrollment and generated-command collection](docs/server-readiness.md#runtime-verification-fixture)
+  are accepted at `0771f1b56befcd30b195c45121dba4d3efeec974`. The compiled native
+  Linux arm64 agent uses fixture-CA-verified HTTPS, with current ready/blocked/stale
+  recovery, viewer denial, role loss and persisted-credential restart checked.
+  CLI availability is metadata-only; the profile requires Docker API 1.54 and
+  1 GiB free per work/journal root. amd64 is compile-only. Production TLS,
+  SSH, application deployment and complete A01 remain open.
 - [Verified route-switch engine](docs/hosting-route-switch.md), accepted at
   `99250c2634109cdd2008c56dae1b1740d377c0a1`, checks old/new HTTP and trusted TLS
   before committing an opt-in existing-route switch. Failed verification requires
@@ -138,8 +143,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Next are combined onboarding diagnostic qualification
-and SSH, a guarded route-switch controller, automatic/protected deployment, then
+and extended compatibility. Next are SSH onboarding, a guarded route-switch
+controller, automatic/protected deployment, then
 production TLS qualification before stateful hosting. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
