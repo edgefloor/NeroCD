@@ -65,3 +65,12 @@ test("mutating permission denial removes selectors and stops metadata reads", as
 test("refreshing revoked signing metadata clears selection and acknowledgment before any write", async () => {
  let revoked = false; const { fetch } = setup(policy, resource, (url) => url.includes("/managed-secrets?") && revoked ? json(page([{ id: "webhook", project_id: "project", name: "Signing secret", status: "revoked" }])) : undefined); await references(); await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save disabled push configuration" }).disabled).toBe(false)); revoked = true; fireEvent.click(screen.getByRole("button", { name: "Refresh build-on-push metadata" })); await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Webhook signing managed secret").value).toBe("")); expect(screen.getByLabelText<HTMLInputElement>(/I reviewed these exact references/).checked).toBe(false); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save disabled push configuration" }).disabled).toBe(true); expect(fetch.mock.calls.some(([, o]) => o.method === "PUT")).toBe(false);
 });
+test("503 preserves the exact command and pauses explicit retry for ten seconds without automatic writes", async () => {
+ const { fetch } = setup(policy, resource, (_url, options) => options.method === "PUT" ? json({}, 503) : undefined); await references(); vi.useFakeTimers();
+ try {
+  fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" })); await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical push decision" }); expect(retry.disabled).toBe(true); const first = fetch.mock.calls.find(([, options]) => options.method === "PUT")![1].body;
+  await act(async () => { await vi.advanceTimersByTimeAsync(9999); }); expect(retry.disabled).toBe(true); expect(fetch.mock.calls.filter(([, options]) => options.method === "PUT")).toHaveLength(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); }); expect(retry.disabled).toBe(false); fireEvent.click(retry); await act(async () => { await vi.advanceTimersByTimeAsync(0); }); const writes = fetch.mock.calls.filter(([, options]) => options.method === "PUT"); expect(writes).toHaveLength(2); expect(writes[1]![1].body).toBe(first);
+ } finally { vi.useRealTimers(); }
+});
