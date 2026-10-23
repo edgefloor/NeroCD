@@ -105,3 +105,10 @@ test("only unique existing routes produce a canonical current baseline and drift
   expect(automaticDeploymentFromOptions(automaticOptions, ["foreign"])).toBeUndefined();
   expect(automaticDeploymentFromOptions({ available: false, reason: "restore_hold" }, ["route_a"])).toBeUndefined();
 });
+
+
+test.each([{ hostname: "bad..example.test" }, { hostname: "*.example.test" }, { path_prefix: "/a/../b" }, { path_prefix: "/a//b" }, { path_prefix: "/dashboard" }, { path_prefix: "/encoded%2fpath" }])("owner route labels require the canonical backend hostname and literal path contract: %j", async (change) => {
+  const options = { ...automaticOptions, baseline: { ...automaticOptions.baseline!, routes: [{ ...automaticOptions.baseline!.routes[0], ...change }] } };
+  vi.stubGlobal("fetch", vi.fn(async () => json({ ...policy, owner_automatic_deployment_options: options })));
+  await expect(getGitHubPushPolicy("resource/one")).rejects.toThrow("malformed");
+});

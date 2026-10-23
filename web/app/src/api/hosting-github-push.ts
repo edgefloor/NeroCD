@@ -19,6 +19,10 @@ type Options = Pick<RequestOptions, "signal">;
 const path = (id: string) => `/api/v1/resources/${encodeURIComponent(id)}/github-push-policy`;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const identifier = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+const hostname = (value: unknown): value is string => typeof value === "string" && value.length <= 253 && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(value);
+function routePath(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 256 && /^\/[a-zA-Z0-9/_~.-]*$/.test(value) && !value.includes("//") && (value === "/" || !value.endsWith("/")) && !value.split("/").some((segment) => segment === "." || segment === "..") && !["/.well-known", "/dashboard", "/_nerocd"].some((prefix) => value.startsWith(prefix));
+}
 const integer = (value: unknown, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): value is number => Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
 function malformed(): never { throw new Error("Automatic deployment evidence is malformed"); }
 function object(value: unknown): Record<string, unknown> {
@@ -56,7 +60,7 @@ function automaticOptions(value: unknown): AutomaticDeploymentOptions {
   if (!identifier(b.healthy_operation_id) || !identifier(b.loaded_proxy_operation_id) || !integer(b.loaded_generation, 1) || !integer(b.runtime_configuration_generation) || !integer(b.container_port, 1, 65535) || !integer(b.manual_epoch) || !Array.isArray(b.routes) || b.routes.length < 1 || b.routes.length > 32) malformed();
   const routes = b.routes.map((value) => {
     const route = object(value);
-    if (!identifier(route.route_id) || !integer(route.version, 1) || !identifier(route.selected_release_operation_id) || typeof route.hostname !== "string" || route.hostname.length < 1 || route.hostname.length > 253 || !/^[a-zA-Z0-9.-]+$/.test(route.hostname) || typeof route.path_prefix !== "string" || route.path_prefix.length > 256 || !route.path_prefix.startsWith("/") || route.path_prefix.startsWith("//") || /[\\#\x00-\x1f\x7f]/.test(route.path_prefix)) malformed();
+    if (!identifier(route.route_id) || !integer(route.version, 1) || !identifier(route.selected_release_operation_id) || !hostname(route.hostname) || !routePath(route.path_prefix)) malformed();
     return { route_id: route.route_id, hostname: route.hostname, path_prefix: route.path_prefix, version: route.version, selected_release_operation_id: route.selected_release_operation_id };
   }).sort((left, right) => left.route_id < right.route_id ? -1 : left.route_id > right.route_id ? 1 : 0);
   if (new Set(routes.map((route) => route.route_id)).size !== routes.length) malformed();
