@@ -164,14 +164,17 @@ func validHostingStorageRef(ref HostingStorageRef) bool {
 
 // ValidateHostingStorageSnapshot prevents mixed or silently ignored policy fields.
 func ValidateHostingStorageSnapshot(s HostingSnapshot) error {
+	if err := ValidateHostingDatabaseSnapshot(s); err != nil {
+		return err
+	}
 	has := s.Storage != (HostingStorageRef{})
 	if !has {
-		if s.PolicyVersion == HostingOwnedStoragePolicyVersion {
+		if s.PolicyVersion == HostingOwnedStoragePolicyVersion || s.PolicyVersion == HostingDatabasePolicyVersion {
 			return ErrInvalidHostingStorage
 		}
 		return nil
 	}
-	if !validHostingStorageRef(s.Storage) || s.PolicyVersion != HostingOwnedStoragePolicyVersion || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) {
+	if !validHostingStorageRef(s.Storage) || (s.PolicyVersion != HostingOwnedStoragePolicyVersion && s.PolicyVersion != HostingDatabasePolicyVersion) || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) {
 		return ErrInvalidHostingStorage
 	}
 	return nil

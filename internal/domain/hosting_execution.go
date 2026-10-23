@@ -32,7 +32,7 @@ const (
 // workflow pointer once, without recursive traversal of untrusted graph depth.
 func ContainsHostingExecution(spec RunSpec, workflow Workflow) bool {
 	internal := func(spec RunSpec) bool {
-		return strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
+		return strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeDatabaseDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
 	}
 	if internal(spec) {
 		return true
@@ -97,6 +97,7 @@ type HostingDeploymentInput struct {
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
+	Database               HostingDatabaseExecutionRef      `json:"database,omitzero"`
 	StorageRouteContinuity HostingStorageRouteContinuityRef `json:"storage_route_continuity,omitzero"`
 	Storage                HostingStorageRef                `json:"storage,omitzero"`
 	ResourceID             string                           `json:"resource_id"`
@@ -139,14 +140,15 @@ type HostingHealthy struct {
 
 // HostingApplyPlan is compiled once from an immutable release and target.
 type HostingApplyPlan struct {
-	Storage          *HostingStoragePlan `json:"storage,omitempty"`
-	RetainedReleases []HostingHealthy    `json:"retained_releases,omitempty"`
-	RetainPrevious   bool                `json:"retain_previous,omitempty"`
-	Snapshot         HostingSnapshot     `json:"snapshot"`
-	Release          HostingRelease      `json:"release"`
-	PreviousHealthy  *HostingHealthy     `json:"previous_healthy,omitempty"`
-	CompilerVersion  string              `json:"compiler_version"`
-	Hash             string              `json:"hash"`
+	Database         *HostingDatabasePlan `json:"database,omitempty"`
+	Storage          *HostingStoragePlan  `json:"storage,omitempty"`
+	RetainedReleases []HostingHealthy     `json:"retained_releases,omitempty"`
+	RetainPrevious   bool                 `json:"retain_previous,omitempty"`
+	Snapshot         HostingSnapshot      `json:"snapshot"`
+	Release          HostingRelease       `json:"release"`
+	PreviousHealthy  *HostingHealthy      `json:"previous_healthy,omitempty"`
+	CompilerVersion  string               `json:"compiler_version"`
+	Hash             string               `json:"hash"`
 }
 
 // HostingReceipt acknowledges one stable, immutable runner document.

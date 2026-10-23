@@ -101,7 +101,7 @@ func TestHostingReleaseAndPlanHashBindTarget(t *testing.T) {
 
 func TestHostingExecutionDetectionCoversEveryWorkflowRepresentation(t *testing.T) {
 	internal := RunSpec{Type: RunTypeImageDeploy}
-	for _, spec := range []RunSpec{internal, {Type: "ansible", HostingMode: "deploy"}, {Type: "ansible", HostingOperationID: "hop_internal"}} {
+	for _, spec := range []RunSpec{internal, {Type: RunTypeDatabaseDeploy}, {Type: " database_deploy "}, {Type: "ansible", HostingMode: "deploy"}, {Type: "ansible", HostingOperationID: "hop_internal"}} {
 		if !ContainsHostingExecution(spec, Workflow{}) {
 			t.Fatal("internal root was public")
 		}
