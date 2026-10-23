@@ -24,6 +24,14 @@ export NEROCD_PRIVATE_GIT_BROWSER="$private_browser_mode"
 private_strategy=${NEROCD_PRIVATE_GIT_STRATEGY:-dockerfile}
 case "$private_strategy" in dockerfile|railpack) ;; *) echo 'invalid fixed private Git browser strategy' >&2; exit 1;; esac
 export NEROCD_PRIVATE_GIT_STRATEGY="$private_strategy"
+compiled_vite=${NEROCD_PRIVATE_GIT_COMPILED_VITE:-0}
+case "$compiled_vite" in 0|1) ;; *) echo 'invalid compiled Vite fixture option' >&2; exit 1;; esac
+if [[ "$compiled_vite" == 1 && "$private_browser_mode:$private_strategy" != 1:railpack ]];then echo 'compiled Vite requires private Railpack browser mode' >&2;exit 1;fi
+export NEROCD_PRIVATE_GIT_COMPILED_VITE="$compiled_vite"
+compiled_diagnostic=${NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC:-0}
+case "$compiled_diagnostic:$compiled_vite" in 0:0|0:1|1:1) ;; *) echo 'invalid compiled diagnostic option' >&2;exit 1;;esac
+export NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC="$compiled_diagnostic"
+printf 'source HEAD=%s tree=%s compiled_vite=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$compiled_vite"
 if [[ "$private_browser_mode" == 1 ]]; then
  bun run --cwd web/app build
  asset_manifest=${NEROCD_PRIVATE_GIT_BROWSER_MANIFEST:-/tmp/nerocd-private-git-browser-assets.json}
@@ -101,6 +109,7 @@ run_fixture_container() {
  # Nonempty positional arguments also work with Bash 3.2 and nounset enabled.
  set -- --detach --privileged --pid=host --mount "type=bind,src=$repo_root/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly" --add-host example.com:127.0.0.1 --name "$name" --label "io.nerocd.runtime-hosting-local-build.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock
  if [[ "$browser_mode" == 1 ]]; then set -- --publish 127.0.0.1::18080 "$@"; fi
+ if [[ "$compiled_vite" == 1 ]];then set -- --publish 127.0.0.1::18081 "$@";fi
  docker run "$@"
 }
 container_id=$(run_fixture_container)
@@ -133,6 +142,13 @@ else
  browser_addr=$(docker port "$container_id" 18080/tcp)
  [[ "$browser_addr" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
  export NEROCD_LOCAL_BUILD_BROWSER_ORIGIN="http://$browser_addr"
+ export NEROCD_PRIVATE_GIT_APP_ORIGIN=""
+ if [[ "$compiled_vite" == 1 ]];then
+  app_addr=$(docker port "$container_id" 18081/tcp)
+  [[ "$app_addr" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
+  export NEROCD_PRIVATE_GIT_APP_ORIGIN="http://$app_addr"
+  printf 'compiled browser read bridge loopbackHTTP=%s upstream=owned-fixture-CA-HTTPS\n' "$NEROCD_PRIVATE_GIT_APP_ORIGIN"
+ fi
  export NEROCD_BROWSER_FIXTURE_DSN="postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable"
  export NEROCD_CGROUP_ROOT="/sys/fs/cgroup/$owner"
  export NEROCD_PLANNER_IMAGE="$planner_id"
@@ -145,7 +161,7 @@ import { readFileSync } from "node:fs";
 const container = process.argv[1];
 const env = process.env;
 const privateMode = env.NEROCD_PRIVATE_GIT_BROWSER === "1";
-const args = ["exec", "--env", `NEROCD_PRIVATE_GIT_BROWSER=${privateMode ? "1" : "0"}`, "--env", `NEROCD_PRIVATE_GIT_STRATEGY=${env.NEROCD_PRIVATE_GIT_STRATEGY}`, "--env", "NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind", "--env", "NEROCD_LOCAL_BUILD_BROWSER=1", "--env", `NEROCD_LOCAL_BUILD_BROWSER_ORIGIN=${env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN}`, "--env", `NEROCD_BUILD_CONTROLLER_DATABASE_URL=${env.NEROCD_BROWSER_FIXTURE_DSN}`, "--env", `NEROCD_CGROUP_ROOT=${env.NEROCD_CGROUP_ROOT}`, "--env", `NEROCD_PLANNER_IMAGE=${env.NEROCD_PLANNER_IMAGE}`, "--env", `NEROCD_BUILDX_SHA256=${env.NEROCD_BUILDX_SHA256}`, container, "/fixture/hosting-controller.test", "-test.v", "-test.run", privateMode ? "^(TestControllerBrowserOrigin|TestPrivateFixtureSourceRevisionPolicy|TestPrivateFixtureResourcePolicyPostgres|TestPrivateGitBrowser)$" : "^(TestControllerBrowserOrigin|TestLocalBuildBrowser)$", "-test.timeout=10m"];
+const args = ["exec", "--env", `NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC=${env.NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC}`, "--env", `NEROCD_PRIVATE_GIT_COMPILED_VITE=${env.NEROCD_PRIVATE_GIT_COMPILED_VITE}`, "--env", `NEROCD_PRIVATE_GIT_APP_ORIGIN=${env.NEROCD_PRIVATE_GIT_APP_ORIGIN}`, "--env", `NEROCD_PRIVATE_GIT_BROWSER=${privateMode ? "1" : "0"}`, "--env", `NEROCD_PRIVATE_GIT_STRATEGY=${env.NEROCD_PRIVATE_GIT_STRATEGY}`, "--env", "NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind", "--env", "NEROCD_LOCAL_BUILD_BROWSER=1", "--env", `NEROCD_LOCAL_BUILD_BROWSER_ORIGIN=${env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN}`, "--env", `NEROCD_BUILD_CONTROLLER_DATABASE_URL=${env.NEROCD_BROWSER_FIXTURE_DSN}`, "--env", `NEROCD_CGROUP_ROOT=${env.NEROCD_CGROUP_ROOT}`, "--env", `NEROCD_PLANNER_IMAGE=${env.NEROCD_PLANNER_IMAGE}`, "--env", `NEROCD_BUILDX_SHA256=${env.NEROCD_BUILDX_SHA256}`, container, "/fixture/hosting-controller.test", "-test.v", "-test.run", privateMode ? "^(TestControllerBrowserOrigin|TestPrivateFixtureSourceRevisionPolicy|TestPrivateFixtureResourcePolicyPostgres|TestCompiledViteSourceContract|TestCompiledViteBridgeRejectsMutations|TestCompiledViteBridgeDropsPrivateHeaders|TestCompiledVitePortFromImage|TestPrivateGitBrowser)$" : "^(TestControllerBrowserOrigin|TestLocalBuildBrowser)$", "-test.timeout=10m"];
 const fixture = spawn("docker", args, { stdio: ["ignore", "pipe", "inherit"] });
 let browser;
 let buffer = "";
