@@ -141,6 +141,9 @@ func (s *PostgresStore) CreateServerBootstrap(ctx context.Context, actor, key st
 
 // GetServerBootstrap rechecks current administrator and project owner authority.
 func (s *PostgresStore) GetServerBootstrap(ctx context.Context, actor, id string) (domain.ServerBootstrapOperation, error) {
+	// Bound the entire metadata request, including pool, authority and SHARE waits.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.ServerBootstrapOperation, error) {
 		q := sqlcgen.New(tx)
 		row, err := q.BootstrapGet(ctx, id)

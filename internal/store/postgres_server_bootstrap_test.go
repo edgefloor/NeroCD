@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -495,5 +496,58 @@ func TestPostgresServerBootstrapFinalActorExpiryRollsBack(t *testing.T) {
 	var operations, grants, audits int
 	if e := f.db.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM server_bootstrap_operations),(SELECT count(*) FROM server_bootstrap_secret_grants),(SELECT count(*) FROM audit_events WHERE action='server_bootstrap.created')`).Scan(&operations, &grants, &audits); e != nil || operations != 0 || grants != 0 || audits != 0 {
 		t.Fatal("actor expiry partial commit", operations, grants, audits, e)
+	}
+}
+
+func TestPostgresServerBootstrapMetadataReadBoundsLockWait(t *testing.T) {
+	for _, short := range []bool{true, false} {
+		name := "default_bound"
+		if short {
+			name = "caller_deadline"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newBootstrapFixture(t)
+			op := f.create(t)
+			blocker, e := f.db.Begin(t.Context())
+			if e != nil {
+				t.Fatal(e)
+			}
+			if _, e = blocker.Exec(t.Context(), `SELECT id FROM server_bootstrap_operations WHERE id=$1 FOR UPDATE`, op.IDs.OperationID); e != nil {
+				t.Fatal(e)
+			}
+			// The fallback bounds the regression itself if the production timeout disappears.
+			released := make(chan struct{})
+			fallback := time.AfterFunc(7*time.Second, func() {
+				defer close(released)
+				cleanup, stop := context.WithTimeout(context.Background(), time.Second)
+				defer stop()
+				_ = blocker.Rollback(cleanup)
+			})
+			defer func() {
+				if !fallback.Stop() {
+					<-released
+				}
+				_ = blocker.Rollback(t.Context())
+			}()
+			ctx := context.Background()
+			if short {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 75*time.Millisecond)
+				defer cancel()
+			}
+			started := time.Now()
+			_, e = f.pg.GetServerBootstrap(ctx, "usr_bootstrap", op.IDs.OperationID)
+			elapsed := time.Since(started)
+			if !errors.Is(e, context.DeadlineExceeded) {
+				t.Fatal("metadata wait escaped request deadline", e)
+			}
+			limit := 6 * time.Second
+			if short {
+				limit = time.Second
+			}
+			if elapsed > limit {
+				t.Fatal("metadata request exceeded bound", elapsed)
+			}
+		})
 	}
 }

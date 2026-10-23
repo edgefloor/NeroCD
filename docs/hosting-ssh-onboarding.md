@@ -51,7 +51,7 @@ Only a private, non-serializable delivery value contains decrypted SSH key/enrol
 
 ## Persistence and restore
 
-The store locks current actor/project authority, target serialization, operation, command/stage, then purpose grant and managed-secret version. Registration takes runner SHARE before the exact enrollment row, matching readiness authority order. Existing consume first creates the runner while holding its enrollment transaction; that uncommitted runner cannot be observed by registration. Its historical replay reads the runner without acquiring a conflicting row lock. No remote I/O occurs under database locks.
+The store locks current actor/project authority, target serialization, operation, command/stage, then purpose grant and managed-secret version. Registration takes runner SHARE before the exact enrollment row, matching readiness authority order. Existing consume first creates the runner while holding its enrollment transaction; that uncommitted runner cannot be observed by registration. Its historical replay reads the runner without acquiring a conflicting row lock. Metadata reads retain operation SHARE for a coherent review, active stage, and history. They can wait on a writer, but the complete request has a five-second bound, including pool acquisition and authority/row waits; a shorter caller deadline takes precedence. No remote I/O occurs under database locks.
 
 Migration 0061 adds bounded operation/command history, monotonic leases/fences, purpose grants, immutable private ciphertext, deferred enrollment/intent consistency, and startup compatibility checks. No parallel task queue is introduced. A later River job will carry an opaque operation ID.
 
