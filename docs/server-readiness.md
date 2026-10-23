@@ -3,7 +3,47 @@
 `basic_image_hosting.v1` reports prerequisites for an enrolled trusted image host.
 The diagnostic does not authorize deployment, reserve capacity, or provision machines.
 It does not inspect workspaces, machine pools, VMs, or SSH targets.
-Agent collection and UI presentation require separate implementation and runtime verification.
+The agent collector is explicitly enabled with `--hosting-readiness`. UI presentation has a separate implementation and verification boundary.
+
+## Agent collection
+
+`nerocd runner --hosting-readiness` requires `--execute` and forbids `--once`,
+`--complete-status`, and an explicit `shell` capability. The option adds
+`hosting_readiness_v1` and removes only the implicit default `shell` capability.
+Both identity checks require parity between the persisted capability and local opt-in.
+The command requires HTTPS with validated TLS. Readiness requests and their identity checks
+reject redirects, disable environment proxies, and have two-second request limits.
+Readiness-enabled enrollment and registration use the same TLS, redirect, and proxy policy.
+Bootstrap has a ten-second overall window and two-second request limits under signal cancellation.
+Enrollment retries preserve the persisted request ID and credential hash; registration has one
+attempt because its endpoint has no enrollment-style idempotent receipt.
+The literal-loopback HTTP allowance exists only in test configuration, never as a CLI option.
+
+Collection starts after every startup journal reconciliation. It samples immediately, then
+runs one sequential cycle every ten seconds. It creates no journal records or jobs.
+Each cycle retains its original ten-second limit and challenge expiry. A sample has a
+five-second limit. A transient report failure can retry once with the identical report;
+HTTP 401, 403, 404, or 409 abandons the cycle. Cancellation closes the sampler and joins
+its collector before the runtime returns.
+
+The sampler makes only Unix-socket Docker GET requests to `/version` and `/v1.54/info`.
+It repeats `/v1.54/info` to check daemon identity stability. Raw response buffers are bounded
+and cleared. The collector does not pull, create containers, execute a CLI, or initialize
+an execution validator. CLI availability records safe executable-file metadata, not proof
+that a deployment can run. Architecture aliases `x86_64` and `aarch64` map explicitly to
+`amd64` and `arm64`; unsupported native platforms cannot qualify.
+
+Linux qualification assumes responsive local filesystems for the CLI path and the work and journal roots.
+Metadata and available-byte checks run synchronously without creating files. They reject
+symlinks and unsafe permissions; the resolved journal root must remain owned by the runner
+and mode 0700. Available-byte multiplication rejects signed 64-bit overflow.
+Filesystem syscalls cannot be forcibly cancelled, so this is not a hard OS deadline.
+The collector discards a sample that returns late instead of leaving a timeout goroutine.
+Shutdown join relies on the same responsive-filesystem assumption.
+
+Configuration, identity, journal opening, or replay failures exit before collection.
+A host without an accepted sample remains `unknown`; earlier evidence ages under its
+original freshness limit. Startup failures do not fabricate a blocked or ready sample.
 
 ## HTTP contract
 
@@ -68,3 +108,14 @@ Successful database restore deletes all pending and accepted readiness state, in
 The deletion shares the existing atomic restore invalidation transaction.
 The migration adds `nerocd_server_readiness_schema_compatible()` to the current schema check.
 The diagnostic does not change deployment or image compatibility behavior.
+
+## Runtime verification fixture
+
+`bash scripts/ci/server-readiness-runtime-gate.sh` compiles the actual agent and runs
+it on native Linux in a uniquely owned Docker 29.4 fixture with PostgreSQL 17.6.
+The gate checks real-clock staleness, response-loss retries, recovery, unsafe roots,
+unsupported and unreachable Docker, revocation, and signal-driven shutdown.
+Its metadata-only Docker executable records accidental invocation; the collector must
+never execute it. The fixture uses a trusted local TLS certificate and credential file.
+This verifies that local test setup, not production TLS or deployment execution.
+The gate removes its exact labelled containers and build image without pruning host state.

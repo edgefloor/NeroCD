@@ -56,6 +56,7 @@ func runRunner(args []string) error {
 	proxyProtocol := fs.String("proxy-protocol", "", "explicit managed proxy protocol managed-traefik.file.v1")
 	buildConfigFile := fs.String("build-config-file", "", "explicit owned mode0600 JSON build execution configuration; disabled when absent")
 	hostingRuntimeLogs := fs.Bool("hosting-runtime-logs", false, "enable demand-driven hosting runtime log collection over HTTPS")
+	hostingReadiness := fs.Bool("hosting-readiness", false, "enable read-only basic image hosting readiness diagnostics over HTTPS")
 	hostingObservation := fs.Bool("hosting-observation", false, "enable independent read-only hosting status collection over HTTPS")
 	hostingRuntimeEnv := fs.Bool("hosting-runtime-env", false, "explicitly enable protected hosting runtime environment delivery over HTTPS")
 	localBuildDeploy := fs.Bool("local-build-deploy", false, "explicitly enable same-host local build artifact deployment")
@@ -63,6 +64,12 @@ func runRunner(args []string) error {
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	runnerContext := context.Background()
+	if *hostingReadiness {
+		var stop context.CancelFunc
+		runnerContext, stop = signal.NotifyContext(runnerContext, os.Interrupt, syscall.SIGTERM)
+		defer stop()
 	}
 	buildConfig, err := loadRunnerBuildConfig(*buildConfigFile)
 	if err != nil {
@@ -145,6 +152,17 @@ func runRunner(args []string) error {
 			return err
 		}
 	}
+	registrationCapabilities, err = runnerReadinessCapabilities(*hostingReadiness, *execute, *once, *completeStatus, capabilitiesSpecified, registrationCapabilities)
+	if err != nil {
+		return err
+	}
+	var readiness *runnerruntime.HostingReadinessConfig
+	if *hostingReadiness {
+		readiness = &runnerruntime.HostingReadinessConfig{}
+		if err := runnerclient.ValidateServerReadinessServer(*server, runnerclient.ServerReadinessTransport{}); err != nil {
+			return err
+		}
+	}
 	if *pollInterval <= 0 {
 		return errors.New("runner --poll-interval must be greater than zero")
 	}
@@ -189,13 +207,17 @@ func runRunner(args []string) error {
 		var consumed app.ConsumedRunnerEnrollment
 		var consumeErr error
 		backoff := 100 * time.Millisecond
-		for attempt := 0; attempt < 5; attempt++ {
-			consumeErr = postAPIInto(*server+"/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
-			if consumeErr == nil || classifyRunnerFailure(consumeErr) != runnerFailureTransient {
-				break
+		if *hostingReadiness {
+			consumeErr = postRunnerReadinessBootstrap(runnerContext, *server, "/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
+		} else {
+			for attempt := 0; attempt < 5; attempt++ {
+				consumeErr = postAPIInto(*server+"/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
+				if consumeErr == nil || classifyRunnerFailure(consumeErr) != runnerFailureTransient {
+					break
+				}
+				time.Sleep(backoff)
+				backoff *= 2
 			}
-			time.Sleep(backoff)
-			backoff *= 2
 		}
 		if consumeErr != nil {
 			return fmt.Errorf("consume runner enrollment: %w", consumeErr)
@@ -219,8 +241,14 @@ func runRunner(args []string) error {
 		}
 		registerBody := runnerRegisterRequest{ID: *id, Name: *name, Tags: splitCSV(*tags), Capabilities: registrationCapabilities}
 		var registered runnerRegisterResponse
-		if err := postAPIInto(*server+"/api/v1/runners/register", registerBody, registrationToken, &registered); err != nil {
-			return err
+		var registerErr error
+		if *hostingReadiness {
+			registerErr = postRunnerReadinessBootstrap(runnerContext, *server, "/api/v1/runners/register", registerBody, registrationToken, &registered)
+		} else {
+			registerErr = postAPIInto(*server+"/api/v1/runners/register", registerBody, registrationToken, &registered)
+		}
+		if registerErr != nil {
+			return registerErr
 		}
 		runnerToken = strings.TrimSpace(registered.Token)
 		if runnerToken == "" {
@@ -229,25 +257,25 @@ func runRunner(args []string) error {
 	}
 	// Resolve credential authority before runtime can select, open, or replay
 	// a journal. Enrollment IDs and local defaults do not replace this read.
-	identityContext := context.Background()
-	if *hostingObservation || *hostingRuntimeLogs {
+	identityContext := runnerContext
+	if !*hostingReadiness && (*hostingObservation || *hostingRuntimeLogs) {
 		var stop context.CancelFunc
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{Proxy: proxyConfig.Enabled(), Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{Proxy: proxyConfig.Enabled(), Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}
 	if (idSpecified || buildConfig != nil) && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	runtimeConfig := runnerruntime.Config{HostingRuntimeLogs: runtimeLogs, HostingObservation: observation, RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
+	runtimeConfig := runnerruntime.Config{HostingReadiness: readiness, HostingRuntimeLogs: runtimeLogs, HostingObservation: observation, RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,
 	}
-	if *hostingObservation || *hostingRuntimeLogs {
+	if *hostingObservation || *hostingRuntimeLogs || *hostingReadiness {
 		return runnerruntime.RunContext(identityContext, runtimeConfig)
 	}
 	if buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv {
