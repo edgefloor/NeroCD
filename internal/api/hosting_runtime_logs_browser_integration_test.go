@@ -139,7 +139,7 @@ func TestHostingRuntimeLogsBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }() // Server shutdown may already close the listener.
 	actualOrigin := "http://" + listener.Addr().String()
 	if origin != "" && origin != actualOrigin {
 		t.Fatal("browser fixture origin mismatch")
