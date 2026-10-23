@@ -119,3 +119,29 @@ Its metadata-only Docker executable records accidental invocation; the collector
 never execute it. The fixture uses a trusted local TLS certificate and credential file.
 This verifies that local test setup, not production TLS or deployment execution.
 The gate removes its exact labelled containers and build image without pruning host state.
+
+
+Set `NEROCD_READINESS_BROWSER=1` when running the gate to qualify the manual
+onboarding flow through the served UI and real API. Build dependencies must already
+be installed in `web/app`. This mode builds `web/dist` before compiling the Go
+fixture, records its asset manifest and binary hashes, and checks served asset bytes.
+The browser creates a one-time readiness enrollment, hands its displayed command to
+a bounded test-only helper, and registers the consumed runner using the normal server
+form. The helper validates the exact generated command and invokes parsed argv with
+`exec.Command`; only the four fixture paths and polling interval change. The compiled
+Linux agent consumes the enrollment over fixture-CA-verified HTTPS and persists a
+mode-0600 credential. A subsequent restart removes only the consumed enrollment-file
+flag and uses that persisted credential; it must not consume enrollment again. Browser UI traffic uses separately labelled loopback HTTP.
+
+The actual browser case uses no fabricated API responses or readiness database
+writes. It observes ready, failed prerequisites, recovery, real-clock staleness,
+agent credential revocation, and current administrator role loss. The separate native
+collector case also checks consumed-enrollment revocation. A nonce-scoped helper accepts only
+bounded named actions, the pinned authenticated session, exact Origin and CSRF header;
+a separate recovery administrator completes cleanup after the tested actor loses its
+role. Secrets stay out of traces and screenshots, which are captured after dismissal.
+Checks include keyboard refresh and widths 320, 390, 430 and 1440. The existing
+synthetic browser case remains rendering evidence only. The gate owns ports 32965
+and 32966 while active and removes its exact labelled fixtures. This qualifies the
+bounded manual enrollment prerequisite; it does not configure SSH, verify production
+TLS, deploy an application, or complete the full A01 workflow.

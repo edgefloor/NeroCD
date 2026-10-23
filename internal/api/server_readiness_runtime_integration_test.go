@@ -2,10 +2,14 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -15,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +31,7 @@ import (
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
+	"nerocd/web"
 )
 
 type readinessFixtureAgent struct {
@@ -40,6 +46,7 @@ func (a *readinessFixtureAgent) Stop(t *testing.T) {
 		_ = a.command.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-a.done:
+			t.Logf("owned agent pid=%d joined", a.command.Process.Pid)
 		case <-time.After(4 * time.Second):
 			_ = a.command.Process.Kill()
 			<-a.done
@@ -289,4 +296,396 @@ func TestServerReadinessCompiledAgent(t *testing.T) {
 		}
 	}
 	t.Logf("compiled native agent completed no_sample->ready->real-clock stale->recovered; Docker=%s arch=%s, lost-response retry, root failure/recovery, unsupported/unreachable Docker, revocation and SIGTERM join; jobs unchanged", ready.Report.DockerAPIVersion, ready.Report.Architecture)
+}
+
+const readinessBrowserCaps = "compose-deploy,image_deploy,image_release_ports_v1,hosting_runtime_env_v1,hosting_observation_v1,hosting_runtime_logs_v1,hosting_readiness_v1"
+
+// The browser handoff is test-only and accepts the exact generated grammar,
+// never executable shell text. Only the four dedicated fixture paths change.
+func readinessBrowserArgv(command, origin, root string) ([]string, error) {
+	expected := "nerocd runner --server '" + origin + "' --enrollment-file /secure/nerocd-runner-enrollment.token --credential-file /secure/nerocd-runner.credential --work-dir /var/lib/nerocd/work --journal-dir /var/lib/nerocd/journal --capabilities '" + readinessBrowserCaps + "' --compose-image-policy pull --hosting-readiness --hosting-runtime-env --hosting-observation --hosting-runtime-logs --execute"
+	if command != expected {
+		return nil, errors.New("unexpected generated command")
+	}
+	args := strings.Fields(command)[1:]
+	replacements := map[string]string{"--enrollment-file": "enrollment", "--credential-file": "credential", "--work-dir": "work", "--journal-dir": "journal"}
+	for i := 0; i < len(args); i++ {
+		args[i] = strings.Trim(args[i], "'")
+		if name, ok := replacements[args[i]]; ok {
+			i++
+			args[i] = filepath.Join(root, name)
+		}
+	}
+	return append(args, "--poll-interval", "200ms"), nil
+}
+
+func readinessBrowserRestartArgv(initial []string) []string {
+	result := make([]string, 0, len(initial)-2)
+	for i := 0; i < len(initial); i++ {
+		if initial[i] == "--enrollment-file" {
+			i++
+			continue
+		}
+		result = append(result, initial[i])
+	}
+	return result
+}
+
+func TestReadinessBrowserRestartUsesCredential(t *testing.T) {
+	initial := []string{"runner", "--enrollment-file", "/owned/enrollment", "--credential-file", "/owned/credential", "--capabilities", readinessBrowserCaps, "--hosting-readiness", "--execute"}
+	original := append([]string(nil), initial...)
+	got := readinessBrowserRestartArgv(initial)
+	want := []string{"runner", "--credential-file", "/owned/credential", "--capabilities", readinessBrowserCaps, "--hosting-readiness", "--execute"}
+	if !slices.Equal(got, want) || !slices.Equal(initial, original) {
+		t.Fatal("restart changed credential/capability flags or initial argv")
+	}
+}
+
+func readinessBrowserControlAllowed(principal auth.Principal, actorID, origin string, r *http.Request) bool {
+	admin := false
+	for _, role := range principal.Roles {
+		admin = admin || role == domain.RoleSystemAdmin
+	}
+	return admin && principal.ID == actorID && r.Method == http.MethodPost && r.Header.Get("Origin") == origin && r.Header.Get("X-NeroCD-CSRF") == "1" && r.URL.RawQuery == ""
+}
+
+type readinessBrowserSession struct {
+	mu     sync.Mutex
+	hashes map[string][32]byte
+}
+
+func (s *readinessBrowserSession) allow(actor string, r *http.Request) bool {
+	cookie, err := r.Cookie("nerocd_session")
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	hash := sha256.Sum256([]byte(cookie.Value))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hashes == nil {
+		s.hashes = make(map[string][32]byte)
+	}
+	original, ok := s.hashes[actor]
+	if !ok {
+		s.hashes[actor] = hash
+		return true
+	}
+	return original == hash
+}
+
+func TestReadinessBrowserHelperSecurity(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/fixture", nil)
+	sessions := &readinessBrowserSession{}
+	request.AddCookie(&http.Cookie{Name: "nerocd_session", Value: "fixture-session-a"})
+	if !sessions.allow("actor", request) {
+		t.Fatal("first session rejected")
+	}
+	if !sessions.allow("actor", request) {
+		t.Fatal("same session rejected")
+	}
+	other := request.Clone(t.Context())
+	other.Header = request.Header.Clone()
+	other.Header.Set("Cookie", "nerocd_session=fixture-session-b")
+	if sessions.allow("actor", other) {
+		t.Fatal("second session accepted")
+	}
+	request.Header.Set("Origin", "http://127.0.0.1:32966")
+	request.Header.Set("X-NeroCD-CSRF", "1")
+	principal := auth.Principal{ID: "actor", Roles: []string{domain.RoleSystemAdmin}}
+	if !readinessBrowserControlAllowed(principal, "actor", "http://127.0.0.1:32966", request) {
+		t.Fatal("valid control rejected")
+	}
+	for _, change := range []func(*http.Request){func(r *http.Request) { r.Method = http.MethodGet }, func(r *http.Request) { r.Header.Del("Origin") }, func(r *http.Request) { r.Header.Del("X-NeroCD-CSRF") }, func(r *http.Request) { r.URL.RawQuery = "x=1" }} {
+		r := request.Clone(t.Context())
+		r.Header = request.Header.Clone()
+		change(r)
+		if readinessBrowserControlAllowed(principal, "actor", "http://127.0.0.1:32966", r) {
+			t.Fatal("unsafe control allowed")
+		}
+	}
+	if readinessBrowserControlAllowed(auth.Principal{ID: "actor"}, "actor", "http://127.0.0.1:32966", request) || readinessBrowserControlAllowed(principal, "other", "http://127.0.0.1:32966", request) {
+		t.Fatal("authority boundary lost")
+	}
+	for _, command := range []string{"", "nerocd runner; touch /tmp/escape", "$(id)"} {
+		if _, err := readinessBrowserArgv(command, "https://127.0.0.1:1", "/tmp/owned"); err == nil {
+			t.Fatal("arbitrary command accepted")
+		}
+	}
+}
+
+func TestServerReadinessEnrollmentBrowser(t *testing.T) {
+	if os.Getenv("NEROCD_READINESS_BROWSER") != "disposable-dind" {
+		t.Skip("requires actual browser gate")
+	}
+	if runtime.GOOS != "linux" {
+		t.Fatal("Linux fixture required")
+	}
+	origin := os.Getenv("NEROCD_READINESS_BROWSER_ORIGIN")
+	if origin != "http://127.0.0.1:32966" {
+		t.Fatal("exact owned browser origin required")
+	}
+	base, pg, database := newHostingBuildAPIFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
+	defer cancel()
+	user, err := base.app.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: "readiness-admin@example.local", Name: "Readiness administrator", Password: "readiness-browser-fixture-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ordinary seeded viewer and fixed recovery administrator are local test identities.
+	password, err := auth.HashPassword("readiness-browser-fixture-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"usr_bootstrap", "usr_viewer"} {
+		if _, err = database.Exec(ctx, `UPDATE users SET password_hash=$2 WHERE id=$1`, id, password); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "readiness_browser_project_owner", ProjectID: "proj_platform", UserID: "usr_viewer", Role: domain.RoleOwner}); err != nil {
+		t.Fatal(err)
+	}
+	api := NewServerWithConfig(base.app, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), ServerConfig{PublicOrigin: origin, AllowInsecureCookies: true})
+	var consumes atomic.Int32
+	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runner-enrollments/consume" {
+			consumes.Add(1)
+		}
+		api.ServeHTTP(w, r)
+	}))
+	defer tlsServer.Close()
+	root, err := os.MkdirTemp("/tmp", "nerocd-readiness-browser-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(root) }()
+	for _, name := range []string{"work", "journal"} {
+		if err = os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ca := filepath.Join(root, "ca.pem")
+	if err = os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tlsServer.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, 16)
+	if _, err = rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	stepPath := "/api/v1/fixture/readiness/" + hex.EncodeToString(nonce) + "/"
+	type action struct {
+		name       string
+		token      string
+		command    string
+		enrollment string
+		result     chan int
+	}
+	actions := make(chan action)
+	var agent *readinessFixtureAgent
+	defer func() {
+		if agent != nil {
+			agent.Stop(t)
+		}
+	}()
+	var argv []string
+	logs := &runtimeFixtureLog{}
+	start := func(args []string) error {
+		c := exec.CommandContext(ctx, "/fixture/nerocd", args...)
+		c.Env = append(os.Environ(), "NEROCD_MODE=development", "NEROCD_TOKEN=", "SSL_CERT_FILE="+ca, "PATH=/fixture/readiness-bin:/usr/local/bin:/usr/bin:/bin")
+		c.Stdout, c.Stderr = logs, logs
+		if e := c.Start(); e != nil {
+			return e
+		}
+		agent = &readinessFixtureAgent{command: c, done: make(chan error, 1)}
+		t.Logf("owned browser agent pid=%d started", c.Process.Pid)
+		go func(a *readinessFixtureAgent) { a.done <- a.command.Wait() }(agent)
+		return nil
+	}
+	sessions := &readinessBrowserSession{}
+	handler := api.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, e := base.app.CurrentPrincipal(r.Context())
+		name := strings.TrimPrefix(r.URL.Path, stepPath)
+		actor := user.ID
+		if name == "complete" {
+			actor = "usr_bootstrap"
+		}
+		if e != nil || !readinessBrowserControlAllowed(principal, actor, origin, r) || !sessions.allow(actor, r) {
+			http.Error(w, "denied", http.StatusForbidden)
+			return
+		}
+		switch name {
+		case "start", "stop", "restart", "unsafe-root", "safe-root", "revoke", "demote", "complete":
+		default:
+			http.Error(w, "unknown fixture action", 400)
+			return
+		}
+		var input struct {
+			Token      string `json:"token"`
+			Command    string `json:"command"`
+			Enrollment string `json:"enrollment"`
+		}
+		raw, e := io.ReadAll(io.LimitReader(r.Body, 16385))
+		defer clear(raw)
+		if e != nil || len(raw) > 16384 {
+			http.Error(w, "invalid fixture request", 400)
+			return
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&input) != nil {
+			http.Error(w, "invalid fixture request", 400)
+			return
+		}
+		var extra any
+		if !errors.Is(decoder.Decode(&extra), io.EOF) {
+			http.Error(w, "invalid fixture request", 400)
+			return
+		}
+		if name != "start" && (input.Token != "" || input.Command != "" || input.Enrollment != "") {
+			http.Error(w, "empty action required", 400)
+			return
+		}
+		item := action{name: name, token: input.Token, command: input.Command, enrollment: input.Enrollment, result: make(chan int, 1)}
+		select {
+		case actions <- item:
+		case <-r.Context().Done():
+			return
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case code := <-item.result:
+			w.WriteHeader(code)
+		case <-r.Context().Done():
+		case <-ctx.Done():
+		}
+	}))
+	listener, err := net.Listen("tcp4", "0.0.0.0:18080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := &http.Server{ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, stepPath) {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		api.ServeHTTP(w, r)
+	})}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- httpServer.Serve(listener) }()
+	defer func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stop()
+		_ = httpServer.Shutdown(cleanup)
+		if e := <-serveDone; e != nil && !errors.Is(e, http.ErrServerClosed) {
+			t.Error(e)
+		}
+	}()
+	metadata, _ := json.Marshal(map[string]string{"base_url": origin, "runner_origin": tlsServer.URL, "step_path": stepPath, "runner_id": "runner_readiness_browser"})
+	fmt.Printf("READINESS_BROWSER_READY %s\n", metadata)
+	enrollmentToken := ""
+	demoted := false
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("bounded browser fixture did not complete")
+		case item := <-actions:
+			code := 204
+			switch item.name {
+			case "start":
+				if len(argv) != 0 || !strings.HasPrefix(item.token, "nce_") || len(item.token) > 256 || !strings.HasPrefix(item.enrollment, "enroll_") || len(item.enrollment) > 128 {
+					code = 400
+					break
+				}
+				argv, err = readinessBrowserArgv(item.command, tlsServer.URL, root)
+				if err != nil {
+					code = 400
+					break
+				}
+				enrollmentToken = item.token
+				if err = os.WriteFile(filepath.Join(root, "enrollment"), []byte(item.token), 0600); err == nil {
+					err = start(argv)
+				}
+			case "stop":
+				if agent == nil {
+					code = 409
+				} else {
+					agent.Stop(t)
+					agent = nil
+				}
+			case "restart":
+				if agent != nil || len(argv) == 0 {
+					code = 409
+				} else {
+					if _, e := os.Stat(filepath.Join(root, "enrollment")); !os.IsNotExist(e) {
+						t.Error("initial enrollment file remained")
+					}
+					info, e := os.Stat(filepath.Join(root, "credential"))
+					if e != nil || info.Mode().Perm() != 0600 {
+						t.Error("initial credential mode", e)
+					}
+					if consumes.Load() != 1 {
+						t.Error("initial enrollment consume count", consumes.Load())
+					}
+					err = start(readinessBrowserRestartArgv(argv))
+				}
+			case "unsafe-root":
+				err = os.Chmod(filepath.Join(root, "work"), 0777)
+			case "safe-root":
+				err = os.Chmod(filepath.Join(root, "work"), 0700)
+			case "revoke":
+				recovery := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+				_, err = base.app.RevokeRunnerToken(recovery, app.RunnerTokenInput{RunnerID: "runner_readiness_browser"})
+			case "demote":
+				_, err = database.Exec(ctx, `UPDATE users SET global_role='user' WHERE id=$1`, user.ID)
+				demoted = err == nil
+			case "complete":
+				if !demoted {
+					code = 409
+					break
+				}
+				item.result <- 204
+				if agent != nil {
+					agent.Stop(t)
+					agent = nil
+				}
+				info, e := os.Stat(filepath.Join(root, "credential"))
+				if e != nil || info.Mode().Perm() != 0600 {
+					t.Error("credential mode", e)
+				}
+				if _, e = os.Stat(filepath.Join(root, "enrollment")); !os.IsNotExist(e) {
+					t.Error("enrollment not consumed")
+				}
+				enrolled, e := pg.GetRunnerByID(ctx, "runner_readiness_browser")
+				if e != nil || strings.Join(enrolled.Capabilities, ",") != readinessBrowserCaps {
+					t.Error("persisted capability parity", e)
+				}
+				if consumes.Load() != 1 {
+					t.Error("restart consumed enrollment again", consumes.Load())
+				}
+				if _, e := os.Stat("/fixture/readiness-cli-executed"); !os.IsNotExist(e) {
+					t.Error("metadata fixture executed CLI")
+				}
+				credentialBytes, e := os.ReadFile(filepath.Join(root, "credential"))
+				if e != nil {
+					t.Error(e)
+				} else {
+					if logs.contains(string(credentialBytes)) {
+						t.Error("persisted credential logged")
+					}
+					clear(credentialBytes)
+				}
+				if logs.contains(enrollmentToken) || logs.contains("ncr_") {
+					t.Error("credential disclosed in agent logs")
+				}
+				t.Log("actual UI enrollment consumed by compiled TLS agent; role loss, persisted capabilities and credential0600 checked")
+				return
+			}
+			if err != nil {
+				t.Error("fixture action failed", item.name, err)
+				err = nil
+				code = 500
+			}
+			item.result <- code
+		}
+	}
 }
