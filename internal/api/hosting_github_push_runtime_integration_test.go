@@ -76,7 +76,16 @@ type pushFixtureOptions struct {
 
 // pushFixtureHosting changes only trusted fixture routing, retaining the real
 // repository's authorization, generations, audit and transaction behavior.
-type pushFixtureHosting struct{ store.HostingRepository }
+type pushFixtureHosting struct {
+	store.HostingRepository
+	store.HostingRuntimeConfigurationRepository
+	store.HostingRuntimeEnvironmentRepository
+}
+
+var (
+	_ store.HostingRuntimeConfigurationRepository = pushFixtureHosting{}
+	_ store.HostingRuntimeEnvironmentRepository   = pushFixtureHosting{}
+)
 
 func (h pushFixtureHosting) CreateResource(ctx context.Context, r domain.Resource, opts ...store.MutationOption) (domain.Resource, error) {
 	if r.Source.Kind == "git" && r.Source.Git != nil {
@@ -98,7 +107,7 @@ func newPushHTTPFixture(t *testing.T, options ...pushFixtureOptions) *pushHTTPFi
 	}
 	var hosting store.HostingRepository = pg
 	if option.internalGit {
-		hosting = pushFixtureHosting{pg}
+		hosting = pushFixtureHosting{HostingRepository: pg, HostingRuntimeConfigurationRepository: pg, HostingRuntimeEnvironmentRepository: pg}
 	}
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: hosting, Destinations: pg, ManagedSecrets: pg, SecretKeyring: ring, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
@@ -735,7 +744,7 @@ func preparePushBrowserIdentity(t *testing.T, ctx context.Context, f *pushHTTPFi
 }
 
 func TestGitHubPushBrowserBootstrapWithOrdinaryProjectMembers(t *testing.T) {
-	f := newPushHTTPFixture(t)
+	f := newPushHTTPFixture(t, pushFixtureOptions{internalGit: true})
 	var before app.BootstrapStatus
 	f.request(http.MethodGet, "/api/v1/bootstrap-status", "", nil, http.StatusOK, &before)
 	if before.Status != "required" {
@@ -751,6 +760,17 @@ func TestGitHubPushBrowserBootstrapWithOrdinaryProjectMembers(t *testing.T) {
 		var role string
 		if err := f.db.QueryRow(t.Context(), `SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`, f.resource.ProjectID, account.id).Scan(&role); err != nil || role != account.role {
 			t.Fatalf("browser member %s role = %q, want %q: %v", account.id, role, account.role, err)
+		}
+		var response struct {
+			Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
+		}
+		path := "/api/v1/resources/" + f.resource.ID + "/runtime-configuration"
+		f.request(http.MethodGet, path, token, nil, http.StatusOK, &response)
+		if response.Configuration.ResourceID != f.resource.ID || response.Configuration.ProjectID != f.resource.ProjectID || response.Configuration.RuntimeGeneration != 0 {
+			t.Fatalf("browser runtime configuration must retain exact resource scope and initial generation: %+v", response.Configuration)
+		}
+		if account.role == domain.RoleViewer {
+			f.request(http.MethodPut, path, token, domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: f.resource.Generation, RequestID: pushAPIUUID(90), Entries: []domain.HostingRuntimeEntry{}}, http.StatusForbidden, nil)
 		}
 	}
 }

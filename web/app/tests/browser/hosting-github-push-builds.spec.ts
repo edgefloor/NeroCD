@@ -92,8 +92,16 @@ test("owner configures signed push builds, manually deploys B, and sees failed C
   const detail = article.getByRole("region", { name: "Build operation detail", exact: true });
   const deployment = detail.getByRole("form", { name: "Deploy selected build", exact: true });
   await deployment.getByLabel("Build readiness timeout in seconds", { exact: true }).fill("10"); await deployment.getByLabel(/I reviewed this exact successful build/).check();
-  const admitted = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}/deployments/from-build` && r.request().method() === "POST");
-  await deployment.getByRole("button", { name: "Deploy selected build", exact: true }).focus(); await page.keyboard.press("Enter"); const deployResponse = await admitted; expect(deployResponse.status()).toBe(202);
+  const runtime = await page.request.get(`/api/v1/resources/${meta.resource_id}/runtime-configuration`, { timeout: 10_000 });
+  expect(runtime.status(), "fixture must expose real saved runtime configuration before deployment").toBe(200);
+  expect(await runtime.json()).toMatchObject({ runtime_configuration: { project_id: meta.project_id, resource_id: meta.resource_id, runtime_generation: 0 } });
+  const deployButton = deployment.getByRole("button", { name: "Deploy selected build", exact: true });
+  await expect(deployButton).toBeEnabled();
+  const [deployResponse] = await Promise.all([
+    page.waitForResponse((r) => new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}/deployments/from-build` && r.request().method() === "POST", { timeout: 15_000 }),
+    (async () => { await deployButton.focus(); await page.keyboard.press("Enter"); })(),
+  ]);
+  expect(deployResponse.status()).toBe(202);
   const deployed = await deployResponse.json() as { id: string; snapshot: { local_build: { artifact: { build_id: string; image_id: string } } } }; expect(deployed.snapshot.local_build.artifact.build_id).toBe(buildB);
   const operation = detail.getByRole("region", { name: "Deployment operation detail", exact: true }); await expect(operation.getByText("Readiness recorded at completion: passed.", { exact: true })).toBeVisible({ timeout: 120_000 });
   await step("fail-next-build"); await step("push-c");
