@@ -4,6 +4,9 @@ Run from the assigned repository root with Docker, Go, Bun, Node.js, Python 3,
 and the existing Playwright Chromium installation available.
 
 ```sh
+# Focused actual API/store fixture policy check, with no builds.
+NEROCD_PRIVATE_GIT_POLICY_CHECK=1 bash acceptance/runtime-hosting-local-build/gate.sh
+
 # Existing compiled CLI Dockerfile and Railpack private HTTPS regressions,
 # plus the original public local-artifact deployment case.
 NEROCD_PRIVATE_GIT_RUNTIME=1 bash acceptance/runtime-hosting-local-build/gate.sh
@@ -56,6 +59,11 @@ IDs/labels and image references before removing only invocation-owned containers
 volumes, image, cgroup, and temporary files. It never prunes or operates on shared
 32918 or unrelated fixtures.
 
+The fixed policy-only selector runs only `TestPrivateFixtureResourcePolicyPostgres`.
+It checks real source edits and name-only edits before the full browser journey.
+The test repository adapter preserves its original trusted loopback policy when
+configuration changes; production public HTTPS policy remains unchanged.
+
 The private source, completion and failure controls exist only in the opted-in
 test binary. Fixed bridge paths require the exact seeded owner cookie session and
 Origin. The failure stage is ordered and accepts no shell, URL, path, or arbitrary
@@ -66,5 +74,7 @@ existing managed secret; their plaintext never enters browser metadata.
 This qualifies the existing private Railpack static provider on a trusted Linux
 build host, not arbitrary language providers, Nixpacks, hostile-code isolation,
 complete account/secret onboarding, external GitHub, or production ACME. Managed
-HTTPS uses the local Pebble CA. Preserve failed attempts separately from passes,
+HTTPS uses the local Pebble CA. Runner control uses trusted fixture loopback HTTP
+with the explicit source-credential fixture option; Git transport uses verified
+test-CA HTTPS. This is not a production control-transport qualification. Preserve failed attempts separately from passes,
 including their owned-resource cleanup evidence.
