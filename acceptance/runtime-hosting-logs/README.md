@@ -48,10 +48,57 @@ This does not establish universal application secret redaction or absence from
 the deliberately configured fixture credential file and source probe binary.
 
 The standalone adapter fixture reads API pages with `limit=100`, which is valid
-on its frozen base. A separately owned middleware fix qualifies the accepted
-200-item runtime log page in the combined browser gate. This fixture does not
+on its frozen base. The combined browser gate qualifies the accepted 200-item runtime log page. This fixture does not
 change API routes, generated contracts, schema, or browser behavior. It does not
 qualify production ACME, remote/untrusted daemons, other logging drivers, or
 exactly-once source capture. A restart can duplicate a bounded tail and has a
 visible source gap. Preserve full failed and passing logs with the source SHA,
 binary identities, owned resource IDs, and cleanup evidence.
+
+## Actual collector and browser
+
+Run the optional combined path from the repository root:
+
+```sh
+NEROCD_RUNTIME_LOGS_ACTUAL_BROWSER=1 bash acceptance/runtime-hosting-logs/gate.sh
+```
+
+This path builds the unchanged UI before compiling Go, writes the canonical asset
+manifest to `/tmp/nerocd-runtime-logs-actual-manifest.json`, prints binary hashes,
+and runs the compiled Linux CLI's 173-route OpenAPI contract. The browser checks
+all 73 served assets against the 74-entry manifest. The unserved `.gitkeep` is
+an embedding placeholder. Set `NEROCD_RUNTIME_LOGS_ACTUAL_MANIFEST` to retain a
+manifest at another explicit location.
+
+The existing primary image deployment settles through the registered API and
+compiled CLI before the browser fixture becomes available. A seeded project
+viewer then explicitly follows the resource. Fixed fixture stages trigger fresh
+stdout/stderr from that actual Docker workload and stop/restart the compiled
+collector. The browser checks immutable deployment/container identity, increasing
+server sequences, source and receipt timestamps, known bearer redaction, Stop
+and new Follow, burst-driven retention, reconnect source gap, real elapsed demand
+expiry while outside the viewport, and output clearing on membership revocation.
+It also checks keyboard interaction and overflow at 320, 390, 430 and 1440 pixels.
+No log response or runner event is fabricated in this path.
+
+The browser port is selected by Docker and published only on host loopback.
+The test binary listens inside its disposable DinD network namespace. Test-only
+stage and completion endpoints require the exact seeded owner session and Origin
+and allow only ordered actions for this fixture. They return reference metadata,
+not credentials or log output. The runner continues to use verified test-CA TLS.
+Browser traces and automatic screenshots are disabled; explicit screenshots show
+only the authenticated log view with controlled, redacted probe output.
+
+The browser completion hook releases the bridge even on assertion failure. A
+bounded context also cancels waiting handlers before server shutdown. Gate cleanup
+checks full IDs and owner labels, asserts that the PostgreSQL schema inventory
+returns to `public`, and removes only invocation-owned resources. Retain failing
+and passing logs separately. The default command still runs the original full
+standalone collector scenarios; optional browser mode keeps its narrower combined
+journey separate instead of repeating all driver and signal tests.
+
+Accounts, project membership, placement, enrollment, and the probe image are
+fixture setup. This proves the bounded deployed-workload log path, not complete
+onboarding, public TLS, arbitrary Docker drivers, universal secret redaction, or
+exactly-once source capture. The project viewer role permits legacy Task reads;
+this journey needs no Task setup or mutation/operation permission.

@@ -362,6 +362,28 @@ func TestHostingRuntimeLogsCompiledRunner(t *testing.T) {
 		}
 		_ = response.Body.Close()
 	}
+	if os.Getenv("NEROCD_RUNTIME_LOGS_ACTUAL_BROWSER") == "1" {
+		runHostingRuntimeLogsActualBrowser(ctx, t, server, database, env, primary, initial, func(stage string) {
+			switch stage {
+			case "emit":
+				trigger(initial.Plan.Snapshot.HostPort, "/emit")
+			case "burst":
+				trigger(initial.Plan.Snapshot.HostPort, "/burst")
+			case "disconnect":
+				agent.Stop(t)
+				wait("browser collector disconnected", func() bool { return trace.active.Load() == 0 })
+			case "resume":
+				agent = start()
+				wait("browser collector reconnected", func() bool { return trace.active.Load() == 1 })
+			}
+		})
+		agent.Stop(t)
+		if !retryVerified.Load() || trace.forbidden.Load() || leak.Load() || controlled.contains(token) {
+			t.Fatal("browser collector retry, Docker allowlist or credential redaction failed")
+		}
+		t.Log("actual browser: registered deployment settled before Docker output; compiled collector, exact lost-append retry, viewer stop/reconnect gap/expiry and authorization clearing qualified")
+		return
+	}
 	session := open(primary, "primary")
 	wait("empty following plus lost-response exact retry", func() bool { return retryVerified.Load() })
 	if !page(session).Session.DemandExpiresAt.Equal(session.DemandExpiresAt) {

@@ -23,7 +23,7 @@ does not qualify actual Docker output, A29, public TLS, or complete onboarding.
 The fixture-only stage and completion endpoints require the exact seeded owner
 session and Origin. They accept only fixed action names for the fixture resource.
 They are not registered in production. The browser logs in as a project viewer
-without legacy Task permission and checks explicit demand, literal output,
+without Task setup or Task mutation/operation permission and checks explicit demand, literal output,
 actor-bound sessions, retention/gaps, stop, demand expiry, replacement, and
 membership revocation. Fault injection may forward an actual response and
 withhold it to exercise deadlines and late completion; it fabricates no log
@@ -40,3 +40,9 @@ binary hashes, container IDs/owner labels, and schema inventories. Cleanup check
 the full PostgreSQL container ID and exact invocation label before removal. The
 test drops its own schema; before and after inventories should contain only
 `public`. No global prune or unrelated container lifecycle operation is used.
+
+The project viewer role also permits legacy Task reads. This gate does not
+claim a separate denied Task-read permission. Actual Docker collector coverage
+is exercised by `NEROCD_RUNTIME_LOGS_ACTUAL_BROWSER=1 bash
+acceptance/runtime-hosting-logs/gate.sh`; this simulated-producer gate remains
+useful for deterministic fault and response-lifecycle coverage.

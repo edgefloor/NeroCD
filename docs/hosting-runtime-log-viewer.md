@@ -1,7 +1,7 @@
 # Resource runtime log viewer
 
-Project hosting exposes runtime logs directly for a resource. It does not require
-legacy Task access. Current principal and resource authorization gate the view,
+Project hosting exposes runtime logs directly for a resource. It requires no
+legacy Task setup or mutation/operation permission. Current principal and resource authorization gate the view,
 and the resource/session APIs authorize every request. A project viewer can
 request logs but cannot read another actor's session.
 The current model uses the same project viewer role for legacy Task reads.
@@ -69,3 +69,14 @@ Accounts, resources, and settled deployment receipts are fixture setup. This
 qualifies the viewer/API workflow, not account onboarding, real Docker log
 collection, production TLS, or A29. Combined actual-collector qualification is a
 separate acceptance gate.
+
+The optional actual-collector browser path is
+`NEROCD_RUNTIME_LOGS_ACTUAL_BROWSER=1 bash acceptance/runtime-hosting-logs/gate.sh`.
+It follows fresh Docker stdout/stderr only after a registered deployment settles
+through the compiled runner. It uses the same embedded viewer and real session
+API, then exercises Stop/new Follow, burst retention, compiled collector reconnect,
+real demand expiry, and membership revocation. The fixture seeds accounts and
+placement, and uses a local test CA and disposable Docker daemon. This bounded
+qualification does not establish onboarding, public TLS, universal redaction, or
+exactly-once log capture. The simulated-producer gate remains the deterministic
+fault and late-response qualification.
