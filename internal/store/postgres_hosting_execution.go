@@ -50,6 +50,9 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			purgeAttempt, stopPurge := context.WithTimeout(recoveryCtx, 3*time.Second)
 			_, _ = s.PurgeRuntimeLogs(purgeAttempt)
 			stopPurge()
+			pushAttempt, stopPush := context.WithTimeout(recoveryCtx, 3*time.Second)
+			_ = s.recoverGitHubPushDispatch(pushAttempt)
+			stopPush()
 			select {
 			case <-recoveryCtx.Done():
 				return

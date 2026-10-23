@@ -12,6 +12,7 @@ import (
 
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/githubpush"
 	"nerocd/internal/observability"
 	"nerocd/internal/runner"
 	"nerocd/internal/secretcrypto"
@@ -43,6 +44,7 @@ type Service struct {
 	destinations         store.DestinationRepository
 	managedSecrets       store.ManagedSecretRepository
 	secretKeyring        *secretcrypto.Keyring
+	githubPushProvider   *githubpush.Client
 	members              store.ProjectMemberRepository
 	templates            store.TemplateRepository
 	sources              store.SourceRepository

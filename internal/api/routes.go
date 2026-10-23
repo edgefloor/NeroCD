@@ -3,6 +3,13 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/github-push-policy"},
+	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/github-push-policy"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/github-push-policy/verify"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/github-push-policy/enabled"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/github-push-policy/retry"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/github-push-policy/deliveries"},
+	{Method: http.MethodPost, Path: "/api/v1/hosting/github-push/{id}"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/runtime-log-sessions"},
 	{Method: http.MethodPost, Path: "/api/v1/runtime-log-sessions/{id}/renew"},
 	{Method: http.MethodDelete, Path: "/api/v1/runtime-log-sessions/{id}"},
@@ -238,6 +245,18 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runtimeLogClaim
 	case "/api/v1/runners/runtime-log-sessions/events":
 		return s.runtimeLogEvents
+	case "/api/v1/resources/{id}/github-push-policy":
+		return s.githubPushPolicy
+	case "/api/v1/resources/{id}/github-push-policy/verify":
+		return s.githubPushVerify
+	case "/api/v1/resources/{id}/github-push-policy/enabled":
+		return s.githubPushEnabled
+	case "/api/v1/resources/{id}/github-push-policy/retry":
+		return s.githubPushRetry
+	case "/api/v1/resources/{id}/github-push-policy/deliveries":
+		return s.githubPushDeliveries
+	case "/api/v1/hosting/github-push/{id}":
+		return s.githubPushReceive
 	case "/api/v1/runners/hosting-observations/targets":
 		return s.runnerHostingObservationTargets
 	case "/api/v1/runners/hosting-observations/report":

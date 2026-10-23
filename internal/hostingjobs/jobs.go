@@ -82,6 +82,7 @@ type Config struct {
 type Client struct {
 	hasProxy               bool
 	hasBuild               bool
+	hasGitHubPush          bool
 	river                  *river.Client[pgx.Tx]
 	pool                   *pgxpool.Pool
 	schema, host, database string
@@ -128,12 +129,17 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 	if hasBuild {
 		river.AddWorker(workers, &prepareBuildWorker{handler: buildHandler})
 	}
+	hasGitHubPush := false
+	if pushHandler, ok := handler.(GitHubPushHandler); ok {
+		river.AddWorker(workers, &githubPushWorker{handler: pushHandler})
+		hasGitHubPush = true
+	}
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema, Workers: workers, Queues: map[string]river.QueueConfig{Queue: {MaxWorkers: cfg.MaxWorkers}}, JobTimeout: cfg.JobTimeout, SoftStopTimeout: cfg.DrainTimeout, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), FetchCooldown: 10 * time.Millisecond, FetchPollInterval: 100 * time.Millisecond})
 	if err != nil {
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild}, nil
+	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.

@@ -279,6 +279,60 @@ type HostingDispatchReceipt struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+type HostingGithubPushCommand struct {
+	ResourceID         string    `json:"resource_id"`
+	RequestID          string    `json:"request_id"`
+	ActorID            string    `json:"actor_id"`
+	Kind               string    `json:"kind"`
+	BodyHash           string    `json:"body_hash"`
+	ExpectedGeneration int64     `json:"expected_generation"`
+	Token              string    `json:"token"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	Receipt            []byte    `json:"receipt"`
+}
+
+type HostingGithubPushCommitIntent struct {
+	PolicyID         string    `json:"policy_id"`
+	PolicyGeneration int64     `json:"policy_generation"`
+	SourceGeneration int64     `json:"source_generation"`
+	CommitSha        string    `json:"commit_sha"`
+	BuildID          string    `json:"build_id"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type HostingGithubPushDelivery struct {
+	ID               string     `json:"id"`
+	PolicyID         string     `json:"policy_id"`
+	PolicyGeneration int64      `json:"policy_generation"`
+	ResourceID       string     `json:"resource_id"`
+	ProjectID        string     `json:"project_id"`
+	DeliveryID       string     `json:"delivery_id"`
+	BodyHash         string     `json:"body_hash"`
+	AfterCommit      string     `json:"after_commit"`
+	VerifiedCommit   string     `json:"verified_commit"`
+	BuildID          string     `json:"build_id"`
+	State            string     `json:"state"`
+	Reason           string     `json:"reason"`
+	Attempts         int32      `json:"attempts"`
+	Token            string     `json:"token"`
+	TokenExpiresAt   *time.Time `json:"token_expires_at"`
+	ReceivedAt       time.Time  `json:"received_at"`
+	NextRetryAt      time.Time  `json:"next_retry_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	RetainUntil      time.Time  `json:"retain_until"`
+}
+
+type HostingGithubPushPolicy struct {
+	ID                    string          `json:"id"`
+	ResourceID            string          `json:"resource_id"`
+	ProjectID             string          `json:"project_id"`
+	Generation            int64           `json:"generation"`
+	Body                  json.RawMessage `json:"body"`
+	VerificationToken     string          `json:"verification_token"`
+	VerificationExpiresAt *time.Time      `json:"verification_expires_at"`
+	CreatedAt             time.Time       `json:"created_at"`
+}
+
 type HostingOperation struct {
 	ID                  string    `json:"id"`
 	ProjectID           string    `json:"project_id"`
