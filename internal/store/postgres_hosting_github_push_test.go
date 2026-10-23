@@ -208,6 +208,8 @@ func TestPostgresGitHubPushCurrentAuthorityAndAttemptExpiry(t *testing.T) {
 		{"destination", `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id='dest_build'`},
 		{"capability", `UPDATE runners SET capabilities=ARRAY['hosting_build_v1']::text[] WHERE id='runner_build'`},
 		{"enrollment", `UPDATE runner_enrollments SET revoked_at=clock_timestamp() WHERE runner_id='runner_build'`},
+		{"token rotation", `UPDATE runners SET token_hash='rotated-token' WHERE id='runner_build'`},
+		{"restore hold", `INSERT INTO hosting_binding_restore_holds(binding_id) VALUES('binding_build')`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newPushStoreFixture(t)
@@ -409,6 +411,118 @@ func TestPostgresGitHubPushConcurrentPolicyChangeRejectsOldProviderProof(t *test
 	if changed.Enabled || changed.DesiredCommit != "" || changed.Reason != "baseline_reset" {
 		t.Fatal("reset did not require new baseline")
 	}
+}
+
+func TestPostgresGitHubPushPrivatePurposeGrantAndViewerScope(t *testing.T) {
+	f := newPushStoreFixture(t)
+	ctx := t.Context()
+	src := f.src
+	src.Generation = 3
+	src.CredentialKind = "https_basic"
+	changed, err := configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 2, src, destinationEvent("private_push_source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.src = changed
+	item, record, event := managedFixture(t, "push_read_secret", 1)
+	if _, err = f.pg.CreateManagedSecret(ctx, item, record, event); err != nil {
+		t.Fatal(err)
+	}
+	grant := domain.HostingSourceGrant{ID: "push_private_grant", Version: 1, SourceID: src.ID, ResourceID: src.ResourceID, ProjectID: src.ProjectID, RepositoryURL: src.RepositoryURL, PolicyHash: domain.HostingDocumentHash(src.Policy), SecretID: item.ID, SecretVersion: 1, Kind: src.CredentialKind}
+	if _, err = f.pg.CreateHostingSourceGrant(ctx, "usr_bootstrap", grant, destinationEvent("push_private_grant")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := *f.policy.OwnerConfiguration
+	cfg.SourceGrantID = grant.ID
+	in := domain.GitHubPushConfigure{ExpectedPolicyGeneration: f.policy.Generation, ExpectedResourceGeneration: 3, ExpectedSourceGeneration: 3, RequestID: pushUUID(200), ResetBranchBaseline: true, Configuration: cfg}
+	if _, err = f.pg.ConfigureGitHubPushPolicy(ctx, "usr_bootstrap", src.ResourceID, in, destinationEvent("missing_provider")); err == nil {
+		t.Fatal("private source silently used an empty provider credential")
+	}
+	cfg.ProviderReadSecret = &domain.GitHubPushSecretRef{ID: item.ID, Version: 1}
+	in.Configuration = cfg
+	f.policy, err = f.pg.ConfigureGitHubPushPolicy(ctx, "usr_bootstrap", src.ResourceID, in, destinationEvent("private_configure"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := f.pg.BeginGitHubPushVerification(ctx, "usr_bootstrap", src.ResourceID, domain.GitHubPushCommand{ExpectedPolicyGeneration: f.policy.Generation, RequestID: pushUUID(201)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		record, err := f.pg.AuthorizeGitHubPushSecret(ctx, a, "github_read")
+		if err != nil || record.Metadata.SecretID != item.ID {
+			t.Fatal("selected provider purpose", err)
+		}
+	}
+	var count int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='hosting.github_push.secret_authorized.github_read'`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("authorization audit grew on exact scope retry", count, err)
+	}
+	if _, err = f.pg.AuthorizeGitHubPushSecret(ctx, a, "runner_delivery"); err == nil {
+		t.Fatal("borrowed another secret purpose")
+	}
+	if _, err = f.db.Exec(ctx, `INSERT INTO project_members(id,project_id,user_id,role) VALUES('push_scope_viewer','proj_platform','usr_viewer','viewer')`); err != nil {
+		t.Fatal(err)
+	}
+	p, err := f.pg.GetGitHubPushPolicy(ctx, "usr_viewer", src.ResourceID)
+	if err != nil || p.CanManage || p.OwnerConfiguration != nil {
+		t.Fatal("viewer secret selectors", err)
+	}
+	if _, err = f.pg.ConfigureGitHubPushPolicy(ctx, "usr_viewer", src.ResourceID, in, destinationEvent("viewer_configure")); err == nil {
+		t.Fatal("viewer wrote policy")
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE hosting_source_grants SET revoked_at=clock_timestamp() WHERE id=$1`, grant.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.pg.AuthorizeGitHubPushSecret(ctx, a, "github_read"); err == nil {
+		t.Fatal("revoked source grant decrypted provider purpose")
+	}
+}
+func TestPostgresGitHubPushRecoveryIndependentOfDispatchFailureAndShutdown(t *testing.T) {
+	f := newPushStoreFixture(t)
+	f.enable(t)
+	ctx := t.Context()
+	a := f.accept(t, 220, strings.Repeat("b", 40))
+	if _, err := f.db.Exec(ctx, `UPDATE hosting_github_push_deliveries SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.IntentID); err != nil {
+		t.Fatal(err)
+	}
+	// Existing dispatch recovery fails on its own missing relation. Push cleanup
+	// has a separate transaction and context and must still run immediately.
+	if _, err := f.db.Exec(ctx, `ALTER TABLE hosting_proxy_operations RENAME TO fixture_unavailable_proxy_operations`); err != nil {
+		t.Fatal(err)
+	}
+	stop, err := f.pg.StartHostingExecution(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := false
+	defer func() {
+		if !stopped {
+			c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = stop(c)
+		}
+	}()
+	until := time.Now().Add(5 * time.Second)
+	state := ""
+	for time.Now().Before(until) {
+		if err = f.db.QueryRow(ctx, `SELECT state FROM hosting_github_push_deliveries WHERE id=$1`, a.IntentID).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		if state == "blocked_exhausted" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if state != "blocked_exhausted" {
+		t.Fatal("push cleanup depended on dispatch success")
+	}
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err = stop(stopCtx); err != nil {
+		t.Fatal("recovery loop did not join", err)
+	}
+	stopped = true
 }
 
 func TestPostgresGitHubPushOwnerCanDisableAfterDelegatedRevocation(t *testing.T) {

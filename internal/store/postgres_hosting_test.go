@@ -43,6 +43,14 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
 	if _, err := database.Exec(ctx, `ALTER TABLE resource_bindings ADD CONSTRAINT resource_bindings_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT`); err != nil {
 		t.Fatal(err)
 	}
+	// The0056 policy/command/delivery resource references are also removed by
+	// this intentional resources CASCADE. Restore those exact later FKs rather
+	// than relaxing the aggregate compatibility check.
+	if _, err := database.Exec(ctx, `ALTER TABLE hosting_github_push_policies ADD CONSTRAINT hosting_github_push_policies_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE;
+ ALTER TABLE hosting_github_push_commands ADD CONSTRAINT hosting_github_push_commands_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE;
+ ALTER TABLE hosting_github_push_deliveries ADD CONSTRAINT hosting_github_push_deliveries_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE`); err != nil {
+		t.Fatal(err)
+	}
 	var restored bool
 	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='resource_bindings'::regclass AND conname='resource_bindings_resource_id_fkey' AND contype='f' AND convalidated) AND NOT EXISTS(SELECT 1 FROM resource_bindings b LEFT JOIN resources r ON r.id=b.resource_id WHERE r.id IS NULL)`).Scan(&restored); err != nil || !restored {
 		t.Fatalf("restored binding FK: %v %v", restored, err)
