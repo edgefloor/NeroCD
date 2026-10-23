@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`8e00631aac26e0787a43398332e31a35980f067d`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`284f45cf1659a559d55d54342a902d0eeb112685`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0063, bootstrap administration,
+- PostgreSQL state, checked migrations through 0064, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -162,9 +162,12 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 - Owned-storage metadata, the private volume helper and durable materialization
   admission are accepted through `8e00631aac26e0787a43398332e31a35980f067d`.
   See the [foundation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-  Storage HTTP/UI, coordinator, advertised capability and mounted-upload workflow
-  remain absent; protocol/engine work is ongoing and unaccepted. PostgreSQL/Redis
-  and complete A19/A26 remain planned.
+  The [uploaded-file API/runtime fixture](acceptance/runtime-hosting-storage/README.md)
+  now qualifies an opt-in mounted workflow through replacement, lost acknowledgment
+  and runner restart, and failed-readiness restoration. Bounded unqueued-continuity
+  recovery is accepted at `284f45cf1659a559d55d54342a902d0eeb112685`.
+  Storage UI and PostgreSQL/Redis remain in progress and unaccepted. Backups/restore,
+  unknown-writer recovery, production ACME and complete A19/A26 remain open.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
