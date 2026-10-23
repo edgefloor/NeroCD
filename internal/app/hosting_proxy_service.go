@@ -326,7 +326,15 @@ func (s *Service) ProxyOperation(ctx context.Context, id string) (any, error) {
 	if isRunnerAdmin(principal) {
 		return op, nil
 	}
-	view := domain.HostingProxyOperationView{ID: op.ID, State: op.State, MutationHold: op.MutationHold, RestoreOwnershipHeld: op.RestoreOwnershipHeld, Routes: make([]domain.HostingRoute, 0)}
+	return s.proxyProjectOperationView(ctx, op)
+}
+
+func (s *Service) proxyProjectOperationView(ctx context.Context, op domain.HostingProxyOperation) (domain.HostingProxyOperationView, error) {
+	repository, err := s.proxyRepository()
+	if err != nil {
+		return domain.HostingProxyOperationView{}, err
+	}
+	view := domain.HostingProxyOperationView{ID: op.ID, State: op.State, MutationHold: op.MutationHold, RestoreOwnershipHeld: op.RestoreOwnershipHeld, MetadataConflict: op.MetadataConflict, Routes: make([]domain.HostingRoute, 0)}
 	allowed := map[string]bool{}
 	checked := map[string]bool{}
 	check := func(project string) (bool, error) {
@@ -347,28 +355,28 @@ func (s *Service) ProxyOperation(ctx context.Context, id string) (any, error) {
 	for _, target := range op.Snapshot.Routes {
 		ok, err := check(target.ProjectID)
 		if err != nil {
-			return nil, err
+			return domain.HostingProxyOperationView{}, err
 		}
 		if !ok {
 			continue
 		}
 		record, err := repository.GetHostingRoute(ctx, target.RouteID)
 		if err != nil {
-			return nil, err
+			return domain.HostingProxyOperationView{}, err
 		}
 		if record.ProjectID != target.ProjectID {
-			return nil, store.ErrConflict
+			return domain.HostingProxyOperationView{}, store.ErrConflict
 		}
 		view.Routes = append(view.Routes, record.Route)
 	}
 	if op.RouteID != "" {
 		record, err := repository.GetHostingRoute(ctx, op.RouteID)
 		if err != nil {
-			return nil, err
+			return domain.HostingProxyOperationView{}, err
 		}
 		ok, err := check(record.ProjectID)
 		if err != nil {
-			return nil, err
+			return domain.HostingProxyOperationView{}, err
 		}
 		if ok {
 			found := false
@@ -383,10 +391,10 @@ func (s *Service) ProxyOperation(ctx context.Context, id string) (any, error) {
 	if len(view.Routes) == 0 {
 		ok, err := check(op.ProjectID)
 		if err != nil {
-			return nil, err
+			return domain.HostingProxyOperationView{}, err
 		}
 		if !ok {
-			return nil, auth.ErrForbidden
+			return domain.HostingProxyOperationView{}, auth.ErrForbidden
 		}
 	}
 	return view, nil

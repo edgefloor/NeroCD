@@ -68,6 +68,15 @@ func (s *Server) hostingRoutes(w http.ResponseWriter, r *http.Request) {
 	route, err := s.app.RequestHostingRoute(r.Context(), r.PathValue("id"), in)
 	proxyResponse(w, http.StatusAccepted, route, err)
 }
+
+func (s *Server) hostingRouteSwitch(w http.ResponseWriter, r *http.Request) {
+	var in domain.HostingRouteSwitchInput
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	operation, err := s.app.RequestHostingRouteSwitch(r.Context(), r.PathValue("id"), in)
+	proxyResponse(w, http.StatusAccepted, operation, err)
+}
 func (s *Server) hostingRoute(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:

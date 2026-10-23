@@ -451,6 +451,14 @@ type HostingProxyRoute struct {
 	UpdatedAt                  time.Time `json:"updated_at"`
 }
 
+type HostingProxySwitchPriorReference struct {
+	OperationID             string `json:"operation_id"`
+	RouteID                 string `json:"route_id"`
+	PriorProxyOperationID   string `json:"prior_proxy_operation_id"`
+	PriorReleaseOperationID string `json:"prior_release_operation_id"`
+	PriorVersion            int64  `json:"prior_version"`
+}
+
 type HostingProxyTaskTarget struct {
 	RunID         string `json:"run_id"`
 	OperationID   string `json:"operation_id"`

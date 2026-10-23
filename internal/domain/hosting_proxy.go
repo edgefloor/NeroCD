@@ -196,6 +196,7 @@ type HostingProxyCompleteRequest struct {
 // HostingProxyOperation is internal or server-administrator detail. Project reads
 // must use HostingProxyOperationView and never serialize this whole snapshot.
 type HostingProxyOperation struct {
+	MetadataConflict     bool                     `json:"metadata_conflict,omitempty"`
 	ID                   string                   `json:"id"`
 	ProxyID              string                   `json:"proxy_id"`
 	ProjectID            string                   `json:"project_id"`
@@ -216,6 +217,7 @@ type HostingProxyOperation struct {
 
 // HostingProxyOperationView contains only an authorized project's route statuses.
 type HostingProxyOperationView struct {
+	MetadataConflict     bool           `json:"metadata_conflict,omitempty"`
 	ID                   string         `json:"id"`
 	State                string         `json:"state"`
 	MutationHold         bool           `json:"mutation_hold"`
