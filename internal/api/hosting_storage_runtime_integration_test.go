@@ -68,7 +68,11 @@ func storageRuntimeAuthorizedJSON[T any](f *storageRuntimeFixture, token, method
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	request, err := http.NewRequestWithContext(f.t.Context(), method, f.control.URL+path, bytes.NewReader(raw))
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(raw)
+	}
+	request, err := http.NewRequestWithContext(f.t.Context(), method, f.control.URL+path, bodyReader)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -419,24 +423,85 @@ func (f *storageRuntimeFixture) https(host, method, path string, body []byte, st
 	return data
 }
 
-func (f *storageRuntimeFixture) continuity(resourceID, loadedID string) *domain.HostingStorageRouteContinuityInput {
+func (f *storageRuntimeFixture) awaitLoadedProxy(id, daemon string) domain.HostingProxy {
 	f.t.Helper()
-	op := f.proxyAwait(loadedID)
+	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
+		proxy := storageRuntimeJSON[domain.HostingProxy](f, http.MethodGet, "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
+		if proxy.ID != id {
+			f.t.Fatal("public proxy identity changed")
+		}
+		if proxy.LoadedGeneration > 0 && proxy.LoadedGeneration == proxy.DesiredGeneration && proxy.ActiveOperationID == "" && proxy.HoldOperationID == "" && !proxy.RestoreOwnershipHeld {
+			if proxy.DaemonID != daemon {
+				f.t.Fatal("loaded proxy daemon differs from workload daemon")
+			}
+			return proxy
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	f.t.Fatal("public proxy did not settle loaded", f.logs.String())
+	return domain.HostingProxy{}
+}
+
+func (f *storageRuntimeFixture) continuity(resource domain.Resource, previous domain.HostingOperation) *domain.HostingStorageRouteContinuityInput {
+	f.t.Helper()
+	var options domain.HostingStorageDeploymentOptions
+	for deadline := time.Now().Add(90 * time.Second); ; {
+		options = storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, http.MethodGet, "/api/v1/resources/"+resource.ID+"/storage-deployment-options", nil, 200)
+		if options.Available && options.StorageRouteContinuity != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			f.t.Fatal("public storage deployment options unavailable", options.Reason, f.logs.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if options.ResourceID != resource.ID || options.ResourceGeneration != resource.Generation || options.StorageRef == nil || *options.StorageRef != previous.Snapshot.Storage || options.PreviousHealthyOperationID == nil || *options.PreviousHealthyOperationID != previous.ID || options.HostPort == nil || *options.HostPort != previous.Snapshot.HostPort {
+		f.t.Fatal("public storage options changed exact predecessor or storage")
+	}
+	selection := options.StorageRouteContinuity
+	op := f.proxyAwait(selection.ExpectedLoadedProxyOperationID)
 	proxy := storageRuntimeJSON[domain.HostingProxy](f, http.MethodGet, "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
-	if proxy.LoadedGeneration != op.Generation {
+	if proxy.LoadedGeneration != op.Generation || proxy.LoadedGeneration != selection.ExpectedLoadedGeneration || proxy.DaemonID != previous.Release.DaemonID || proxy.ActiveOperationID != "" || proxy.HoldOperationID != "" || proxy.RestoreOwnershipHeld {
 		f.t.Fatal("public loaded generation differs from exact applied operation")
 	}
-	routes := storageRuntimeJSON[[]domain.HostingRoute](f, http.MethodGet, "/api/v1/resources/"+resourceID+"/routes", nil, 200)
-	selection := &domain.HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: proxy.LoadedGeneration, ExpectedLoadedProxyOperationID: op.ID}
+	routes := storageRuntimeJSON[[]domain.HostingRoute](f, http.MethodGet, "/api/v1/resources/"+resource.ID+"/routes", nil, 200)
+	var observed []domain.HostingRouteSwitchSelection
 	for _, route := range routes {
 		if route.Enabled {
-			selection.Routes = append(selection.Routes, domain.HostingRouteSwitchSelection{RouteID: route.ID, ExpectedVersion: route.Version, ExpectedSelectedReleaseOperationID: route.SelectedReleaseOperationID})
+			observed = append(observed, domain.HostingRouteSwitchSelection{RouteID: route.ID, ExpectedVersion: route.Version, ExpectedSelectedReleaseOperationID: route.SelectedReleaseOperationID})
 		}
 	}
-	if len(selection.Routes) != 1 {
-		f.t.Fatal("expected exact one owned route")
+	if len(selection.Routes) != 1 || !reflect.DeepEqual(observed, selection.Routes) || selection.Routes[0].ExpectedSelectedReleaseOperationID != previous.ID {
+		f.t.Fatal("public options differ from exact current owned route")
 	}
+	f.t.Logf("public continuity predecessor=%s loaded_operation=%s generation=%d route=%s version=%d", previous.ID, op.ID, proxy.LoadedGeneration, selection.Routes[0].RouteID, selection.Routes[0].ExpectedVersion)
 	return selection
+}
+
+func (f *storageRuntimeFixture) awaitContinuity(resourceID, operationID string) domain.HostingStorageRouteContinuityStatus {
+	f.t.Helper()
+	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
+		status := storageRuntimeJSON[domain.HostingStorageRouteContinuityStatus](f, http.MethodGet, "/api/v1/resources/"+resourceID+"/storage-route-continuity/"+operationID, nil, 200)
+		if status.ResourceID != resourceID || status.OperationID != operationID {
+			f.t.Fatal("public continuity status identity changed")
+		}
+		if status.State == "loaded" {
+			if status.SuccessorProxyOperationID == "" || status.LoadedGeneration == nil {
+				f.t.Fatal("loaded continuity omitted exact receipt")
+			}
+			op := f.proxyAwait(status.SuccessorProxyOperationID)
+			if op.Generation != *status.LoadedGeneration {
+				f.t.Fatal("continuity status generation differs from applied operation")
+			}
+			return status
+		}
+		if status.State != "reserved" && status.State != "proxy_pending" {
+			f.t.Fatal("storage continuity did not settle", status.State, status.Reason)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	f.t.Fatal("public storage continuity did not load", f.logs.String())
+	return domain.HostingStorageRouteContinuityStatus{}
 }
 
 func (f *storageRuntimeFixture) verifyVolume(storage domain.HostingStorage, origin domain.HostingStorageMaterializedRequest, containerID string) string {
@@ -518,16 +583,11 @@ func TestHostingStorageCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.start()
-	if proxy.ActiveOperationID == "" {
-		t.Fatal("configure proxy omitted operation identity")
-	}
-	f.proxyAwait(proxy.ActiveOperationID)
-	var loadedID string
+	f.awaitLoadedProxy(proxy.ID, a.Release.DaemonID)
 	for i, item := range []struct{ resource, host, operation string }{{resource.ID, "storage-runtime.example.test", a.ID}, {unrelated.ID, "storage-unrelated.example.test", u.ID}} {
 		storageRuntimeJSON[domain.HostingHostnameGrant](f, http.MethodPost, "/api/v1/servers/"+f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: "proj_platform", Hostname: item.host}, 201)
 		route := storageRuntimeJSON[domain.HostingRoute](f, http.MethodPost, "/api/v1/resources/"+item.resource+"/routes", domain.HostingRouteInput{IdempotencyKey: fmt.Sprintf("storage-route-%d", i), Hostname: item.host, PathPrefix: "/", ExpectedHealthyOperationID: item.operation}, 202)
 		f.proxyAwait(route.OperationID)
-		loadedID = route.OperationID
 	}
 	if got := f.https("storage-runtime.example.test", "GET", "/", nil, 200); string(got) != "A\n" {
 		t.Fatal("HTTPS A version", string(got))
@@ -556,7 +616,7 @@ func TestHostingStorageCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("rename replaced immutable storage")
 	}
 	completeLoss := f.arm("/api/v1/runners/hosting/complete")
-	b := f.deploy(resource, "storage-b", "/", 20101, f.continuity(resource.ID, loadedID))
+	b := f.deploy(resource, "storage-b", "/", 20101, f.continuity(resource, a))
 	completed := f.lose(completeLoss, "result", b.ID)
 	if completed.Result == nil || completed.Result.Result.ContainerID == a.Result.ContainerID {
 		t.Fatal("B journal lacks distinct replacement")
@@ -579,8 +639,9 @@ func TestHostingStorageCompiledRunnerHTTPS(t *testing.T) {
 	if !reflect.DeepEqual(b.Result, bAgain.Result) || f.verifyVolume(storage, origin, b.Result.ContainerID) != created {
 		t.Fatal("restart changed B or volume origin")
 	}
+	loadedID := f.awaitContinuity(resource.ID, b.ID).SuccessorProxyOperationID
 	verifyBytes("B")
-	failed := f.await(f.deploy(resource, "storage-unready", "/unready", 20101, f.continuity(resource.ID, loadedID)).ID, "failed")
+	failed := f.await(f.deploy(resource, "storage-unready", "/unready", 20101, f.continuity(resource, b)).ID, "failed")
 	if failed.Result == nil || !failed.Result.Restored || failed.Result.Uncertain {
 		t.Fatal("failed readiness did not restore exact B", failed.Result)
 	}
