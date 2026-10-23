@@ -80,6 +80,7 @@ type Config struct {
 
 // Client owns a private River client. Construction neither migrates nor starts it.
 type Client struct {
+	hasServerBootstrap     bool
 	hasProxy               bool
 	hasBuild               bool
 	hasGitHubPush          bool
@@ -130,6 +131,10 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 		river.AddWorker(workers, &prepareBuildWorker{handler: buildHandler})
 	}
 	hasGitHubPush := false
+	bootstrapHandler, hasServerBootstrap := handler.(ServerBootstrapHandler)
+	if hasServerBootstrap {
+		river.AddWorker(workers, &serverBootstrapWorker{handler: bootstrapHandler})
+	}
 	if pushHandler, ok := handler.(GitHubPushHandler); ok {
 		river.AddWorker(workers, &githubPushWorker{handler: pushHandler})
 		hasGitHubPush = true
@@ -139,7 +144,7 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush}, nil
+	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasServerBootstrap: hasServerBootstrap}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.

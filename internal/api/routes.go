@@ -3,6 +3,17 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/server-bootstrap-options"},
+	{Method: http.MethodGet, Path: "/api/v1/server-bootstraps"},
+	{Method: http.MethodPost, Path: "/api/v1/server-bootstraps"},
+	{Method: http.MethodGet, Path: "/api/v1/server-bootstraps/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/server-bootstraps/{id}/probe"},
+	{Method: http.MethodPost, Path: "/api/v1/server-bootstraps/{id}/review"},
+	{Method: http.MethodPost, Path: "/api/v1/server-bootstraps/{id}/install"},
+	{Method: http.MethodPost, Path: "/api/v1/server-bootstraps/{id}/inspect"},
+	{Method: http.MethodPost, Path: "/api/v1/server-bootstraps/{id}/register"},
+	{Method: http.MethodPost, Path: "/api/v1/server-bootstraps/{id}/grant"},
+	{Method: http.MethodPost, Path: "/api/v1/server-bootstraps/{id}/cancel"},
 	{Method: http.MethodPost, Path: "/api/v1/runner/server-readiness/challenge"},
 	{Method: http.MethodPost, Path: "/api/v1/runner/server-readiness/report"},
 	{Method: http.MethodGet, Path: "/api/v1/servers/{id}/readiness"},
@@ -206,6 +217,14 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/server-bootstrap-options":
+		return s.serverBootstrapOptions
+	case "/api/v1/server-bootstraps":
+		return s.serverBootstraps
+	case "/api/v1/server-bootstraps/{id}":
+		return s.serverBootstrap
+	case "/api/v1/server-bootstraps/{id}/probe", "/api/v1/server-bootstraps/{id}/review", "/api/v1/server-bootstraps/{id}/install", "/api/v1/server-bootstraps/{id}/inspect", "/api/v1/server-bootstraps/{id}/register", "/api/v1/server-bootstraps/{id}/grant", "/api/v1/server-bootstraps/{id}/cancel":
+		return s.serverBootstrapCommand
 	case "/api/v1/servers/{id}/proxy":
 		return s.hostingProxy
 	case "/api/v1/servers/{id}/proxy/disable":

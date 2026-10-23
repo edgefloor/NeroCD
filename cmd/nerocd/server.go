@@ -27,6 +27,7 @@ import (
 )
 
 type runtimeConfig struct {
+	serverBootstrap      *app.ServerBootstrapConfig
 	addr                 string
 	databaseURL          string
 	mode                 deploymentMode
@@ -200,6 +201,13 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	if hostingBuildPolicy != nil && databaseURL == "" {
 		return runtimeConfig{}, errors.New("hosting build controller requires PostgreSQL")
 	}
+	serverBootstrap, err := loadServerBootstrapConfig()
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+	if serverBootstrap != nil && (databaseURL == "" || publicOrigin != serverBootstrap.ControllerOrigin) {
+		return runtimeConfig{}, errors.New("server bootstrap requires PostgreSQL and matching HTTPS public origin")
+	}
 	hostingGitHosts, err := loadHostingGitHosts()
 	if err != nil {
 		return runtimeConfig{}, err
@@ -212,7 +220,7 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	if err != nil {
 		return runtimeConfig{}, err
 	}
-	return runtimeConfig{addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider, secretKeyring: secretKeyring, hostingGitHosts: hostingGitHosts, hostingBuildPolicy: hostingBuildPolicy}, nil
+	return runtimeConfig{serverBootstrap: serverBootstrap, addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider, secretKeyring: secretKeyring, hostingGitHosts: hostingGitHosts, hostingBuildPolicy: hostingBuildPolicy}, nil
 }
 
 func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), error) {
@@ -254,6 +262,20 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		if err = pg.ConfigureGitHubPushProcessor(service.ProcessGitHubPushDelivery); err != nil {
 			_ = pg.Close()
 			return nil, nil, err
+		}
+		if err = service.ConfigureServerBootstrap(cfg.serverBootstrap); err != nil {
+			_ = pg.Close()
+			return nil, nil, err
+		}
+		if cfg.serverBootstrap != nil {
+			if cfg.secretKeyring == nil {
+				_ = pg.Close()
+				return nil, nil, errors.New("server bootstrap requires managed secret keyring")
+			}
+			if err = pg.ConfigureServerBootstrapProcessor(service.ProcessServerBootstrap); err != nil {
+				_ = pg.Close()
+				return nil, nil, err
+			}
 		}
 		stopHosting, err := pg.StartHostingExecution(ctx)
 		if err != nil {

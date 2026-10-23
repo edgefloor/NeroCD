@@ -72,6 +72,9 @@ func (s *PostgresStore) CompleteServerBootstrapStage(ctx context.Context, actor,
 				return zero, ErrConflict
 			}
 			old := stored.Receipt
+			if in.Probe != nil && old.Probe != nil && in.Probe.ObservedAt.IsZero() && in.Probe.ExpiresAt.IsZero() {
+				in.Probe.ObservedAt, in.Probe.ExpiresAt = old.Probe.ObservedAt, old.Probe.ExpiresAt
+			}
 			if len(old.Evidence) > 0 {
 				var value any
 				_ = json.Unmarshal(old.Evidence, &value)
@@ -94,10 +97,29 @@ func (s *PostgresStore) CompleteServerBootstrapStage(ctx context.Context, actor,
 			return zero, ErrConflict
 		}
 		state := op.State
+		if op.Input.ArtifactID != "" && row.Action == "probe" && in.Outcome == "observed" && in.Probe == nil {
+			return zero, ErrConflict
+		}
+		if in.Probe != nil {
+			if row.Action != "probe" || in.Outcome != "observed" || !in.Probe.ObservedAt.IsZero() || !in.Probe.ExpiresAt.IsZero() {
+				return zero, ErrConflict
+			}
+			in.Probe.ObservedAt = now
+			in.Probe.ExpiresAt = now.Add(domain.ServerBootstrapLeaseLifetime)
+		}
+		if in.Owned != nil && row.Action != "install" && row.Action != "inspect_owned" {
+			return zero, ErrConflict
+		}
 		switch row.Action {
 		case "probe", "inspect_owned":
 			if in.Outcome != "observed" && in.Outcome != "refused" {
 				return zero, ErrConflict
+			}
+			if row.Action == "inspect_owned" && in.Outcome == "observed" && in.Owned != nil && op.RemoteHold && (op.State == "running" || op.State == "uncertain") {
+				if err = bootstrapReconcileOwned(ctx, tx, op, *in.Owned); err != nil {
+					return zero, err
+				}
+				state = "installed_waiting_enrollment"
 			}
 		case "install":
 			if !row.EffectIntent || !op.RemoteHold || in.RemoteOperationID != op.IDs.InstallOperationID {
@@ -114,6 +136,9 @@ func (s *PostgresStore) CompleteServerBootstrapStage(ctx context.Context, actor,
 			}
 			switch in.Outcome {
 			case "installed":
+				if op.Input.ArtifactID != "" && !bootstrapOwnedMatches(op, command.Review.ManifestSHA256, in.Owned) {
+					return zero, ErrConflict
+				}
 				state = "installed_waiting_enrollment"
 			case "uncertain":
 				state = "uncertain"

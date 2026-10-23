@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store/sqlcgen"
 )
 
@@ -247,13 +248,28 @@ func (s *PostgresStore) RequestServerBootstrapCommand(ctx context.Context, actor
 			return zero, ErrConflict
 		}
 		if in.Action == "review" {
+			if op.Input.ArtifactID != "" && in.ProbeReceiptID == "" {
+				return zero, ErrConflict
+			}
 			if in.Review == nil || in.Review.Validate(op, now) != nil {
 				return zero, ErrConflict
+			}
+			if in.ProbeReceiptID != "" {
+				if err = bootstrapTrustedReview(ctx, q, op, in); err != nil {
+					return zero, err
+				}
 			}
 		} else if in.Review != nil {
 			return zero, ErrConflict
 		}
 		if in.Action == "install" {
+			review, reviewErr := bootstrapReview(ctx, q, op, now)
+			if reviewErr != nil {
+				return zero, reviewErr
+			}
+			if op.Input.ArtifactID != "" && (!in.InstallAcknowledged || in.GrantProject == nil || in.ManifestSHA256 != review.ManifestSHA256) {
+				return zero, ErrConflict
+			}
 			if _, err = bootstrapReview(ctx, q, op, now); err != nil {
 				return zero, err
 			}
@@ -302,6 +318,14 @@ func (s *PostgresStore) RequestServerBootstrapCommand(ctx context.Context, actor
 			}
 			r, _ := json.Marshal(domain.ServerBootstrapReceipt{CommandID: in.ID, Outcome: "accepted"})
 			if err = q.BootstrapCommandReceipt(ctx, sqlcgen.BootstrapCommandReceiptParams{ID: in.ID, Receipt: r}); err != nil {
+				return zero, err
+			}
+		}
+		if s.serverBootstrapHandler != nil && in.Action != "review" && in.Action != "cancel" {
+			if s.hostingJobs == nil {
+				return zero, hostingjobs.ErrUnavailable
+			}
+			if _, err = s.hostingJobs.EnqueueServerBootstrapTx(ctx, tx, hostingjobs.ServerBootstrapArgs{OperationID: id}); err != nil {
 				return zero, err
 			}
 		}

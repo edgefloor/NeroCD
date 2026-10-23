@@ -21,6 +21,424 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  "/api/v1/server-bootstrap-options":
+    get:
+      operationId: "serverBootstrapOptions"
+      summary: "serverBootstrapOptions"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "project_id"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrapOptions"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+  "/api/v1/server-bootstraps":
+    get:
+      operationId: "listServerBootstraps"
+      summary: "listServerBootstraps"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "project_id"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+        -
+          name: "limit"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+        -
+          name: "offset"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 0
+            maximum: 100000
+      responses:
+        "200":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrapList"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: "createServerBootstrap"
+      summary: "createServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters: []
+      responses:
+        "201":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ServerBootstrapCreateInput"
+  "/api/v1/server-bootstraps/{id}":
+    get:
+      operationId: "getServerBootstrap"
+      summary: "getServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+  "/api/v1/server-bootstraps/{id}/probe":
+    post:
+      operationId: "probeServerBootstrap"
+      summary: "probeServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "202":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ServerBootstrapCommandInput"
+  "/api/v1/server-bootstraps/{id}/review":
+    post:
+      operationId: "reviewServerBootstrap"
+      summary: "reviewServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ServerBootstrapReviewInput"
+  "/api/v1/server-bootstraps/{id}/install":
+    post:
+      operationId: "installServerBootstrap"
+      summary: "installServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "202":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ServerBootstrapInstallInput"
+  "/api/v1/server-bootstraps/{id}/inspect":
+    post:
+      operationId: "inspectServerBootstrap"
+      summary: "inspectServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "202":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ServerBootstrapCommandInput"
+  "/api/v1/server-bootstraps/{id}/register":
+    post:
+      operationId: "registerServerBootstrap"
+      summary: "registerServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "202":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ServerBootstrapCommandInput"
+  "/api/v1/server-bootstraps/{id}/grant":
+    post:
+      operationId: "grantServerBootstrap"
+      summary: "grantServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "202":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ServerBootstrapCommandInput"
+  "/api/v1/server-bootstraps/{id}/cancel":
+    post:
+      operationId: "cancelServerBootstrap"
+      summary: "cancelServerBootstrap"
+      description: "Prepared Debian 12 arm64 SSH onboarding only. Administrator and project owner authority required. Cache-Control: no-store. Review uses a committed fresh probe receipt; install requires exact reviewed manifest hash, explicit install/start acknowledgment and project grant choice. Installation uncertainty retains remote ownership and permits only exact owned inspection. Readiness is independent."
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Closed bootstrap metadata"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ServerBootstrap"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "413":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ServerBootstrapCommandInput"
   "/api/v1/runner/server-readiness/challenge": {"post": {"operationId": "issueServerReadiness", "summary": "issueServerReadiness", "description": "Diagnostic basic_image_hosting.v1 only. No deployment admission authority. Cache-Control: no-store. Reports and challenge bodies at most 8 KiB. Challenge deadline ten seconds; accepted sample fresh for thirty seconds without replay extension.", "responses": {"200": {"description": "Bounded diagnostic result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ServerReadinessChallenge"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "413": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "security": [{"bearerAuth": []}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": [], "properties": {}}}}}}}
   "/api/v1/runner/server-readiness/report": {"post": {"operationId": "reportServerReadiness", "summary": "reportServerReadiness", "description": "Diagnostic basic_image_hosting.v1 only. No deployment admission authority. Cache-Control: no-store. Reports and challenge bodies at most 8 KiB. Challenge deadline ten seconds; accepted sample fresh for thirty seconds without replay extension.", "responses": {"200": {"description": "Bounded diagnostic result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ServerReadinessAck"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "413": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "security": [{"bearerAuth": []}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ServerReadinessReport"}}}}}}
   "/api/v1/servers/{id}/readiness": {"get": {"operationId": "getServerReadiness", "summary": "getServerReadiness", "description": "Diagnostic basic_image_hosting.v1 only. No deployment admission authority. Cache-Control: no-store. Reports and challenge bodies at most 8 KiB. Challenge deadline ten seconds; accepted sample fresh for thirty seconds without replay extension.", "responses": {"200": {"description": "Bounded diagnostic result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ServerReadiness"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "413": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "maxLength": 128}}]}}
@@ -3588,6 +4006,391 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    ServerBootstrapTarget:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "ip"
+        - "port"
+        - "user"
+        - "host_fingerprint"
+      properties:
+        ip:
+          type: "string"
+        port:
+          type: "integer"
+          minimum: 1
+          maximum: 65535
+        user:
+          type: "string"
+          enum:
+            - "root"
+        host_fingerprint:
+          type: "string"
+    ServerBootstrapArtifactOption:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "artifact_id"
+        - "version"
+        - "architecture"
+        - "size"
+        - "sha256"
+        - "profile"
+      properties:
+        artifact_id:
+          type: "string"
+        version:
+          type: "string"
+        architecture:
+          type: "string"
+          enum:
+            - "arm64"
+        size:
+          type: "integer"
+          format: "int64"
+        sha256:
+          type: "string"
+        profile:
+          type: "string"
+          enum:
+            - "prepared_debian12_v1"
+    ServerBootstrapOptions:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "available"
+        - "unavailable_reason"
+        - "profile"
+        - "preset"
+        - "artifacts"
+      properties:
+        available:
+          type: "boolean"
+        unavailable_reason:
+          type: "string"
+          enum:
+            - ""
+            - "disabled"
+            - "durable_store_required"
+            - "managed_secrets_unavailable"
+        profile:
+          type: "string"
+          enum:
+            - "prepared_debian12_v1"
+        preset:
+          type: "string"
+          enum:
+            - "hosting_image_v1"
+        artifacts:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ServerBootstrapArtifactOption"
+    ServerBootstrapCreateInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "request_id"
+        - "project_id"
+        - "name"
+        - "target"
+        - "ssh_secret_id"
+        - "ssh_secret_version"
+        - "artifact_id"
+      properties:
+        request_id:
+          type: "string"
+          format: "uuid"
+        project_id:
+          type: "string"
+        name:
+          type: "string"
+        target:
+          "$ref": "#/components/schemas/ServerBootstrapTarget"
+        ssh_secret_id:
+          type: "string"
+        ssh_secret_version:
+          type: "integer"
+          format: "int64"
+        artifact_id:
+          type: "string"
+    ServerBootstrapCommandInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "command_id"
+        - "expected_version"
+      properties:
+        command_id:
+          type: "string"
+          format: "uuid"
+        expected_version:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+    ServerBootstrapReviewInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "command_id"
+        - "expected_version"
+        - "probe_receipt_id"
+      properties:
+        command_id:
+          type: "string"
+          format: "uuid"
+        expected_version:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+        probe_receipt_id:
+          type: "string"
+    ServerBootstrapInstallInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "command_id"
+        - "expected_version"
+        - "manifest_sha256"
+        - "acknowledge_install_and_start"
+        - "grant_project"
+      properties:
+        command_id:
+          type: "string"
+          format: "uuid"
+        expected_version:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+        manifest_sha256:
+          type: "string"
+        acknowledge_install_and_start:
+          type: "boolean"
+          enum:
+            - true
+        grant_project:
+          type: "boolean"
+    ServerBootstrapPrerequisites:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "profile"
+        - "os_state"
+        - "os_id"
+        - "os_version"
+        - "architecture"
+        - "systemd_state"
+        - "systemd_status"
+        - "docker_state"
+        - "docker_api_version"
+        - "compose_state"
+        - "compose_version"
+        - "disk_state"
+        - "disk_total_bytes"
+        - "disk_available_bytes"
+      properties:
+        profile:
+          type: "string"
+        os_state:
+          type: "string"
+        os_id:
+          type: "string"
+        os_version:
+          type: "string"
+        architecture:
+          type: "string"
+        systemd_state:
+          type: "string"
+        systemd_status:
+          type: "string"
+        docker_state:
+          type: "string"
+        docker_api_version:
+          type: "string"
+        compose_state:
+          type: "string"
+        compose_version:
+          type: "string"
+        disk_state:
+          type: "string"
+        disk_total_bytes:
+          type: "integer"
+          format: "int64"
+        disk_available_bytes:
+          type: "integer"
+          format: "int64"
+    ServerBootstrapProbe:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "receipt_id"
+        - "prerequisites"
+        - "observed_at"
+        - "expires_at"
+      properties:
+        receipt_id:
+          type: "string"
+        prerequisites:
+          "$ref": "#/components/schemas/ServerBootstrapPrerequisites"
+        observed_at:
+          type: "string"
+          format: "date-time"
+        expires_at:
+          type: "string"
+          format: "date-time"
+    ServerBootstrapReview:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "manifest_sha256"
+        - "probe_receipt_id"
+        - "expires_at"
+      properties:
+        manifest_sha256:
+          type: "string"
+        probe_receipt_id:
+          type: "string"
+        expires_at:
+          type: "string"
+          format: "date-time"
+    ServerBootstrapProgress:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "command_id"
+        - "action"
+        - "status"
+        - "outcome"
+      properties:
+        command_id:
+          type: "string"
+        action:
+          type: "string"
+          enum:
+            - "probe"
+            - "review"
+            - "install"
+            - "inspect"
+            - "register"
+            - "grant"
+            - "cancel"
+        status:
+          type: "string"
+          enum:
+            - "pending"
+            - "running"
+            - "completed"
+        outcome:
+          type: "string"
+          enum:
+            - ""
+            - "accepted"
+            - "observed"
+            - "refused"
+            - "installed"
+            - "uncertain"
+        receipt_id:
+          type: "string"
+    ServerBootstrap:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "project_id"
+        - "name"
+        - "target"
+        - "artifact_id"
+        - "state"
+        - "version"
+        - "remote_hold"
+        - "restore_held"
+        - "created_at"
+        - "progress"
+        - "available_actions"
+        - "readiness_state"
+      properties:
+        id:
+          type: "string"
+        project_id:
+          type: "string"
+        name:
+          type: "string"
+        target:
+          "$ref": "#/components/schemas/ServerBootstrapTarget"
+        artifact_id:
+          type: "string"
+        state:
+          type: "string"
+          enum:
+            - "draft"
+            - "reviewed"
+            - "running"
+            - "installed_waiting_enrollment"
+            - "registered"
+            - "completed"
+            - "refused"
+            - "canceled"
+            - "uncertain"
+        version:
+          type: "integer"
+          format: "int64"
+        remote_hold:
+          type: "boolean"
+        restore_held:
+          type: "boolean"
+        created_at:
+          type: "string"
+          format: "date-time"
+        progress:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ServerBootstrapProgress"
+        probe:
+          "$ref": "#/components/schemas/ServerBootstrapProbe"
+        review:
+          "$ref": "#/components/schemas/ServerBootstrapReview"
+        available_actions:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+              - "probe"
+              - "review"
+              - "install"
+              - "inspect"
+              - "register"
+              - "grant"
+              - "cancel"
+        server_id:
+          type: "string"
+        destination_id:
+          type: "string"
+        readiness_state:
+          type: "string"
+          enum:
+            - "not_registered"
+            - "check_server_readiness"
+    ServerBootstrapList:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "items"
+        - "limit"
+        - "offset"
+        - "has_more"
+      properties:
+        items:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ServerBootstrap"
+        limit:
+          type: "integer"
+          format: "int64"
+        offset:
+          type: "integer"
+          format: "int64"
+        has_more:
+          type: "boolean"
     ServerReadinessReport: {"type": "object", "additionalProperties": false, "required": ["sample_id", "profile", "duration_ms", "os", "architecture", "execution", "configuration", "docker", "docker_api_version", "daemon_id", "daemon_os", "daemon_architecture", "cli", "work_root", "journal_root", "work_free_bytes", "journal_free_bytes", "error"], "properties": {"sample_id": {"type": "string", "pattern": "^srd_[0-9a-f]{32}$"}, "profile": {"type": "string", "enum": ["basic_image_hosting.v1"]}, "duration_ms": {"type": "integer", "minimum": 0, "maximum": 5000}, "os": {"type": "string", "enum": ["linux", "unsupported", "unknown"]}, "architecture": {"type": "string", "enum": ["amd64", "arm64", "unsupported", "unknown"]}, "execution": {"type": "string", "enum": ["enabled", "disabled"]}, "configuration": {"type": "string", "enum": ["matched", "mismatch"]}, "docker": {"type": "string", "enum": ["available", "unreachable", "unsupported_api", "invalid_response"]}, "docker_api_version": {"type": "string", "pattern": "^([0-9]{1,3}\\.[0-9]{1,3})?$"}, "daemon_id": {"type": "string", "maxLength": 128, "pattern": "^[ -~]*$"}, "daemon_os": {"type": "string", "enum": ["linux", "unsupported", "unknown"]}, "daemon_architecture": {"type": "string", "enum": ["amd64", "arm64", "unsupported", "unknown"]}, "cli": {"type": "string", "enum": ["available", "missing", "unsafe", "unknown"]}, "work_root": {"type": "string", "enum": ["accessible", "missing", "unsafe", "inaccessible", "unknown"]}, "journal_root": {"type": "string", "enum": ["accessible", "missing", "unsafe", "inaccessible", "unknown"]}, "work_free_bytes": {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9223372036854775807}, "journal_free_bytes": {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9223372036854775807}, "error": {"type": "string", "enum": ["", "timeout", "daemon_changed", "local_check_failed"]}}}
     ServerReadinessChallenge: {"type": "object", "additionalProperties": false, "required": ["sample_id", "profile", "server_id", "destination_id", "runner_id", "issued_at", "expires_at"], "properties": {"sample_id": {"type": "string", "pattern": "^srd_[0-9a-f]{32}$"}, "profile": {"type": "string", "enum": ["basic_image_hosting.v1"]}, "server_id": {"type": "string", "maxLength": 128}, "destination_id": {"type": "string", "maxLength": 128}, "runner_id": {"type": "string", "maxLength": 128}, "issued_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}}}
     ServerReadinessAck: {"type": "object", "additionalProperties": false, "required": ["sample_id", "observed_at", "accepted"], "properties": {"sample_id": {"type": "string", "pattern": "^srd_[0-9a-f]{32}$"}, "observed_at": {"type": "string", "format": "date-time"}, "accepted": {"type": "boolean", "const": true}}}
