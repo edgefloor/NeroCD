@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/domain"
+	"nerocd/internal/secretcrypto"
 	sources "nerocd/internal/source"
 	"nerocd/internal/store"
 )
@@ -107,6 +109,31 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer source.Close()
+
+	// Even a draft or safely canceled onboarding record must lose restored root authority.
+	ring, e := secretcrypto.New("backup", map[string][]byte{"backup": bytes.Repeat([]byte{7}, 32)})
+	if e != nil {
+		t.Fatal(e)
+	}
+	envelope, e := ring.Seal(secretcrypto.Binding{ProjectID: "proj_platform", SecretID: "msec_backup_ssh", Version: 1}, []byte("fixture-only-private-key"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = pg.CreateManagedSecret(ctx, domain.ManagedSecret{ID: "msec_backup_ssh", ProjectID: "proj_platform", Name: "SSH backup", CreatedBy: "usr_bootstrap", CreatedAt: now, UpdatedAt: now}, store.ManagedSecretRecord{Metadata: domain.ManagedSecretVersion{SecretID: "msec_backup_ssh", Version: 1, CreatedBy: "usr_bootstrap", CreatedAt: now}, Envelope: envelope}, event("ssh_secret")); e != nil {
+		t.Fatal(e)
+	}
+	bootstrapInput := domain.ServerBootstrapInput{ProjectID: "proj_platform", Name: "prepared", Target: domain.ServerBootstrapTarget{IP: "192.0.2.30", Port: 22, User: "root", HostFingerprint: "SHA256:" + strings.Repeat("A", 43)}, ControllerURL: "https://controller.example/", Artifact: domain.ServerBootstrapArtifact{Size: 1, SHA256: strings.Repeat("a", 64), Version: "fixture", Architecture: "arm64"}, SSHSecretID: "msec_backup_ssh", SSHSecretVersion: 1}
+	if _, e = pg.CreateServerBootstrap(ctx, "usr_bootstrap", "draft", bootstrapInput, event("ssh_draft")); e != nil {
+		t.Fatal(e)
+	}
+	bootstrapInput.Target.IP = "192.0.2.31"
+	canceled, e := pg.CreateServerBootstrap(ctx, "usr_bootstrap", "canceled", bootstrapInput, event("ssh_canceled"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = pg.RequestServerBootstrapCommand(ctx, "usr_bootstrap", canceled.IDs.OperationID, domain.ServerBootstrapCommand{Key: "cancel", Action: "cancel", ExpectedVersion: canceled.Version, Deadline: now.Add(time.Hour - time.Minute)}, event("ssh_cancel")); e != nil {
+		t.Fatal(e)
+	}
 
 	// Preserve readiness on both an unused server and a bound server in the backup.
 	// Successful restore must invalidate both pending and accepted state atomically.
@@ -210,17 +237,20 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		defer stop()
 		_ = exec.CommandContext(cleanupCtx, "docker", "exec", "--user", "0", container, "rm", "-f", "/tmp/nerocd-hosting-backup-"+suffix+".dump").Run()
 	})
-	for _, failure := range []string{"none", "binding", "proxy"} {
+	for _, failure := range []string{"none", "binding", "proxy", "bootstrap"} {
 		failHold := failure != "none"
 		if failHold {
-			if _, err = source.Exec(ctx, `DROP TRIGGER IF EXISTS reject_restore_hold ON hosting_binding_restore_holds; DROP FUNCTION IF EXISTS reject_restore_hold(); CREATE FUNCTION reject_restore_hold() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected hold write failure'; END $$`); err != nil {
+			if _, err = source.Exec(ctx, `DROP TRIGGER IF EXISTS reject_restore_hold ON hosting_binding_restore_holds; DROP TRIGGER IF EXISTS reject_restore_hold ON hosting_proxy_restore_holds; DROP TRIGGER IF EXISTS reject_restore_hold ON server_bootstrap_operations; DROP FUNCTION IF EXISTS reject_restore_hold(); CREATE FUNCTION reject_restore_hold() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected hold write failure'; END $$`); err != nil {
 				t.Fatal(err)
 			}
 			table := "hosting_binding_restore_holds"
 			if failure == "proxy" {
 				table = "hosting_proxy_restore_holds"
 			}
-			if _, err = source.Exec(ctx, "CREATE TRIGGER reject_restore_hold BEFORE INSERT ON "+table+" FOR EACH ROW EXECUTE FUNCTION reject_restore_hold()"); err != nil {
+			if failure == "bootstrap" {
+				table = "server_bootstrap_operations"
+			}
+			if _, err = source.Exec(ctx, "CREATE TRIGGER reject_restore_hold BEFORE INSERT OR UPDATE ON "+table+" FOR EACH ROW EXECUTE FUNCTION reject_restore_hold()"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -248,6 +278,11 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 		if queryErr := target.QueryRow(ctx, `SELECT count(*) FROM server_readiness`).Scan(&readinessCount); queryErr != nil || (!failHold && readinessCount != 0) || (failHold && readinessCount != 2) {
 			t.Fatal("readiness restore invalidation", readinessCount, queryErr)
 		}
+		var bootstrapHeld, bootstrapGrants int
+		if queryErr := target.QueryRow(ctx, `SELECT (SELECT count(*) FROM server_bootstrap_operations WHERE restore_held),(SELECT count(*) FROM server_bootstrap_secret_grants WHERE revoked_at IS NOT NULL)`).Scan(&bootstrapHeld, &bootstrapGrants); queryErr != nil || (!failHold && (bootstrapHeld != 2 || bootstrapGrants != 2)) || (failHold && (bootstrapHeld != 0 || bootstrapGrants != 1)) {
+			t.Fatal("bootstrap restore atomicity", bootstrapHeld, bootstrapGrants, queryErr)
+		}
+
 		var sourceConsistent bool
 		if queryErr := target.QueryRow(ctx, `SELECT nerocd_hosting_git_resource_schema_compatible() AND EXISTS(SELECT 1 FROM resources r JOIN hosting_build_sources h ON h.id=r.source->'git'->>'source_id' AND h.generation=(r.source->'git'->>'generation')::bigint JOIN hosting_build_source_versions v ON v.source_id=h.id AND v.generation=h.generation WHERE r.id='res_git_backup' AND v.body->>'repository_url'='https://github.com/acme/backup.git')`).Scan(&sourceConsistent); queryErr != nil || !sourceConsistent {
 			t.Fatal("restored Git source reference/schema", sourceConsistent, queryErr)

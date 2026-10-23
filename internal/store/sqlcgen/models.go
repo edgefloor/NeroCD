@@ -941,6 +941,58 @@ type Server struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type ServerBootstrapCommand struct {
+	ID             string          `json:"id"`
+	OperationID    string          `json:"operation_id"`
+	ActorID        string          `json:"actor_id"`
+	RequestKey     string          `json:"request_key"`
+	RequestHash    string          `json:"request_hash"`
+	Action         string          `json:"action"`
+	Body           json.RawMessage `json:"body"`
+	Deadline       time.Time       `json:"deadline"`
+	CreatedAt      time.Time       `json:"created_at"`
+	LeaseID        string          `json:"lease_id"`
+	LeaseExpiresAt *time.Time      `json:"lease_expires_at"`
+	Attempt        int32           `json:"attempt"`
+	Fence          int64           `json:"fence"`
+	EffectIntent   bool            `json:"effect_intent"`
+	Receipt        []byte          `json:"receipt"`
+}
+
+type ServerBootstrapEnrollmentCredential struct {
+	OperationID     string `json:"operation_id"`
+	EnrollmentID    string `json:"enrollment_id"`
+	EnvelopeVersion int32  `json:"envelope_version"`
+	KeyID           string `json:"key_id"`
+	Ciphertext      []byte `json:"ciphertext"`
+}
+
+type ServerBootstrapOperation struct {
+	ID          string          `json:"id"`
+	ProjectID   string          `json:"project_id"`
+	ActorID     string          `json:"actor_id"`
+	RequestKey  string          `json:"request_key"`
+	RequestHash string          `json:"request_hash"`
+	Target      string          `json:"target"`
+	Body        json.RawMessage `json:"body"`
+	Version     int64           `json:"version"`
+	State       string          `json:"state"`
+	RemoteHold  bool            `json:"remote_hold"`
+	RestoreHeld bool            `json:"restore_held"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type ServerBootstrapSecretGrant struct {
+	OperationID   string     `json:"operation_id"`
+	PrincipalID   string     `json:"principal_id"`
+	Purpose       string     `json:"purpose"`
+	TargetHash    string     `json:"target_hash"`
+	SecretID      string     `json:"secret_id"`
+	SecretVersion int64      `json:"secret_version"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	RevokedAt     *time.Time `json:"revoked_at"`
+}
+
 type ServerReadiness struct {
 	ServerID         string `json:"server_id"`
 	PendingTarget    []byte `json:"pending_target"`
