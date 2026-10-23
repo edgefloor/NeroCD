@@ -1416,6 +1416,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/hosting/storage-create-begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced owned storage storage-create-begin
+         * @description Requires a current dedicated runner and exact operation/run/lease/attempt/fence. Bounded closed JSON, at most 32 KiB. Creation intent commits before fresh-only permission; missing volumes are never automatically recreated after admission. Materialization receipt must commit before any application writer. Historical exact ACK replay grants no current mutation authority. Cache-Control: no-store on every response. This endpoint does not advertise runner support or expose user storage configuration.
+         */
+        post: operations["runnerHostingStorageCreateBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-materialized": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced owned storage storage-materialized
+         * @description Requires a current dedicated runner and exact operation/run/lease/attempt/fence. Bounded closed JSON, at most 32 KiB. Creation intent commits before fresh-only permission; missing volumes are never automatically recreated after admission. Materialization receipt must commit before any application writer. Historical exact ACK replay grants no current mutation authority. Cache-Control: no-store on every response. This endpoint does not advertise runner support or expose user storage configuration.
+         */
+        post: operations["runnerHostingStorageMaterialized"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting/apply-begin": {
         parameters: {
             query?: never;
@@ -4352,7 +4392,127 @@ export interface components {
             generation: number;
             hash: string;
         };
+        HostingStorageRef: {
+            storage_id: string;
+            /** @enum {integer} */
+            generation: 1;
+            hash: string;
+        };
+        HostingStorage: {
+            id: string;
+            project_id: string;
+            resource_id: string;
+            binding_id: string;
+            destination_id: string;
+            volume_name: string;
+            created_by: string;
+            /** @enum {string} */
+            kind: "platform_managed";
+            /** @enum {string} */
+            driver: "local";
+            /** @description Canonical absolute container path; root and proc/sys/dev namespaces are rejected. Immutable metadata never relocates data. */
+            mount_path: string;
+            /** @enum {string} */
+            access_mode: "read_write";
+            /** @enum {string} */
+            retention: "retain";
+            /** @enum {integer} */
+            generation: 1;
+            hash: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        HostingStoragePlan: {
+            reference: components["schemas"]["HostingStorageRef"];
+            volume_name: string;
+            /** @description Canonical absolute container path; root and proc/sys/dev namespaces are rejected. Immutable metadata never relocates data. */
+            mount_path: string;
+            creation_operation_id: string;
+            creation_nonce: string;
+            daemon_id: string;
+        };
+        HostingHealthyStorage: {
+            plan: components["schemas"]["HostingStoragePlan"];
+            creation_plan_hash: string;
+        };
+        HostingStorageMaterialization: {
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            /** @enum {string} */
+            state: "create_admitted" | "materialized";
+            creation_operation_id: string;
+            creation_plan_hash: string;
+            creation_nonce: string;
+            daemon_id: string;
+            labels: {
+                "io.nerocd.storage.id": string;
+                "io.nerocd.storage.hash": string;
+                "io.nerocd.storage.generation": string;
+                "io.nerocd.storage.project": string;
+                "io.nerocd.storage.resource": string;
+                "io.nerocd.storage.destination": string;
+                "io.nerocd.storage.origin_operation": string;
+                "io.nerocd.storage.origin_plan": string;
+                "io.nerocd.storage.creation_nonce": string;
+                "io.nerocd.storage.daemon": string;
+                "io.nerocd.binding": string;
+            };
+            materialized_receipt?: components["schemas"]["HostingReceipt"];
+        };
+        HostingStorageCreateRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            plan_hash: string;
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            creation_nonce: string;
+        };
+        HostingStorageCreateAck: {
+            storage: components["schemas"]["HostingStorage"];
+            materialization: components["schemas"]["HostingStorageMaterialization"];
+            /** @description Fresh committed insertion only. Never persist or replay as permission; false retries inspect existing volume and never recreate a missing volume. */
+            create_permitted: boolean;
+        };
+        HostingStorageMaterializedRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            plan_hash: string;
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            creation_operation_id: string;
+            creation_plan_hash: string;
+            creation_nonce: string;
+            daemon_id: string;
+            volume_name: string;
+            /** @enum {string} */
+            driver: "local";
+            /** @enum {string} */
+            scope: "local";
+            labels: {
+                "io.nerocd.storage.id": string;
+                "io.nerocd.storage.hash": string;
+                "io.nerocd.storage.generation": string;
+                "io.nerocd.storage.project": string;
+                "io.nerocd.storage.resource": string;
+                "io.nerocd.storage.destination": string;
+                "io.nerocd.storage.origin_operation": string;
+                "io.nerocd.storage.origin_plan": string;
+                "io.nerocd.storage.creation_nonce": string;
+                "io.nerocd.storage.daemon": string;
+                "io.nerocd.binding": string;
+            };
+            options: Record<string, never> | null;
+        };
+        HostingStorageMaterializedAck: {
+            materialization: components["schemas"]["HostingStorageMaterialization"];
+            receipt: components["schemas"]["HostingReceipt"];
+        };
         HostingSnapshot: {
+            storage?: components["schemas"]["HostingStorageRef"];
             runtime_configuration?: components["schemas"]["HostingRuntimeConfigurationRef"];
             local_build?: components["schemas"]["HostingLocalBuildSource"];
             resource_id: string;
@@ -4368,7 +4528,7 @@ export interface components {
             host_port: number;
             readiness: components["schemas"]["HostingReadiness"];
             /** @enum {string} */
-            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1";
+            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1";
         };
         HostingRelease: {
             local_build?: components["schemas"]["HostingLocalBuildArtifact"];
@@ -4382,6 +4542,7 @@ export interface components {
             hash: string;
         };
         HostingHealthy: {
+            storage?: components["schemas"]["HostingHealthyStorage"];
             snapshot: components["schemas"]["HostingSnapshot"];
             operation_id: string;
             container_id: string;
@@ -4408,13 +4569,14 @@ export interface components {
             cleanup_operation_id?: string;
         };
         HostingApplyPlan: {
+            storage?: components["schemas"]["HostingStoragePlan"];
             retained_releases?: components["schemas"]["HostingHealthy"][];
             retain_previous?: boolean;
             snapshot: components["schemas"]["HostingSnapshot"];
             release: components["schemas"]["HostingRelease"];
             previous_healthy?: components["schemas"]["HostingHealthy"];
             /** @enum {string} */
-            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1";
+            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1";
             hash: string;
         };
         HostingReceipt: {
@@ -8365,6 +8527,68 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingStorageCreateBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Committed controller acknowledgment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageCreateAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingStorageMaterialized: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageMaterializedRequest"];
+            };
+        };
+        responses: {
+            /** @description Committed controller acknowledgment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageMaterializedAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };

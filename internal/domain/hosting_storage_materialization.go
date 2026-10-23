@@ -1,9 +1,13 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"maps"
 	"math"
+	"strings"
 )
 
 // These versions identify explicit owned-storage admission and compilation.
@@ -11,6 +15,7 @@ const (
 	HostingOwnedStorageCapability      = "hosting_owned_storage_v1"
 	HostingOwnedStoragePolicyVersion   = "public-image.owned-storage.release-ports.v1"
 	HostingOwnedStorageCompilerVersion = "image-hosting.owned-storage.v1"
+	HostingStorageProtocolJSONLimit    = 32 << 10
 )
 
 // HostingStoragePlan is frozen before its containing plan is hashed. Its origin
@@ -69,8 +74,64 @@ type HostingStorageCreateRequest struct {
 // HostingStorageCreateAck grants CreatePermitted only to the transaction
 // inserting the origin. Every retry must inspect, not create.
 type HostingStorageCreateAck struct {
+	Storage         HostingStorage                `json:"storage"`
 	Materialization HostingStorageMaterialization `json:"materialization"`
 	CreatePermitted bool                          `json:"create_permitted"`
+}
+
+// DecodeHostingStorageProtocolJSON decodes one bounded closed document, rejecting
+// duplicate keys and case aliases before typed decoding. Protocol field and
+// label names are canonical lowercase; label values remain case-sensitive.
+func DecodeHostingStorageProtocolJSON(raw []byte, out any) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(raw) > HostingStorageProtocolJSONLimit || len(trimmed) == 0 || trimmed[0] != '{' || !storageProtocolUniqueJSON(json.NewDecoder(bytes.NewReader(raw))) {
+		return ErrInvalidHostingStorage
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(out); err != nil {
+		return ErrInvalidHostingStorage
+	}
+	if err := d.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return ErrInvalidHostingStorage
+	}
+	return nil
+}
+
+func storageProtocolUniqueJSON(d *json.Decoder) bool {
+	token, err := d.Token()
+	if err != nil {
+		return false
+	}
+	delim, compound := token.(json.Delim)
+	if !compound {
+		return true
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for d.More() {
+			token, err := d.Token()
+			key, ok := token.(string)
+			if err != nil || !ok || key != strings.ToLower(key) || seen[key] {
+				return false
+			}
+			seen[key] = true
+			if !storageProtocolUniqueJSON(d) {
+				return false
+			}
+		}
+	case '[':
+		for d.More() {
+			if !storageProtocolUniqueJSON(d) {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+	_, err = d.Token()
+	return err == nil
 }
 
 // HostingStorageMaterializedRequest contains nonsecret observations only.

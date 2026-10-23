@@ -62,6 +62,17 @@ func TestHostingStorageMaterializationIdentityAndFamilies(t *testing.T) {
 		}
 	}
 	proof.Attempt = 1
+	create.Attempt = 1
+	rawCreate, err := json.Marshal(create)
+	var decodedCreate HostingStorageCreateRequest
+	if err != nil || DecodeHostingStorageProtocolJSON(rawCreate, &decodedCreate) != nil || decodedCreate != create {
+		t.Fatal("canonical storage request did not decode")
+	}
+	for _, raw := range []string{`null`, `[]`, `{"attempt":1,"attempt":2}`, `{"attempt":1,"Attempt":2}`, `{"socket":"/var/run/docker.sock"}`, string(rawCreate) + `{}`, strings.Repeat(" ", HostingStorageProtocolJSONLimit) + string(rawCreate)} {
+		if DecodeHostingStorageProtocolJSON([]byte(raw), new(HostingStorageCreateRequest)) == nil {
+			t.Errorf("invalid closed storage JSON accepted: %.100s", raw)
+		}
+	}
 	for _, mutate := range []func(*HostingStorageMaterializedRequest){
 		func(p *HostingStorageMaterializedRequest) { p.CreationNonce = strings.Repeat("0", 32) }, func(p *HostingStorageMaterializedRequest) { p.Driver = "nfs" }, func(p *HostingStorageMaterializedRequest) { p.Scope = "global" }, func(p *HostingStorageMaterializedRequest) { p.Options = map[string]string{"type": "nfs"} }, func(p *HostingStorageMaterializedRequest) { p.DaemonID = "other" }, func(p *HostingStorageMaterializedRequest) { p.Labels["io.nerocd.storage.id"] = "foreign" }, func(p *HostingStorageMaterializedRequest) { p.Labels["extra"] = "adopted" },
 	} {
