@@ -57,3 +57,24 @@ export function verificationCurrent(p: GitHubPushPolicy, now = Date.now()): bool
 export const pushReason: Record<GitHubPushPolicy["reason"], string> = {
   "": "No blocker recorded", unsupported_source: "Save a supported GitHub.com HTTPS branch source.", unverified: "Verify the repository and branch before enabling.", disabled: "Build on push is disabled.", repository_identity_mismatch: "Repository identity changed. Disable and reconfigure after review.", repository_or_branch_unavailable: "The repository or branch is unavailable. Review provider access and source settings.", provider_credentials_required: "Select an existing provider read secret for this private repository.", provider_response_invalid: "GitHub returned an unusable response. Retry verification later.", rate_limited: "GitHub rate limit reached. Wait before retrying; public unauthenticated access has lower limits.", provider_unavailable: "GitHub is unavailable. Retry verification later.", comparison_limit: "Ancestry comparison exceeded 100 commits. Review history and explicitly reconfigure the baseline.", ancestry_unverified: "Ancestry is unverified. Review branch history before retrying or reconfiguring.", authority_unavailable: "Automation actor, source grant, runner, or project authority is unavailable. Restore access or reconfigure.", source_changed: "The saved source changed. Reconfigure and verify the current source.", policy_changed: "This delivery belongs to an older policy generation.", attempt_expired: "The 24-hour retry window expired. Review and reconfigure; retry cannot extend it.", quota_exceeded: "Build capacity is exhausted. Retry explicitly after capacity returns.", ignored_event: "This event was ignored.", ignored_disabled: "The policy was disabled when this event arrived.", verified: "Repository and branch verified.", build_queued: "A build was queued. Deployment remains manual.", already_queued: "The build was already queued; no duplicate build was requested.", blocked_exhausted: "The delivery exhausted its 32 attempts or 24-hour window. Disable or reconfigure after review.", obsolete: "A newer accepted revision superseded this delivery.", invalid_push: "The push did not match the configured repository and branch.", baseline_reset: "The branch baseline was reset by an explicit configuration decision.",
 };
+
+// This deadline settles independently of fetch, including transports that ignore
+// abort. Retire local ownership before notifying the transport of cancellation.
+export function withGitHubPushDeadline<T>(signal: AbortSignal, milliseconds: number, operation: (signal: AbortSignal) => Promise<T>, beforeAbort?: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const controller = new AbortController();
+    let owned = true, timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => { if (timer !== undefined) clearTimeout(timer); signal.removeEventListener("abort", parentAborted); };
+    const cancel = (cause: Error) => {
+      if (!owned) return;
+      owned = false; cleanup(); beforeAbort?.(); reject(cause); controller.abort();
+    };
+    const parentAborted = () => cancel(new Error("Build-on-push request canceled; outcome may be unconfirmed"));
+    if (signal.aborted) { parentAborted(); return; }
+    signal.addEventListener("abort", parentAborted, { once: true });
+    timer = setTimeout(() => cancel(new Error("Build-on-push request deadline exceeded; outcome may be unconfirmed")), milliseconds);
+    try {
+      operation(controller.signal).then((result) => { if (!owned) return; owned = false; cleanup(); resolve(result); }, (cause: unknown) => { if (!owned) return; owned = false; cleanup(); reject(cause); });
+    } catch (cause) { if (!owned) return; owned = false; cleanup(); reject(cause); }
+  });
+}

@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { ApiError } from "./errors";
-import { executeGitHubPushDecision, getGitHubPushPolicy, githubPushError, listGitHubPushDeliveries, verificationCurrent, type GitHubPushPolicy, type PushDecision } from "./hosting-github-push";
+import { withGitHubPushDeadline, executeGitHubPushDecision, getGitHubPushPolicy, githubPushError, listGitHubPushDeliveries, verificationCurrent, type GitHubPushPolicy, type PushDecision } from "./hosting-github-push";
 const id = "11111111-1111-4111-8111-111111111111";
 const policy: GitHubPushPolicy = { can_manage: true, id, resource_id: "resource/one", project_id: "project", generation: 2, resource_generation: 3, source_generation: 4, enabled: false, status: "verified", reason: "verified", repository_id: 1, repository: "owner/repo", branch: "main", verified_at: new Date().toISOString(), desired_commit: "", last_build_id: "", callback_url: "https://controller.test/hook", provider_read_configured: false };
 const delivery = { id, policy_id: id, policy_generation: 2, state: "retry_wait", reason: "provider_unavailable", after_commit: "a", verified_commit: "", build_id: "", attempts: 1, received_at: "", expires_at: "" };
@@ -33,4 +33,14 @@ test("verification is current for at most60 seconds and errors never echo raw di
  const now = Date.now(); expect(verificationCurrent({ ...policy, verified_at: new Date(now - 60_000).toISOString() }, now)).toBe(true); expect(verificationCurrent({ ...policy, verified_at: new Date(now - 60_001).toISOString() }, now)).toBe(false); expect(verificationCurrent({ ...policy, status: "blocked" }, now)).toBe(false);
  for (const status of [400, 401, 403, 404, 409, 413, 503]) expect(githubPushError(new ApiError(status, "raw provider/token diagnostic", null))).not.toMatch(/raw provider|token diagnostic/);
  expect(githubPushError(new Error("raw provider/token diagnostic"))).toMatch(/identical request/);
+});
+
+test.each(["timeout", "parent abort"])("deadline settles independently and retires before abort: %s", async (kind) => {
+ vi.useFakeTimers();
+ try {
+  const parent = new AbortController(), order: string[] = []; let resolve!: (value: string) => void;
+  const result = withGitHubPushDeadline(parent.signal, 5000, (signal) => { signal.addEventListener("abort", () => order.push("abort")); return new Promise<string>((done) => { resolve = done; }); }, () => order.push("retired")).catch((cause: unknown) => cause);
+  if (kind === "timeout") await vi.advanceTimersByTimeAsync(5000); else parent.abort();
+  expect(await result).toBeInstanceOf(Error); expect(order).toEqual(["retired", "abort"]); resolve("late"); await vi.advanceTimersByTimeAsync(0); expect(await result).toBeInstanceOf(Error); expect(vi.getTimerCount()).toBe(0);
+ } finally { vi.useRealTimers(); }
 });

@@ -74,3 +74,51 @@ test("503 preserves the exact command and pauses explicit retry for ten seconds 
   await act(async () => { await vi.advanceTimersByTimeAsync(1); }); expect(retry.disabled).toBe(false); fireEvent.click(retry); await act(async () => { await vi.advanceTimersByTimeAsync(0); }); const writes = fetch.mock.calls.filter(([, options]) => options.method === "PUT"); expect(writes).toHaveLength(2); expect(writes[1]![1].body).toBe(first);
  } finally { vi.useRealTimers(); }
 });
+test("hung configure retires before transport settles and fences its late result from the exact retry", async () => {
+ const pending: Array<{ resolve: (response: Response) => void; signal: AbortSignal }> = [];
+ const { fetch } = setup(policy, resource, (_url, options) => options.method === "PUT" ? new Promise<Response>((resolve) => pending.push({ resolve, signal: options.signal as AbortSignal })) : undefined); await references(); vi.useFakeTimers();
+ try {
+  fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" })); await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical push decision" }); expect(retry.disabled).toBe(false); expect(pending[0]!.signal.aborted).toBe(true); expect(pending).toHaveLength(1);
+  fireEvent.click(retry); await act(async () => { await vi.advanceTimersByTimeAsync(0); }); expect(pending).toHaveLength(2); expect(retry.disabled).toBe(true);
+  await act(async () => { pending[0]!.resolve(json({ ...policy, generation: 99 })); await vi.advanceTimersByTimeAsync(0); }); expect(retry.disabled).toBe(true); expect(screen.getByText(/Retained configure request/)).toBeTruthy(); expect(screen.queryByText(/Current policy 99/)).toBeNull();
+  await act(async () => { pending[1]!.resolve(json({ ...policy, generation: 2 })); await vi.advanceTimersByTimeAsync(0); }); expect(screen.queryByText(/Retained configure request/)).toBeNull(); const writes = fetch.mock.calls.filter(([, options]) => options.method === "PUT"); expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+ } finally { vi.useRealTimers(); }
+});
+test("hung initial policy read times out and manual refresh recovers despite an abort-ignoring old response", async () => {
+ let resolve!: (r: Response) => void, reads = 0; vi.useFakeTimers(); setup(policy, resource, (url) => url.endsWith("/github-push-policy") && ++reads === 1 ? new Promise<Response>((done) => { resolve = done; }) : undefined);
+ try {
+  await act(async () => { await vi.advanceTimersByTimeAsync(5001); }); const refresh = screen.getByRole<HTMLButtonElement>("button", { name: "Refresh build-on-push metadata" }); expect(refresh.disabled).toBe(false); expect(screen.getByRole("alert").textContent).toMatch(/Unable to refresh/);
+  fireEvent.click(refresh); await act(async () => { await vi.advanceTimersByTimeAsync(0); }); expect(screen.getByRole("form", { name: "Configure GitHub build on push" })).toBeTruthy();
+  await act(async () => { resolve(json({ ...policy, can_manage: false })); await vi.advanceTimersByTimeAsync(0); }); expect(screen.getByRole("form", { name: "Configure GitHub build on push" })).toBeTruthy();
+ } finally { vi.useRealTimers(); }
+});
+test("hung history read exposes manual recovery and cannot overwrite a recovered page", async () => {
+ let resolve!: (r: Response) => void, reads = 0; vi.useFakeTimers(); setup(policy, resource, (url) => url.includes("/deliveries?") && ++reads === 1 ? new Promise<Response>((done) => { resolve = done; }) : undefined);
+ try {
+  await act(async () => { await vi.advanceTimersByTimeAsync(5001); }); const refresh = screen.getByRole<HTMLButtonElement>("button", { name: "Refresh build-on-push metadata" }); expect(refresh.disabled).toBe(false); expect(screen.getByRole("alert").textContent).toMatch(/Unable to refresh/); fireEvent.click(refresh); await act(async () => { await vi.advanceTimersByTimeAsync(0); }); expect(reads).toBe(2);
+  await act(async () => { resolve(json({ items: [{ id: "11111111-1111-4111-8111-111111111111", policy_id: "policy", policy_generation: 1, state: "ignored", reason: "obsolete", after_commit: "stale-old-page", verified_commit: "", build_id: "", attempts: 1, received_at: "", expires_at: "" }], has_more: false, next_cursor: "" })); await vi.advanceTimersByTimeAsync(0); }); expect(screen.queryByText(/stale-old-page/)).toBeNull(); expect(screen.getByText("No push deliveries recorded.")).toBeTruthy();
+ } finally { vi.useRealTimers(); }
+});
+test("verify preserves uncertainty only after its twenty-five second deadline", async () => {
+ const pending: Array<(r: Response) => void> = []; const { fetch } = setup(policy, resource, (url, options) => url.endsWith("/verify") && options.method === "POST" ? new Promise<Response>((resolve) => pending.push(resolve)) : undefined); await screen.findByRole("form", { name: "Configure GitHub build on push" }); vi.useFakeTimers();
+ try {
+  fireEvent.click(screen.getByRole("button", { name: "Verify GitHub repository and branch" })); await act(async () => { await vi.advanceTimersByTimeAsync(24_999); }); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical push decision" }).disabled).toBe(true); expect(fetch.mock.calls.filter(([url]) => url.endsWith("/verify"))).toHaveLength(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); }); const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical push decision" }); expect(retry.disabled).toBe(false); fireEvent.click(retry); await act(async () => { await vi.advanceTimersByTimeAsync(0); }); expect(pending).toHaveLength(2); const writes = fetch.mock.calls.filter(([url]) => url.endsWith("/verify")); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+ } finally { vi.useRealTimers(); }
+});
+test("pause releases an abort-ignoring mutation and exact retry remains available on resume", async () => {
+ const pending: Array<{ resolve: (r: Response) => void; signal: AbortSignal }> = []; const { rerender, fetch } = setup(policy, resource, (_url, options) => options.method === "PUT" ? new Promise<Response>((resolve) => pending.push({ resolve, signal: options.signal as AbortSignal })) : undefined); await references(); fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" })); await waitFor(() => expect(pending).toHaveLength(1));
+ rerender(<QueryClientProvider client={client}><ResourceGithubPushBuilds actor="actor-identity" resource={resource} blocked /></QueryClientProvider>); expect(pending[0]!.signal.aborted).toBe(true);
+ rerender(<QueryClientProvider client={client}><ResourceGithubPushBuilds actor="actor-identity" resource={resource} blocked={false} /></QueryClientProvider>); const retry = await screen.findByRole<HTMLButtonElement>("button", { name: "Retry identical push decision" }); await waitFor(() => expect(retry.disabled).toBe(false)); fireEvent.click(retry); await waitFor(() => expect(pending).toHaveLength(2)); await act(async () => pending[0]!.resolve(json({ ...policy, generation: 99 }))); expect(retry.disabled).toBe(true); await act(async () => pending[1]!.resolve(json({ ...policy, generation: 2 }))); const writes = fetch.mock.calls.filter(([, options]) => options.method === "PUT"); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
+test.each(["actor", "resource"])("hung mutation cannot retain request state across %s changes", async (scope) => {
+ let resolve!: (r: Response) => void, signal!: AbortSignal; const { rerender } = setup(policy, resource, (url, options) => options.method === "PUT" ? new Promise<Response>((done) => { resolve = done; signal = options.signal as AbortSignal; }) : url.includes("/other/") && url.endsWith("/github-push-policy") ? json({ ...policy, resource_id: "other" }) : undefined); await references(); fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" })); await waitFor(() => expect(resolve).toBeTypeOf("function"));
+ rerender(<QueryClientProvider client={client}><ResourceGithubPushBuilds actor={scope === "actor" ? "new-actor" : "actor-identity"} resource={scope === "resource" ? { ...resource, id: "other" } : resource} blocked={false} /></QueryClientProvider>); expect(signal.aborted).toBe(true); await screen.findByRole("form", { name: "Configure GitHub build on push" }); await act(async () => resolve(json({ ...policy, generation: 99 }))); expect(screen.queryByText(/Retained configure request/)).toBeNull(); expect(screen.getByLabelText<HTMLSelectElement>("Automation service account").value).toBe("");
+});
+test("pending owner metadata is retired while current policy authority is being refreshed", async () => {
+ let accountSignal!: AbortSignal, resolveAccount!: (r: Response) => void, resolvePolicy!: (r: Response) => void, policyReads = 0;
+ setup(policy, resource, (url, options) => url.includes("/service-accounts?") ? new Promise<Response>((resolve) => { resolveAccount = resolve; accountSignal = options.signal as AbortSignal; }) : url.endsWith("/github-push-policy") && ++policyReads > 1 ? new Promise<Response>((resolve) => { resolvePolicy = resolve; }) : undefined);
+ await waitFor(() => expect(resolveAccount).toBeTypeOf("function")); const refresh = screen.getByRole<HTMLButtonElement>("button", { name: "Refresh build-on-push metadata" }); await waitFor(() => expect(refresh.disabled).toBe(false)); fireEvent.click(refresh); await waitFor(() => expect(resolvePolicy).toBeTypeOf("function")); expect(accountSignal.aborted).toBe(true);
+ await act(async () => resolveAccount(json(page([{ id: "late-owner", project_id: "project", name: "Late owner metadata", role: "owner", status: "active" }])))); expect(screen.queryByRole("option", { name: /Late owner metadata/ })).toBeNull(); await act(async () => resolvePolicy(json({ ...policy, can_manage: false }))); expect(screen.queryByRole("form")).toBeNull();
+});

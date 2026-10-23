@@ -5,7 +5,7 @@ import type { Resource } from "@/api/hosting";
 import { listServiceAccounts } from "@/api/service-accounts";
 import { listManagedSecrets, listManagedSecretVersions } from "@/api/managed-secrets";
 import { eligibleSourceGrant, listHostingSourceGrants } from "@/api/hosting-source-grants";
-import { executeGitHubPushDecision, getGitHubPushPolicy, githubPushDenied, githubPushError, listGitHubPushDeliveries, pushReason, verificationCurrent, type GitHubPushConfiguration, type GitHubPushDelivery, type GitHubPushPolicy, type PushDecision } from "@/api/hosting-github-push";
+import { withGitHubPushDeadline, executeGitHubPushDecision, getGitHubPushPolicy, githubPushDenied, githubPushError, listGitHubPushDeliveries, pushReason, verificationCurrent, type GitHubPushConfiguration, type GitHubPushDelivery, type GitHubPushPolicy, type PushDecision } from "@/api/hosting-github-push";
 import { Button } from "@/components/ui/button";
 import { PageNavigation } from "@/components/common/PageNavigation";
 const button = "h-auto max-w-full whitespace-normal break-all";
@@ -21,20 +21,28 @@ export function ResourceGithubPushBuilds({ actor, resource, blocked }: { actor: 
 function PushPolicy({ actor, resource, blocked }: { actor: string; resource: Resource; blocked: boolean }) {
   const client = useQueryClient();
   const [cursor, setCursor] = useState(""), [denied, setDenied] = useState(false);
-  const policy = useQuery({ queryKey: policyKey(actor, resource), enabled: !blocked && !denied, retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const p = await getGitHubPushPolicy(resource.id, { signal }); if (p.project_id !== resource.project_id) throw new Error("Push policy project mismatch"); return p; } });
-  const history = useQuery({ queryKey: ["githubPushDeliveries", actor, resource.project_id, resource.id, cursor], enabled: !blocked && !denied && Boolean(policy.data), retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const page = await listGitHubPushDeliveries(resource.id, cursor, { signal }); if (policy.data?.id && page.items.some((d) => d.policy_id !== policy.data.id)) throw new Error("Push delivery policy mismatch"); return page; } });
+  const policy = useQuery({ queryKey: policyKey(actor, resource), enabled: !blocked && !denied, retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const p = await withGitHubPushDeadline(signal, 5000, (signal) => getGitHubPushPolicy(resource.id, { signal })); if (p.project_id !== resource.project_id) throw new Error("Push policy project mismatch"); return p; } });
+  const history = useQuery({ queryKey: ["githubPushDeliveries", actor, resource.project_id, resource.id, cursor], enabled: !blocked && !denied && Boolean(policy.data), retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const page = await withGitHubPushDeadline(signal, 5000, (signal) => listGitHubPushDeliveries(resource.id, cursor, { signal })); if (policy.data?.id && page.items.some((d) => d.policy_id !== policy.data.id)) throw new Error("Push delivery policy mismatch"); return page; } });
   useEffect(() => { if (githubPushDenied(policy.error) || githubPushDenied(history.error)) setDenied(true); }, [policy.error, history.error]);
+  useEffect(() => {
+    if (!blocked && !denied) return;
+    for (const name of ["githubPushPolicy", "githubPushDeliveries", "githubPushAccounts", "githubPushGrants", "githubPushSecrets", "githubPushVersions"]) void client.cancelQueries({ queryKey: [name, actor, resource.project_id, resource.id] });
+  }, [blocked, denied, actor, resource.project_id, resource.id, client]);
   const p = policy.data;
   const paused = blocked || denied || policy.isPending || policy.isError || policy.isFetching || history.isError;
+  useEffect(() => {
+    if (!paused) return;
+    for (const name of ["githubPushAccounts", "githubPushGrants", "githubPushSecrets", "githubPushVersions"]) void client.cancelQueries({ queryKey: [name, actor, resource.project_id, resource.id] });
+  }, [paused, actor, resource.project_id, resource.id, client]);
   const refresh = async () => {
     if (blocked || denied) return;
     const result = await policy.refetch();
     if (result.isError || !result.data || !result.data.can_manage) { await history.refetch(); return; }
     await Promise.all([history.refetch(), ...["githubPushAccounts", "githubPushGrants", "githubPushSecrets", "githubPushVersions"].map((name) => client.invalidateQueries({ queryKey: [name, actor, resource.project_id, resource.id] }))]);
   };
-  const changed = async (result: GitHubPushPolicy | GitHubPushDelivery) => {
+  const changed = (result: GitHubPushPolicy | GitHubPushDelivery) => {
     if ("can_manage" in result) { if (result.project_id !== resource.project_id) throw new Error("Push policy project mismatch"); client.setQueryData(policyKey(actor, resource), result); }
-    await history.refetch();
+    void history.refetch();
   };
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label="Build on push"><h5 className="font-medium">Build on push</h5>
     <p className="text-sm">Signed GitHub.com pushes can build the configured branch. Deployments remain manual. A queued or successful build does not deploy the application.</p>
@@ -52,20 +60,36 @@ function PushPolicy({ actor, resource, blocked }: { actor: string; resource: Res
   </section>;
 }
 
-type ManagerProps = { actor: string; resource: Resource; policy: GitHubPushPolicy; paused: boolean; changed: (p: GitHubPushPolicy | GitHubPushDelivery) => Promise<void>; onDenied: () => void; refresh: () => Promise<void> };
+type ManagerProps = { actor: string; resource: Resource; policy: GitHubPushPolicy; paused: boolean; changed: (p: GitHubPushPolicy | GitHubPushDelivery) => void; onDenied: () => void; refresh: () => Promise<void> };
 function useDecision(props: ManagerProps) {
   const client = useQueryClient();
   const [attempt, setAttempt] = useState<PushDecision>(), [busy, setBusy] = useState(false), [conflict, setConflict] = useState(false), [error, setError] = useState(""), [retryAt, setRetryAt] = useState(0);
   const request = useRef<AbortController | null>(null), active = useRef(true);
-  useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); }; }, []);
-  useEffect(() => { if (props.paused) request.current?.abort(); }, [props.paused]);
+  function retire(controller: AbortController, uncertain: boolean) {
+    if (request.current !== controller) return false;
+    request.current = null;
+    if (active.current) { setBusy(false); if (uncertain) setError("The decision outcome is unconfirmed. Retry the identical retained request after current access is available."); }
+    return true;
+  }
+  useEffect(() => { active.current = true; return () => { active.current = false; const controller = request.current; if (controller) { retire(controller, false); controller.abort(); } }; }, []);
+  useEffect(() => { const controller = request.current; if (props.paused && controller) { retire(controller, true); controller.abort(); } }, [props.paused]);
   useEffect(() => { if (!retryAt) return; const timer = setTimeout(() => setRetryAt(0), Math.max(0, retryAt - Date.now())); return () => clearTimeout(timer); }, [retryAt]);
   async function send(decision: PushDecision) {
     if (props.paused || busy || conflict || retryAt > Date.now() || request.current) return undefined;
     const frozen = attempt ?? decision, controller = new AbortController(); request.current = controller; setAttempt(frozen); setBusy(true); setError("");
-    try { const result = await executeGitHubPushDecision(props.resource.id, frozen, { signal: controller.signal }); if (!active.current || controller.signal.aborted) return; if (!client.getQueryData<GitHubPushPolicy>(policyKey(props.actor, props.resource))?.can_manage) { props.onDenied(); return; } await props.changed(result); if (!active.current || controller.signal.aborted) return; setAttempt(undefined); return result; }
-    catch (cause) { if (!active.current || controller.signal.aborted) return; setError(githubPushError(cause)); if (cause instanceof ApiError && cause.status === 503) setRetryAt(Date.now() + 10_000); if (githubPushDenied(cause)) props.onDenied(); if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await props.refresh(); } }
-    finally { if (request.current === controller) request.current = null; if (active.current) setBusy(false); }
+    const owns = () => active.current && request.current === controller && !controller.signal.aborted;
+    try {
+      const result = await withGitHubPushDeadline(controller.signal, frozen.action === "verify" ? 25_000 : 10_000, (signal) => executeGitHubPushDecision(props.resource.id, frozen, { signal }), () => retire(controller, true));
+      if (!owns()) return;
+      if (!client.getQueryData<GitHubPushPolicy>(policyKey(props.actor, props.resource))?.can_manage) { props.onDenied(); return; }
+      props.changed(result); setAttempt(undefined); return result;
+    } catch (cause) {
+      if (!owns()) return;
+      setError(githubPushError(cause));
+      if (cause instanceof ApiError && cause.status === 503) setRetryAt(Date.now() + 10_000);
+      if (githubPushDenied(cause)) props.onDenied();
+      if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await props.refresh(); }
+    } finally { retire(controller, false); }
   }
   return { attempt, busy, conflict, error, retryBlocked: retryAt > 0, send, reset: () => { setAttempt(undefined); setConflict(false); setError(""); } };
 }
@@ -77,8 +101,8 @@ function PushManager(props: ManagerProps) {
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   const locked = paused || decision.busy || Boolean(decision.attempt), stale = base.generation !== policy.generation || base.resource_generation !== policy.resource_generation || base.source_generation !== policy.source_generation;
   const privateSource = resource.source.kind === "git" && resource.source.git.credential_kind === "https_basic";
-  const accounts = useQuery({ queryKey: ["githubPushAccounts", actor, resource.project_id, resource.id, offset], enabled: !paused, retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const page = await listServiceAccounts(resource.project_id, limit, offset, { signal }).catch(metadataError); if (page.items.some((a) => a.project_id !== resource.project_id)) throw new Error("Account scope mismatch"); return { count: page.count, total: page.total, limit: page.limit, offset: page.offset, items: page.items.map(({ id, project_id, name, status, role }) => ({ id, project_id, name, status, role })) }; } });
-  const grants = useQuery({ queryKey: ["githubPushGrants", actor, resource.project_id, resource.id, grantOffset], enabled: privateSource && !paused, retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: ({ signal }) => listHostingSourceGrants(resource.id, grantOffset, { signal }) });
+  const accounts = useQuery({ queryKey: ["githubPushAccounts", actor, resource.project_id, resource.id, offset], enabled: !paused, retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const page = await withGitHubPushDeadline(signal, 5000, (signal) => listServiceAccounts(resource.project_id, limit, offset, { signal })).catch(metadataError); if (page.items.some((a) => a.project_id !== resource.project_id)) throw new Error("Account scope mismatch"); return { count: page.count, total: page.total, limit: page.limit, offset: page.offset, items: page.items.map(({ id, project_id, name, status, role }) => ({ id, project_id, name, status, role })) }; } });
+  const grants = useQuery({ queryKey: ["githubPushGrants", actor, resource.project_id, resource.id, grantOffset], enabled: privateSource && !paused, retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: ({ signal }) => withGitHubPushDeadline(signal, 5000, (signal) => listHostingSourceGrants(resource.id, grantOffset, { signal })) });
   useEffect(() => { if (githubPushDenied(accounts.error) || githubPushDenied(grants.error)) onDenied(); }, [accounts.error, grants.error]);
   const selectedAccount = accounts.data?.items.find((a) => a.id === account && a.status === "active" && ["maintainer", "owner"].includes(a.role));
   const selectedGrant = grants.data?.items.find((g) => g.id === grantID && eligibleSourceGrant(g, resource));
@@ -112,8 +136,8 @@ function PushManager(props: ManagerProps) {
 }
 function SecretReference({ label, actor, resource, locked, value, onChange, onDenied }: { label: string; actor: string; resource: Resource; locked: boolean; value: { id: string; version: number }; onChange: (value: { id: string; version: number }) => void; onDenied: () => void }) {
   const [offset, setOffset] = useState(0), [versionOffset, setVersionOffset] = useState(0);
-  const secrets = useQuery({ queryKey: ["githubPushSecrets", actor, resource.project_id, resource.id, label, offset], enabled: !locked, retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const page = await listManagedSecrets({ project_id: resource.project_id, limit, offset }, { signal }).catch(metadataError); if (page.items.some((s) => s.project_id !== resource.project_id)) throw new Error("Secret project mismatch"); return { count: page.count, total: page.total, limit: page.limit, offset: page.offset, items: page.items.map(({ id, project_id, name, status }) => ({ id, project_id, name, status })) }; } });
-  const versions = useQuery({ queryKey: ["githubPushVersions", actor, resource.project_id, resource.id, label, value.id, versionOffset], enabled: !locked && Boolean(value.id), retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const page = await listManagedSecretVersions(value.id, { limit, offset: versionOffset }, { signal }).catch(metadataError); if (page.items.some((s) => s.secret_id !== value.id)) throw new Error("Secret version mismatch"); return { count: page.count, total: page.total, limit: page.limit, offset: page.offset, items: page.items.map(({ secret_id, version }) => ({ secret_id, version })) }; } });
+  const secrets = useQuery({ queryKey: ["githubPushSecrets", actor, resource.project_id, resource.id, label, offset], enabled: !locked, retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const page = await withGitHubPushDeadline(signal, 5000, (signal) => listManagedSecrets({ project_id: resource.project_id, limit, offset }, { signal })).catch(metadataError); if (page.items.some((s) => s.project_id !== resource.project_id)) throw new Error("Secret project mismatch"); return { count: page.count, total: page.total, limit: page.limit, offset: page.offset, items: page.items.map(({ id, project_id, name, status }) => ({ id, project_id, name, status })) }; } });
+  const versions = useQuery({ queryKey: ["githubPushVersions", actor, resource.project_id, resource.id, label, value.id, versionOffset], enabled: !locked && Boolean(value.id), retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: async ({ signal }) => { const page = await withGitHubPushDeadline(signal, 5000, (signal) => listManagedSecretVersions(value.id, { limit, offset: versionOffset }, { signal })).catch(metadataError); if (page.items.some((s) => s.secret_id !== value.id)) throw new Error("Secret version mismatch"); return { count: page.count, total: page.total, limit: page.limit, offset: page.offset, items: page.items.map(({ secret_id, version }) => ({ secret_id, version })) }; } });
   useEffect(() => { if (githubPushDenied(secrets.error) || githubPushDenied(versions.error)) onDenied(); }, [secrets.error, versions.error]);
   useEffect(() => { if (!locked && value.id && (secrets.isError || secrets.data && !secrets.data.items.some((s) => s.id === value.id && s.status === "active"))) onChange({ id: "", version: 0 }); else if (!locked && value.version && (versions.isError || versions.data && !versions.data.items.some((v) => v.version === value.version))) onChange({ id: value.id, version: 0 }); }, [locked, value.id, value.version, secrets.data, secrets.isError, versions.data, versions.isError]);
   return <fieldset className="min-w-0 space-y-2" disabled={locked}><legend className="text-sm font-medium">{label} secret reference</legend><label className="block">{label} managed secret<select className={select} value={value.id} onChange={(event) => { setVersionOffset(0); onChange({ id: event.target.value, version: 0 }); }}><option value="">{label === "GitHub provider read" ? "No provider secret selected" : "Choose an existing signing secret"}</option>{secrets.data?.items.filter((s) => s.status === "active").map((s) => <option value={s.id} key={s.id}>{s.name} · {s.id}</option>)}</select></label>
