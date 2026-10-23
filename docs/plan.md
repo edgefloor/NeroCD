@@ -75,10 +75,11 @@ exact local artifact deployment and test-CA HTTPS. See the
 A03 remains partial. The private browser fixture does not qualify an automatic
 builder or provider integrations, and test-CA HTTPS is not production ACME.
 
-The live runtime-log slice is accepted within the limits below. Next H1 work
-includes provider-authenticated deploy-on-push control on the accepted exact-revision
-prerequisite, plus the other hosting gaps. This serves R29–R32,
-R58–R60 and the applicable hosting acceptance scenarios, including A28 and A29.
+The live runtime-log slice has bounded accepted evidence for R58–R60 and A28–A29
+within the limits below. The next H1 slice is GitHub build-on-push on the accepted
+exact-revision prerequisite, serving R09, R10, R13, R57 and A09. Subsequent
+automatic or protected deployment serves R17, R19 and applicable A09/A10 checks.
+Build-on-push alone does not qualify automatic deployment.
 Use existing resources, Go application authorization, managed-secret versions,
 PostgreSQL/River and fenced runner execution. Do not require a collaboration
 Task, Workspace, VM or general grant platform.
