@@ -465,6 +465,7 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 	if err = proxyValidateResult(op, in.Result); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
+	originalPlan := *op.Plan
 	if err = proxyAuthority(ctx, tx, runner, in.HostingAuthority, true); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
@@ -519,6 +520,15 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 	op, err = proxyOperation(ctx, tx, op.ID)
 	if err != nil {
 		return op, err
+	}
+	if originalPlan.Snapshot.VerifiedSwitch != nil && (in.Result.Outcome == "applied" || in.Result.Outcome == "rolled_back") {
+		acceptedAt, err := q.DatabaseClock(ctx)
+		if err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
+		if err = domain.ValidateHostingVerifiedSwitchResult(originalPlan, in.Result, acceptedAt); err != nil {
+			return domain.HostingProxyOperation{}, ErrConflict
+		}
 	}
 	return op, tx.Commit(ctx)
 }

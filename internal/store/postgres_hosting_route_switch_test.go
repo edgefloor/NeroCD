@@ -782,3 +782,142 @@ func TestPostgresVerifiedSwitchRunnerTailLockWithRenewAndClaim(t *testing.T) {
 		t.Fatalf("valid admission failed %+v %v", current, err)
 	}
 }
+
+func TestPostgresVerifiedSwitchCertificateFreshAtCompletionCommit(t *testing.T) {
+	for _, outcome := range []string{"applied", "rolled_back"} {
+		t.Run(outcome, func(t *testing.T) {
+			f := switchControlFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			op, err := f.pg.RequestHostingRouteSwitch(ctx, f.resource.ID, "pop_certificate_wait", "usr_bootstrap", f.input("certificate-wait"), destinationEvent("certificate_wait"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, op, prepared := admitSwitchOperation(t, f, op.ID)
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var work sync.WaitGroup
+			defer func() {
+				cancel()
+				cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stop()
+				_ = blocker.Rollback(cleanup)
+				work.Wait()
+			}()
+			var key int64
+			var pid int
+			if err = blocker.QueryRow(ctx, `SELECT hashtextextended(current_schema()||':strict-completion-audit',0),pg_backend_pid()`).Scan(&key, &pid); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.db.Exec(ctx, `CREATE FUNCTION strict_completion_audit_wait() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hosting.proxy_completed' THEN PERFORM pg_advisory_xact_lock(hashtextextended(current_schema()||':strict-completion-audit',0)); END IF; RETURN NEW; END $$; CREATE TRIGGER strict_completion_audit_wait BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION strict_completion_audit_wait()`); err != nil {
+				t.Fatal(err)
+			}
+			request := domain.HostingProxyCompleteRequest{HostingAuthority: a, ReceiptID: "certificate_complete", Result: trustedProxyResult(op, prepared, outcome)}
+			expires := time.Now().Add(2 * time.Second)
+			for n := range request.Result.Routes {
+				request.Result.Routes[n].Certificate.ExpiresAt = expires
+			}
+			done := make(chan error, 1)
+			work.Go(func() { _, err := f.pg.RunnerProxyComplete(ctx, f.server.RunnerID, request); done <- err })
+			ticker := time.NewTicker(10 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				var waiting bool
+				if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%CreateAuditEvent%')`, pid).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("completion did not wait: %v", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-ticker.C:
+				}
+			}
+			for {
+				var expired bool
+				if err = f.db.QueryRow(ctx, `SELECT $1::timestamptz<=clock_timestamp()`, expires).Scan(&expired); err != nil {
+					t.Fatal(err)
+				}
+				if expired {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-ticker.C:
+				}
+			}
+			if err = blocker.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err = <-done; !errors.Is(err, store.ErrConflict) {
+				t.Fatalf("expired completion admitted: %v", err)
+			}
+			current, err := f.pg.GetHostingProxyOperation(ctx, op.ID)
+			if err != nil || !current.MutationHold || current.State != "applying" || current.CompleteReceipt != nil || current.Result != nil {
+				t.Fatalf("expired completion changed state %+v %v", current, err)
+			}
+			var receipts, audits int
+			var lease, task string
+			if err = f.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_proxy_receipts WHERE operation_id=$1 AND phase='complete'),(SELECT count(*) FROM audit_events WHERE id=$2),l.status,r.status FROM run_leases l JOIN task_runs r ON r.id=l.run_id WHERE l.id=$3`, op.ID, "aud_proxy_complete_"+op.ID, a.LeaseID).Scan(&receipts, &audits, &lease, &task); err != nil || receipts != 0 || audits != 0 || lease != "active" || task != "running" {
+				t.Fatalf("completion was not atomic receipts=%d audits=%d lease=%s task=%s err=%v", receipts, audits, lease, task, err)
+			}
+			for _, route := range f.routes[:2] {
+				row, err := f.pg.GetHostingRoute(ctx, route.ID)
+				if err != nil || row.Route.SelectedReleaseOperationID != f.b.ID || row.Route.Version != route.Version+1 {
+					t.Fatalf("expired rollback changed metadata %+v %v", row, err)
+				}
+			}
+			// Fresh acceptance succeeds; replay of that exact immutable receipt remains
+			// historical after its certificate expiry and cannot repeat metadata CAS.
+			expires = time.Now().Add(time.Second)
+			for n := range request.Result.Routes {
+				request.Result.Routes[n].Certificate.ExpiresAt = expires
+			}
+			accepted, err := f.pg.RunnerProxyComplete(ctx, f.server.RunnerID, request)
+			if err != nil || accepted.MutationHold {
+				t.Fatalf("fresh completion %+v %v", accepted, err)
+			}
+			before, err := f.pg.ListHostingRoutes(ctx, f.resource.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				var expired bool
+				if err = f.db.QueryRow(ctx, `SELECT $1::timestamptz<=clock_timestamp()`, expires).Scan(&expired); err != nil {
+					t.Fatal(err)
+				}
+				if expired {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-ticker.C:
+				}
+			}
+			replayed, err := f.pg.RunnerProxyComplete(ctx, f.server.RunnerID, request)
+			if err != nil || !reflect.DeepEqual(accepted.Result, replayed.Result) {
+				t.Fatalf("historical replay rejected %+v %v", replayed, err)
+			}
+			after, err := f.pg.ListHostingRoutes(ctx, f.resource.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for n := range before {
+				if before[n].Version != after[n].Version || before[n].SelectedReleaseOperationID != after[n].SelectedReleaseOperationID {
+					t.Fatal("historical replay repeated metadata CAS")
+				}
+			}
+		})
+	}
+}
