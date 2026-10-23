@@ -3,14 +3,96 @@
 `hostingproxy.PrepareVerifiedSwitch(identity, settings, generation, previous,
 routes, requiredRouteIDs)` prepares an opt-in engine plan for switching existing
 routes to new loopback host ports. This is a reusable engine mechanism for the
-hosting R21/R25/R28 and A11/A20 requirements. Controller capability negotiation,
-the route-switch API and admission, and automatic HTTPS deploy orchestration
-remain separate work. This change does not complete R17 automatic HTTPS deploy.
+hosting R21/R25/R28 and A11/A20 requirements. The controller exposes a bounded
+route-switch operation and admits only explicitly configured agents. R17 automatic
+HTTPS deployment orchestration remains separate work. Metadata conflict recovery
+also remains unsupported, as described below.
 
 The caller must hold the existing fenced proxy lease, authorize the settled
 healthy target bindings, and retain its hold when the engine reports `Uncertain`.
 The engine does not stop containers, drain connections, change console database
 generations, or make a controller lease atomic with Docker operations.
+
+## Request and agent configuration
+
+A current project maintainer can request an existing route switch through
+`POST /api/v1/resources/{id}/route-switches`:
+
+```json
+{
+  "idempotency_key": "release-b",
+  "expected_loaded_generation": 12,
+  "target_release_operation_id": "hop_b",
+  "routes": [
+    {
+      "route_id": "route_web",
+      "expected_version": 4,
+      "expected_selected_release_operation_id": "hop_a"
+    }
+  ]
+}
+```
+
+The request selects between one and 32 unique routes belonging to that resource.
+The controller derives hostnames, paths, grants, placement, daemon identity, and
+loopback ports. It accepts the current healthy release or an exact retained
+running release on the same binding and daemon. Selecting a retained release does
+not restart it, rebuild it, or deliver its historical secrets. The response is
+the existing project-safe operation view, including for an administrator.
+
+The runner must advertise `hosting_proxy_verified_switch_v1` and start with
+`--proxy-verified-switch` plus the existing explicit proxy configuration. Agents
+without that opt-in cannot admit or execute a strict operation. The optional
+version 1 `verified_switch` descriptor binds the exact loaded predecessor and
+selected prior targets into the ordinary immutable snapshot and compiler hash.
+Absent that descriptor, legacy serialization and behavior remain unchanged.
+Strict journal entries require format 9; legacy entries retain their existing
+format. Restart replay sends durable receipts and never repeats Apply.
+
+Admission locks destination ownership, the proxy, and all route resources in
+sorted order. It checks current actor authority, grants, target eligibility,
+versions, loaded predecessor, and agent capability. First mutation checks those
+conditions again after ownership waits. Unrelated routes remain in the complete
+snapshot. Ordinary route edits are refused while a strict operation is pending
+or held, so they cannot publish a candidate before its verification completes.
+
+## Revocation, metadata, and unresolved ownership
+
+Disabling the proxy or withdrawing a hostname or destination grant commits the
+revocation immediately. Before admission, the same transaction restores only
+strict selections whose candidate version and release are still exactly owned,
+supersedes that operation, and queues the withdrawal. After admission, it preserves
+the strict hold and queues a safe withdrawal derived from the exact loaded
+committed generation with every currently disabled or revoked route removed.
+That queued withdrawal cannot dispatch through the strict hold. A later verified
+outcome atomically settles ownership and replaces the deferred withdrawal from
+post-outcome authorized metadata. Repeated receipts do not repeat that transition.
+
+Metadata restoration is a compare-and-swap operation. It increments the route
+version and restores its prior selected release only when the current candidate
+selection and version still belong to the strict operation. A withdrawal that
+increments the route version creates a conflict. The controller preserves the
+engine's original receipt, exposes `metadata_conflict` separately, and retains
+the mutation hold and both release references. It keeps revoked and disabled
+flags effective. Regranting or enabling cannot publish the unresolved candidate.
+A lost-response retry returns the original engine outcome with the current hold;
+it does not clear the conflict or claim new TLS evidence.
+
+There is currently no authorized API to reconcile a route-switch metadata
+conflict. This case requires a future reviewed reconciliation mechanism and
+cannot complete the automatic workflow in this slice. Operators must retain the
+hold; direct database edits are not a supported recovery procedure. Uncertain
+engine outcomes also retain ownership and references without automatic recovery.
+The database revocation is immediate, while physical proxy withdrawal can remain
+deferred by that uncertainty.
+
+Successful strict completion requires complete unique route observations and
+fresh selected HTTP and trusted HTTPS evidence for the candidate or exact prior
+generation. Receipt replay validates the original immutable result without
+rechecking certificate freshness or repeating metadata changes. Displayed receipt
+verification is historical evidence, not a new live TLS probe. Current route
+status exposes a conflict hold instead of suggesting delivery or withdrawal has
+fully settled.
 
 ## Plan and predecessor contract
 
@@ -73,3 +155,11 @@ checks refusal of an untrusted baseline and strict replay and observation after
 trust loss. Run once with `NEROCD_PROXY_SWITCH_FAULT=rollback` for failed rollback,
 and once without that variable for cancellation after publication. Both cases
 must retain `Uncertain` and the durable strict policy across fresh-engine calls.
+
+The API fixture `TestHostingVerifiedSwitchCompiledRunner` runs a separately named
+`nerocd_proxy_fixture` binary, the real API and PostgreSQL store, and pinned
+Traefik/Pebble inside a task-owned Linux DinD daemon. Its constructor selects
+`NewFixture` only in that build and with the explicit disposable-fixture marker.
+The ordinary binary has no fixture constructor or environment CA override. This
+fixture is local test-CA evidence; it does not establish public production ACME
+issuance or R17 automatic deployment orchestration.
