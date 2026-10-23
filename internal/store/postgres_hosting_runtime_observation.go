@@ -20,6 +20,7 @@ type observationPlacement struct {
 	heartbeat                                                          *time.Time
 	mutation, restore                                                  bool
 	identity                                                           string
+	authorityIdentity, credential                                      string
 	target                                                             domain.HostingObservationTarget
 }
 
@@ -27,6 +28,11 @@ type observationPlacement struct {
 // Destination row SHARE precedes grant UPDATE to avoid inversion with revocation.
 // No operation or task locks may be acquired after this helper's binding lock.
 func lockObservationPlacement(ctx context.Context, tx pgx.Tx, resource, runner, credential string) (observationPlacement, error) {
+	return lockHostingSettledPlacement(ctx, tx, resource, runner, credential, domain.HostingObservationCapability)
+}
+
+// lockHostingSettledPlacement admits only current enrolled authority for the requested capability.
+func lockHostingSettledPlacement(ctx context.Context, tx pgx.Tx, resource, runner, credential, capability string) (observationPlacement, error) {
 	p := observationPlacement{resource: resource}
 	q := sqlcgen.New(tx)
 	before, err := q.ObservationResourceDestination(ctx, resource)
@@ -94,7 +100,7 @@ func lockObservationPlacement(ctx context.Context, tx pgx.Tx, resource, runner, 
 		return p, err
 	}
 	p.heartbeat = &current.LastHeartbeatAt
-	if current.Status != "active" || current.TokenHash == "" || credential != "" && current.TokenHash != credential || !slices.Contains(current.Capabilities, domain.HostingObservationCapability) || slices.Contains(current.Capabilities, "shell") {
+	if current.Status != "active" || current.TokenHash == "" || credential != "" && current.TokenHash != credential || !slices.Contains(current.Capabilities, capability) || slices.Contains(current.Capabilities, "shell") {
 		gateErr = ErrConflict
 	}
 	enrollment, err := q.LockObservationEnrollment(ctx, sqlcgen.LockObservationEnrollmentParams{RunnerID: p.runner, CredentialHash: &current.TokenHash})
@@ -107,6 +113,8 @@ func lockObservationPlacement(ctx context.Context, tx pgx.Tx, resource, runner, 
 	if p.restore {
 		gateErr = ErrHostingRestoreHold
 	}
+	p.credential = current.TokenHash
+	p.authorityIdentity = runtimeLogAuthorityHash(p.project, p.destination, p.server, p.runner, grant.CreatedAt, current.TokenHash, enrollment)
 	healthy := state.Healthy
 	if len(healthy) == 0 {
 		return p, gateErr

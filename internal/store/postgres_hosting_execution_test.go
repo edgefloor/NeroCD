@@ -1139,3 +1139,70 @@ func TestPostgresClaimRejectsPersistedInternalWorkflowWithoutTarget(t *testing.T
 		t.Fatalf("rejected internal tasks created %d leases: %v", leases, err)
 	}
 }
+
+func TestPostgresHostingRuntimeLogJanitorIndependentRecoveryAndShutdown(t *testing.T) {
+	f := newRuntimeLogFixture(t)
+	session := f.open(t, 1)
+	f.exec(t, `UPDATE hosting_runtime_log_sessions SET purge_after=clock_timestamp()-interval '1 second' WHERE id=$1`, session.ID)
+	ctx, cancel := context.WithTimeout(t.Context(), 14*time.Second)
+	defer cancel()
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err = blocker.Exec(ctx, `LOCK hosting_operations IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	stop, err := f.pg.StartHostingExecution(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := false
+	defer func() {
+		if !stopped {
+			stopCtx, done := context.WithTimeout(context.Background(), 3*time.Second)
+			defer done()
+			_ = stop(stopCtx)
+		}
+	}()
+	waitObservationBlock(t, ctx, observationFixture{db: f.db}, blocker.Conn().PgConn().PID(), "RecoverQueuedHostingOperations")
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var exists bool
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_runtime_log_sessions WHERE id=$1)`, session.ID).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("purge inherited failed recovery context", ctx.Err())
+		case <-tick.C:
+		}
+	}
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stopCtx, stopCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer stopCancel()
+	if err = stop(stopCtx); err != nil {
+		t.Fatal(err)
+	}
+	stopped = true
+	next := f.open(t, 2)
+	f.exec(t, `UPDATE hosting_runtime_log_sessions SET purge_after=clock_timestamp()-interval '1 second' WHERE id=$1`, next.ID)
+	timer := time.NewTimer(5100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	var exists bool
+	if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_runtime_log_sessions WHERE id=$1)`, next.ID).Scan(&exists); err != nil || !exists {
+		t.Fatal("janitor survived stop", exists, err)
+	}
+}

@@ -4,6 +4,126 @@
  */
 
 export interface paths {
+    "/api/v1/resources/{id}/runtime-log-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * openRuntimeLogSession
+         * @description Opt-in sensitive runtime output bound to the session actor and immutable settled target. Current viewer and original destination grant, runner credential and enrollment remain required. Demand30s, collector lease10s, retention5min after end or demand expiry. Source gaps and server accepted-order sequence do not promise exactly-once Docker capture. New requests recheck cookie validity; admitted background demand can remain for at most30s after cookie revocation. Request deadlines are frozen across open retries.
+         */
+        post: operations["openRuntimeLogSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runtime-log-sessions/{id}/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * renewRuntimeLogSession
+         * @description Opt-in sensitive runtime output bound to the session actor and immutable settled target. Current viewer and original destination grant, runner credential and enrollment remain required. Demand30s, collector lease10s, retention5min after end or demand expiry. Source gaps and server accepted-order sequence do not promise exactly-once Docker capture. New requests recheck cookie validity; admitted background demand can remain for at most30s after cookie revocation. Request deadlines are frozen across open retries.
+         */
+        post: operations["renewRuntimeLogSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runtime-log-sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * closeRuntimeLogSession
+         * @description Opt-in sensitive runtime output bound to the session actor and immutable settled target. Current viewer and original destination grant, runner credential and enrollment remain required. Demand30s, collector lease10s, retention5min after end or demand expiry. Source gaps and server accepted-order sequence do not promise exactly-once Docker capture. New requests recheck cookie validity; admitted background demand can remain for at most30s after cookie revocation. Request deadlines are frozen across open retries.
+         */
+        delete: operations["closeRuntimeLogSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runtime-log-sessions/{id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * runtimeLogPage
+         * @description Opt-in sensitive runtime output bound to the session actor and immutable settled target. Current viewer and original destination grant, runner credential and enrollment remain required. Demand30s, collector lease10s, retention5min after end or demand expiry. Source gaps and server accepted-order sequence do not promise exactly-once Docker capture. New requests recheck cookie validity; admitted background demand can remain for at most30s after cookie revocation. Request deadlines are frozen across open retries.
+         */
+        get: operations["runtimeLogPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/runtime-log-sessions/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * claimRuntimeLogSessions
+         * @description Opt-in sensitive runtime output bound to the session actor and immutable settled target. Current viewer and original destination grant, runner credential and enrollment remain required. Demand30s, collector lease10s, retention5min after end or demand expiry. Source gaps and server accepted-order sequence do not promise exactly-once Docker capture. New requests recheck cookie validity; admitted background demand can remain for at most30s after cookie revocation. Request deadlines are frozen across open retries.
+         */
+        post: operations["claimRuntimeLogSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/runtime-log-sessions/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * appendRuntimeLogs
+         * @description Opt-in sensitive runtime output bound to the session actor and immutable settled target. Current viewer and original destination grant, runner credential and enrollment remain required. Demand30s, collector lease10s, retention5min after end or demand expiry. Source gaps and server accepted-order sequence do not promise exactly-once Docker capture. New requests recheck cookie validity; admitted background demand can remain for at most30s after cookie revocation. Request deadlines are frozen across open retries.
+         */
+        post: operations["appendRuntimeLogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting-observations/targets": {
         parameters: {
             query?: never;
@@ -2436,6 +2556,132 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingRuntimeLogOpen: {
+            request_id: string;
+            /** Format: date-time */
+            request_expires_at: string;
+        };
+        HostingRuntimeLogTarget: {
+            resource_id: string;
+            binding_id: string;
+            destination_id: string;
+            server_id: string;
+            runner_id: string;
+            operation_id: string;
+            daemon_id: string;
+            container_id: string;
+            image_id: string;
+            release_hash: string;
+            plan_hash: string;
+            runtime_namespace: string;
+        };
+        HostingRuntimeLogSession: {
+            id: string;
+            request_id: string;
+            resource_id: string;
+            project_id: string;
+            actor_id: string;
+            target: components["schemas"]["HostingRuntimeLogTarget"];
+            /** @enum {string} */
+            state: "waiting" | "following" | "disconnected" | "ended" | "target_changed" | "authority_unavailable" | "unsupported_driver";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            demand_expires_at: string;
+            /** Format: date-time */
+            ended_at: string | null;
+            /** Format: date-time */
+            purge_after: string;
+            /** Format: date-time */
+            server_time: string;
+            /** @enum {boolean} */
+            sensitive: true;
+        };
+        HostingRuntimeLogClaimInput: {
+            instance_id: string;
+            after_session_id: string;
+            limit: number;
+        };
+        /** @description Batch sequence increases for every accepted batch, including empty batches, independently of event sequence; it survives epoch replacement. Exact latest retries retain their original acknowledgment. Counter exhaustion fails closed. */
+        HostingRuntimeLogClaim: {
+            session_id: string;
+            instance_id: string;
+            collection_epoch: string;
+            /** Format: date-time */
+            epoch_expires_at: string;
+            /** Format: date-time */
+            demand_expires_at: string;
+            target: components["schemas"]["HostingRuntimeLogTarget"];
+            next_sequence: number;
+            next_batch_sequence: number;
+        };
+        HostingRuntimeLogClaims: {
+            targets: components["schemas"]["HostingRuntimeLogClaim"][];
+            next_cursor: string;
+            end_of_sweep: boolean;
+        };
+        HostingRuntimeLogEvent: {
+            /** @enum {string} */
+            component: "application";
+            /** @enum {string} */
+            stream: "stdout" | "stderr" | "combined";
+            /** @description Sensitive UTF-8 application output, at most16KiB encoded bytes. Known runner bearer redaction is defense in depth; arbitrary application secrets may remain. */
+            message: string;
+            /** Format: date-time */
+            source_timestamp?: string;
+            message_truncated?: boolean;
+        };
+        /** @description Batch sequence increases for every accepted batch, including empty batches, independently of event sequence; it survives epoch replacement. Exact latest retries retain their original acknowledgment. Counter exhaustion fails closed. */
+        HostingRuntimeLogBatch: {
+            session_id: string;
+            instance_id: string;
+            collection_epoch: string;
+            batch_id: string;
+            expected_sequence: number;
+            events: components["schemas"]["HostingRuntimeLogEvent"][];
+            /** @enum {string} */
+            state: "following" | "disconnected" | "unsupported_driver";
+            batch_sequence: number;
+        };
+        /** @description Batch sequence increases for every accepted batch, including empty batches, independently of event sequence; it survives epoch replacement. Exact latest retries retain their original acknowledgment. Counter exhaustion fails closed. */
+        HostingRuntimeLogAck: {
+            session_id: string;
+            instance_id: string;
+            collection_epoch: string;
+            batch_id: string;
+            body_hash: string;
+            first_sequence: number;
+            last_sequence: number;
+            /** Format: date-time */
+            received_at: string;
+            batch_sequence: number;
+        };
+        HostingRuntimeLogItem: {
+            sequence: number;
+            /** Format: date-time */
+            received_at: string;
+            /** @enum {string} */
+            component: "application";
+            /** @enum {string} */
+            stream: "stdout" | "stderr" | "combined";
+            /** @description Sensitive UTF-8 application output, at most16KiB encoded bytes. Known runner bearer redaction is defense in depth; arbitrary application secrets may remain. */
+            message: string;
+            /** Format: date-time */
+            source_timestamp?: string;
+            message_truncated?: boolean;
+        };
+        HostingRuntimeLogPage: {
+            session: components["schemas"]["HostingRuntimeLogSession"];
+            items: components["schemas"]["HostingRuntimeLogItem"][];
+            next_sequence: number;
+            earliest_available_sequence: number;
+            deleted_through_sequence: number;
+            gap: boolean;
+            truncated: boolean;
+            markers: ("source_gap" | "prefix_evicted")[];
+            /** @enum {boolean} */
+            sensitive: true;
+        };
         HostingObservationTargetsInput: {
             after_binding_id?: string;
             limit: number;
@@ -4597,6 +4843,205 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    openRuntimeLogSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRuntimeLogOpen"];
+            };
+        };
+        responses: {
+            /** @description Bounded sensitive runtime result with Cache-Control:no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeLogSession"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    renewRuntimeLogSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Bounded sensitive runtime result with Cache-Control:no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeLogSession"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    closeRuntimeLogSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Bounded sensitive runtime result with Cache-Control:no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeLogSession"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runtimeLogPage: {
+        parameters: {
+            query?: {
+                after_sequence?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded sensitive runtime result with Cache-Control:no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeLogPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    claimRuntimeLogSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRuntimeLogClaimInput"];
+            };
+        };
+        responses: {
+            /** @description Bounded sensitive runtime result with Cache-Control:no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeLogClaims"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    appendRuntimeLogs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRuntimeLogBatch"];
+            };
+        };
+        responses: {
+            /** @description Bounded sensitive runtime result with Cache-Control:no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeLogAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     hostingObservationTargets: {
         parameters: {
             query?: never;
