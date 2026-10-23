@@ -6,6 +6,11 @@ Run from the repository root with a clean committed checkout:
 bash acceptance/runtime-hosting-auto-deploy/gate.sh
 ```
 
+An optional `NEROCD_AUTO_DEPLOY_BUILDX_FILE` supplies a previously downloaded
+Buildx binary. The gate copies it into owned evidence and still requires the
+exact pinned native architecture checksum before execution. It never changes
+the source file.
+
 The gate compiles the actual CLI and API integration test for the Docker host's
 native Linux architecture. It records the Git commit/tree/source blobs and
 binary hashes under the printed `/tmp/nerocd-auto-deploy-runtime.*` directory.
@@ -26,7 +31,12 @@ then verify and load the HTTPS switch. It independently verifies fixture-CA TLS,
 exact artifact/container identity, and the unrelated route. A lost committed
 proxy-completion response and agent restart must preserve immutable receipts and
 operation IDs. Source C executes `RUN false` and produces no artifact or deploy;
-source D builds a 503 workload and must never switch. Both preserve B's HTTPS.
+source D builds a 503 workload and must never switch. Both preserve B's HTTPS. Duplicate B and delayed A deliveries do not replace B.
+C's durably acknowledged failure must allow D to execute on the same running
+agent PID, with no intervening restart. A final fixed first-apply barrier accepts
+a B operation, records a newer signed C desired revision before admission, and
+requires HTTP 409, no mutation receipt/hold, no actual Docker candidate, and
+preserved B/unrelated HTTPS.
 
 Git retains its exact `https://github.com/acme/push-fixture.git` origin and normal
 end-to-end TLS verification against the owned Git CA. A fixed bounded test-only

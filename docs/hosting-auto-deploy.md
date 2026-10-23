@@ -91,3 +91,24 @@ Rollback, failed readiness, or uncertain proxy state cannot produce automatic HT
 Database fixtures exercise authorization, transactions, replay, expiry after lock waits, supersession, and recovery. Their receipt metadata does not prove real Docker execution or TLS issuance.
 
 Usable automatic hosting additionally requires the compiled Linux agent, registered API, and UI journey to agree on the same reviewed configuration. Local fixture-CA HTTPS does not qualify production ACME, public DNS, or a live GitHub installation. This policy adds no workspace infrastructure or SSH onboarding.
+
+## Settled build failure and runtime qualification
+
+A continuous runner continues after a failed build only when the exact server
+completion acknowledgment has been validated and its local journal completion
+has been durably acknowledged. Once mode still returns the failed outcome.
+Authority loss, cancellation, missing or mismatched acknowledgments, output or
+cleanup uncertainty, and journal failures remain fatal and retain unresolved
+state. This does not retry the failed source or reset its automatic demand.
+
+The opt-in gate is `bash acceptance/runtime-hosting-auto-deploy/gate.sh`. It
+records a clean committed source identity and compiled binary hashes before
+running normal API enrollment/bootstrap, signed fixed-provider pushes, the real
+compiled Linux agent, and independent fixture-CA HTTPS probes. Its bounded cases
+cover B with unrelated-route preservation, duplicate/delayed deliveries, C's
+source-owned compiler failure, D's readiness failure, committed response loss,
+agent restart, and desired supersession before the first host mutation. The
+fixture uses a fixed test-only Git CONNECT bridge while retaining original
+origin and TLS verification. These are local trusted fixtures, not live-provider,
+browser HTTPS, public ACME, or complete hosting-parity evidence. The gate must
+pass at the final candidate before these cases are considered qualified.

@@ -62,7 +62,12 @@ case "$arch" in
  amd64|x86_64) goarch=amd64; buildx_sha=e25d5cd675092bb5d1d03632fdc46cdf3fede7b514dc5f023a105e00d3ce5ad4;;
  *) echo 'unsupported native Docker architecture' >&2; exit 1;;
 esac
-curl --fail --silent --show-error --location "https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-$goarch" --output "$evidence/buildx"
+if [[ -n ${NEROCD_AUTO_DEPLOY_BUILDX_FILE:-} ]]; then
+ test -f "$NEROCD_AUTO_DEPLOY_BUILDX_FILE"
+ cp "$NEROCD_AUTO_DEPLOY_BUILDX_FILE" "$evidence/buildx"
+else
+ curl --fail --silent --show-error --location "https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-$goarch" --output "$evidence/buildx"
+fi
 printf '%s  %s\n' "$buildx_sha" "$evidence/buildx" | shasum -a 256 --check
 chmod 0755 "$evidence/buildx"
 GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -tags nerocd_proxy_fixture -c -o "$evidence/api.test" ./internal/api

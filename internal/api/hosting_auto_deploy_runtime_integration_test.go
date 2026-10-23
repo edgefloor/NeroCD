@@ -352,6 +352,11 @@ func automaticRuntimeGit(t *testing.T) ([4]string, func(int)) {
 	return commits, func(i int) { run(bare, "update-ref", "refs/heads/main", commits[i]) }
 }
 
+type automaticApplyBarrier struct {
+	entered, release, finished chan struct{}
+	status                     atomic.Int32
+}
+
 type automaticRuntimeFixture struct {
 	Control                                                      *pushHTTPFixture
 	Commits                                                      [4]string
@@ -365,6 +370,7 @@ type automaticRuntimeFixture struct {
 	roots                                                        *x509.CertPool
 	lost                                                         atomic.Bool
 	lostCount                                                    atomic.Int32
+	applyBarrier                                                 atomic.Pointer[automaticApplyBarrier]
 	bootstrap                                                    domain.HostingOperation
 	unrelated                                                    domain.Resource
 }
@@ -444,6 +450,26 @@ func newAutomaticRuntimeFixture(t *testing.T) *automaticRuntimeFixture {
 	}
 	out := &automaticRuntimeFixture{Control: f, Commits: commits, move: move, t: t, ctx: ctx, root: root, logs: &runtimeFixtureLog{}, roots: roots, unrelated: unrelated, buildConfig: filepath.Join(root, "build.json"), credential: filepath.Join(root, "credential"), apiCA: filepath.Join(root, "api-ca.pem"), proxyRoots: filepath.Join(root, "proxy-roots.pem"), proxyState: filepath.Join(root, "proxy")}
 	out.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runners/hosting/apply-begin" {
+			if barrier := out.applyBarrier.Swap(nil); barrier != nil {
+				close(barrier.entered)
+				defer close(barrier.finished)
+				select {
+				case <-barrier.release:
+				case <-r.Context().Done():
+					return
+				}
+				recorded := httptest.NewRecorder()
+				f.api.ServeHTTP(recorded, r)
+				barrier.status.Store(int32(recorded.Code))
+				for key, values := range recorded.Header() {
+					w.Header()[key] = append([]string(nil), values...)
+				}
+				w.WriteHeader(recorded.Code)
+				_, _ = w.Write(recorded.Body.Bytes())
+				return
+			}
+		}
 		if r.URL.Path == "/api/v1/runners/proxy/complete" && out.lost.CompareAndSwap(true, false) {
 			recorded := httptest.NewRecorder()
 			f.api.ServeHTTP(recorded, r)
@@ -768,6 +794,16 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 	if err = control.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_proxy_receipts WHERE operation_id=$1 AND phase='complete'`, status.SwitchOperationID).Scan(&receipts); err != nil || receipts != 1 {
 		t.Fatal("completion response loss duplicated immutable receipt", receipts, err)
 	}
+	// Delivery order cannot replace current B with a duplicate or delayed A.
+	control.push(current, 214, f.Commits[1])
+	control.delivery(214, "coalesced")
+	control.push(current, 215, f.Commits[0])
+	control.delivery(215, "ignored")
+	unchanged := f.AwaitDemand("succeeded")
+	if unchanged.DeploymentOperationID != status.DeploymentOperationID || unchanged.SwitchOperationID != status.SwitchOperationID {
+		t.Fatal("duplicate or delayed push replaced B")
+	}
+	continuousPID := f.process.command.Process.Pid
 	f.SignedPush(211, 2)
 	c := f.AwaitBuild(f.Commits[2], "failed")
 	failed := f.AwaitDemand("failed")
@@ -793,6 +829,10 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 	f.SignedPush(212, 3)
 	f.AwaitBuild(f.Commits[3], "succeeded")
 	readiness := f.AwaitDemand("failed")
+	if f.process == nil || f.process.command.Process.Pid != continuousPID {
+		t.Fatal("C to D required a different runner process")
+	}
+	t.Logf("settled failed C followed by real D build/deployment on same running PID=%d", continuousPID)
 	if readiness.Reason != "deployment_failed" || readiness.DesiredCommit != f.Commits[3] {
 		t.Fatal("503 candidate did not fail workload readiness", readiness.Reason)
 	}
@@ -800,6 +840,70 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 		t.Fatal("readiness failure admitted switch", receipts, err)
 	}
 	f.ProbeHTTPS("push fixture B\n")
+	// Pause one accepted operation before its first API mutation admission. The
+	// fixed signed newer desired revision must retire it without Docker effects.
+	barrier := &automaticApplyBarrier{entered: make(chan struct{}), release: make(chan struct{}), finished: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(barrier.release) }) }
+	defer release()
+	f.applyBarrier.Store(barrier)
+	// A readiness failure may terminate the bare CLI; explicit process recovery
+	// is separately checked below before requesting another fixed revision.
+	if err = f.StopRunner(); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.StartRunner(); err != nil {
+		t.Fatal(err)
+	}
+	f.SignedPush(216, 1)
+	select {
+	case <-barrier.entered:
+	case <-time.After(4 * time.Minute):
+		t.Fatal("actual accepted automatic apply did not reach first-mutation barrier")
+	}
+	var pending domain.GitHubPushPolicy
+	control.request(http.MethodGet, path, control.owner, nil, http.StatusOK, &pending)
+	if pending.AutomaticDeployment == nil || pending.AutomaticDeployment.DesiredCommit != f.Commits[1] || pending.AutomaticDeployment.DeploymentOperationID == "" {
+		t.Fatal("barrier did not bind an accepted exact B automatic operation")
+	}
+	blockedID := pending.AutomaticDeployment.DeploymentOperationID
+	f.SignedPush(217, 2)
+	until := time.Now().Add(3 * time.Second)
+	for {
+		var latest domain.GitHubPushPolicy
+		control.request(http.MethodGet, path, control.owner, nil, http.StatusOK, &latest)
+		if latest.DesiredCommit == f.Commits[2] && latest.AutomaticDeployment != nil && latest.AutomaticDeployment.DesiredCommit == f.Commits[2] {
+			break
+		}
+		if time.Now().After(until) {
+			t.Fatal("newer signed desired revision was not durably accepted")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	release()
+	select {
+	case <-barrier.finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("superseded first-mutation request did not finish")
+	}
+	if barrier.status.Load() != http.StatusConflict {
+		t.Fatal("superseded first mutation was not denied", barrier.status.Load())
+	}
+	if err = control.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_apply_admissions WHERE operation_id=$1`, blockedID).Scan(&receipts); err != nil || receipts != 0 {
+		t.Fatal("superseded operation obtained a Docker mutation admission", receipts, err)
+	}
+	blocked, err := control.pg.GetHostingOperation(f.ctx, blockedID)
+	if err != nil || blocked.MutationHold || blocked.Result != nil {
+		t.Fatal("superseded operation retained host effects", err)
+	}
+	// Check real Docker, not only stored status: the exact previously serving B
+	// remains the sole container for its image; no new candidate was created.
+	containers, err := exec.CommandContext(f.ctx, "/usr/local/bin/docker", "ps", "-aq", "--no-trunc", "--filter", "ancestor="+b.Artifact.ImageID).Output()
+	if err != nil || strings.TrimSpace(string(containers)) != deployment.Result.ContainerID {
+		t.Fatal("superseded apply changed actual B containers", err)
+	}
+	f.ProbeHTTPS("push fixture B\n")
+	t.Logf("actual first-mutation denial: operation=%s HTTP409 no apply admission, no hold or Docker candidate; original B and unrelated HTTPS preserved", blockedID)
 	mode, err := os.Stat(f.credential)
 	if err != nil || mode.Mode().Perm() != 0600 {
 		t.Fatal("owned credential mode changed", err)
