@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Explicit guards are required: callers deliberately invoke cleanup under ||.
+remove_owned() {
+ local kind=$1 id=$2 name=$3 identity remaining
+ [[ -n "$id" && -n "$name" && -n "$owner" ]] || return 1
+ case "$kind" in
+ container)
+  if ! identity=$(docker container inspect --format "{{.Id}} {{.Name}} {{index .Config.Labels \"$label\"}}" "$id"); then return 1; fi
+  [[ "$identity" == "$id /$name $owner" ]] || return 1
+  docker container rm --force --volumes "$id" >/dev/null || return 1
+  remaining=$(docker container ls --all --quiet --no-trunc --filter "id=$id") || return 1
+  ;;
+ volume|network)
+  if [[ "$kind" == volume ]]; then
+   identity=$(docker volume inspect --format "{{.Name}} {{index .Labels \"$label\"}}" "$id") || return 1
+   [[ "$id" == "$name" && "$identity" == "$name $owner" ]] || return 1
+  else
+   identity=$(docker network inspect --format "{{.Id}} {{.Name}} {{index .Labels \"$label\"}}" "$id") || return 1
+   [[ "$identity" == "$id $name $owner" ]] || return 1
+  fi
+  docker "$kind" rm "$id" >/dev/null || return 1
+  remaining=$(docker "$kind" ls --quiet --filter "name=^$name$") || return 1
+  ;;
+ image)
+  identity=$(docker image inspect --format "{{.Id}} {{index .Config.Labels \"$label\"}} {{join .RepoTags \",\"}}" "$id") || return 1
+  [[ "$identity" == "$id $owner $name:fixture" ]] || return 1
+  docker image rm "$id" >/dev/null || return 1
+  remaining=$(docker image ls --quiet --no-trunc --filter "label=$label=$owner") || return 1
+  ;;
+ *) return 1;;
+ esac
+ [[ -z "$remaining" ]] || return 1
+ printf 'removed owned %s id=%s name=%s; successful absence readback\n' "$kind" "$id" "$name"
+}
+
+# A failed create may have reached the daemon. Recover only the exact named,
+# labelled resource; never treat failed inspect as proof that it is absent.
+recover_owned() {
+ local kind=$1 name=$2 identity
+ case "$kind" in
+ container) identity=$(docker container inspect --format "{{.Id}} {{.Name}} {{index .Config.Labels \"$label\"}}" "$name") || return 1
+  [[ "$identity" == *" /$name $owner" ]] || return 1;;
+ network) identity=$(docker network inspect --format "{{.Id}} {{.Name}} {{index .Labels \"$label\"}}" "$name") || return 1
+  [[ "$identity" == *" $name $owner" ]] || return 1;;
+ volume) identity=$(docker volume inspect --format "{{.Name}} {{index .Labels \"$label\"}}" "$name") || return 1
+  [[ "$identity" == "$name $owner" ]] || return 1;;
+ *) return 1;;
+ esac
+ printf '%s\n' "${identity%% *}"
+}
+
+main() {
+ image_id=''; container_id=''; network_id=''; volume_id=''; relay_pid=''; result=0
+ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+ work=$(mktemp -d /tmp/nerocd-server-bootstrap.XXXXXXXX)
+ chmod 0700 "$work"
+ # macOS launch environments may deny Bash heredoc files in inherited TMPDIR.
+ export TMPDIR="$work"
+ owner=$(basename "$work" | tr '[:upper:]' '[:lower:]')
+ label=io.nerocd.server-bootstrap.owner
+ evidence="$root/.cache/$owner"
+ mkdir -p "$evidence"
+ donor='docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489'
+ cleanup() {
+  result=$?; trap - EXIT HUP INT TERM
+  if [[ -n "$relay_pid" ]]; then
+   kill -TERM "$relay_pid" 2>/dev/null || true
+   wait "$relay_pid" || result=1
+   cat "$evidence/relay.log"
+  fi
+  if [[ -n "$container_id" ]]; then remove_owned container "$container_id" "$owner" || result=1; fi
+  if [[ -n "$volume_id" ]]; then remove_owned volume "$volume_id" "$owner-data" || result=1; fi
+  if [[ -n "$network_id" ]]; then remove_owned network "$network_id" "$owner-net" || result=1; fi
+  if [[ -n "$image_id" ]]; then remove_owned image "$image_id" "$owner" || result=1; fi
+  rm -rf -- "$work"
+  printf 'fixture cleanup exit=%s evidence=%s\n' "$result" "$evidence"
+  exit "$result"
+ }
+ trap cleanup EXIT
+ trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+ exec > >(tee "$evidence/qualification.log") 2>&1
+ printf 'fixture-only source=%s owner=%s label=%s\n' "$(git -C "$root" rev-parse HEAD)" "$owner" "$label"
+ shasum -a 256 "$root"/acceptance/runtime-server-bootstrap/* >"$evidence/source-sha256.txt"
+ docker version --format 'host Docker={{.Server.Version}} API={{.Server.APIVersion}} arch={{.Server.Arch}}'
+ for key in host client wrong-client wrong-host; do ssh-keygen -q -t ed25519 -N '' -f "$work/$key"; done
+ docker build --label "$label=$owner" --tag "$owner:fixture" "$root/acceptance/runtime-server-bootstrap"
+ image_id=$(docker image inspect --format '{{.Id}}' "$owner:fixture")
+ # The donor is the pinned native sentinel, saved before runtime isolation.
+ docker pull "$donor"
+ donor_arch=$(docker image inspect --format '{{.Architecture}}' "$donor")
+ [[ "$donor_arch" == arm64 || "$donor_arch" == amd64 ]]
+ docker save --platform "linux/$donor_arch" --output "$work/sentinel.tar" "$donor"
+ donor_id=$(python3 -B "$root/acceptance/runtime-server-bootstrap/sentinel-config.py" "$work/sentinel.tar" "$donor_arch")
+ [[ "$donor_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+ printf 'pinned sentinel source=%s native_arch=%s config_id=%s\n' "$donor" "$donor_arch" "$donor_id"
+ if ! network_id=$(docker network create --internal --label "$label=$owner" "$owner-net"); then
+  network_id=$(recover_owned network "$owner-net") || return 1
+  return 1
+ fi
+ if ! volume_id=$(docker volume create --label "$label=$owner" "$owner-data"); then
+  volume_id=$(recover_owned volume "$owner-data") || return 1
+  return 1
+ fi
+ if ! container_id=$(docker create --name "$owner" --label "$label=$owner" --network "$network_id" --cgroupns=private --cap-add SYS_ADMIN --cap-add NET_ADMIN --security-opt seccomp=unconfined --tmpfs /run --tmpfs /run/lock --mount "type=volume,src=$volume_id,dst=/var/lib/docker" "$owner:fixture"); then
+  container_id=$(recover_owned container "$owner") || return 1
+  return 1
+ fi
+ docker inspect "$container_id" >"$evidence/container-inspect.json"
+ printf 'owned image=%s container=%s network=%s volume=%s\n' "$image_id" "$container_id" "$network_id" "$volume_id"
+ python3 "$root/acceptance/runtime-server-bootstrap/check-isolation.py" "$evidence/container-inspect.json" "$volume_id"
+ docker network inspect "$network_id" >"$evidence/network-inspect.json"
+ python3 -c 'import json,sys; n=json.load(open(sys.argv[1]))[0]; assert n["Id"] == sys.argv[2] and n["Internal"] and n["Driver"] == "bridge"; assert n["Labels"]["io.nerocd.server-bootstrap.owner"] == sys.argv[3]' "$evidence/network-inspect.json" "$network_id" "$owner"
+ docker volume inspect "$volume_id" >"$evidence/volume-inspect.json"
+ docker cp "$work/host" "$container_id:/fixture/host"
+ docker cp "$work/client.pub" "$container_id:/root/.ssh/authorized_keys"
+ docker cp "$work/sentinel.tar" "$container_id:/fixture/sentinel.tar"
+ docker start "$container_id" >/dev/null
+ local ready=false
+ for _ in $(seq 1 40); do
+  if [[ $(docker inspect --format '{{.State.Running}}' "$container_id") != true ]]; then break; fi
+  if docker exec "$container_id" systemctl is-active --quiet ssh && docker exec "$container_id" systemctl is-active --quiet fixture-docker && docker exec "$container_id" systemctl is-active --quiet fixture-sentinel && docker exec "$container_id" docker info >/dev/null 2>&1; then ready=true; break; fi
+  sleep 1
+ done
+ docker logs "$container_id" >"$evidence/boot.log" 2>&1
+ if [[ "$ready" != true ]]; then
+  cat "$evidence/boot.log"
+  docker exec "$container_id" journalctl --unit fixture-docker --unit ssh --no-pager >"$evidence/service-journal.log" || true
+  cat "$evidence/service-journal.log"
+  echo 'BLOCKED: real systemd/sshd/private Docker did not become ready under frozen isolation'
+  return 1
+ fi
+ local address port fingerprint
+ python3 -B "$root/acceptance/runtime-server-bootstrap/relay.py" "$container_id" "$owner" "$work/relay-port" >"$evidence/relay.log" 2>&1 &
+ relay_pid=$!
+ for _ in $(seq 1 50); do
+  if [[ -s "$work/relay-port" ]]; then break; fi
+  kill -0 "$relay_pid" || return 1
+  sleep 0.1
+ done
+ port=$(cat "$work/relay-port")
+ [[ "$port" =~ ^[0-9]+$ ]]
+ address="127.0.0.1:$port"
+ printf 'owned relay pid=%s transport=fixture-Docker-exec-TCP endpoint=%s\n' "$relay_pid" "$address"
+ fingerprint=$(ssh-keygen -lf "$work/host.pub" -E sha256 | awk '{print $2}')
+ printf 'SSH endpoint=%s independently pinned host fingerprint=%s\n' "$address" "$fingerprint"
+ printf '[127.0.0.1]:%s %s\n' "$port" "$(cat "$work/host.pub")" >"$work/known_hosts"
+ printf '[127.0.0.1]:%s %s\n' "$port" "$(cat "$work/wrong-host.pub")" >"$work/wrong_known_hosts"
+ local ssh_options=(-F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=5 -p "$port")
+ if ssh -vv "${ssh_options[@]}" -o "UserKnownHostsFile=$work/wrong_known_hosts" -i "$work/client" root@127.0.0.1 true >"$work/wrong-host.log" 2>&1; then echo 'wrong host accepted'; return 1; fi
+ grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED' "$work/wrong-host.log"
+ if grep -q 'Offering public key' "$work/wrong-host.log"; then echo 'client key offered before host verification'; return 1; fi
+ printf 'wrong host key rejected before client key offer\n'
+ sed "s|$work|<ephemeral-key-directory>|g" "$work/wrong-host.log" >"$evidence/wrong-host.log"
+ if ssh "${ssh_options[@]}" -o "UserKnownHostsFile=$work/known_hosts" -i "$work/wrong-client" root@127.0.0.1 true >"$work/wrong-client.log" 2>&1; then echo 'wrong client accepted'; return 1; fi
+ grep -q 'Permission denied (publickey)' "$work/wrong-client.log"
+ printf 'wrong client key rejected\n'
+ cp "$work/wrong-client.log" "$evidence/wrong-client.log"
+ if ! ssh "${ssh_options[@]}" -o "UserKnownHostsFile=$work/known_hosts" -i "$work/client" root@127.0.0.1 "bash -se -- $donor_id" <"$root/acceptance/runtime-server-bootstrap/remote-check.sh"; then
+  docker exec "$container_id" journalctl --unit ssh --no-pager >"$evidence/ssh-journal.log" || true
+  cat "$evidence/ssh-journal.log"
+  return 1
+ fi
+ docker cp "$container_id:/fixture-packages.txt" "$evidence/packages.txt"
+ printf 'PASS: native fixture SSH/systemd/private Docker qualification only\n'
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
