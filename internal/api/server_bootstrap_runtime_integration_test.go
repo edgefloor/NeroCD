@@ -510,7 +510,7 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	}
 	// A transparent byte forwarder delays server chunks after a substantial
 	// upload. Window adjustments still pass. The peer remains real OpenSSH.
-	proxyPort, closeProxy := bootstrapRuntimeSSHResponseLoss(t, int64(len(artifact)))
+	proxyPort, dropProxyConnections, closeProxy := bootstrapRuntimeTCPForwarder(t, "127.0.0.1:22", int64(len(artifact)))
 	defer closeProxy()
 	lossInput := input
 	lossInput.RequestID = uuid()
@@ -561,6 +561,9 @@ func TestServerBootstrapRuntime(t *testing.T) {
 		}
 	}
 	t.Logf("exact owned installation active before interruption; InvocationID=%s; controller install receipt still pending", installed.InvocationID)
+	// Lose the real SSH response before gracefully draining River. Keep the
+	// listener and target identity available for subsequent owned inspection.
+	dropProxyConnections()
 	stopExecution()
 	end, finish := context.WithTimeout(context.Background(), 10*time.Second)
 	if e = stop(end); e != nil {
@@ -605,6 +608,12 @@ func bootstrapRuntimeSSHResponseLoss(t *testing.T, transferSize int64) (int, fun
 
 func bootstrapRuntimeTCPResponseLoss(t *testing.T, destination string, transferSize int64) (int, func()) {
 	t.Helper()
+	port, _, closeProxy := bootstrapRuntimeTCPForwarder(t, destination, transferSize)
+	return port, closeProxy
+}
+
+func bootstrapRuntimeTCPForwarder(t *testing.T, destination string, transferSize int64) (int, func(), func()) {
+	t.Helper()
 	host, _, e := net.SplitHostPort(destination)
 	if e != nil || host != "127.0.0.1" || transferSize < 1 {
 		t.Fatal("fixed loopback destination and positive transfer bound required")
@@ -615,6 +624,8 @@ func bootstrapRuntimeTCPResponseLoss(t *testing.T, destination string, transferS
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	var group sync.WaitGroup
+	var activeMu sync.Mutex
+	active := make(map[net.Conn]chan struct{})
 	slots := make(chan struct{}, 4)
 	group.Add(1)
 	go func() {
@@ -631,8 +642,18 @@ func bootstrapRuntimeTCPResponseLoss(t *testing.T, destination string, transferS
 				continue
 			}
 			group.Add(1)
+			joined := make(chan struct{})
+			activeMu.Lock()
+			active[client] = joined
+			activeMu.Unlock()
 			go func() {
 				defer group.Done()
+				defer func() {
+					activeMu.Lock()
+					delete(active, client)
+					activeMu.Unlock()
+					close(joined)
+				}()
 				defer func() { <-slots }()
 				defer client.Close()
 				peer, e := net.DialTimeout("tcp4", destination, 2*time.Second)
@@ -709,8 +730,29 @@ func bootstrapRuntimeTCPResponseLoss(t *testing.T, destination string, transferS
 			}()
 		}
 	}()
+	dropConnections := func() {
+		activeMu.Lock()
+		joined := make([]chan struct{}, 0, len(active))
+		for connection, done := range active {
+			_ = connection.Close()
+			joined = append(joined, done)
+		}
+		activeMu.Unlock()
+		if len(joined) == 0 {
+			t.Fatal("response loss requires an active owned SSH transport")
+		}
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		for _, done := range joined {
+			select {
+			case <-done:
+			case <-deadline.C:
+				t.Fatal("fixture SSH connections did not join after response loss")
+			}
+		}
+	}
 	var once sync.Once
-	return listener.Addr().(*net.TCPAddr).Port, func() {
+	return listener.Addr().(*net.TCPAddr).Port, dropConnections, func() {
 		once.Do(func() {
 			cancel()
 			_ = listener.Close()
@@ -750,15 +792,17 @@ func TestServerBootstrapRuntimeForwarderJoins(t *testing.T) {
 	peerDone := make(chan struct{})
 	go func() {
 		defer close(peerDone)
-		connection, e := listener.Accept()
-		if e != nil {
-			return
+		for range 2 {
+			connection, e := listener.Accept()
+			if e != nil {
+				return
+			}
+			_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
+			_, _ = io.Copy(connection, connection)
+			_ = connection.Close()
 		}
-		defer connection.Close()
-		_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
-		_, _ = io.Copy(connection, connection)
 	}()
-	port, closeProxy := bootstrapRuntimeTCPResponseLoss(t, listener.Addr().String(), 8)
+	port, dropConnections, closeProxy := bootstrapRuntimeTCPForwarder(t, listener.Addr().String(), 8)
 	defer closeProxy()
 	client, e := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
 	if e != nil {
@@ -791,6 +835,23 @@ func TestServerBootstrapRuntimeForwarderJoins(t *testing.T) {
 	_ = client.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 	if _, e = client.Read(buffer); e == nil {
 		t.Fatal("second response was not delayed before cancellation")
+	}
+	dropConnections()
+	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	if _, e = client.Read(buffer); e == nil {
+		t.Fatal("dropped SSH transport still delivered a response")
+	}
+	reconnected, e := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+	if e != nil {
+		t.Fatal("response loss closed the recovery listener", e)
+	}
+	defer reconnected.Close()
+	_ = reconnected.SetDeadline(time.Now().Add(time.Second))
+	if _, e = reconnected.Write([]byte("abc")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = io.ReadFull(reconnected, buffer); e != nil || string(buffer) != "abc" {
+		t.Fatalf("same-port recovery connection failed: %q %v", buffer, e)
 	}
 	closeProxy()
 	select {

@@ -143,7 +143,9 @@ All bytes, including SSH window adjustments, still pass unchanged. It never
 decrypts traffic, changes SSH identity, or substitutes a remote result.
 Independent exact ownership inspection must observe the active service while
 the controller's install receipt remains pending. Otherwise the test fails.
-The test then stops and joins the hosting execution loop.
+The test then drops and joins the active owned SSH transport, retaining the
+same bounded listener and target port for recovery. This loses the real pending
+response before the test gracefully stops and joins the hosting execution loop.
 The restarted execution loop recovers from the durable intent after real lease
 expiry. Exact manifest, remote operation and systemd InvocationID must survive
 inspection with the hold retained. This proves an execution lifecycle restart
