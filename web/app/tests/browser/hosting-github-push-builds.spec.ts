@@ -79,8 +79,8 @@ test("owner configures signed push builds, manually deploys B, and sees failed C
   expect(recorded.filter((item) => item.source_receipt?.commit === meta.expected_commit_b)).toHaveLength(1);
   expect(recorded.filter((item) => item.source_receipt?.commit === meta.expected_commit_a)).toHaveLength(initialACount);
   const deliveryHistory = await page.request.get(`${policyPath}/deliveries?limit=20`); expect(deliveryHistory.status()).toBe(200);
-  const delivered = (await deliveryHistory.json() as { items: Array<{ after_commit: string; verified_commit: string; state: string; build_id: string }> }).items;
-  const delayed = delivered.find((item) => item.after_commit === meta.expected_commit_a); expect(delayed).toBeTruthy(); expect(delayed!.state).toBe("coalesced"); expect(delayed!.verified_commit).toBe(meta.expected_commit_b); expect(delayed!.build_id).toBe(buildB);
+  const delivered = (await deliveryHistory.json() as { items: Array<{ after_commit: string; verified_commit: string; state: string; reason: string; build_id: string }> }).items;
+  const delayed = delivered.find((item) => item.after_commit === meta.expected_commit_a); expect(delayed).toBeTruthy(); expect(delayed!.state).toBe("ignored"); expect(delayed!.reason).toBe("obsolete"); expect(["", meta.expected_commit_b]).toContain(delayed!.verified_commit); expect(delayed!.build_id).toBe("");
   await panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true }).click();
   await expect(panel.getByRole("list", { name: "GitHub push deliveries", exact: true })).toContainText(meta.expected_commit_b);
   await article.getByRole("button", { name: "Refresh build history", exact: true }).click(); await article.getByRole("button", { name: `View build ${buildB}`, exact: true }).click();
