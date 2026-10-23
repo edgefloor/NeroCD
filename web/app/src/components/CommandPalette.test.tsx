@@ -7,7 +7,7 @@ vi.mock("@/components/ui/command", () => ({
     useLayoutEffect(() => { if (open) document.querySelector<HTMLInputElement>('input[aria-label="Search navigation"]')?.focus(); }, [open]);
     return open ? <div>{children}<button onClick={() => onCloseAutoFocus({ preventDefault: vi.fn() })}>Close palette fixture</button></div> : null;
   },
-  CommandInput: () => <input aria-label="Search navigation" />,
+  CommandInput: ({ value, onValueChange }: { value: string; onValueChange: (value: string) => void }) => <input aria-label="Search navigation" value={value} onChange={(event) => onValueChange(event.target.value)} />,
   CommandList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   CommandEmpty: () => null,
   CommandSeparator: () => <hr />,
@@ -37,4 +37,16 @@ test("palette closing returns focus to the element that opened it", () => {
   const trigger = screen.getByRole("button", { name: "Open palette fixture" }); fireEvent.pointerDown(trigger); trigger.focus();
   view.rerender(<><button>Open palette fixture</button><CommandPalette {...props} open /></>);
   const close = screen.getByRole("button", { name: "Close palette fixture" }); close.focus(); fireEvent.click(close); expect(document.activeElement).toBe(trigger);
+});
+
+
+test("each palette session starts with an empty search while its dialog shell keeps focus restoration", () => {
+  const props = { roles: [], onOpenChange: vi.fn(), snapshot: null, view: "runners" as const, setView: vi.fn(), theme: "dark" as const, toggleTheme: vi.fn(), onRefresh: vi.fn(), onSignOut: vi.fn(), onSearch: vi.fn() };
+  const view = render(<CommandPalette {...props} open />);
+  fireEvent.change(screen.getByRole("textbox", { name: "Search navigation" }), { target: { value: "servers" } });
+  expect(screen.getByRole("button", { name: 'Filter this page for "servers"' })).toBeTruthy();
+  view.rerender(<CommandPalette {...props} open={false} />);
+  view.rerender(<CommandPalette {...props} open />);
+  expect((screen.getByRole("textbox", { name: "Search navigation" }) as HTMLInputElement).value).toBe("");
+  expect(screen.queryByRole("button", { name: /Filter this page/ })).toBeNull();
 });

@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useMemo, useRef, useState } from "react";
 import { LoaderCircle, X } from "lucide-react";
 import { shouldPollRun, type RunLog, type TaskRun } from "@/api";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -47,24 +47,7 @@ export function TerminalLogDialog({
 }): ReactNode {
   const orderedLogs = useMemo(() => [...logs].sort((a, b) => a.sequence - b.sequence), [logs]);
   const openerRef = useRef<HTMLElement | null>(null);
-  const filterRef = useRef<HTMLInputElement | null>(null);
-  const [filter, setFilter] = useState("");
-  useEffect(() => setFilter(""), [run?.id, open]);
-  const filtering = Boolean(filter.trim());
-  const visibleLogs = useMemo(() => orderedLogs.filter((log) => matchesLogQuery(filter, log)), [orderedLogs, filter]);
 
-  function downloadLoadedOutput() {
-    const runID = run?.id ?? "run";
-    const blob = new Blob([formatLoadedRunLogs(runID, orderedLogs)], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${runID.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 128)}-loaded.log`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -92,6 +75,36 @@ export function TerminalLogDialog({
           });
         }}
       >
+        <TerminalLogContents key={`${run?.id ?? ""}:${open}`} run={run} orderedLogs={orderedLogs}
+          loading={loading} error={error} onRetry={onRetry} retrying={retrying} recovery={recovery}
+          following={following} hasPrevious={hasPrevious} loadingPrevious={loadingPrevious}
+          previousError={previousError} onLoadPrevious={onLoadPrevious} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type TerminalLogContentsProps = Omit<Parameters<typeof TerminalLogDialog>[0], "logs" | "open" | "onOpenChange"> & { orderedLogs: RunLog[] };
+
+function TerminalLogContents({ run, orderedLogs, loading, error, onRetry, retrying, recovery, following, hasPrevious, loadingPrevious, previousError, onLoadPrevious }: TerminalLogContentsProps) {
+  const filterRef = useRef<HTMLInputElement | null>(null);
+  const [filter, setFilter] = useState("");
+  const filtering = Boolean(filter.trim());
+  const visibleLogs = useMemo(() => orderedLogs.filter((log) => matchesLogQuery(filter, log)), [orderedLogs, filter]);
+  function downloadLoadedOutput() {
+    const runID = run?.id ?? "run";
+    const blob = new Blob([formatLoadedRunLogs(runID, orderedLogs)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${runID.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 128)}-loaded.log`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  return <>
         <DialogHeader className="min-w-0 border-b border-border bg-muted px-4 py-3">
           <div className="flex min-w-0 items-center justify-between gap-3">
             <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -177,7 +190,5 @@ export function TerminalLogDialog({
             </div>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
-  );
+  </>;
 }

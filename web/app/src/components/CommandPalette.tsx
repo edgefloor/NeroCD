@@ -37,9 +37,7 @@ export function CommandPalette({
   onSignOut: () => void;
   onSearch?: (query: string) => void;
 }): ReactNode {
-  const [searchTerm, setSearchTerm] = useState("");
   const onKeyOpenChange = useEffectEvent(onOpenChange);
-  const navItems = navigationForRoles(roles);
   const returnFocus = useRef<HTMLElement | null>(null);
   const rememberFocus = useEffectEvent((event: Event) => {
     if (open) return;
@@ -54,7 +52,6 @@ export function CommandPalette({
     document.addEventListener("focusin", remember, true);
     return () => { document.removeEventListener("pointerdown", remember, true); document.removeEventListener("focusin", remember, true); };
   }, [open]);
-  useEffect(() => { if (!open) setSearchTerm(""); }, [open]);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -70,6 +67,17 @@ export function CommandPalette({
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} onCloseAutoFocus={(event) => { event.preventDefault(); if (returnFocus.current?.isConnected) returnFocus.current.focus(); }}>
+      <CommandPaletteContents key={String(open)} roles={roles} snapshot={snapshot} view={view} setView={setView}
+        theme={theme} toggleTheme={toggleTheme} onRefresh={onRefresh} onSignOut={onSignOut}
+        onOpenChange={onOpenChange} onSearch={onSearch} />
+    </CommandDialog>
+  );
+}
+
+function CommandPaletteContents({ roles = [], snapshot, view, setView, theme, toggleTheme, onRefresh, onSignOut, onOpenChange, onSearch }: Omit<Parameters<typeof CommandPalette>[0], "open">) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const navItems = navigationForRoles(roles);
+  return <>
       <CommandInput
         placeholder="Find a page or action..."
         value={searchTerm}
@@ -133,6 +141,5 @@ export function CommandPalette({
           </CommandItem>
         </CommandGroup>}
       </CommandList>
-    </CommandDialog>
-  );
+  </>;
 }
