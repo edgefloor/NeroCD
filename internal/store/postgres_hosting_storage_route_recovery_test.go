@@ -108,21 +108,41 @@ func TestHostingStorageRouteRecoveryPostgresQueueReplayAndConcurrentDuplicate(t 
 	for _, terminal := range []string{"loaded", "proxy_failed"} {
 		t.Run(terminal, func(t *testing.T) {
 			f, next, in := storageRouteRecoveryFixture(t)
-			var wg sync.WaitGroup
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
 			results := make(chan error, 2) // One result per concurrent recovery caller.
+			exited := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+			t.Cleanup(func() {
+				cancel()
+				deadline := time.NewTimer(5 * time.Second)
+				defer deadline.Stop()
+				for _, done := range exited {
+					select {
+					case <-done:
+					case <-deadline.C:
+						t.Error("concurrent recovery callers did not exit after cancellation")
+						return
+					}
+				}
+			})
 			for n := range 2 {
-				wg.Go(func() {
-					view, err := f.pg.RecoverHostingStorageRouteContinuity(t.Context(), f.resource.ID, next.op.ID, "usr_bootstrap", in, destinationEvent(fmt.Sprintf("storage_recovery_%d", n)))
+				go func() {
+					defer close(exited[n])
+					view, err := f.pg.RecoverHostingStorageRouteContinuity(ctx, f.resource.ID, next.op.ID, "usr_bootstrap", in, destinationEvent(fmt.Sprintf("storage_recovery_%d", n)))
 					if err == nil && (view.State != "proxy_pending" || view.LoadedGeneration != nil || view.SuccessorProxyOperationID != "pop_storage_"+next.op.ID) {
 						err = fmt.Errorf("invalid pending status: %+v", view)
 					}
 					results <- err
-				})
+				}()
 			}
-			wg.Wait()
 			for range 2 {
-				if err := <-results; err != nil {
-					t.Fatal(err)
+				select {
+				case err := <-results:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-ctx.Done():
+					t.Fatalf("concurrent recovery results exceeded deadline: %v", ctx.Err())
 				}
 			}
 			proxyID := continuityState(t, f, next.op.ID, "proxy_pending")
