@@ -130,6 +130,9 @@ and SSH target share the disposable container. The HTTPS test CA is trusted
 explicitly by the API client and installed only inside that container for the
 agent. This does not qualify production DNS, TLS issuance, or network reachability.
 The original qualifier remains unchanged unless this opt-in is set.
+The onboarding artifact is compiled separately with
+`-ldflags '-X main.version=v0.0.0-fixture'`, matching its qualified policy metadata.
+Its digest and explicit version pin are retained in the run evidence.
 
 The recovery case uses a transparent loopback TCP forwarder to the same real
 sshd. It counts encrypted upload bytes and withholds server response bytes after

@@ -106,6 +106,11 @@ main() {
  donor_arch=$(docker image inspect --format '{{.Architecture}}' "$donor")
  [[ "$donor_arch" == arm64 || "$donor_arch" == amd64 ]]
  GOOS=linux GOARCH="$donor_arch" CGO_ENABLED=0 go build -trimpath -o "$work/agent" ./cmd/nerocd
+ if [[ ${NEROCD_BOOTSTRAP_ONBOARDING:-} == owned-systemd-target ]]; then
+  GOOS=linux GOARCH="$donor_arch" CGO_ENABLED=0 go build -trimpath -ldflags '-X main.version=v0.0.0-fixture' -o "$work/onboarding-agent" ./cmd/nerocd
+  shasum -a 256 "$work/onboarding-agent" >"$evidence/onboarding-agent-sha256.txt"
+  printf 'onboarding artifact version=v0.0.0-fixture explicit main.version build pin\n' >"$evidence/onboarding-artifact-version.txt"
+ fi
  GOOS=linux GOARCH="$donor_arch" CGO_ENABLED=0 go test -c -o "$work/target.test" ./internal/serverbootstrap
  shasum -a 256 "$work/agent" "$work/target.test" >"$evidence/installer-binary-sha256.txt"
  postgres='postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94'
@@ -163,7 +168,7 @@ main() {
  if [[ ${NEROCD_BOOTSTRAP_ONBOARDING:-} == owned-systemd-target ]]; then
   [[ "$donor_arch" == arm64 ]] || { echo 'onboarding policy requires native arm64'; return 1; }
   docker cp "$work/api.test" "$container_id:/fixture/api.test"
-  docker cp "$work/agent" "$container_id:/fixture/onboarding-agent"
+  docker cp "$work/onboarding-agent" "$container_id:/fixture/onboarding-agent"
   docker cp "$work/client" "$container_id:/fixture/onboarding-client"
  fi
  docker start "$container_id" >/dev/null
