@@ -56,8 +56,12 @@ export function DeploymentsView({
     return matchesQuery(q, item.id, item.status, item.environment_id, item.desired_revision_id, item.failure_code ?? "",
       environmentByID.get(item.environment_id)?.name ?? "", revision?.requested_ref ?? "", revision?.git_commit ?? "");
   });
-  useEffect(() => { setRevisionID(""); }, [serviceID]);
-  useEffect(() => { if (!scopedRevisions.some((item) => item.id === revisionID)) setRevisionID(""); }, [scopedRevisions, revisionID]);
+  const [observedServiceID, setObservedServiceID] = useState(serviceID);
+  if (observedServiceID !== serviceID) {
+    setObservedServiceID(serviceID);
+    setRevisionID("");
+  }
+  if (revisionID && !scopedRevisions.some((item) => item.id === revisionID)) setRevisionID("");
   useEffect(() => { createKey.current = newDeploymentIntentKey(); }, [serviceID, environmentID, revisionID]);
 
   const failedSelection = !submitting && submissionError?.environment_id === environmentID

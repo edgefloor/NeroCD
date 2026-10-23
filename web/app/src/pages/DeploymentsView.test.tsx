@@ -1,3 +1,5 @@
+import { Profiler, StrictMode } from "react";
+import { DeploymentsView } from "./DeploymentsView";
 import { afterEach, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { DeploymentDetailView } from "./DeploymentDetailView";
@@ -95,4 +97,27 @@ test("cancellation intent stays stable for retries and changes with deployment i
   const second = onCancel.mock.calls[2]![0];
   expect(second.deployment_id).toBe("deployment_second");
   expect(second.request_id).not.toBe(first.request_id);
+});
+
+
+test("StrictMode retires missing revisions before commit without resurrecting them or submitting", () => {
+  const props = { deployments: [], projects: [{ id: "project", name: "Project" }] as never,
+    services: [{ id: "service", project_id: "project", name: "Service" }] as never,
+    environments: [{ id: "environment", service_id: "service", name: "Production" }] as never,
+    selectedServiceID: "service", selectedEnvironmentID: "environment", canOperate: true,
+    onCreate: vi.fn(), onServiceChange: vi.fn(), onEnvironmentChange: vi.fn() };
+  const revisions = [{ id: "revision", service_id: "service", requested_ref: "main", git_commit: "abc" }] as never;
+  const enabledCommits: boolean[] = [];
+  const observe = () => { const button = document.querySelector<HTMLButtonElement>('form[aria-label="Request deployment"] button[type="submit"]'); if (button) enabledCommits.push(!button.disabled); };
+  const ui = (choices: typeof revisions) => <StrictMode><Profiler id="deployment" onRender={observe}><DeploymentsView {...props} revisions={choices} /></Profiler></StrictMode>;
+  const view = render(ui(revisions));
+  fireEvent.change(screen.getByRole("combobox", { name: "Immutable revision" }), { target: { value: "revision" } });
+  enabledCommits.length = 0;
+  view.rerender(ui([] as never));
+  expect(enabledCommits.length).toBeGreaterThan(0);
+  expect(enabledCommits.every((enabled) => !enabled)).toBe(true);
+  view.rerender(ui(revisions)); view.rerender(ui(revisions));
+  expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Immutable revision" }).value).toBe("");
+  fireEvent.submit(screen.getByRole("form", { name: "Request deployment" }));
+  expect(props.onCreate).not.toHaveBeenCalled();
 });
