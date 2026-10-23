@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`86825ab17f2e2bb0b2b0a26e6e65e2e2769d8fa3`, 2026-10-23, through migration 0061.
+`b4951282aefb3ad63d525c9d10037d7120f1d4ba`, 2026-10-23, through migration 0061.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -30,13 +30,13 @@ remain distinct acceptance claims.
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
 | Application and persistence | Go API/application/store layers, PostgreSQL through migration 0061, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
-| Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding, broader host qualification, complete team/server access and legacy mappings |
+| Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | Broader SSH/host qualification, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, protected reveal, private Git credential delivery and bounded managed runtime delivery/execution; separate runner-file execution | Broader delivery and variable scopes, provider coverage and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
 | Admission and protected delivery | Migration 0053 admission and protected runner endpoint; metadata authorization/audit before decryption, bounded original window; journal format 8 persists only nonsecret references and delivery ID | Broader runtime qualification |
 | Runtime execution and status controls | Opt-in CLI/API applies literal/exact managed versions via protected Docker stdin; bounded challenge/report and viewer freshness API, migration 0054 | Broader log qualification and disk/CPU metrics |
 | Runtime configuration UI and collector | Accepted authenticated browser deployment journey and opt-in independent Docker/loopback collector; four targets per 10-second cycle with fair selection | Read-only status dashboard is accepted; runtime-log control and migration 0055 are accepted; bounded live collector/viewer are accepted; no per-resource 10-second guarantee |
-| Status dashboard and enrollment commands | Bounded current/stale/historical target display under current viewer authority; accepted manual UI enrollment/generated-command collector with persisted capabilities and diagnostic readiness | SSH automation, broader readiness/log qualification and general metrics |
+| Status dashboard and enrollment commands | Bounded current/stale/historical target display under current viewer authority; accepted manual UI enrollment/generated-command collector with persisted capabilities and diagnostic readiness | Broader SSH automation, readiness/log qualification and general metrics |
 | Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack and pinned Vite SPA qualification, owner grant selection and Dockerfile/Railpack static-provider UI through exact artifact deployment and test-CA HTTPS | Full language/provider coverage, broader compiled frontend qualification, remote publication and hosting cache |
 | Deployment | Guarded verified-route API/controller with explicit agent opt-in and strict trusted-TLS rollback; exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, protected deployment approval, remote image delivery and supported hosting previews |
 | Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Broader runtime log/status coverage, resource actions and terminals |
@@ -119,7 +119,10 @@ settlement does not prove convergence completion. Trusted
 `86825ab17f2e2bb0b2b0a26e6e65e2e2769d8fa3` in optional `automatic_unprotected`
 mode after a healthy manual release and existing routes. Protected approval is
 unsupported. The SSH installer and durable control have bounded accepted evidence;
-the full SSH API/UI flow is active and unaccepted. See the
+the full SSH API/UI flow is accepted at `b4951282aefb3ad63d525c9d10037d7120f1d4ba`
+for the prepared native arm64 Debian 12 fixture, with pinned SSH identity and
+response-loss inspection recovery. The four-capability baseline is image-hosting
+only, not source-build/proxy/log/storage qualification. Complete A01 remains open. See the
 [revision-specific evidence and limits](compatibility.md#accepted-foundations-and-evidence).
 Pinned Vite SPA compilation is accepted at `d29edb3bc8cde064108891f70713423bb57776a3`.
 See the [bounded evidence and reliability limits](compatibility.md#accepted-foundations-and-evidence). Hosting navigation is
@@ -127,8 +130,9 @@ accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`, with Home, Projects and
 Servers and runners leading direct hosting and advanced workflows preserved.
 See the [navigation evidence and limits](compatibility.md#accepted-foundations-and-evidence).
 
-Automatic deployment has bounded accepted evidence. Finish the full SSH
-API/UI qualification next, then proceed to H2 stateful hosting. Protected plans
+Automatic deployment and SSH onboarding have bounded accepted evidence. Proceed
+to H2 stateful hosting next: managed volumes, storage runtime/UI and PostgreSQL/Redis.
+Storage metadata work is not yet accepted and does not establish a runtime product. Protected plans
 under R17/R19 and applicable A09/A10 checks, production TLS and remaining parity
 remain separate unfinished work. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.
@@ -204,7 +208,7 @@ remove arbitrary application secrets, and delivery is not exactly once. The earl
 the accepted repair resolves that blocker without establishing complete A29. Disk/CPU metrics remain planned.
 Docker administrators can inspect environment values;
 controlled log scans do not prove arbitrary output is secret-free. Broader value
-inheritance, broader provider delivery, SSH, live webhook setup and production TLS qualification
+inheritance, broader provider delivery, broader SSH qualification, live webhook setup and production TLS qualification
 remain separate hosting work.
 
 Exact trigger-revision source `21349d3e2492dca8b8b3ca3d99132085889360e8` is accepted

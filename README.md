@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`86825ab17f2e2bb0b2b0a26e6e65e2e2769d8fa3`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`b4951282aefb3ad63d525c9d10037d7120f1d4ba`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -156,7 +156,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   [durable control](docs/hosting-ssh-onboarding.md) have accepted bounded evidence
   on native arm64 Debian 12/systemd. The baseline installer advertises only four
   capabilities, not build/proxy/log capabilities. The full SSH API/UI journey is
-  active and unaccepted; complete A01 remains open.
+  accepted at `b4951282aefb3ad63d525c9d10037d7120f1d4ba` for the prepared-host
+  fixture, including response-loss inspection recovery. This does not qualify
+  live-host/OS breadth, build/proxy/log/storage presets or complete A01.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
@@ -176,8 +178,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Automatic deployment is accepted within its stated limits. Finish the active
-full SSH flow next, then stateful hosting. Protected plans and production TLS
+and extended compatibility. Automatic deployment and SSH onboarding are accepted within their stated limits.
+Stateful hosting is next: managed volumes, storage runtime/UI, PostgreSQL and Redis. Protected plans and production TLS
 remain visible unfinished work. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
