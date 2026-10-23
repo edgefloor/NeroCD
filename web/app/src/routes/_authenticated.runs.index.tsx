@@ -39,11 +39,14 @@ export function RunsRoute({ runId, q }: RunsRouteProps = {}) {
     retryOnMount: false,
     refetchInterval: (query) => query.state.status !== "error" && shouldPollRun(query.state.data) ? 3_000 : false,
   });
-  useEffect(() => {
-    if (!runId) return;
-    setSelectedRunID(runId);
-    setSelectedLogs({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
-  }, [runId]);
+  const [observedRunID, setObservedRunID] = useState(runId);
+  if (observedRunID !== runId) {
+    setObservedRunID(runId);
+    if (runId) {
+      setSelectedRunID(runId);
+      setSelectedLogs({ runID: "", logs: [], loading: false, hasPrevious: false, loadingPrevious: false });
+    }
+  }
   const queries = [runs, projects, templates, principal, members, ...(selectedRunID ? [selectedRun] : [])];
   const failed = queries.filter((query) => query.isError);
   const recovery = failed.length > 0 ? <section className="space-y-3">

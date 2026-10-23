@@ -1,3 +1,4 @@
+import { Profiler, StrictMode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { RunsRoute } from "./_authenticated.runs.index";
@@ -69,4 +70,22 @@ test("cancellation blocks repeated submissions until the request settles", () =>
   cancellation.mutate.mock.calls[0]?.[1].onSettled();
   fireEvent.click(button);
   expect(cancellation.mutate).toHaveBeenCalledTimes(2);
+});
+
+
+test("StrictMode commits the current URL identity directly and repeated props preserve explicit closing", () => {
+  const committedIDs: string[] = [];
+  const observe = () => committedIDs.push(document.querySelector('[data-testid="selected-run"]')?.textContent ?? "");
+  const ui = (runId?: string) => <StrictMode><Profiler id="runs" onRender={observe}><RunsRoute runId={runId} /></Profiler></StrictMode>;
+  const view = render(ui("run_first"));
+  committedIDs.length = 0;
+  view.rerender(ui("run_second"));
+  expect(committedIDs.length).toBeGreaterThan(0);
+  expect(committedIDs.every((id) => id === "run_second")).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Close logs" }));
+  view.rerender(ui("run_second")); view.rerender(ui("run_second"));
+  expect(screen.getByTestId("selected-run").textContent).toBe("");
+  view.rerender(ui("run_first"));
+  expect(screen.getByTestId("selected-run").textContent).toBe("run_first");
+  expect(cancellation.mutate).not.toHaveBeenCalled();
 });
