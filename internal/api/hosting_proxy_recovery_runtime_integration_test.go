@@ -360,34 +360,41 @@ func TestHostingProxyMetadataRecoveryCompiledRunner(t *testing.T) {
 	if !status.Eligible || status.Review == nil {
 		t.Fatalf("recovery eligibility %+v", status)
 	}
-	review := status.Review
-	plan := switchFixtureJSON[domain.HostingProxyRecoveryPlan](t, control.Client(), control.URL, session.Token, "POST", "/api/v1/proxy-operations/"+view.ID+"/recovery-plans", domain.HostingProxyRecoveryInput{IdempotencyKey: "compiled-review", ExpectedLoadedGeneration: review.LoadedGeneration, ExpectedDesiredGeneration: review.DesiredGeneration, ExpectedCompleteReceiptID: review.CompleteReceiptID, ExpectedCompleteReceiptHash: review.CompleteReceiptHash}, 201)
-	apply := domain.HostingProxyRecoveryApplyInput{IdempotencyKey: "compiled-apply", PlanHash: plan.PlanHash}
-	path := "/api/v1/proxy-operations/" + view.ID + "/recovery-plans/" + plan.ID + "/apply"
-	loseRecoveryResponse.Store(true)
-	raw, err := json.Marshal(apply)
-	if err != nil {
-		t.Fatal(err)
+	var resolution domain.HostingProxyRecoveryResolution
+	if os.Getenv("NEROCD_PROXY_RECOVERY_BROWSER") == "1" {
+		t.Logf("compiled recovery agent arguments=%q", agentCommand().Args)
+		resolution = runHostingProxyRecoveryBrowser(t, recoveryBrowserFixture{server: server, pg: pg, database: database, proxy: proxy, original: original, routes: routes, initial: a, loaded: p.LoadedGeneration})
+	} else {
+		review := status.Review
+		plan := switchFixtureJSON[domain.HostingProxyRecoveryPlan](t, control.Client(), control.URL, session.Token, "POST", "/api/v1/proxy-operations/"+view.ID+"/recovery-plans", domain.HostingProxyRecoveryInput{IdempotencyKey: "compiled-review", ExpectedLoadedGeneration: review.LoadedGeneration, ExpectedDesiredGeneration: review.DesiredGeneration, ExpectedCompleteReceiptID: review.CompleteReceiptID, ExpectedCompleteReceiptHash: review.CompleteReceiptHash}, 201)
+		apply := domain.HostingProxyRecoveryApplyInput{IdempotencyKey: "compiled-apply", PlanHash: plan.PlanHash}
+		path := "/api/v1/proxy-operations/" + view.ID + "/recovery-plans/" + plan.ID + "/apply"
+		loseRecoveryResponse.Store(true)
+		raw, err := json.Marshal(apply)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := http.NewRequestWithContext(ctx, "POST", control.URL+path, bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+session.Token)
+		request.Header.Set("Content-Type", "application/json")
+		response, err = control.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != 503 {
+			t.Fatalf("lost recovery response status=%d", response.StatusCode)
+		}
+		resolution = switchFixtureJSON[domain.HostingProxyRecoveryResolution](t, control.Client(), control.URL, session.Token, "POST", path, apply, 200)
+		again := switchFixtureJSON[domain.HostingProxyRecoveryResolution](t, control.Client(), control.URL, session.Token, "POST", path, apply, 200)
+		if !reflect.DeepEqual(resolution, again) {
+			t.Fatal("recovery replay changed receipt")
+		}
 	}
-	request, err := http.NewRequestWithContext(ctx, "POST", control.URL+path, bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Authorization", "Bearer "+session.Token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err = control.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != 503 {
-		t.Fatalf("lost recovery response status=%d", response.StatusCode)
-	}
-	resolution := switchFixtureJSON[domain.HostingProxyRecoveryResolution](t, control.Client(), control.URL, session.Token, "POST", path, apply, 200)
-	again := switchFixtureJSON[domain.HostingProxyRecoveryResolution](t, control.Client(), control.URL, session.Token, "POST", path, apply, 200)
-	if !reflect.DeepEqual(resolution, again) {
-		t.Fatal("recovery replay changed receipt")
-	}
+
 	settled, err := pg.GetHostingProxyOperation(ctx, view.ID)
 	if err != nil || settled.MutationHold || settled.MetadataConflict || settled.State != "rolled_back" || !reflect.DeepEqual(settled.Result, original.Result) || !reflect.DeepEqual(settled.CompleteReceipt, original.CompleteReceipt) {
 		t.Fatalf("historical receipt changed err=%v", err)
