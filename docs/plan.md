@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`d29edb3bc8cde064108891f70713423bb57776a3`, 2026-10-23, through migration 0058.
+`e097ffa706325f55cab7a7b0416a235a0e9ad151`, 2026-10-23, through migration 0059.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,7 +29,7 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0058, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0059, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding, broader host qualification, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, protected reveal, private Git credential delivery and bounded managed runtime delivery/execution; separate runner-file execution | Broader delivery and variable scopes, provider coverage and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
@@ -38,7 +38,7 @@ remain distinct acceptance claims.
 | Runtime configuration UI and collector | Accepted authenticated browser deployment journey and opt-in independent Docker/loopback collector; four targets per 10-second cycle with fair selection | Read-only status dashboard is accepted; runtime-log control and migration 0055 are accepted; bounded live collector/viewer are accepted; no per-resource 10-second guarantee |
 | Status dashboard and enrollment commands | Bounded current/stale/historical target display under current viewer authority; accepted manual UI enrollment/generated-command collector with persisted capabilities and diagnostic readiness | SSH automation, broader readiness/log qualification and general metrics |
 | Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack and pinned Vite SPA qualification, owner grant selection and Dockerfile/Railpack static-provider UI through exact artifact deployment and test-CA HTTPS | Full language/provider coverage, broader compiled frontend qualification, remote publication and hosting cache |
-| Deployment | Guarded verified-route API/controller with explicit agent opt-in and strict trusted-TLS rollback; exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, metadata-conflict reconciliation, automatic/protected deployment, remote image delivery and supported hosting previews |
+| Deployment | Guarded verified-route API/controller with explicit agent opt-in and strict trusted-TLS rollback; exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, recovery administrator UI, automatic/protected deployment, remote image delivery and supported hosting previews |
 | Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Broader runtime log/status coverage, resource actions and terminals |
 | Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Public DNS/production ACME qualification, broader certificate modes, continuous observations and hosting preview access |
 
@@ -107,16 +107,19 @@ healthy/retained-running releases. Authority checks and unresolved metadata
 conflict/cancellation/replay holds remain enforced. Resource-scoped reads and the
 operator UI are accepted at `fa93d16fa09d5a7929581d5acb206029be9752d0` and
 `1c6ddb414d984372bb1f081fb6ff23db8bd81f88`. Explicit review, frozen retries and
-pending-operation recovery preserve holds. Metadata-conflict reconciliation
-failed specification review on concurrent replay and remains under repair;
-0059 is not accepted. Automatic deployment orchestration remains pending.
+pending-operation recovery preserve holds. The bounded
+[completed metadata-conflict recovery API](hosting-proxy-recovery.md) is accepted
+at `e097ffa706325f55cab7a7b0416a235a0e9ad151`, through migration 0059. Its repaired
+concurrent replay preserves one resolution and convergence operation. Uncertain
+outcomes remain held. Recovery administrator UI and trusted automatic deployment
+are active unaccepted candidates; protected plans remain pending.
 Pinned Vite SPA compilation is accepted at `d29edb3bc8cde064108891f70713423bb57776a3`.
 See the [bounded evidence and reliability limits](compatibility.md#accepted-foundations-and-evidence). Hosting navigation is
 accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`, with Home, Projects and
 Servers and runners leading direct hosting and advanced workflows preserved.
 See the [navigation evidence and limits](compatibility.md#accepted-foundations-and-evidence).
 
-Next, qualify SSH onboarding and route-switch metadata-conflict recovery. Follow with automatic deployment and protected plans under R17/R19
+Next, qualify SSH onboarding and the recovery administrator UI. Follow with automatic deployment and protected plans under R17/R19
 and applicable A09/A10 checks, then production TLS qualification before H2
 stateful hosting. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.

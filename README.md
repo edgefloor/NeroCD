@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`d29edb3bc8cde064108891f70713423bb57776a3`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`e097ffa706325f55cab7a7b0416a235a0e9ad151`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0058, bootstrap administration,
+- PostgreSQL state, checked migrations through 0059, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -97,9 +97,11 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   explicit agent opt-in and retains holds for cancellation, uncertain replay or
   metadata conflicts. Resource-scoped reads and operator controls are accepted at
   `1c6ddb414d984372bb1f081fb6ff23db8bd81f88`, with explicit review, frozen retries,
-  pending-operation recovery and visible holds. Metadata-conflict reconciliation
-  remains unaccepted; automatic deployment, draining, data rollback and production
-  ACME remain incomplete.
+  pending-operation recovery and visible holds. The bounded
+  [completed metadata-conflict recovery API](docs/hosting-proxy-recovery.md) is
+  accepted at `e097ffa706325f55cab7a7b0416a235a0e9ad151`, with reviewed expiring
+  plans and idempotent apply. Uncertain outcomes remain held. Recovery administrator
+  UI, automatic deployment, draining, data rollback and production ACME remain open.
 - Runtime configuration UI for public literals and exact managed-secret versions,
   generation compare-and-swap, idempotent retries and fresh deployment generations.
   Accepted browser proof covers authenticated API, compiled runner and Docker,
@@ -158,7 +160,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Next are SSH onboarding, route-switch conflict recovery,
+and extended compatibility. Next are SSH onboarding, recovery administrator UI,
 automatic/protected deployment, then
 production TLS qualification before stateful hosting. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
