@@ -724,6 +724,7 @@ func TestHostingAutomaticDeploymentCompiledRunner(t *testing.T) {
 	}
 	input := domain.GitHubPushConfigure{ExpectedResourceGeneration: control.resource.Generation, ExpectedSourceGeneration: control.resource.Source.Git.Generation, ExpectedPolicyGeneration: current.Generation, RequestID: pushAPIUUID(200), ResetBranchBaseline: true, Configuration: domain.GitHubPushConfiguration{AutomationActorID: control.accountID, WebhookSecret: domain.GitHubPushSecretRef{ID: control.signing.ID, Version: 1}, ProviderReadSecret: &domain.GitHubPushSecretRef{ID: control.provider.ID, Version: 1}, AutomaticDeployment: &configuration}}
 	control.request(http.MethodPut, path, control.viewer, input, http.StatusForbidden, nil)
+	current = domain.GitHubPushPolicy{} // Decode a fresh receipt; omitted owner options must not retain prior GET fields.
 	control.request(http.MethodPut, path, control.owner, input, http.StatusOK, &current)
 	if current.Enabled || current.OwnerAutomaticDeploymentOptions != nil {
 		t.Fatal("review save skipped disabled state or exposed stale options")
