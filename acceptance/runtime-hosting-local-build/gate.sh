@@ -12,6 +12,12 @@ private_browser_mode=${NEROCD_PRIVATE_GIT_BROWSER:-0}
 policy_check=${NEROCD_PRIVATE_GIT_POLICY_CHECK:-0}
 case "$policy_check:$private_browser_mode" in 0:0|0:1|1:0) ;; *) echo 'invalid focused private policy option' >&2; exit 1;; esac
 if [[ "$policy_check" == 1 ]]; then private_mode=1; fi
+private_cli_check=${NEROCD_PRIVATE_GIT_CLI_CHECK:-0}
+case "$private_cli_check" in 0|1) ;; *) echo 'invalid fixed private CLI option' >&2; exit 1;; esac
+if [[ "$private_cli_check" == 1 ]]; then
+ if [[ "$private_browser_mode:$policy_check:$browser_mode" != 0:0:0 ]]; then echo 'private CLI check cannot combine with browser or policy-only mode' >&2; exit 1; fi
+ private_mode=1
+fi
 case "$private_mode:$private_browser_mode" in 0:0|1:0|0:1|1:1) ;; *) echo 'invalid private Git fixture option' >&2; exit 1;; esac
 if [[ "$private_browser_mode" == 1 ]]; then private_mode=1; browser_mode=1; fi
 export NEROCD_PRIVATE_GIT_BROWSER="$private_browser_mode"
@@ -121,6 +127,7 @@ if [[ "$browser_mode" == 0 ]]; then
 test_pattern='^TestLocalBuildProductionHTTPS$'
 if [[ "$private_mode" == 1 ]]; then test_pattern='^(TestPrivateFixtureSourceRevisionPolicy|TestPrivateFixtureResourcePolicyPostgres|TestPrivateBuildProductionHTTPS|TestLocalBuildProductionHTTPS)$'; fi
 if [[ "$policy_check" == 1 ]]; then test_pattern='^TestPrivateFixtureResourcePolicyPostgres$'; fi
+if [[ "$private_cli_check" == 1 ]]; then test_pattern='^TestPrivateBuildProductionHTTPS$'; fi
 docker exec --env NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind --env "NEROCD_BUILD_CONTROLLER_DATABASE_URL=postgres://nerocd:isolated_fixture_only@$pg_addr/nerocd_build_controller?sslmode=disable" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env "NEROCD_PLANNER_IMAGE=$planner_id" --env "NEROCD_BUILDX_SHA256=sha256:$buildx_sha" "$name" /fixture/hosting-controller.test -test.v -test.run "$test_pattern" -test.timeout=15m
 else
  browser_addr=$(docker port "$container_id" 18080/tcp)

@@ -7,7 +7,10 @@ and the existing Playwright Chromium installation available.
 # Focused actual API/store fixture policy check, with no builds.
 NEROCD_PRIVATE_GIT_POLICY_CHECK=1 bash acceptance/runtime-hosting-local-build/gate.sh
 
-# Existing compiled CLI Dockerfile and Railpack private HTTPS regressions,
+# Isolated existing private CLI Dockerfile and Railpack regressions.
+NEROCD_PRIVATE_GIT_CLI_CHECK=1 bash acceptance/runtime-hosting-local-build/gate.sh
+
+# Existing combined compiled CLI Dockerfile and Railpack private HTTPS regressions,
 # plus the original public local-artifact deployment case.
 NEROCD_PRIVATE_GIT_RUNTIME=1 bash acceptance/runtime-hosting-local-build/gate.sh
 
@@ -63,6 +66,12 @@ image and volume inventories, and inner database inventories. Cleanup checks exa
 IDs/labels and image references before removing only invocation-owned containers,
 volumes, image, cgroup, and temporary files. It never prunes or operates on shared
 32918 or unrelated fixtures.
+
+The fixed private-CLI selector runs only both `TestPrivateBuildProductionHTTPS`
+strategies. It leaves the original combined public/private mode unchanged.
+A public-case timeout or combined-mode failure remains a failed check, even if
+the isolated private cases pass. Failure diagnostics use bounded actual typed
+output with known fixture credentials redacted.
 
 The fixed policy-only selector runs only `TestPrivateFixtureResourcePolicyPostgres`.
 It checks real source edits and name-only edits before the full browser journey.

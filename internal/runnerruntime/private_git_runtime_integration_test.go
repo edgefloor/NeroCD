@@ -431,6 +431,19 @@ func testPrivateBuildProductionHTTPS(t *testing.T, strategy string) {
 	build := func(key string) domain.HostingBuild {
 		b := privateRuntimeBuild(t, f, resource, grant.ID, key)
 		if err := cli(); err != nil {
+			// Retain bounded actual API diagnostics without printing known credentials.
+			var page domain.HostingBuildLogPage
+			f.request(t, "GET", "/api/v1/hosting-builds/"+b.ID+"/logs?limit=200", f.admin, nil, 200, &page)
+			for _, item := range page.Items {
+				message := item.Message
+				for _, pattern := range []string{password, username + ":" + password, base64.StdEncoding.EncodeToString([]byte(username + ":" + password)), f.credential, f.admin} {
+					message = strings.ReplaceAll(message, pattern, "[REDACTED fixture credential]")
+				}
+				if len(message) > 2000 {
+					message = message[:2000]
+				}
+				t.Logf("typed private build diagnostic sequence=%d component=%s: %s", item.Sequence, item.Component, message)
+			}
 			t.Fatal(err)
 		}
 		full, err := f.pg.GetHostingBuild(t.Context(), "usr_bootstrap", b.ID)
