@@ -62,7 +62,11 @@ Lists require a project and return `items`, `limit`, `offset`, and `has_more`. A
 The existing River hosting queue carries only the opaque bootstrap operation ID. Business
 commands survive finite job retries and job-history cleanup. The existing hosting recovery loop
 finds due bootstrap work in bounded batches. Remote calls run outside transactions, renew their
-thirty-second lease every ten seconds, and cancel and join on authority loss.
+thirty-second lease every ten seconds. Each renewal receives a context capped at five seconds and
+the last confirmed lease expiry. The controller uses each returned expiry, cancels local SSH
+independently of a stalled renewal, and joins both calls on authority loss. The original command
+deadline and the 125-second remote-call limit remain fixed. Cancellation stops local transport;
+it does not prove that remote effects stopped.
 
 Install intent and enrollment are committed before remote submission. A failed connection,
 lease expiry, cancellation, or lost response retains remote ownership. It never permits a
