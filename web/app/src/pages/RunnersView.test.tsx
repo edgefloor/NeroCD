@@ -111,3 +111,20 @@ test("StrictMode retires runner confirmation before a revoked status commits and
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(onRevoke).not.toHaveBeenCalled();
 });
+
+
+test("permission loss never commits an obsolete enrollment token and restoration cannot resurrect it", async () => {
+  const onEnroll = vi.fn().mockResolvedValue(created());
+  const committedTokens: boolean[] = [];
+  const observe = () => committedTokens.push(document.querySelector('[aria-label="Enrollment secret"]')?.textContent === "test-only-bootstrap");
+  const ui = (canAdmin: boolean) => <StrictMode><Profiler id="enrollment" onRender={observe}><RunnersView runners={[]} canAdmin={canAdmin} onEnroll={onEnroll} /></Profiler></StrictMode>;
+  const view = render(ui(true));
+  submit(); await screen.findByLabelText("Enrollment secret");
+  committedTokens.length = 0;
+  view.rerender(ui(false));
+  expect(committedTokens.length).toBeGreaterThan(0);
+  expect(committedTokens.every((visible) => !visible)).toBe(true);
+  view.rerender(ui(true)); view.rerender(ui(true));
+  expect(screen.queryByLabelText("Enrollment secret")).toBeNull();
+  expect(onEnroll).toHaveBeenCalledTimes(1);
+});
