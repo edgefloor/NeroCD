@@ -106,9 +106,24 @@ records a clean committed source identity and compiled binary hashes before
 running normal API enrollment/bootstrap, signed fixed-provider pushes, the real
 compiled Linux agent, and independent fixture-CA HTTPS probes. Its bounded cases
 cover B with unrelated-route preservation, duplicate/delayed deliveries, C's
-source-owned compiler failure, D's readiness failure, committed response loss,
+source-owned build failure, D's readiness failure, committed response loss,
 agent restart, and desired supersession before the first host mutation. The
 fixture uses a fixed test-only Git CONNECT bridge while retaining original
 origin and TLS verification. These are local trusted fixtures, not live-provider,
 browser HTTPS, public ACME, or complete hosting-parity evidence. The gate must
 pass at the final candidate before these cases are considered qualified.
+
+The policy GET uses a read-only repeatable-read snapshot for source, policy,
+automatic status, and owner review options. It takes no quota, placement, proxy,
+resource, project, or identity mutation locks. One two-second deadline starts
+before acquiring the connection and covers all reads, closing the snapshot,
+and the final authorization check. A mutation in progress may make review
+options unavailable; it does not make this metadata read wait for that mutation.
+
+Before disclosure, the reader closes its snapshot and checks current authority
+in a fresh statement bound to the same actor, resource, and project. Lost viewer
+authority denies the response. Lost owner authority removes owner configuration
+and options. Active identities, parent-account authority, project scope, legacy token
+revocation, and legacy token expiry use current database facts. These read facts never
+replace the locked current-authority checks performed when configuring policy
+or admitting deployment and proxy mutations.

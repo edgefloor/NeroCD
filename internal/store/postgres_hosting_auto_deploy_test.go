@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
+	"nerocd/internal/store/sqlcgen"
 )
 
 type automaticStoreFixture struct {
@@ -373,5 +376,214 @@ func TestPostgresAutomaticDeploymentUnboundOptions(t *testing.T) {
 	p, err := f.pg.GetGitHubPushPolicy(t.Context(), "usr_bootstrap", resource.ID)
 	if err != nil || p.Status != "unconfigured" || p.OwnerAutomaticDeploymentOptions == nil || p.OwnerAutomaticDeploymentOptions.Available || p.OwnerAutomaticDeploymentOptions.Baseline != nil || p.OwnerAutomaticDeploymentOptions.Reason != "unbound" {
 		t.Fatal(p.OwnerAutomaticDeploymentOptions, err)
+	}
+}
+
+func TestPostgresAutomaticDeploymentPolicyReadAvoidsMutationLocks(t *testing.T) {
+	for _, mode := range []string{"unconfigured", "build_only", "automatic"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newAutomaticStoreFixture(t)
+			ctx := t.Context()
+			if mode == "unconfigured" {
+				if _, err := f.db.Exec(ctx, `DELETE FROM hosting_github_push_policies WHERE resource_id=$1`, f.src.ResourceID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "automatic" {
+				if _, err := f.pg.ConfigureGitHubPushPolicy(ctx, "usr_bootstrap", f.src.ResourceID, f.configuration(), destinationEvent("read-configured")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := f.pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "read-viewer", ProjectID: f.src.ProjectID, UserID: "usr_viewer", Role: domain.RoleViewer}); err != nil {
+				t.Fatal(err)
+			}
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := blocker.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+					t.Error(err)
+				}
+			}()
+			for _, query := range []string{`SELECT pg_advisory_xact_lock(hashtextextended('hosting-github-push-quotas',0))`, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:dest_build',0))`, `SELECT id FROM hosting_proxies WHERE id='automatic-proxy' FOR UPDATE`, `SELECT id FROM resources FOR UPDATE`, `SELECT id FROM projects FOR UPDATE`, `SELECT id FROM users FOR UPDATE`, `SELECT id FROM hosting_build_sources FOR UPDATE`} {
+				if _, err = blocker.Exec(ctx, query); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, actor := range []string{"usr_bootstrap", "usr_viewer"} {
+				read, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+				p, err := f.pg.GetGitHubPushPolicy(read, actor, f.src.ResourceID)
+				cancel()
+				if err != nil {
+					t.Fatal("GET waited on mutation lock", mode, actor, err)
+				}
+				if actor == "usr_bootstrap" && (!p.CanManage || p.OwnerAutomaticDeploymentOptions == nil) {
+					t.Fatal("owner read lost options")
+				}
+				if actor == "usr_viewer" && (p.CanManage || p.OwnerConfiguration != nil || p.OwnerAutomaticDeploymentOptions != nil) {
+					t.Fatal("viewer received owner facts")
+				}
+			}
+		})
+	}
+}
+
+func TestPostgresAutomaticDeploymentPolicyReadFreshAuthority(t *testing.T) {
+	for _, mode := range []string{"owner_to_viewer", "lost_viewer", "archived", "token_revoked", "token_expired", "token_natural_expiry", "service_account_revoked", "parent_disabled", "project_archived"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newAutomaticStoreFixture(t)
+			ctx := t.Context()
+			if _, err := f.pg.ConfigureGitHubPushPolicy(ctx, "usr_bootstrap", f.src.ResourceID, f.configuration(), destinationEvent("read-auth")); err != nil {
+				t.Fatal(err)
+			}
+			actor := "usr_bootstrap"
+			if strings.HasPrefix(mode, "token_") {
+				actor = "auto_read_token"
+				if _, err := f.pg.CreateAPIToken(ctx, domain.APIToken{ID: actor, Name: actor, Kind: domain.TokenKindServiceAccount, TokenHash: strings.Repeat("7", 64), Roles: []string{domain.RoleSystemAdmin}, Status: domain.TokenActive, CreatedBy: "usr_bootstrap", CreatedAt: time.Now()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "token_natural_expiry" {
+				if _, err := f.db.Exec(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()+interval '300 milliseconds' WHERE id='auto_read_token'`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "service_account_revoked" || mode == "parent_disabled" {
+				actor = "push_bot"
+				if _, err := f.db.Exec(ctx, `UPDATE service_accounts SET role='owner' WHERE id='push_bot'`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := blocker.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+					t.Error(err)
+				}
+			}()
+			if _, err = blocker.Exec(ctx, `LOCK TABLE hosting_proxy_routes IN ACCESS EXCLUSIVE MODE`); err != nil {
+				t.Fatal(err)
+			}
+			type result struct {
+				p   domain.GitHubPushPolicy
+				err error
+			}
+			done := make(chan result, 1)
+			go func() { p, err := f.pg.GetGitHubPushPolicy(ctx, actor, f.src.ResourceID); done <- result{p, err} }()
+			until := time.Now().Add(time.Second)
+			for {
+				var waiting bool
+				if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='hosting_proxy_routes'::regclass AND NOT granted)`).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				if time.Now().After(until) {
+					t.Fatal("GET did not reach snapshot barrier")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			switch mode {
+			case "owner_to_viewer":
+				if _, err = f.db.Exec(ctx, `UPDATE users SET global_role='user' WHERE id='usr_bootstrap'; INSERT INTO project_members(id,project_id,user_id,role) VALUES('read-demoted','proj_platform','usr_bootstrap','viewer') ON CONFLICT(project_id,user_id) DO UPDATE SET role='viewer'`); err != nil {
+					t.Fatal(err)
+				}
+			case "lost_viewer":
+				_, err = f.db.Exec(ctx, `UPDATE users SET global_role='user' WHERE id='usr_bootstrap';DELETE FROM project_members WHERE user_id='usr_bootstrap'`)
+			case "archived":
+				_, err = f.db.Exec(ctx, `UPDATE users SET archived_at=clock_timestamp() WHERE id='usr_bootstrap'`)
+			case "token_revoked":
+				_, err = f.db.Exec(ctx, `UPDATE api_tokens SET revoked_at=clock_timestamp() WHERE id='auto_read_token'`)
+			case "token_expired":
+				_, err = f.db.Exec(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()-interval '1 second' WHERE id='auto_read_token'`)
+			case "service_account_revoked":
+				_, err = f.db.Exec(ctx, `UPDATE service_accounts SET status='revoked',revoked_at=clock_timestamp() WHERE id='push_bot'`)
+			case "parent_disabled":
+				_, err = f.db.Exec(ctx, `UPDATE users SET status='disabled' WHERE id='usr_bootstrap'`)
+			case "token_natural_expiry":
+				time.Sleep(400 * time.Millisecond)
+			case "project_archived":
+				_, err = f.db.Exec(ctx, `UPDATE projects SET archived_at=clock_timestamp() WHERE id='proj_platform'`)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = blocker.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case out := <-done:
+				if mode == "owner_to_viewer" {
+					if out.err != nil || out.p.CanManage || out.p.OwnerConfiguration != nil || out.p.OwnerAutomaticDeploymentOptions != nil {
+						t.Fatal("owner loss disclosed private fields", out.err)
+					}
+				} else if !errors.Is(out.err, auth.ErrForbidden) {
+					t.Fatal("stale authority disclosed snapshot", mode, out.err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("GET did not join after authorization change")
+			}
+		})
+	}
+}
+
+func TestPostgresAutomaticDeploymentPolicyReadWholeDeadlineAndSingleConnection(t *testing.T) {
+	f := newAutomaticStoreFixture(t)
+	ctx := t.Context()
+	cfg := f.db.Config()
+	cfg.MaxConns = 1
+	cfg.MinConns = 0
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	pg := store.AutomaticPolicyReadTestStore(pool)
+	if _, err = pg.GetGitHubPushPolicy(ctx, "usr_bootstrap", f.src.ResourceID); err != nil {
+		t.Fatal("single connection self-wait", err)
+	}
+	connection, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, err = pg.GetGitHubPushPolicy(ctx, "usr_bootstrap", f.src.ResourceID)
+	connection.Release()
+	if err == nil || time.Since(started) > 3*time.Second || time.Since(started) < 1500*time.Millisecond {
+		t.Fatal("whole GET poolwait deadline not enforced", time.Since(started), err)
+	}
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := blocker.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Error(err)
+		}
+	}()
+	if _, err = blocker.Exec(ctx, `LOCK TABLE resources IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	started = time.Now()
+	_, err = pg.GetGitHubPushPolicy(ctx, "usr_bootstrap", f.src.ResourceID)
+	if err == nil || time.Since(started) > 3*time.Second || time.Since(started) < 1500*time.Millisecond {
+		t.Fatal("whole GET statement deadline not enforced", time.Since(started), err)
+	}
+}
+
+func TestPostgresAutomaticDeploymentPolicyReadResourceProjectBinding(t *testing.T) {
+	f := newAutomaticStoreFixture(t)
+	if _, err := f.db.Exec(t.Context(), `INSERT INTO projects(id,name,description) VALUES('read-other-project','other','')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []struct{ resource, project string }{{f.src.ResourceID, "read-other-project"}, {"missing-read-resource", f.src.ProjectID}} {
+		rank, err := sqlcgen.New(f.db).AutoReadActorRank(t.Context(), sqlcgen.AutoReadActorRankParams{ActorID: "usr_bootstrap", ResourceID: scope.resource, ProjectID: scope.project})
+		if err != nil || rank != 0 {
+			t.Fatal("final disclosure authority was not bound to original resource/project", rank, err)
+		}
 	}
 }

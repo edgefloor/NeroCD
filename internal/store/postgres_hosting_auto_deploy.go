@@ -408,7 +408,7 @@ func autoStatus(ctx context.Context, tx pgx.Tx, doc githubPushDocument) (*domain
 		return nil, hostingError(err)
 	}
 	out.ManualEpoch = control.ManualEpoch
-	if _, err = autoCurrent(ctx, tx, doc); err != nil {
+	if _, err = autoReadCurrent(ctx, tx, doc); err != nil {
 		if errors.Is(err, ErrConflict) || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, auth.ErrForbidden) {
 			out.State, out.Reason = "blocked", "review_invalidated"
 			return out, nil
@@ -547,8 +547,8 @@ func autoOptions(ctx context.Context, q *sqlcgen.Queries, resource string) (*dom
 }
 
 // autoOwnerOptions is called only by GET, including an unconfigured policy.
-// Repeat temporal token authority after reading facts before exposing options.
-func autoOwnerOptions(ctx context.Context, tx pgx.Tx, actor, project string, p domain.GitHubPushPolicy) (domain.GitHubPushPolicy, error) {
+// The GET caller repeats fresh authority after closing the snapshot.
+func autoOwnerOptions(ctx context.Context, tx pgx.Tx, p domain.GitHubPushPolicy) (domain.GitHubPushPolicy, error) {
 	p.OwnerAutomaticDeploymentOptions = nil
 	if !p.CanManage {
 		return p, nil
@@ -557,14 +557,7 @@ func autoOwnerOptions(ctx context.Context, tx pgx.Tx, actor, project string, p d
 	if err != nil {
 		return p, err
 	}
-	if err = authorizeBuildActor(ctx, tx, actor, project, "owner"); err != nil {
-		if errors.Is(err, auth.ErrForbidden) || errors.Is(err, ErrConflict) {
-			p.CanManage = false
-			p.OwnerConfiguration = nil
-			return p, nil
-		}
-		return p, err
-	}
+
 	p.OwnerAutomaticDeploymentOptions = options
 	return p, nil
 }

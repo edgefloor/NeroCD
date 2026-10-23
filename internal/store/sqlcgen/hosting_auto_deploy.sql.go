@@ -212,6 +212,28 @@ func (q *Queries) AutoPutControl(ctx context.Context, arg AutoPutControlParams) 
 	return i, err
 }
 
+const autoReadActorRank = `-- name: AutoReadActorRank :one
+SELECT coalesce((SELECT CASE principal.kind
+ WHEN 'human' THEN (SELECT CASE WHEN u.global_role='system_admin' THEN 3 ELSE coalesce((SELECT CASE m.role WHEN 'owner' THEN 3 WHEN 'maintainer' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END FROM project_members m WHERE m.project_id=project.id AND m.user_id=u.id),0) END FROM users u WHERE u.id=principal.id AND u.status='active' AND u.archived_at IS NULL)
+ WHEN 'service_account' THEN (SELECT CASE sa.role WHEN 'owner' THEN 3 WHEN 'maintainer' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END FROM service_accounts sa JOIN users u ON u.id=sa.owner_user_id WHERE sa.id=principal.id AND sa.project_id=project.id AND sa.status='active' AND u.status='active' AND u.archived_at IS NULL)
+ WHEN 'api_token' THEN (SELECT 3 FROM api_tokens token WHERE token.id=principal.id AND token.service_account_id IS NULL AND token.status='active' AND token.revoked_at IS NULL AND (token.expires_at IS NULL OR token.expires_at>clock_timestamp()) AND 'system_admin'=ANY(token.roles))
+ ELSE 0 END FROM principals principal CROSS JOIN projects project JOIN resources resource ON resource.project_id=project.id
+ WHERE principal.id=$1::text AND project.id=$2::text AND project.archived_at IS NULL AND resource.id=$3::text),0)::integer AS role_rank
+`
+
+type AutoReadActorRankParams struct {
+	ActorID    string `json:"actor_id"`
+	ProjectID  string `json:"project_id"`
+	ResourceID string `json:"resource_id"`
+}
+
+func (q *Queries) AutoReadActorRank(ctx context.Context, arg AutoReadActorRankParams) (int32, error) {
+	row := q.db.QueryRow(ctx, autoReadActorRank, arg.ActorID, arg.ProjectID, arg.ResourceID)
+	var role_rank int32
+	err := row.Scan(&role_rank)
+	return role_rank, err
+}
+
 const autoReadControl = `-- name: AutoReadControl :one
 SELECT resource_id, policy_id, policy_generation, manual_epoch, body, body_hash FROM hosting_auto_deploy_controls WHERE resource_id=$1
 `
@@ -326,6 +348,43 @@ func (q *Queries) AutoReadOrigin(ctx context.Context, operationID string) (Hosti
 		&i.BodyHash,
 		&i.CreatedAt,
 	)
+	return i, err
+}
+
+const autoReadResourceTarget = `-- name: AutoReadResourceTarget :one
+SELECT r.generation,b.runtime_namespace,coalesce(runtime.generation,0)::bigint AS runtime_generation FROM resources r JOIN resource_bindings b ON b.resource_id=r.id LEFT JOIN hosting_runtime_configurations runtime ON runtime.resource_id=r.id WHERE r.id=$1
+`
+
+type AutoReadResourceTargetRow struct {
+	Generation        int64  `json:"generation"`
+	RuntimeNamespace  string `json:"runtime_namespace"`
+	RuntimeGeneration int64  `json:"runtime_generation"`
+}
+
+func (q *Queries) AutoReadResourceTarget(ctx context.Context, id string) (AutoReadResourceTargetRow, error) {
+	row := q.db.QueryRow(ctx, autoReadResourceTarget, id)
+	var i AutoReadResourceTargetRow
+	err := row.Scan(&i.Generation, &i.RuntimeNamespace, &i.RuntimeGeneration)
+	return i, err
+}
+
+const autoReadSource = `-- name: AutoReadSource :one
+SELECT r.project_id,r.generation,v.body FROM resources r
+JOIN hosting_build_sources h ON h.resource_id=r.id
+JOIN hosting_build_source_versions v ON v.source_id=h.id AND v.generation=h.generation
+WHERE r.id=$1
+`
+
+type AutoReadSourceRow struct {
+	ProjectID  string          `json:"project_id"`
+	Generation int64           `json:"generation"`
+	Body       json.RawMessage `json:"body"`
+}
+
+func (q *Queries) AutoReadSource(ctx context.Context, id string) (AutoReadSourceRow, error) {
+	row := q.db.QueryRow(ctx, autoReadSource, id)
+	var i AutoReadSourceRow
+	err := row.Scan(&i.ProjectID, &i.Generation, &i.Body)
 	return i, err
 }
 

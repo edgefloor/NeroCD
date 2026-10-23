@@ -230,46 +230,35 @@ func pushAudit(ctx context.Context, tx pgx.Tx, event domain.AuditEvent, actor, a
 
 // GetGitHubPushPolicy returns current viewer metadata, with selectors only for current owners.
 func (s *PostgresStore) GetGitHubPushPolicy(ctx context.Context, actor, resource string) (domain.GitHubPushPolicy, error) {
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.GitHubPushPolicy, error) {
-		src, generation, err := autoPushScope(ctx, tx, resource, actor, "viewer", false)
-		if err != nil {
-			return domain.GitHubPushPolicy{}, err
-		}
-		owner := authorizeBuildActor(ctx, tx, actor, src.ProjectID, "owner") == nil
-		q := sqlcgen.New(tx)
-		row, err := q.ReadGitHubPushPolicy(ctx, resource)
-		if errors.Is(err, pgx.ErrNoRows) {
-			p := domain.GitHubPushPolicy{CanManage: owner, ResourceID: resource, ProjectID: src.ProjectID, ResourceGeneration: generation, SourceGeneration: src.Generation, Status: "unconfigured", Reason: "unverified"}
-			o, r, b, e := domain.GitHubPushRepositoryBranch(src)
-			if e != nil {
-				p.Status = "blocked"
-				p.Reason = "unsupported_source"
-			} else {
-				p.Repository = o + "/" + r
-				p.Branch = b
-			}
-			return autoOwnerOptions(ctx, tx, actor, src.ProjectID, p)
-		}
-		if err != nil {
-			return domain.GitHubPushPolicy{}, err
-		}
-		doc, err := pushDocument(row)
-		if err != nil {
-			return doc.Policy, err
-		}
-		if src.Generation != doc.Policy.SourceGeneration || generation != doc.Policy.ResourceGeneration {
-			doc.Policy.Status = "blocked"
-			doc.Policy.Reason = "source_changed"
-		}
-		if err = authorizeBuildActor(ctx, tx, actor, src.ProjectID, "viewer"); err != nil {
-			return doc.Policy, err
-		}
-		doc.Policy.AutomaticDeployment, err = autoStatus(ctx, tx, doc)
-		if err != nil {
-			return doc.Policy, err
-		}
-		return autoOwnerOptions(ctx, tx, actor, src.ProjectID, pushPublic(doc, owner))
-	})
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	tx, err := s.switchReadTransaction(ctx)
+	if err != nil {
+		return domain.GitHubPushPolicy{}, err
+	}
+	defer rollbackTransaction(ctx, tx)
+	policy, err := autoReadPolicySnapshot(ctx, tx, actor, resource)
+	if err != nil {
+		return domain.GitHubPushPolicy{}, hostingError(err)
+	}
+	// Release the snapshot connection before current authorization. Even a
+	// one-connection pool must not wait on itself for the fresh disclosure check.
+	if err = tx.Rollback(ctx); err != nil {
+		return domain.GitHubPushPolicy{}, hostingError(err)
+	}
+	rank, err := s.queries.AutoReadActorRank(ctx, sqlcgen.AutoReadActorRankParams{ActorID: actor, ResourceID: resource, ProjectID: policy.ProjectID})
+	if err != nil {
+		return domain.GitHubPushPolicy{}, hostingError(err)
+	}
+	if rank < 1 {
+		return domain.GitHubPushPolicy{}, auth.ErrForbidden
+	}
+	if rank < 3 {
+		policy.CanManage = false
+		policy.OwnerConfiguration = nil
+		policy.OwnerAutomaticDeploymentOptions = nil
+	}
+	return policy, nil
 }
 
 // ConfigureGitHubPushPolicy saves explicit owner delegation disabled with a fresh baseline requirement.
