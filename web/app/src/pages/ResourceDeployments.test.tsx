@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import { queryKeys } from "@/api";
+import { ApiError, queryKeys } from "@/api";
 import type { Resource } from "@/api/hosting";
 import type { HostingOperation } from "@/api/hosting-deployments";
 import { ResourceDeployments } from "./ResourceDeployments";
@@ -12,7 +12,7 @@ const operation: HostingOperation = { id: "hop_one", project_id: "project", reso
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const page = (items: HostingOperation[] = [], offset = 0, total = items.length) => ({ items, count: items.length, total, limit: 20, offset });
 let client: QueryClient;
-afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 function setup(role = "maintainer", globalRoles: string[] = [], automatic = false) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(queryKeys.principal, { id: "user", name: "Operator", email: "operator@example.test", provider: "oidc", roles: globalRoles });
@@ -28,6 +28,8 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
     if (response) return response;
     if (url.includes("/project-members")) return json({ items: client.getQueryData(queryKeys.allProjectMembers) ?? [], limit: 100, offset: 0, count: (client.getQueryData<unknown[]>(queryKeys.allProjectMembers) ?? []).length, total: (client.getQueryData<unknown[]>(queryKeys.allProjectMembers) ?? []).length });
     if (url.endsWith("/me")) return json(client.getQueryData(queryKeys.principal));
+    if (url.endsWith("/storage-deployment-options")) return json({ resource_id: "resource", resource_generation: 1, storage_ref: null, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: false, reason: "storage_unconfigured", routes: [], storage_route_continuity: null });
+    if (url.endsWith("/storage")) return json({ id: "storage", project_id: "project", resource_id: "resource", binding_id: "binding", generation: 1, hash: "hash", kind: "platform_managed", driver: "local", access_mode: "read_write", retention: "retain", volume_name: "ncd_uploads", mount_path: "/app/uploads" });
     if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: { resource_id: "resource", project_id: resource.project_id, resource_generation: 1, runtime_generation: 0, entries: [] } });
     if (url.endsWith("/binding")) return json(binding);
     if (url.includes("/retained-releases")) return json([]);
@@ -44,6 +46,232 @@ async function request() {
   await act(async () => { await Promise.resolve(); });
 }
 function acknowledge() { fireEvent.click(screen.getByLabelText(/I understand that/)); }
+test("storage authority failure never falls back to stateless admission", async () => {
+  const fetch = backend((url) => url.endsWith("/storage-deployment-options") ? json({ error: "authority unavailable" }, 503) : undefined);
+  setup();
+  await screen.findByText(/Storage deployment options are unavailable/);
+  expect(screen.queryByRole("form", { name: "Deploy image for Web" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(0);
+});
+test("new storage created after opening a stateless draft requires storage review before any admission", async () => {
+  let configured = false;
+  const fetch = backend((url) => configured && url.endsWith("/storage-deployment-options") ? json({ resource_id: "resource", resource_generation: 1, storage_ref: { storage_id: "storage", generation: 1, hash: "hash" }, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: false, reason: "no_previous_healthy", routes: [], storage_route_continuity: null }) : undefined);
+  setup(); acknowledge();
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request image deployment" }).disabled).toBe(false));
+  configured = true;
+  fireEvent.submit(screen.getByRole("form", { name: "Deploy image for Web" }));
+  await screen.findByRole("region", { name: "Persistent upload deployment review" });
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(0);
+});
+test("configured storage uses server review and clears it on resource generation change", async () => {
+  const options = { resource_id: "resource", resource_generation: 1, storage_ref: { storage_id: "storage", generation: 1, hash: "hash" }, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null };
+  const fetch = backend((url) => url.endsWith("/storage-deployment-options") ? json(options) : undefined);
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+  await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+  expect(screen.queryByLabelText("Host port allocation")).toBeNull();
+  expect(screen.queryByRole("form", { name: "Deploy image for Web" })).toBeNull();
+  view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={{ ...resource, generation: 2 }} writable blocked={false} /></QueryClientProvider>);
+  expect(screen.queryByRole("button", { name: "Deploy reviewed image with uploads" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(0);
+});
+test("storage receipt retry survives history acquiring the admitted operation mutation hold", async () => {
+  const storage: NonNullable<HostingOperation["snapshot"]["storage"]> = { storage_id: "storage", generation: 1, hash: "hash" };
+  const options = { resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null };
+  const admitted = { ...operation, mutation_hold: true, snapshot: { ...operation.snapshot, storage } };
+  let held = false, submissions = 0;
+  const fetch = backend((url, init) => {
+    if (url.endsWith("/storage-deployment-options")) return json(options);
+    if (url.endsWith("/deployments") && init.method === "POST") {
+      if (++submissions === 1) { held = true; throw new TypeError("accepted response lost"); }
+      return json(admitted, 202);
+    }
+    if (url.includes("/deployments") && init.method !== "POST") return json(page(held ? [admitted] : []));
+    return undefined;
+  });
+  setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+  await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
+  await screen.findByRole("button", { name: "Retry identical storage deployment request" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh deployment history" }));
+  await screen.findByText(/New deployment requests are paused/);
+  const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical storage deployment request" });
+  expect(retry.disabled).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Review current storage deployment" }).disabled).toBe(true);
+  fireEvent.click(retry);
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  const writes = fetch.mock.calls.filter(([, init]) => init.method === "POST");
+  expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
+test("stateless accepted receipt remains selected when the shared history refresh rejects", async () => {
+  const fetch = backend(); setup(); acknowledge();
+  vi.spyOn(client, "invalidateQueries").mockRejectedValue(new Error("history refresh failed"));
+  await request();
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  await screen.findByText(/was accepted, but history could not be refreshed/);
+  expect(screen.getByLabelText<HTMLInputElement>("Container port").disabled).toBe(false);
+  expect(screen.queryByText(/connection ended without a confirmed response/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry identical deployment request" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+});
+const refreshDenials = ["storage", "stateless"].flatMap((mode) => ["history", "retained"].flatMap((endpoint) => [401, 403, 404].map((status) => ({ mode, endpoint, status }))));
+test.each(refreshDenials)("accepted $mode refresh preserves later denial $status after earlier $endpoint 503", async ({ mode, endpoint, status }) => {
+  const storage: NonNullable<HostingOperation["snapshot"]["storage"]> = { storage_id: "storage", generation: 1, hash: "hash" };
+  let admitted = false;
+  let completeDenial!: (response: Response) => void;
+  const reads = { history: 0, retained: 0 };
+  const fetch = backend((url, init) => {
+    if (mode === "storage" && url.endsWith("/storage-deployment-options")) return json({ resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null });
+    if (url.endsWith("/deployments") && init.method === "POST") { admitted = true; return json({ ...operation, snapshot: { ...operation.snapshot, ...(mode === "storage" ? { storage } : {}) } }, 202); }
+    if (admitted && (url.includes("/deployments") && init.method !== "POST" || url.endsWith("/retained-releases"))) {
+      const read = url.includes("/deployments") ? "history" : "retained";
+      reads[read]++;
+      if (read === endpoint) return json({ error: "ordinary first failure" }, 503);
+      return new Promise<Response>((resolve) => { completeDenial = resolve; });
+    }
+    return undefined;
+  });
+  setup();
+  if (mode === "storage") {
+    fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+    await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+    fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+    fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
+  } else { acknowledge(); await request(); }
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  await waitFor(() => expect(reads).toEqual({ history: 1, retained: 1 }));
+  await waitFor(() => expect(client.getQueryCache().getAll().some((query) => query.state.error instanceof ApiError && query.state.error.status === 503)).toBe(true));
+  await act(async () => { completeDenial(json({ error: "later current denial" }, status)); });
+  await screen.findByText(/Deployment permission is unavailable. Reload to verify current project access/);
+  expect(screen.queryByRole("region", { name: "Image deployments for Web" })).toBeNull();
+  expect(screen.queryByText(/Delivery is unconfirmed/)).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+  expect(reads).toEqual({ history: 1, retained: 1 });
+});
+test.each(["deadline", "actor", "resource"])("mixed refresh ignores late denial after %s retirement without extra reads", async (retirement) => {
+  const storage: NonNullable<HostingOperation["snapshot"]["storage"]> = { storage_id: "storage", generation: 1, hash: "hash" };
+  let admitted = false;
+  let completeDenial!: (response: Response) => void;
+  let pendingSignal: AbortSignal | null | undefined;
+  const reads = { history: 0, retained: 0 };
+  const fetch = backend((url, init) => {
+    if (url.endsWith("/storage-deployment-options")) return json({ resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null });
+    if (url.endsWith("/deployments") && init.method === "POST") { admitted = true; return json({ ...operation, snapshot: { ...operation.snapshot, storage } }, 202); }
+    if (admitted && url.includes("/deployments") && init.method !== "POST") { reads.history++; return json({ error: "first ordinary failure" }, 503); }
+    if (admitted && url.endsWith("/retained-releases")) { reads.retained++; pendingSignal = init.signal; return new Promise<Response>((resolve) => { completeDenial = resolve; }); }
+    return undefined;
+  });
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+  await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+  vi.useFakeTimers();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" })); });
+  expect(reads).toEqual({ history: 1, retained: 1 });
+  if (retirement === "deadline") {
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(screen.getByText(/was accepted, but history could not be refreshed/)).toBeTruthy();
+  }
+  vi.useRealTimers();
+  if (retirement === "resource") view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={{ ...resource, id: "other" }} writable blocked={false} /></QueryClientProvider>);
+  if (retirement === "actor") await act(async () => { client.setQueryData(queryKeys.principal, { id: "other", provider: "oidc", roles: [] }); });
+  if (retirement !== "deadline") await waitFor(() => expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull());
+  expect(pendingSignal?.aborted).toBe(true);
+  await act(async () => { completeDenial(json({ error: "retired denial" }, 403)); });
+  expect(screen.queryByText(/Deployment permission is unavailable. Reload to verify current project access/)).toBeNull();
+  if (retirement === "deadline") expect(screen.getByText(/Deployment request accepted: hop_one/)).toBeTruthy();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+  if (retirement === "deadline") expect(reads).toEqual({ history: 1, retained: 1 });
+});
+test.each(refreshDenials)("accepted $mode POST retires protected panel after $endpoint refresh $status", async ({ mode, endpoint, status }) => {
+  const storage: NonNullable<HostingOperation["snapshot"]["storage"]> = { storage_id: "storage", generation: 1, hash: "hash" };
+  const options = { resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null };
+  let admitted = false;
+  let siblingSignal: AbortSignal | null | undefined;
+  let completeSibling!: (response: Response) => void;
+  const fetch = backend((url, init) => {
+    if (mode === "storage" && url.endsWith("/storage-deployment-options")) return json(options);
+    if (url.endsWith("/deployments") && init.method === "POST") { admitted = true; return json({ ...operation, snapshot: { ...operation.snapshot, ...(mode === "storage" ? { storage } : {}) } }, 202); }
+    if (admitted && (url.includes("/deployments") && init.method !== "POST" || url.endsWith("/retained-releases"))) {
+      const history = url.includes("/deployments");
+      if (history === (endpoint === "history")) return json({ error: "current scope denied" }, status);
+      siblingSignal = init.signal;
+      return new Promise<Response>((resolve) => { completeSibling = resolve; });
+    }
+    return undefined;
+  });
+  setup();
+  if (mode === "storage") {
+    fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+    await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+    fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+    fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
+  } else { acknowledge(); await request(); }
+  await screen.findByText(/Deployment permission is unavailable. Reload to verify current project access/);
+  expect(screen.queryByRole("region", { name: "Image deployments for Web" })).toBeNull();
+  expect(screen.queryByText(/Delivery is unconfirmed/)).toBeNull();
+  expect(siblingSignal?.aborted).toBe(true);
+  await act(async () => { completeSibling(json(endpoint === "history" ? [] : page([operation]))); });
+  expect(screen.getByText(/Deployment permission is unavailable. Reload to verify current project access/)).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Retry identical/ })).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+});
+test.each(["storage", "stateless"].flatMap((mode) => ["history", "retained"].map((endpoint) => ({ mode, endpoint }))))("accepted $mode receipt remains definitive after ordinary $endpoint refresh 503", async ({ mode, endpoint }) => {
+  const storage: NonNullable<HostingOperation["snapshot"]["storage"]> = { storage_id: "storage", generation: 1, hash: "hash" };
+  let admitted = false;
+  const fetch = backend((url, init) => {
+    if (mode === "storage" && url.endsWith("/storage-deployment-options")) return json({ resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null });
+    if (url.endsWith("/deployments") && init.method === "POST") { admitted = true; return json({ ...operation, snapshot: { ...operation.snapshot, ...(mode === "storage" ? { storage } : {}) } }, 202); }
+    if (admitted && (endpoint === "history" ? url.includes("/deployments") && init.method !== "POST" : url.endsWith("/retained-releases"))) return json({ error: "temporarily unavailable" }, 503);
+    return undefined;
+  });
+  setup();
+  if (mode === "storage") {
+    fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+    await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+    fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+    fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
+  } else { acknowledge(); await request(); }
+  await screen.findByText(/was accepted, but history could not be refreshed/);
+  expect(screen.getByText(/Deployment request accepted: hop_one/)).toBeTruthy();
+  expect(screen.queryByText(/Deployment permission is unavailable. Reload to verify current project access/)).toBeNull();
+  expect(screen.queryByText(/Delivery is unconfirmed/)).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+});
+test.each(["actor", "resource"])("accepted storage refresh times out and fences late reads after %s changes", async (change) => {
+  const storage: NonNullable<HostingOperation["snapshot"]["storage"]> = { storage_id: "storage", generation: 1, hash: "hash" };
+  const options = { resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null };
+  let admitted = false;
+  let historySignal: AbortSignal | null | undefined;
+  let resolve!: (response: Response) => void;
+  const fetch = backend((url, init) => {
+    if (url.endsWith("/storage-deployment-options")) return json(options);
+    if (url.endsWith("/deployments") && init.method === "POST") { admitted = true; return json({ ...operation, snapshot: { ...operation.snapshot, storage } }, 202); }
+    if (admitted && url.includes("/deployments") && init.method !== "POST") { historySignal = init.signal; return new Promise<Response>((done) => { resolve = done; }); }
+    return undefined;
+  });
+  const view = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Review current storage deployment" }));
+  await screen.findByRole("button", { name: "Deploy reviewed image with uploads" });
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+  vi.useFakeTimers();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" })); });
+  expect(screen.getByText(/Deployment request accepted: hop_one/)).toBeTruthy();
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(screen.getByText(/was accepted, but history could not be refreshed/)).toBeTruthy();
+  expect(historySignal?.aborted).toBe(true);
+  vi.useRealTimers();
+  if (change === "resource") view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={{ ...resource, id: "other" }} writable blocked={false} /></QueryClientProvider>);
+  else await act(async () => { client.setQueryData(queryKeys.principal, { id: "other", provider: "oidc", roles: [] }); });
+  await waitFor(() => expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull());
+  await act(async () => { resolve(json(page([{ ...operation, mutation_hold: true }]))); });
+  expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull();
+  expect(screen.queryByText(/was accepted, but history could not be refreshed/)).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+});
 test("viewer reads persisted history and results without request, cancel, or reconcile controls", async () => {
   backend((url) => url.includes("/deployments") ? json(page([{ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }])) : url.includes("/hosting-operations/") ? json({ ...operation, state: "succeeded", result: { outcome: "succeeded", ready: true, restored: false, uncertain: false } }) : undefined);
   setup("viewer"); fireEvent.click(await screen.findByRole("button", { name: "View operation hop_one" }));

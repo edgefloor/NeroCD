@@ -66,3 +66,12 @@ test("local build admission preserves exact generated body, CSRF, signal and str
   await expect(requestHostingBuildDeployment("resource/one", body)).rejects.toMatchObject({ status: 409, code: "hosting_restore_held" });
   expect(hostingDeploymentsQuery("p", "r", 0, "actor").queryKey).not.toEqual(hostingDeploymentsQuery("p", "r", 0, "other").queryKey);
 });
+
+test("storage deployment admission preserves the complete reviewed route CAS and stable request key", async () => {
+  const fetch = vi.fn().mockImplementation(async () => new Response("{}", { status: 202 })); vi.stubGlobal("fetch", fetch);
+  const body = { ...input, storage_route_continuity: { expected_loaded_generation: 7, expected_loaded_proxy_operation_id: "proxy_old", routes: [{ route_id: "route_one", expected_version: 4, expected_selected_release_operation_id: "hop_old" }, { route_id: "route_two", expected_version: 8, expected_selected_release_operation_id: "hop_old" }] } };
+  await requestHostingDeployment("resource", body);
+  await requestHostingDeployment("resource", body);
+  expect(fetch.mock.calls[0][1].body).toBe(JSON.stringify(body));
+  expect(fetch.mock.calls[1][1].body).toBe(fetch.mock.calls[0][1].body);
+});

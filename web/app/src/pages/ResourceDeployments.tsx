@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { PageNavigation } from "@/components/common/PageNavigation";
 import { canMaintainProject } from "@/lib/permissions";
 import { maximumPageOffset } from "@/router/search";
+import { boundedStorageRequest, getStorageDeploymentOptions, storageDeploymentOptionsQuery } from "@/api/hosting-storage-deployment";
+import { StorageContinuityDetail, StorageDeploymentReview } from "./StorageDeploymentReview";
 
 const terminalStates = new Set(["succeeded", "failed", "canceled"]);
 const stateText: Record<string, string> = {
@@ -62,6 +64,7 @@ export function OperationDetail({ actor, projectID, resourceID, operationID, wri
     <Button type="button" variant="outline" disabled={detail.isFetching || busy} onClick={() => void detail.refetch()}>Refresh operation</Button>
     {operation ? <>
       <h6 className="font-medium">{stateText[operation.state] ?? operation.state}</h6>
+      {operation.snapshot.storage_route_continuity ? <StorageContinuityDetail scope={{ actor, project: projectID, resource: resourceID }} operation={operationID} /> : null}
       {operation.cleanup_plan ? <p>Retained release cleanup · target {operation.cleanup_plan.target.operation_id}</p> : null}
       <dl className="space-y-1 break-all text-sm">
         <dt>Operation ID</dt><dd>{operation.id}</dd><dt>Recorded update</dt><dd>{operation.updated_at}</dd>
@@ -175,7 +178,7 @@ export function ResourceDeployments(props: { resource: Resource; writable: boole
   const scope = JSON.stringify([actor, props.resource.project_id, props.resource.id]);
   if (deniedScope === scope) return <p role="alert">Deployment permission is unavailable. Reload to verify current project access. Drafts and retained requests are cleared.</p>;
   const writable = props.writable && canMaintainProject(identity.data, members.data ?? [], props.resource.project_id);
-  return <Deployments key={JSON.stringify([actor, props.resource.project_id, props.resource.id, writable])} {...props} writable={writable} actor={actor} onDenied={() => setDeniedScope(scope)} blocked={props.blocked || identity.isError} />;
+  return <Deployments key={JSON.stringify([actor, props.resource.project_id, props.resource.id, props.resource.generation, writable])} {...props} writable={writable} actor={actor} onDenied={() => setDeniedScope(scope)} blocked={props.blocked || identity.isError} />;
 }
 function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: string; resource: Resource; writable: boolean; blocked: boolean; onDenied: () => void }) {
   const id = useId();
@@ -183,7 +186,8 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   const active = useRef(true);
   const submitting = useRef(false);
   const request = useRef<AbortController | null>(null);
-  useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); }; }, []);
+  const refreshRequests = useRef(new Set<AbortController>());
+  useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); for (const controller of refreshRequests.current) controller.abort(); refreshRequests.current.clear(); }; }, []);
   const principal = useQuery(principalQuery());
   const members = useQuery({ ...allProjectMembersQuery(), staleTime: 10_000 });
   // Mirrors requireProjectRole: only system_admin bypasses persisted membership.
@@ -205,8 +209,13 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   const [refreshError, setRefreshError] = useState("");
   const [differentIntent, setDifferentIntent] = useState(false);
   const [restoreRejected, setRestoreRejected] = useState(false);
+  const [acceptedID, setAcceptedID] = useState("");
+  const acceptedReceipt = useRef("");
+  const [acceptedRefreshError, setAcceptedRefreshError] = useState("");
   const binding = useQuery(hostingBindingQuery(resource.project_id, resource.id, actor));
   const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset, actor));
+  const storageOptions = useQuery({ ...storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }), enabled: resource.source.kind === "image" });
+  const stateless = !storageOptions.isError && storageOptions.data?.reason === "storage_unconfigured" && storageOptions.data.storage_ref === null;
   const base = reviewed ?? resource;
   const restoreHeld = restoreRejected || Boolean(history.data?.items.some((operation) => operation.restore_ownership_held));
   const mutationHeld = Boolean(history.data?.items.some((operation) => operation.mutation_hold));
@@ -216,7 +225,33 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   // An existing exact key is receipt recovery, not new workload admission.
   // Keep its frozen body available even if refreshed history reveals its hold.
   const newAdmissionHeld = mutationHeld && !attempt;
-  const refreshHistory = async () => { await Promise.all([client.invalidateQueries({ queryKey: hostingDeploymentKeys.history(resource.project_id, resource.id) }), client.invalidateQueries({ queryKey: hostingDeploymentKeys.retained(resource.project_id, resource.id) })]); };
+  const refreshHistory = async (retired?: AbortSignal) => {
+    if (!active.current) throw new DOMException("Deployment scope retired", "AbortError");
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (retired?.aborted) controller.abort();
+    retired?.addEventListener("abort", abort, { once: true });
+    refreshRequests.current.add(controller);
+    const keys = [hostingDeploymentKeys.history(resource.project_id, resource.id, actor), hostingDeploymentKeys.retained(resource.project_id, resource.id, actor)];
+    try {
+      await boundedStorageRequest(async (signal) => {
+        const cancel = () => { for (const queryKey of keys) void client.cancelQueries({ queryKey }); };
+        signal.addEventListener("abort", cancel, { once: true });
+        try {
+          const denied = (cause: unknown) => cause instanceof ApiError && [401, 403, 404].includes(cause.status);
+          // Inspect each current read while siblings are pending. An earlier
+          // ordinary failure must not consume a later permission denial.
+          const results = await Promise.allSettled(keys.map(async (queryKey) => {
+            try { await client.invalidateQueries({ queryKey }, { throwOnError: true }); }
+            catch (cause) { if (active.current && !signal.aborted && denied(cause)) onDenied(); throw cause; }
+          }));
+          for (const result of results) if (result.status === "rejected" && denied(result.reason)) throw result.reason;
+          for (const result of results) if (result.status === "rejected") throw result.reason;
+        }
+        finally { signal.removeEventListener("abort", cancel); }
+      }, controller.signal);
+    } finally { retired?.removeEventListener("abort", abort); refreshRequests.current.delete(controller); }
+  };
   async function reviewCurrent() {
     setRefreshError(""); setCurrent(undefined);
     try {
@@ -229,24 +264,37 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (resource.source.kind !== "image" || !canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
+    if (resource.source.kind !== "image" || !stateless || !canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
     submitting.current = true;
     let input = attempt;
     const controller = new AbortController(); request.current = controller;
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setAcceptedRefreshError("");
     try {
       if (!input) {
-        const { runtime_configuration: runtime } = await getHostingRuntimeConfiguration(resource.id, { signal: controller.signal });
+        const authority = await getStorageDeploymentOptions({ actor, project: resource.project_id, resource: resource.id }, controller.signal);
+        if (!active.current || controller.signal.aborted) return;
+        client.setQueryData(storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }).queryKey, authority);
+        if (authority.reason !== "storage_unconfigured" || authority.storage_ref !== null) {
+          setAcknowledged(false);
+          return;
+        }
+        const { runtime_configuration: runtime } = await boundedStorageRequest((signal) => getHostingRuntimeConfiguration(resource.id, { signal }), controller.signal);
         if (!active.current || controller.signal.aborted) return;
         if (runtime.resource_id !== resource.id || runtime.project_id !== resource.project_id || !Number.isSafeInteger(runtime.runtime_generation) || runtime.runtime_generation < 0) throw new Error("Runtime configuration scope mismatch");
         input = { ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}), expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(portMode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
         setAttempt(input);
       }
-      const operation = await requestHostingDeployment(resource.id, input, { signal: controller.signal });
+      const frozenInput = input;
+      const operation = await boundedStorageRequest((signal) => requestHostingDeployment(resource.id, frozenInput, { signal }), controller.signal);
       if (!active.current || controller.signal.aborted) return;
       if (operation.project_id !== resource.project_id || operation.resource_id !== resource.id || operation.binding_id !== binding.data.id || (input.expected_runtime_configuration_generation !== undefined && operation.snapshot.runtime_configuration?.generation !== input.expected_runtime_configuration_generation)) throw new Error("Operation scope mismatch");
-      setSelected(operation.id); setAttempt(undefined); setAcknowledged(false); setDifferentIntent(false); setOffset(0);
-      await refreshHistory();
+      setSelected(operation.id); setAcceptedID(operation.id); acceptedReceipt.current = operation.id; setAttempt(undefined); setAcknowledged(false); setDifferentIntent(false); setOffset(0);
+      void refreshHistory().catch((cause) => {
+        if (!active.current) return;
+        if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { onDenied(); return; }
+        if (acceptedReceipt.current !== operation.id) return;
+        setAcceptedRefreshError(`Deployment request ${operation.id} was accepted, but history could not be refreshed. Refresh deployment history to inspect its recorded state.`);
+      });
     } catch (cause) {
       if (!active.current || controller.signal.aborted) return;
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { onDenied(); return; }
@@ -265,6 +313,8 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
     <h5 className="font-medium">{resource.source.kind === "image" ? "Image deployments" : "Deployment history"}</h5>
+    {acceptedID ? <p role="status" className="break-all">Deployment request accepted: {acceptedID}. Acceptance does not confirm workload completion or public traffic.</p> : null}
+    {acceptedRefreshError ? <p role="alert">{acceptedRefreshError}</p> : null}
     {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Use Git builds to request and review build operations. Select a successful build in Git builds to deploy its recorded local artifact. Review the resulting operation here, then configure the existing HTTPS route after the release settles healthy.</p> : null}
     {restoreHeld ? <p role="alert">Deployment admission blocked after platform restore. Recovery proof is pending; refreshing configuration, retrying, or requesting reconciliation cannot release restored ownership. Your settings are preserved.</p> : null}
     {mutationHeld ? <p role="status">New deployment requests are paused while a recorded mutation hold is retained. An exact retained request can still recover its existing operation. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
@@ -276,7 +326,10 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     <PageNavigation label={`deployments for ${resource.name}`} page={history.data} loading={history.isFetching || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))} />
     {selected ? <OperationDetail actor={actor} key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
     {binding.data ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
-    {writable && resource.source.kind === "image" ? <form className="space-y-3 rounded-lg border p-3" aria-label={`Deploy image for ${resource.name}`} onSubmit={(event) => void submit(event)}>
+    {resource.source.kind === "image" && storageOptions.isPending ? <p role="status">Checking authoritative storage deployment options...</p> : null}
+    {resource.source.kind === "image" && storageOptions.isError ? <><p role="alert">Storage deployment options are unavailable. Deployment is paused; refresh authority before reviewing.</p><Button type="button" variant="outline" disabled={storageOptions.isFetching} onClick={() => void storageOptions.refetch()}>Retry storage deployment options</Button></> : null}
+    {writable && resource.source.kind === "image" && !storageOptions.isError && storageOptions.data && !stateless ? <StorageDeploymentReview key={binding.data?.id ?? "unbound"} bindingID={binding.data?.id ?? ""} scope={{ actor, project: resource.project_id, resource: resource.id }} resource={resource} options={storageOptions.data} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} /> : null}
+    {writable && resource.source.kind === "image" && (stateless || storageOptions.isPending) ? <form className="space-y-3 rounded-lg border p-3" aria-label={`Deploy image for ${resource.name}`} onSubmit={(event) => void submit(event)}>
       <p className="text-sm">A new deployment captures the current saved runtime generation and requires a compatible runner. Saving variables does not update the serving release.</p>
       <p className="break-all text-sm">Deploy saved image {base.source.kind === "image" ? base.source.image.reference : "unavailable"} at generation {base.generation} to binding {binding.data?.id ?? "unavailable"}.</p>
       {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
@@ -290,7 +343,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
       <p className="text-xs text-muted-foreground">The readiness path must be relative to the local origin, such as /health. This is a generic HTTP check without revision-specific response headers. {portMode === "fixed" ? `Port 127.0.0.1:${hostPort}` : "The allocated loopback port"} is local to the runner, not a public application URL. Automatic allocation uses a separate port per release and retains prior containers until explicit cleanup. It does not switch traffic or provision HTTPS.</p>
       {portMode === "fixed" ? <p role="note" className="text-sm">Reusing the current release’s unprotected port on this binding stops the current container before replacement readiness is verified, interrupting service. Retained-release, other-binding, and proxy-protected port conflicts are rejected.</p> : null}
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={(event) => setAcknowledged(event.target.checked)} /><span>I understand that {portMode === "fixed" ? "reusing the current release’s unprotected port stops it before replacement readiness is verified and interrupts service; retained-release, other-binding, and proxy-protected port conflicts are rejected" : "the server allocates a new release port and previous containers remain until explicit cleanup"}. No automatic traffic switch or zero-downtime behavior is promised.</span></label>
-      <Button type="submit" className="h-auto whitespace-normal" disabled={!canWrite || newAdmissionHeld || busy || !binding.data || !acknowledged || conflict || restoreHeld}>{restoreHeld ? "Deployment blocked after restore" : newAdmissionHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
+      <Button type="submit" className="h-auto whitespace-normal" disabled={!stateless || !canWrite || newAdmissionHeld || busy || !binding.data || !acknowledged || conflict || restoreHeld}>{restoreHeld ? "Deployment blocked after restore" : newAdmissionHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
       {attempt ? <p className="break-all text-xs">Request key: {attempt.idempotency_key}. Submitted settings and resource/runtime generations {attempt.expected_generation}/{attempt.expected_runtime_configuration_generation ?? 0} are retained{restoreHeld ? ". Deployment admission remains blocked." : " for an identical retry."}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {attempt && !restoreHeld ? <section className="space-y-2" aria-label="Review deployment request">
