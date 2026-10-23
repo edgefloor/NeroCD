@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`132012237ee484e9cd6fce2fba656966567a1cc8`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`24c363fd22ac8237a09c12040386a442b0a3ff53`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - PostgreSQL state, checked migrations through 0054, bootstrap administration,
@@ -56,8 +56,13 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   through migration 0054. The collector requires `--hosting-observation` with
   matching persisted `hosting_observation_v1` capability. It reads narrow Docker
   status and loopback readiness, selecting four targets fairly per 10-second cycle.
-  This is not a 10-second sampling guarantee for each resource. Status UI and
-  disk/CPU metrics remain pending.
+  This is not a 10-second sampling guarantee for each resource. The accepted
+  read-only dashboard separates current, stale and historical target evidence,
+  checks current viewer access and bounds reads with timeout and retry handling.
+  Disk/CPU metrics remain pending.
+- Enrollment commands use the exact persisted capabilities and identify runner
+  configuration prerequisites. This does not qualify SSH-assisted enrollment or
+  complete host readiness.
 - Runtime configuration UI for public literals and exact managed-secret versions,
   generation compare-and-swap, idempotent retries and fresh deployment generations.
   Accepted browser proof covers authenticated API, compiled runner and Docker,
@@ -95,8 +100,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. The next H1 work is the runtime-status dashboard and runtime logs, both active
-unaccepted work, followed by the other H1 gaps. Other gaps include onboarding,
+and extended compatibility. The next H1 work is runtime logs, whose control
+integration is blocked by a client decoder incompatibility. Log collection and
+viewing remain unimplemented. Other gaps include onboarding,
 broader credentials, trusted triggers, deployment policy, production TLS
 qualification, broader Compose/storage, databases, backups,
 restores, previews, terminals, schedules and notifications.
