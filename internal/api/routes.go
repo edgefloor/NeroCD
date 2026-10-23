@@ -66,6 +66,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/route-switches"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-deployment-options"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-route-continuity/{operation_id}"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-route-continuity/{operation_id}/recover"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/route-switches/{operation_id}"},
 	{Method: http.MethodGet, Path: "/api/v1/routes/{id}"},
 	{Method: http.MethodPatch, Path: "/api/v1/routes/{id}"},
@@ -249,6 +250,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingStorageDeploymentOptions
 	case "/api/v1/resources/{id}/storage-route-continuity/{operation_id}":
 		return s.hostingStorageRouteContinuityStatus
+	case "/api/v1/resources/{id}/storage-route-continuity/{operation_id}/recover":
+		return s.recoverHostingStorageRouteContinuity
 	case "/api/v1/resources/{id}/route-switches":
 		return s.hostingRouteSwitch
 	case "/api/v1/resources/{id}/route-switches/{operation_id}":

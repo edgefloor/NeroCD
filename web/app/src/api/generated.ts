@@ -1003,6 +1003,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/storage-route-continuity/{operation_id}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue unlinked proxy continuity for a confirmed healthy storage replacement
+         * @description Requires current maintainer authority and exact immutable deployment evidence. Retries only an unresolved continuity with no successor. Matching replay returns linked historical status, including proxy failure, without repeating storage or writer mutations.
+         */
+        post: operations["recoverHostingStorageRouteContinuity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/route-switches": {
         parameters: {
             query?: never;
@@ -4270,6 +4290,14 @@ export interface components {
             }[];
             /** @description Copy this existing accepted write field only when available. When available, null means an ordinary redeploy without own public routes. */
             storage_route_continuity: components["schemas"]["HostingStorageRouteContinuityInput"] | null;
+        };
+        HostingStorageRouteRecoveryInput: {
+            /** @description Exact snapshot.storage_route_continuity.hash from the authorized deployment operation. */
+            expected_descriptor_hash: string;
+            /** @description Exact complete_receipt.id from the authorized deployment operation. */
+            expected_complete_receipt_id: components["schemas"]["HostingIdentifier"];
+            /** @description Exact complete_receipt.body_hash from the authorized deployment operation. */
+            expected_complete_receipt_hash: string;
         };
         HostingStorageRouteContinuityStatus: {
             resource_id: components["schemas"]["HostingIdentifier"];
@@ -7910,6 +7938,40 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Authorized read-only resource view */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageRouteContinuityStatus"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recoverHostingStorageRouteContinuity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+                operation_id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageRouteRecoveryInput"];
+            };
+        };
+        responses: {
+            /** @description Current linked continuity status, without a new storage admission */
             200: {
                 headers: {
                     "Cache-Control"?: "no-store";
