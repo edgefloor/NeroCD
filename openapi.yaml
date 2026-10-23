@@ -2063,6 +2063,41 @@ paths:
         "403": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
         "409": {$ref: "#/components/responses/Error"}
+  /api/v1/resources/{id}/storage:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getHostingStorage
+      summary: Read immutable desired storage metadata
+      description: Current project viewer and destination grant required. A 404 means no configured storage or unavailable resource. Metadata is not evidence of volume materialization or workload use.
+      responses:
+        '200':
+          description: Desired metadata only, Cache-Control no-store
+          content: {application/json: {schema: {$ref: '#/components/schemas/HostingStorage'}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createHostingStorage
+      summary: Configure immutable retained storage for an image application
+      description: Project owner and current destination grant required, including replay. Creates desired metadata only, not a Docker volume or deployment. The mount is immutable. Storage-capable agents and deployment preflight are still required. The first volume is empty with no image file or existing upload import. Ownership and mode initialization are unsupported.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/HostingStorageInput'}}}
+      responses:
+        '201':
+          description: Desired metadata saved or exact request replayed, Cache-Control no-store
+          content: {application/json: {schema: {$ref: '#/components/schemas/HostingStorage'}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '413': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/resources/{id}/runtime-configuration:
     parameters:
       - name: id
@@ -5757,6 +5792,14 @@ components:
           }
         }
       }
+    HostingStorageInput:
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_resource_generation, mount_path]
+      properties:
+        request_id: {type: string, pattern: '^[0-9a-f]{32}$', description: 128 random bits retained unchanged across identical retries}
+        expected_resource_generation: {type: integer, format: int64, minimum: 1}
+        mount_path: {type: string, minLength: 2, maxLength: 512, description: Canonical absolute container path excluding root and proc/sys/dev namespaces; immutable after creation}
     HostingStorage:
       {
         "type": "object",
