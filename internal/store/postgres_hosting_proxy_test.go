@@ -13,9 +13,9 @@ import (
 	"nerocd/internal/store"
 )
 
-func proxyControlFixture(t *testing.T) (*store.PostgresStore, *pgxpool.Pool, domain.Resource, domain.Server, domain.Destination, domain.HostingOperation) {
+func proxyControlFixture(t *testing.T, stopOut ...*func(context.Context) error) (*store.PostgresStore, *pgxpool.Pool, domain.Resource, domain.Server, domain.Destination, domain.HostingOperation) {
 	t.Helper()
-	pg, database, resource, server, destination := hostingExecutionFixture(t)
+	pg, database, resource, server, destination := hostingExecutionFixture(t, stopOut...)
 	if _, err := database.Exec(t.Context(), `UPDATE runners SET capabilities=array_append(array_append(capabilities,$2),$3) WHERE id=$1`, server.RunnerID, domain.RunTypeProxyApply, domain.HostingReleasePortsCapability); err != nil {
 		t.Fatal(err)
 	}

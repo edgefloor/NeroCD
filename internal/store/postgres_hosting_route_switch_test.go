@@ -53,9 +53,9 @@ func admitSwitchOperation(t *testing.T, f switchControl, id string) (domain.Host
 	return a, op, preparation
 }
 
-func switchControlFixture(t *testing.T) switchControl {
+func switchControlFixture(t *testing.T, stopOut ...*func(context.Context) error) switchControl {
 	t.Helper()
-	pg, db, resource, server, _, a := proxyControlFixture(t)
+	pg, db, resource, server, _, a := proxyControlFixture(t, stopOut...)
 	f := switchControl{pg: pg, db: db, resource: resource, server: server, a: a}
 	if _, err := db.Exec(t.Context(), `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingProxyVerifiedSwitchCapability); err != nil {
 		t.Fatal(err)
@@ -225,10 +225,22 @@ func TestPostgresVerifiedSwitchCancellation(t *testing.T) {
 			}
 			if admitted {
 				_, _, _ = admitSwitchOperation(t, f, op.ID)
+			} else {
+				// Dispatch may race cancellation's preflight run-ID compare. Wait
+				// for dispatch without claiming or admitting the unheld operation.
+				op = awaitProxyDispatch(t, f.pg, op.ID)
+				if op.State != "dispatched" || op.MutationHold || op.PreparedReceipt != nil || op.Preparation != nil {
+					t.Fatalf("unadmitted cancellation state=%q hold=%t", op.State, op.MutationHold)
+				}
+				var leases, admissions int
+				if err := f.db.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM run_leases WHERE run_id=$1),(SELECT count(*) FROM hosting_proxy_admissions WHERE operation_id=$2)`, op.RunID, op.ID).Scan(&leases, &admissions); err != nil || leases != 0 || admissions != 0 {
+					t.Fatalf("unadmitted fixture leases=%d admissions=%d err=%v", leases, admissions, err)
+				}
 			}
 			canceled, err := f.pg.CancelHostingProxyOperation(t.Context(), op.ID, "usr_bootstrap", destinationEvent("cancel_switch_request"))
 			if err != nil {
-				t.Fatal(err)
+				current, readErr := f.pg.GetHostingProxyOperation(t.Context(), op.ID)
+				t.Fatalf("cancel: %v; requested run=%q state=%q; current run=%q state=%q hold=%t; read=%v", err, op.RunID, op.State, current.RunID, current.State, current.MutationHold, readErr)
 			}
 			if canceled.MutationHold != admitted {
 				t.Fatalf("hold %+v", canceled)
@@ -251,6 +263,40 @@ func TestPostgresVerifiedSwitchCancellation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPostgresVerifiedSwitchQueuedCancellation(t *testing.T) {
+	var stop func(context.Context) error
+	f := switchControlFixture(t, &stop)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	op, err := f.pg.RequestHostingRouteSwitch(ctx, f.resource.ID, "pop_queued_cancel_switch", "usr_bootstrap", f.input("queued-cancel"), destinationEvent("queued_cancel_switch"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.State != "queued" || op.RunID != "" || op.MutationHold {
+		t.Fatalf("queued fixture state=%q run=%q hold=%t", op.State, op.RunID, op.MutationHold)
+	}
+	canceled, err := f.pg.CancelHostingProxyOperation(ctx, op.ID, "usr_bootstrap", destinationEvent("queued_cancel_request"))
+	if err != nil || canceled.State != "canceled" || canceled.RunID != "" || canceled.MutationHold {
+		t.Fatalf("queued cancellation state=%q run=%q hold=%t err=%v", canceled.State, canceled.RunID, canceled.MutationHold, err)
+	}
+	if err := f.pg.PrepareProxy(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	var leases, admissions int
+	if err := f.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM run_leases WHERE run_id=$1),(SELECT count(*) FROM hosting_proxy_admissions WHERE operation_id=$2)`, "proxy_"+op.ID, op.ID).Scan(&leases, &admissions); err != nil || leases != 0 || admissions != 0 {
+		t.Fatalf("queued cancellation leases=%d admissions=%d err=%v", leases, admissions, err)
+	}
+	for _, prior := range f.routes[:2] {
+		record, err := f.pg.GetHostingRoute(ctx, prior.ID)
+		if err != nil || record.Route.SelectedReleaseOperationID != f.a.ID || record.Route.Version != prior.Version+2 {
+			t.Fatalf("queued metadata route=%+v err=%v", record.Route, err)
+		}
 	}
 }
 
