@@ -239,9 +239,6 @@ func RunContext(ctx context.Context, config Config) error {
 		return fmt.Errorf("open runner journal: %w", err)
 	}
 	defer func() { _ = journal.Close() }()
-	if err := validateStorageJournalStartup(journal); err != nil {
-		return err
-	}
 	if err := validateLocalBuildJournalConfiguration(journal, config.LocalBuildDeploy); err != nil {
 		return err
 	}

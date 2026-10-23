@@ -76,7 +76,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		return err
 	}
 	failBeforeApply := func() error {
-		_, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, reporter.WaitEmpty, local, op.Snapshot.RuntimeConfiguration)
+		_, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, reporter.WaitEmpty, local, op.Snapshot.RuntimeConfiguration, op.Snapshot.Storage)
 		return err
 	}
 	if op.Release == nil {
@@ -94,6 +94,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		request := domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_prepared", a.LeaseID, a.Attempt, "release"), Release: release}
 		entry := runner.JournalHosting{ID: request.ReceiptID, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, supervisor), OperationID: a.OperationID, Phase: "prepared", Prepared: &request, CreatedAt: time.Now().UTC()}
 		markHostingRuntimeEntry(&entry, initialSnapshot.RuntimeConfiguration)
+		entry.StorageRef = initialSnapshot.Storage
 		if _, err = journal.AppendHosting(entry); err != nil {
 			return err
 		}
@@ -131,6 +132,9 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	}
 	if err = reporter.Emit("system", "Prepared immutable image release", 5); err != nil {
 		return err
+	}
+	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+		return executeHostingStoragePrepared(supervisor, journal, reporter.WaitEmpty, client, engine, a, claim.Lease, op)
 	}
 	intentID := attemptMutationKey("hosting_intent", a.LeaseID, a.Attempt, "apply")
 	intent := runner.JournalHosting{ID: intentID, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, supervisor), OperationID: a.OperationID, Phase: "apply_intent", Plan: op.Plan, CreatedAt: time.Now().UTC()}
@@ -199,11 +203,17 @@ func journalHostingResult(supervisor *attemptSupervisor, journal *runner.Attempt
 	return journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, lease, result, drain, len(localBuild) > 0 && localBuild[0], domain.HostingRuntimeConfigurationRef{})
 }
 
-func journalHostingResultWithRuntimeEnvironment(supervisor *attemptSupervisor, journal *runner.AttemptJournal, client runnerclient.Client, a domain.HostingAuthority, lease domain.RunLease, result domain.HostingResult, drain func(context.Context) error, localBuild bool, ref domain.HostingRuntimeConfigurationRef) (domain.HostingOperation, error) {
+func journalHostingResultWithRuntimeEnvironment(supervisor *attemptSupervisor, journal *runner.AttemptJournal, client runnerclient.Client, a domain.HostingAuthority, lease domain.RunLease, result domain.HostingResult, drain func(context.Context) error, localBuild bool, ref domain.HostingRuntimeConfigurationRef, storage ...domain.HostingStorageRef) (domain.HostingOperation, error) {
+	if len(storage) > 1 {
+		return domain.HostingOperation{}, errors.New("invalid storage result reference")
+	}
 	request := domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_result", a.LeaseID, a.Attempt, "result"), Result: result}
 	entry := runner.JournalHosting{ID: request.ReceiptID, Attempt: journalAttemptIdentity(a.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "result", Result: &request, CreatedAt: time.Now().UTC()}
 	entry.LocalBuild = localBuild
 	markHostingRuntimeEntry(&entry, ref)
+	if len(storage) == 1 {
+		entry.StorageRef = storage[0]
+	}
 	if _, err := journal.AppendHosting(entry); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -276,6 +286,10 @@ func reconcileHostingJournalWithLocalBuild(server, token string, journal *runner
 		return nil
 	}
 	client := runnerclient.New(server, token)
+	if err := reconcileHostingStorageJournal(server, token, journal, endpoint, parent); err != nil {
+		return err
+	}
+	snapshot = journal.Snapshot()
 	for _, entry := range snapshot.Hosting {
 		if entry.Phase != "prepared" {
 			continue
@@ -490,6 +504,7 @@ func executeHostingCleanup(supervisor *attemptSupervisor, journal *runner.Attemp
 	intentID := attemptMutationKey("hosting_cleanup_intent", a.LeaseID, a.Attempt, "cleanup")
 	entry := runner.JournalHosting{ID: intentID, Attempt: journalAttemptIdentity(a.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "cleanup_intent", CleanupPlan: op.CleanupPlan, CreatedAt: time.Now().UTC()}
 	markHostingRuntimeEntry(&entry, op.CleanupPlan.Target.Snapshot.RuntimeConfiguration)
+	entry.StorageRef = op.CleanupPlan.Target.Snapshot.Storage
 	entry.RuntimeEnvironment = runner.HostingJournalUsesRuntimeEnvironment(entry)
 	if _, err = journal.AppendHosting(entry); err != nil {
 		return err
@@ -506,7 +521,7 @@ func executeHostingCleanup(supervisor *attemptSupervisor, journal *runner.Attemp
 		return errors.New("cleanup admission changed")
 	}
 	result := engine.Cleanup(supervisor.Context(), expected)
-	finished, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, lease, result, reporter.WaitEmpty, hostingOperationUsesLocalBuild(op), op.CleanupPlan.Target.Snapshot.RuntimeConfiguration)
+	finished, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, lease, result, reporter.WaitEmpty, hostingOperationUsesLocalBuild(op), op.CleanupPlan.Target.Snapshot.RuntimeConfiguration, op.CleanupPlan.Target.Snapshot.Storage)
 	if err != nil {
 		return err
 	}

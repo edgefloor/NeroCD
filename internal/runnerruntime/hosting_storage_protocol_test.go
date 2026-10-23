@@ -103,7 +103,7 @@ func TestStorageProtocolPersistsBeforeSendAndReplaysLostMaterializationACK(t *te
 		t.Fatal(err)
 	}
 	remaining := journal.Snapshot().Hosting
-	if len(remaining) != 1 || remaining[0].ID != intent.ID || validateStorageJournalStartup(journal) == nil {
+	if len(remaining) != 2 || remaining[0].ID != intent.ID || remaining[1].StorageMaterialized == nil {
 		t.Fatal("materialization ACK erased unresolved workload creation intent")
 	}
 }
@@ -124,10 +124,16 @@ func TestStorageJournalBlocksActualStartupBeforeAnyClaimOrReplay(t *testing.T) {
 				t.Fatal(err)
 			}
 			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.URL.Path != "/api/v1/runners/hosting/status" {
+					t.Errorf("unresolved storage permitted unrelated traffic: %s", r.URL.Path)
+				}
+				w.WriteHeader(http.StatusConflict)
+			}))
 			defer server.Close()
 			err = RunContext(t.Context(), Config{Server: server.URL, Token: "token", RunnerID: "runner", WorkDir: t.TempDir(), JournalDir: directory, Execute: true, Once: true})
-			if err == nil || !strings.Contains(err.Error(), "storage recovery support") || requests.Load() != 0 {
+			if err == nil || !strings.Contains(err.Error(), "storage recovery status") || requests.Load() != 1 {
 				t.Fatalf("storage phase silently ignored: requests=%d err=%v", requests.Load(), err)
 			}
 		})

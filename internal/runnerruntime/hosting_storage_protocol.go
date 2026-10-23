@@ -9,18 +9,6 @@ import (
 	"nerocd/internal/runnerclient"
 )
 
-// This intermediate runner understands durable storage documents but does not
-// yet execute mounted workloads. Never let the older replay coordinator skip
-// them and proceed to normal heartbeat or claim traffic.
-func validateStorageJournalStartup(journal *runner.AttemptJournal) error {
-	for _, entry := range journal.Snapshot().Hosting {
-		if runner.HostingJournalUsesStorage(entry) {
-			return errors.New("owned-storage journal evidence is unresolved; use a runner with storage recovery support before claiming more work")
-		}
-	}
-	return nil
-}
-
 // journalHostingStorageCreate retains the intent even after an admission ACK.
 // A returned fresh permission lives only in the caller's current stack.
 func journalHostingStorageCreate(ctx context.Context, journal *runner.AttemptJournal, client runnerclient.Client, entry runner.JournalHosting) (domain.HostingStorageCreateAck, error) {
@@ -33,8 +21,9 @@ func journalHostingStorageCreate(ctx context.Context, journal *runner.AttemptJou
 	return client.HostingStorageCreateBegin(ctx, *entry.StorageCreate)
 }
 
-// journalHostingStorageMaterialized appends evidence before sending and removes
-// only the exact server-acknowledged document. A lost ACK remains replayable.
+// journalHostingStorageMaterialized appends evidence before sending. Keep its
+// exact body through workload settlement, including nil versus empty options,
+// so a restart never reconstructs a different acknowledged receipt.
 func journalHostingStorageMaterialized(ctx context.Context, journal *runner.AttemptJournal, client runnerclient.Client, entry runner.JournalHosting) (domain.HostingStorageMaterializedAck, error) {
 	if entry.Phase != "storage_materialized" || entry.StorageMaterialized == nil {
 		return domain.HostingStorageMaterializedAck{}, errors.New("storage materialization requires durable evidence")
@@ -47,9 +36,6 @@ func journalHostingStorageMaterialized(ctx context.Context, journal *runner.Atte
 		return domain.HostingStorageMaterializedAck{}, err
 	}
 	if err = ctx.Err(); err != nil {
-		return domain.HostingStorageMaterializedAck{}, err
-	}
-	if err = journal.AckHosting(entry.ID); err != nil {
 		return domain.HostingStorageMaterializedAck{}, err
 	}
 	return ack, nil
