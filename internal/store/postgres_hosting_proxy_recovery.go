@@ -22,7 +22,7 @@ type proxyRecoveryState struct {
 
 // proxyRecoveryScope takes attempt locks before destination/proxy/resource locks.
 // It never interprets an expired lease or a missing result as completed effects.
-func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string) (proxyRecoveryState, error) {
+func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string, replay func() (bool, error)) (proxyRecoveryState, error) {
 	var state proxyRecoveryState
 	op, err := proxyOperation(ctx, tx, operation)
 	if err != nil {
@@ -70,6 +70,15 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 	}
 	state.p = p
 	state.op = op
+	// An identical request may have committed while this request waited for the
+	// task lock. Current read authority precedes replay; historical receipt replay
+	// precedes fresh eligibility, which the first request may already have settled.
+	if replay != nil {
+		found, err := replay()
+		if err != nil || found {
+			return state, err
+		}
+	}
 	if op.Snapshot.ProxyID != p.ID || op.Snapshot.ServerID != p.ServerID || op.Snapshot.DestinationID != p.DestinationID || op.Snapshot.RunnerID != p.RunnerID || !reflect.DeepEqual(op.Snapshot.Configuration, p.Configuration) {
 		return state, ErrConflict
 	}
@@ -250,6 +259,47 @@ func proxyRecoveryRead(ctx context.Context, tx pgx.Tx, operation, actor string) 
 	return proxyAuthorize(ctx, tx, actor, p.ControlProjectID, domain.RoleOwner, true)
 }
 
+// Callers hold current read authorization before either replay lookup. The
+// serialized lookup uses the same actor/key/body contract as the initial read.
+func proxyRecoveryPlanReplay(ctx context.Context, tx pgx.Tx, operation, actor string, in domain.HostingProxyRecoveryInput) (domain.HostingProxyRecoveryPlan, bool, error) {
+	var plan domain.HostingProxyRecoveryPlan
+	stored, err := sqlcgen.New(tx).ProxyRecoveryPlanByKey(ctx, sqlcgen.ProxyRecoveryPlanByKeyParams{OperationID: operation, RequestKey: in.IdempotencyKey})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return plan, false, nil
+	}
+	if err != nil {
+		return plan, false, err
+	}
+	if stored.ActorID != actor || stored.RequestHash != domain.HostingDocumentHash(in) {
+		return plan, false, ErrConflict
+	}
+	if err = json.Unmarshal(stored.Body, &plan); err != nil {
+		return plan, false, err
+	}
+	return plan, true, proxyCheckLegacyToken(ctx, tx, actor)
+}
+
+func proxyRecoveryApplyReplay(ctx context.Context, tx pgx.Tx, operation, planID, actor string, in domain.HostingProxyRecoveryApplyInput) (domain.HostingProxyRecoveryResolution, bool, error) {
+	var resolution domain.HostingProxyRecoveryResolution
+	stored, err := sqlcgen.New(tx).ProxyRecoveryResolution(ctx, operation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return resolution, false, nil
+	}
+	if err != nil {
+		return resolution, false, err
+	}
+	if stored.ActorID != actor || stored.RequestKey != in.IdempotencyKey || stored.RequestHash != domain.HostingDocumentHash(in) {
+		return resolution, false, ErrConflict
+	}
+	if err = json.Unmarshal(stored.Body, &resolution); err != nil {
+		return resolution, false, err
+	}
+	if resolution.PlanID != planID {
+		return resolution, false, ErrConflict
+	}
+	return resolution, true, proxyCheckLegacyToken(ctx, tx, actor)
+}
+
 // HostingProxyRecovery reads completed-conflict eligibility or its immutable resolution.
 func (s *PostgresStore) HostingProxyRecovery(ctx context.Context, operation, actor string) (domain.HostingProxyRecoveryStatus, error) {
 	status := domain.HostingProxyRecoveryStatus{OperationID: operation, Reason: "unsupported_or_unfinished"}
@@ -279,7 +329,7 @@ func (s *PostgresStore) HostingProxyRecovery(ctx context.Context, operation, act
 		return status, err
 	}
 	defer rollbackTransaction(ctx, tx)
-	state, err := proxyRecoveryScope(ctx, tx, operation, actor)
+	state, err := proxyRecoveryScope(ctx, tx, operation, actor, nil)
 	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
 		if err = proxyRecoveryRead(ctx, tx, operation, actor); err != nil {
 			return status, err
@@ -310,17 +360,9 @@ func (s *PostgresStore) PlanHostingProxyRecovery(ctx context.Context, operation,
 	if err = proxyRecoveryRead(ctx, tx, operation, actor); err != nil {
 		return plan, err
 	}
-	stored, err := sqlcgen.New(tx).ProxyRecoveryPlanByKey(ctx, sqlcgen.ProxyRecoveryPlanByKeyParams{OperationID: operation, RequestKey: in.IdempotencyKey})
-	if err == nil {
-		if stored.ActorID != actor || stored.RequestHash != domain.HostingDocumentHash(in) {
-			return plan, ErrConflict
-		}
-		if err = json.Unmarshal(stored.Body, &plan); err != nil {
-			return plan, err
-		}
-		return plan, proxyCheckLegacyToken(ctx, tx, actor)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	var replayed bool
+	plan, replayed, err = proxyRecoveryPlanReplay(ctx, tx, operation, actor, in)
+	if err != nil || replayed {
 		return plan, err
 	}
 	if err = tx.Rollback(ctx); err != nil {
@@ -331,8 +373,12 @@ func (s *PostgresStore) PlanHostingProxyRecovery(ctx context.Context, operation,
 		return plan, err
 	}
 	defer rollbackTransaction(ctx, tx)
-	state, err := proxyRecoveryScope(ctx, tx, operation, actor)
-	if err != nil {
+	state, err := proxyRecoveryScope(ctx, tx, operation, actor, func() (bool, error) {
+		var replayErr error
+		plan, replayed, replayErr = proxyRecoveryPlanReplay(ctx, tx, operation, actor, in)
+		return replayed, replayErr
+	})
+	if err != nil || replayed {
 		return plan, err
 	}
 	if state.review.LoadedGeneration != in.ExpectedLoadedGeneration || state.review.DesiredGeneration != in.ExpectedDesiredGeneration || state.review.CompleteReceiptID != in.ExpectedCompleteReceiptID || state.review.CompleteReceiptHash != in.ExpectedCompleteReceiptHash {
@@ -404,20 +450,9 @@ func (s *PostgresStore) ApplyHostingProxyRecovery(ctx context.Context, operation
 	if err = proxyRecoveryRead(ctx, tx, operation, actor); err != nil {
 		return resolution, err
 	}
-	stored, err := sqlcgen.New(tx).ProxyRecoveryResolution(ctx, operation)
-	if err == nil {
-		if stored.ActorID != actor || stored.RequestKey != in.IdempotencyKey || stored.RequestHash != domain.HostingDocumentHash(in) {
-			return resolution, ErrConflict
-		}
-		if err = json.Unmarshal(stored.Body, &resolution); err != nil {
-			return resolution, err
-		}
-		if resolution.PlanID != planID {
-			return resolution, ErrConflict
-		}
-		return resolution, proxyCheckLegacyToken(ctx, tx, actor)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	var replayed bool
+	resolution, replayed, err = proxyRecoveryApplyReplay(ctx, tx, operation, planID, actor, in)
+	if err != nil || replayed {
 		return resolution, err
 	}
 	if s.hostingJobs == nil {
@@ -431,8 +466,12 @@ func (s *PostgresStore) ApplyHostingProxyRecovery(ctx context.Context, operation
 		return resolution, err
 	}
 	defer rollbackTransaction(ctx, tx)
-	state, err := proxyRecoveryScope(ctx, tx, operation, actor)
-	if err != nil {
+	state, err := proxyRecoveryScope(ctx, tx, operation, actor, func() (bool, error) {
+		var replayErr error
+		resolution, replayed, replayErr = proxyRecoveryApplyReplay(ctx, tx, operation, planID, actor, in)
+		return replayed, replayErr
+	})
+	if err != nil || replayed {
 		return resolution, err
 	}
 	raw, err := sqlcgen.New(tx).ProxyRecoveryPlanForApply(ctx, sqlcgen.ProxyRecoveryPlanForApplyParams{ID: planID, OperationID: operation, ActorID: actor})

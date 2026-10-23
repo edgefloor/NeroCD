@@ -14,6 +14,162 @@ import (
 	"nerocd/internal/store"
 )
 
+// Both requests must miss the initial receipt lookup before either can publish.
+// PostgreSQL may queue the second tuple waiter behind the first, so follow the
+// blocker chain rather than depending on a particular lock implementation.
+func identicalRecoveryRequestsBehindTaskLock(t *testing.T, f switchControl, op domain.HostingProxyOperation, request func(context.Context, string) (any, error)) []any {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var work sync.WaitGroup
+	defer func() {
+		cancel()
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		_ = blocker.Rollback(cleanup)
+		work.Wait()
+	}()
+	var pid int
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid() FROM task_runs WHERE id=$1 FOR UPDATE`, op.RunID).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		value any
+		err   error
+	}
+	// One buffered slot per launched request permits deterministic cleanup.
+	done := make(chan result, 2)
+	for _, id := range []string{"first", "second"} {
+		work.Go(func() { value, e := request(ctx, id); done <- result{value, e} })
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting int
+		err = f.db.QueryRow(ctx, `WITH RECURSIVE blocked(pid) AS (
+ SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
+ UNION SELECT a.pid FROM pg_stat_activity a JOIN blocked b ON b.pid=ANY(pg_blocking_pids(a.pid))
+) SELECT count(*) FROM pg_stat_activity a JOIN blocked b USING(pid)
+ WHERE a.state='active' AND a.wait_event_type='Lock' AND a.query LIKE '%-- name: LockRunID%'`, pid).Scan(&waiting)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if waiting == 2 {
+			break
+		}
+		select {
+		case r := <-done:
+			t.Fatalf("request returned before both initial misses queued: %v", r.err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	values := make([]any, 0, 2)
+	for range 2 {
+		select {
+		case r := <-done:
+			if r.err != nil {
+				t.Fatalf("identical concurrent replay failed: %v", r.err)
+			}
+			values = append(values, r.value)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	work.Wait()
+	if !reflect.DeepEqual(values[0], values[1]) {
+		t.Fatal("identical requests returned different immutable receipts")
+	}
+	return values
+}
+
+func TestPostgresHostingProxyRecoveryConcurrentExactReplay(t *testing.T) {
+	t.Run("plan", func(t *testing.T) {
+		f, op, _ := recoveryConflictFixture(t)
+		status, err := f.pg.HostingProxyRecovery(t.Context(), op.ID, "usr_bootstrap")
+		if err != nil || !status.Eligible {
+			t.Fatalf("status %+v %v", status, err)
+		}
+		in := recoveryPlanInput(status)
+		values := identicalRecoveryRequestsBehindTaskLock(t, f, op, func(ctx context.Context, id string) (any, error) {
+			return f.pg.PlanHostingProxyRecovery(ctx, op.ID, "prp_concurrent_"+id, "usr_bootstrap", in, destinationEvent("concurrent-plan-"+id))
+		})
+		plan := values[0].(domain.HostingProxyRecoveryPlan)
+		if !plan.ExpiresAt.Equal(plan.CreatedAt.Add(domain.HostingProxyRecoveryPlanLifetime)) {
+			t.Fatal("concurrent replay extended expiry")
+		}
+		var plans, audits int
+		if err = f.db.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM hosting_proxy_recovery_plans WHERE operation_id=$1),(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='hosting.proxy_recovery_planned')`, op.ID).Scan(&plans, &audits); err != nil || plans != 1 || audits != 1 {
+			t.Fatalf("plan publication plans=%d audits=%d err=%v", plans, audits, err)
+		}
+		changed := in
+		changed.ExpectedDesiredGeneration++
+		if _, err = f.pg.PlanHostingProxyRecovery(t.Context(), op.ID, "prp_changed_body", "usr_bootstrap", changed, destinationEvent("changed-body")); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("plan replay accepted changed body: %v", err)
+		}
+		principal, _ := proxyLegacyToken(t, f.pg, proxyTokenApplication(t, f.pg), "tok_concurrent_plan", []string{domain.RoleSystemAdmin})
+		if _, err = f.pg.PlanHostingProxyRecovery(t.Context(), op.ID, "prp_changed_actor", principal.ID, in, destinationEvent("changed-actor")); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("plan replay accepted changed actor: %v", err)
+		}
+		if _, err = f.db.Exec(t.Context(), `UPDATE users SET status='disabled' WHERE id='usr_bootstrap'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.pg.PlanHostingProxyRecovery(t.Context(), op.ID, "prp_revoked_actor", "usr_bootstrap", in, destinationEvent("revoked-actor")); !errors.Is(err, auth.ErrForbidden) {
+			t.Fatalf("plan replay skipped current authorization: %v", err)
+		}
+	})
+	t.Run("apply", func(t *testing.T) {
+		f, op, _ := recoveryConflictFixture(t)
+		status, err := f.pg.HostingProxyRecovery(t.Context(), op.ID, "usr_bootstrap")
+		if err != nil || !status.Eligible {
+			t.Fatalf("status %+v %v", status, err)
+		}
+		plan, err := f.pg.PlanHostingProxyRecovery(t.Context(), op.ID, "prp_concurrent_apply", "usr_bootstrap", recoveryPlanInput(status), destinationEvent("concurrent-apply-plan"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		in := domain.HostingProxyRecoveryApplyInput{IdempotencyKey: "same-apply", PlanHash: plan.PlanHash}
+		values := identicalRecoveryRequestsBehindTaskLock(t, f, op, func(ctx context.Context, id string) (any, error) {
+			return f.pg.ApplyHostingProxyRecovery(ctx, op.ID, plan.ID, "prr_concurrent_"+id, "usr_bootstrap", in, destinationEvent("concurrent-apply-"+id))
+		})
+		resolution := values[0].(domain.HostingProxyRecoveryResolution)
+		for _, change := range resolution.Routes {
+			row, e := f.pg.GetHostingRoute(t.Context(), change.RouteID)
+			if e != nil || row.Route.Version != change.AfterVersion || row.Route.SelectedReleaseOperationID != change.AfterReleaseOperationID {
+				t.Fatalf("second CAS %+v %v", row.Route, e)
+			}
+		}
+		var resolutions, queues, audits int
+		if err = f.db.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM hosting_proxy_recovery_resolutions WHERE operation_id=$1),(SELECT count(*) FROM hosting_proxy_operations WHERE id IN (SELECT convergence_operation_id FROM hosting_proxy_recovery_resolutions WHERE operation_id=$1)),(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='hosting.proxy_metadata_recovered')`, op.ID).Scan(&resolutions, &queues, &audits); err != nil || resolutions != 1 || queues != 1 || audits != 1 {
+			t.Fatalf("apply publication resolutions=%d queues=%d audits=%d err=%v", resolutions, queues, audits, err)
+		}
+		changed := in
+		changed.PlanHash = domain.HostingDocumentHash("different-plan")
+		if _, err = f.pg.ApplyHostingProxyRecovery(t.Context(), op.ID, plan.ID, "prr_changed_body", "usr_bootstrap", changed, destinationEvent("changed-apply-body")); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("apply replay accepted changed body: %v", err)
+		}
+		changed = in
+		changed.IdempotencyKey = "different-key"
+		if _, err = f.pg.ApplyHostingProxyRecovery(t.Context(), op.ID, plan.ID, "prr_changed_key", "usr_bootstrap", changed, destinationEvent("changed-apply-key")); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("apply replay accepted changed key: %v", err)
+		}
+		if _, err = f.db.Exec(t.Context(), `UPDATE users SET status='disabled' WHERE id='usr_bootstrap'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.pg.ApplyHostingProxyRecovery(t.Context(), op.ID, plan.ID, "prr_revoked_actor", "usr_bootstrap", in, destinationEvent("revoked-apply-actor")); !errors.Is(err, auth.ErrForbidden) {
+			t.Fatalf("apply replay skipped current authorization: %v", err)
+		}
+	})
+}
+
 func recoveryEnabledConflict(t *testing.T, outcome string) (switchControl, domain.HostingProxyOperation) {
 	t.Helper()
 	f := switchControlFixture(t)
