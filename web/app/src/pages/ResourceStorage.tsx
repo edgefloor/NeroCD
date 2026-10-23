@@ -18,6 +18,31 @@ import { Input } from "@/components/ui/input";
 const button = "h-auto max-w-full whitespace-normal";
 const denied = (error: unknown) =>
   error instanceof ApiError && [401, 403].includes(error.status);
+// Bound reads owned by this panel even when a transport ignores abort.
+function boundedStorageRead<T>(
+  signal: AbortSignal,
+  read: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const transport = new AbortController();
+  let stop: () => void = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    stop = () => reject(new Error("Storage read stopped"));
+    transport.signal.addEventListener("abort", stop, { once: true });
+  });
+  const cancel = () => transport.abort();
+  signal.addEventListener("abort", cancel, { once: true });
+  if (signal.aborted) cancel();
+  const deadline = window.setTimeout(cancel, 30000);
+  return Promise.race([
+    aborted,
+    transport.signal.aborted ? aborted : read(transport.signal),
+  ]).finally(() => {
+    window.clearTimeout(deadline);
+    signal.removeEventListener("abort", cancel);
+    transport.signal.removeEventListener("abort", stop);
+  });
+}
+
 export function ResourceStorage({
   resource,
   blocked,
@@ -146,24 +171,32 @@ function StorageValues({
   const id = useId();
   const client = useQueryClient();
   const authorityLost = useRef(false);
-  const storage = useQuery(
-    storageQuery(actor, resource.project_id, resource.id),
-  );
+  const storageOptions = storageQuery(actor, resource.project_id, resource.id);
+  const storage = useQuery({
+    ...storageOptions,
+    queryFn: (context) =>
+      boundedStorageRead(context.signal, async (signal) => {
+        if (!storageOptions.queryFn)
+          throw new Error("Storage query unavailable");
+        return storageOptions.queryFn({ ...context, signal });
+      }),
+  });
   const binding = useQuery({
     queryKey: ["storageBinding", actor, resource.project_id, resource.id],
     retry: false,
     gcTime: 0,
-    queryFn: async ({ signal }) => {
-      try {
-        const value = await getResourceBinding(resource.id, { signal });
-        if (value.resource_id !== resource.id)
-          throw new Error("Storage binding scope mismatch");
-        return value;
-      } catch (cause) {
-        if (cause instanceof ApiError && cause.status === 404) return null;
-        throw cause;
-      }
-    },
+    queryFn: ({ signal }) =>
+      boundedStorageRead(signal, async (signal) => {
+        try {
+          const value = await getResourceBinding(resource.id, { signal });
+          if (value.resource_id !== resource.id)
+            throw new Error("Storage binding scope mismatch");
+          return value;
+        } catch (cause) {
+          if (cause instanceof ApiError && cause.status === 404) return null;
+          throw cause;
+        }
+      }),
   });
   const [mount, setMount] = useState("/app/uploads");
   const [confirmed, setConfirmed] = useState(false);
@@ -212,6 +245,66 @@ function StorageValues({
     binding.isFetching ||
     storage.isPending ||
     binding.isPending;
+  function beginAttempt() {
+    const transport = new AbortController();
+    controller.current = transport;
+    lock.current = true;
+    setBusy(true);
+    setError("");
+    const cancellations: (() => void)[] = [];
+    let stop: () => void = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      stop = () => {
+        if (controller.current === transport)
+          cancellations.forEach((cancel) => cancel());
+        reject(new Error("Storage request stopped"));
+      };
+      transport.signal.addEventListener("abort", stop, { once: true });
+    });
+    const deadline = window.setTimeout(() => transport.abort(), 30000);
+    const owned = () =>
+      active.current &&
+      !authorityLost.current &&
+      controller.current === transport;
+    const current = () => owned() && !transport.signal.aborted;
+    const wait = <T,>(promise: Promise<T>) => Promise.race([promise, aborted]);
+    return {
+      signal: transport.signal,
+      owned,
+      current,
+      wait,
+      read<T>(queryKey: readonly unknown[], read: () => Promise<T>) {
+        const result = read();
+        const query = client.getQueryCache().find({ queryKey, exact: true });
+        const promise = query?.promise;
+        if (query && promise)
+          cancellations.push(() => {
+            // A retired attempt must not cancel a newer fetch of the same key.
+            void client.cancelQueries({
+              predicate: (candidate) =>
+                candidate === query && candidate.promise === promise,
+            });
+          });
+        return wait(result);
+      },
+      finish() {
+        window.clearTimeout(deadline);
+        transport.signal.removeEventListener("abort", stop);
+        if (controller.current === transport) {
+          controller.current = undefined;
+          lock.current = false;
+          if (active.current) setBusy(false);
+        }
+      },
+    };
+  }
+  const storageReadKey = storageKey(actor, resource.project_id, resource.id);
+  const bindingReadKey = [
+    "storageBinding",
+    actor,
+    resource.project_id,
+    resource.id,
+  ] as const;
   async function save(event: FormEvent) {
     event.preventDefault();
     if (
@@ -220,6 +313,7 @@ function StorageValues({
       lock.current ||
       conflict ||
       accessDenied ||
+      authorityLost.current ||
       !confirmed ||
       !binding.data ||
       storage.data
@@ -231,38 +325,30 @@ function StorageValues({
       mount_path: mount,
     };
     setAttempt(body);
-    setBusy(true);
-    lock.current = true;
-    setError("");
-    const transport = new AbortController();
-    controller.current = transport;
-    let stop: () => void = () => {};
-    const aborted = new Promise<never>((_, reject) => {
-      stop = () => reject(new Error("Storage response not confirmed"));
-      transport.signal.addEventListener("abort", stop, { once: true });
-    });
-    const deadline = window.setTimeout(() => transport.abort(), 30000);
+    const request = beginAttempt();
     try {
       const value = scopedStorage(
-        await Promise.race([
-          createHostingStorage(resource.id, body, { signal: transport.signal }),
-          aborted,
-        ]),
+        await request.wait(
+          createHostingStorage(resource.id, body, { signal: request.signal }),
+        ),
         resource.project_id,
         resource.id,
       );
-      if (!active.current || authorityLost.current || transport.signal.aborted)
-        return;
+      if (!request.current()) return;
       if (
         value.binding_id !== binding.data.id ||
         value.destination_id !== binding.data.destination_id ||
         value.mount_path !== body.mount_path
       )
         throw new Error("Storage placement mismatch");
-      // Refetch under current read authority instead of restoring a denied cache.
-      await Promise.race([storage.refetch(), aborted]);
+      // Confirm with a current authorized read instead of restoring a denied cache.
+      const currentStorage = await request.read(storageReadKey, () =>
+        storage.refetch(),
+      );
+      if (!request.current()) return;
+      if (currentStorage.isError) throw currentStorage.error;
     } catch (cause) {
-      if (!active.current || authorityLost.current) return;
+      if (!request.owned()) return;
       if (denied(cause)) {
         setAccessDenied(true);
         return;
@@ -281,84 +367,69 @@ function StorageValues({
           "Save delivery is unconfirmed. Retry the identical saved request to recover its result. Your mount and request identity are preserved.",
         );
     } finally {
-      window.clearTimeout(deadline);
-      transport.signal.removeEventListener("abort", stop);
-      lock.current = false;
-      if (active.current) setBusy(false);
+      request.finish();
+    }
+  }
+  function refreshError(
+    cause: unknown,
+    request: ReturnType<typeof beginAttempt>,
+  ) {
+    if (!request.owned()) return;
+    if (denied(cause)) setAccessDenied(true);
+    else
+      setError(
+        request.signal.aborted
+          ? "Configuration refresh timed out. Your draft is preserved. Retry the refresh; nothing was resubmitted."
+          : "Unable to refresh current configuration. Nothing was resubmitted.",
+      );
+  }
+  async function refreshConfigured() {
+    if (busy || paused || accessDenied || authorityLost.current || lock.current)
+      return;
+    const request = beginAttempt();
+    try {
+      const results = await Promise.all([
+        request.read(storageReadKey, () => storage.refetch()),
+        request.read(bindingReadKey, () => binding.refetch()),
+      ]);
+      if (!request.current()) return;
+      for (const result of results) if (result.isError) throw result.error;
+    } catch (cause) {
+      refreshError(cause, request);
+    } finally {
+      request.finish();
     }
   }
   async function refreshGeneration() {
     if (busy || paused || accessDenied || authorityLost.current || lock.current)
       return;
-    const transport = new AbortController();
-    controller.current = transport;
-    lock.current = true;
-    setBusy(true);
+    const request = beginAttempt();
     setReviewedGeneration(undefined);
-    setError("");
-    let stop: () => void = () => {};
-    const aborted = new Promise<never>((_, reject) => {
-      stop = () => {
-        // Cancel scoped query reads too, so a late response cannot update their
-        // caches or keep the form paused after this refresh has timed out.
-        void client.cancelQueries({
-          queryKey: storageKey(actor, resource.project_id, resource.id),
-          exact: true,
-        });
-        void client.cancelQueries({
-          queryKey: ["storageBinding", actor, resource.project_id, resource.id],
-          exact: true,
-        });
-        reject(new Error("Storage refresh stopped"));
-      };
-      transport.signal.addEventListener("abort", stop, { once: true });
-    });
-    const deadline = window.setTimeout(() => transport.abort(), 30000);
-    const isCurrent = () =>
-      active.current &&
-      !authorityLost.current &&
-      controller.current === transport &&
-      !transport.signal.aborted;
     try {
-      const latest = await Promise.race([
-        getResource(resource.id, { signal: transport.signal }),
-        aborted,
-      ]);
-      if (!isCurrent()) return;
+      const latest = await request.wait(
+        getResource(resource.id, { signal: request.signal }),
+      );
+      if (!request.current()) return;
       if (
         latest.id !== resource.id ||
         latest.project_id !== resource.project_id
       )
         throw new Error("Storage resource scope mismatch");
-      const currentStorage = await Promise.race([storage.refetch(), aborted]);
-      if (!isCurrent()) return;
+      const currentStorage = await request.read(storageReadKey, () =>
+        storage.refetch(),
+      );
+      if (!request.current()) return;
       if (currentStorage.isError) throw currentStorage.error;
-      const currentBinding = await Promise.race([binding.refetch(), aborted]);
-      if (!isCurrent()) return;
+      const currentBinding = await request.read(bindingReadKey, () =>
+        binding.refetch(),
+      );
+      if (!request.current()) return;
       if (currentBinding.isError) throw currentBinding.error;
       setReviewedGeneration(latest.generation);
     } catch (cause) {
-      if (
-        active.current &&
-        !authorityLost.current &&
-        controller.current === transport
-      ) {
-        if (denied(cause)) setAccessDenied(true);
-        else
-          setError(
-            transport.signal.aborted
-              ? "Configuration refresh timed out. Your draft is preserved. Retry the refresh; nothing was resubmitted."
-              : "Unable to refresh current configuration. Nothing was resubmitted.",
-          );
-      }
+      refreshError(cause, request);
     } finally {
-      window.clearTimeout(deadline);
-      transport.signal.removeEventListener("abort", stop);
-      if (controller.current === transport) {
-        controller.current = undefined;
-        lock.current = false;
-        if (active.current) setBusy(false);
-      }
+      request.finish();
     }
   }
 
@@ -383,10 +454,7 @@ function StorageValues({
         variant="outline"
         className={button}
         disabled={busy || storage.isFetching || binding.isFetching}
-        onClick={() => {
-          void storage.refetch();
-          void binding.refetch();
-        }}
+        onClick={() => void refreshConfigured()}
       >
         Refresh configured storage
       </Button>

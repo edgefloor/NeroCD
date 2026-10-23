@@ -443,3 +443,207 @@ test("unmount aborts a conflict refresh and rejects its late generation", async 
   });
   expect(screen.queryByText(/Current resource generation/)).toBeNull();
 });
+
+test("successful save with hung confirmation releases exact retry and fences the old GET", async () => {
+  const pending: ((value: Response) => void)[] = [];
+  let posted = false;
+  const { fetch } = setup("owner", (url, options) => {
+    if (options.method === "POST") {
+      posted = true;
+      return json(saved);
+    }
+    if (posted && url.endsWith("/storage"))
+      return new Promise<Response>((done) => {
+        pending.push(done);
+      });
+  });
+  await consent();
+  vi.useFakeTimers();
+  submit();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30000);
+  });
+  const retry = screen.getByRole<HTMLButtonElement>("button", {
+    name: "Retry identical storage request",
+  });
+  expect(retry.disabled).toBe(false);
+  const reads = fetch.mock.calls.filter(([url]) => url.endsWith("/storage"));
+  expect(reads.at(-1)![1].signal?.aborted).toBe(true);
+  fireEvent.click(retry);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(writes(fetch)).toHaveLength(2);
+  expect(writes(fetch)[1]![1].body).toBe(writes(fetch)[0]![1].body);
+  await act(async () => {
+    pending[0]!(json({ ...saved, volume_name: "retired-volume" }));
+  });
+  expect(screen.queryByText("retired-volume")).toBeNull();
+  expect(retry.disabled).toBe(true);
+  const currentRead = fetch.mock.calls
+    .filter(
+      ([url, options]) => url.endsWith("/storage") && options.method !== "POST",
+    )
+    .at(-1)!;
+  expect(currentRead[1].signal?.aborted).toBe(false);
+  await act(async () => {
+    pending[1]!(json(saved));
+  });
+  expect(screen.getByText("stable-volume")).toBeTruthy();
+});
+
+test.each(["storage", "binding"])(
+  "ordinary refresh releases stalled %s read and rejects old completion during retry",
+  async (target) => {
+    const pending: ((value: Response) => void)[] = [];
+    let refreshReads = false;
+    const { fetch } = setup("owner", (url) =>
+      refreshReads && url.endsWith(`/${target}`)
+        ? new Promise<Response>((done) => {
+            pending.push(done);
+          })
+        : undefined,
+    );
+    await consent();
+    const refresh = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Refresh configured storage",
+    });
+    refreshReads = true;
+    vi.useFakeTimers();
+    fireEvent.click(refresh);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(refresh.disabled).toBe(false);
+    expect(
+      screen.getByLabelText<HTMLInputElement>("Container mount path").value,
+    ).toBe("/app/uploads");
+    const reads = fetch.mock.calls.filter(([url]) =>
+      url.endsWith(`/${target}`),
+    );
+    expect(reads.at(-1)![1].signal?.aborted).toBe(true);
+    fireEvent.click(refresh);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      pending[0]!(
+        target === "storage"
+          ? json(saved)
+          : json({
+              id: "retired",
+              resource_id: "r",
+              destination_id: "foreign",
+            }),
+      );
+    });
+    expect(screen.queryByLabelText("Configured storage metadata")).toBeNull();
+    expect(refresh.disabled).toBe(true);
+    const current = fetch.mock.calls
+      .filter(([url]) => url.endsWith(`/${target}`))
+      .at(-1)!;
+    expect(current[1].signal?.aborted).toBe(false);
+    await act(async () => {
+      pending[1]!(
+        target === "storage"
+          ? json({}, 404)
+          : json({ id: "b", resource_id: "r", destination_id: "d" }),
+      );
+    });
+    expect(refresh.disabled).toBe(false);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Save desired storage",
+      }).disabled,
+    ).toBe(false);
+  },
+);
+
+test.each(["storage", "binding"])(
+  "initial %s read has a deadline and supports explicit read retry",
+  async (target) => {
+    let hung = true;
+    let resolve!: (value: Response) => void;
+    vi.useFakeTimers();
+    const { fetch } = setup("owner", (url) =>
+      hung && url.endsWith(`/${target}`)
+        ? new Promise<Response>((done) => {
+            resolve = done;
+          })
+        : undefined,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetch.mock.calls.some(([url]) => url.endsWith(`/${target}`))).toBe(
+      true,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30001);
+    });
+    const refresh = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Refresh configured storage",
+    });
+    expect(refresh.disabled).toBe(false);
+    expect(
+      fetch.mock.calls.find(([url]) => url.endsWith(`/${target}`))![1].signal
+        ?.aborted,
+    ).toBe(true);
+    hung = false;
+    fireEvent.click(refresh);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolve(
+        target === "storage"
+          ? json(saved)
+          : json({
+              id: "retired",
+              resource_id: "r",
+              destination_id: "foreign",
+            }),
+      );
+    });
+    expect(screen.queryByLabelText("Configured storage metadata")).toBeNull();
+    expect(refresh.disabled).toBe(false);
+  },
+);
+
+test("unmount cancels both reads owned by an ordinary refresh", async () => {
+  const pending: ((value: Response) => void)[] = [];
+  let refreshReads = false;
+  const { fetch } = setup("owner", (url) =>
+    refreshReads && (url.endsWith("/storage") || url.endsWith("/binding"))
+      ? new Promise<Response>((done) => {
+          pending.push(done);
+        })
+      : undefined,
+  );
+  await consent();
+  refreshReads = true;
+  fireEvent.click(
+    screen.getByRole("button", { name: "Refresh configured storage" }),
+  );
+  await waitFor(() => expect(pending).toHaveLength(2));
+  const reads = ["storage", "binding"].map(
+    (target) =>
+      fetch.mock.calls.filter(([url]) => url.endsWith(`/${target}`)).at(-1)!,
+  );
+  cleanup();
+  for (const [, options] of reads) expect(options.signal?.aborted).toBe(true);
+  await act(async () => {
+    pending[0]!(json(saved));
+    pending[1]!(
+      json({ id: "retired", resource_id: "r", destination_id: "foreign" }),
+    );
+  });
+  expect(
+    client.getQueryData([
+      "hostingStorage",
+      JSON.stringify([principal.provider, principal.id]),
+      "p",
+      "r",
+    ]),
+  ).not.toEqual(saved);
+});
