@@ -29,6 +29,7 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
     if (url.includes("/project-members")) return json({ items: client.getQueryData(queryKeys.allProjectMembers) ?? [], limit: 100, offset: 0, count: (client.getQueryData<unknown[]>(queryKeys.allProjectMembers) ?? []).length, total: (client.getQueryData<unknown[]>(queryKeys.allProjectMembers) ?? []).length });
     if (url.endsWith("/me")) return json(client.getQueryData(queryKeys.principal));
     if (url.endsWith("/storage-deployment-options")) return json({ resource_id: "resource", resource_generation: 1, storage_ref: null, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: false, reason: "storage_unconfigured", routes: [], storage_route_continuity: null });
+    if (url.endsWith("/storage")) return json({ id: "storage", project_id: "project", resource_id: "resource", binding_id: "binding", generation: 1, hash: "hash", kind: "platform_managed", driver: "local", access_mode: "read_write", retention: "retain", volume_name: "ncd_uploads", mount_path: "/app/uploads" });
     if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: { resource_id: "resource", project_id: resource.project_id, resource_generation: 1, runtime_generation: 0, entries: [] } });
     if (url.endsWith("/binding")) return json(binding);
     if (url.includes("/retained-releases")) return json([]);
@@ -75,7 +76,7 @@ test("configured storage uses server review and clears it on resource generation
   expect(fetch.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(0);
 });
 test("storage receipt retry survives history acquiring the admitted operation mutation hold", async () => {
-  const storage = { storage_id: "storage", generation: 1, hash: "hash" };
+  const storage: NonNullable<HostingOperation["snapshot"]["storage"]> = { storage_id: "storage", generation: 1, hash: "hash" };
   const options = { resource_id: "resource", resource_generation: 1, storage_ref: storage, previous_healthy_operation_id: "old", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null };
   const admitted = { ...operation, mutation_hold: true, snapshot: { ...operation.snapshot, storage } };
   let held = false, submissions = 0;

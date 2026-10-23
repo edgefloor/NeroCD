@@ -323,6 +323,9 @@ test("review freezes exact fixed port, full route selection and key before expli
     fetch.mock.calls.filter(([, init]) => init.method === "POST"),
   ).toHaveLength(0);
   expect(screen.getByText(/uploads.example.test/)).toBeTruthy();
+  expect(screen.getByText("ncd_uploads")).toBeTruthy();
+  expect(screen.getByText("/app/uploads")).toBeTruthy();
+  expect(screen.getByText(/Application data remains/)).toBeTruthy();
   expect(screen.getByText(/Image rollback does not undo writes/)).toBeTruthy();
   fireEvent.click(
     screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
@@ -340,6 +343,69 @@ test("review freezes exact fixed port, full route selection and key before expli
     storage_route_continuity: options.storage_route_continuity,
   });
   expect(body.idempotency_key).toHaveLength(36);
+});
+test.each([
+  { id: "foreign" },
+  { hash: "foreign" },
+  { generation: 2 },
+  { resource_id: "foreign" },
+  { project_id: "foreign" },
+  { binding_id: "foreign" },
+  { kind: "external" },
+  { retention: "delete" },
+])(
+  "replacement metadata mismatch blocks review and admission %#",
+  async (mismatch) => {
+    const { fetch } = setup((url) =>
+      url.endsWith("/storage")
+        ? json({
+            id: "storage",
+            project_id: "project",
+            resource_id: "resource",
+            binding_id: "binding",
+            generation: 1,
+            hash: "hash",
+            kind: "platform_managed",
+            driver: "local",
+            access_mode: "read_write",
+            retention: "retain",
+            volume_name: "ncd_uploads",
+            mount_path: "/app/uploads",
+            ...mismatch,
+          })
+        : undefined,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review current storage deployment" }),
+    );
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Deploy reviewed image with uploads",
+      }),
+    ).toBeNull();
+    expect(
+      fetch.mock.calls.filter(([, init]) => init.method === "POST"),
+    ).toHaveLength(0);
+  },
+);
+test("replacement metadata timeout blocks review without sending a deployment", async () => {
+  const { fetch } = setup((url) =>
+    url.endsWith("/storage") ? new Promise<Response>(() => {}) : undefined,
+  );
+  vi.useFakeTimers();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review current storage deployment" }),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30_000);
+  });
+  expect(screen.getByRole("alert").textContent).toContain("30 seconds");
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(
+    fetch.mock.calls.filter(([, init]) => init.method === "POST"),
+  ).toHaveLength(0);
 });
 test("lost response preserves frozen body and key for explicit identical retry", async () => {
   let count = 0;

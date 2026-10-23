@@ -10,7 +10,7 @@ import {
   boundedStorageRequest,
   getStorageContinuityStatus,
   getStorageDeploymentOptions,
-  getInitialDeploymentStorage,
+  getStorageDeploymentStorage,
   validStorageReadiness,
   type StorageDeploymentOptions,
   type StorageDeploymentScope,
@@ -130,7 +130,7 @@ export function StorageDeploymentReview({
   const [review, setReview] = useState<{
     options: StorageDeploymentOptions;
     input: HostingDeploymentInput;
-    storage?: HostingStorage;
+    storage: HostingStorage;
   }>();
   const formID = useId();
   const [hostPort, setHostPort] = useState("");
@@ -219,14 +219,12 @@ export function StorageDeploymentReview({
         throw new Error(
           "Enter an explicit host port, container port, origin-relative readiness path and timeout before reviewing the first deployment.",
         );
-      const storage = initial
-        ? await getInitialDeploymentStorage(
-            scope,
-            current,
-            bindingID,
-            controller.signal,
-          )
-        : undefined;
+      const storage = await getStorageDeploymentStorage(
+        scope,
+        current,
+        bindingID,
+        controller.signal,
+      );
       if (!active.current || controller.signal.aborted) return;
       const input: HostingDeploymentInput = {
         expected_generation: current.resource_generation,
@@ -243,7 +241,7 @@ export function StorageDeploymentReview({
       setReview({
         options: structuredClone(current),
         input,
-        ...(storage ? { storage: structuredClone(storage) } : {}),
+        storage: structuredClone(storage),
       });
     } catch (cause) {
       if (!active.current || controller.signal.aborted) return;
@@ -261,7 +259,15 @@ export function StorageDeploymentReview({
     }
   }
   async function submit() {
-    if (!review || !confirmed || blocked || (mutationHeld && !sent) || conflict || request.current) return;
+    if (
+      !review ||
+      !confirmed ||
+      blocked ||
+      (mutationHeld && !sent) ||
+      conflict ||
+      request.current
+    )
+      return;
     const controller = new AbortController();
     request.current = controller;
     setBusy(true);
@@ -500,13 +506,19 @@ export function StorageDeploymentReview({
             <span>
               {initial
                 ? "I reviewed this exact image, platform-owned upload volume, mount path, retain policy, ports and readiness. I understand existing uploads are not imported and image rollback does not undo upload writes."
-                : "I reviewed this exact image, retained upload storage, fixed port and complete route selection. I accept interruption and understand image rollback does not undo upload writes."}
+                : "I reviewed this exact image, retained upload volume, mount path, retain policy, fixed port and complete route selection. I accept interruption and understand image rollback does not undo upload writes."}
             </span>
           </label>
           <Button
             type="button"
             className="h-auto whitespace-normal"
-            disabled={blocked || (mutationHeld && !sent) || busy || conflict || !confirmed}
+            disabled={
+              blocked ||
+              (mutationHeld && !sent) ||
+              busy ||
+              conflict ||
+              !confirmed
+            }
             onClick={() => void submit()}
           >
             {busy

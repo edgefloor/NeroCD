@@ -202,7 +202,8 @@ test("storage deployment reviews exact authority and separates historical contin
   };
   let lost = true,
     conflict = false,
-    initial = true;
+    initial = true,
+    historyHeld = false;
   let lastReceipt: unknown = operation;
   const writes: string[] = [];
   await page.route(`**${base}/**`, async (route) => {
@@ -263,11 +264,18 @@ test("storage deployment reviews exact authority and separates historical contin
         loaded_generation: 8,
       });
     if (path === `${base}/deployments` && request.method() === "GET")
-      return reply({ items: [], count: 0, total: 0, limit: 20, offset: 0 });
+      return reply({
+        items: historyHeld ? [{ ...operation, mutation_hold: true }] : [],
+        count: historyHeld ? 1 : 0,
+        total: historyHeld ? 1 : 0,
+        limit: 20,
+        offset: 0,
+      });
     if (path === `${base}/deployments` && request.method() === "POST") {
       writes.push(request.postData()!);
       if (lost) {
         lost = false;
+        if (!initial) historyHeld = true;
         return route.abort("failed");
       }
       const chosen = JSON.parse(request.postData()!);
@@ -440,6 +448,13 @@ test("storage deployment reviews exact authority and separates historical contin
       .click();
     await expect(review.getByText(/uploads.example.test/)).toBeVisible();
     await expect(
+      review.getByText("nerocd_uploads_fixture", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      review.getByText("/app/uploads", { exact: true }),
+    ).toBeVisible();
+    await expect(review.getByText(/Application data remains/)).toBeVisible();
+    await expect(
       review.getByText(/Image rollback does not undo writes/),
     ).toBeVisible();
     const submit = review.getByRole("button", {
@@ -456,6 +471,27 @@ test("storage deployment reviews exact authority and separates historical contin
     await page.keyboard.press("Enter");
     if (width === 320) {
       await expect(review.getByText(/Delivery is unconfirmed/)).toBeVisible();
+      await hosting
+        .getByRole("button", {
+          name: "Refresh deployment history",
+          exact: true,
+        })
+        .click();
+      await expect(
+        hosting.getByText(/New deployment requests are paused/),
+      ).toBeVisible();
+      await expect(
+        review.getByRole("button", {
+          name: "Review current storage deployment",
+          exact: true,
+        }),
+      ).toBeDisabled();
+      await expect(
+        review.getByRole("button", {
+          name: "Retry identical storage deployment request",
+          exact: true,
+        }),
+      ).toBeEnabled();
       await review
         .getByRole("button", {
           name: "Retry identical storage deployment request",
@@ -499,5 +535,6 @@ test("storage deployment reviews exact authority and separates historical contin
       animations: "disabled",
     });
     conflict = width === 430;
+    historyHeld = false;
   }
 });

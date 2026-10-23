@@ -251,7 +251,7 @@ export function validateStorageDeploymentOptions(
       fail();
   } else if (continuity !== null) fail();
 }
-export async function getInitialDeploymentStorage(
+export async function getStorageDeploymentStorage(
   scope: StorageDeploymentScope,
   options: StorageDeploymentOptions,
   binding: string,
@@ -282,9 +282,7 @@ export async function getInitialDeploymentStorage(
     !text(storage.mount_path, 1024) ||
     !storage.mount_path.startsWith("/")
   )
-    throw new Error(
-      "Configured storage does not match initial deployment authority",
-    );
+    throw new Error("Configured storage does not match deployment authority");
   return storage;
 }
 export const storageDeploymentOptionsQuery = (scope: StorageDeploymentScope) =>

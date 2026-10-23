@@ -4,7 +4,7 @@ import {
   boundedStorageRequest,
   getStorageContinuityStatus,
   getStorageDeploymentOptions,
-  getInitialDeploymentStorage,
+  getStorageDeploymentStorage,
   storageDeploymentOptionsQuery,
   type StorageDeploymentOptions,
 } from "./hosting-storage-deployment";
@@ -116,13 +116,13 @@ test("initial volume review verifies current storage identity, scope, binding an
     );
   vi.stubGlobal("fetch", fetch);
   expect(
-    await getInitialDeploymentStorage(scope, initialOptions, "binding"),
+    await getStorageDeploymentStorage(scope, initialOptions, "binding"),
   ).toEqual(storage);
   await expect(
-    getInitialDeploymentStorage(scope, initialOptions, "binding"),
+    getStorageDeploymentStorage(scope, initialOptions, "binding"),
   ).rejects.toThrow();
   await expect(
-    getInitialDeploymentStorage(scope, initialOptions, "binding"),
+    getStorageDeploymentStorage(scope, initialOptions, "binding"),
   ).rejects.toThrow();
 });
 test("storage reads encode targets, isolate actor and project, and disable caching", async () => {
