@@ -1210,6 +1210,10 @@ func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
  DROP TABLE server_readiness; DROP FUNCTION nerocd_server_readiness_schema_compatible();`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(t.Context(), `DROP TABLE hosting_auto_deploy_origins,hosting_auto_deploy_demands,hosting_auto_deploy_controls;
+ DROP FUNCTION nerocd_hosting_auto_deploy_schema_compatible();`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(t.Context(), `DROP TABLE hosting_github_push_commit_intents,hosting_github_push_deliveries,hosting_github_push_commands,hosting_github_push_policies; DROP FUNCTION nerocd_hosting_github_push_schema_compatible();
 DROP TABLE hosting_runtime_log_events,hosting_runtime_log_sessions; DROP FUNCTION nerocd_runtime_log_identity(),nerocd_hosting_runtime_log_schema_compatible();
  DROP TABLE hosting_runtime_observations; DROP FUNCTION nerocd_hosting_observation_schema_compatible();
