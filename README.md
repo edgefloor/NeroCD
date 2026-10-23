@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`0a9422194e8bff7485e7fb20c02f74418ea2ce51`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`a92d100c6ba654e6797432e7ef7a6cfd55527272`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - PostgreSQL state, checked migrations through 0055, bootstrap administration,
@@ -89,9 +89,12 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   pinned Railpack and prepared static/SPA assets into immutable local artifacts.
   [Private HTTPS Git](docs/hosting-git-resources.md#request-a-private-https-git-build)
   supports explicit Basic/PAT source grants, compiled CLI Dockerfile and Railpack
-  builds, and a Dockerfile WebUI journey through output, same-host deployment and
-  test-CA HTTPS. Provider breadth, automatic-builder UI qualification, compiled
-  static coverage and complete A03 remain separate work. See the [accepted limits](docs/compatibility.md#accepted-foundations-and-evidence).
+  builds, and Dockerfile/Railpack static-provider WebUI journeys through output,
+  same-host deployment and test-CA HTTPS. Private Railpack qualification covers
+  resource creation/editing, exact-version grant retry after a lost response and
+  preservation of the old HTTPS application after a genuine failed rebuild.
+  Arbitrary language providers, provider breadth, compiled frontend coverage and
+  complete A03 remain separate work. See the [accepted limits](docs/compatibility.md#accepted-foundations-and-evidence).
 - [Exact trigger revisions](docs/hosting-build-trigger-revision.md) admitted by a
   trusted internal caller are frozen before checkout and require the runner's
   revision capability. Public/private HTTPS checkout builds the selected commit

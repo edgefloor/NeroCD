@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`0a9422194e8bff7485e7fb20c02f74418ea2ce51`, 2026-10-23, through migration 0055.
+`a92d100c6ba654e6797432e7ef7a6cfd55527272`, 2026-10-23, through migration 0055.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -37,7 +37,7 @@ remain distinct acceptance claims.
 | Runtime execution and status controls | Opt-in CLI/API applies literal/exact managed versions via protected Docker stdin; bounded challenge/report and viewer freshness API, migration 0054 | Broader log qualification and disk/CPU metrics |
 | Runtime configuration UI and collector | Accepted authenticated browser deployment journey and opt-in independent Docker/loopback collector; four targets per 10-second cycle with fair selection | Read-only status dashboard is accepted; runtime-log control and migration 0055 are accepted; bounded live collector/viewer are accepted; no per-resource 10-second guarantee |
 | Status dashboard and enrollment commands | Bounded current/stale/historical target display under current viewer authority; enrollment command uses persisted exact capabilities and configuration prerequisites | Broader log qualification, SSH automation, complete readiness and general metrics |
-| Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack, owner grant selection and Dockerfile UI through exact artifact deployment and test-CA HTTPS | Automatic-builder private UI qualification, provider integrations, compiled static, remote publication and hosting cache |
+| Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack, owner grant selection and Dockerfile/Railpack static-provider UI through exact artifact deployment and test-CA HTTPS | Full language/provider coverage, compiled frontend, remote publication and hosting cache |
 | Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
 | Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Broader runtime log/status coverage, resource actions and terminals |
 | Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Public DNS/production ACME qualification, broader certificate modes, continuous observations and hosting preview access |
@@ -72,8 +72,15 @@ includes source grants, protected credential transport, compiled CLI Dockerfile
 and Railpack execution, and a Dockerfile browser workflow through build output,
 exact local artifact deployment and test-CA HTTPS. See the
 [scope and revision-specific evidence](compatibility.md#accepted-foundations-and-evidence).
-A03 remains partial. The private browser fixture does not qualify an automatic
-builder or provider integrations, and test-CA HTTPS is not production ACME.
+The private Railpack static-provider UI qualification is accepted at
+`a92d100c6ba654e6797432e7ef7a6cfd55527272`. It covers UI creation/editing,
+exact-version grant retry after committed-response loss, compiled CLI build,
+exact artifact deployment, test-CA HTTPS and preservation of the old application
+through a genuine failed rebuild. Viewer denial and responsive layouts are covered.
+A03 remains partial. Arbitrary language providers, Nixpacks, compiled frontend
+coverage, provider integrations and public production ACME remain unqualified.
+See the [runtime limits](hosting-build-runtime.md#enable-private-https-git) and
+[fixture contract](../acceptance/runtime-hosting-local-build/README.md).
 
 The live runtime-log slice has bounded accepted evidence for R58–R60 and A28–A29
 within the limits below. The next H1 slice is GitHub build-on-push on the accepted
