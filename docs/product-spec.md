@@ -5,7 +5,7 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `43e9c305f71a267b1d201f7849c12a31f8c532d6`, reviewed on 2026-10-23. Native migrations extend through 0057. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `5687b88465839b8e341181ba8b47f54dc17f006c`, reviewed on 2026-10-23. Native migrations extend through 0058. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -890,7 +890,7 @@ The earlier revision 3 instruction to make Task collaboration and D0–D3 the fi
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0057, including GitHub push admission and server-readiness diagnostics. The current accepted application assessment is `43e9c305f71a267b1d201f7849c12a31f8c532d6`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0058, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `5687b88465839b8e341181ba8b47f54dc17f006c`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -921,7 +921,8 @@ The implementation campaign changed application code and exercised real infrastr
 | Server-readiness diagnostic backend | Accepted `3cb62858e3d1e263d89d5e3c6aecd0a30792e938`; [diagnostic contract](server-readiness.md), [PostgreSQL tests](../internal/store/postgres_server_readiness_test.go) | Migration 0057; bounded runner challenge/report and administrator freshness/authority reads for `basic_image_hosting.v1`; diagnostic API only, no deployment admission or complete A01; agent and UI were absent at this backend checkpoint; accepted manual enrollment qualification is recorded below |
 | Manual enrollment and readiness | Accepted `0771f1b56befcd30b195c45121dba4d3efeec974`; [qualification contract](server-readiness.md#runtime-verification-fixture), [real gate](../scripts/ci/server-readiness-runtime-gate.sh) | UI enrollment and generated command consumed by compiled native Linux arm64 agent over fixture-CA-verified HTTPS; ready/blocked/stale recovery, viewer denial, administrator role loss and persisted-credential restart; CLI metadata only, Docker API 1.54 and 1 GiB per work/journal root; amd64 compile-only, no runtime qualification; no SSH, production TLS, application deployment or complete A01 |
 | Direct hosting navigation | Source `32ab3bcd259781c565e2a052dfbba320acd9206e`, accepted `43e9c305f71a267b1d201f7849c12a31f8c532d6`; [navigation metadata](../web/app/src/router/metadata.ts), [Home guidance](../web/app/src/pages/HomeView.tsx), [browser scenarios](../web/app/tests/browser/hosting-navigation.spec.ts) | Home, Projects and Servers and runners lead the Hosting group; advanced workflows remain available; direct image/Git application guidance requires no Task; saving configuration, heartbeat and a saved route do not establish deployment, readiness or HTTPS |
-| Verified existing-route switch engine | Accepted `99250c2634109cdd2008c56dae1b1740d377c0a1`; [engine contract](hosting-route-switch.md), [runtime fixture](../internal/hostingproxy/runtime_test.go) | Opt-in existing-route port switches verify old/new HTTP and trusted TLS, preserve unrelated routes and verify rollback; cancellation or unverified rollback stays `Uncertain`; controller/API admission, agent capability negotiation and automatic traffic orchestration remain pending; no production ACME or complete A11/A20 |
+| Verified existing-route switch engine | Accepted `99250c2634109cdd2008c56dae1b1740d377c0a1`; [engine contract](hosting-route-switch.md), [runtime fixture](../internal/hostingproxy/runtime_test.go) | Opt-in existing-route port switches verify old/new HTTP and trusted TLS, preserve unrelated routes and verify rollback; cancellation or unverified rollback stays `Uncertain`; controller/API admission and agent capability negotiation were absent at this engine checkpoint; accepted controller evidence is below; automatic deployment orchestration remains pending; no production ACME or complete A11/A20 |
+| Guarded verified-route controller | Accepted `5687b88465839b8e341181ba8b47f54dc17f006c`; [request, authority and recovery contract](hosting-route-switch.md), [compiled runner fixture](../internal/api/hosting_route_switch_runtime_integration_test.go) | Migration 0058; resource POST selects exact healthy or retained-running releases for existing routes; explicit agent capability/opt-in, verified HTTP/trusted TLS, prior-generation rollback, lost-response idempotency and cancellation/replay holds; current authority, expiry and revocation checks; metadata conflicts remain held without a reconciliation API; bounded R21/R25/R28 and A11/A20 evidence, not full R21, draining or automatic data rollback |
 
 Private Railpack qualification is now accepted at
 `a92d100c6ba654e6797432e7ef7a6cfd55527272`, tree
@@ -936,6 +937,22 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
+Controller qualification at `b1e42f53d06af36c086d5a8160dba4c17bced8c9`
+has tree `f0d646b8f85f32e82646189d59dc81fe1ac0b61f`, identical to accepted
+`5687b88465839b8e341181ba8b47f54dc17f006c`. Retained route runtime passed in
+23.92 seconds in `/tmp/nerocd-route-integration-route-runtime.log`; readiness
+native 61.19 seconds and browser 70.66 seconds passed in
+`/tmp/nerocd-route-integration-readiness-browser-runtime.log`, with owned cleanup
+verified. The first Bash 3.2 empty-array invocation failed; the corrected run
+passed. Whole-repository lint retained three unchanged errors; the required lint
+delta was zero and passed. These results do not claim a clean whole lint gate.
+Main's 184-route contract and 74-served-asset checks passed in
+`/tmp/nerocd-main-route-control-contract.log` and
+`/tmp/nerocd-main-route-control-served.log`, retaining manifest
+`0e81691a8d4fcb7f1b59facf37ce1d9dc84cf601e87b42f24532778e827b6cd6`.
+The dedicated route-switch UI and read API remain pending. R17 automatic/protected
+plans, SSH, production ACME and stateful hosting remain incomplete.
+
 Navigation evidence at source `32ab3bcd259781c565e2a052dfbba320acd9206e`
 records 965 Vitest tests and 120 compiled-Go browser cases in 6.3 minutes in
 `/tmp/nerocd-hosting-navigation-browser-final-20261023.log`, with three independent
@@ -944,8 +961,7 @@ passed fresh 183-route contract and 74-served-asset checks, with manifest
 `0e81691a8d4fcb7f1b59facf37ce1d9dc84cf601e87b42f24532778e827b6cd6`
 and binary `c3c95c79862e0ca396ee0875ca2fb5d5152ad7490b36df5ea74087e2bf4a6e3a`.
 Synthetic fault and actor cases prove client behavior only; real OIDC denial
-evidence remains separate. These retained results do not qualify the unaccepted
-route controller/runtime work, automatic deployment, protected plans, SSH,
+evidence remains separate. These retained results do not qualify complete route-switch UI/read API, automatic deployment, protected plans, SSH,
 production ACME or complete hosting parity.
 
 Manual enrollment qualification at `68c403aa6d319dd9a391d6f6eb577336943e355b`

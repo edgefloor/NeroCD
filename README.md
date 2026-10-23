@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`43e9c305f71a267b1d201f7849c12a31f8c532d6`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`5687b88465839b8e341181ba8b47f54dc17f006c`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0057, bootstrap administration,
+- PostgreSQL state, checked migrations through 0058, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -92,8 +92,11 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   `99250c2634109cdd2008c56dae1b1740d377c0a1`, checks old/new HTTP and trusted TLS
   before committing an opt-in existing-route switch. Failed verification requires
   verified rollback; cancellation or uncertain rollback retains `Uncertain`.
-  Caller API/admission, agent capability negotiation and automatic traffic
-  orchestration remain pending.
+  The guarded controller is accepted at `5687b88465839b8e341181ba8b47f54dc17f006c`.
+  Its resource POST selects exact healthy or retained-running releases, requires
+  explicit agent opt-in and retains holds for cancellation, uncertain replay or
+  metadata conflicts. Dedicated UI/read API and automatic deployment remain
+  pending; this does not qualify draining, data rollback or production ACME.
 - Runtime configuration UI for public literals and exact managed-secret versions,
   generation compare-and-swap, idempotent retries and fresh deployment generations.
   Accepted browser proof covers authenticated API, compiled runner and Docker,
@@ -147,8 +150,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Next are SSH onboarding, a guarded route-switch
-controller, automatic/protected deployment, then
+and extended compatibility. Next are SSH onboarding, route-switch UI/read API,
+automatic/protected deployment, then
 production TLS qualification before stateful hosting. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
