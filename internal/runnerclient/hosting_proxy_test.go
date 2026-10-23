@@ -305,3 +305,30 @@ func TestRuntimePrivateGitIdentityExactOptIn(t *testing.T) {
 		server.Close()
 	}
 }
+
+func TestRuntimeReadinessIdentityRequiresExactConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		caps              []string
+		configured, valid bool
+	}{
+		{[]string{domain.ServerReadinessCapability}, true, true},
+		{[]string{domain.ServerReadinessCapability}, false, false},
+		{nil, true, false},
+		{[]string{domain.ServerReadinessCapability, "shell"}, true, false},
+		{[]string{"HOSTING_READINESS_V1"}, true, false},
+	} {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/runners/identity" {
+				t.Error("wrong identity path")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": tc.caps})
+		}))
+		client := New(server.URL, "fixture")
+		client.HTTP = server.Client()
+		_, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Readiness: tc.configured})
+		server.Close()
+		if (err == nil) != tc.valid {
+			t.Fatal(tc, err)
+		}
+	}
+}
