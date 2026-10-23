@@ -1690,6 +1690,118 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/HostingPreparedRequest'
+  /api/v1/runners/hosting/storage-create-begin:
+    {
+      "post": {
+        "operationId": "runnerHostingStorageCreateBegin",
+        "summary": "Fenced owned storage storage-create-begin",
+        "description": "Requires a current dedicated runner and exact operation/run/lease/attempt/fence. Bounded closed JSON, at most 32 KiB. Creation intent commits before fresh-only permission; missing volumes are never automatically recreated after admission. Materialization receipt must commit before any application writer. Historical exact ACK replay grants no current mutation authority. Cache-Control: no-store on every response. This endpoint does not advertise runner support or expose user storage configuration.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Committed controller acknowledgment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageCreateAck"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  /api/v1/runners/hosting/storage-materialized:
+    {
+      "post": {
+        "operationId": "runnerHostingStorageMaterialized",
+        "summary": "Fenced owned storage storage-materialized",
+        "description": "Requires a current dedicated runner and exact operation/run/lease/attempt/fence. Bounded closed JSON, at most 32 KiB. Creation intent commits before fresh-only permission; missing volumes are never automatically recreated after admission. Materialization receipt must commit before any application writer. Historical exact ACK replay grants no current mutation authority. Cache-Control: no-store on every response. This endpoint does not advertise runner support or expose user storage configuration.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageMaterializedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Committed controller acknowledgment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageMaterializedAck"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
   /api/v1/runners/hosting/apply-begin:
     post:
       summary: Fenced image hosting apply-begin
@@ -5619,6 +5731,587 @@ components:
       properties:
         generation: {type: integer, format: int64, minimum: 1}
         hash: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    HostingStorageRef:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "storage_id",
+          "generation",
+          "hash"
+        ],
+        "properties": {
+          "storage_id": {
+            "type": "string",
+            "pattern": "^hsv_[0-9a-f]{32}$"
+          },
+          "generation": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    HostingStorage:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id",
+          "resource_id",
+          "binding_id",
+          "destination_id",
+          "volume_name",
+          "created_by",
+          "kind",
+          "driver",
+          "mount_path",
+          "access_mode",
+          "retention",
+          "generation",
+          "hash",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "resource_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "binding_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "destination_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "volume_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "created_by": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "platform_managed"
+            ]
+          },
+          "driver": {
+            "type": "string",
+            "enum": [
+              "local"
+            ]
+          },
+          "mount_path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 512,
+            "description": "Canonical absolute container path; root and proc/sys/dev namespaces are rejected. Immutable metadata never relocates data."
+          },
+          "access_mode": {
+            "type": "string",
+            "enum": [
+              "read_write"
+            ]
+          },
+          "retention": {
+            "type": "string",
+            "enum": [
+              "retain"
+            ]
+          },
+          "generation": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    HostingStoragePlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reference",
+          "volume_name",
+          "mount_path",
+          "creation_operation_id",
+          "creation_nonce",
+          "daemon_id"
+        ],
+        "properties": {
+          "reference": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "volume_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "mount_path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 512,
+            "description": "Canonical absolute container path; root and proc/sys/dev namespaces are rejected. Immutable metadata never relocates data."
+          },
+          "creation_operation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "creation_nonce": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "daemon_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    HostingHealthyStorage:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "plan",
+          "creation_plan_hash"
+        ],
+        "properties": {
+          "plan": {
+            "$ref": "#/components/schemas/HostingStoragePlan"
+          },
+          "creation_plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    HostingStorageMaterialization:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "storage_ref",
+          "state",
+          "creation_operation_id",
+          "creation_plan_hash",
+          "creation_nonce",
+          "daemon_id",
+          "labels"
+        ],
+        "properties": {
+          "storage_ref": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "create_admitted",
+              "materialized"
+            ]
+          },
+          "creation_operation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "creation_plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "creation_nonce": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "daemon_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "io.nerocd.storage.id",
+              "io.nerocd.storage.hash",
+              "io.nerocd.storage.generation",
+              "io.nerocd.storage.project",
+              "io.nerocd.storage.resource",
+              "io.nerocd.storage.destination",
+              "io.nerocd.storage.origin_operation",
+              "io.nerocd.storage.origin_plan",
+              "io.nerocd.storage.creation_nonce",
+              "io.nerocd.storage.daemon",
+              "io.nerocd.binding"
+            ],
+            "properties": {
+              "io.nerocd.storage.id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.hash": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.generation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.resource": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.destination": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.origin_operation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.origin_plan": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.creation_nonce": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.daemon": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.binding": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          },
+          "materialized_receipt": {
+            "$ref": "#/components/schemas/HostingReceipt"
+          }
+        }
+      }
+    HostingStorageCreateRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "plan_hash",
+          "storage_ref",
+          "creation_nonce"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "lease_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "storage_ref": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "creation_nonce": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          }
+        }
+      }
+    HostingStorageCreateAck:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "storage",
+          "materialization",
+          "create_permitted"
+        ],
+        "properties": {
+          "storage": {
+            "$ref": "#/components/schemas/HostingStorage"
+          },
+          "materialization": {
+            "$ref": "#/components/schemas/HostingStorageMaterialization"
+          },
+          "create_permitted": {
+            "type": "boolean",
+            "description": "Fresh committed insertion only. Never persist or replay as permission; false retries inspect existing volume and never recreate a missing volume."
+          }
+        }
+      }
+    HostingStorageMaterializedRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "receipt_id",
+          "plan_hash",
+          "storage_ref",
+          "creation_operation_id",
+          "creation_plan_hash",
+          "creation_nonce",
+          "daemon_id",
+          "volume_name",
+          "driver",
+          "scope",
+          "labels",
+          "options"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "lease_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "receipt_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "storage_ref": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "creation_operation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "creation_plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "creation_nonce": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "daemon_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "volume_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "driver": {
+            "type": "string",
+            "enum": [
+              "local"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "local"
+            ]
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "io.nerocd.storage.id",
+              "io.nerocd.storage.hash",
+              "io.nerocd.storage.generation",
+              "io.nerocd.storage.project",
+              "io.nerocd.storage.resource",
+              "io.nerocd.storage.destination",
+              "io.nerocd.storage.origin_operation",
+              "io.nerocd.storage.origin_plan",
+              "io.nerocd.storage.creation_nonce",
+              "io.nerocd.storage.daemon",
+              "io.nerocd.binding"
+            ],
+            "properties": {
+              "io.nerocd.storage.id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.hash": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.generation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.resource": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.destination": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.origin_operation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.origin_plan": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.creation_nonce": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.storage.daemon": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "io.nerocd.binding": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          },
+          "options": {
+            "type": "object",
+            "nullable": true,
+            "maxProperties": 0,
+            "additionalProperties": false
+          }
+        }
+      }
+    HostingStorageMaterializedAck:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "materialization",
+          "receipt"
+        ],
+        "properties": {
+          "materialization": {
+            "$ref": "#/components/schemas/HostingStorageMaterialization"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/HostingReceipt"
+          }
+        }
+      }
     HostingSnapshot:
       type: object
       additionalProperties: false
@@ -5636,6 +6329,7 @@ components:
         - readiness
         - policy_version
       properties:
+        storage: {$ref: '#/components/schemas/HostingStorageRef'}
         runtime_configuration: {$ref: '#/components/schemas/HostingRuntimeConfigurationRef'}
         local_build: {$ref: '#/components/schemas/HostingLocalBuildSource'}
         resource_id:
@@ -5669,6 +6363,7 @@ components:
             - local-build.release-ports.v1
             - public-image.runtime-env.release-ports.v1
             - local-build.runtime-env.release-ports.v1
+            - public-image.owned-storage.release-ports.v1
     HostingRelease:
       type: object
       additionalProperties: false
@@ -5707,6 +6402,7 @@ components:
         - release
         - plan_hash
       properties:
+        storage: {$ref: '#/components/schemas/HostingHealthyStorage'}
         snapshot:
           $ref: '#/components/schemas/HostingSnapshot'
         operation_id:
@@ -5767,6 +6463,7 @@ components:
         - compiler_version
         - hash
       properties:
+        storage: {$ref: '#/components/schemas/HostingStoragePlan'}
         retained_releases:
           type: array
           maxItems: 32
@@ -5788,6 +6485,7 @@ components:
             - local-build-hosting.v1
             - image-hosting.runtime-env.v1
             - local-build-hosting.runtime-env.v1
+            - image-hosting.owned-storage.v1
         hash:
           type: string
     HostingReceipt:

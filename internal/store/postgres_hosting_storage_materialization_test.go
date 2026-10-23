@@ -245,6 +245,9 @@ func TestHostingStorageMaterializationPostgresAdmissionAndWriterGate(t *testing.
 	if err != nil || !ack.CreatePermitted || ack.Materialization.State != "create_admitted" {
 		t.Fatalf("first admission: %+v %v", ack, err)
 	}
+	if ack.Storage != f.storage || ack.Storage.Validate() != nil || ack.Storage.CreatedBy == "" || ack.Storage.CreatedAt.IsZero() {
+		t.Fatal("fresh acknowledgment fabricated or omitted immutable metadata")
+	}
 	op, err := f.pg.GetHostingOperation(ctx, f.op.ID)
 	if err != nil || op.State != "prepared" || !op.MutationHold {
 		t.Fatalf("storage preparation failed to retain independent hold: %+v %v", op, err)
@@ -258,6 +261,9 @@ func TestHostingStorageMaterializationPostgresAdmissionAndWriterGate(t *testing.
 	replay, err := f.pg.HostingStorageCreateBegin(ctx, f.runner, f.request())
 	if err != nil || replay.CreatePermitted || replay.Materialization.CreationNonce != ack.Materialization.CreationNonce {
 		t.Fatalf("replayed permission: %+v %v", replay, err)
+	}
+	if replay.Storage != ack.Storage {
+		t.Fatal("replayed acknowledgment changed immutable metadata")
 	}
 	proof := f.proof(ack)
 	ready, err := f.pg.HostingStorageMaterialized(ctx, f.runner, proof)

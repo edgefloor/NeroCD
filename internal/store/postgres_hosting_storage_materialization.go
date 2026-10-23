@@ -234,7 +234,7 @@ func (s *PostgresStore) HostingStorageCreateBegin(ctx context.Context, runner st
 			if readErr != nil {
 				return zero, readErr
 			}
-			return domain.HostingStorageCreateAck{Materialization: origin}, finalHostingStorageAuthority(ctx, tx, runner, in.HostingAuthority, op)
+			return domain.HostingStorageCreateAck{Storage: storage, Materialization: origin}, finalHostingStorageAuthority(ctx, tx, runner, in.HostingAuthority, op)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
@@ -287,7 +287,7 @@ func (s *PostgresStore) HostingStorageCreateBegin(ctx context.Context, runner st
 		if err = finalHostingStorageAuthority(ctx, tx, runner, in.HostingAuthority, op); err != nil {
 			return zero, err
 		}
-		return domain.HostingStorageCreateAck{Materialization: origin, CreatePermitted: fresh}, nil
+		return domain.HostingStorageCreateAck{Storage: storage, Materialization: origin, CreatePermitted: fresh}, nil
 	})
 }
 

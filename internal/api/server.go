@@ -242,6 +242,9 @@ func (s *Server) clientSource(r *http.Request) string {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/v1/runners/hosting/storage-create-begin" || r.URL.Path == "/api/v1/runners/hosting/storage-materialized" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if r.Method == http.MethodGet && hostingRouteSwitchReadPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
@@ -455,6 +458,8 @@ func requiresRunnerAuth(path string) bool {
 	case "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
 		return true
 	case "/api/v1/runners/proxy/plan", "/api/v1/runners/proxy/prepared", "/api/v1/runners/proxy/apply-begin", "/api/v1/runners/proxy/complete", "/api/v1/runners/proxy/status":
+		return true
+	case "/api/v1/runners/hosting/storage-create-begin", "/api/v1/runners/hosting/storage-materialized":
 		return true
 	case "/api/v1/runners/hosting/plan", "/api/v1/runners/hosting/prepared", "/api/v1/runners/hosting/apply-begin", "/api/v1/runners/hosting/complete", "/api/v1/runners/hosting/status", "/api/v1/runners/hosting/reconciliation", "/api/v1/runners/identity", "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry", "/api/v1/runners/claim", "/api/v1/runners/renew", "/api/v1/runners/lease", "/api/v1/runners/logs", "/api/v1/runners/events/batch", "/api/v1/runners/secrets/access", "/api/v1/runners/artifacts", "/api/v1/runners/complete", "/api/v1/runners/deployments/transition", "/api/v1/runners/deployments/plan", "/api/v1/runners/deployments/status", "/api/v1/runners/deployments/provenance", "/api/v1/runners/deployments/fail-and-rollback":
 		return true
