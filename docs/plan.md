@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`a92d100c6ba654e6797432e7ef7a6cfd55527272`, 2026-10-23, through migration 0055.
+`99250c2634109cdd2008c56dae1b1740d377c0a1`, 2026-10-23, through migration 0057.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,7 +29,7 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0055, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0057, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | SSH-assisted onboarding and host readiness, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, scoped lifecycle and protected reveal; separate runner-file execution | Scoped managed build/runtime delivery, broader variable scopes, provider credentials and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
@@ -38,7 +38,7 @@ remain distinct acceptance claims.
 | Runtime configuration UI and collector | Accepted authenticated browser deployment journey and opt-in independent Docker/loopback collector; four targets per 10-second cycle with fair selection | Read-only status dashboard is accepted; runtime-log control and migration 0055 are accepted; bounded live collector/viewer are accepted; no per-resource 10-second guarantee |
 | Status dashboard and enrollment commands | Bounded current/stale/historical target display under current viewer authority; enrollment command uses persisted exact capabilities and configuration prerequisites | Broader log qualification, SSH automation, complete readiness and general metrics |
 | Builds | Public builds and private HTTPS Basic/PAT checkout; compiled CLI Dockerfile/Railpack, owner grant selection and Dockerfile/Railpack static-provider UI through exact artifact deployment and test-CA HTTPS | Full language/provider coverage, compiled frontend, remote publication and hosting cache |
-| Deployment | Exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, deployment policy, triggers, remote image delivery and supported hosting previews |
+| Deployment | Opt-in verified existing-route switch engine with strict trusted-TLS rollback; exact same-host artifact deployment through CLI/API/UI, ordinary HTTP readiness and selected managed routing | Public production TLS qualification, guarded route-switch controller, automatic/protected deployment, remote image delivery and supported hosting previews |
 | Build output | Typed receipts and retention cursors, redaction, journal format 7, delivery/replay before completion, bounded opt-in viewer | Broader runtime log/status coverage, resource actions and terminals |
 | Routing | Explicit proxy capability, Traefik generation/holds and isolated trusted-test-CA HTTPS fixtures | Public DNS/production ACME qualification, broader certificate modes, continuous observations and hosting preview access |
 
@@ -90,10 +90,19 @@ provide bounded R09/R10/R13/R57 and A09 evidence. The local TLS fixture uses
 registered API/River, compiled CLI and Docker; deployment remains manual.
 See the [accepted evidence and limits](compatibility.md#accepted-foundations-and-evidence).
 
-Next, qualify practical onboarding, host readiness and SSH. Readiness backend
-work is in progress and unaccepted. Follow with automatic deployment and
-protected plans under R17/R19 and applicable A09/A10 checks, then production TLS
-qualification before H2 stateful hosting. Live GitHub webhook configuration,
+The [readiness diagnostic backend](server-readiness.md) is accepted at
+`3cb62858e3d1e263d89d5e3c6aecd0a30792e938`, through migration 0057. Its API
+reports bounded evidence; agent collection and UI remain unaccepted pending
+staging and actual enrollment/browser qualification. Complete A01 remains open.
+The [verified route-switch engine](hosting-route-switch.md) is accepted at
+`99250c2634109cdd2008c56dae1b1740d377c0a1`. It verifies old/new trusted TLS and
+rollback under an opt-in engine contract; caller API/admission, agent capability
+negotiation and automatic traffic orchestration are pending.
+
+Next, qualify combined onboarding diagnostics and SSH, then a guarded route-switch
+controller. Follow with automatic deployment and protected plans under R17/R19
+and applicable A09/A10 checks, then production TLS qualification before H2
+stateful hosting. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.
 Use existing resources, Go application authorization, managed-secret versions,
 PostgreSQL/River and fenced runner execution. Do not require a collaboration

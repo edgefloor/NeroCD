@@ -24,10 +24,10 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`a92d100c6ba654e6797432e7ef7a6cfd55527272`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`99250c2634109cdd2008c56dae1b1740d377c0a1`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
-- PostgreSQL state, checked migrations through 0055, bootstrap administration,
+- PostgreSQL state, checked migrations through 0057, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -74,6 +74,17 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   persisted `hosting_runtime_logs_v1` in the manual hosting profile. This does not
   qualify SSH-assisted enrollment or
   complete host readiness.
+- [Server-readiness diagnostic API](docs/server-readiness.md), accepted at
+  `3cb62858e3d1e263d89d5e3c6aecd0a30792e938`, records bounded profile evidence
+  and derives current authority/freshness status. It does not authorize deployment.
+  Agent collection and UI remain unaccepted pending actual enrollment/browser
+  qualification; complete A01 and SSH onboarding remain open.
+- [Verified route-switch engine](docs/hosting-route-switch.md), accepted at
+  `99250c2634109cdd2008c56dae1b1740d377c0a1`, checks old/new HTTP and trusted TLS
+  before committing an opt-in existing-route switch. Failed verification requires
+  verified rollback; cancellation or uncertain rollback retains `Uncertain`.
+  Caller API/admission, agent capability negotiation and automatic traffic
+  orchestration remain pending.
 - Runtime configuration UI for public literals and exact managed-secret versions,
   generation compare-and-swap, idempotent retries and fresh deployment generations.
   Accepted browser proof covers authenticated API, compiled runner and Docker,
@@ -127,9 +138,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. The next H1 gaps are practical onboarding with host
-readiness and SSH, deployment automation and protected plans, then production TLS
-qualification. Readiness backend work is in progress and unaccepted. Broader
+and extended compatibility. Next are combined onboarding diagnostic qualification
+and SSH, a guarded route-switch controller, automatic/protected deployment, then
+production TLS qualification before stateful hosting. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
 
