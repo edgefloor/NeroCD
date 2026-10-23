@@ -1201,6 +1201,13 @@ func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 // dependencies above 0046 so older missing-layer tests retain their assertions.
 func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
+	// Storage references the build resource scope and destination identity. Remove
+	// its complete layer first so both older fixtures can restore migration 0062.
+	if _, err := db.Exec(t.Context(), `DROP TABLE hosting_storage_receipts,hosting_storage;
+ DROP FUNCTION nerocd_hosting_storage_creation_consistent(),nerocd_hosting_storage_immutable(),nerocd_hosting_storage_schema_compatible(),nerocd_hosting_storage_path_valid(text);
+ ALTER TABLE resource_bindings DROP CONSTRAINT resource_bindings_storage_identity;`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(t.Context(), `DROP TABLE server_bootstrap_enrollment_credentials,server_bootstrap_secret_grants,server_bootstrap_commands,server_bootstrap_operations;
  DROP FUNCTION nerocd_server_bootstrap_grant_immutable(),nerocd_server_bootstrap_credential_consistent(),nerocd_server_bootstrap_immutable(),nerocd_server_bootstrap_schema_compatible();
  DROP TABLE hosting_proxy_recovery_resolutions,hosting_proxy_recovery_plans;
