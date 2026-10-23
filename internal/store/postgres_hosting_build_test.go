@@ -1201,6 +1201,13 @@ func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 // dependencies above 0046 so older missing-layer tests retain their assertions.
 func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_storage_lease ON run_leases; DROP FUNCTION nerocd_hosting_storage_lease();
+ ALTER TABLE hosting_storage_materializations DROP CONSTRAINT hosting_storage_materialized_receipt_fk,DROP CONSTRAINT hosting_storage_origin_admission_fk;
+ DROP TABLE hosting_storage_materialized_receipts,hosting_storage_operation_admissions,hosting_storage_materializations;
+ DROP FUNCTION nerocd_hosting_storage_receipt_consistent(),nerocd_hosting_storage_admission_consistent(),nerocd_hosting_storage_materialization_transition(),nerocd_hosting_storage_materialization_schema_compatible();
+ ALTER TABLE hosting_apply_plans DROP CONSTRAINT hosting_apply_plans_storage_hash;`); err != nil {
+		t.Fatal(err)
+	}
 	// Storage references the build resource scope and destination identity. Remove
 	// its complete layer first so both older fixtures can restore migration 0062.
 	if _, err := db.Exec(t.Context(), `DROP TABLE hosting_storage_receipts,hosting_storage;

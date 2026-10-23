@@ -36,11 +36,30 @@ func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
 
 // HostingPlanFamilyMatches rejects mixed policy/compiler families and substituted snapshots.
 func HostingPlanFamilyMatches(s HostingSnapshot, p HostingApplyPlan) bool {
-	if ValidateHostingRuntimeConfigurationRef(s) != nil || p.Snapshot != s {
+	if ValidateHostingRuntimeConfigurationRef(s) != nil || ValidateHostingStorageSnapshot(s) != nil || p.Snapshot != s {
+		return false
+	}
+	if s.Storage == (HostingStorageRef{}) && p.Storage != nil {
+		return false
+	}
+	if s.Storage != (HostingStorageRef{}) && (p.Storage == nil || p.Storage.Validate(s, p.Release) != nil) {
+		return false
+	}
+	if p.PreviousHealthy != nil && (ValidateHostingHealthyStorage(*p.PreviousHealthy) != nil || s.Storage == (HostingStorageRef{}) && p.PreviousHealthy.Storage != nil) {
+		return false
+	}
+	for _, healthy := range p.RetainedReleases {
+		if ValidateHostingHealthyStorage(healthy) != nil || s.Storage == (HostingStorageRef{}) && healthy.Storage != nil {
+			return false
+		}
+	}
+	if s.Storage != (HostingStorageRef{}) && p.RetainPrevious {
 		return false
 	}
 	compiler := ""
 	switch s.PolicyVersion {
+	case HostingOwnedStoragePolicyVersion:
+		compiler = HostingOwnedStorageCompilerVersion
 	case HostingPolicyVersion:
 		compiler = HostingCompilerVersion
 	case HostingReleasePolicyVersion:

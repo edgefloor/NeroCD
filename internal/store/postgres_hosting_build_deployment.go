@@ -102,6 +102,13 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 		return domain.HostingOperation{}, false, ErrConflict
 	}
 	projectID := r.ProjectID
+	storageRef, storageErr := hostingStorageSnapshot(ctx, tx, r.ProjectID, resourceID)
+	if storageErr != nil {
+		return domain.HostingOperation{}, false, storageErr
+	}
+	if storageRef != (domain.HostingStorageRef{}) {
+		return domain.HostingOperation{}, false, ErrConflict
+	}
 	snap := domain.HostingSnapshot{ResourceID: resourceID, ResourceGeneration: r.Generation, BindingID: r.BindingID, DestinationID: r.DestinationID, RuntimeNamespace: r.RuntimeNamespace, ServerID: r.ServerID, RunnerID: r.RunnerID, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness, PolicyVersion: domain.HostingLocalBuildPolicyVersion, LocalBuild: domain.HostingLocalBuildSource{SourceGeneration: in.ExpectedSourceGeneration, ArtifactHash: domain.HostingDocumentHash(*b.Artifact), Artifact: *b.Artifact}}
 	snap.RuntimeConfiguration, err = lockHostingRuntimeConfiguration(ctx, tx, projectID, resourceID, in.ExpectedRuntimeConfigurationGeneration)
 	if err != nil {
@@ -200,6 +207,9 @@ func hostingSnapshotTaskType(snap domain.HostingSnapshot) string {
 	return domain.RunTypeImageDeploy
 }
 func hostingRetainedPolicy(snap domain.HostingSnapshot) string {
+	if snap.Storage != (domain.HostingStorageRef{}) {
+		return domain.HostingOwnedStoragePolicyVersion
+	}
 	if snap.RuntimeConfiguration.Generation > 0 {
 		if snap.LocalBuild != (domain.HostingLocalBuildSource{}) {
 			return domain.HostingLocalBuildRuntimePolicyVersion

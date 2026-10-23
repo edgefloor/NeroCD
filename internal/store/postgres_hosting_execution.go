@@ -252,9 +252,22 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}
+	snap.Storage, err = hostingStorageSnapshot(ctx, tx, projectID, resourceID)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if snap.Storage != (domain.HostingStorageRef{}) && snap.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) {
+		return domain.HostingOperation{}, ErrConflict
+	}
 	snap.PolicyVersion = domain.HostingPolicyVersion
 	if snap.RuntimeConfiguration.Generation > 0 {
 		snap.PolicyVersion = domain.HostingRuntimePolicyVersion
+	}
+	if snap.Storage != (domain.HostingStorageRef{}) {
+		snap.PolicyVersion = domain.HostingOwnedStoragePolicyVersion
+	}
+	if err = requireHostingStorageAgent(ctx, tx, snap); err != nil {
+		return domain.HostingOperation{}, err
 	}
 	if err = requireHostingRuntimeAgent(ctx, tx, snap); err != nil {
 		return domain.HostingOperation{}, err
@@ -345,6 +358,9 @@ func hostingTargetGate(ctx context.Context, tx pgx.Tx, projectID string, snap do
 	return hostingTargetGateMode(ctx, tx, projectID, snap, allowMissingState, false)
 }
 func hostingTargetGateMode(ctx context.Context, tx pgx.Tx, projectID string, snap domain.HostingSnapshot, allowMissingState, observe bool) error {
+	if err := requireHostingStorageAgent(ctx, tx, snap); err != nil {
+		return err
+	}
 	if err := sqlcgen.New(tx).LockHostingExecutionDestination(ctx, snap.DestinationID); err != nil {
 		return err
 	}
@@ -571,8 +587,16 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 				return domain.HostingOperation{}, err
 			}
 		}
+		if op.ReconciliationHealthy != nil && domain.ValidateHostingHealthyStorage(*op.ReconciliationHealthy) != nil {
+			return domain.HostingOperation{}, ErrConflict
+		}
 		if err = finalLocalHostingAuthority(ctx, tx, runnerID, a, op, true); err != nil {
 			return domain.HostingOperation{}, err
+		}
+		if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+			if err = finalHostingStorageAuthority(ctx, tx, runnerID, a, op); err != nil {
+				return domain.HostingOperation{}, err
+			}
 		}
 		return op, nil
 	}
@@ -734,7 +758,7 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		}
 	}
 	var plan domain.HostingApplyPlan
-	if op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildPolicyVersion || op.Snapshot.PolicyVersion == domain.HostingRuntimePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildRuntimePolicyVersion {
+	if op.Snapshot.PolicyVersion == domain.HostingOwnedStoragePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildPolicyVersion || op.Snapshot.PolicyVersion == domain.HostingRuntimePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildRuntimePolicyVersion {
 		var retained []domain.HostingHealthy
 		rows, readErr := sqlcgen.New(tx).GetHostingRetainedReleases(ctx, op.BindingID)
 		if readErr != nil {
@@ -750,7 +774,9 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 			}
 			retained = append(retained, old)
 		}
-		if op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) {
+		if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+			plan, err = compileHostingStoragePlan(ctx, tx, op, in.Release, previous, retained)
+		} else if op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) {
 			plan, err = domain.CompileLocalBuildHostingPlan(op.Snapshot, in.Release, previous, retained)
 		} else {
 			plan, err = domain.CompileRetainedHostingPlan(op.Snapshot, in.Release, previous, retained)
@@ -797,6 +823,11 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 	if err = finalHostingRuntimeAuthority(ctx, tx, runnerID, in.HostingAuthority, op); err != nil {
 		return domain.HostingOperation{}, err
 	}
+	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+		if err = finalHostingStorageAuthority(ctx, tx, runnerID, in.HostingAuthority, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
 	return op, tx.Commit(ctx)
 }
 
@@ -829,6 +860,24 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	op, err := hostingOperation(ctx, tx, a.OperationID)
 	if err != nil {
 		return op, err
+	}
+	storageHeld := op.Snapshot.Storage != (domain.HostingStorageRef{}) && op.MutationHold && op.State == "prepared"
+	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+		if !op.MutationHold {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		if err = hostingFreshRuntimeGate(ctx, tx, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if err = hostingOperationTargetGate(ctx, tx, op, false); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if err = hostingStorageWriterReady(ctx, tx, a, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if err = finalHostingStorageAuthority(ctx, tx, runnerID, a, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	if op.MutationHold && op.State == "applying" && op.CleanupPlan == nil {
 		if op.Plan == nil || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) {
@@ -866,18 +915,20 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 			return domain.HostingOperation{}, ErrConflict
 		}
 	}
-	if op.State != "prepared" || op.MutationHold {
+	if op.State != "prepared" || op.MutationHold && !storageHeld {
 		return domain.HostingOperation{}, ErrConflict
 	}
-	tag, err := sqlcgen.New(tx).AdmitHostingMutation(ctx, sqlcgen.AdmitHostingMutationParams{BindingID: op.BindingID, HoldOperationID: hostingStringPointer(op.ID), DaemonID: hostingStringPointer(op.Release.DaemonID)})
-	if err != nil {
-		return domain.HostingOperation{}, err
-	}
-	if tag != 1 {
-		return domain.HostingOperation{}, ErrConflict
-	}
-	if _, err = sqlcgen.New(tx).HoldHostingReleaseClaim(ctx, op.ID); err != nil {
-		return domain.HostingOperation{}, err
+	if !storageHeld {
+		tag, err := sqlcgen.New(tx).AdmitHostingMutation(ctx, sqlcgen.AdmitHostingMutationParams{BindingID: op.BindingID, HoldOperationID: hostingStringPointer(op.ID), DaemonID: hostingStringPointer(op.Release.DaemonID)})
+		if err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if tag != 1 {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		if _, err = sqlcgen.New(tx).HoldHostingReleaseClaim(ctx, op.ID); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	authorityRaw, marshalErr := json.Marshal(a)
 	if marshalErr != nil {
@@ -904,6 +955,11 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	}
 	if err = autoFirstMutation(ctx, tx, op.ID, false); err != nil {
 		return domain.HostingOperation{}, err
+	}
+	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+		if err = finalHostingStorageAuthority(ctx, tx, runnerID, a, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	return op, tx.Commit(ctx)
 }
@@ -949,6 +1005,14 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if err = sqlcgen.New(tx).LockHostingExecutionDestination(ctx, op.Snapshot.DestinationID); err != nil {
 		return domain.HostingOperation{}, err
 	}
+	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+		if err = hostingFreshStorageGate(ctx, tx, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if err = hostingOperationTargetGate(ctx, tx, op, false); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
 	if op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion {
 		if err = requireHostingReleaseAgent(ctx, tx, runnerID); err != nil {
 			return domain.HostingOperation{}, err
@@ -962,6 +1026,21 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	}
 	if err = hostingRequireMode(ctx, tx, in.HostingAuthority, "deploy"); err != nil {
 		return domain.HostingOperation{}, err
+	}
+	if op.Snapshot.Storage != (domain.HostingStorageRef{}) && op.MutationHold {
+		if in.Result.Outcome == "succeeded" || in.Result.Restored {
+			if op.State != "applying" && op.State != "verifying" {
+				return domain.HostingOperation{}, ErrConflict
+			}
+			if err = replayHostingApplyAdmission(ctx, tx, in.HostingAuthority, op); err != nil {
+				return domain.HostingOperation{}, err
+			}
+		}
+		if err = hostingStorageWriterReady(ctx, tx, in.HostingAuthority, op); err != nil {
+			if in.Result.Outcome != "failed" || !in.Result.Uncertain || in.Result.Restored {
+				return domain.HostingOperation{}, ErrConflict
+			}
+		}
 	}
 	// Pre-apply failure cannot assert external success. A post-admission
 	// uncertain result retains the independent hold under live authority.
@@ -997,6 +1076,10 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	if op.MutationHold && !uncertain {
 		if in.Result.Outcome == "succeeded" {
 			healthy := domain.HostingHealthy{Snapshot: op.Snapshot, OperationID: op.ID, ContainerID: in.Result.ContainerID, Release: *op.Release, PlanHash: op.Plan.Hash}
+			healthy.Storage, err = hostingStorageHealthyEvidence(ctx, tx, op)
+			if err != nil {
+				return domain.HostingOperation{}, err
+			}
 			if op.Plan.PreviousHealthy != nil {
 				if _, err = sqlcgen.New(tx).RetainPreviousHostingRelease(ctx, sqlcgen.RetainPreviousHostingReleaseParams{OperationID: op.Plan.PreviousHealthy.OperationID, RetainedRunning: op.Plan.RetainPrevious}); err != nil {
 					return domain.HostingOperation{}, err
@@ -1051,6 +1134,9 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 		if !live {
 			return domain.HostingOperation{}, ErrConflict
 		}
+	}
+	if err = finalHostingStorageSettlementAuthority(ctx, tx, runnerID, in.HostingAuthority, op, false); err != nil {
+		return domain.HostingOperation{}, err
 	}
 	return op, tx.Commit(ctx)
 }
@@ -1332,6 +1418,10 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 			return domain.HostingOperation{}, ErrConflict
 		}
 		expected = &domain.HostingHealthy{Snapshot: op.Snapshot, OperationID: op.ID, ContainerID: op.Result.ContainerID, Release: *op.Release, PlanHash: op.Plan.Hash}
+		expected.Storage, err = hostingStorageHealthyEvidence(ctx, tx, op)
+		if err != nil {
+			return domain.HostingOperation{}, err
+		}
 		if op.Result.Outcome != "succeeded" {
 			if !op.Result.Restored || op.Plan.PreviousHealthy == nil {
 				return domain.HostingOperation{}, ErrConflict
@@ -1349,6 +1439,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 				return domain.HostingOperation{}, err
 			}
 		}
+	}
+	if expected != nil && domain.ValidateHostingHealthyStorage(*expected) != nil {
+		return domain.HostingOperation{}, ErrConflict
 	}
 	if expected == nil {
 		if op.MutationHold || !in.NoOwnedContainers || in.ContainerID != "" || in.ImageID != "" {
@@ -1399,6 +1492,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 		return op, err
 	}
 	if err = finalLocalHostingObservationReportAuthority(ctx, tx, runnerID, in.HostingAuthority, op); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = finalHostingStorageSettlementAuthority(ctx, tx, runnerID, in.HostingAuthority, op, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	return op, tx.Commit(ctx)
