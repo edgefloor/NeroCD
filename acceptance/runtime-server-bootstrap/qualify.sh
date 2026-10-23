@@ -259,6 +259,9 @@ main() {
   # accepted adapter fixture. No host PostgreSQL service or published port.
   docker exec "$pg_id" createdb -U postgres onboarding
   docker exec "$container_id" /bin/sh -ec 'mkdir -p /db/seeds /internal/api; cp /fixture/dev.sql /db/seeds/dev.sql; chmod 0600 /fixture/onboarding-client'
+  docker exec "$container_id" /fixture/onboarding-agent version >"$evidence/onboarding-artifact-actual-version.txt"
+  [[ $(cat "$evidence/onboarding-artifact-actual-version.txt") == v0.0.0-fixture ]]
+  docker exec "$container_id" sha256sum /fixture/onboarding-agent >>"$evidence/onboarding-artifact-actual-version.txt"
   docker exec --workdir /internal/api "$container_id" /fixture/api.test -test.v -test.run '^TestServerBootstrapRuntimeForwarderJoins$' -test.timeout=10s >"$evidence/onboarding-forwarder.log" 2>&1 || { cat "$evidence/onboarding-forwarder.log"; return 1; }
   cat "$evidence/onboarding-forwarder.log"
   shasum -a 256 "$root"/internal/api/server_bootstrap_runtime_integration_test.go "$root"/internal/app/server_bootstrap*.go "$root"/internal/store/postgres_server_bootstrap*.go "$root"/internal/api/server_bootstrap*.go >"$evidence/onboarding-source-sha256.txt"

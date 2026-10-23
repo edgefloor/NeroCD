@@ -446,84 +446,6 @@ func TestServerBootstrapRuntime(t *testing.T) {
 		}
 		t.Logf("real API/River/SSH/systemd/enrollment/register grant=%t operation=%s server=%s readiness=%s artifact_sha256=%s", grant, v.ID, v.ServerID, readiness.Status, qualified.SHA256)
 	}
-	// A transparent byte forwarder withholds only post-transfer SSH response
-	// bytes. The SSH peer remains the real, fingerprint-verified OpenSSH server.
-	proxyPort, closeProxy := bootstrapRuntimeSSHResponseLoss(t, int64(len(artifact)))
-	defer closeProxy()
-	lossInput := input
-	lossInput.RequestID = uuid()
-	lossInput.Name = "controller execution restart"
-	lossInput.Target.Port = uint16(proxyPort)
-	v := decode(request("POST", "/api/v1/server-bootstraps", lossInput, credential, 201))
-	op, e := pg.GetServerBootstrap(ctx, "usr_bootstrap", v.ID)
-	if e != nil {
-		t.Fatal(e)
-	}
-	lossManifest := serverbootstrap.InstallManifest{Version: 1, InstallationID: op.IDs.InstallationID, InstallOperationID: op.IDs.InstallOperationID, RunnerID: op.IDs.RunnerID, CredentialReferenceID: op.IDs.CredentialReferenceID, ControllerURL: origin, Artifact: serverbootstrap.Artifact(op.Input.Artifact), CapabilityPreset: domain.ServerBootstrapPreset}
-	direct := serverbootstrap.Target{Address: netip.MustParseAddr("127.0.0.1"), Port: 22, User: "root", HostKeyFingerprint: fingerprint}
-	defer func() {
-		cleanup, done := context.WithTimeout(context.Background(), 15*time.Second)
-		defer done()
-		out, e := serverbootstrap.CleanupOwned(cleanup, direct, key, serverbootstrap.Mutation{OperationID: strings.Repeat("e", 32), Ownership: serverbootstrap.Ownership{Manifest: lossManifest}})
-		if e != nil || out.State != serverbootstrap.OwnedRemoved {
-			t.Errorf("restart fixture cleanup: state=%s error=%v", out.State, e)
-		}
-	}()
-	v = probe(v)
-	v = command(v, "review", func(c *app.ServerBootstrapCommandInput) { c.ProbeReceiptID = v.Probe.ReceiptID })
-	v = wait(v.ID, "restart review", func(v app.ServerBootstrap) bool { return v.Review != nil })
-	grant := false
-	command(v, "install", func(c *app.ServerBootstrapCommandInput) {
-		c.ManifestSHA256 = v.Review.ManifestSHA256
-		c.AcknowledgeInstallAndStart = true
-		c.GrantProject = &grant
-	})
-	var installed serverbootstrap.OwnedInspection
-	deadline := time.Now().Add(40 * time.Second)
-	for time.Now().Before(deadline) {
-		attempt, done := context.WithTimeout(ctx, 2*time.Second)
-		installed, e = serverbootstrap.InspectOwned(attempt, direct, key, serverbootstrap.Ownership{Manifest: lossManifest})
-		done()
-		if e == nil && installed.State == serverbootstrap.OwnedInstalled && installed.ServiceActive {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if e != nil || installed.State != serverbootstrap.OwnedInstalled || !installed.ServiceActive {
-		t.Fatalf("remote install not observed before controller interruption: state=%s error=%v", installed.State, e)
-	}
-	stopExecution()
-	end, finish := context.WithTimeout(context.Background(), 10*time.Second)
-	if e = stop(end); e != nil {
-		finish()
-		t.Fatal(e)
-	}
-	finish()
-	before := get(v.ID)
-	if !before.RemoteHold || before.State == "completed" || before.State == "registered" {
-		t.Fatalf("lost SSH response did not retain intent/hold: state=%s hold=%t", before.State, before.RemoteHold)
-	}
-	executionCtx, stopExecution = context.WithCancel(ctx)
-	stop, e = pg.StartHostingExecution(executionCtx)
-	if e != nil {
-		t.Fatal(e)
-	}
-	v = wait(v.ID, "execution controller restart inspection", func(v app.ServerBootstrap) bool {
-		for _, p := range v.Progress {
-			if p.Action == "inspect" && p.Status == "completed" && p.Outcome == "observed" {
-				return true
-			}
-		}
-		return false
-	})
-	after, e := serverbootstrap.InspectOwned(ctx, direct, key, serverbootstrap.Ownership{Manifest: lossManifest})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if after.InvocationID != installed.InvocationID || after.OperationID != installed.OperationID || after.ManifestSHA256 != installed.ManifestSHA256 || !v.RemoteHold {
-		t.Fatal("restart recovery changed remote identity or released hold")
-	}
-	t.Logf("execution lifecycle restarted against durable DB; retained hold; automatic inspection preserved installation=%s operation=%s InvocationID=%s without reinstall", after.InstallationID, after.OperationID, after.InvocationID)
 	if !lostConsume.Load() {
 		t.Fatal("real enrollment response loss was not exercised")
 	}
@@ -579,6 +501,92 @@ func TestServerBootstrapRuntime(t *testing.T) {
 			t.Fatal("browser did not create an actual operation")
 		}
 	}
+	// A transparent byte forwarder delays server chunks after a substantial
+	// upload. Window adjustments still pass. The peer remains real OpenSSH.
+	proxyPort, closeProxy := bootstrapRuntimeSSHResponseLoss(t, int64(len(artifact)))
+	defer closeProxy()
+	lossInput := input
+	lossInput.RequestID = uuid()
+	lossInput.Name = "controller execution restart"
+	lossInput.Target.Port = uint16(proxyPort)
+	v := decode(request("POST", "/api/v1/server-bootstraps", lossInput, credential, 201))
+	op, e := pg.GetServerBootstrap(ctx, "usr_bootstrap", v.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	lossManifest := serverbootstrap.InstallManifest{Version: 1, InstallationID: op.IDs.InstallationID, InstallOperationID: op.IDs.InstallOperationID, RunnerID: op.IDs.RunnerID, CredentialReferenceID: op.IDs.CredentialReferenceID, ControllerURL: origin, Artifact: serverbootstrap.Artifact(op.Input.Artifact), CapabilityPreset: domain.ServerBootstrapPreset}
+	direct := serverbootstrap.Target{Address: netip.MustParseAddr("127.0.0.1"), Port: 22, User: "root", HostKeyFingerprint: fingerprint}
+	defer func() {
+		cleanup, done := context.WithTimeout(context.Background(), 15*time.Second)
+		defer done()
+		out, e := serverbootstrap.CleanupOwned(cleanup, direct, key, serverbootstrap.Mutation{OperationID: strings.Repeat("e", 32), Ownership: serverbootstrap.Ownership{Manifest: lossManifest}})
+		if e != nil || out.State != serverbootstrap.OwnedRemoved {
+			t.Errorf("restart fixture cleanup: state=%s error=%v", out.State, e)
+		}
+	}()
+	v = probe(v)
+	v = command(v, "review", func(c *app.ServerBootstrapCommandInput) { c.ProbeReceiptID = v.Probe.ReceiptID })
+	v = wait(v.ID, "restart review", func(v app.ServerBootstrap) bool { return v.Review != nil })
+	grant := false
+	command(v, "install", func(c *app.ServerBootstrapCommandInput) {
+		c.ManifestSHA256 = v.Review.ManifestSHA256
+		c.AcknowledgeInstallAndStart = true
+		c.GrantProject = &grant
+	})
+	var installed serverbootstrap.OwnedInspection
+	deadline := time.Now().Add(40 * time.Second)
+	for time.Now().Before(deadline) {
+		attempt, done := context.WithTimeout(ctx, 2*time.Second)
+		installed, e = serverbootstrap.InspectOwned(attempt, direct, key, serverbootstrap.Ownership{Manifest: lossManifest})
+		done()
+		if e == nil && installed.State == serverbootstrap.OwnedInstalled && installed.ServiceActive {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if e != nil || installed.State != serverbootstrap.OwnedInstalled || !installed.ServiceActive {
+		t.Fatalf("remote install not observed before controller interruption: state=%s error=%v", installed.State, e)
+	}
+	beforeCut := get(v.ID)
+	for _, progress := range beforeCut.Progress {
+		if progress.Action == "install" && progress.Status == "completed" {
+			t.Fatal("response delay did not retain a pending install receipt before interruption")
+		}
+	}
+	t.Logf("exact owned installation active before interruption; InvocationID=%s; controller install receipt still pending", installed.InvocationID)
+	stopExecution()
+	end, finish := context.WithTimeout(context.Background(), 10*time.Second)
+	if e = stop(end); e != nil {
+		finish()
+		t.Fatal(e)
+	}
+	finish()
+	before := get(v.ID)
+	if !before.RemoteHold || before.State == "completed" || before.State == "registered" {
+		t.Fatalf("lost SSH response did not retain intent/hold: state=%s hold=%t", before.State, before.RemoteHold)
+	}
+	restartCtx, restartCancel := context.WithCancel(ctx)
+	defer restartCancel()
+	stop, e = pg.StartHostingExecution(restartCtx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	v = wait(v.ID, "execution controller restart inspection", func(v app.ServerBootstrap) bool {
+		for _, p := range v.Progress {
+			if p.Action == "inspect" && p.Status == "completed" && p.Outcome == "observed" {
+				return true
+			}
+		}
+		return false
+	})
+	after, e := serverbootstrap.InspectOwned(ctx, direct, key, serverbootstrap.Ownership{Manifest: lossManifest})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if after.InvocationID != installed.InvocationID || after.OperationID != installed.OperationID || after.ManifestSHA256 != installed.ManifestSHA256 || !v.RemoteHold {
+		t.Fatal("restart recovery changed remote identity or released hold")
+	}
+	t.Logf("execution lifecycle restarted against durable DB; retained hold; automatic inspection preserved installation=%s operation=%s InvocationID=%s without reinstall", after.InstallationID, after.OperationID, after.InvocationID)
 	if bytes.Contains(logs.snapshot(), key) || bytes.Contains(logs.snapshot(), []byte("nce_")) {
 		t.Fatal("credential in controller logs")
 	}
@@ -664,12 +672,16 @@ func bootstrapRuntimeTCPResponseLoss(t *testing.T, destination string, transferS
 					for {
 						n, e := peer.Read(buffer)
 						if n > 0 {
-							if transferred.Load() >= transferSize {
+							if transferred.Load() >= transferSize/2 {
+								delay := time.NewTimer(500 * time.Millisecond)
 								select {
 								case <-connectionCtx.Done():
+									delay.Stop()
 									return
 								case <-done:
+									delay.Stop()
 									return
+								case <-delay.C:
 								}
 							}
 							if _, writeErr := client.Write(buffer[:n]); writeErr != nil {
@@ -759,7 +771,19 @@ func TestServerBootstrapRuntimeForwarderJoins(t *testing.T) {
 	}
 	_ = client.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 	if _, e = client.Read(buffer); e == nil {
-		t.Fatal("post-transfer response was not withheld")
+		t.Fatal("post-transfer response was not delayed")
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	delayed := make([]byte, 5)
+	if _, e = io.ReadFull(client, delayed); e != nil || string(delayed) != "defgh" {
+		t.Fatalf("delayed response did not pass unchanged: %q %v", delayed, e)
+	}
+	if _, e = client.Write([]byte("ijklm")); e != nil {
+		t.Fatal(e)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, e = client.Read(buffer); e == nil {
+		t.Fatal("second response was not delayed before cancellation")
 	}
 	closeProxy()
 	select {

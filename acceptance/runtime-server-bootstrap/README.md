@@ -135,10 +135,12 @@ The onboarding artifact is compiled separately with
 Its digest and explicit version pin are retained in the run evidence.
 
 The recovery case uses a transparent loopback TCP forwarder to the same real
-sshd. It counts encrypted upload bytes and withholds server response bytes after
-the artifact-sized transfer. It never decrypts traffic, changes SSH identity, or
-substitutes a remote result. Independent exact ownership inspection must observe
-the active service before the test stops and joins the hosting execution loop.
+sshd. After a substantial upload it delays each server chunk by 500 milliseconds.
+All bytes, including SSH window adjustments, still pass unchanged. It never
+decrypts traffic, changes SSH identity, or substitutes a remote result.
+Independent exact ownership inspection must observe the active service while
+the controller's install receipt remains pending. Otherwise the test fails.
+The test then stops and joins the hosting execution loop.
 The restarted execution loop recovers from the durable intent after real lease
 expiry. Exact manifest, remote operation and systemd InvocationID must survive
 inspection with the hold retained. This proves an execution lifecycle restart
