@@ -484,7 +484,14 @@ func (s *PostgresStore) SetGitHubPushEnabled(ctx context.Context, actor, resourc
 			return domain.GitHubPushPolicy{}, err
 		}
 		q := sqlcgen.New(tx)
-		row, err := lockPushPolicy(ctx, tx, resource, in.Enabled)
+		// A current owner can always stop demand after delegated authority is
+		// revoked. Enabling still obtains all current automation/target locks.
+		var row sqlcgen.HostingGithubPushPolicy
+		if in.Enabled {
+			row, err = lockPushPolicy(ctx, tx, resource, true)
+		} else {
+			row, err = q.LockGitHubPushPolicy(ctx, resource)
+		}
 		if err != nil {
 			return domain.GitHubPushPolicy{}, err
 		}

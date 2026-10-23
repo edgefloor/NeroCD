@@ -410,3 +410,21 @@ func TestPostgresGitHubPushConcurrentPolicyChangeRejectsOldProviderProof(t *test
 		t.Fatal("reset did not require new baseline")
 	}
 }
+
+func TestPostgresGitHubPushOwnerCanDisableAfterDelegatedRevocation(t *testing.T) {
+	f := newPushStoreFixture(t)
+	f.enable(t)
+	ctx := t.Context()
+	f.accept(t, 230, strings.Repeat("b", 40))
+	if _, err := f.db.Exec(ctx, `UPDATE service_accounts SET status='revoked',revoked_at=clock_timestamp() WHERE id='push_bot'`); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := f.pg.SetGitHubPushEnabled(ctx, "usr_bootstrap", f.src.ResourceID, domain.GitHubPushEnable{ExpectedPolicyGeneration: f.policy.Generation, RequestID: pushUUID(231), Enabled: false}, destinationEvent("disable_revoked"))
+	if err != nil || disabled.Enabled {
+		t.Fatal("owner could not stop revoked delegation", err)
+	}
+	page, err := f.pg.ListGitHubPushDeliveries(ctx, "usr_bootstrap", f.src.ResourceID, "", 50)
+	if err != nil || len(page.Items) != 1 || page.Items[0].State != "obsolete" {
+		t.Fatal("disabled demand remains active", err)
+	}
+}
