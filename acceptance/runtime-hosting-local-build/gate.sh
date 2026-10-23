@@ -12,6 +12,16 @@ private_browser_mode=${NEROCD_PRIVATE_GIT_BROWSER:-0}
 case "$private_mode:$private_browser_mode" in 0:0|1:0|0:1|1:1) ;; *) echo 'invalid private Git fixture option' >&2; exit 1;; esac
 if [[ "$private_browser_mode" == 1 ]]; then private_mode=1; browser_mode=1; fi
 export NEROCD_PRIVATE_GIT_BROWSER="$private_browser_mode"
+private_strategy=${NEROCD_PRIVATE_GIT_STRATEGY:-dockerfile}
+case "$private_strategy" in dockerfile|railpack) ;; *) echo 'invalid fixed private Git browser strategy' >&2; exit 1;; esac
+export NEROCD_PRIVATE_GIT_STRATEGY="$private_strategy"
+if [[ "$private_browser_mode" == 1 ]]; then
+ bun run --cwd web/app build
+ asset_manifest=${NEROCD_PRIVATE_GIT_BROWSER_MANIFEST:-/tmp/nerocd-private-git-browser-assets.json}
+ python3 -B scripts/skills/ui_manifest.py > "$asset_manifest"
+ shasum -a 256 "$asset_manifest"
+ export NEROCD_PRIVATE_GIT_BROWSER_MANIFEST="$asset_manifest"
+fi
 preload_postgres=${NEROCD_BUILD_CONTROLLER_PRELOAD_POSTGRES:-0}
 case "$preload_postgres" in 0|1) ;; *) echo 'invalid PostgreSQL preload option' >&2; exit 1;; esac
 arch=$(docker info --format '{{.Architecture}}')
@@ -27,6 +37,11 @@ image="$owner:fixture"
 container_id=""
 image_id=""
 pg_id=""
+inventory(){
+ printf 'inventory %s containers\n' "$1"; docker ps -a --no-trunc --format '{{.ID}} {{.Names}}'
+ printf 'inventory %s images\n' "$1"; docker image ls --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}}'
+ printf 'inventory %s volumes\n' "$1"; docker volume ls --format '{{.Name}}'
+}
 cleanup() {
  result=$?
  trap - EXIT INT TERM
@@ -34,7 +49,10 @@ cleanup() {
   if [[ $(docker inspect --format '{{.Id}} {{index .Config.Labels "io.nerocd.runtime-hosting-local-build.owner"}}' "$container_id" 2>/dev/null || true) == "$container_id $owner" ]]; then
    if [[ -n "$pg_id" ]]; then
     if [[ $(docker exec "$container_id" docker inspect --format '{{.Id}} {{index .Config.Labels "io.nerocd.build-controller.owner"}}' "$pg_id" 2>/dev/null || true) == "$pg_id $owner" ]]; then
+     printf 'owned database inventory before cleanup\n'
+     docker exec "$container_id" docker exec "$pg_id" psql -U nerocd -d postgres --no-psqlrc -Atc 'SELECT datname FROM pg_database ORDER BY datname' || result=1
      if ! docker exec "$container_id" docker rm --force --volumes "$pg_id" >/dev/null; then result=1; fi
+     printf 'owned PostgreSQL removed %s\n' "$pg_id"
     else result=1; fi
    fi
    if ! docker exec "$container_id" sh -ec 'if [ -d "$1" ]; then rmdir "$1"; fi' sh "/sys/fs/cgroup/$owner"; then result=1; fi
@@ -43,14 +61,16 @@ cleanup() {
   else printf 'owned container identity unavailable: %s\n' "$container_id" >&2; result=1; fi
  fi
  if [[ -n "$image_id" ]]; then
-  if [[ $(docker image inspect --format '{{index .Config.Labels "io.nerocd.runtime-hosting-local-build.owner"}}' "$image_id" 2>/dev/null || true) == "$owner" ]]; then
+  if [[ $(docker image inspect --format '{{.Id}} {{index .Config.Labels "io.nerocd.runtime-hosting-local-build.owner"}}' "$image" 2>/dev/null || true) == "$image_id $owner" && -z $(docker ps -aq --filter "ancestor=$image_id") ]]; then
    if ! docker image rm "$image" >/dev/null; then result=1; fi
   else result=1; fi
  fi
+ inventory after || result=1
  rm -rf "$fixture_dir"
  exit "$result"
 }
 trap cleanup EXIT INT TERM
+inventory before
 curl --fail --silent --show-error --location "https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-$goarch" --output "$fixture_dir/buildx"
 printf '%s  %s\n' "$buildx_sha" "$fixture_dir/buildx" | shasum -a 256 --check
 curl --fail --silent --show-error --location "https://github.com/railwayapp/railpack/releases/download/v0.40.1/railpack-v0.40.1-$railarch-unknown-linux-musl.tar.gz" --output "$fixture_dir/railpack.tgz"
@@ -63,6 +83,7 @@ cp "$fixture_dir/mise/bin/mise" "$fixture_dir/mise-bin"
 chmod 0755 "$fixture_dir/buildx" "$fixture_dir/railpack"
 GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -tags nerocd_proxy_fixture -c -o "$fixture_dir/hosting-controller.test" ./internal/runnerruntime
 GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -o "$fixture_dir/nerocd" ./cmd/nerocd
+shasum -a 256 "$fixture_dir/nerocd" "$fixture_dir/hosting-controller.test"
 cp db/seeds/dev.sql "$fixture_dir/dev.sql"
 printf '%s\n' 'FROM docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489' 'RUN apk add --no-cache git=2.52.0-r0 git-daemon=2.52.0-r0' 'COPY buildx railpack mise-bin hosting-controller.test nerocd dev.sql /fixture/' > "$fixture_dir/Dockerfile"
 docker build --label "io.nerocd.runtime-hosting-local-build.owner=$owner" -t "$image" "$fixture_dir"
@@ -74,6 +95,7 @@ run_fixture_container() {
  docker run "$@"
 }
 container_id=$(run_fixture_container)
+printf 'owned DinD id=%s owner=%s image=%s\n' "$container_id" "$owner" "$image_id"
 ready=false
 for _ in $(seq 1 90); do
  if docker exec "$name" docker info >/dev/null 2>&1; then ready=true; break; fi
@@ -89,7 +111,8 @@ pg_id=$(docker exec "$name" docker run --detach --name "$owner-pg" --label "io.n
 ready=false
 for _ in $(seq 1 60); do if controller_postgres_ready "$name" "$pg_id" >/dev/null 2>&1; then ready=true; break; fi; sleep 1; done
 if [[ "$ready" != true ]]; then echo 'owned PostgreSQL not ready' >&2; exit 1; fi
-printf 'owned PostgreSQL TCP query ready: container=%s database=nerocd_build_controller\n' "$pg_id"
+printf 'owned PostgreSQL TCP query ready: container=%s owner=%s database=nerocd_build_controller\n' "$pg_id" "$owner"
+docker exec "$name" docker exec "$pg_id" psql -U nerocd -d postgres --no-psqlrc -Atc 'SELECT datname FROM pg_database ORDER BY datname'
 pg_addr=$(docker exec "$name" docker port "$pg_id" 5432/tcp)
 if [[ "$browser_mode" == 0 ]]; then
 test_pattern='^TestLocalBuildProductionHTTPS$'
@@ -107,10 +130,11 @@ else
  node --input-type=module -e '
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 const container = process.argv[1];
 const env = process.env;
 const privateMode = env.NEROCD_PRIVATE_GIT_BROWSER === "1";
-const args = ["exec", "--env", `NEROCD_PRIVATE_GIT_BROWSER=${privateMode ? "1" : "0"}`, "--env", "NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind", "--env", "NEROCD_LOCAL_BUILD_BROWSER=1", "--env", `NEROCD_LOCAL_BUILD_BROWSER_ORIGIN=${env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN}`, "--env", `NEROCD_BUILD_CONTROLLER_DATABASE_URL=${env.NEROCD_BROWSER_FIXTURE_DSN}`, "--env", `NEROCD_CGROUP_ROOT=${env.NEROCD_CGROUP_ROOT}`, "--env", `NEROCD_PLANNER_IMAGE=${env.NEROCD_PLANNER_IMAGE}`, "--env", `NEROCD_BUILDX_SHA256=${env.NEROCD_BUILDX_SHA256}`, container, "/fixture/hosting-controller.test", "-test.v", "-test.run", privateMode ? "^(TestControllerBrowserOrigin|TestPrivateGitBrowser)$" : "^(TestControllerBrowserOrigin|TestLocalBuildBrowser)$", "-test.timeout=10m"];
+const args = ["exec", "--env", `NEROCD_PRIVATE_GIT_BROWSER=${privateMode ? "1" : "0"}`, "--env", `NEROCD_PRIVATE_GIT_STRATEGY=${env.NEROCD_PRIVATE_GIT_STRATEGY}`, "--env", "NEROCD_LOCAL_BUILD_RUNTIME=disposable-dind", "--env", "NEROCD_LOCAL_BUILD_BROWSER=1", "--env", `NEROCD_LOCAL_BUILD_BROWSER_ORIGIN=${env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN}`, "--env", `NEROCD_BUILD_CONTROLLER_DATABASE_URL=${env.NEROCD_BROWSER_FIXTURE_DSN}`, "--env", `NEROCD_CGROUP_ROOT=${env.NEROCD_CGROUP_ROOT}`, "--env", `NEROCD_PLANNER_IMAGE=${env.NEROCD_PLANNER_IMAGE}`, "--env", `NEROCD_BUILDX_SHA256=${env.NEROCD_BUILDX_SHA256}`, container, "/fixture/hosting-controller.test", "-test.v", "-test.run", privateMode ? "^(TestControllerBrowserOrigin|TestPrivateGitBrowser)$" : "^(TestControllerBrowserOrigin|TestLocalBuildBrowser)$", "-test.timeout=10m"];
 const fixture = spawn("docker", args, { stdio: ["ignore", "pipe", "inherit"] });
 let browser;
 let buffer = "";
@@ -133,7 +157,7 @@ fixture.stdout.on("data", (chunk) => {
   try { metadata = JSON.parse(line.slice(prefix.length)); } catch { stop(); continue; }
   if (metadata.origin !== env.NEROCD_LOCAL_BUILD_BROWSER_ORIGIN) { stop(); continue; }
   process.stdout.write(`authenticated browser fixture ready at ${metadata.origin}\n`);
-  browser = spawn("bun", ["run", "--cwd", "web/app", "smoke:browser", privateMode ? "private-git-build-deployments.spec.ts" : "local-build-deployments.spec.ts", "--project", "chromium", "--no-deps"], { cwd: process.cwd(), env: { ...env, PLAYWRIGHT_BASE_URL: metadata.origin, NEROCD_LOCAL_BUILD_BROWSER_META: JSON.stringify(metadata), ...(privateMode ? { NEROCD_PRIVATE_GIT_BROWSER_META: JSON.stringify(metadata) } : {}) }, stdio: "inherit" });
+  browser = spawn("bun", ["run", "--cwd", "web/app", "smoke:browser", privateMode ? "private-git-build-deployments.spec.ts" : "local-build-deployments.spec.ts", "--project", "chromium", "--no-deps"], { cwd: process.cwd(), env: { ...env, PLAYWRIGHT_BASE_URL: metadata.origin, NEROCD_LOCAL_BUILD_BROWSER_META: JSON.stringify(metadata), ...(privateMode ? { NEROCD_PRIVATE_GIT_BROWSER_META: JSON.stringify(metadata), NEROCD_PRIVATE_GIT_BROWSER_ASSETS: readFileSync(env.NEROCD_PRIVATE_GIT_BROWSER_MANIFEST,"utf8") } : {}) }, stdio: "inherit" });
   browserResult = once(browser, "exit").then(([code]) => { if (code !== 0) stop(); return code; });
  }
 });
@@ -146,7 +170,12 @@ try {
 ' "$container_id"
 fi
 if [[ $(docker exec "$name" docker inspect --format '{{.Id}} {{index .Config.Labels "io.nerocd.build-controller.owner"}}' "$pg_id") != "$pg_id $owner" ]]; then echo 'owned PostgreSQL identity mismatch' >&2; exit 1; fi
+printf 'owned database inventory after tests\n'
+remaining=$(docker exec "$name" docker exec "$pg_id" psql -U nerocd -d postgres --no-psqlrc -Atc 'SELECT datname FROM pg_database ORDER BY datname')
+printf '%s\n' "$remaining"
+if [[ "$remaining" == *private_runtime_* ]]; then echo 'private fixture database cleanup incomplete' >&2; exit 1; fi
 docker exec "$name" docker rm --force --volumes "$pg_id"
+printf 'owned PostgreSQL removed %s\n' "$pg_id"
 pg_id=""
 
 docker exec "$name" rmdir "/sys/fs/cgroup/$owner"

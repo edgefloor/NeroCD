@@ -115,8 +115,20 @@ operation deadline still apply. Failed authority, transport or cleanup retains
 unresolved evidence and cannot become ordinary successful completion.
 
 The real private CLI fixture qualifies Dockerfile and Railpack on a trusted Linux
-build host. This adds no hostile-input isolation, SSH/provider adapter, runtime
-application-secret injection or full A03 claim. See the
+build host. The optional private browser gate in
+`acceptance/runtime-hosting-local-build/` also exercises UI creation/editing of a
+private HTTPS resource, exact-version source-grant replay, a genuine compiled
+Railpack static-provider build, typed Railpack output, exact local-artifact
+deployment, and managed HTTPS routing. A malformed Railpack configuration creates
+a real failed build without an artifact; the old application must keep serving
+its original HTTPS bytes. Known credentials are scanned in logs, audits, journal,
+typed output and CLI output, and checkout cleanup is checked.
+
+This bounded qualification uses seeded accounts, existing secret metadata,
+trusted Linux/Docker placement and a local test CA. It does not establish arbitrary
+Railpack language providers, Nixpacks, hostile-input isolation, SSH/provider
+adapters, complete onboarding, universal redaction, or production ACME. See the
+[fixture instructions](../acceptance/runtime-hosting-local-build/README.md) and
 [accepted evidence and limits](compatibility.md#accepted-foundations-and-evidence).
 
 ## Placement, lifecycle and replay

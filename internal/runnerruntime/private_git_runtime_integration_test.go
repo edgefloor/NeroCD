@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -28,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/app"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
 	"nerocd/internal/hostingproxy"
@@ -104,6 +106,13 @@ func privateRuntimeGit(t *testing.T, strategy string) (string, func(string, bool
 		if strategy == "railpack" {
 			delete(files, "Dockerfile")
 			files["Staticfile"] = "root: .\n"
+			if fail {
+				files["railpack.json"] = `{ "steps": `
+			} else {
+				if err := os.Remove(filepath.Join(work, "railpack.json")); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			}
 		}
 		for name, value := range files {
 			if e := os.WriteFile(filepath.Join(work, name), []byte(value), 0600); e != nil {
@@ -575,6 +584,13 @@ func TestPrivateGitBrowser(t *testing.T) {
 	if os.Getenv("NEROCD_LOCAL_BUILD_RUNTIME") != "disposable-dind" || os.Getenv("NEROCD_PRIVATE_GIT_BROWSER") != "1" {
 		t.Skip("requires opt-in local build browser gate")
 	}
+	strategy := os.Getenv("NEROCD_PRIVATE_GIT_STRATEGY")
+	if strategy == "" {
+		strategy = "dockerfile"
+	}
+	if strategy != "dockerfile" && strategy != "railpack" {
+		t.Fatal("unsupported fixed private browser strategy")
+	}
 	privateRuntimeDatabase(t)
 	f := newControllerBuildFixture(t, domain.HostingPrivateGitCapability, domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability)
 	root, err := os.MkdirTemp("/var/lib", "nerocd-browser-proxy-")
@@ -596,11 +612,17 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 		return hostingproxy.NewFixture(settings, "https://localhost:14000/dir", roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
 	}}
-	url, _, username, password := privateRuntimeGit(t, "dockerfile")
-	var resource domain.Resource
-	f.request(t, "POST", "/api/v1/resources", f.admin, map[string]any{"project_id": f.environment.ProjectID, "project_environment_id": f.environment.ID, "name": "Browser local artifact", "kind": "application", "source": map[string]any{"kind": "git", "git": domain.GitResourceConfiguration{RepositoryURL: url, RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}}}, 201, &resource)
-	f.request(t, "POST", "/api/v1/resources/"+resource.ID+"/binding", f.admin, map[string]string{"destination_id": f.target.Destination.ID}, 201, nil)
-	secret := privateRuntimeSecret(t, f, resource, username, password)
+	repositoryURL, updateGit, username, password := privateRuntimeGit(t, strategy)
+	secret := privateRuntimeSecret(t, f, domain.Resource{ProjectID: f.environment.ProjectID}, username, password)
+	var ownerID string
+	if err := f.db.QueryRow(t.Context(), `SELECT id FROM users WHERE email='browser-bootstrap@example.local'`).Scan(&ownerID); err != nil {
+		t.Fatal(err)
+	}
+	patterns := []string{password, username + ":" + password, base64.StdEncoding.EncodeToString([]byte(username + ":" + password)), url.QueryEscape(password), url.PathEscape(password), f.credential, f.admin}
+	var failureEnabled atomic.Bool
+	var recordsMu sync.Mutex
+	var buildIDs []string
+	var cliOutput []byte
 	f.request(t, "POST", "/api/v1/project-members", f.admin, map[string]string{"project_id": f.environment.ProjectID, "email": "viewer@example.local", "role": "viewer"}, 200, nil)
 	// Infrastructure setup is separate from the browser's build/deploy/route journey.
 	proxy := controlJSON[domain.HostingProxy](t, f.server.URL, f.admin, "POST", "/api/v1/servers/"+f.target.Server.ID+"/proxy", domain.HostingProxyInput{ControlProjectID: f.environment.ProjectID, IdempotencyKey: "browser-enable-proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
@@ -667,6 +689,25 @@ func TestPrivateGitBrowser(t *testing.T) {
 	if err = runProxy(); err != nil {
 		t.Fatal(err)
 	}
+	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		_, port, e := net.SplitHostPort(address)
+		if e != nil {
+			return nil, e
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+	}}
+	defer transport.CloseIdleConnections()
+	probe := func() {
+		response, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Get("https://local.example.test/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = response.Body.Close() }()
+		body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
+		if err != nil || response.StatusCode != 200 || string(body) != "local-A\n" {
+			t.Fatalf("browser HTTPS actual response %d %q err=%v", response.StatusCode, body, err)
+		}
+	}
 	type work struct{ kind, id string }
 	queue := make(chan work, 1)
 	results := make(chan error, 1)
@@ -677,13 +718,42 @@ func TestPrivateGitBrowser(t *testing.T) {
 	if _, err = rand.Read(nonce); err != nil {
 		t.Fatal(err)
 	}
-	completePath := "/fixture/browser-complete/" + hex.EncodeToString(nonce)
+	completePath := "/api/v1/fixture/private-browser/" + hex.EncodeToString(nonce) + "/complete"
+	failurePath := strings.TrimSuffix(completePath, "/complete") + "/fail-source"
+	stages := make(chan chan struct{})
 	origin := os.Getenv("NEROCD_LOCAL_BUILD_BROWSER_ORIGIN")
 	handler := f.server.Config.Handler
 	exposed := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == completePath {
-			if r.Method != "POST" || r.Header.Get("Origin") != origin {
+		if r.URL.Path == completePath || r.URL.Path == failurePath {
+			cookie, cookieErr := r.Cookie("nerocd_session")
+			authorized := false
+			if cookieErr == nil && r.Header.Get("Authorization") == "" {
+				check := httptest.NewRequestWithContext(r.Context(), "GET", "/api/v1/me", nil)
+				check.AddCookie(cookie)
+				recorded := httptest.NewRecorder()
+				handler.ServeHTTP(recorded, check)
+				var principal auth.Principal
+				authorized = recorded.Code == 200 && json.Unmarshal(recorded.Body.Bytes(), &principal) == nil && principal.ID == ownerID
+			}
+			if r.Method != "POST" || r.Header.Get("Origin") != origin || !authorized {
 				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			if r.URL.Path == failurePath {
+				acknowledgement := make(chan struct{})
+				select {
+				case stages <- acknowledgement:
+				case <-ctx.Done():
+					return
+				case <-r.Context().Done():
+					return
+				}
+				select {
+				case <-acknowledgement:
+					w.WriteHeader(http.StatusNoContent)
+				case <-ctx.Done():
+				case <-r.Context().Done():
+				}
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -713,6 +783,9 @@ func TestPrivateGitBrowser(t *testing.T) {
 				return
 			}
 			item = work{"build", response.Build.ID}
+			recordsMu.Lock()
+			buildIDs = append(buildIDs, response.Build.ID)
+			recordsMu.Unlock()
 		} else if strings.HasSuffix(r.URL.Path, "/from-build") {
 			var op domain.HostingOperation
 			if json.Unmarshal(recorded.Body.Bytes(), &op) != nil {
@@ -756,7 +829,24 @@ func TestPrivateGitBrowser(t *testing.T) {
 					// Build and local workload execution use the compiled production CLI.
 					command := f.agentCommand(ctx, "--local-build-deploy", "--proxy-state-root", root, "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion)
 					out, runErr := command.CombinedOutput()
+					recordsMu.Lock()
+					cliOutput = append(cliOutput, out...)
+					recordsMu.Unlock()
+					credentialLeak := false
+					for _, pattern := range patterns {
+						if strings.Contains(string(out), pattern) {
+							credentialLeak = true
+							runErr = fmt.Errorf("known credential in CLI output")
+							out = nil
+						}
+					}
 					err = runErr
+					if err != nil && !credentialLeak && item.kind == "build" && failureEnabled.Load() {
+						full, readErr := f.pg.GetHostingBuild(ctx, "usr_bootstrap", item.id)
+						if readErr == nil && full.State == "failed" && full.Artifact == nil && full.FailureCode == "build_failed" {
+							err = nil
+						}
+					}
 					if err != nil {
 						t.Logf("bounded browser CLI diagnostic: %.1500s", out)
 					}
@@ -772,35 +862,66 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { cancel(); <-workerDone })
-	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "resource_id": resource.ID, "complete_path": completePath, "secret_id": secret.ID, "secret_version": int64(1), "source_repository_url": url})
+	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "complete_path": completePath, "secret_id": secret.ID, "secret_version": int64(1), "source_repository_url": repositoryURL, "strategy": strategy, "destination_id": f.target.Destination.ID, "failure_path": failurePath})
 	if err != nil {
 		t.Fatal(err)
 	}
 	fmt.Printf("PRIVATE_GIT_BROWSER_READY %s\n", metadata)
-	select {
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	case err = <-results:
-		t.Fatal(err)
-	case <-done:
-	}
-	// The browser reports success only after recorded HTTPS readiness. Independently
-	// probe the actual proxy with its fixture CA and ordinary application bytes.
-	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		_, port, e := net.SplitHostPort(address)
-		if e != nil {
-			return nil, e
+journey:
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case err = <-results:
+			t.Fatal(err)
+		case ack := <-stages:
+			recordsMu.Lock()
+			count := len(buildIDs)
+			recordsMu.Unlock()
+			if failureEnabled.Load() || count != 1 {
+				t.Fatal("unexpected private fixture stage order")
+			}
+			probe()
+			updateGit("local-B\n", true)
+			failureEnabled.Store(true)
+			close(ack)
+		case <-done:
+			break journey
 		}
-		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
-	}}
-	defer transport.CloseIdleConnections()
-	response, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Get("https://local.example.test/")
-	if err != nil {
-		t.Fatal(err)
 	}
-	defer func() { _ = response.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
-	if err != nil || response.StatusCode != 200 || string(body) != "local-A\n" {
-		t.Fatalf("browser HTTPS actual response %d %q err=%v", response.StatusCode, body, err)
+	cancel()
+	<-workerDone
+	recordsMu.Lock()
+	ids := append([]string(nil), buildIDs...)
+	output := append([]byte(nil), cliOutput...)
+	recordsMu.Unlock()
+	if len(ids) != 2 || !failureEnabled.Load() {
+		t.Fatal("browser did not complete success and genuine failure builds")
 	}
+	for i, id := range ids {
+		full, err := f.pg.GetHostingBuild(t.Context(), "usr_bootstrap", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 && (full.State != "succeeded" || full.Artifact == nil) {
+			t.Fatal("browser success artifact missing")
+		}
+		if i == 1 && (full.State != "failed" || full.Artifact != nil || full.FailureCode != "build_failed") {
+			t.Fatal("genuine failed build published an artifact or unexpected status")
+		}
+		privateRuntimeNoSecrets(t, f, id, patterns...)
+		var typed domain.HostingBuildLogPage
+		f.request(t, "GET", "/api/v1/hosting-builds/"+id+"/logs?limit=200", f.admin, nil, 200, &typed)
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pattern := range patterns {
+			if strings.Contains(string(raw), pattern) || strings.Contains(string(output), pattern) {
+				t.Fatal("known credential reached typed output or compiled CLI")
+			}
+		}
+	}
+	probe()
+	t.Logf("private %s browser: actual successful artifact/HTTPS, genuine failed build without artifact preserves old HTTPS bytes; known credentials absent logs/audit/journal/typed output/CLI; source cleanup passed", strategy)
 }
