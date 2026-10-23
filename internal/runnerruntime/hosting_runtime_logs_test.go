@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"nerocd/internal/runner"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"nerocd/internal/domain"
@@ -334,4 +336,78 @@ func TestRuntimeLogRuntimeErrorJoinsClaimAndCooldown(t *testing.T) {
 	default:
 		t.Fatal("runtime returned before claim cancellation joined")
 	}
+}
+
+func TestRuntimeLogSharedTargetSessionsAndFourReaderLimit(t *testing.T) {
+	claim := runtimeLogClaimFixture()
+	second := claim
+	second.SessionID = "rls_test2"
+	now := time.Now()
+	page := domain.HostingRuntimeLogClaims{Targets: []domain.HostingRuntimeLogClaim{claim, second}, NextCursor: second.SessionID, EndOfSweep: true}
+	if _, err := validateRuntimeLogClaims(page, claim.Target.RunnerID, claim.InstanceID, now, now); err != nil {
+		t.Fatal("independent viewer sessions cannot share a settled target", err)
+	}
+	for i := 2; i < 4; i++ {
+		next := claim
+		next.SessionID = fmt.Sprintf("rls_test%d", i+1)
+		page.Targets = append(page.Targets, next)
+		page.NextCursor = next.SessionID
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var opened atomic.Int32
+	ready := make(chan struct{})
+	done := make(chan struct{})
+	c := runtimeLogCollector{runner: claim.Target.RunnerID, instance: claim.InstanceID, client: runtimeLogClientFixture{claim: func(context.Context, domain.HostingRuntimeLogClaimInput) (domain.HostingRuntimeLogClaims, error) {
+		return page, nil
+	}, append: func(context.Context, domain.HostingRuntimeLogBatch) (domain.HostingRuntimeLogAck, error) {
+		return domain.HostingRuntimeLogAck{}, nil
+	}}, source: runtimeLogSourceFixture{verify: func(context.Context, domain.HostingRuntimeLogTarget) (runtimeLogSourceIdentity, error) {
+		return runtimeLogSourceIdentity{Driver: "local"}, nil
+	}, open: func(context.Context, domain.HostingRuntimeLogTarget) (io.ReadCloser, error) {
+		reader, _ := io.Pipe()
+		if opened.Add(1) == 4 {
+			close(ready)
+		}
+		return reader, nil
+	}}}
+	go func() { defer close(done); _ = c.round(ctx) }()
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("four bounded readers did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("bounded group did not join")
+	}
+	if opened.Load() != 4 {
+		t.Fatal("collector exceeded reader limit")
+	}
+}
+func TestRuntimeLogLostRenewalResponseIncludedInCooldown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		claim := runtimeLogClaimFixture()
+		reader, writer := io.Pipe()
+		defer func() { _ = writer.Close() }()
+		calls := 0
+		c := runtimeLogCollector{runner: claim.Target.RunnerID, instance: claim.InstanceID, source: runtimeLogSourceFixture{verify: func(context.Context, domain.HostingRuntimeLogTarget) (runtimeLogSourceIdentity, error) {
+			return runtimeLogSourceIdentity{Driver: "local"}, nil
+		}, open: func(context.Context, domain.HostingRuntimeLogTarget) (io.ReadCloser, error) { return reader, nil }}, client: runtimeLogClientFixture{claim: func(ctx context.Context, _ domain.HostingRuntimeLogClaimInput) (domain.HostingRuntimeLogClaims, error) {
+			calls++
+			if calls > 1 {
+				<-ctx.Done()
+				return domain.HostingRuntimeLogClaims{}, &runnerclient.APIError{Err: io.ErrUnexpectedEOF}
+			}
+			return domain.HostingRuntimeLogClaims{Targets: []domain.HostingRuntimeLogClaim{claim}, NextCursor: claim.SessionID, EndOfSweep: true}, nil
+		}, append: func(context.Context, domain.HostingRuntimeLogBatch) (domain.HostingRuntimeLogAck, error) {
+			return domain.HostingRuntimeLogAck{}, nil
+		}}}
+		delay := c.round(t.Context())
+		if calls < 2 || delay < 9*time.Second {
+			t.Fatal("cooldown ignored an accepted renewal hidden by response loss")
+		}
+	})
 }

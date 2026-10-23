@@ -85,15 +85,13 @@ func validateRuntimeLogClaims(page domain.HostingRuntimeLogClaims, runner, insta
 		return nil, invalid
 	}
 	previous := ""
-	containers := map[string]bool{}
 	grants := make([]runtimeLogGrant, 0, len(page.Targets))
 	for _, c := range page.Targets {
 		remaining := c.EpochExpiresAt.Sub(received)
-		if c.SessionID <= previous || !observationOpaqueID.MatchString(c.SessionID) || c.InstanceID != instance || !runtimeLogID(c.CollectionEpoch) || !validRuntimeLogTarget(c.Target, runner) || containers[c.Target.ContainerID] || c.NextSequence < 1 || c.NextSequence > 2147483647 || c.NextBatchSequence < 1 || c.NextBatchSequence > 2147483647 || remaining <= time.Second || remaining > 10*time.Second || c.DemandExpiresAt.Before(c.EpochExpiresAt) || c.DemandExpiresAt.After(received.Add(30*time.Second)) || page.NextCursor < c.SessionID {
+		if c.SessionID <= previous || !observationOpaqueID.MatchString(c.SessionID) || c.InstanceID != instance || !runtimeLogID(c.CollectionEpoch) || !validRuntimeLogTarget(c.Target, runner) || c.NextSequence < 1 || c.NextSequence > 2147483647 || c.NextBatchSequence < 1 || c.NextBatchSequence > 2147483647 || remaining <= time.Second || remaining > 10*time.Second || c.DemandExpiresAt.Before(c.EpochExpiresAt) || c.DemandExpiresAt.After(received.Add(30*time.Second)) || page.NextCursor < c.SessionID {
 			return nil, invalid
 		}
 		previous = c.SessionID
-		containers[c.Target.ContainerID] = true
 		deadline := started.Add(remaining - time.Second)
 		if !deadline.After(received) {
 			return nil, invalid
@@ -107,7 +105,7 @@ func runtimeLogID(value string) bool {
 		return false
 	}
 	for _, r := range value {
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+		if r < '0' || r > 'f' || r > '9' && r < 'a' {
 			return false
 		}
 	}
