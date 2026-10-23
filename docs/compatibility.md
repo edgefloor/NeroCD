@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`99250c2634109cdd2008c56dae1b1740d377c0a1`, 2026-10-23.
+`0771f1b56befcd30b195c45121dba4d3efeec974`, 2026-10-23.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -70,7 +70,8 @@ artifact deployment, build output and private Git control-plane contracts:
 | Runtime-log control | Decoder repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`, accepted `aa88f62e76a4ef964900db17bf81515e141da03b`; [API](../internal/api/hosting_runtime_logs_handlers.go), [PostgreSQL tests](../internal/store/postgres_hosting_runtime_logs_test.go) | Migration 0055 and 173-route contract; actor sessions/renewal/stop/bounded retained reads; exact runner claims/events, counters, replay gaps and purge; live collector/viewer were absent at that checkpoint and are accepted below |
 | Live runtime logs and embedded viewer | Accepted `3a2b524ca622a7ebfba761c590803d110192cb9f`; [collector contract](hosting-runtime-logs.md), [viewer contract](hosting-runtime-log-viewer.md), [real gate](../acceptance/runtime-hosting-logs/gate.sh) | Bounded R59/A29 evidence: registered settled deployment, fresh Docker stdout/stderr, compiled collector, API and embedded viewer; explicit Follow/30-second demand, retention/source gaps and revocation; `--hosting-runtime-logs` must match persisted `hosting_runtime_logs_v1`; trusted Unix Docker with json-file/local drivers; additional TTY proof has synthetic provenance; raw application output can be sensitive, known bearer redaction is bounded and delivery is not exactly once |
 | Exact trigger-revision prerequisite | Source `21349d3e2492dca8b8b3ca3d99132085889360e8`, accepted `0a9422194e8bff7485e7fb20c02f74418ea2ce51`; [contract and qualification](hosting-build-trigger-revision.md) | Trusted internal caller freezes commit before checkout; runner revision capability enforced; revision-bound idempotency; public/private HTTPS checkout preserves selected commit after branch movement and rejects unavailable commits without fallback; provider authentication/controller were absent at this checkpoint; the accepted GitHub integration below supersedes that absence; webhook registration remains manual |
-| Server-readiness diagnostic backend | Accepted `3cb62858e3d1e263d89d5e3c6aecd0a30792e938`; [diagnostic contract](server-readiness.md), [PostgreSQL tests](../internal/store/postgres_server_readiness_test.go) | Migration 0057; bounded runner challenge/report and administrator freshness/authority reads for `basic_image_hosting.v1`; diagnostic API only, no deployment admission or complete A01; agent and UI remain unaccepted pending combined enrollment/browser qualification |
+| Server-readiness diagnostic backend | Accepted `3cb62858e3d1e263d89d5e3c6aecd0a30792e938`; [diagnostic contract](server-readiness.md), [PostgreSQL tests](../internal/store/postgres_server_readiness_test.go) | Migration 0057; bounded runner challenge/report and administrator freshness/authority reads for `basic_image_hosting.v1`; diagnostic API only, no deployment admission or complete A01; agent and UI were absent at this backend checkpoint; accepted manual enrollment qualification is recorded below |
+| Manual enrollment and readiness | Accepted `0771f1b56befcd30b195c45121dba4d3efeec974`; [qualification contract](server-readiness.md#runtime-verification-fixture), [real gate](../scripts/ci/server-readiness-runtime-gate.sh) | UI enrollment and generated command consumed by compiled native Linux arm64 agent over fixture-CA-verified HTTPS; ready/blocked/stale recovery, viewer denial, administrator role loss and persisted-credential restart; CLI metadata only, Docker API 1.54 and 1 GiB per work/journal root; amd64 compile-only, no runtime qualification; no SSH, production TLS, application deployment or complete A01 |
 | Verified existing-route switch engine | Accepted `99250c2634109cdd2008c56dae1b1740d377c0a1`; [engine contract](hosting-route-switch.md), [runtime fixture](../internal/hostingproxy/runtime_test.go) | Opt-in existing-route port switches verify old/new HTTP and trusted TLS, preserve unrelated routes and verify rollback; cancellation or unverified rollback stays `Uncertain`; controller/API admission, agent capability negotiation and automatic traffic orchestration remain pending; no production ACME or complete A11/A20 |
 
 Private Railpack qualification is now accepted at
@@ -86,6 +87,18 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
+Manual enrollment qualification at `68c403aa6d319dd9a391d6f6eb577336943e355b`
+passed the native agent case in 61.24 seconds and the actual enrollment/browser
+case in 69.64 seconds, with exit 0 in
+`/tmp/nerocd-readiness-qualification-final.log`. Accepted integration
+`0771f1b56befcd30b195c45121dba4d3efeec974` preserves 31 reviewed blobs and records
+106 focused frontend tests, the 183-route contract and a 75-file manifest with
+74 served assets. These are retained acceptance results, not fresh application
+checks for this documentation candidate. The profile checks safe CLI metadata;
+it does not execute the CLI or prove deployment. Runtime evidence is native
+Linux arm64; amd64 has compile evidence only. SSH, production TLS, application
+deployment and complete A01 remain open.
+
 GitHub build-on-push is accepted at
 `be85bf4c4d42c0b2ddb9e9935f2fa74332656bde`. The [operator contract](hosting-github-push.md),
 [real gate](../acceptance/runtime-hosting-github-push/gate.sh) and
@@ -279,7 +292,7 @@ The C references resolve in the specification's [source list](product-spec.md#13
 
 | Product area | Upstream reference | Status and supported limits at baseline | Required fixtures | Package and deliberate difference |
 | --- | --- | --- | --- | --- |
-| Server management | C4, C11 | partial: enrolled server/default destination admission, project grants and immutable desired bindings through API/UI; readiness diagnostic API accepted; agent/UI and combined enrollment qualification pending; SSH automation and full lifecycle planned | A01, A13, A14, A27; server-reenroll, host-key-mismatch, old-agent-capability | P02; persistent Go agent instead of upstream deployment over SSH |
+| Server management | C4, C11 | partial: enrolled server/default destination admission, project grants and immutable desired bindings through API/UI; readiness diagnostic API accepted; manual UI enrollment/generated-command agent qualification accepted with the profile limits above; SSH automation and full lifecycle planned | A01, A13, A14, A27; server-reenroll, host-key-mismatch, old-agent-capability | P02; persistent Go agent instead of upstream deployment over SSH |
 | Resource organization | C1, C10 | partial: shared project environments, image configuration and per-binding public-image mutation admission through API/UI; additional kinds, team ownership, legacy mappings and broader shared-resource concurrency planned | A08, A34, A35; legacy-membership-preservation | P01; preserve legacy IDs and explicit environment grouping |
 | Git sources | C2 | partial: public HTTPS build UI/runtime and controlled checkout; private HTTPS configuration/grants/credential endpoint/client accepted; private HTTPS runtime and Dockerfile/Railpack static-provider UI accepted; bounded GitHub push integration accepted; broader provider integrations and complete source choices planned | A03, A09; provider matrix below | P04, P18; no-Git inputs need no artificial repository |
 | Builds | C2, C12, C13 | partial: production UI/API/River/controller and explicitly configured agent build public and granted private HTTPS Git into immutable local artifacts; same-host artifact deployment and typed build output accepted; private Railpack static-provider UI accepted; full language matrix, remote delivery and shared cache planned | A02–A07; builder and architecture matrices below | P05; bounded public source-to-local-artifact/deployment evidence does not establish the complete hosting or workspace journey |

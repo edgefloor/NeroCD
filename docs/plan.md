@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`99250c2634109cdd2008c56dae1b1740d377c0a1`, 2026-10-23, through migration 0057.
+`0771f1b56befcd30b195c45121dba4d3efeec974`, 2026-10-23, through migration 0057.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -92,15 +92,20 @@ See the [accepted evidence and limits](compatibility.md#accepted-foundations-and
 
 The [readiness diagnostic backend](server-readiness.md) is accepted at
 `3cb62858e3d1e263d89d5e3c6aecd0a30792e938`, through migration 0057. Its API
-reports bounded evidence; agent collection and UI remain unaccepted pending
-staging and actual enrollment/browser qualification. Complete A01 remains open.
+reports bounded evidence. Manual UI enrollment, the generated command and compiled
+native Linux arm64 agent are accepted at `0771f1b56befcd30b195c45121dba4d3efeec974`.
+The [retained qualification evidence and limits](compatibility.md#accepted-foundations-and-evidence)
+cover fixture-CA HTTPS, current ready/blocked/stale recovery, viewer denial,
+role loss and persisted-credential restart. CLI checks inspect metadata only;
+Docker API 1.54 and 1 GiB per work/journal root are required. amd64 is compile-only.
+Production TLS, SSH, application deployment and complete A01 remain open.
 The [verified route-switch engine](hosting-route-switch.md) is accepted at
 `99250c2634109cdd2008c56dae1b1740d377c0a1`. It verifies old/new trusted TLS and
 rollback under an opt-in engine contract; caller API/admission, agent capability
-negotiation and automatic traffic orchestration are pending.
+negotiation and automatic traffic orchestration are pending. Controller and
+navigation improvements in progress are not accepted hosting features.
 
-Next, qualify combined onboarding diagnostics and SSH, then a guarded route-switch
-controller. Follow with automatic deployment and protected plans under R17/R19
+Next, qualify SSH onboarding and a guarded route-switch controller. Follow with automatic deployment and protected plans under R17/R19
 and applicable A09/A10 checks, then production TLS qualification before H2
 stateful hosting. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.
