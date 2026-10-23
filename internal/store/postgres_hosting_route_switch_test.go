@@ -971,3 +971,107 @@ func TestPostgresVerifiedSwitchCertificateFreshAtCompletionCommit(t *testing.T) 
 		})
 	}
 }
+
+func TestPostgresVerifiedSwitchOuterTransaction(t *testing.T) {
+	var stop func(context.Context) error
+	f := switchControlFixture(t, &stop)
+	ctx := t.Context()
+	if err := stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	type effects struct {
+		Counts     [5]int
+		Routes     string
+		Generation int64
+	}
+	read := func(db interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}) effects {
+		t.Helper()
+		var out effects
+		err := db.QueryRow(ctx, `SELECT
+   (SELECT count(*) FROM hosting_proxy_operations),
+   (SELECT count(*) FROM hosting_proxy_release_references),
+   (SELECT count(*) FROM hosting_proxy_switch_prior_references),
+   (SELECT count(*) FROM audit_events),
+   (SELECT count(*) FROM river_job),
+   (SELECT jsonb_agg(jsonb_build_array(id,version,selected_release_operation_id) ORDER BY id)::text FROM hosting_proxy_routes),
+   (SELECT desired_generation FROM hosting_proxies WHERE id='proxy_fixture')`).Scan(&out.Counts[0], &out.Counts[1], &out.Counts[2], &out.Counts[3], &out.Counts[4], &out.Routes, &out.Generation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	// Placement resolution precedes the ordered admission locks, as in the wrapper.
+	placement, err := store.HostingRouteSwitchPlacementForTest(ctx, f.pg, f.resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := read(f.db)
+	in := f.input("outer-switch")
+	event := destinationEvent("outer-switch-audit")
+	tx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tx.Rollback(cleanup); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Error("outer transaction cleanup", err)
+		}
+	}()
+	pending, replayed, err := store.RequestHostingRouteSwitchTxForTest(ctx, f.pg, tx, placement, f.resource.ID, "pop_outer_switch", "usr_bootstrap", in, event)
+	if err != nil || replayed {
+		t.Fatal("outer switch", replayed, err)
+	}
+	inside := read(tx)
+	if inside.Counts[0] != before.Counts[0]+1 || inside.Counts[2] != before.Counts[2]+2 || inside.Counts[4] != before.Counts[4]+1 || inside.Routes == before.Routes {
+		t.Fatal("tentative switch effects missing", inside, before)
+	}
+	if outside := read(f.db); outside != before {
+		t.Fatal("uncommitted switch escaped outer transaction", outside, before)
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(f.db); after != before {
+		t.Fatal("outer rollback left route/ref/generation/audit/job changes", after, before)
+	}
+	tx, err = f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, replayed, err := store.RequestHostingRouteSwitchTxForTest(ctx, f.pg, tx, placement, f.resource.ID, pending.ID, "usr_bootstrap", in, event)
+	if err != nil || replayed {
+		t.Fatal("switch retry after rollback", replayed, err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	committed := read(f.db)
+	if committed != inside {
+		t.Fatal("committed switch differs from tentative effects", committed, inside)
+	}
+	replay, err := f.pg.RequestHostingRouteSwitch(ctx, f.resource.ID, "ignored-outer-switch", "usr_bootstrap", in, destinationEvent("ignored-outer-switch-audit"))
+	if err != nil || replay.ID != admitted.ID || !reflect.DeepEqual(replay.Snapshot, admitted.Snapshot) {
+		t.Fatal("public switch commit equivalence", err)
+	}
+	tx, err = f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, replayed, err = store.RequestHostingRouteSwitchTxForTest(ctx, f.pg, tx, placement, f.resource.ID, "ignored-helper-switch", "usr_bootstrap", in, destinationEvent("ignored-helper-switch-audit"))
+	if err != nil || !replayed {
+		t.Fatal("helper switch replay", replayed, err)
+	}
+	if _, err = tx.Exec(ctx, `SELECT 1`); err != nil {
+		t.Fatal("helper replay closed outer transaction", err)
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(f.db); after != committed {
+		t.Fatal("switch replay changed durable effects", after, committed)
+	}
+}

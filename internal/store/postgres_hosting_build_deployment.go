@@ -25,15 +25,39 @@ func (s *PostgresStore) RequestHostingBuildDeployment(ctx context.Context, id, r
 		return domain.HostingOperation{}, err
 	}
 	defer rollbackTransaction(ctx, tx)
-	if err = lockHostingResourceDestination(ctx, tx, resourceID); err != nil {
+	op, replayed, err := s.requestHostingBuildDeploymentTx(ctx, tx, id, resourceID, actorID, in, audit)
+	if err != nil {
+		return op, err
+	}
+	if replayed {
+		return op, tx.Commit(ctx)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return domain.HostingOperation{}, err
+	}
+	return op, nil
+}
+
+// requestHostingBuildDeploymentTx admits within the caller's ordered transaction.
+// It never owns the transaction lifecycle. Authority covers admission through
+// return only: callers adding blocking work must repeat applicable final DB-clock
+// and token authority checks after that work and before committing.
+func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx pgx.Tx, id, resourceID, actorID string, in domain.HostingBuildDeploymentInput, audit domain.AuditEvent) (domain.HostingOperation, bool, error) {
+	if s.hostingJobs == nil {
+		return domain.HostingOperation{}, false, hostingjobs.ErrUnavailable
+	}
+	if err := domain.ValidateHostingBuildDeployment(in); err != nil {
+		return domain.HostingOperation{}, false, ErrConflict
+	}
+	if err := lockHostingResourceDestination(ctx, tx, resourceID); err != nil {
+		return domain.HostingOperation{}, false, err
 	}
 	r, err := lockBuildResourceDestination(ctx, tx, resourceID)
 	if err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if err = authorizeBuildActor(ctx, tx, actorID, r.ProjectID, "maintainer"); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	var existingID, requestHash string
 	err = func() error {
@@ -47,48 +71,48 @@ func (s *PostgresStore) RequestHostingBuildDeployment(ctx context.Context, id, r
 	}()
 	if err == nil {
 		if requestHash != domain.HostingDocumentHash(in) {
-			return domain.HostingOperation{}, ErrConflict
+			return domain.HostingOperation{}, false, ErrConflict
 		}
 		op, readErr := hostingOperation(ctx, tx, existingID)
 		if readErr != nil {
-			return op, readErr
+			return op, false, readErr
 		}
 		if err = authorizeBuildActor(ctx, tx, actorID, r.ProjectID, "maintainer"); err != nil {
-			return domain.HostingOperation{}, err
+			return domain.HostingOperation{}, false, err
 		}
-		return op, tx.Commit(ctx)
+		return op, true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	b, r, err := resolveCurrentHostingBuildArtifactTx(ctx, tx, actorID, resourceID, in.BuildID)
 	if err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if r.Generation != in.ExpectedGeneration || b.Snapshot.Source.Generation != in.ExpectedSourceGeneration {
-		return domain.HostingOperation{}, ErrConflict
+		return domain.HostingOperation{}, false, ErrConflict
 	}
 	projectID := r.ProjectID
 	snap := domain.HostingSnapshot{ResourceID: resourceID, ResourceGeneration: r.Generation, BindingID: r.BindingID, DestinationID: r.DestinationID, RuntimeNamespace: r.RuntimeNamespace, ServerID: r.ServerID, RunnerID: r.RunnerID, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness, PolicyVersion: domain.HostingLocalBuildPolicyVersion, LocalBuild: domain.HostingLocalBuildSource{SourceGeneration: in.ExpectedSourceGeneration, ArtifactHash: domain.HostingDocumentHash(*b.Artifact), Artifact: *b.Artifact}}
 	snap.RuntimeConfiguration, err = lockHostingRuntimeConfiguration(ctx, tx, projectID, resourceID, in.ExpectedRuntimeConfigurationGeneration)
 	if err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if snap.RuntimeConfiguration.Generation > 0 {
 		snap.PolicyVersion = domain.HostingLocalBuildRuntimePolicyVersion
 	}
 	if err = requireHostingRuntimeAgent(ctx, tx, snap); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if err = hostingTargetGate(ctx, tx, projectID, snap, true); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if err = s.resolveHostingReleasePort(ctx, tx, &snap, in.HostPort); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	_, err = sqlcgen.New(tx).CreateHostingPortReservation(ctx, sqlcgen.CreateHostingPortReservationParams{BindingID: snap.BindingID, DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort)})
 	if err != nil {
-		return domain.HostingOperation{}, hostingError(err)
+		return domain.HostingOperation{}, false, hostingError(err)
 	}
 	var reserved int
 	var admitted bool
@@ -103,10 +127,10 @@ func (s *PostgresStore) RequestHostingBuildDeployment(ctx context.Context, id, r
 		hold = row.HoldOperationID
 		return nil
 	}(); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if reserved < 1024 || !admitted || hold != nil {
-		return domain.HostingOperation{}, ErrConflict
+		return domain.HostingOperation{}, false, ErrConflict
 	}
 	var busy bool
 	if err = func() error {
@@ -117,50 +141,47 @@ func (s *PostgresStore) RequestHostingBuildDeployment(ctx context.Context, id, r
 		busy = row
 		return nil
 	}(); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if busy {
-		return domain.HostingOperation{}, ErrConflict
+		return domain.HostingOperation{}, false, ErrConflict
 	}
 	_, err = sqlcgen.New(tx).CreateHostingOperation(ctx, sqlcgen.CreateHostingOperationParams{ID: id, ProjectID: projectID, ResourceID: resourceID, BindingID: snap.BindingID, IdempotencyKey: in.IdempotencyKey, RequestHash: domain.HostingDocumentHash(in), CreatedBy: actorID})
 	if err != nil {
-		return domain.HostingOperation{}, hostingError(err)
+		return domain.HostingOperation{}, false, hostingError(err)
 	}
 	if _, err = sqlcgen.New(tx).CreateHostingReleaseClaim(ctx, sqlcgen.CreateHostingReleaseClaimParams{OperationID: id, DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort), BindingID: snap.BindingID}); err != nil {
-		return domain.HostingOperation{}, hostingError(err)
+		return domain.HostingOperation{}, false, hostingError(err)
 	}
 	contents, err := json.Marshal(snap)
 	if err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if _, err = sqlcgen.New(tx).CreateHostingSnapshot(ctx, sqlcgen.CreateHostingSnapshotParams{OperationID: id, Body: contents, BodyHash: domain.HostingDocumentHash(snap)}); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if _, err = sqlcgen.New(tx).CreateHostingOperationBuildArtifact(ctx, sqlcgen.CreateHostingOperationBuildArtifactParams{OperationID: id, BuildID: b.ID, ArtifactHash: snap.LocalBuild.ArtifactHash}); err != nil {
-		return domain.HostingOperation{}, hostingError(err)
+		return domain.HostingOperation{}, false, hostingError(err)
 	}
 	audit.ActorID, audit.Action, audit.TargetID = actorID, "hosting.build_deployment_requested", id
 	audit.Metadata = map[string]any{"project_id": projectID, "resource_id": resourceID, "binding_id": snap.BindingID, "build_id": b.ID, "artifact_hash": snap.LocalBuild.ArtifactHash}
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if _, err = s.hostingJobs.EnqueueTx(ctx, tx, hostingjobs.PrepareDeploymentArgs{OperationID: id}); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	op, err := hostingOperation(ctx, tx, id)
 	if err != nil {
-		return op, err
+		return op, false, err
 	}
 	if err = authorizeBuildActor(ctx, tx, actorID, projectID, "maintainer"); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
 	if err = requireHostingRuntimeAgent(ctx, tx, snap); err != nil {
-		return domain.HostingOperation{}, err
+		return domain.HostingOperation{}, false, err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return domain.HostingOperation{}, err
-	}
-	return op, nil
+	return op, false, nil
 }
 
 func hostingSnapshotTaskType(snap domain.HostingSnapshot) string {
