@@ -99,7 +99,7 @@ func TestPrivateFixtureResourcePolicyPostgres(t *testing.T) {
 		t.Skip("requires owned local build fixture")
 	}
 	privateRuntimeDatabase(t)
-	f := newControllerBuildFixture(t, domain.HostingPrivateGitCapability, domain.HostingBuildTaskType)
+	f := newControllerBuildFixture(t, domain.HostingPrivateGitCapability, domain.HostingBuildTaskType, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy)
 	configuration := domain.GitResourceConfiguration{RepositoryURL: "https://example.com/fixture-policy.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "railpack"}}
 	var resource domain.Resource
 	f.request(t, "POST", "/api/v1/resources", f.admin, map[string]any{"project_id": f.environment.ProjectID, "project_environment_id": f.environment.ID, "name": "policy probe", "kind": "application", "source": map[string]any{"kind": "git", "git": configuration}}, 201, &resource)
