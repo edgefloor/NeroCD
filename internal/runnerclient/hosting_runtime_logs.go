@@ -3,16 +3,35 @@ package runnerclient
 import (
 	"context"
 	"errors"
+	"io"
 	"math"
 	"nerocd/internal/domain"
 )
+
+// runtimeLogResponse keeps the log response contract independent of observation
+// DTOs while enforcing the same closed JSON fields as the log API boundary.
+type runtimeLogResponse[T domain.HostingRuntimeLogClaims | domain.HostingRuntimeLogAck] struct {
+	value T
+	limit int
+}
+
+func (r *runtimeLogResponse[T]) decodeResponse(body io.Reader) error {
+	raw, err := io.ReadAll(io.LimitReader(body, int64(r.limit)+1))
+	if err != nil {
+		return err
+	}
+	if len(raw) > r.limit {
+		return errors.New("runtime log response exceeds limit")
+	}
+	return domain.DecodeHostingRuntimeLogsJSON(raw, &r.value)
+}
 
 // ClaimRuntimeLogSessions renews only process-local collection leases, never demand.
 func (c Client) ClaimRuntimeLogSessions(ctx context.Context, in domain.HostingRuntimeLogClaimInput) (domain.HostingRuntimeLogClaims, error) {
 	if err := in.Validate(); err != nil {
 		return domain.HostingRuntimeLogClaims{}, err
 	}
-	response := observationResponse[domain.HostingRuntimeLogClaims]{limit: 64 << 10}
+	response := runtimeLogResponse[domain.HostingRuntimeLogClaims]{limit: 64 << 10}
 	err := c.post(ctx, "/api/v1/runners/runtime-log-sessions/claim", in, &response)
 	if err != nil {
 		return domain.HostingRuntimeLogClaims{}, err
@@ -34,7 +53,7 @@ func (c Client) AppendRuntimeLogs(ctx context.Context, in domain.HostingRuntimeL
 	if err != nil {
 		return domain.HostingRuntimeLogAck{}, err
 	}
-	response := observationResponse[domain.HostingRuntimeLogAck]{limit: 8 << 10}
+	response := runtimeLogResponse[domain.HostingRuntimeLogAck]{limit: 8 << 10}
 	if err = c.post(ctx, "/api/v1/runners/runtime-log-sessions/events", in, &response); err != nil {
 		return domain.HostingRuntimeLogAck{}, err
 	}
