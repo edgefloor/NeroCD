@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -453,4 +454,107 @@ func TestRuntimeLogQueueFullChannelBackpressureAndCancel(t *testing.T) {
 			}
 		})
 	}
+}
+
+type runtimeLogCloseProof struct {
+	*io.PipeReader
+	closed atomic.Bool
+}
+
+func (r *runtimeLogCloseProof) Close() error { r.closed.Store(true); return r.PipeReader.Close() }
+
+func TestRuntimeLogRenewalRejectionImmediatelyJoinsAndDiscardsBufferedOutput(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				claim := runtimeLogClaimFixture()
+				reader, writer := io.Pipe()
+				defer func() { _ = writer.Close() }()
+				body := &runtimeLogCloseProof{PipeReader: reader}
+				rejectedSignal, pendingStarted, buffered, producerDone := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+				releasePending := make(chan struct{})
+				go func() { <-rejectedSignal; time.Sleep(25 * time.Millisecond); close(releasePending) }()
+				go func() {
+					defer close(producerDone)
+					time.Sleep(1500 * time.Millisecond)
+					if _, err := writer.Write(runtimeLogFrame(1, "first pending output\n")); err != nil {
+						return
+					}
+					<-pendingStarted
+					if _, err := writer.Write(runtimeLogFrame(1, "buffered output must be discarded\n")); err == nil {
+						close(buffered)
+					}
+				}()
+				var rejected atomic.Bool
+				var appendAfterRejection atomic.Bool
+				calls := 0
+				pendingID := ""
+				var rejectedAt time.Time
+				c := runtimeLogCollector{runner: claim.Target.RunnerID, instance: claim.InstanceID, source: runtimeLogSourceFixture{verify: func(context.Context, domain.HostingRuntimeLogTarget) (runtimeLogSourceIdentity, error) {
+					return runtimeLogSourceIdentity{Driver: "local"}, nil
+				}, open: func(context.Context, domain.HostingRuntimeLogTarget) (io.ReadCloser, error) { return body, nil }}, client: runtimeLogClientFixture{claim: func(context.Context, domain.HostingRuntimeLogClaimInput) (domain.HostingRuntimeLogClaims, error) {
+					calls++
+					if calls == 1 {
+						return domain.HostingRuntimeLogClaims{Targets: []domain.HostingRuntimeLogClaim{claim}, NextCursor: claim.SessionID, EndOfSweep: true}, nil
+					}
+					<-buffered
+					if rejected.CompareAndSwap(false, true) {
+						rejectedAt = time.Now()
+						close(rejectedSignal)
+					}
+					return domain.HostingRuntimeLogClaims{}, &runnerclient.APIError{StatusCode: status}
+				}, append: func(ctx context.Context, batch domain.HostingRuntimeLogBatch) (domain.HostingRuntimeLogAck, error) {
+					if rejected.Load() && batch.BatchID != pendingID {
+						appendAfterRejection.Store(true)
+					}
+					if pendingID == "" && len(batch.Events) > 0 {
+						pendingID = batch.BatchID
+						close(pendingStarted)
+						select {
+						case <-ctx.Done():
+							return domain.HostingRuntimeLogAck{}, ctx.Err()
+						case <-releasePending:
+						}
+					}
+					return domain.HostingRuntimeLogAck{}, nil
+				}}}
+				delay := c.round(t.Context())
+				returnedAt := time.Now()
+				<-producerDone
+				<-releasePending
+				if !rejected.Load() || !body.closed.Load() {
+					t.Fatal("rejected renewal returned without closing and joining active reader")
+				}
+				if returnedAt.Sub(rejectedAt) != 0 {
+					t.Error("renewal rejection waited for append timeout or authority watchdog")
+				}
+				if appendAfterRejection.Load() {
+					t.Error("queued output was published after renewal rejection")
+				}
+				if delay < 10*time.Second || delay > 11*time.Second {
+					t.Error("rejection discarded conservative completed-attempt cooldown")
+				}
+			})
+		})
+	}
+}
+func TestRuntimeLogRejectionCooldownIsParentCancellable(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		claimed, done := make(chan struct{}), make(chan struct{})
+		c := runtimeLogCollector{instance: strings.Repeat("a", 32), client: runtimeLogClientFixture{claim: func(context.Context, domain.HostingRuntimeLogClaimInput) (domain.HostingRuntimeLogClaims, error) {
+			close(claimed)
+			return domain.HostingRuntimeLogClaims{}, &runnerclient.APIError{StatusCode: http.StatusForbidden}
+		}}}
+		go func() { defer close(done); c.run(ctx) }()
+		<-claimed
+		synctest.Wait()
+		started := time.Now()
+		cancel()
+		<-done
+		if time.Since(started) != 0 {
+			t.Fatal("parent shutdown waited for rejection cooldown")
+		}
+	})
 }

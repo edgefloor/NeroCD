@@ -184,6 +184,10 @@ func (c *runtimeLogCollector) round(ctx context.Context) time.Duration {
 					}
 				}
 			}
+		} else {
+			// Rejection or response loss ends local authority immediately. The
+			// deferred cancellation joins readers and publication before cooldown.
+			return 11 * time.Second
 		}
 		select {
 		case <-ctx.Done():
