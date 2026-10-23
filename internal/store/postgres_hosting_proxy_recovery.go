@@ -35,18 +35,16 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 	if _, err = q.LockRunID(ctx, op.RunID); err != nil {
 		return state, hostingError(err)
 	}
-	var authorityRaw json.RawMessage
-	if err = tx.QueryRow(ctx, `SELECT authority FROM hosting_proxy_receipts WHERE operation_id=$1 AND phase='complete'`, operation).Scan(&authorityRaw); err != nil {
+	authorityRaw, err := q.ProxyRecoveryCompleteAuthority(ctx, operation)
+	if err != nil {
 		return state, hostingError(err)
 	}
 	var authority domain.HostingAuthority
 	if err = json.Unmarshal(authorityRaw, &authority); err != nil {
 		return state, err
 	}
-	var leaseStatus, leaseRunner, completionKey, fence string
-	var leaseAttempt int
-	var completed *time.Time
-	if err = tx.QueryRow(ctx, `SELECT status,runner_id,completion_key,fence,attempt,completed_at FROM run_leases WHERE id=$1 AND run_id=$2 FOR UPDATE`, authority.LeaseID, op.RunID).Scan(&leaseStatus, &leaseRunner, &completionKey, &fence, &leaseAttempt, &completed); err != nil {
+	lease, err := q.ProxyRecoveryLockLease(ctx, sqlcgen.ProxyRecoveryLockLeaseParams{ID: authority.LeaseID, RunID: op.RunID})
+	if err != nil {
 		return state, hostingError(err)
 	}
 	if err = q.LockHostingExecutionDestination(ctx, op.Snapshot.DestinationID); err != nil {
@@ -72,6 +70,9 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 	}
 	state.p = p
 	state.op = op
+	if op.Snapshot.ProxyID != p.ID || op.Snapshot.ServerID != p.ServerID || op.Snapshot.DestinationID != p.DestinationID || op.Snapshot.RunnerID != p.RunnerID || !reflect.DeepEqual(op.Snapshot.Configuration, p.Configuration) {
+		return state, ErrConflict
+	}
 	v := op.Snapshot.VerifiedSwitch
 	if op.State != "uncertain" || !op.MetadataConflict || !op.MutationHold || op.RestoreOwnershipHeld || p.RestoreOwnershipHeld || p.ActiveOperationID != op.ID || p.HoldOperationID != op.ID || v == nil || v.Version != 1 || op.Plan == nil || op.CompleteReceipt == nil || op.Result == nil || len(v.Routes) < 1 || len(v.Routes) > domain.HostingProxyMaxRoutes || len(rows) > domain.HostingProxyMaxRoutes {
 		return state, ErrConflict
@@ -79,20 +80,17 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 	if op.Result.Outcome != "rolled_back" && op.Result.Outcome != "refused" {
 		return state, ErrConflict
 	}
-	if authority.OperationID != op.ID || authority.RunID != op.RunID || authority.Attempt != leaseAttempt || authority.Fence != fence || leaseRunner != p.RunnerID || leaseStatus != "failed" || completed == nil || completionKey != op.CompleteReceipt.ID {
+	if authority.OperationID != op.ID || authority.RunID != op.RunID || authority.Attempt != int(lease.Attempt) || authority.Fence != lease.Fence || lease.RunnerID != p.RunnerID || lease.Status != "failed" || lease.CompletedAt == nil || proxyString(lease.CompletionKey) != op.CompleteReceipt.ID {
 		return state, ErrConflict
 	}
-	var proof bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM task_runs t JOIN hosting_proxy_task_targets x ON x.run_id=t.id WHERE t.id=$1 AND t.status='failed' AND t.finished_at IS NOT NULL AND t.next_attempt=$2 AND t.runner_id=$3 AND x.operation_id=$4 AND x.proxy_id=$5 AND x.server_id=$6 AND x.destination_id=$7 AND x.runner_id=$3 AND x.mode='apply') AND NOT EXISTS(SELECT 1 FROM run_leases l JOIN hosting_proxy_task_targets x ON x.run_id=l.run_id WHERE x.proxy_id=$5 AND l.status='active')`, op.RunID, authority.Attempt+1, p.RunnerID, op.ID, p.ID, p.ServerID, p.DestinationID).Scan(&proof)
+	proof, err := q.ProxyRecoveryTerminalTask(ctx, sqlcgen.ProxyRecoveryTerminalTaskParams{RunID: op.RunID, NextAttempt: int32(authority.Attempt + 1), RunnerID: p.RunnerID, OperationID: op.ID, ProxyID: p.ID, ServerID: p.ServerID, DestinationID: p.DestinationID})
 	if err != nil {
 		return state, err
 	}
 	if !proof {
 		return state, ErrConflict
 	}
-	var admitted json.RawMessage
-	var admissionRun, admissionLease, admissionHash string
-	err = tx.QueryRow(ctx, `SELECT authority,run_id,lease_id,plan_hash FROM hosting_proxy_admissions WHERE operation_id=$1`, op.ID).Scan(&admitted, &admissionRun, &admissionLease, &admissionHash)
+	admission, err := q.ProxyRecoveryAdmission(ctx, op.ID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return state, err
 	}
@@ -102,7 +100,7 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 		}
 	} else {
 		var admittedAuthority domain.HostingAuthority
-		if json.Unmarshal(admitted, &admittedAuthority) != nil || admittedAuthority != authority || admissionRun != authority.RunID || admissionLease != authority.LeaseID || admissionHash != op.Result.EngineHash {
+		if json.Unmarshal(admission.Authority, &admittedAuthority) != nil || admittedAuthority != authority || admission.RunID != authority.RunID || admission.LeaseID != authority.LeaseID || admission.PlanHash != op.Result.EngineHash {
 			return state, ErrConflict
 		}
 	}
@@ -111,7 +109,7 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 	}
 	preparedHash := ""
 	if op.Preparation == nil || op.PreparedReceipt == nil {
-		if op.Result.Outcome != "refused" || len(admitted) != 0 {
+		if op.Result.Outcome != "refused" || len(admission.Authority) != 0 {
 			return state, ErrConflict
 		}
 	} else {
@@ -124,7 +122,7 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 	if err != nil {
 		return state, err
 	}
-	if prior.ID != v.PriorAppliedProxyOperationID || !reflect.DeepEqual(proxySortedTargets(prior.Snapshot.Routes), proxySortedTargets(domain.HostingProxyPriorRoutes(op.Snapshot))) {
+	if prior.ID != v.PriorAppliedProxyOperationID || prior.Preparation == nil || prior.Preparation.StaticHash != p.StaticHash || prior.Result.DaemonID != p.DaemonID || !reflect.DeepEqual(prior.Snapshot.Configuration, p.Configuration) || !reflect.DeepEqual(proxySortedTargets(prior.Snapshot.Routes), proxySortedTargets(domain.HostingProxyPriorRoutes(op.Snapshot))) {
 		return state, ErrConflict
 	}
 	refs, err := q.ProxyPriorReleaseReferences(ctx, op.ID)
@@ -155,8 +153,8 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		var fact json.RawMessage
-		if err = tx.QueryRow(ctx, `SELECT to_jsonb(g) FROM hosting_proxy_hostname_grants g WHERE id=$1 FOR SHARE`, id).Scan(&fact); err != nil {
+		fact, err := q.ProxyRecoveryLockHostnameFact(ctx, id)
+		if err != nil {
 			return state, hostingError(err)
 		}
 		grantFacts = append(grantFacts, fact)
@@ -167,8 +165,8 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		var fact json.RawMessage
-		if err = tx.QueryRow(ctx, `SELECT to_jsonb(g) FROM destination_project_grants g WHERE destination_id=$1 AND project_id=$2 FOR SHARE`, p.DestinationID, id).Scan(&fact); err != nil {
+		fact, err := q.ProxyRecoveryLockDestinationFact(ctx, sqlcgen.ProxyRecoveryLockDestinationFactParams{DestinationID: p.DestinationID, ProjectID: id})
+		if err != nil {
 			return state, hostingError(err)
 		}
 		grantFacts = append(grantFacts, fact)
@@ -184,12 +182,12 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 		}
 		allowed[row.ID] = p.Enabled && row.Enabled && g.RevokedAt == nil && d.RevokedAt == nil && g.ProxyID == p.ID && g.ProjectID == row.ProjectID && domain.HostingHostnameGranted(g.Hostname, g.Wildcard, row.Hostname)
 	}
-	var deferred json.RawMessage
-	if err = tx.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'snapshot_hash',snapshot_hash) ORDER BY id),'[]'::jsonb) FROM hosting_proxy_operations WHERE proxy_id=$1 AND id<>$2 AND state IN ('queued','dispatched','prepared','applying','uncertain')`, p.ID, op.ID).Scan(&deferred); err != nil {
+	deferred, err := q.ProxyRecoveryDeferredFacts(ctx, sqlcgen.ProxyRecoveryDeferredFactsParams{ProxyID: p.ID, ID: op.ID})
+	if err != nil {
 		return state, err
 	}
-	var competing bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_proxy_operations o WHERE o.proxy_id=$1 AND o.id<>$2 AND o.state IN ('queued','dispatched','prepared','applying','uncertain') AND (o.state<>'queued' OR o.snapshot->'verified_switch' IS NOT NULL OR EXISTS(SELECT 1 FROM hosting_proxy_admissions a WHERE a.operation_id=o.id)))`, p.ID, op.ID).Scan(&competing); err != nil {
+	competing, err := q.ProxyRecoveryCompeting(ctx, sqlcgen.ProxyRecoveryCompetingParams{ProxyID: p.ID, ID: op.ID})
+	if err != nil {
 		return state, err
 	}
 	if competing {
@@ -232,10 +230,9 @@ func proxyRecoveryScope(ctx context.Context, tx pgx.Tx, operation, actor string)
 
 func proxyRecoveryResolution(ctx context.Context, tx pgx.Tx, operation string) (domain.HostingProxyRecoveryResolution, error) {
 	var result domain.HostingProxyRecoveryResolution
-	var raw json.RawMessage
-	err := tx.QueryRow(ctx, `SELECT body FROM hosting_proxy_recovery_resolutions WHERE operation_id=$1`, operation).Scan(&raw)
+	row, err := sqlcgen.New(tx).ProxyRecoveryResolution(ctx, operation)
 	if err == nil {
-		err = json.Unmarshal(raw, &result)
+		err = json.Unmarshal(row.Body, &result)
 	}
 	return result, err
 }
@@ -313,14 +310,12 @@ func (s *PostgresStore) PlanHostingProxyRecovery(ctx context.Context, operation,
 	if err = proxyRecoveryRead(ctx, tx, operation, actor); err != nil {
 		return plan, err
 	}
-	var raw json.RawMessage
-	var storedActor, hash string
-	err = tx.QueryRow(ctx, `SELECT actor_id,request_hash,body FROM hosting_proxy_recovery_plans WHERE operation_id=$1 AND request_key=$2`, operation, in.IdempotencyKey).Scan(&storedActor, &hash, &raw)
+	stored, err := sqlcgen.New(tx).ProxyRecoveryPlanByKey(ctx, sqlcgen.ProxyRecoveryPlanByKeyParams{OperationID: operation, RequestKey: in.IdempotencyKey})
 	if err == nil {
-		if storedActor != actor || hash != domain.HostingDocumentHash(in) {
+		if stored.ActorID != actor || stored.RequestHash != domain.HostingDocumentHash(in) {
 			return plan, ErrConflict
 		}
-		if err = json.Unmarshal(raw, &plan); err != nil {
+		if err = json.Unmarshal(stored.Body, &plan); err != nil {
 			return plan, err
 		}
 		return plan, proxyCheckLegacyToken(ctx, tx, actor)
@@ -344,8 +339,8 @@ func (s *PostgresStore) PlanHostingProxyRecovery(ctx context.Context, operation,
 		return plan, ErrConflict
 	}
 	// The proxy lock serializes competing keys across all actors.
-	var pending bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_proxy_recovery_plans WHERE operation_id=$1 AND expires_at>clock_timestamp())`, operation).Scan(&pending); err != nil {
+	pending, err := sqlcgen.New(tx).ProxyRecoveryPlanPending(ctx, operation)
+	if err != nil {
 		return plan, err
 	}
 	if pending {
@@ -360,11 +355,11 @@ func (s *PostgresStore) PlanHostingProxyRecovery(ctx context.Context, operation,
 	if err != nil {
 		return plan, ErrConflict
 	}
-	raw, err = json.Marshal(plan)
+	raw, err := json.Marshal(plan)
 	if err != nil {
 		return plan, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO hosting_proxy_recovery_plans(id,operation_id,actor_id,request_key,request_hash,body,body_hash,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, plan.ID, operation, actor, in.IdempotencyKey, domain.HostingDocumentHash(in), raw, plan.PlanHash, now, plan.ExpiresAt)
+	err = sqlcgen.New(tx).ProxyRecoveryCreatePlan(ctx, sqlcgen.ProxyRecoveryCreatePlanParams{ID: plan.ID, OperationID: operation, ActorID: actor, RequestKey: in.IdempotencyKey, RequestHash: domain.HostingDocumentHash(in), Body: raw, BodyHash: plan.PlanHash, CreatedAt: now, ExpiresAt: plan.ExpiresAt})
 	if err != nil {
 		return plan, hostingError(err)
 	}
@@ -409,14 +404,12 @@ func (s *PostgresStore) ApplyHostingProxyRecovery(ctx context.Context, operation
 	if err = proxyRecoveryRead(ctx, tx, operation, actor); err != nil {
 		return resolution, err
 	}
-	var storedActor, key, requestHash string
-	var raw json.RawMessage
-	err = tx.QueryRow(ctx, `SELECT actor_id,request_key,request_hash,body FROM hosting_proxy_recovery_resolutions WHERE operation_id=$1`, operation).Scan(&storedActor, &key, &requestHash, &raw)
+	stored, err := sqlcgen.New(tx).ProxyRecoveryResolution(ctx, operation)
 	if err == nil {
-		if storedActor != actor || key != in.IdempotencyKey || requestHash != domain.HostingDocumentHash(in) {
+		if stored.ActorID != actor || stored.RequestKey != in.IdempotencyKey || stored.RequestHash != domain.HostingDocumentHash(in) {
 			return resolution, ErrConflict
 		}
-		if err = json.Unmarshal(raw, &resolution); err != nil {
+		if err = json.Unmarshal(stored.Body, &resolution); err != nil {
 			return resolution, err
 		}
 		if resolution.PlanID != planID {
@@ -442,7 +435,8 @@ func (s *PostgresStore) ApplyHostingProxyRecovery(ctx context.Context, operation
 	if err != nil {
 		return resolution, err
 	}
-	if err = tx.QueryRow(ctx, `SELECT body FROM hosting_proxy_recovery_plans WHERE id=$1 AND operation_id=$2 AND actor_id=$3 FOR SHARE`, planID, operation, actor).Scan(&raw); err != nil {
+	raw, err := sqlcgen.New(tx).ProxyRecoveryPlanForApply(ctx, sqlcgen.ProxyRecoveryPlanForApplyParams{ID: planID, OperationID: operation, ActorID: actor})
+	if err != nil {
 		return resolution, hostingError(err)
 	}
 	var plan domain.HostingProxyRecoveryPlan
@@ -460,11 +454,11 @@ func (s *PostgresStore) ApplyHostingProxyRecovery(ctx context.Context, operation
 		if r.SelectedReleaseOperationID == r.PriorTarget.ReleaseOperationID {
 			continue
 		}
-		tag, e := tx.Exec(ctx, `UPDATE hosting_proxy_routes SET selected_release_operation_id=$2,version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND version=$3 AND selected_release_operation_id=$4`, r.RouteID, r.PriorTarget.ReleaseOperationID, r.Version, r.SelectedReleaseOperationID)
+		tag, e := sqlcgen.New(tx).ProxyRecoveryRestoreRoute(ctx, sqlcgen.ProxyRecoveryRestoreRouteParams{ID: r.RouteID, SelectedReleaseOperationID: r.PriorTarget.ReleaseOperationID, Version: r.Version, SelectedReleaseOperationID_2: r.SelectedReleaseOperationID})
 		if e != nil {
 			return resolution, e
 		}
-		if tag.RowsAffected() != 1 {
+		if tag != 1 {
 			return resolution, ErrConflict
 		}
 	}
@@ -510,7 +504,7 @@ func (s *PostgresStore) ApplyHostingProxyRecovery(ctx context.Context, operation
 	if err != nil {
 		return resolution, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO hosting_proxy_recovery_resolutions(id,operation_id,plan_id,actor_id,plan_hash,request_key,request_hash,complete_receipt_id,complete_receipt_hash,convergence_operation_id,body,body_hash,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, resolutionID, operation, plan.ID, actor, plan.PlanHash, in.IdempotencyKey, domain.HostingDocumentHash(in), resolution.CompleteReceiptID, resolution.CompleteReceiptHash, queued.ID, raw, domain.HostingDocumentHash(resolution), now)
+	err = q.ProxyRecoveryCreateResolution(ctx, sqlcgen.ProxyRecoveryCreateResolutionParams{ID: resolutionID, OperationID: operation, PlanID: plan.ID, ActorID: actor, PlanHash: plan.PlanHash, RequestKey: in.IdempotencyKey, RequestHash: domain.HostingDocumentHash(in), CompleteReceiptID: resolution.CompleteReceiptID, CompleteReceiptHash: resolution.CompleteReceiptHash, ConvergenceOperationID: queued.ID, Body: raw, BodyHash: domain.HostingDocumentHash(resolution), CreatedAt: now})
 	if err != nil {
 		return resolution, hostingError(err)
 	}

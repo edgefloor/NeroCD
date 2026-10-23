@@ -1,6 +1,55 @@
 -- name: ProxyPlacement :one
 SELECT s.id AS server_id,s.runner_id,d.id AS destination_id FROM servers s JOIN destinations d ON d.server_id=s.id WHERE s.id=$1 AND d.runtime_kind='docker_compose';
 
+-- name: ProxyRecoveryCompleteAuthority :one
+SELECT authority FROM hosting_proxy_receipts WHERE operation_id=$1 AND phase='complete';
+
+-- name: ProxyRecoveryLockLease :one
+SELECT * FROM run_leases WHERE id=$1 AND run_id=$2 FOR UPDATE;
+
+-- name: ProxyRecoveryTerminalTask :one
+SELECT COALESCE((EXISTS(SELECT 1 FROM task_runs t JOIN hosting_proxy_task_targets x ON x.run_id=t.id
+ WHERE t.id=sqlc.arg(run_id)::text AND t.status='failed' AND t.finished_at IS NOT NULL AND t.next_attempt=sqlc.arg(next_attempt)::integer
+ AND t.runner_id=sqlc.arg(runner_id)::text AND x.operation_id=sqlc.arg(operation_id)::text AND x.proxy_id=sqlc.arg(proxy_id)::text
+ AND x.server_id=sqlc.arg(server_id)::text AND x.destination_id=sqlc.arg(destination_id)::text AND x.runner_id=sqlc.arg(runner_id)::text AND x.mode='apply')
+ AND NOT EXISTS(SELECT 1 FROM run_leases l JOIN hosting_proxy_task_targets x ON x.run_id=l.run_id WHERE x.proxy_id=sqlc.arg(proxy_id)::text AND l.status='active')),false)::boolean;
+
+-- name: ProxyRecoveryAdmission :one
+SELECT * FROM hosting_proxy_admissions WHERE operation_id=$1;
+
+-- name: ProxyRecoveryLockHostnameFact :one
+SELECT to_jsonb(g)::jsonb FROM hosting_proxy_hostname_grants g WHERE id=$1 FOR SHARE;
+
+-- name: ProxyRecoveryLockDestinationFact :one
+SELECT to_jsonb(g)::jsonb FROM destination_project_grants g WHERE destination_id=$1 AND project_id=$2 FOR SHARE;
+
+-- name: ProxyRecoveryDeferredFacts :one
+SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'snapshot_hash',snapshot_hash) ORDER BY id),'[]'::jsonb)::jsonb FROM hosting_proxy_operations WHERE proxy_id=$1 AND id<>$2 AND state IN ('queued','dispatched','prepared','applying','uncertain');
+
+-- name: ProxyRecoveryCompeting :one
+SELECT EXISTS(SELECT 1 FROM hosting_proxy_operations o WHERE o.proxy_id=$1 AND o.id<>$2 AND o.state IN ('queued','dispatched','prepared','applying','uncertain') AND (o.state<>'queued' OR o.snapshot->'verified_switch' IS NOT NULL OR EXISTS(SELECT 1 FROM hosting_proxy_admissions a WHERE a.operation_id=o.id)));
+
+-- name: ProxyRecoveryResolution :one
+SELECT * FROM hosting_proxy_recovery_resolutions WHERE operation_id=$1;
+
+-- name: ProxyRecoveryPlanByKey :one
+SELECT * FROM hosting_proxy_recovery_plans WHERE operation_id=$1 AND request_key=$2;
+
+-- name: ProxyRecoveryPlanPending :one
+SELECT EXISTS(SELECT 1 FROM hosting_proxy_recovery_plans WHERE operation_id=$1 AND expires_at>clock_timestamp());
+
+-- name: ProxyRecoveryCreatePlan :exec
+INSERT INTO hosting_proxy_recovery_plans(id,operation_id,actor_id,request_key,request_hash,body,body_hash,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
+
+-- name: ProxyRecoveryPlanForApply :one
+SELECT body FROM hosting_proxy_recovery_plans WHERE id=$1 AND operation_id=$2 AND actor_id=$3 FOR SHARE;
+
+-- name: ProxyRecoveryRestoreRoute :execrows
+UPDATE hosting_proxy_routes SET selected_release_operation_id=$2,version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND version=$3 AND selected_release_operation_id=$4;
+
+-- name: ProxyRecoveryCreateResolution :exec
+INSERT INTO hosting_proxy_recovery_resolutions(id,operation_id,plan_id,actor_id,plan_hash,request_key,request_hash,complete_receipt_id,complete_receipt_hash,convergence_operation_id,body,body_hash,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13);
+
 -- name: ProxyGet :one
 SELECT p.*,EXISTS(SELECT 1 FROM hosting_proxy_restore_holds h WHERE h.proxy_id=p.id) AS restore_held FROM hosting_proxies p WHERE p.id=$1;
 

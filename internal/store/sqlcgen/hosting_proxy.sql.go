@@ -1056,6 +1056,327 @@ func (q *Queries) ProxyReceipt(ctx context.Context, arg ProxyReceiptParams) (Hos
 	return i, err
 }
 
+const proxyRecoveryAdmission = `-- name: ProxyRecoveryAdmission :one
+SELECT operation_id, run_id, lease_id, authority, plan_hash, created_at FROM hosting_proxy_admissions WHERE operation_id=$1
+`
+
+func (q *Queries) ProxyRecoveryAdmission(ctx context.Context, operationID string) (HostingProxyAdmission, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryAdmission, operationID)
+	var i HostingProxyAdmission
+	err := row.Scan(
+		&i.OperationID,
+		&i.RunID,
+		&i.LeaseID,
+		&i.Authority,
+		&i.PlanHash,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const proxyRecoveryCompeting = `-- name: ProxyRecoveryCompeting :one
+SELECT EXISTS(SELECT 1 FROM hosting_proxy_operations o WHERE o.proxy_id=$1 AND o.id<>$2 AND o.state IN ('queued','dispatched','prepared','applying','uncertain') AND (o.state<>'queued' OR o.snapshot->'verified_switch' IS NOT NULL OR EXISTS(SELECT 1 FROM hosting_proxy_admissions a WHERE a.operation_id=o.id)))
+`
+
+type ProxyRecoveryCompetingParams struct {
+	ProxyID string `json:"proxy_id"`
+	ID      string `json:"id"`
+}
+
+func (q *Queries) ProxyRecoveryCompeting(ctx context.Context, arg ProxyRecoveryCompetingParams) (bool, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryCompeting, arg.ProxyID, arg.ID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const proxyRecoveryCompleteAuthority = `-- name: ProxyRecoveryCompleteAuthority :one
+SELECT authority FROM hosting_proxy_receipts WHERE operation_id=$1 AND phase='complete'
+`
+
+func (q *Queries) ProxyRecoveryCompleteAuthority(ctx context.Context, operationID string) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryCompleteAuthority, operationID)
+	var authority json.RawMessage
+	err := row.Scan(&authority)
+	return authority, err
+}
+
+const proxyRecoveryCreatePlan = `-- name: ProxyRecoveryCreatePlan :exec
+INSERT INTO hosting_proxy_recovery_plans(id,operation_id,actor_id,request_key,request_hash,body,body_hash,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+`
+
+type ProxyRecoveryCreatePlanParams struct {
+	ID          string          `json:"id"`
+	OperationID string          `json:"operation_id"`
+	ActorID     string          `json:"actor_id"`
+	RequestKey  string          `json:"request_key"`
+	RequestHash string          `json:"request_hash"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+	ExpiresAt   time.Time       `json:"expires_at"`
+}
+
+func (q *Queries) ProxyRecoveryCreatePlan(ctx context.Context, arg ProxyRecoveryCreatePlanParams) error {
+	_, err := q.db.Exec(ctx, proxyRecoveryCreatePlan,
+		arg.ID,
+		arg.OperationID,
+		arg.ActorID,
+		arg.RequestKey,
+		arg.RequestHash,
+		arg.Body,
+		arg.BodyHash,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const proxyRecoveryCreateResolution = `-- name: ProxyRecoveryCreateResolution :exec
+INSERT INTO hosting_proxy_recovery_resolutions(id,operation_id,plan_id,actor_id,plan_hash,request_key,request_hash,complete_receipt_id,complete_receipt_hash,convergence_operation_id,body,body_hash,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+`
+
+type ProxyRecoveryCreateResolutionParams struct {
+	ID                     string          `json:"id"`
+	OperationID            string          `json:"operation_id"`
+	PlanID                 string          `json:"plan_id"`
+	ActorID                string          `json:"actor_id"`
+	PlanHash               string          `json:"plan_hash"`
+	RequestKey             string          `json:"request_key"`
+	RequestHash            string          `json:"request_hash"`
+	CompleteReceiptID      string          `json:"complete_receipt_id"`
+	CompleteReceiptHash    string          `json:"complete_receipt_hash"`
+	ConvergenceOperationID string          `json:"convergence_operation_id"`
+	Body                   json.RawMessage `json:"body"`
+	BodyHash               string          `json:"body_hash"`
+	CreatedAt              time.Time       `json:"created_at"`
+}
+
+func (q *Queries) ProxyRecoveryCreateResolution(ctx context.Context, arg ProxyRecoveryCreateResolutionParams) error {
+	_, err := q.db.Exec(ctx, proxyRecoveryCreateResolution,
+		arg.ID,
+		arg.OperationID,
+		arg.PlanID,
+		arg.ActorID,
+		arg.PlanHash,
+		arg.RequestKey,
+		arg.RequestHash,
+		arg.CompleteReceiptID,
+		arg.CompleteReceiptHash,
+		arg.ConvergenceOperationID,
+		arg.Body,
+		arg.BodyHash,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const proxyRecoveryDeferredFacts = `-- name: ProxyRecoveryDeferredFacts :one
+SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'snapshot_hash',snapshot_hash) ORDER BY id),'[]'::jsonb)::jsonb FROM hosting_proxy_operations WHERE proxy_id=$1 AND id<>$2 AND state IN ('queued','dispatched','prepared','applying','uncertain')
+`
+
+type ProxyRecoveryDeferredFactsParams struct {
+	ProxyID string `json:"proxy_id"`
+	ID      string `json:"id"`
+}
+
+func (q *Queries) ProxyRecoveryDeferredFacts(ctx context.Context, arg ProxyRecoveryDeferredFactsParams) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryDeferredFacts, arg.ProxyID, arg.ID)
+	var column_1 json.RawMessage
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const proxyRecoveryLockDestinationFact = `-- name: ProxyRecoveryLockDestinationFact :one
+SELECT to_jsonb(g)::jsonb FROM destination_project_grants g WHERE destination_id=$1 AND project_id=$2 FOR SHARE
+`
+
+type ProxyRecoveryLockDestinationFactParams struct {
+	DestinationID string `json:"destination_id"`
+	ProjectID     string `json:"project_id"`
+}
+
+func (q *Queries) ProxyRecoveryLockDestinationFact(ctx context.Context, arg ProxyRecoveryLockDestinationFactParams) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryLockDestinationFact, arg.DestinationID, arg.ProjectID)
+	var column_1 json.RawMessage
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const proxyRecoveryLockHostnameFact = `-- name: ProxyRecoveryLockHostnameFact :one
+SELECT to_jsonb(g)::jsonb FROM hosting_proxy_hostname_grants g WHERE id=$1 FOR SHARE
+`
+
+func (q *Queries) ProxyRecoveryLockHostnameFact(ctx context.Context, id string) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryLockHostnameFact, id)
+	var column_1 json.RawMessage
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const proxyRecoveryLockLease = `-- name: ProxyRecoveryLockLease :one
+SELECT id, run_id, runner_id, status, expires_at, created_at, completed_at, attempt, fence, completion_key FROM run_leases WHERE id=$1 AND run_id=$2 FOR UPDATE
+`
+
+type ProxyRecoveryLockLeaseParams struct {
+	ID    string `json:"id"`
+	RunID string `json:"run_id"`
+}
+
+func (q *Queries) ProxyRecoveryLockLease(ctx context.Context, arg ProxyRecoveryLockLeaseParams) (RunLease, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryLockLease, arg.ID, arg.RunID)
+	var i RunLease
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.RunnerID,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.CompletedAt,
+		&i.Attempt,
+		&i.Fence,
+		&i.CompletionKey,
+	)
+	return i, err
+}
+
+const proxyRecoveryPlanByKey = `-- name: ProxyRecoveryPlanByKey :one
+SELECT id, operation_id, actor_id, request_key, request_hash, body, body_hash, created_at, expires_at FROM hosting_proxy_recovery_plans WHERE operation_id=$1 AND request_key=$2
+`
+
+type ProxyRecoveryPlanByKeyParams struct {
+	OperationID string `json:"operation_id"`
+	RequestKey  string `json:"request_key"`
+}
+
+func (q *Queries) ProxyRecoveryPlanByKey(ctx context.Context, arg ProxyRecoveryPlanByKeyParams) (HostingProxyRecoveryPlan, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryPlanByKey, arg.OperationID, arg.RequestKey)
+	var i HostingProxyRecoveryPlan
+	err := row.Scan(
+		&i.ID,
+		&i.OperationID,
+		&i.ActorID,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.Body,
+		&i.BodyHash,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const proxyRecoveryPlanForApply = `-- name: ProxyRecoveryPlanForApply :one
+SELECT body FROM hosting_proxy_recovery_plans WHERE id=$1 AND operation_id=$2 AND actor_id=$3 FOR SHARE
+`
+
+type ProxyRecoveryPlanForApplyParams struct {
+	ID          string `json:"id"`
+	OperationID string `json:"operation_id"`
+	ActorID     string `json:"actor_id"`
+}
+
+func (q *Queries) ProxyRecoveryPlanForApply(ctx context.Context, arg ProxyRecoveryPlanForApplyParams) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryPlanForApply, arg.ID, arg.OperationID, arg.ActorID)
+	var body json.RawMessage
+	err := row.Scan(&body)
+	return body, err
+}
+
+const proxyRecoveryPlanPending = `-- name: ProxyRecoveryPlanPending :one
+SELECT EXISTS(SELECT 1 FROM hosting_proxy_recovery_plans WHERE operation_id=$1 AND expires_at>clock_timestamp())
+`
+
+func (q *Queries) ProxyRecoveryPlanPending(ctx context.Context, operationID string) (bool, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryPlanPending, operationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const proxyRecoveryResolution = `-- name: ProxyRecoveryResolution :one
+SELECT id, operation_id, plan_id, actor_id, plan_hash, request_key, request_hash, complete_receipt_id, complete_receipt_hash, convergence_operation_id, body, body_hash, created_at FROM hosting_proxy_recovery_resolutions WHERE operation_id=$1
+`
+
+func (q *Queries) ProxyRecoveryResolution(ctx context.Context, operationID string) (HostingProxyRecoveryResolution, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryResolution, operationID)
+	var i HostingProxyRecoveryResolution
+	err := row.Scan(
+		&i.ID,
+		&i.OperationID,
+		&i.PlanID,
+		&i.ActorID,
+		&i.PlanHash,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.CompleteReceiptID,
+		&i.CompleteReceiptHash,
+		&i.ConvergenceOperationID,
+		&i.Body,
+		&i.BodyHash,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const proxyRecoveryRestoreRoute = `-- name: ProxyRecoveryRestoreRoute :execrows
+UPDATE hosting_proxy_routes SET selected_release_operation_id=$2,version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND version=$3 AND selected_release_operation_id=$4
+`
+
+type ProxyRecoveryRestoreRouteParams struct {
+	ID                           string `json:"id"`
+	SelectedReleaseOperationID   string `json:"selected_release_operation_id"`
+	Version                      int64  `json:"version"`
+	SelectedReleaseOperationID_2 string `json:"selected_release_operation_id_2"`
+}
+
+func (q *Queries) ProxyRecoveryRestoreRoute(ctx context.Context, arg ProxyRecoveryRestoreRouteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, proxyRecoveryRestoreRoute,
+		arg.ID,
+		arg.SelectedReleaseOperationID,
+		arg.Version,
+		arg.SelectedReleaseOperationID_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const proxyRecoveryTerminalTask = `-- name: ProxyRecoveryTerminalTask :one
+SELECT COALESCE((EXISTS(SELECT 1 FROM task_runs t JOIN hosting_proxy_task_targets x ON x.run_id=t.id
+ WHERE t.id=$1::text AND t.status='failed' AND t.finished_at IS NOT NULL AND t.next_attempt=$2::integer
+ AND t.runner_id=$3::text AND x.operation_id=$4::text AND x.proxy_id=$5::text
+ AND x.server_id=$6::text AND x.destination_id=$7::text AND x.runner_id=$3::text AND x.mode='apply')
+ AND NOT EXISTS(SELECT 1 FROM run_leases l JOIN hosting_proxy_task_targets x ON x.run_id=l.run_id WHERE x.proxy_id=$5::text AND l.status='active')),false)::boolean
+`
+
+type ProxyRecoveryTerminalTaskParams struct {
+	RunID         string `json:"run_id"`
+	NextAttempt   int32  `json:"next_attempt"`
+	RunnerID      string `json:"runner_id"`
+	OperationID   string `json:"operation_id"`
+	ProxyID       string `json:"proxy_id"`
+	ServerID      string `json:"server_id"`
+	DestinationID string `json:"destination_id"`
+}
+
+func (q *Queries) ProxyRecoveryTerminalTask(ctx context.Context, arg ProxyRecoveryTerminalTaskParams) (bool, error) {
+	row := q.db.QueryRow(ctx, proxyRecoveryTerminalTask,
+		arg.RunID,
+		arg.NextAttempt,
+		arg.RunnerID,
+		arg.OperationID,
+		arg.ProxyID,
+		arg.ServerID,
+		arg.DestinationID,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const proxyReferencePriorRelease = `-- name: ProxyReferencePriorRelease :execrows
 INSERT INTO hosting_proxy_switch_prior_references(operation_id,route_id,prior_proxy_operation_id,prior_release_operation_id,prior_version) VALUES($1,$2,$3,$4,$5)
 `

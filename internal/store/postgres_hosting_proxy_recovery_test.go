@@ -395,6 +395,16 @@ func TestPostgresHostingProxyRecovery(t *testing.T) {
 		if _, err = f.db.Exec(t.Context(), `UPDATE hosting_proxy_recovery_resolutions SET body=body WHERE operation_id=$1`, op.ID); err == nil {
 			t.Fatal("resolution mutated")
 		}
+		otherActor, _ := proxyLegacyToken(t, f.pg, proxyTokenApplication(t, f.pg), "tok_recovery_other_actor", []string{domain.RoleSystemAdmin})
+		if _, err = f.pg.ApplyHostingProxyRecovery(t.Context(), op.ID, plan.ID, "prr_other_actor", otherActor.ID, apply, destinationEvent("other-actor-replay")); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("actor-bound replay %v", err)
+		}
+		if _, err = f.db.Exec(t.Context(), `UPDATE users SET status='disabled' WHERE id='usr_bootstrap'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.pg.ApplyHostingProxyRecovery(t.Context(), op.ID, plan.ID, "prr_disabled_actor", "usr_bootstrap", apply, destinationEvent("disabled-replay")); !errors.Is(err, auth.ErrForbidden) {
+			t.Fatalf("replay skipped current read authority %v", err)
+		}
 	})
 	t.Run("stale_plan_is_atomic", func(t *testing.T) {
 		f, op, _ := recoveryConflictFixture(t)
