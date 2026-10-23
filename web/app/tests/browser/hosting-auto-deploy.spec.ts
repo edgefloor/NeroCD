@@ -4,8 +4,13 @@ import { expect, test, type Page, type Locator } from "@playwright/test";
 test.use({ trace: "off", screenshot: "off" });
 type Metadata = { base_url: string; project_id: string; environment_name: string; resource_name: string; resource_id: string; expected_commit_a: string; expected_commit_b: string; expected_commit_c: string; step_path: string };
 async function keyboardActivate(page: Page, button: Locator) {
-  await expect(button).toBeEnabled(); await button.focus();
-  await expect(button).toBeFocused(); await page.keyboard.press("Enter");
+  // A preceding metadata read or viewport transition can briefly disable the
+  // control and retire focus. Retry focus only; submit exactly once when ready.
+  await expect(async () => {
+    await expect(button).toBeEnabled({ timeout: 200 }); await button.focus();
+    await expect(button).toBeFocused({ timeout: 200 });
+  }).toPass({ timeout: 15_000, intervals: [100, 250] });
+  await page.keyboard.press("Enter");
 }
 async function signIn(page: Page, viewer = false) {
   const bootstrap = await page.request.get("/api/v1/bootstrap-status", { timeout: 10_000 });
@@ -151,7 +156,13 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
   await panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true }).click();
   await expect(summary.getByText("Recorded automatic deployment failed", { exact: true })).toBeVisible();
   await expect(summary).toContainText("A failed build is not a deployed release.");
-  for (const width of [320, 390, 430, 1440]) { await page.setViewportSize({ width, height: 1000 }); await expect(panel).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await keyboardActivate(page, panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true })); }
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 1000 }); await expect(panel).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const refreshed = page.waitForResponse((r) => new URL(r.url()).pathname === policyPath && r.request().method() === "GET");
+    await keyboardActivate(page, panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true }));
+    expect((await refreshed).status()).toBe(200);
+  }
   const viewerContext = await browser.newContext({ baseURL: meta.base_url, viewport: { width: 390, height: 1000 } });
   try {
     const viewer = await viewerContext.newPage(); const viewerReads: string[] = [];
