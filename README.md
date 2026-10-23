@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`5687b88465839b8e341181ba8b47f54dc17f006c`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`d29edb3bc8cde064108891f70713423bb57776a3`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -95,8 +95,11 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   The guarded controller is accepted at `5687b88465839b8e341181ba8b47f54dc17f006c`.
   Its resource POST selects exact healthy or retained-running releases, requires
   explicit agent opt-in and retains holds for cancellation, uncertain replay or
-  metadata conflicts. Dedicated UI/read API and automatic deployment remain
-  pending; this does not qualify draining, data rollback or production ACME.
+  metadata conflicts. Resource-scoped reads and operator controls are accepted at
+  `1c6ddb414d984372bb1f081fb6ff23db8bd81f88`, with explicit review, frozen retries,
+  pending-operation recovery and visible holds. Metadata-conflict reconciliation
+  remains unaccepted; automatic deployment, draining, data rollback and production
+  ACME remain incomplete.
 - Runtime configuration UI for public literals and exact managed-secret versions,
   generation compare-and-swap, idempotent retries and fresh deployment generations.
   Accepted browser proof covers authenticated API, compiled runner and Docker,
@@ -116,8 +119,13 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   same-host deployment and test-CA HTTPS. Private Railpack qualification covers
   resource creation/editing, exact-version grant retry after a lost response and
   preservation of the old HTTPS application after a genuine failed rebuild.
-  Arbitrary language providers, provider breadth, compiled frontend coverage and
+  Arbitrary language providers, provider breadth, broader frontend coverage and
   complete A03 remain separate work. See the [accepted limits](docs/compatibility.md#accepted-foundations-and-evidence).
+- [Compiled Vite SPA qualification](acceptance/runtime-hosting-local-build/README.md)
+  is accepted at `d29edb3bc8cde064108891f70713423bb57776a3` for the exact pinned
+  Node/Bun/Vite/Caddy fixture. A real parser failure preserves the prior application.
+  Earlier unexplained failures remain a reliability limit; full A04 and production
+  ACME remain open.
 - [Exact trigger revisions](docs/hosting-build-trigger-revision.md) admitted by a
   trusted internal caller are frozen before checkout and require the runner's
   revision capability. Public/private HTTPS checkout builds the selected commit
@@ -150,7 +158,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Next are SSH onboarding, route-switch UI/read API,
+and extended compatibility. Next are SSH onboarding, route-switch conflict recovery,
 automatic/protected deployment, then
 production TLS qualification before stateful hosting. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
