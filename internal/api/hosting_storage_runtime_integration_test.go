@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,6 +26,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
@@ -236,9 +239,13 @@ func newStorageRuntimeFixture(t *testing.T) *storageRuntimeFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() {
+			if err := storageRuntimeRollback(tx); err != nil {
+				t.Errorf("queue migration rollback: %v", err)
+			}
+		})
 		changed, err := hostingjobs.MigrateNextTx(t.Context(), tx)
 		if err != nil {
-			_ = tx.Rollback(t.Context())
 			t.Fatal(err)
 		}
 		if err := tx.Commit(t.Context()); err != nil {
@@ -262,6 +269,48 @@ func newStorageRuntimeFixture(t *testing.T) *storageRuntimeFixture {
 	t.Cleanup(func() { f.stop(); t.Logf("compiled runner logs:\n%s", f.logs.String()) })
 	f.start(caps)
 	return f
+}
+
+func storageRuntimeRollback(tx interface{ Rollback(context.Context) error }) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		return err
+	}
+	return nil
+}
+
+type storageRuntimeRollbackFunc func(context.Context) error
+
+func (rollback storageRuntimeRollbackFunc) Rollback(ctx context.Context) error { return rollback(ctx) }
+
+func TestStorageRuntimeRollback(t *testing.T) {
+	failure := errors.New("fixture rollback failure")
+	for _, test := range []struct {
+		name               string
+		returned, expected error
+	}{
+		{name: "open transaction"},
+		{name: "committed transaction", returned: pgx.ErrTxClosed},
+		{name: "wrapped closed transaction", returned: fmt.Errorf("closed: %w", pgx.ErrTxClosed)},
+		{name: "rollback error retained", returned: failure, expected: failure},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			err := storageRuntimeRollback(storageRuntimeRollbackFunc(func(ctx context.Context) error {
+				called = true
+				deadline, ok := ctx.Deadline()
+				remaining := time.Until(deadline)
+				if ctx.Err() != nil || !ok || remaining <= 0 || remaining > 5*time.Second {
+					t.Fatal("rollback requires a fresh live bounded cleanup context")
+				}
+				return test.returned
+			}))
+			if !called || !errors.Is(err, test.expected) {
+				t.Fatalf("rollback called=%t error=%v want=%v", called, err, test.expected)
+			}
+		})
+	}
 }
 
 func (f *storageRuntimeFixture) start(caps ...[]string) {

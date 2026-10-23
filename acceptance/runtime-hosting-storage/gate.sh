@@ -71,7 +71,9 @@ cleanup() {
  echo "gate exit=$result evidence=$evidence"
  exit "$result"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 [[ $(host_docker info --format '{{.ID}} {{.OSType}} {{.Architecture}}') == "$daemon linux aarch64" ]]
 [[ -z $(host_docker ps -aq --filter "name=^/$name$") ]]
 if host_docker volume inspect "$volume" >/dev/null 2>&1; then echo 'owned outer volume already exists' >&2; exit 1; fi
@@ -126,5 +128,5 @@ for _ in $(seq 1 60); do
  sleep 1
 done
 [[ "$ready" == true ]]
-host_docker exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run '^TestHostingStorageCompiledRunnerHTTPS$' -test.timeout=12m
+host_docker exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run '^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$' -test.timeout=12m
 echo 'compiled storage runner / authenticated public API / trusted fixture-CA HTTPS gate passed'
