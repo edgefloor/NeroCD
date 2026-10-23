@@ -91,3 +91,23 @@ func TestGitHubPushResponseCallbackUsesConfiguredOrigin(t *testing.T) {
 		t.Fatal(rec.Body.String())
 	}
 }
+
+func TestGitHubPushPUTRejectsWebhookProviderIDReuse(t *testing.T) {
+	s, _ := newTestServer()
+	session := createTestSession(t, s)
+	for _, version := range []int64{1, 2} {
+		in := domain.GitHubPushConfigure{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, RequestID: "00000000-0000-0000-0000-000000000001", ResetBranchBaseline: true, Configuration: domain.GitHubPushConfiguration{AutomationActorID: "bot", WebhookSecret: domain.GitHubPushSecretRef{ID: "shared", Version: 1}, ProviderReadSecret: &domain.GitHubPushSecretRef{ID: "shared", Version: version}}}
+		raw, err := json.Marshal(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/resources/missing/github-push-policy", strings.NewReader(string(raw)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+session)
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid_request"`) {
+			t.Fatalf("shared purpose IDs reached resource mutation: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+}

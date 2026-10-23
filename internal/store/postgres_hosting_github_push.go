@@ -95,6 +95,11 @@ func pushScope(ctx context.Context, tx pgx.Tx, resource, actor, role string) (do
 	return source, locked.Generation, nil
 }
 func pushCurrent(ctx context.Context, tx pgx.Tx, doc githubPushDocument, requireTarget bool) error {
+	// Persisted policies can predate request validation. Fail before authorizing
+	// either secret purpose; owner disable intentionally does not call this path.
+	if provider := doc.Configuration.ProviderReadSecret; provider != nil && provider.ID == doc.Configuration.WebhookSecret.ID {
+		return ErrConflict
+	}
 	q := sqlcgen.New(tx)
 	source, err := readBuildSource(ctx, tx, doc.Policy.ResourceID)
 	if err != nil {

@@ -143,6 +143,11 @@ func GitHubPushRepositoryBranch(source HostingGitSource) (string, string, string
 
 // Validate checks bounded explicit selectors without conferring authority.
 func (in GitHubPushConfigure) Validate() error {
+	// A webhook key must never also select provider authentication material,
+	// even through a different version of the same managed secret.
+	if provider := in.Configuration.ProviderReadSecret; provider != nil && provider.ID == in.Configuration.WebhookSecret.ID {
+		return errors.New("invalid_github_push_configuration")
+	}
 	validSecret := func(r GitHubPushSecretRef) bool { return observationID(r.ID, false) && r.Version > 0 }
 	if !in.ResetBranchBaseline || in.ExpectedPolicyGeneration < 0 || in.ExpectedResourceGeneration < 1 || in.ExpectedSourceGeneration < 1 || !ValidGitHubPushRequestID(in.RequestID) || !observationID(in.Configuration.AutomationActorID, false) || !validSecret(in.Configuration.WebhookSecret) || (in.Configuration.ProviderReadSecret != nil && !validSecret(*in.Configuration.ProviderReadSecret)) || !observationID(in.Configuration.SourceGrantID, true) {
 		return errors.New("invalid_github_push_configuration")

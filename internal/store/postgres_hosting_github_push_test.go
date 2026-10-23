@@ -542,3 +542,61 @@ func TestPostgresGitHubPushOwnerCanDisableAfterDelegatedRevocation(t *testing.T)
 		t.Fatal("disabled demand remains active", err)
 	}
 }
+
+func TestPostgresGitHubPushRejectsPersistedWebhookProviderReuse(t *testing.T) {
+	for _, version := range []int64{1, 2} {
+		t.Run(fmt.Sprintf("provider version %d", version), func(t *testing.T) {
+			f := newPushStoreFixture(t)
+			ctx := t.Context()
+			if version == 2 {
+				_, record, event := managedFixture(t, "push_signing", 2)
+				if _, err := f.pg.RotateManagedSecret(ctx, "push_signing", 1, record, event); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.enable(t)
+			a := f.accept(t, 250, strings.Repeat("b", 40))
+			verification, err := f.pg.BeginGitHubPushVerification(ctx, "usr_bootstrap", f.src.ResourceID, domain.GitHubPushCommand{ExpectedPolicyGeneration: f.policy.Generation, RequestID: pushUUID(254)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Simulate a policy written before the invariant existed. Its selected
+			// versions both exist, so denial cannot be attributed to a missing version.
+			if _, err := f.db.Exec(ctx, `UPDATE hosting_github_push_policies SET body=jsonb_set(body,'{configuration,provider_read_secret}',jsonb_build_object('id','push_signing','version',$1::bigint)) WHERE id=$2`, version, f.policy.ID); err != nil {
+				t.Fatal(err)
+			}
+			for _, purpose := range []string{"webhook_hmac", "github_read"} {
+				if _, err := f.pg.AuthorizeGitHubPushSecret(ctx, a, purpose); err == nil {
+					t.Errorf("persisted invalid policy authorized %s", purpose)
+				}
+			}
+			if _, err := f.pg.GitHubPushWebhookAuthority(ctx, f.policy.ID); err == nil {
+				t.Error("persisted invalid policy issued webhook authority")
+			}
+			if _, err := f.pg.BeginGitHubPushVerification(ctx, "usr_bootstrap", f.src.ResourceID, domain.GitHubPushCommand{ExpectedPolicyGeneration: f.policy.Generation, RequestID: pushUUID(252)}); err == nil {
+				t.Error("persisted invalid policy began verification")
+			}
+			if err := f.pg.CommitGitHubPushDelivery(ctx, a, pushEvidence(a.Policy, strings.Repeat("b", 40)), ""); err == nil {
+				t.Error("persisted invalid policy admitted a build")
+			}
+			if _, err := f.pg.FinishGitHubPushVerification(ctx, verification, pushEvidence(verification.Policy, strings.Repeat("a", 40)), ""); err == nil {
+				t.Error("persisted invalid policy completed verification")
+			}
+			var audits, builds int
+			var metadata string
+			if err := f.db.QueryRow(ctx, `SELECT count(*),coalesce(string_agg(metadata::text,''),'') FROM audit_events WHERE action LIKE 'hosting.github_push.secret_authorized.%'`).Scan(&audits, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if audits != 0 || strings.Contains(metadata, "private-value") {
+				t.Error("invalid secret purpose produced authorization audit or plaintext")
+			}
+			if err := f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_builds`).Scan(&builds); err != nil || builds != 0 {
+				t.Errorf("invalid policy produced %d builds: %v", builds, err)
+			}
+			disabled, err := f.pg.SetGitHubPushEnabled(ctx, "usr_bootstrap", f.src.ResourceID, domain.GitHubPushEnable{ExpectedPolicyGeneration: f.policy.Generation, RequestID: pushUUID(253), Enabled: false}, destinationEvent("disable_invalid_purposes"))
+			if err != nil || disabled.Enabled {
+				t.Fatal("owner could not disable invalid delegated credentials", err)
+			}
+		})
+	}
+}
