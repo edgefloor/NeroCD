@@ -517,10 +517,12 @@ func newAutomaticRuntimeFixture(t *testing.T) *automaticRuntimeFixture {
 			t.Error("fixture credential reached runner logs")
 		}
 	})
-	var build domain.PublicHostingBuild
+	var build struct {
+		Build domain.PublicHostingBuild `json:"build"`
+	}
 	f.request(http.MethodPost, "/api/v1/resources/"+f.resource.ID+"/builds", f.owner, domain.HostingBuildRequest{ExpectedResourceGeneration: f.resource.Generation, ExpectedSourceGeneration: f.resource.Source.Git.Generation, IdempotencyKey: "automatic-manual-A"}, http.StatusAccepted, &build)
 	built := out.AwaitBuild(commits[0], "succeeded")
-	if built.ID != build.ID || built.Artifact == nil {
+	if built.ID != build.Build.ID || built.Artifact == nil {
 		t.Fatal("manual A artifact identity")
 	}
 	var operation domain.HostingOperation
