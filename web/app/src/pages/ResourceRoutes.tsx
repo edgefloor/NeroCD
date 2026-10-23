@@ -8,18 +8,19 @@ import { ApiError } from "@/api/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageNavigation } from "@/components/common/PageNavigation";
+import { ResourceRouteSwitch } from "./ResourceRouteSwitch";
 import { maximumPageOffset } from "@/router/search";
 
 type Attempt = { kind: "create" | "update"; target?: string; body: RouteInput } | { kind: "delete"; target: string; body: RouteDeletion };
 export function ResourceRoutes(props: { resource: Resource; writable: boolean; blocked: boolean }) {
   const principal = useQuery(principalQuery());
-  if (!principal.data) return <p role="status">Loading route identity...</p>;
+  if (principal.isPending || principal.isFetching || principal.isError || !principal.data) return <p role="status">Loading route identity...</p>;
   const actor = JSON.stringify([principal.data.provider, principal.data.id]);
   return <Routes key={JSON.stringify([actor, props.resource.project_id, props.resource.id, props.writable])} {...props} actor={actor} blocked={props.blocked || principal.isError} />;
 }
 function RouteOperation({ actor, resource, id }: { actor: string; resource: Resource; id: string }) {
   const operation = useQuery({ ...routeOperationQuery(actor, resource.project_id, resource.id, id), refetchInterval: 5000 });
-  return <section aria-label="Route operation status" className="space-y-2 rounded-lg border p-2"><p className="break-all">Proxy operation {id}</p><Button className="h-auto max-w-full whitespace-normal break-all" type="button" variant="outline" onClick={() => void operation.refetch()}>Refresh route operation</Button>{operation.isError ? <p role="alert">Unable to refresh route operation; loaded and HTTPS state are unconfirmed.</p> : null}{operation.data ? <><p>Operation state: {operation.data.state}</p>{operation.data.mutation_hold ? <p role="status">Proxy mutation ownership remains held. Refresh status; do not assume cancellation releases ownership.</p> : null}{operation.data.restore_ownership_held ? <p role="alert">Proxy ownership held after restore. Recovery proof is pending; no hold-clearing API is available.</p> : null}</> : null}</section>;
+  return <section aria-label="Route operation status" className="space-y-2 rounded-lg border p-2"><p className="break-all">Proxy operation {id}</p><Button className="h-auto max-w-full whitespace-normal break-all" type="button" variant="outline" onClick={() => void operation.refetch()}>Refresh route operation</Button>{operation.isError ? <p role="alert">Unable to refresh route operation; loaded and HTTPS state are unconfirmed.</p> : null}{operation.data ? <><p>Operation state: {operation.data.state}</p>{operation.data.engine_outcome ? <p>Historical engine outcome: {operation.data.engine_outcome}</p> : null}{operation.data.metadata_conflict ? <p role="alert">Route metadata conflict. Keep ownership held; this operator workflow has no reconciliation or unlock action. The original engine outcome is historical.</p> : null}{operation.data.mutation_hold ? <p role="status">Proxy mutation ownership remains held. Refresh status; do not assume cancellation releases ownership.</p> : null}{operation.data.restore_ownership_held ? <p role="alert">Proxy ownership held after restore. Recovery proof is pending; no hold-clearing API is available.</p> : null}</> : null}</section>;
 }
 function Routes({ resource, writable, blocked, actor }: { resource: Resource; writable: boolean; blocked: boolean; actor: string }) {
   const id = useId();
@@ -90,5 +91,6 @@ function Routes({ resource, writable, blocked, actor }: { resource: Resource; wr
     </form> : <p className="text-xs">Project maintainer access is required to change routes.</p>}
     {denied ? <p role="alert">Route mutations paused after permission denial. Reload to refresh project permissions.</p> : null}
     {error ? <p role="alert">{error}</p> : null}
+    <ResourceRouteSwitch resource={resource} writable={writable} blocked={blocked || denied} />
   </section>;
 }

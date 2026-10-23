@@ -50,7 +50,7 @@ export const routesQuery = (actor: string, project: string, resource: string) =>
 export const routeOperationQuery = (actor: string, project: string, resource: string, id: string) => queryOptions({ queryKey: proxyKeys.operation(actor, `${project}:${resource}`, id), retry: false, queryFn: async ({ signal }): Promise<ProxyOperationView> => {
   const raw = await request<ProxyOperation | ProxyOperationView>(operationPath(id), { signal });
   if (raw.id !== id) throw new Error("Proxy operation scope mismatch");
-  return { id: raw.id, state: raw.state, mutation_hold: raw.mutation_hold, restore_ownership_held: raw.restore_ownership_held, routes: "routes" in raw ? raw.routes.filter((route) => route.resource_id === resource) : [] };
+  return { ...(raw.metadata_conflict !== undefined ? { metadata_conflict: raw.metadata_conflict } : {}), ...("engine_outcome" in raw && raw.engine_outcome ? { engine_outcome: raw.engine_outcome } : "result" in raw && raw.result?.outcome ? { engine_outcome: raw.result.outcome } : {}), id: raw.id, state: raw.state, mutation_hold: raw.mutation_hold, restore_ownership_held: raw.restore_ownership_held, routes: "routes" in raw ? raw.routes.filter((route) => route.resource_id === resource) : [] };
 } });
 export function proxyError(cause: unknown): string {
   if (cause instanceof ApiError) {

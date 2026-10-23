@@ -459,6 +459,10 @@ func TestHostingVerifiedSwitchCompiledRunner(t *testing.T) {
 			t.Fatalf("trusted HTTPS path=%s body=%s want=%s err=%v", path, body, want, e)
 		}
 	}
+	if os.Getenv("NEROCD_ROUTE_SWITCH_BROWSER") == "1" {
+		runHostingRouteSwitchBrowser(t, switchBrowserFixture{server: server, pg: pg, database: database, environment: env, resource: resource, proxy: proxy, a: a, b: b, routes: routes, runAgent: runAgent, agentCommand: agentCommand, probe: probe, state: state, work: work})
+		return
+	}
 	switchTo("a-to-b", b.ID, "applied", true)
 	probe("/", "B:/")
 	probe("/unchanged", "A:/unchanged")
