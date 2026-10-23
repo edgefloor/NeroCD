@@ -199,6 +199,10 @@ func TestPostgresVerifiedRouteSwitch(t *testing.T) {
 		if err != nil || !finished.MutationHold || !finished.MetadataConflict || finished.Result == nil || finished.Result.Outcome != "rolled_back" {
 			t.Fatalf("conflict lost original result/hold %+v %v", finished, err)
 		}
+		view, readErr := f.pg.HostingRouteSwitchOperation(t.Context(), f.resource.ID, "usr_bootstrap", op.ID)
+		if readErr != nil || view.EngineOutcome != "rolled_back" || view.State != "uncertain" || !view.MetadataConflict || !view.MutationHold || view.Switch == nil || len(view.Switch.Routes) != 2 {
+			t.Fatalf("safe conflict recovery %+v %v", view, readErr)
+		}
 		if _, err = f.pg.SetHostingProxyEnabled(t.Context(), "proxy_fixture", "usr_bootstrap", "cannot-revive", true, destinationEvent("cannot-revive")); !errors.Is(err, store.ErrConflict) {
 			t.Fatalf("unverified B revived: %v", err)
 		}

@@ -35,9 +35,13 @@ func TestRouteSwitchServiceProjectProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repository := &routeSwitchServiceRepository{proxyViewRepository: &proxyViewRepository{RunRepository: service.runs, op: domain.HostingProxyOperation{ID: "pop_switch", ProjectID: "proj_platform", ProxyID: "proxy_private", RunID: "private_run", State: "queued", Snapshot: domain.HostingProxySnapshot{ServerID: "private_server", Routes: []domain.HostingProxyRouteTarget{{RouteID: "route_own", ProjectID: "proj_platform"}, {RouteID: "route_other", ProjectID: "proj_security"}}}}, routes: map[string]store.HostingProxyRouteRecord{}}}
+	repository := &routeSwitchServiceRepository{proxyViewRepository: &proxyViewRepository{RunRepository: service.runs, op: domain.HostingProxyOperation{ID: "pop_switch", ProjectID: "proj_platform", ProxyID: "proxy_private", RunID: "private_run", State: "queued", Snapshot: domain.HostingProxySnapshot{ServerID: "private_server", Routes: []domain.HostingProxyRouteTarget{{RouteID: "route_own", ResourceID: resource.ID, ReleaseOperationID: "hop_b", ProjectID: "proj_platform"}, {RouteID: "route_other", ProjectID: "proj_security"}}}}, routes: map[string]store.HostingProxyRouteRecord{}}}
 	repository.routes["route_own"] = store.HostingProxyRouteRecord{ProjectID: "proj_platform", Route: domain.HostingRoute{ID: "route_own", ResourceID: resource.ID, Hostname: "own.example.com"}}
 	repository.routes["route_other"] = store.HostingProxyRouteRecord{ProjectID: "proj_security", Route: domain.HostingRoute{ID: "route_other", ResourceID: "private_resource", Hostname: "other.example.com"}}
+	repository.op.Snapshot.VerifiedSwitch = &domain.HostingVerifiedSwitch{Version: 1, ExpectedLoadedGeneration: 1, Routes: []domain.HostingVerifiedSwitchRoute{{RouteID: "route_own", PriorVersion: 1, PriorTarget: domain.HostingProxyRouteTarget{RouteID: "route_own", ResourceID: resource.ID, ProjectID: resource.ProjectID, ReleaseOperationID: "hop_a"}}}}
+	// Even an administrator must not see another resource in the same project.
+	repository.op.Snapshot.Routes = append(repository.op.Snapshot.Routes, domain.HostingProxyRouteTarget{RouteID: "route_sibling", ResourceID: "private_sibling", ProjectID: resource.ProjectID})
+	repository.routes["route_sibling"] = store.HostingProxyRouteRecord{ProjectID: resource.ProjectID, Route: domain.HostingRoute{ID: "route_sibling", ResourceID: "private_sibling", Hostname: "private-sibling.example.com"}}
 	service.runs = repository
 	input := domain.HostingRouteSwitchInput{IdempotencyKey: "switch", ExpectedLoadedGeneration: 1, TargetReleaseOperationID: "hop_b", Routes: []domain.HostingRouteSwitchSelection{{RouteID: "route_z", ExpectedVersion: 1, ExpectedSelectedReleaseOperationID: "hop_a"}, {RouteID: "route_a", ExpectedVersion: 1, ExpectedSelectedReleaseOperationID: "hop_a"}}}
 	view, err := service.RequestHostingRouteSwitch(admin, resource.ID, input)
@@ -51,10 +55,13 @@ func TestRouteSwitchServiceProjectProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, private := range []string{"proxy_private", "private_run", "private_server", "snapshot", "plan"} {
+	for _, private := range []string{"proxy_private", "private_run", "private_server", "snapshot", "plan", "private_sibling", "private-sibling.example.com", "other.example.com"} {
 		if strings.Contains(string(encoded), private) {
 			t.Fatalf("unsafe response %s", encoded)
 		}
+	}
+	if len(view.Routes) != 1 || view.Switch == nil || len(view.Switch.Routes) != 1 {
+		t.Fatalf("unscoped response %+v", view)
 	}
 	viewer := auth.WithPrincipal(t.Context(), auth.Principal{ID: "usr_viewer", Provider: domain.PrincipalLocal})
 	if _, err = service.RequestHostingRouteSwitch(viewer, resource.ID, input); !errors.Is(err, auth.ErrForbidden) {
@@ -62,5 +69,9 @@ func TestRouteSwitchServiceProjectProjection(t *testing.T) {
 	}
 	if repository.calls != 1 {
 		t.Fatal("unauthorized request reached mutation")
+	}
+	repository.op.Snapshot.VerifiedSwitch = nil
+	if _, err = service.RequestHostingRouteSwitch(admin, resource.ID, input); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("malformed strict response downgraded: %v", err)
 	}
 }

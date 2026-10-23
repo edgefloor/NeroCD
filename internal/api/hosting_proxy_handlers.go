@@ -2,9 +2,15 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"nerocd/internal/domain"
 )
+
+func hostingRouteSwitchReadPath(path string) bool {
+	parts := strings.Split(path, "/")
+	return (len(parts) == 6 || len(parts) == 7 && parts[6] != "") && parts[0] == "" && parts[1] == "api" && parts[2] == "v1" && parts[3] == "resources" && parts[4] != "" && parts[5] == "route-switches"
+}
 
 func proxyResponse(w http.ResponseWriter, status int, result any, err error) {
 	if err != nil {
@@ -70,12 +76,24 @@ func (s *Server) hostingRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hostingRouteSwitch(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Cache-Control", "no-store")
+		options, err := s.app.HostingRouteSwitchOptions(r.Context(), r.PathValue("id"), r.URL.Query().Get("after_operation_id"))
+		proxyResponse(w, http.StatusOK, options, err)
+		return
+	}
 	var in domain.HostingRouteSwitchInput
 	if !decodeBody(w, r, &in) {
 		return
 	}
 	operation, err := s.app.RequestHostingRouteSwitch(r.Context(), r.PathValue("id"), in)
 	proxyResponse(w, http.StatusAccepted, operation, err)
+}
+
+func (s *Server) hostingRouteSwitchOperation(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	operation, err := s.app.HostingRouteSwitchOperation(r.Context(), r.PathValue("id"), r.PathValue("operation_id"))
+	proxyResponse(w, http.StatusOK, operation, err)
 }
 func (s *Server) hostingRoute(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

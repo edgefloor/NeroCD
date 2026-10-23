@@ -11,6 +11,91 @@ import (
 // HostingProxyVerifiedSwitchCapability enables the opt-in verified switch protocol.
 const HostingProxyVerifiedSwitchCapability = "hosting_proxy_verified_switch_v1"
 
+// HostingRouteSwitchTargetPageSize bounds each authoritative target page.
+const HostingRouteSwitchTargetPageSize = 50
+
+// HostingRouteSwitchOptions is explanatory state, never admission authority.
+type HostingRouteSwitchOptions struct {
+	ResourceID           string                     `json:"resource_id"`
+	LoadedGeneration     *int64                     `json:"loaded_generation"`
+	Routes               []HostingRouteSwitchRoute  `json:"routes"`
+	Targets              []HostingRouteSwitchTarget `json:"targets"`
+	Available            bool                       `json:"available"`
+	Reason               string                     `json:"reason"`
+	PendingOperationID   string                     `json:"pending_operation_id,omitempty"`
+	NextAfterOperationID *string                    `json:"next_after_operation_id"`
+}
+
+// HostingRouteSwitchRoute contains only the resource's enabled desired selection.
+type HostingRouteSwitchRoute struct {
+	ID                         string `json:"id"`
+	Hostname                   string `json:"hostname"`
+	PathPrefix                 string `json:"path_prefix"`
+	Version                    int64  `json:"version"`
+	SelectedReleaseOperationID string `json:"selected_release_operation_id"`
+}
+
+// HostingRouteSwitchTarget exposes immutable display identity without engine details.
+type HostingRouteSwitchTarget struct {
+	OperationID           string `json:"operation_id"`
+	Kind                  string `json:"kind"`
+	ResolvedImageIdentity string `json:"resolved_image_identity,omitempty"`
+	SourceGeneration      int64  `json:"source_generation,omitempty"`
+}
+
+// HostingRouteSwitchSummary preserves the requested transition independently of current state.
+type HostingRouteSwitchSummary struct {
+	ExpectedLoadedGeneration int64                      `json:"expected_loaded_generation"`
+	Routes                   []HostingRouteSwitchChange `json:"routes"`
+}
+
+// HostingRouteSwitchChange records one selected route's immutable transition.
+type HostingRouteSwitchChange struct {
+	RouteID                  string `json:"route_id"`
+	BeforeReleaseOperationID string `json:"before_release_operation_id"`
+	AfterReleaseOperationID  string `json:"after_release_operation_id"`
+}
+
+// HostingRouteSwitchOperationView returns a safe view only for an exact resource switch.
+// The snapshot, engine result and other resources are never exposed, including to admins.
+func HostingRouteSwitchOperationView(op HostingProxyOperation, resource, project string, routes []HostingRoute) (HostingProxyOperationView, bool) {
+	v := op.Snapshot.VerifiedSwitch
+	if v == nil || v.Version != 1 || v.ExpectedLoadedGeneration < 1 || len(v.Routes) == 0 || len(v.Routes) > HostingProxyMaxRoutes || len(op.Snapshot.Routes) > HostingProxyMaxRoutes || op.ProjectID != project {
+		return HostingProxyOperationView{}, false
+	}
+	view := HostingProxyOperationView{ID: op.ID, State: op.State, MetadataConflict: op.MetadataConflict, MutationHold: op.MutationHold, RestoreOwnershipHeld: op.RestoreOwnershipHeld, Routes: make([]HostingRoute, 0), Switch: &HostingRouteSwitchSummary{ExpectedLoadedGeneration: v.ExpectedLoadedGeneration, Routes: make([]HostingRouteSwitchChange, 0, len(v.Routes))}}
+	seen := make(map[string]bool, len(v.Routes))
+	for _, prior := range v.Routes {
+		if seen[prior.RouteID] || prior.PriorVersion < 1 || prior.PriorTarget.RouteID != prior.RouteID || !hostingProxyID.MatchString(prior.RouteID) || !hostingProxyID.MatchString(prior.PriorTarget.ReleaseOperationID) || prior.PriorTarget.ResourceID != resource || prior.PriorTarget.ProjectID != project {
+			return HostingProxyOperationView{}, false
+		}
+		seen[prior.RouteID] = true
+		found := false
+		for _, target := range op.Snapshot.Routes {
+			if target.RouteID == prior.RouteID && target.ResourceID == resource && target.ProjectID == project && hostingProxyID.MatchString(target.ReleaseOperationID) {
+				view.Switch.Routes = append(view.Switch.Routes, HostingRouteSwitchChange{RouteID: prior.RouteID, BeforeReleaseOperationID: prior.PriorTarget.ReleaseOperationID, AfterReleaseOperationID: target.ReleaseOperationID})
+				found = true
+				break
+			}
+		}
+		if !found {
+			return HostingProxyOperationView{}, false
+		}
+	}
+	for _, route := range routes {
+		if route.ResourceID == resource {
+			view.Routes = append(view.Routes, route)
+		}
+	}
+	if op.Result != nil {
+		switch op.Result.Outcome {
+		case "applied", "rolled_back", "refused", "uncertain":
+			view.EngineOutcome = op.Result.Outcome
+		}
+	}
+	return view, true
+}
+
 // HostingRouteSwitchInput identifies settled releases and existing route versions.
 // Hostnames, placement, grants and ports are always derived by the controller.
 type HostingRouteSwitchInput struct {

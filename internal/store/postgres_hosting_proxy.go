@@ -1174,10 +1174,15 @@ func proxyHealthyTarget(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, r
 	if err = json.Unmarshal(release.Body, &healthy); err != nil {
 		return domain.HostingProxyRouteTarget{}, err
 	}
-	if (release.State != "healthy" && release.State != "retained") || !release.RetainedRunning || healthy.OperationID != row.SelectedReleaseOperationID || healthy.Snapshot.ResourceID != row.ResourceID || healthy.Snapshot.BindingID != row.BindingID || healthy.Snapshot.DestinationID != p.DestinationID || healthy.Snapshot.ServerID != p.ServerID || healthy.Snapshot.RunnerID != p.RunnerID || healthy.Snapshot.HostPort < 1024 || healthy.Snapshot.HostPort > 65535 || healthy.Snapshot.HostPort == int(p.Configuration.ManagementPort) || domain.ValidateHostingSnapshotRelease(healthy.Snapshot, healthy.Release) != nil || p.DaemonID != "" && p.DaemonID != healthy.Release.DaemonID {
+	if !proxyReleaseQualified(p, row, release.State, release.RetainedRunning, healthy) {
 		return domain.HostingProxyRouteTarget{}, ErrConflict
 	}
 	return domain.HostingProxyRouteTarget{RouteID: row.ID, ProjectID: row.ProjectID, ResourceID: row.ResourceID, BindingID: row.BindingID, ReleaseOperationID: row.SelectedReleaseOperationID, Hostname: row.Hostname, PathPrefix: row.PathPrefix, HostPort: uint16(healthy.Snapshot.HostPort)}, nil
+}
+
+// proxyReleaseQualified is shared by locked admission and snapshot-only reads.
+func proxyReleaseQualified(p domain.HostingProxy, row sqlcgen.HostingProxyRoute, state string, running bool, healthy domain.HostingHealthy) bool {
+	return (state == "healthy" || state == "retained") && running && healthy.OperationID == row.SelectedReleaseOperationID && healthy.Snapshot.ResourceID == row.ResourceID && healthy.Snapshot.BindingID == row.BindingID && healthy.Snapshot.DestinationID == p.DestinationID && healthy.Snapshot.ServerID == p.ServerID && healthy.Snapshot.RunnerID == p.RunnerID && healthy.Snapshot.HostPort >= 1024 && healthy.Snapshot.HostPort <= 65535 && healthy.Snapshot.HostPort != int(p.Configuration.ManagementPort) && domain.ValidateHostingSnapshotRelease(healthy.Snapshot, healthy.Release) == nil && (p.DaemonID == "" || p.DaemonID == healthy.Release.DaemonID)
 }
 
 func (s *PostgresStore) queueProxyGeneration(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, operationID, project, routeID, actor, key, requestHash string, audit domain.AuditEvent) (domain.HostingProxyOperation, error) {

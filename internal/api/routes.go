@@ -50,6 +50,8 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/routes"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/routes"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/route-switches"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/route-switches"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/route-switches/{operation_id}"},
 	{Method: http.MethodGet, Path: "/api/v1/routes/{id}"},
 	{Method: http.MethodPatch, Path: "/api/v1/routes/{id}"},
 	{Method: http.MethodDelete, Path: "/api/v1/routes/{id}"},
@@ -215,6 +217,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingRoutes
 	case "/api/v1/resources/{id}/route-switches":
 		return s.hostingRouteSwitch
+	case "/api/v1/resources/{id}/route-switches/{operation_id}":
+		return s.hostingRouteSwitchOperation
 	case "/api/v1/routes/{id}":
 		return s.hostingRoute
 	case "/api/v1/proxy-operations/{id}":

@@ -217,12 +217,14 @@ type HostingProxyOperation struct {
 
 // HostingProxyOperationView contains only an authorized project's route statuses.
 type HostingProxyOperationView struct {
-	MetadataConflict     bool           `json:"metadata_conflict,omitempty"`
-	ID                   string         `json:"id"`
-	State                string         `json:"state"`
-	MutationHold         bool           `json:"mutation_hold"`
-	RestoreOwnershipHeld bool           `json:"restore_ownership_held"`
-	Routes               []HostingRoute `json:"routes"`
+	EngineOutcome        string                     `json:"engine_outcome,omitempty"`
+	Switch               *HostingRouteSwitchSummary `json:"switch,omitempty"`
+	MetadataConflict     bool                       `json:"metadata_conflict,omitempty"`
+	ID                   string                     `json:"id"`
+	State                string                     `json:"state"`
+	MutationHold         bool                       `json:"mutation_hold"`
+	RestoreOwnershipHeld bool                       `json:"restore_ownership_held"`
+	Routes               []HostingRoute             `json:"routes"`
 }
 
 var proxyHostname = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)

@@ -22,6 +22,35 @@ type proxyAuthorityAPIStore struct {
 	calls    int
 }
 
+func TestRouteSwitchReadCacheHeadersPrecedeAuthentication(t *testing.T) {
+	server, _ := newTestServer()
+	for _, test := range []struct {
+		method, path string
+		noStore      bool
+	}{
+		{http.MethodGet, "/api/v1/resources/res_own/route-switches", true},
+		{http.MethodGet, "/api/v1/resources/res_own/route-switches/pop_own", true},
+		{http.MethodGet, "/api/v1/resources/res_own/route-switchess", false},
+		{http.MethodGet, "/api/v1/resources/res_own/route-switches/pop_own/extra", false},
+		{http.MethodGet, "/api/v1/resources/res_own/route-switches/", false},
+		{http.MethodGet, "/api/v1/resources//route-switches", false},
+		{http.MethodGet, "/api/v1/projects/res_own/route-switches", false},
+		{http.MethodPost, "/api/v1/resources/res_own/route-switches", false},
+	} {
+		t.Run(test.method+test.path, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			if (recorder.Header().Get("Cache-Control") == "no-store") != test.noStore {
+				t.Fatalf("cache header status=%d headers=%v", recorder.Code, recorder.Header())
+			}
+			if test.noStore && recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated status=%d", recorder.Code)
+			}
+		})
+	}
+}
+
 func (s *proxyAuthorityAPIStore) check(runner string, authority domain.HostingAuthority) (domain.HostingProxyOperation, error) {
 	s.calls++
 	if runner != "runner_proxy_auth" || authority != s.expected {
@@ -161,6 +190,11 @@ func TestHostingRetainedReleaseAPIMemoryFailsClosed(t *testing.T) {
 		status                    int
 	}{
 		{http.MethodPost, "/route-switches", "", `{}`, 401},
+		{http.MethodGet, "/route-switches", "", "", 401},
+		{http.MethodGet, "/route-switches", viewer, "", 503},
+		{http.MethodGet, "/route-switches", admin, "", 503},
+		{http.MethodGet, "/route-switches/pop_switch", viewer, "", 503},
+		{http.MethodGet, "/route-switches/pop_switch", admin, "", 503},
 		{http.MethodPost, "/route-switches", viewer, `{"idempotency_key":"switch","expected_loaded_generation":1,"target_release_operation_id":"hop_b","routes":[{"route_id":"route_a","expected_version":1,"expected_selected_release_operation_id":"hop_a"}]}`, 403},
 		{http.MethodPost, "/route-switches", admin, `{"idempotency_key":"switch","expected_loaded_generation":1,"target_release_operation_id":"hop_b","routes":[{"route_id":"route_a","expected_version":1,"expected_selected_release_operation_id":"hop_a"}]}`, 503},
 		{http.MethodPost, "/route-switches", admin, `{"idempotency_key":"switch","host_port":18080}`, 400},
@@ -178,6 +212,9 @@ func TestHostingRetainedReleaseAPIMemoryFailsClosed(t *testing.T) {
 		}
 		w := httptest.NewRecorder()
 		server.ServeHTTP(w, r)
+		if test.method == http.MethodGet && strings.HasPrefix(test.path, "/route-switches") && test.token != "" && w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("missing no-store: %v", w.Header())
+		}
 		if w.Code != test.status {
 			t.Fatalf("%s %s status=%d want=%d body=%s", test.method, test.path, w.Code, test.status, w.Body.String())
 		}
