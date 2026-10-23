@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`d29edb3bc8cde064108891f70713423bb57776a3`, 2026-10-23.
+`e097ffa706325f55cab7a7b0416a235a0e9ad151`, 2026-10-23.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -74,8 +74,9 @@ artifact deployment, build output and private Git control-plane contracts:
 | Manual enrollment and readiness | Accepted `0771f1b56befcd30b195c45121dba4d3efeec974`; [qualification contract](server-readiness.md#runtime-verification-fixture), [real gate](../scripts/ci/server-readiness-runtime-gate.sh) | UI enrollment and generated command consumed by compiled native Linux arm64 agent over fixture-CA-verified HTTPS; ready/blocked/stale recovery, viewer denial, administrator role loss and persisted-credential restart; CLI metadata only, Docker API 1.54 and 1 GiB per work/journal root; amd64 compile-only, no runtime qualification; no SSH, production TLS, application deployment or complete A01 |
 | Direct hosting navigation | Source `32ab3bcd259781c565e2a052dfbba320acd9206e`, accepted `43e9c305f71a267b1d201f7849c12a31f8c532d6`; [navigation metadata](../web/app/src/router/metadata.ts), [Home guidance](../web/app/src/pages/HomeView.tsx), [browser scenarios](../web/app/tests/browser/hosting-navigation.spec.ts) | Home, Projects and Servers and runners lead the Hosting group; advanced workflows remain available; direct image/Git application guidance requires no Task; saving configuration, heartbeat and a saved route do not establish deployment, readiness or HTTPS |
 | Verified existing-route switch engine | Accepted `99250c2634109cdd2008c56dae1b1740d377c0a1`; [engine contract](hosting-route-switch.md), [runtime fixture](../internal/hostingproxy/runtime_test.go) | Opt-in existing-route port switches verify old/new HTTP and trusted TLS, preserve unrelated routes and verify rollback; cancellation or unverified rollback stays `Uncertain`; controller/API admission and agent capability negotiation were absent at this engine checkpoint; accepted controller evidence is below; automatic deployment orchestration remains pending; no production ACME or complete A11/A20 |
-| Guarded verified-route controller | Accepted `5687b88465839b8e341181ba8b47f54dc17f006c`; [request, authority and recovery contract](hosting-route-switch.md), [compiled runner fixture](../internal/api/hosting_route_switch_runtime_integration_test.go) | Migration 0058; resource POST selects exact healthy or retained-running releases for existing routes; explicit agent capability/opt-in, verified HTTP/trusted TLS, prior-generation rollback, lost-response idempotency and cancellation/replay holds; current authority, expiry and revocation checks; metadata conflicts remain held without a reconciliation API; bounded R21/R25/R28 and A11/A20 evidence, not full R21, draining or automatic data rollback |
+| Guarded verified-route controller | Accepted `5687b88465839b8e341181ba8b47f54dc17f006c`; [request, authority and recovery contract](hosting-route-switch.md), [compiled runner fixture](../internal/api/hosting_route_switch_runtime_integration_test.go) | Migration 0058; resource POST selects exact healthy or retained-running releases for existing routes; explicit agent capability/opt-in, verified HTTP/trusted TLS, prior-generation rollback, lost-response idempotency and cancellation/replay holds; current authority, expiry and revocation checks; metadata conflicts remained held without reconciliation at this controller checkpoint; bounded R21/R25/R28 and A11/A20 evidence, not full R21, draining or automatic data rollback |
 | Route-switch reads and operator UI | Read API accepted `fa93d16fa09d5a7929581d5acb206029be9752d0`; UI source `1a555c514a23241bca34224380008dc42edcce49`, accepted `1c6ddb414d984372bb1f081fb6ff23db8bd81f88`; [operator contract](hosting-route-switch.md) | Resource-scoped authoritative options, explicit review, frozen retry intent, pending-operation recovery and visible holds; compiled controller 33.98 seconds/browser 19.6 seconds plus 111 normal browser cases; native Linux arm64 and local test CA; unresolved metadata conflicts remain held |
+| Completed metadata-conflict recovery API | Source `93305f8c528b8a3990ec79178584f4e170bada02`, accepted `e097ffa706325f55cab7a7b0416a235a0e9ad151`; [administrator recovery contract](hosting-proxy-recovery.md) | Migration 0059; current server administrator/control-project owner reviews eligible completed rolled-back/refused conflicts; 30-second plans and idempotent apply preserve original receipts, disabled/revoked state and release protection, settle only the matching hold and queue authorized convergence; concurrent retries return one resolution; uncertain/unfinished outcomes and generic unlock remain unsupported; administrator UI remains pending |
 | Compiled Vite SPA qualification | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Exact pinned source compiles with Node 22.22.0, Bun 1.3.6, Vite 8.2.2 and Caddy 2.10.2; runtime 141.87 seconds/default regression 42.72 seconds; genuine parser failure preserves the prior serving application; HTTP browser bridge and independent TLS probe are separate evidence; earlier unexplained failures remain a reliability limit; not complete A04 or production ACME |
 
 Private Railpack qualification is now accepted at
@@ -91,12 +92,21 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
-Route-switch metadata-conflict reconciliation remains unaccepted. Its recovery
-candidate failed specification review on concurrent replay and is under repair;
-migration 0059 is not accepted. The accepted migration inventory remains 0058.
-The baseline SQL-policy failure in route-switch read source was confirmed at
-`fa93d16fa09d5a7929581d5acb206029be9752d0`; its repair candidate remains pending.
-No clean whole-suite result is claimed here. R17 automatic deployment, protected
+Bounded completed metadata-conflict recovery is accepted at
+`e097ffa706325f55cab7a7b0416a235a0e9ad151`, including migration 0059. Source
+`93305f8c528b8a3990ec79178584f4e170bada02` passed all three independent reviews.
+The earlier concurrent-replay specification failure remains historical; the
+accepted repair returns the same durable resolution after serialization retries.
+Actual compiled-runner recovery passed in 24.89 seconds in
+`/tmp/nerocd-metadata-replay-final-runtime.log`; PostgreSQL recovery race checks
+passed in 45.390 seconds in `/tmp/nerocd-metadata-replay-final-race.log`.
+The historical SQL-policy failure at `fa93d16fa09d5a7929581d5acb206029be9752d0`
+was repaired through SQLc query extraction. Combined and accepted-main SQL
+architecture checks passed in `/tmp/nerocd-recovery-combined-sql-policy.log` and
+`/tmp/nerocd-main-recovery-sql-policy.log`. Main's 189-route contract and 74 served
+assets passed in `/tmp/nerocd-main-recovery-contract.log` and
+`/tmp/nerocd-main-recovery-served.log`. No fresh whole-suite or production TLS
+result is claimed. Recovery administrator UI, R17 automatic deployment, protected
 plans, SSH, production TLS, stateful hosting and remaining parity stay open.
 
 Controller qualification at `b1e42f53d06af36c086d5a8160dba4c17bced8c9`
@@ -338,7 +348,7 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | Inputs without Git | C2, C3, C8 | partial: public-image API/UI deployment freezes selected output without a repository; stored-Dockerfile product input, pasted Compose and catalog sources planned | A05, A15, A21; no-git-source | P04, P08, P11 |
 | Build placement | C4 | partial: controller dispatches to the exact configured enrolled build agent and fixed daemon; registry publication and dedicated-server image delivery planned | A07, A13; registry-push-pull, architecture-mismatch | P02, P05; tags never relocate stateful destinations |
 | Domains and HTTPS | C5 | partial: standalone Traefik TLS engine and authorized whole-generation backend/dispatch; explicitly capable agent execution and managed routing UI accepted with local test-CA fixtures; public DNS/production ACME and additional proxy modes remain unvalidated | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
-| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; bounded GitHub build-on-push accepted; verified route-switch engine and guarded controller accepted; bounded read API/operator UI accepted; conflict reconciliation, automatic deployment orchestration and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
+| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; bounded GitHub build-on-push accepted; verified route-switch engine and guarded controller accepted; bounded read API/operator UI accepted; bounded completed-conflict recovery API accepted; recovery administrator UI, automatic deployment orchestration and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | planned: managed volumes, directories, managed files and external host files | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
 | Databases | C7 | planned: engine-specific lifecycle; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
