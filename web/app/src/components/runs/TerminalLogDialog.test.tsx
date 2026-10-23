@@ -1,3 +1,4 @@
+import { Profiler } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { TerminalLogDialog } from "./TerminalLogDialog";
@@ -20,4 +21,17 @@ test("filter resets on reopening and changing runs while the dialog shell stays 
   view.rerender(<TerminalLogDialog {...props} open={false} />);
   view.rerender(<TerminalLogDialog {...props} />);
   expect((screen.getByRole("searchbox", { name: "Filter loaded output" }) as HTMLInputElement).value).toBe("");
+});
+
+
+test("changing run identity never commits the previous run's output filter", () => {
+  const committedFilters: string[] = [];
+  const observe = () => { const field = document.querySelector<HTMLInputElement>('input[type="search"]'); if (field) committedFilters.push(field.value); };
+  const props = { run, logs, open: true, onOpenChange: vi.fn() };
+  const view = render(<Profiler id="terminal" onRender={observe}><TerminalLogDialog {...props} /></Profiler>);
+  fireEvent.change(screen.getByRole("searchbox", { name: "Filter loaded output" }), { target: { value: "missing" } });
+  committedFilters.length = 0;
+  view.rerender(<Profiler id="terminal" onRender={observe}><TerminalLogDialog {...props} run={{ id: "run_two", status: "running" } as never} /></Profiler>);
+  expect(committedFilters.length).toBeGreaterThan(0);
+  expect(committedFilters.every((filter) => filter === "")).toBe(true);
 });
