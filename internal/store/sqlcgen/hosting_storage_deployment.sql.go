@@ -44,6 +44,30 @@ func (q *Queries) StorageDeploymentContinuitySuccessor(ctx context.Context, oper
 	return successor_proxy_operation_id, err
 }
 
+const storageDeploymentInitialHistory = `-- name: StorageDeploymentInitialHistory :one
+SELECT EXISTS(SELECT 1 FROM hosting_operations WHERE resource_id=$1::text OR binding_id=$2::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_materializations WHERE storage_id=$3::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_operation_admissions WHERE storage_id=$3::text)
+OR EXISTS(SELECT 1 FROM hosting_retained_releases WHERE binding_id=$2::text)
+OR EXISTS(SELECT 1 FROM hosting_release_claims WHERE binding_id=$2::text)
+OR EXISTS(SELECT 1 FROM hosting_release_slots WHERE binding_id=$2::text)
+OR EXISTS(SELECT 1 FROM hosting_proxy_routes WHERE resource_id=$1::text OR binding_id=$2::text)
+AS recorded
+`
+
+type StorageDeploymentInitialHistoryParams struct {
+	ResourceID string `json:"resource_id"`
+	BindingID  string `json:"binding_id"`
+	StorageID  string `json:"storage_id"`
+}
+
+func (q *Queries) StorageDeploymentInitialHistory(ctx context.Context, arg StorageDeploymentInitialHistoryParams) (*bool, error) {
+	row := q.db.QueryRow(ctx, storageDeploymentInitialHistory, arg.ResourceID, arg.BindingID, arg.StorageID)
+	var recorded *bool
+	err := row.Scan(&recorded)
+	return recorded, err
+}
+
 const storageDeploymentResource = `-- name: StorageDeploymentResource :one
 SELECT r.id,r.project_id,r.kind,r.source,r.generation FROM resources r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND p.archived_at IS NULL
 `
