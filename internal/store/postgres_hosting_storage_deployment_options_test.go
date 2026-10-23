@@ -4,14 +4,290 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"nerocd/internal/api"
+	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
+	"nerocd/web"
 )
+
+func assertStorageInitialOptions(t *testing.T, view domain.HostingStorageDeploymentOptions, resource domain.Resource, storage domain.HostingStorage) {
+	t.Helper()
+	if !view.Available || view.Reason != "initial_deployment" || view.ResourceID != resource.ID || view.ResourceGeneration != resource.Generation || view.StorageRef == nil || *view.StorageRef != storage.Reference() || view.PreviousHealthyOperationID != nil || view.HostPort != nil || view.ContainerPort != nil || view.Readiness != nil || view.StorageRouteContinuity != nil || view.Routes == nil || len(view.Routes) != 0 {
+		t.Fatalf("initial advice invented settings or failed eligibility: %+v", view)
+	}
+}
+
+func storageInitialFixture(t *testing.T) storageMaterializationFixture {
+	t.Helper()
+	pg, db, resource, _ := hostingStorageFixture(t)
+	runner := "runner_owned_storage"
+	if _, err := db.Exec(t.Context(), `UPDATE runners SET capabilities=array_append(array_append(array_append(capabilities,$2),$3),$4) WHERE id=$1`, runner, domain.RunTypeImageDeploy, domain.HostingOwnedStorageCapability, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	storage := saveHostingStorage(t, pg, resource.ID, hostingStorageInput())
+	return storageMaterializationFixture{pg: pg, db: db, resource: resource, runner: runner, storage: storage}
+}
+
+func TestHostingStorageDeploymentPostgresInitialConstraints(t *testing.T) {
+	for _, test := range []struct{ name, reason, statement string }{
+		{"storage_capability", "runner_ineligible", `UPDATE runners SET capabilities=array_remove(capabilities,'hosting_owned_storage_v1')`},
+		{"restore_without_state", "restore_hold", `INSERT INTO hosting_binding_restore_holds(binding_id) SELECT id FROM resource_bindings`},
+		{"initialized_unknown_writer", "no_previous_healthy", `INSERT INTO hosting_binding_state(binding_id,destination_id,host_port,daemon_id) SELECT id,destination_id,18080,'prior_daemon' FROM resource_bindings`},
+		{"initialized_restore", "restore_hold", `INSERT INTO hosting_binding_state(binding_id,destination_id,host_port,restore_admitted) SELECT id,destination_id,18080,false FROM resource_bindings`},
+		{"malformed_healthy", "stale_storage", `INSERT INTO hosting_binding_state(binding_id,destination_id,host_port,healthy) SELECT id,destination_id,18080,'{}'::jsonb FROM resource_bindings`},
+		{"queued_without_state", "busy", `INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,state,created_by) SELECT 'hop_initial_history',r.project_id,r.id,b.id,'history','sha256:'||repeat('a',64),'queued','usr_bootstrap' FROM resources r JOIN resource_bindings b ON b.resource_id=r.id`},
+		{"unknown_without_state", "busy", `INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,state,created_by) SELECT 'hop_initial_history',r.project_id,r.id,b.id,'history','sha256:'||repeat('a',64),'reconciliation_required','usr_bootstrap' FROM resources r JOIN resource_bindings b ON b.resource_id=r.id`},
+		{"canceled_history_without_state", "no_previous_healthy", `INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,state,created_by) SELECT 'hop_initial_history',r.project_id,r.id,b.id,'history','sha256:'||repeat('a',64),'canceled','usr_bootstrap' FROM resources r JOIN resource_bindings b ON b.resource_id=r.id`},
+		{"failed_history_without_state", "no_previous_healthy", `INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,state,created_by) SELECT 'hop_initial_history',r.project_id,r.id,b.id,'history','sha256:'||repeat('a',64),'failed','usr_bootstrap' FROM resources r JOIN resource_bindings b ON b.resource_id=r.id`},
+		{"port_history_without_state", "no_previous_healthy", `INSERT INTO hosting_release_slots(destination_id,host_port,binding_id) SELECT destination_id,18080,id FROM resource_bindings`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := storageInitialFixture(t)
+			initial, err := f.pg.HostingStorageDeploymentOptions(t.Context(), f.resource.ID, "usr_bootstrap")
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertStorageInitialOptions(t, initial, f.resource, f.storage)
+			if _, err = f.db.Exec(t.Context(), test.statement); err != nil {
+				t.Fatal(err)
+			}
+			view, err := f.pg.HostingStorageDeploymentOptions(t.Context(), f.resource.ID, "usr_bootstrap")
+			if err != nil || view.Available || view.Reason != test.reason || view.PreviousHealthyOperationID != nil || view.HostPort != nil || view.ContainerPort != nil || view.Readiness != nil || view.StorageRouteContinuity != nil {
+				t.Fatalf("unsafe initial advice %+v %v", view, err)
+			}
+		})
+	}
+	t.Run("materialized_uncertain", func(t *testing.T) {
+		f := newStorageMaterializationFixture(t)
+		ack, err := f.pg.HostingStorageCreateBegin(t.Context(), f.runner, f.request())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.pg.HostingStorageMaterialized(t.Context(), f.runner, f.proof(ack)); err != nil {
+			t.Fatal(err)
+		}
+		f.complete(t, "failed", true)
+		view, err := f.pg.HostingStorageDeploymentOptions(t.Context(), f.resource.ID, "usr_bootstrap")
+		if err != nil || view.Available || view.Reason != "busy" || view.PreviousHealthyOperationID != nil {
+			t.Fatalf("uncertain materialized writer offered initial path %+v %v", view, err)
+		}
+	})
+}
+
+func TestHostingStorageDeploymentPostgresInitialAuthority(t *testing.T) {
+	f := storageInitialFixture(t)
+	ctx := t.Context()
+	if _, err := f.pg.HostingStorageDeploymentOptions(ctx, f.resource.ID, "usr_viewer"); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("foreign viewer %v", err)
+	}
+	if _, err := f.db.Exec(ctx, `INSERT INTO service_accounts(id,project_id,owner_user_id,name,role,status) VALUES('sa_initial_viewer',$1,'usr_bootstrap','initial viewer','viewer','active'),('sa_initial_foreign','proj_security','usr_bootstrap','foreign initial viewer','viewer','active')`, f.resource.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	view, err := f.pg.HostingStorageDeploymentOptions(ctx, f.resource.ID, "sa_initial_viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStorageInitialOptions(t, view, f.resource, f.storage)
+	if _, err = f.pg.HostingStorageDeploymentOptions(ctx, f.resource.ID, "sa_initial_foreign"); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("foreign machine %v", err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE service_accounts SET status='revoked',revoked_at=clock_timestamp() WHERE id='sa_initial_viewer'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.pg.HostingStorageDeploymentOptions(ctx, f.resource.ID, "sa_initial_viewer"); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("revoked machine %v", err)
+	}
+	if _, err = f.pg.RevokeDestinationProject(ctx, f.storage.DestinationID, f.resource.ProjectID, destinationEvent("initial_grant_revoke")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.pg.HostingStorageDeploymentOptions(ctx, f.resource.ID, "usr_bootstrap"); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("revoked destination grant %v", err)
+	}
+}
+
+func TestHostingStorageDeploymentPostgresInitialRepeatableSnapshot(t *testing.T) {
+	f := storageInitialFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	lock, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock := cleanupContinuityTransaction(t, lock)
+	if _, err = lock.Exec(ctx, `LOCK TABLE hosting_storage IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		view domain.HostingStorageDeploymentOptions
+		err  error
+	}
+	done := make(chan result, 1)
+	joined := false
+	go func() {
+		view, readErr := f.pg.HostingStorageDeploymentOptions(ctx, f.resource.ID, "usr_bootstrap")
+		done <- result{view, readErr}
+	}()
+	t.Cleanup(func() {
+		cancel()
+		unlock()
+		if !joined {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("initial advice reader did not join")
+			}
+		}
+	})
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked bool
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='hosting_storage'::regclass AND NOT granted)`).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("initial reader never reached storage snapshot")
+		case <-ticker.C:
+		}
+	}
+	if _, err = f.db.Exec(ctx, `INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,state,created_by) VALUES('hop_initial_concurrent',$1,$2,$3,'concurrent','sha256:'||repeat('a',64),'queued','usr_bootstrap')`, f.resource.ProjectID, f.resource.ID, f.storage.BindingID); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	select {
+	case got := <-done:
+		joined = true
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		assertStorageInitialOptions(t, got.view, f.resource, f.storage)
+	case <-ctx.Done():
+		t.Fatal("initial reader did not finish")
+	}
+	fresh, err := f.pg.HostingStorageDeploymentOptions(t.Context(), f.resource.ID, "usr_bootstrap")
+	if err != nil || fresh.Available || fresh.Reason != "busy" {
+		t.Fatalf("fresh view ignored concurrent operation %+v %v", fresh, err)
+	}
+}
+
+func TestHostingStorageDeploymentPostgresInitialPublicCreation(t *testing.T) {
+	pg, db, _, host, destination := hostingExecutionFixture(t)
+	if _, err := db.Exec(t.Context(), `UPDATE runners SET capabilities=array_append(array_append(capabilities,$2),$3) WHERE id=$1`, host.RunnerID, domain.HostingOwnedStorageCapability, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	service := proxyTokenApplication(t, pg)
+	session, err := service.CreateSession(t.Context(), "admin@example.local", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := api.NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static())
+	request := func(method, path string, body any, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		var raw []byte
+		if body != nil {
+			var marshalErr error
+			raw, marshalErr = json.Marshal(body)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+		}
+		r := httptest.NewRequest(method, path, strings.NewReader(string(raw)))
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		r = r.WithContext(ctx)
+		r.Header.Set("Authorization", "Bearer "+session.Token)
+		if body != nil {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body.String())
+		}
+		return w
+	}
+	var environment domain.ProjectEnvironment
+	w := request(http.MethodPost, "/api/v1/project-environments", app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "fresh uploads"}, http.StatusCreated)
+	if err = json.Unmarshal(w.Body.Bytes(), &environment); err != nil {
+		t.Fatal(err)
+	}
+	var resource domain.Resource
+	w = request(http.MethodPost, "/api/v1/resources", app.ResourceInput{ProjectID: "proj_platform", ProjectEnvironmentID: environment.ID, Name: "fresh uploads", Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: "nginx:1.27"}}}, http.StatusCreated)
+	if err = json.Unmarshal(w.Body.Bytes(), &resource); err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/v1/resources/" + resource.ID
+	request(http.MethodPost, base+"/binding", app.ResourceBindingInput{DestinationID: destination.ID}, http.StatusCreated)
+	var storage domain.HostingStorage
+	w = request(http.MethodPost, base+"/storage", hostingStorageInput(), http.StatusCreated)
+	if err = json.Unmarshal(w.Body.Bytes(), &storage); err != nil {
+		t.Fatal(err)
+	}
+	var states int
+	if err = db.QueryRow(t.Context(), `SELECT count(*) FROM hosting_binding_state`).Scan(&states); err != nil || states != 0 {
+		t.Fatalf("public creation initialized writer state: %d %v", states, err)
+	}
+	snapshot := `SELECT jsonb_build_array((SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM resources x),(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM resource_bindings x),(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM hosting_storage x),(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM hosting_operations x),(SELECT jsonb_agg(to_jsonb(x) ORDER BY binding_id) FROM hosting_binding_state x),(SELECT jsonb_agg(to_jsonb(x) ORDER BY storage_id) FROM hosting_storage_materializations x),(SELECT jsonb_agg(to_jsonb(x) ORDER BY operation_id) FROM hosting_storage_operation_admissions x),(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM audit_events x))::text`
+	var before, after string
+	if err = db.QueryRow(t.Context(), snapshot).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock := cleanupContinuityTransaction(t, lock)
+	if _, err = lock.Exec(t.Context(), `SELECT id FROM resources WHERE id=$1 FOR UPDATE`, resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	w = request(http.MethodGet, base+"/storage-deployment-options", nil, http.StatusOK)
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("initial advice may be cached")
+	}
+	var view domain.HostingStorageDeploymentOptions
+	if err = json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	assertStorageInitialOptions(t, view, resource, storage)
+	if err = db.QueryRow(t.Context(), snapshot).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("initial advice changed application rows")
+	}
+	unlock()
+	// It is advisory. The existing POST still rejects missing user-selected
+	// readiness/ports and rechecks current destination authority.
+	request(http.MethodPost, base+"/deployments", domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, IdempotencyKey: "initial-missing-settings"}, http.StatusBadRequest)
+	if _, err = pg.RevokeDestinationProject(t.Context(), destination.ID, resource.ProjectID, destinationEvent("initial_public_revoke")); err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodPost, base+"/deployments", hostingDeploymentRequest(), http.StatusConflict)
+	request(http.MethodGet, base+"/storage-deployment-options", nil, http.StatusForbidden)
+	grantDestination(t, pg, destination.ID, resource.ProjectID, "initial_public_regrant")
+	w = request(http.MethodPost, base+"/deployments", hostingDeploymentRequest(), http.StatusAccepted)
+	var operation domain.HostingOperation
+	if err = json.Unmarshal(w.Body.Bytes(), &operation); err != nil {
+		t.Fatal(err)
+	}
+	if operation.Snapshot.Storage != storage.Reference() || operation.Snapshot.ContainerPort != 80 || operation.Snapshot.HostPort != 18080 {
+		t.Fatalf("initial request lost chosen settings or storage: %+v", operation)
+	}
+}
 
 func TestHostingStorageDeploymentPostgresReadOnlySnapshot(t *testing.T) {
 	f := newStorageContinuityFixture(t)

@@ -15,3 +15,13 @@ AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_
 
 -- name: StorageDeploymentContinuitySuccessor :one
 SELECT successor_proxy_operation_id FROM hosting_storage_route_continuities WHERE operation_id=$1;
+
+-- name: StorageDeploymentInitialHistory :one
+SELECT EXISTS(SELECT 1 FROM hosting_operations WHERE resource_id=sqlc.arg(resource_id)::text OR binding_id=sqlc.arg(binding_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_materializations WHERE storage_id=sqlc.arg(storage_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_operation_admissions WHERE storage_id=sqlc.arg(storage_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_retained_releases WHERE binding_id=sqlc.arg(binding_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_release_claims WHERE binding_id=sqlc.arg(binding_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_release_slots WHERE binding_id=sqlc.arg(binding_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_proxy_routes WHERE resource_id=sqlc.arg(resource_id)::text OR binding_id=sqlc.arg(binding_id)::text)
+AS recorded;

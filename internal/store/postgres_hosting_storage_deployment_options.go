@@ -68,7 +68,7 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 	view.ResourceGeneration = r.Generation
 	finish := func(reason string) (domain.HostingStorageDeploymentOptions, error) {
 		view.Reason = reason
-		view.Available = reason == "available"
+		view.Available = reason == "available" || reason == "initial_deployment"
 		if !view.Available {
 			view.StorageRouteContinuity = nil
 		}
@@ -125,17 +125,15 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 		return finish("runner_ineligible")
 	}
 	state, err := q.StorageDeploymentBindingState(ctx, placement.BindingID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return finish("no_previous_healthy")
-	}
-	if err != nil {
+	missingState := errors.Is(err, pgx.ErrNoRows)
+	if err != nil && !missingState {
 		return view, err
 	}
 	held, err := q.HostingBindingRestoreHeld(ctx, placement.BindingID)
 	if err != nil {
 		return view, err
 	}
-	if !state.RestoreAdmitted || held {
+	if held || !missingState && !state.RestoreAdmitted {
 		return finish("restore_hold")
 	}
 	busy, err := q.HostingBindingBusy(ctx, placement.BindingID)
@@ -145,9 +143,24 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 	if state.HoldOperationID != nil || busy {
 		return finish("busy")
 	}
+	if missingState {
+		// A binding-state row is first created by deployment admission. Any
+		// durable history without that row leaves prior writer ownership unknown.
+		history, readErr := q.StorageDeploymentInitialHistory(ctx, sqlcgen.StorageDeploymentInitialHistoryParams{ResourceID: resource, BindingID: placement.BindingID, StorageID: storage.ID})
+		if readErr != nil {
+			return view, readErr
+		}
+		if history == nil || *history {
+			return finish("no_previous_healthy")
+		}
+		return finish("initial_deployment")
+	}
 	var healthy domain.HostingHealthy
-	if len(state.Healthy) == 0 || json.Unmarshal(state.Healthy, &healthy) != nil {
+	if len(state.Healthy) == 0 {
 		return finish("no_previous_healthy")
+	}
+	if json.Unmarshal(state.Healthy, &healthy) != nil {
+		return finish("stale_storage")
 	}
 	if healthy.OperationID == "" || healthy.ContainerID == "" || domain.ValidateHostingHealthyStorage(healthy) != nil || healthy.Storage == nil || healthy.Snapshot.Storage != ref || healthy.Snapshot.ResourceID != resource || healthy.Snapshot.BindingID != placement.BindingID || healthy.Snapshot.DestinationID != placement.DestinationID || healthy.Snapshot.ServerID != placement.ServerID || healthy.Snapshot.RunnerID != placement.RunnerID || domain.ValidateHostingSnapshotRelease(healthy.Snapshot, healthy.Release) != nil || state.DaemonID == nil || *state.DaemonID != healthy.Release.DaemonID {
 		return finish("stale_storage")
