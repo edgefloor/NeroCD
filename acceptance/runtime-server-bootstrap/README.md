@@ -146,9 +146,12 @@ the controller's install receipt remains pending. Otherwise the test fails.
 The test then drops and joins the active owned SSH transport, retaining the
 same bounded listener and target port for recovery. This loses the real pending
 response before the test gracefully stops and joins the hosting execution loop.
-The restarted execution loop recovers from the durable intent after real lease
-expiry. Exact manifest, remote operation and systemd InvocationID must survive
-inspection with the hold retained. This proves an execution lifecycle restart
+The test requires a committed uncertain install receipt and retained hold before
+restarting execution. After restart, a fresh authorized API command requests
+operator inspection of that settled uncertain result. Automatic recovery of a
+missing receipt is a separate path. Exact manifest, remote operation and systemd
+InvocationID must survive inspection with the hold and original uncertain receipt
+retained. This proves an execution lifecycle restart
 against the durable database. It does not restart the whole controller process.
 The forwarder binds only loopback, permits four connections, applies 125-second
 connection deadlines, and joins its connections and byte pumps on cancellation.

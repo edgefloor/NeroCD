@@ -572,8 +572,14 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	}
 	finish()
 	before := get(v.ID)
-	if !before.RemoteHold || before.State == "completed" || before.State == "registered" {
-		t.Fatalf("lost SSH response did not retain intent/hold: state=%s hold=%t", before.State, before.RemoteHold)
+	uncertainReceipt := ""
+	for _, progress := range before.Progress {
+		if progress.Action == "install" && progress.Status == "completed" && progress.Outcome == "uncertain" {
+			uncertainReceipt = progress.ReceiptID
+		}
+	}
+	if !before.RemoteHold || before.State != "uncertain" || uncertainReceipt == "" {
+		t.Fatalf("lost SSH response did not retain uncertain receipt/hold: state=%s hold=%t", before.State, before.RemoteHold)
 	}
 	restartCtx, restartCancel := context.WithCancel(ctx)
 	defer restartCancel()
@@ -581,7 +587,10 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	v = wait(v.ID, "execution controller restart inspection", func(v app.ServerBootstrap) bool {
+	// Settled uncertain receipts require a fresh authorized operator inspection.
+	// Automatic recovery covers missing receipts, a different failure boundary.
+	command(get(v.ID), "inspect", nil)
+	v = wait(v.ID, "operator inspection after execution controller restart", func(v app.ServerBootstrap) bool {
 		for _, p := range v.Progress {
 			if p.Action == "inspect" && p.Status == "completed" && p.Outcome == "observed" {
 				return true
@@ -596,7 +605,16 @@ func TestServerBootstrapRuntime(t *testing.T) {
 	if after.InvocationID != installed.InvocationID || after.OperationID != installed.OperationID || after.ManifestSHA256 != installed.ManifestSHA256 || !v.RemoteHold {
 		t.Fatal("restart recovery changed remote identity or released hold")
 	}
-	t.Logf("execution lifecycle restarted against durable DB; retained hold; automatic inspection preserved installation=%s operation=%s InvocationID=%s without reinstall", after.InstallationID, after.OperationID, after.InvocationID)
+	retainedUncertainty := false
+	for _, progress := range v.Progress {
+		if progress.Action == "install" && progress.ReceiptID == uncertainReceipt && progress.Outcome == "uncertain" {
+			retainedUncertainty = true
+		}
+	}
+	if !retainedUncertainty {
+		t.Fatal("operator inspection lost the original uncertain install receipt")
+	}
+	t.Logf("execution lifecycle restarted against durable DB; retained hold and uncertain receipt; operator inspection preserved installation=%s operation=%s InvocationID=%s without reinstall", after.InstallationID, after.OperationID, after.InvocationID)
 	if bytes.Contains(logs.snapshot(), key) || bytes.Contains(logs.snapshot(), []byte("nce_")) {
 		t.Fatal("credential in controller logs")
 	}
