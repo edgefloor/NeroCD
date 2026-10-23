@@ -114,7 +114,7 @@ func TestHostingAutomaticDeploymentBrowser(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	metadata := map[string]string{"base_url": origin, "project_id": f.resource.ProjectID, "environment_name": "push-fixture", "resource_id": f.resource.ID, "expected_commit_a": fixture.Commits[0], "expected_commit_b": fixture.Commits[1], "expected_commit_c": fixture.Commits[2], "step_path": stepPath}
+	metadata := map[string]string{"base_url": origin, "project_id": f.resource.ProjectID, "environment_name": "automatic-applications", "resource_name": f.resource.Name, "resource_id": f.resource.ID, "expected_commit_a": fixture.Commits[0], "expected_commit_b": fixture.Commits[1], "expected_commit_c": fixture.Commits[2], "step_path": stepPath}
 	raw, _ := json.Marshal(metadata)
 	fmt.Printf("AUTO_DEPLOY_BROWSER_READY %s\n", raw)
 	stage := 0

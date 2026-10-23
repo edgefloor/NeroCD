@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 // This scenario requires the registered API/real River/compiled runner fixture.
 // Interception below loses one real committed response; it never fabricates success.
 test.use({ trace: "off", screenshot: "off" });
-type Metadata = { base_url: string; project_id: string; environment_name: string; resource_id: string; expected_commit_a: string; expected_commit_b: string; expected_commit_c: string; step_path: string };
+type Metadata = { base_url: string; project_id: string; environment_name: string; resource_name: string; resource_id: string; expected_commit_a: string; expected_commit_b: string; expected_commit_c: string; step_path: string };
 async function signIn(page: Page, viewer = false) {
   const bootstrap = await page.request.get("/api/v1/bootstrap-status", { timeout: 10_000 });
   expect(bootstrap.status(), "fixture bootstrap status must be available before sign-in").toBe(200);
@@ -20,7 +20,7 @@ async function resourceArticle(page: Page, meta: Metadata) {
   const hosting = page.getByRole("region", { name: "Project hosting", exact: true });
   await hosting.getByRole("combobox", { name: "Hosting project", exact: true }).selectOption(meta.project_id);
   await hosting.getByRole("button", { name: meta.environment_name, exact: true }).click();
-  const article = hosting.getByRole("article").filter({ hasText: "https://github.com/acme/push-fixture.git" });
+  const article = hosting.getByRole("article", { name: meta.resource_name, exact: true }).filter({ hasText: "https://github.com/acme/push-fixture.git" });
   await expect(article).toHaveCount(1); return article;
 }
 test("owner reviews automatic unprotected deployment, B reaches HTTPS automatically, and failed C preserves B", async ({ page, browser }) => {
@@ -46,7 +46,12 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
     console.info("owner options snapshot", JSON.stringify({ elapsed_ms: Date.now() - started, available: options?.available, reason: options?.reason }));
   });
   await signIn(page); await page.setViewportSize({ width: 320, height: 1000 });
+  const initialUIOptions = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}/github-push-policy` && r.request().method() === "GET");
   const article = await resourceArticle(page, meta), panel = article.getByRole("region", { name: "Build on push", exact: true });
+  const initialUIResponse = await initialUIOptions;
+  expect(new URL(initialUIResponse.url()).pathname).toBe(`/api/v1/resources/${meta.resource_id}/github-push-policy`);
+  expect(initialUIResponse.status()).toBe(200);
+  expect((await initialUIResponse.json() as { owner_automatic_deployment_options?: { available: boolean; reason: string } }).owner_automatic_deployment_options).toMatchObject({ available: true, reason: "eligible" });
   const ownerOptions = await page.request.get(`/api/v1/resources/${meta.resource_id}/github-push-policy`);
   expect(ownerOptions.status()).toBe(200);
   const ownerPolicy = await ownerOptions.json() as { can_manage: boolean; owner_automatic_deployment_options?: { available: boolean; reason: string } };
