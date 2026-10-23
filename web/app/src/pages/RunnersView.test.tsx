@@ -1,6 +1,7 @@
+import { Profiler, StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { RunnersView } from "./RunnersView";
+import { RunnerDetailView, RunnersView } from "./RunnersView";
 import type { CreatedRunnerEnrollment } from "@/api";
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 const created = (expires = Date.now() + 600_000): CreatedRunnerEnrollment => ({ enrollment: { id: "enrollment", runner_id: "runner_manual", runner_name: "Manual", tags: [], capabilities: ["compose-deploy"], created_by: "admin", created_at: new Date().toISOString(), expires_at: new Date(expires).toISOString() }, token: "test-only-bootstrap" });
@@ -92,4 +93,21 @@ test("returned runtime log grants enable the collector independently of the subm
   expect(command).toContain("--hosting-runtime-logs --execute");
   expect(command).not.toContain("--hosting-observation");
   expect(command).not.toContain(response.token);
+});
+
+
+test("StrictMode retires runner confirmation before a revoked status commits and never reopens it", () => {
+  const onRevoke = vi.fn();
+  const runner = { id: "runner_one", name: "Runner", status: "active", last_heartbeat_at: new Date().toISOString() };
+  const openCommits: boolean[] = [];
+  const observe = () => openCommits.push(Boolean(document.querySelector('[role="dialog"][data-state="open"]')));
+  const ui = (status: string) => <StrictMode><Profiler id="runner" onRender={observe}><RunnerDetailView runner={{ ...runner, status } as never} canAdmin onRevoke={onRevoke} /></Profiler></StrictMode>;
+  const view = render(ui("active"));
+  fireEvent.click(screen.getByRole("button", { name: "Revoke credential" }));
+  openCommits.length = 0;
+  view.rerender(ui("revoked"));
+  expect(openCommits.every((open) => !open)).toBe(true);
+  view.rerender(ui("active")); view.rerender(ui("active"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(onRevoke).not.toHaveBeenCalled();
 });

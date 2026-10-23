@@ -1,3 +1,4 @@
+import { Profiler, StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
@@ -355,4 +356,23 @@ test.each(["create", "update", "rotate"] as const)("%s synchronously blocks dupl
   serviceAccountsAPI[action].mockRejectedValueOnce(new Error("Retry failure"));
   await act(async () => { actions[action](); });
   expect(serviceAccountsAPI[action]).toHaveBeenCalledTimes(2);
+});
+
+
+test("StrictMode retires a missing account before commit and does not reopen it when metadata returns", async () => {
+  const result = { items: [account], count: 1, total: 1, limit: 10, offset: 0 };
+  serviceAccountsAPI.list.mockResolvedValue(result);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  const openCommits: boolean[] = [];
+  const observe = () => openCommits.push(Boolean(document.querySelector('[role="dialog"][data-state="open"]')));
+  render(<StrictMode><QueryClientProvider client={client}><Profiler id="accounts" onRender={observe}><ServiceAccountsSettingsPanel projects={projects} /></Profiler></QueryClientProvider></StrictMode>);
+  fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+  openCommits.length = 0;
+  await act(async () => { client.setQueryData(["service-accounts", account.project_id, 0], { ...result, items: [] }); });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(openCommits.every((open) => !open)).toBe(true);
+  await act(async () => { client.setQueryData(["service-accounts", account.project_id, 0], result); });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(serviceAccountsAPI.revoke).not.toHaveBeenCalled();
+  client.clear();
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldOff, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -74,16 +74,12 @@ export function UsersSettings({ users, page, loading, busy, readOnly = false, on
   const [offboardError, setOffboardError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  useEffect(() => {
-    if (!selected || loading || submitting) return;
-    const current = users.find((user) => user.id === selected.id);
-    if (!current || current.status !== "active") {
-      setSelected(undefined);
-      setOffboardError("");
-    } else if (current !== selected) {
-      setSelected(current);
-    }
-  }, [users, selected, loading, submitting]);
+  // Retire the selection before committing refreshed users. Keeping the selected
+  // object as the marker makes this converge and prevents a removed user reopening.
+  if (selected && !loading && !submitting) {
+    const current = users.find((user) => user.id === selected.id && user.status === "active");
+    if (current !== selected) setSelected(current);
+  }
   const metadata = page ?? { count: users.length, limit: users.length, offset: 0, total: users.length };
   return (
     <Card className="min-w-0 lg:col-span-2">

@@ -153,12 +153,13 @@ export function RunnerDetailView({ runner, canAdmin, controlsDisabled = false, o
   const [confirming, setConfirming] = useState(false); const [busy, setBusy] = useState(false);
   const [revokeError, setRevokeError] = useState("");
   const revoking = useRef(false);
-  useEffect(() => {
-    if (runner?.status === "revoked") {
-      setConfirming(false);
-      setRevokeError("");
-    }
-  }, [runner?.status]);
+  const revoked = runner?.status === "revoked";
+  const [observedRevoked, setObservedRevoked] = useState(revoked);
+  if (observedRevoked !== revoked) {
+    setObservedRevoked(revoked);
+    setConfirming(false);
+    setRevokeError("");
+  }
   async function revoke() {
     if (revoking.current || !canAdmin || controlsDisabled || !runner || runner.status === "revoked") return;
     revoking.current = true;

@@ -95,16 +95,10 @@ export function ServiceAccountsSettingsPanel({ projects, readOnly = false }: { p
     return true;
   }
   const result = page.data;
-  useEffect(() => {
-    if (!revoking || !result || revokingRef.current) return;
-    const current = result.items.find((account) => account.id === revoking.id);
-    if (!current || current.status !== "active") {
-      setRevoking(undefined);
-      setRevokeError("");
-    } else if (current !== revoking) {
-      setRevoking(current);
-    }
-  }, [result, revoking, revoke.isPending]);
+  // Preserve the frozen account while submitting, then retire invalid selections
+  // before committing refreshed metadata. The selected object is the marker.
+  const currentRevocation = result?.items.find((account) => account.id === revoking?.id && account.status === "active");
+  if (result && !revoke.isPending && currentRevocation !== revoking) setRevoking(currentRevocation);
 
   function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

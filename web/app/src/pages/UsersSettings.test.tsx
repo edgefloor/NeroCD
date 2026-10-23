@@ -1,3 +1,4 @@
+import { Profiler, StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
@@ -191,4 +192,38 @@ test.each(["disabled", "removed"])("offboarding confirmation closes when the sel
   view.rerender(<UsersSettings users={status === "disabled" ? [{ ...activeUser, status: "disabled" }] : []} onOffboard={offboard} />);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(offboard).not.toHaveBeenCalled();
+});
+
+
+test("StrictMode retires a missing offboarding target before commit and never resurrects it", () => {
+  const offboard = vi.fn();
+  const openCommits: boolean[] = [];
+  const observe = () => openCommits.push(Boolean(document.querySelector('[role="dialog"][data-state="open"]')));
+  const ui = (users: User[]) => <StrictMode><Profiler id="users" onRender={observe}><UsersSettings users={users} onOffboard={offboard} /></Profiler></StrictMode>;
+  const view = render(ui([activeUser]));
+  fireEvent.click(screen.getByRole("button", { name: `Offboard ${activeUser.email}` }));
+  openCommits.length = 0;
+  view.rerender(ui([]));
+  expect(openCommits.length).toBeGreaterThan(0);
+  expect(openCommits.every((open) => !open)).toBe(true);
+  view.rerender(ui([activeUser])); view.rerender(ui([activeUser]));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(offboard).not.toHaveBeenCalled();
+});
+
+test("StrictMode keeps an in-flight offboarding guarded across metadata and permission changes", async () => {
+  let resolve!: () => void;
+  const offboard = vi.fn(() => new Promise<void>((done) => { resolve = done; }));
+  const ui = (users: User[], readOnly = false) => <StrictMode><UsersSettings users={users} onOffboard={offboard} readOnly={readOnly} /></StrictMode>;
+  const view = render(ui([activeUser]));
+  fireEvent.click(screen.getByRole("button", { name: `Offboard ${activeUser.email}` }));
+  fireEvent.click(screen.getByRole("button", { name: "Offboard user" }));
+  view.rerender(ui([], true));
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Offboarding..." }).disabled).toBe(true);
+  expect(offboard).toHaveBeenCalledTimes(1);
+  await act(async () => resolve());
+  view.rerender(ui([activeUser]));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(offboard).toHaveBeenCalledTimes(1);
 });
