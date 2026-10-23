@@ -47,7 +47,7 @@ func TestHostingAutomaticDeploymentBrowser(t *testing.T) {
 		}
 		t.Fatal("ordinary-owner identity preparation must retain eligible manual A/HTTPS baseline", reason)
 	}
-	f.api = NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), ServerConfig{PublicOrigin: origin, AllowInsecureCookies: true})
+	browserAPI := NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), ServerConfig{PublicOrigin: origin, AllowInsecureCookies: true})
 	nonce := make([]byte, 16)
 	if _, err = rand.Read(nonce); err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestHostingAutomaticDeploymentBrowser(t *testing.T) {
 		result  chan int
 	}
 	commands := make(chan step)
-	handler := f.api.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := browserAPI.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, e := f.service.CurrentPrincipal(r.Context())
 		if e != nil || principal.ID != "usr_bootstrap" || r.Method != http.MethodPost || r.Header.Get("Origin") != origin || r.Header.Get("X-NeroCD-CSRF") != "1" || r.URL.RawQuery != "" {
 			http.Error(w, "denied", 403)
@@ -100,7 +100,7 @@ func TestHostingAutomaticDeploymentBrowser(t *testing.T) {
 			handler.ServeHTTP(w, r)
 			return
 		}
-		f.api.ServeHTTP(w, r)
+		browserAPI.ServeHTTP(w, r)
 	})}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
