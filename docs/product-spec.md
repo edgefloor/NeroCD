@@ -917,7 +917,7 @@ The implementation campaign changed application code and exercised real infrastr
 | Enrollment command capability repair | Accepted `1c4e7076cde2c79d2aa3d46eb4de2133d72e8a3e`; [command helper](../web/app/src/lib/runner-enrollment-command.ts) | Command uses exact persisted capabilities and exposes configuration prerequisites; does not qualify SSH-assisted enrollment or complete host readiness |
 | Runtime-log control | Decoder repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`, accepted `aa88f62e76a4ef964900db17bf81515e141da03b`; [API](../internal/api/hosting_runtime_logs_handlers.go), [PostgreSQL tests](../internal/store/postgres_hosting_runtime_logs_test.go) | Migration 0055 and 173-route contract; actor sessions/renewal/stop/bounded retained reads; exact runner claims/events, counters, replay gaps and purge; live collector/viewer were absent at that checkpoint and are accepted below |
 | Live runtime logs and embedded viewer | Accepted `3a2b524ca622a7ebfba761c590803d110192cb9f`; [collector contract](hosting-runtime-logs.md), [viewer contract](hosting-runtime-log-viewer.md), [real gate](../acceptance/runtime-hosting-logs/gate.sh) | Bounded R59/A29 evidence: registered settled deployment, fresh Docker stdout/stderr, compiled collector, API and embedded viewer; explicit Follow/30-second demand, retention/source gaps and revocation; `--hosting-runtime-logs` must match persisted `hosting_runtime_logs_v1`; trusted Unix Docker with json-file/local drivers; additional TTY proof has synthetic provenance; raw application output can be sensitive, known bearer redaction is bounded and delivery is not exactly once |
-| Exact trigger-revision prerequisite | Source `21349d3e2492dca8b8b3ca3d99132085889360e8`, accepted `0a9422194e8bff7485e7fb20c02f74418ea2ce51`; [contract and qualification](hosting-build-trigger-revision.md) | Trusted internal caller freezes commit before checkout; runner revision capability enforced; revision-bound idempotency; public/private HTTPS checkout preserves selected commit after branch movement and rejects unavailable commits without fallback; no provider event authentication, webhook installation or deploy-on-push controller |
+| Exact trigger-revision prerequisite | Source `21349d3e2492dca8b8b3ca3d99132085889360e8`, accepted `0a9422194e8bff7485e7fb20c02f74418ea2ce51`; [contract and qualification](hosting-build-trigger-revision.md) | Trusted internal caller freezes commit before checkout; runner revision capability enforced; revision-bound idempotency; public/private HTTPS checkout preserves selected commit after branch movement and rejects unavailable commits without fallback; provider authentication/controller were absent at this checkpoint; the accepted GitHub integration below supersedes that absence; webhook registration remains manual |
 
 Private Railpack qualification is now accepted at
 `a92d100c6ba654e6797432e7ef7a6cfd55527272`, tree
@@ -932,7 +932,26 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
-GitHub build-on-push remains unaccepted work in progress.
+GitHub build-on-push is accepted at
+`be85bf4c4d42c0b2ddb9e9935f2fa74332656bde`. The [operator contract](hosting-github-push.md),
+[real gate](../acceptance/runtime-hosting-github-push/gate.sh) and
+[browser scenario](../web/app/tests/browser/hosting-github-push-builds.spec.ts)
+cover signed GitHub.com pushes for one saved branch, independent current-head
+verification, durable commit deduplication, ignored delayed older deliveries,
+owner policy/recovery and viewer history. Deployment remains manual. A genuine
+failed build preserves the previously serving artifact, checked by HTTP bytes.
+
+The exact-candidate local gate passed with browser 23.7 seconds and compiled
+runner/API runtime 25.21 seconds. It uses a simulated GitHub TLS provider with
+registered API routes, PostgreSQL/River, real checkout and compiled Go CLI Docker
+builds. Evidence is `/tmp/nerocd-push-bootstrap-v3-full-browser.log` and
+`/tmp/nerocd-push-bootstrap-v3-cleanup.log`. Earlier failed gate attempts remain
+historical failures; the final candidate passed. No fresh full application suite
+is claimed on this candidate.
+
+This qualifies bounded R09/R10/R13/R57 and A09 behavior. It does not qualify live
+GitHub webhook configuration, automatic deployment, PR previews, other providers,
+remote image transfer, production ACME, complete A09 or full hosting parity.
 
 The desired-configuration foundation passed actual PostgreSQL and focused race
 checks, 718 frontend tests, the 163-route contract, generated-output checks and
@@ -959,8 +978,8 @@ embedded viewer and manual enrollment log profile are now accepted at
 accepted. The new path provides bounded R59/A29 coverage, not full Coolify parity.
 Exact trigger-revision source `21349d3e2492dca8b8b3ca3d99132085889360e8` is now
 accepted at `0a9422194e8bff7485e7fb20c02f74418ea2ce51`. This is a trusted internal
-build prerequisite. No provider push controller, event authentication or webhook
-installation is supplied.
+build prerequisite. Provider event authentication and push ordering are supplied
+by the accepted GitHub integration above; webhook registration remains manual.
 
 Accepted roll-forward evidence records the real 86.96-second combined log gate
 at `3a2b524ca622a7ebfba761c590803d110192cb9f`, including registered settled

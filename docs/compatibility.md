@@ -69,7 +69,7 @@ artifact deployment, build output and private Git control-plane contracts:
 | Enrollment command capability repair | Accepted `1c4e7076cde2c79d2aa3d46eb4de2133d72e8a3e`; [command helper](../web/app/src/lib/runner-enrollment-command.ts) | Command uses exact persisted capabilities and exposes configuration prerequisites; does not qualify SSH-assisted enrollment or complete host readiness |
 | Runtime-log control | Decoder repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`, accepted `aa88f62e76a4ef964900db17bf81515e141da03b`; [API](../internal/api/hosting_runtime_logs_handlers.go), [PostgreSQL tests](../internal/store/postgres_hosting_runtime_logs_test.go) | Migration 0055 and 173-route contract; actor sessions/renewal/stop/bounded retained reads; exact runner claims/events, counters, replay gaps and purge; live collector/viewer were absent at that checkpoint and are accepted below |
 | Live runtime logs and embedded viewer | Accepted `3a2b524ca622a7ebfba761c590803d110192cb9f`; [collector contract](hosting-runtime-logs.md), [viewer contract](hosting-runtime-log-viewer.md), [real gate](../acceptance/runtime-hosting-logs/gate.sh) | Bounded R59/A29 evidence: registered settled deployment, fresh Docker stdout/stderr, compiled collector, API and embedded viewer; explicit Follow/30-second demand, retention/source gaps and revocation; `--hosting-runtime-logs` must match persisted `hosting_runtime_logs_v1`; trusted Unix Docker with json-file/local drivers; additional TTY proof has synthetic provenance; raw application output can be sensitive, known bearer redaction is bounded and delivery is not exactly once |
-| Exact trigger-revision prerequisite | Source `21349d3e2492dca8b8b3ca3d99132085889360e8`, accepted `0a9422194e8bff7485e7fb20c02f74418ea2ce51`; [contract and qualification](hosting-build-trigger-revision.md) | Trusted internal caller freezes commit before checkout; runner revision capability enforced; revision-bound idempotency; public/private HTTPS checkout preserves selected commit after branch movement and rejects unavailable commits without fallback; no provider event authentication, webhook installation or deploy-on-push controller |
+| Exact trigger-revision prerequisite | Source `21349d3e2492dca8b8b3ca3d99132085889360e8`, accepted `0a9422194e8bff7485e7fb20c02f74418ea2ce51`; [contract and qualification](hosting-build-trigger-revision.md) | Trusted internal caller freezes commit before checkout; runner revision capability enforced; revision-bound idempotency; public/private HTTPS checkout preserves selected commit after branch movement and rejects unavailable commits without fallback; provider authentication/controller were absent at this checkpoint; the accepted GitHub integration below supersedes that absence; webhook registration remains manual |
 
 Private Railpack qualification is now accepted at
 `a92d100c6ba654e6797432e7ef7a6cfd55527272`, tree
@@ -84,7 +84,26 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
-GitHub build-on-push remains unaccepted work in progress.
+GitHub build-on-push is accepted at
+`be85bf4c4d42c0b2ddb9e9935f2fa74332656bde`. The [operator contract](hosting-github-push.md),
+[real gate](../acceptance/runtime-hosting-github-push/gate.sh) and
+[browser scenario](../web/app/tests/browser/hosting-github-push-builds.spec.ts)
+cover signed GitHub.com pushes for one saved branch, independent current-head
+verification, durable commit deduplication, ignored delayed older deliveries,
+owner policy/recovery and viewer history. Deployment remains manual. A genuine
+failed build preserves the previously serving artifact, checked by HTTP bytes.
+
+The exact-candidate local gate passed with browser 23.7 seconds and compiled
+runner/API runtime 25.21 seconds. It uses a simulated GitHub TLS provider with
+registered API routes, PostgreSQL/River, real checkout and compiled Go CLI Docker
+builds. Evidence is `/tmp/nerocd-push-bootstrap-v3-full-browser.log` and
+`/tmp/nerocd-push-bootstrap-v3-cleanup.log`. Earlier failed gate attempts remain
+historical failures; the final candidate passed. No fresh full application suite
+is claimed on this candidate.
+
+This qualifies bounded R09/R10/R13/R57 and A09 behavior. It does not qualify live
+GitHub webhook configuration, automatic deployment, PR previews, other providers,
+remote image transfer, production ACME, complete A09 or full hosting parity.
 
 The desired-configuration foundation passed actual PostgreSQL and focused race
 checks, 718 frontend tests, the 163-route contract, generated-output checks and
@@ -111,8 +130,8 @@ embedded viewer and manual enrollment log profile are now accepted at
 accepted. The new path provides bounded R59/A29 coverage, not full Coolify parity.
 Exact trigger-revision source `21349d3e2492dca8b8b3ca3d99132085889360e8` is now
 accepted at `0a9422194e8bff7485e7fb20c02f74418ea2ce51`. This is a trusted internal
-build prerequisite. No provider push controller, event authentication or webhook
-installation is supplied.
+build prerequisite. Provider event authentication and push ordering are supplied
+by the accepted GitHub integration above; webhook registration remains manual.
 
 Accepted roll-forward evidence records the real 86.96-second combined log gate
 at `3a2b524ca622a7ebfba761c590803d110192cb9f`, including registered settled
@@ -259,12 +278,12 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | --- | --- | --- | --- | --- |
 | Server management | C4, C11 | partial: enrolled server/default destination admission, project grants and immutable desired bindings through API/UI; SSH automation, onboarding-time host capability/readiness validation and full lifecycle planned | A01, A13, A14, A27; server-reenroll, host-key-mismatch, old-agent-capability | P02; persistent Go agent instead of upstream deployment over SSH |
 | Resource organization | C1, C10 | partial: shared project environments, image configuration and per-binding public-image mutation admission through API/UI; additional kinds, team ownership, legacy mappings and broader shared-resource concurrency planned | A08, A34, A35; legacy-membership-preservation | P01; preserve legacy IDs and explicit environment grouping |
-| Git sources | C2 | partial: public HTTPS build UI/runtime and controlled checkout; private HTTPS configuration/grants/credential endpoint/client accepted; private HTTPS runtime and Dockerfile/Railpack static-provider UI accepted; provider integrations and complete source choices planned | A03, A09; provider matrix below | P04, P18; no-Git inputs need no artificial repository |
+| Git sources | C2 | partial: public HTTPS build UI/runtime and controlled checkout; private HTTPS configuration/grants/credential endpoint/client accepted; private HTTPS runtime and Dockerfile/Railpack static-provider UI accepted; bounded GitHub push integration accepted; broader provider integrations and complete source choices planned | A03, A09; provider matrix below | P04, P18; no-Git inputs need no artificial repository |
 | Builds | C2, C12, C13 | partial: production UI/API/River/controller and explicitly configured agent build public and granted private HTTPS Git into immutable local artifacts; same-host artifact deployment and typed build output accepted; private Railpack static-provider UI accepted; full language matrix, remote delivery and shared cache planned | A02–A07; builder and architecture matrices below | P05; bounded public source-to-local-artifact/deployment evidence does not establish the complete hosting or workspace journey |
 | Inputs without Git | C2, C3, C8 | partial: public-image API/UI deployment freezes selected output without a repository; stored-Dockerfile product input, pasted Compose and catalog sources planned | A05, A15, A21; no-git-source | P04, P08, P11 |
 | Build placement | C4 | partial: controller dispatches to the exact configured enrolled build agent and fixed daemon; registry publication and dedicated-server image delivery planned | A07, A13; registry-push-pull, architecture-mismatch | P02, P05; tags never relocate stateful destinations |
 | Domains and HTTPS | C5 | partial: standalone Traefik TLS engine and authorized whole-generation backend/dispatch; explicitly capable agent execution and managed routing UI accepted with local test-CA fixtures; public DNS/production ACME and additional proxy modes remain unvalidated | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
-| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; automatic public traffic switching, provider push controller and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
+| Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; bounded GitHub build-on-push accepted; automatic public traffic switching and hosting approval planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | planned: managed volumes, directories, managed files and external host files | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
 | Databases | C7 | planned: engine-specific lifecycle; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
@@ -299,7 +318,7 @@ Every supported engine/version pair also needs readiness, credential rotation, n
 
 | Provider or input | Reference | Status and delivery | Limits and planned fixtures |
 | --- | --- | --- | --- |
-| GitHub | C2, C6 | planned, first provider in P04 | Public/private Git, installation credentials, branch/commit selection, signed webhook receipts, duplicate/delayed events, PR status and cleanup; git-github, A03, A09, A23 |
+| GitHub | C2, C6 | partial: signed fixed-branch GitHub.com build-on-push accepted with manual deployment; broader integration planned | Public/private Git, installation credentials, branch/commit selection, signed webhook receipts, duplicate/delayed events, PR status and cleanup; git-github, A03, A09, A23 |
 | GitLab | C2, C6 | planned, M3/P18 | Provider-specific credentials, signatures, MR events and status; git-gitlab |
 | Gitea | C2 | planned, M3/P18 | Provider-specific authentication, webhook and preview events; git-gitea |
 | Bitbucket | C2 | planned, M3/P18 | Provider-specific authentication, webhook and preview events; git-bitbucket |

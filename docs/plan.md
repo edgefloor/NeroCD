@@ -83,10 +83,18 @@ See the [runtime limits](hosting-build-runtime.md#enable-private-https-git) and
 [fixture contract](../acceptance/runtime-hosting-local-build/README.md).
 
 The live runtime-log slice has bounded accepted evidence for R58–R60 and A28–A29
-within the limits below. The next H1 slice is GitHub build-on-push on the accepted
-exact-revision prerequisite, serving R09, R10, R13, R57 and A09. Subsequent
-automatic or protected deployment serves R17, R19 and applicable A09/A10 checks.
-Build-on-push alone does not qualify automatic deployment.
+within the limits below. [GitHub build-on-push](hosting-github-push.md) is accepted
+at `be85bf4c4d42c0b2ddb9e9935f2fa74332656bde`. Its signed fixed-branch/current-head checks,
+deduplication, delayed-delivery handling, owner recovery and viewer history
+provide bounded R09/R10/R13/R57 and A09 evidence. The local TLS fixture uses
+registered API/River, compiled CLI and Docker; deployment remains manual.
+See the [accepted evidence and limits](compatibility.md#accepted-foundations-and-evidence).
+
+Next, qualify practical onboarding, host readiness and SSH. Readiness backend
+work is in progress and unaccepted. Follow with automatic deployment and
+protected plans under R17/R19 and applicable A09/A10 checks, then production TLS
+qualification before H2 stateful hosting. Live GitHub webhook configuration,
+PR previews, other providers, remote image transfer and complete A09 remain open.
 Use existing resources, Go application authorization, managed-secret versions,
 PostgreSQL/River and fenced runner execution. Do not require a collaboration
 Task, Workspace, VM or general grant platform.
@@ -159,16 +167,17 @@ remove arbitrary application secrets, and delivery is not exactly once. The earl
 the accepted repair resolves that blocker without establishing complete A29. Disk/CPU metrics remain planned.
 Docker administrators can inspect environment values;
 controlled log scans do not prove arbitrary output is secret-free. Broader value
-inheritance, provider delivery, SSH, webhooks and production TLS qualification
+inheritance, broader provider delivery, SSH, live webhook setup and production TLS qualification
 remain separate hosting work.
 
 Exact trigger-revision source `21349d3e2492dca8b8b3ca3d99132085889360e8` is accepted
 at `0a9422194e8bff7485e7fb20c02f74418ea2ce51`. A trusted internal caller freezes
 the intended commit before first checkout, with capability-gated admission and
 execution, revision-bound idempotency and no branch fallback. Manual public API
-requests retain their existing configured source behavior. Provider event
-authentication, webhook installation and concurrent push ordering remain future
-controller work. See the [contract and qualification](hosting-build-trigger-revision.md).
+requests retain their existing configured source behavior. The accepted GitHub
+integration adds provider event authentication and current-head ordering; webhook
+registration remains manual. See the [revision contract](hosting-build-trigger-revision.md)
+and [push contract](hosting-github-push.md).
 
 ## Hosting-dependency test
 

@@ -99,7 +99,15 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   trusted internal caller are frozen before checkout and require the runner's
   revision capability. Public/private HTTPS checkout builds the selected commit
   even after a branch moves; unavailable commits fail without branch fallback.
-  Provider webhook authentication and deploy-on-push control remain planned.
+  The accepted GitHub build-on-push integration is described below.
+- [GitHub build-on-push](docs/hosting-github-push.md) is accepted at
+  `be85bf4c4d42c0b2ddb9e9935f2fa74332656bde`.
+  Signed GitHub.com pushes for one saved branch require independent current-head
+  verification. Duplicate commits coalesce, delayed older deliveries are ignored,
+  and a failed build preserves the serving release. Owners configure policy and
+  recover deliveries; viewers read history. Deployment remains manual.
+  Local TLS simulation covers registered API/River, compiled CLI and Docker builds,
+  not live GitHub webhook setup, automatic deployment or complete A09.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
@@ -119,11 +127,11 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. The next H1 gaps include the provider-authenticated
-deploy-on-push controller; its exact-revision prerequisite is accepted. Other gaps include onboarding,
-broader credentials, deployment policy, production TLS
-qualification, broader Compose/storage, databases, backups,
-restores, previews, terminals, schedules and notifications.
+and extended compatibility. The next H1 gaps are practical onboarding with host
+readiness and SSH, deployment automation and protected plans, then production TLS
+qualification. Readiness backend work is in progress and unaccepted. Broader
+credentials, Compose/storage, databases, backups, restores, previews, terminals,
+schedules and notifications remain open.
 
 Remote builders, registry delivery, caching, releases, approvals, permissions and
 observations can advance through a named hosting contract. Before any workspace
