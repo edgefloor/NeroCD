@@ -19,6 +19,7 @@ import (
 // An empty configuration preserves legacy runner behavior without proxy effects.
 type ProxyConfig struct {
 	Directory, DockerBinary, DockerSocket, Protocol string
+	VerifiedSwitch                                  bool
 	engineFactory                                   func(hostingproxy.Settings) (managedProxyEngine, error)
 }
 
@@ -36,6 +37,9 @@ func (c ProxyConfig) Enabled() bool { return c.Directory != "" }
 // Validate refuses partial configuration, unsupported protocols and non-Linux hosts.
 // It initializes only the operator-owned state root, never a proxy generation.
 func (c ProxyConfig) Validate() error {
+	if c.VerifiedSwitch && !c.Enabled() {
+		return errors.New("verified proxy switching requires explicit proxy configuration")
+	}
 	if c.Directory == "" && c.DockerBinary == "" && c.DockerSocket == "" && c.Protocol == "" {
 		return nil
 	}
@@ -75,6 +79,9 @@ func prepareProxyEngine(ctx context.Context, config ProxyConfig, plan domain.Hos
 	if !config.Enabled() || config.Protocol != domain.HostingProxyCompilerVersion || domain.ValidateHostingProxyPlan(plan) != nil {
 		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, errors.New("explicit supported proxy configuration and canonical plan are required")
 	}
+	if plan.Snapshot.VerifiedSwitch != nil && !config.VerifiedSwitch {
+		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, errors.New("verified proxy switch is not explicitly enabled")
+	}
 	snapshot := plan.Snapshot
 	for _, id := range []string{snapshot.ProxyID, snapshot.ServerID, snapshot.DestinationID, snapshot.RunnerID} {
 		if len(id) > 80 {
@@ -94,7 +101,7 @@ func prepareProxyEngine(ctx context.Context, config ProxyConfig, plan domain.Hos
 	if config.engineFactory != nil {
 		engine, err = config.engineFactory(settings)
 	} else {
-		engine, err = hostingproxy.New(settings)
+		engine, err = newProxyEngine(settings)
 	}
 	if err != nil {
 		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, err
@@ -103,7 +110,19 @@ func prepareProxyEngine(ctx context.Context, config ProxyConfig, plan domain.Hos
 	if prepared != nil {
 		identity.DaemonID = prepared.DaemonID
 	}
-	local, daemon, err := engine.PrepareManaged(ctx, identity, uint64(snapshot.Generation), uint64(plan.PreviousGeneration), routes)
+	var local hostingproxy.Plan
+	var daemon string
+	if snapshot.VerifiedSwitch == nil {
+		local, daemon, err = engine.PrepareManaged(ctx, identity, uint64(snapshot.Generation), uint64(plan.PreviousGeneration), routes)
+	} else {
+		strict, ok := engine.(interface {
+			PrepareManagedVerifiedSwitch(context.Context, hostingproxy.Identity, uint64, uint64, []hostingproxy.Route, []string) (hostingproxy.Plan, string, error)
+		})
+		if !ok {
+			return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, errors.New("proxy engine does not support verified switching")
+		}
+		local, daemon, err = strict.PrepareManagedVerifiedSwitch(ctx, identity, uint64(snapshot.Generation), uint64(plan.PreviousGeneration), routes, snapshot.VerifiedSwitch.RouteIDs())
+	}
 	if err != nil {
 		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, err
 	}
@@ -184,7 +203,9 @@ func executeProxyClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	} else {
 		result, engineErr = engine.Apply(supervisor.Context(), local)
 	}
-	result = waitProxyTLS(supervisor.Context(), engine, local, result)
+	if op.Plan.Snapshot.VerifiedSwitch == nil {
+		result = waitProxyTLS(supervisor.Context(), engine, local, result)
+	}
 	evidence := proxyResultEvidence(result, *op.Plan, preparation)
 	entry := proxyJournalEntry(supervisor, claim.Lease, a, *op.Plan, preparation, "result")
 	request := domain.HostingProxyCompleteRequest{HostingAuthority: a, ReceiptID: entry.ID, Result: evidence}

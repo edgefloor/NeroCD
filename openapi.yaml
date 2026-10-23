@@ -488,6 +488,37 @@ paths:
           application/json:
             schema:
               "$ref": "#/components/schemas/HostingRouteInput"
+  "/api/v1/resources/{id}/route-switches":
+    post:
+      operationId: "requestHostingRouteSwitch"
+      summary: "Switch existing routes with verified HTTPS and rollback"
+      description: "Requires current resource-project maintainer authority and active destination and hostname grants. Selects only a settled healthy or exact retained-running release on the same binding and pinned daemon. Route IDs, versions and selected releases are compared atomically with the exact loaded generation. Hostnames, paths and ports cannot be supplied. Returns only project-safe operation status. Metadata conflicts retain a visible mutation hold; physical withdrawal can remain deferred under uncertainty."
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/HostingIdentifier"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/HostingRouteSwitchInput"
+      responses:
+        "202":
+          description: "Verified switch admitted or exact idempotent request replayed"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HostingProxyOperationView"
+        "400":
+          "$ref": "#/components/responses/Error"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "503":
+          "$ref": "#/components/responses/Error"
   "/api/v1/routes/{id}":
     get:
       operationId: "getHostingRoute"
@@ -4050,11 +4081,53 @@ components:
           type: "string"
         host_port:
           type: "integer"
+    HostingRouteSwitchInput:
+      type: object
+      additionalProperties: false
+      required: [idempotency_key, expected_loaded_generation, target_release_operation_id, routes]
+      properties:
+        idempotency_key: {type: string, minLength: 1, maxLength: 128}
+        expected_loaded_generation: {type: integer, format: int64, minimum: 1}
+        target_release_operation_id: {"$ref": "#/components/schemas/HostingIdentifier"}
+        routes:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: object
+            additionalProperties: false
+            required: [route_id, expected_version, expected_selected_release_operation_id]
+            properties:
+              route_id: {"$ref": "#/components/schemas/HostingIdentifier"}
+              expected_version: {type: integer, format: int64, minimum: 1}
+              expected_selected_release_operation_id: {"$ref": "#/components/schemas/HostingIdentifier"}
+    HostingVerifiedSwitch:
+      type: object
+      additionalProperties: false
+      required: [version, expected_loaded_generation, prior_applied_proxy_operation_id, routes]
+      properties:
+        version: {type: integer, enum: [1]}
+        expected_loaded_generation: {type: integer, format: int64, minimum: 1}
+        prior_applied_proxy_operation_id: {"$ref": "#/components/schemas/HostingIdentifier"}
+        routes:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [route_id, prior_version, prior_target]
+            properties:
+              route_id: {"$ref": "#/components/schemas/HostingIdentifier"}
+              prior_version: {type: integer, format: int64, minimum: 1}
+              prior_target: {"$ref": "#/components/schemas/HostingProxyRouteTarget"}
     HostingProxySnapshot:
       type: "object"
       additionalProperties: false
       required: ["proxy_id", "server_id", "destination_id", "runner_id", "generation", "configuration", "routes"]
       properties:
+        verified_switch: {"$ref": "#/components/schemas/HostingVerifiedSwitch"}
         proxy_id:
           type: "string"
         server_id:
@@ -4187,6 +4260,9 @@ components:
       additionalProperties: false
       required: ["id", "proxy_id", "project_id", "generation", "state", "snapshot", "mutation_hold", "restore_ownership_held", "created_by"]
       properties:
+        metadata_conflict:
+          type: boolean
+          description: "Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no recovery API exists."
         id:
           type: "string"
         proxy_id:
@@ -4224,6 +4300,9 @@ components:
       additionalProperties: false
       required: ["id", "state", "mutation_hold", "restore_ownership_held", "routes"]
       properties:
+        metadata_conflict:
+          type: boolean
+          description: "Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no recovery API exists."
         id:
           type: "string"
         state:

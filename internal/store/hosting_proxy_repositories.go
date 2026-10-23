@@ -38,3 +38,8 @@ type HostingProxyRepository interface {
 	RunnerProxyComplete(context.Context, string, domain.HostingProxyCompleteRequest) (domain.HostingProxyOperation, error)
 	RunnerProxyStatus(context.Context, string, domain.HostingAuthority) (domain.HostingProxyOperation, error)
 }
+
+// HostingRouteSwitchRepository atomically admits one bounded verified switch.
+type HostingRouteSwitchRepository interface {
+	RequestHostingRouteSwitch(context.Context, string, string, string, domain.HostingRouteSwitchInput, domain.AuditEvent) (domain.HostingProxyOperation, error)
+}

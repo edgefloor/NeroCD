@@ -10,6 +10,23 @@ import (
 	"testing"
 )
 
+func TestVerifiedSwitchIdentityOldAgentDenied(t *testing.T) {
+	for _, tc := range []struct{ flag, capability, valid bool }{{false, false, true}, {true, true, true}, {true, false, false}, {false, true, false}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			caps := []string{domain.RunTypeProxyApply}
+			if tc.capability {
+				caps = append(caps, domain.HostingProxyVerifiedSwitchCapability)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps})
+		}))
+		_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Proxy: true, ProxyVerifiedSwitch: tc.flag})
+		server.Close()
+		if (err == nil) != tc.valid {
+			t.Fatalf("flag=%v capability=%v: %v", tc.flag, tc.capability, err)
+		}
+	}
+}
+
 func TestRuntimeExecutionIdentityRequiresExactLocalConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		caps                       []string
@@ -329,6 +346,35 @@ func TestRuntimeReadinessIdentityRequiresExactConfiguration(t *testing.T) {
 		server.Close()
 		if (err == nil) != tc.valid {
 			t.Fatal(tc, err)
+		}
+	}
+}
+
+func TestReadinessAndVerifiedSwitchIdentityCompose(t *testing.T) {
+	for _, advertisedStrict := range []bool{false, true} {
+		for _, advertisedReadiness := range []bool{false, true} {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				caps := []string{domain.RunTypeProxyApply}
+				if advertisedStrict {
+					caps = append(caps, domain.HostingProxyVerifiedSwitchCapability)
+				}
+				if advertisedReadiness {
+					caps = append(caps, domain.ServerReadinessCapability)
+				}
+				if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_combined", "capabilities": caps}); err != nil {
+					t.Error(err)
+				}
+			}))
+			for _, configuredStrict := range []bool{false, true} {
+				for _, configuredReadiness := range []bool{false, true} {
+					_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Proxy: true, ProxyVerifiedSwitch: configuredStrict, Readiness: configuredReadiness, ReadinessTrustedLoopbackHTTP: true})
+					valid := configuredStrict == advertisedStrict && configuredReadiness == advertisedReadiness
+					if (err == nil) != valid {
+						t.Fatalf("configured strict/readiness=%v/%v advertised=%v/%v err=%v", configuredStrict, configuredReadiness, advertisedStrict, advertisedReadiness, err)
+					}
+				}
+			}
+			server.Close()
 		}
 	}
 }

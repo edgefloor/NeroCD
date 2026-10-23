@@ -77,7 +77,9 @@ func (j *AttemptJournal) AppendBuildLog(at AttemptIdentity, buildID, component, 
 	} else {
 		j.state.BuildLogCursors[index].LastSequence = sequence
 	}
-	j.state.Version = 7
+	if j.state.Version < 7 {
+		j.state.Version = 7
+	}
 	if err = validateJournalState(j.state); err == nil {
 		err = j.persistLocked()
 	}

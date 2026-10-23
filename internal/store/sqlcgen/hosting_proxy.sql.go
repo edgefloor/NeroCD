@@ -40,7 +40,7 @@ func (q *Queries) ProxyAdmit(ctx context.Context, arg ProxyAdmitParams) (int64, 
 const proxyCheckAuthority = `-- name: ProxyCheckAuthority :one
 SELECT l.id FROM run_leases l JOIN task_runs r ON r.id=l.run_id JOIN hosting_proxy_task_targets t ON t.run_id=r.id JOIN hosting_proxy_operations o ON o.id=t.operation_id JOIN hosting_proxies p ON p.id=t.proxy_id JOIN runners agent ON agent.id=t.runner_id
 WHERE l.id=$1 AND l.run_id=$2 AND l.runner_id=$3 AND l.attempt=$4 AND l.fence=$5 AND o.id=$6 AND t.mode='apply' AND t.runner_id=l.runner_id AND t.server_id=p.server_id AND t.destination_id=p.destination_id AND t.runner_id=p.runner_id AND r.run_spec->>'type'='proxy_apply' AND r.run_spec->>'proxy_operation_id'=o.id AND r.run_spec->>'proxy_mode'='apply'
-AND (NOT $7::boolean OR (l.status='active' AND l.expires_at>clock_timestamp() AND o.state NOT IN ('cancel_requested','canceled','superseded') AND r.status NOT IN ('succeeded','failed','canceled') AND agent.status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(agent.capabilities))) FOR UPDATE OF l
+AND (NOT $7::boolean OR (l.status='active' AND l.expires_at>clock_timestamp() AND o.state NOT IN ('cancel_requested','canceled','superseded') AND r.status NOT IN ('succeeded','failed','canceled') AND agent.status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(agent.capabilities) AND (NOT (o.snapshot ? 'verified_switch') OR 'hosting_proxy_verified_switch_v1'=ANY(agent.capabilities)))) FOR UPDATE OF l
 `
 
 type ProxyCheckAuthorityParams struct {
@@ -71,6 +71,7 @@ func (q *Queries) ProxyCheckAuthority(ctx context.Context, arg ProxyCheckAuthori
 const proxyClaimEligible = `-- name: ProxyClaimEligible :one
 SELECT EXISTS(SELECT 1 FROM hosting_proxy_task_targets t JOIN hosting_proxy_operations o ON o.id=t.operation_id JOIN hosting_proxies p ON p.id=t.proxy_id JOIN runners r ON r.id=t.runner_id
 WHERE t.run_id=$1 AND t.runner_id=$2 AND t.mode='apply' AND o.state IN ('dispatched','prepared') AND o.run_id=t.run_id AND p.active_operation_id=o.id AND p.hold_operation_id IS NULL AND r.status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(r.capabilities)
+AND (NOT (o.snapshot ? 'verified_switch') OR 'hosting_proxy_verified_switch_v1'=ANY(r.capabilities))
 AND NOT EXISTS(SELECT 1 FROM hosting_proxy_restore_holds h WHERE h.proxy_id=p.id))
 `
 
@@ -274,6 +275,35 @@ func (q *Queries) ProxyCreateTaskTarget(ctx context.Context, arg ProxyCreateTask
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const proxyDeferredWithdrawals = `-- name: ProxyDeferredWithdrawals :many
+SELECT id FROM hosting_proxy_operations WHERE proxy_id=$1 AND generation>$2 AND state='queued' AND NOT (snapshot ? 'verified_switch') ORDER BY generation
+`
+
+type ProxyDeferredWithdrawalsParams struct {
+	ProxyID    string `json:"proxy_id"`
+	Generation int64  `json:"generation"`
+}
+
+func (q *Queries) ProxyDeferredWithdrawals(ctx context.Context, arg ProxyDeferredWithdrawalsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, proxyDeferredWithdrawals, arg.ProxyID, arg.Generation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const proxyDeleteRoute = `-- name: ProxyDeleteRoute :execrows
@@ -661,6 +691,23 @@ func (q *Queries) ProxyListRoutes(ctx context.Context, proxyID string) ([]Hostin
 	return items, nil
 }
 
+const proxyLoadedAppliedOperation = `-- name: ProxyLoadedAppliedOperation :one
+SELECT o.id FROM hosting_proxy_operations o WHERE o.proxy_id=$1 AND o.generation=$2 AND o.state='applied'
+AND EXISTS(SELECT 1 FROM hosting_proxy_receipts r WHERE r.operation_id=o.id AND r.phase='complete' AND r.body->>'outcome'='applied' AND (r.body->>'loaded_generation')::bigint=o.generation)
+`
+
+type ProxyLoadedAppliedOperationParams struct {
+	ProxyID    string `json:"proxy_id"`
+	Generation int64  `json:"generation"`
+}
+
+func (q *Queries) ProxyLoadedAppliedOperation(ctx context.Context, arg ProxyLoadedAppliedOperationParams) (string, error) {
+	row := q.db.QueryRow(ctx, proxyLoadedAppliedOperation, arg.ProxyID, arg.Generation)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const proxyLock = `-- name: ProxyLock :one
 SELECT id, server_id, destination_id, runner_id, control_project_id, configuration, enabled, desired_generation, loaded_generation, daemon_id, static_hash, active_operation_id, hold_operation_id, created_by, created_at, updated_at FROM hosting_proxies WHERE id=$1 FOR UPDATE
 `
@@ -779,6 +826,16 @@ func (q *Queries) ProxyLockUser(ctx context.Context, id string) (ProxyLockUserRo
 	return i, err
 }
 
+const proxyLockVerifiedSwitchRunner = `-- name: ProxyLockVerifiedSwitchRunner :one
+SELECT id FROM runners WHERE id=$1 AND status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(capabilities) AND 'hosting_proxy_verified_switch_v1'=ANY(capabilities) FOR SHARE
+`
+
+func (q *Queries) ProxyLockVerifiedSwitchRunner(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, proxyLockVerifiedSwitchRunner, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const proxyManagementPortAvailable = `-- name: ProxyManagementPortAvailable :one
 SELECT NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE b.destination_id=$1 AND b.host_port=$2)
 AND NOT EXISTS(SELECT 1 FROM hosting_release_slots s WHERE s.destination_id=$1 AND s.host_port=$2)
@@ -814,32 +871,34 @@ EXISTS(SELECT 1 FROM hosting_proxy_restore_holds h WHERE h.proxy_id=o.proxy_id) 
 (SELECT body FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='prepared') AS prepared,
 (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='complete') AS complete_receipt,
 (SELECT body FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='complete') AS result
+ ,EXISTS(SELECT 1 FROM audit_events WHERE target_id=o.id AND action='hosting.route_switch_metadata_conflict') AS metadata_conflict
 FROM hosting_proxy_operations o WHERE o.id=$1
 `
 
 type ProxyOperationRow struct {
-	ID              string          `json:"id"`
-	ProxyID         string          `json:"proxy_id"`
-	ProjectID       *string         `json:"project_id"`
-	RouteID         *string         `json:"route_id"`
-	Generation      int64           `json:"generation"`
-	IdempotencyKey  string          `json:"idempotency_key"`
-	RequestHash     string          `json:"request_hash"`
-	State           string          `json:"state"`
-	Snapshot        json.RawMessage `json:"snapshot"`
-	SnapshotHash    string          `json:"snapshot_hash"`
-	Plan            []byte          `json:"plan"`
-	PlanHash        *string         `json:"plan_hash"`
-	RunID           *string         `json:"run_id"`
-	CreatedBy       string          `json:"created_by"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	MutationHold    bool            `json:"mutation_hold"`
-	RestoreHeld     bool            `json:"restore_held"`
-	PreparedReceipt json.RawMessage `json:"prepared_receipt"`
-	Prepared        json.RawMessage `json:"prepared"`
-	CompleteReceipt json.RawMessage `json:"complete_receipt"`
-	Result          json.RawMessage `json:"result"`
+	ID               string          `json:"id"`
+	ProxyID          string          `json:"proxy_id"`
+	ProjectID        *string         `json:"project_id"`
+	RouteID          *string         `json:"route_id"`
+	Generation       int64           `json:"generation"`
+	IdempotencyKey   string          `json:"idempotency_key"`
+	RequestHash      string          `json:"request_hash"`
+	State            string          `json:"state"`
+	Snapshot         json.RawMessage `json:"snapshot"`
+	SnapshotHash     string          `json:"snapshot_hash"`
+	Plan             []byte          `json:"plan"`
+	PlanHash         *string         `json:"plan_hash"`
+	RunID            *string         `json:"run_id"`
+	CreatedBy        string          `json:"created_by"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	MutationHold     bool            `json:"mutation_hold"`
+	RestoreHeld      bool            `json:"restore_held"`
+	PreparedReceipt  json.RawMessage `json:"prepared_receipt"`
+	Prepared         json.RawMessage `json:"prepared"`
+	CompleteReceipt  json.RawMessage `json:"complete_receipt"`
+	Result           json.RawMessage `json:"result"`
+	MetadataConflict bool            `json:"metadata_conflict"`
 }
 
 func (q *Queries) ProxyOperation(ctx context.Context, id string) (ProxyOperationRow, error) {
@@ -868,8 +927,20 @@ func (q *Queries) ProxyOperation(ctx context.Context, id string) (ProxyOperation
 		&i.Prepared,
 		&i.CompleteReceipt,
 		&i.Result,
+		&i.MetadataConflict,
 	)
 	return i, err
+}
+
+const proxyPending = `-- name: ProxyPending :one
+SELECT EXISTS(SELECT 1 FROM hosting_proxy_operations o JOIN hosting_proxies p ON p.id=o.proxy_id WHERE o.proxy_id=$1 AND (p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')))
+`
+
+func (q *Queries) ProxyPending(ctx context.Context, proxyID string) (bool, error) {
+	row := q.db.QueryRow(ctx, proxyPending, proxyID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const proxyPinEngine = `-- name: ProxyPinEngine :execrows
@@ -905,6 +976,36 @@ func (q *Queries) ProxyPlacement(ctx context.Context, id string) (ProxyPlacement
 	var i ProxyPlacementRow
 	err := row.Scan(&i.ServerID, &i.RunnerID, &i.DestinationID)
 	return i, err
+}
+
+const proxyPriorReleaseReferences = `-- name: ProxyPriorReleaseReferences :many
+SELECT operation_id, route_id, prior_proxy_operation_id, prior_release_operation_id, prior_version FROM hosting_proxy_switch_prior_references WHERE operation_id=$1 ORDER BY route_id
+`
+
+func (q *Queries) ProxyPriorReleaseReferences(ctx context.Context, operationID string) ([]HostingProxySwitchPriorReference, error) {
+	rows, err := q.db.Query(ctx, proxyPriorReleaseReferences, operationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HostingProxySwitchPriorReference{}
+	for rows.Next() {
+		var i HostingProxySwitchPriorReference
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.RouteID,
+			&i.PriorProxyOperationID,
+			&i.PriorReleaseOperationID,
+			&i.PriorVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const proxyQueuedRecovery = `-- name: ProxyQueuedRecovery :many
@@ -953,6 +1054,32 @@ func (q *Queries) ProxyReceipt(ctx context.Context, arg ProxyReceiptParams) (Hos
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const proxyReferencePriorRelease = `-- name: ProxyReferencePriorRelease :execrows
+INSERT INTO hosting_proxy_switch_prior_references(operation_id,route_id,prior_proxy_operation_id,prior_release_operation_id,prior_version) VALUES($1,$2,$3,$4,$5)
+`
+
+type ProxyReferencePriorReleaseParams struct {
+	OperationID             string `json:"operation_id"`
+	RouteID                 string `json:"route_id"`
+	PriorProxyOperationID   string `json:"prior_proxy_operation_id"`
+	PriorReleaseOperationID string `json:"prior_release_operation_id"`
+	PriorVersion            int64  `json:"prior_version"`
+}
+
+func (q *Queries) ProxyReferencePriorRelease(ctx context.Context, arg ProxyReferencePriorReleaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, proxyReferencePriorRelease,
+		arg.OperationID,
+		arg.RouteID,
+		arg.PriorProxyOperationID,
+		arg.PriorReleaseOperationID,
+		arg.PriorVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const proxyReferenceRelease = `-- name: ProxyReferenceRelease :execrows
@@ -1021,6 +1148,31 @@ func (q *Queries) ProxyResourceTarget(ctx context.Context, id string) (ProxyReso
 	return i, err
 }
 
+const proxyRestoreSwitchRoute = `-- name: ProxyRestoreSwitchRoute :execrows
+UPDATE hosting_proxy_routes SET selected_release_operation_id=$2,version=version+1,updated_at=clock_timestamp()
+WHERE id=$1 AND version=$3 AND selected_release_operation_id=$4
+`
+
+type ProxyRestoreSwitchRouteParams struct {
+	ID                           string `json:"id"`
+	SelectedReleaseOperationID   string `json:"selected_release_operation_id"`
+	Version                      int64  `json:"version"`
+	SelectedReleaseOperationID_2 string `json:"selected_release_operation_id_2"`
+}
+
+func (q *Queries) ProxyRestoreSwitchRoute(ctx context.Context, arg ProxyRestoreSwitchRouteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, proxyRestoreSwitchRoute,
+		arg.ID,
+		arg.SelectedReleaseOperationID,
+		arg.Version,
+		arg.SelectedReleaseOperationID_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const proxyRevokeGrant = `-- name: ProxyRevokeGrant :execrows
 UPDATE hosting_proxy_hostname_grants SET revoked_at=clock_timestamp() WHERE id=$1 AND proxy_id=$2 AND revoked_at IS NULL
 `
@@ -1039,7 +1191,7 @@ func (q *Queries) ProxyRevokeGrant(ctx context.Context, arg ProxyRevokeGrantPara
 }
 
 const proxyRouteOperation = `-- name: ProxyRouteOperation :one
-SELECT o.id FROM hosting_proxy_operations o WHERE o.route_id=$1 OR EXISTS(SELECT 1 FROM hosting_proxy_release_references ref WHERE ref.operation_id=o.id AND ref.route_id=$1) ORDER BY o.generation DESC LIMIT 1
+SELECT o.id FROM hosting_proxy_operations o WHERE o.route_id=$1 OR EXISTS(SELECT 1 FROM hosting_proxy_release_references ref WHERE ref.operation_id=o.id AND ref.route_id=$1) ORDER BY CASE WHEN EXISTS(SELECT 1 FROM hosting_proxies p WHERE p.hold_operation_id=o.id) THEN 0 ELSE 1 END,o.generation DESC LIMIT 1
 `
 
 func (q *Queries) ProxyRouteOperation(ctx context.Context, routeID *string) (string, error) {
@@ -1146,12 +1298,62 @@ func (q *Queries) ProxySettleUnadmitted(ctx context.Context, arg ProxySettleUnad
 	return result.RowsAffected(), nil
 }
 
+const proxyStrictPending = `-- name: ProxyStrictPending :many
+SELECT o.id FROM hosting_proxy_operations o JOIN hosting_proxies p ON p.id=o.proxy_id WHERE o.proxy_id=$1 AND o.snapshot ? 'verified_switch'
+AND (p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')) ORDER BY o.generation
+`
+
+func (q *Queries) ProxyStrictPending(ctx context.Context, proxyID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, proxyStrictPending, proxyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const proxySupersedeUnadmitted = `-- name: ProxySupersedeUnadmitted :execrows
 UPDATE hosting_proxy_operations o SET state='superseded',updated_at=clock_timestamp() WHERE o.proxy_id=$1 AND o.state IN ('queued','dispatched','prepared') AND NOT EXISTS(SELECT 1 FROM hosting_proxy_admissions a WHERE a.operation_id=o.id)
 `
 
 func (q *Queries) ProxySupersedeUnadmitted(ctx context.Context, proxyID string) (int64, error) {
 	result, err := q.db.Exec(ctx, proxySupersedeUnadmitted, proxyID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const proxySwitchRoute = `-- name: ProxySwitchRoute :execrows
+UPDATE hosting_proxy_routes SET selected_release_operation_id=$2,version=version+1,updated_at=clock_timestamp()
+WHERE id=$1 AND version=$3 AND selected_release_operation_id=$4 AND enabled
+`
+
+type ProxySwitchRouteParams struct {
+	ID                           string `json:"id"`
+	SelectedReleaseOperationID   string `json:"selected_release_operation_id"`
+	Version                      int64  `json:"version"`
+	SelectedReleaseOperationID_2 string `json:"selected_release_operation_id_2"`
+}
+
+func (q *Queries) ProxySwitchRoute(ctx context.Context, arg ProxySwitchRouteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, proxySwitchRoute,
+		arg.ID,
+		arg.SelectedReleaseOperationID,
+		arg.Version,
+		arg.SelectedReleaseOperationID_2,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -1196,6 +1398,17 @@ func (q *Queries) ProxyUpdateRoute(ctx context.Context, arg ProxyUpdateRoutePara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const proxyVerifiedSwitchRunnerEligible = `-- name: ProxyVerifiedSwitchRunnerEligible :one
+SELECT EXISTS(SELECT 1 FROM runners WHERE id=$1 AND status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(capabilities) AND 'hosting_proxy_verified_switch_v1'=ANY(capabilities))
+`
+
+func (q *Queries) ProxyVerifiedSwitchRunnerEligible(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, proxyVerifiedSwitchRunnerEligible, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const proxyWithdrawAllRoutes = `-- name: ProxyWithdrawAllRoutes :execrows
