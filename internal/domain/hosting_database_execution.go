@@ -194,6 +194,10 @@ func (p HostingDatabasePlan) Validate(s HostingSnapshot, r HostingRelease) error
 // CompileHostingDatabasePlan pins one private writer and its immutable owned
 // volume. PreviousHealthy is an allowed predecessor, never evidence it stopped.
 func CompileHostingDatabasePlan(s HostingSnapshot, r HostingRelease, previous *HostingHealthy, storage HostingStoragePlan, database HostingDatabasePlan) (HostingApplyPlan, error) {
+	storageID, volumeName := HostingStorageIdentity(s.BindingID)
+	if s.Storage.StorageID != storageID || storage.VolumeName != volumeName {
+		return HostingApplyPlan{}, errors.New("database requires its binding-derived owned volume")
+	}
 	canonical, err := hostingDatabaseCredentials(s, database.Credentials)
 	if err != nil {
 		return HostingApplyPlan{}, err

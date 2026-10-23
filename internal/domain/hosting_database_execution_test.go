@@ -293,3 +293,45 @@ func TestDatabaseExecutionZeroFieldsPreserveLegacyImageHashes(t *testing.T) {
 		t.Fatal("zero database fields changed old image wire", err)
 	}
 }
+
+func TestDatabaseExecutionRejectsSelfRehashedForeignBindingVolume(t *testing.T) {
+	s, r, storage, db := databaseExecutionFixture(t, "postgresql", HostingDatabasePostgresRecipe, 0)
+	original, err := CompileHostingDatabasePlan(s, r, nil, storage, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := s
+	foreign.BindingID = "binding_foreign"
+	foreign.Database.ConfigurationHash, err = HostingDatabaseConfigurationHash(foreign, db.Credentials)
+	if err != nil {
+		t.Fatal("could not construct self-consistent configuration hash", err)
+	}
+	foreignDB := db
+	foreignDB.Reference = foreign.Database
+	foreignDB.NetworkName = HostingDatabaseNetworkName(foreign.BindingID)
+	// Shape and hash consistency cannot establish volume ownership. Keep the
+	// original volume/reference while rehashing every binding-dependent field.
+	if storage.Validate(foreign, r) != nil || foreignDB.Validate(foreign, r) != nil {
+		t.Fatal("fixture is not otherwise self-consistent")
+	}
+	for _, withPrevious := range []bool{false, true} {
+		t.Run(map[bool]string{false: "first_plan", true: "matching_forged_predecessor"}[withPrevious], func(t *testing.T) {
+			forged := HostingApplyPlan{Snapshot: foreign, Release: r, Storage: &storage, Database: &foreignDB, CompilerVersion: HostingDatabaseCompilerVersion}
+			forged.Hash = HostingDocumentHash(forged)
+			if withPrevious {
+				forged.PreviousHealthy = &HostingHealthy{Snapshot: foreign, Release: r, OperationID: "hop_previous", ContainerID: strings.Repeat("d", 64), PlanHash: forged.Hash, Storage: &HostingHealthyStorage{Plan: storage, CreationPlanHash: original.Hash}}
+				forged.Hash = ""
+				forged.Hash = HostingDocumentHash(forged)
+			}
+			if _, err := CompileHostingDatabasePlan(foreign, r, forged.PreviousHealthy, storage, foreignDB); err == nil {
+				t.Error("compiler accepted another binding's derived volume")
+			}
+			if ValidateHostingDatabasePlan(forged) == nil {
+				t.Error("self-rehashed plan validator accepted another binding's derived volume")
+			}
+			if HostingPlanFamilyMatches(foreign, forged) {
+				t.Error("family validator accepted another binding's derived volume")
+			}
+		})
+	}
+}
