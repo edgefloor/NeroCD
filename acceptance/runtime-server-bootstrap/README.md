@@ -1,7 +1,7 @@
 # SSH and systemd target fixture
 
 This fixture qualifies a native Linux target for later SSH-assisted hosting onboarding tests.
-It does not install NeroCD, test a product onboarding command, or qualify a production network.
+It also exercises the bounded owned installer adapter. It does not test complete product onboarding or qualify a production network.
 
 The target runs real systemd as PID 1, OpenSSH, and its own Docker 29.4 daemon with API 1.54.
 The host generates ephemeral Ed25519 host and client keys outside the image.
@@ -14,10 +14,16 @@ It also checks that an unrelated sentinel file, service process, and running con
 No fixture operation targets a live server or a product-managed resource.
 
 The qualifier also compiles and hashes the fixed `internal/serverbootstrap` test binary.
-It invokes only `TestPreparedHostFixture` against the same target and ephemeral key files.
+It invokes the fixed `TestPreparedHostFixture` and `TestInstallerPreparedHostFixture` entry points against the same target and ephemeral key files.
 That integration test calls the real Go SSH probe and checks its prerequisite observations, host mismatch, and wrong-client denial.
 Fixed snapshots before and after prove that the probe leaves the unrelated file, service process, container, and marker unchanged.
-Source and binary hashes bind this evidence to the candidate. This remains prerequisite probing, not installation or enrollment.
+The installer transfers a separately compiled exact Linux agent artifact through the real SSH adapter.
+An additional PostgreSQL container on the same internal bridge supports a real registered HTTPS API inside the target.
+`TestInstallerControlFixture` creates a real authorized enrollment and installs an ephemeral fixture CA in the target trust bundle.
+The first successful consume response is deliberately lost after the real database effect; a successful exact replay is required.
+The test checks enrollment-file transition, credential-mode restart, exact owned cleanup, partial-transfer cleanup, and a symlink collision.
+The fixture compares unrelated sentinels after installation and cleanup as well as after the read-only probe.
+Source and agent/test binary hashes bind the evidence to the candidate; this remains a bounded adapter fixture, not complete onboarding.
 
 ## Run the fixture
 
@@ -30,7 +36,8 @@ python3 -B acceptance/runtime-server-bootstrap/relay_test.py
 bash acceptance/runtime-server-bootstrap/qualify.sh
 ```
 
-The qualification creates a unique image, internal network, Docker-data volume, and container.
+The qualification creates a unique image, internal network, two labelled containers, and two labelled named data volumes.
+PostgreSQL has no published port and uses trust authentication only inside this disposable internal fixture network.
 It writes public evidence to `.cache/nerocd-server-bootstrap.<random>/` and deletes ephemeral keys on exit.
 A successful run ends with the fixture-only pass message, relay shutdown, and successful resource absence checks.
 The evidence includes exact resource identities, Docker configuration, package versions, source hashes, and SSH rejection logs.
@@ -92,4 +99,5 @@ The guard tests inject inspect failures, identity changes, deletion failures, an
 Create-response-loss tests exercise exact-name and owner recovery without assuming a failed inspect proves absence.
 
 The tested architecture is the Docker host's native architecture only.
-Passing this fixture does not qualify NeroCD SSH onboarding, an installer, fresh TLS, data rollback, or production hosting parity.
+Passing this fixture qualifies the bounded adapter on that native prepared target.
+It does not qualify complete NeroCD SSH onboarding, production installation or networking, fresh TLS, data rollback, or production hosting parity.

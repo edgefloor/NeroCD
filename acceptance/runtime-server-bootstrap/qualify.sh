@@ -52,9 +52,10 @@ recover_owned() {
 }
 
 main() {
- image_id=''; container_id=''; network_id=''; volume_id=''; relay_pid=''; result=0
+ image_id=''; container_id=''; network_id=''; volume_id=''; pg_id=''; pg_volume=''; relay_pid=''; result=0
  root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
  work=$(mktemp -d /tmp/nerocd-server-bootstrap.XXXXXXXX)
+ work=$(cd "$work" && pwd -P)
  chmod 0700 "$work"
  # macOS launch environments may deny Bash heredoc files in inherited TMPDIR.
  export TMPDIR="$work"
@@ -71,6 +72,8 @@ main() {
    cat "$evidence/relay.log"
   fi
   if [[ -n "$container_id" ]]; then remove_owned container "$container_id" "$owner" || result=1; fi
+  if [[ -n "$pg_id" ]]; then remove_owned container "$pg_id" "$owner-pg" || result=1; fi
+  if [[ -n "$pg_volume" ]]; then remove_owned volume "$pg_volume" "$owner-pgdata" || result=1; fi
   if [[ -n "$volume_id" ]]; then remove_owned volume "$volume_id" "$owner-data" || result=1; fi
   if [[ -n "$network_id" ]]; then remove_owned network "$network_id" "$owner-net" || result=1; fi
   if [[ -n "$image_id" ]]; then remove_owned image "$image_id" "$owner" || result=1; fi
@@ -84,6 +87,7 @@ main() {
  printf 'fixture-only source=%s owner=%s label=%s\n' "$(git -C "$root" rev-parse HEAD)" "$owner" "$label"
  shasum -a 256 "$root"/acceptance/runtime-server-bootstrap/* >"$evidence/source-sha256.txt"
  shasum -a 256 "$root"/internal/serverbootstrap/*.go "$root/go.mod" "$root/docs/hosting-ssh-bootstrap.md" >>"$evidence/source-sha256.txt"
+ shasum -a 256 "$root"/cmd/nerocd/*.go >>"$evidence/source-sha256.txt"
  go version
  go list -m golang.org/x/crypto
  go test -c -o "$work/serverbootstrap.test" ./internal/serverbootstrap
@@ -96,6 +100,11 @@ main() {
  docker pull "$donor"
  donor_arch=$(docker image inspect --format '{{.Architecture}}' "$donor")
  [[ "$donor_arch" == arm64 || "$donor_arch" == amd64 ]]
+ GOOS=linux GOARCH="$donor_arch" CGO_ENABLED=0 go build -trimpath -o "$work/agent" ./cmd/nerocd
+ GOOS=linux GOARCH="$donor_arch" CGO_ENABLED=0 go test -c -o "$work/target.test" ./internal/serverbootstrap
+ shasum -a 256 "$work/agent" "$work/target.test" >"$evidence/installer-binary-sha256.txt"
+ postgres='postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94'
+ docker pull "$postgres"
  docker save --platform "linux/$donor_arch" --output "$work/sentinel.tar" "$donor"
  donor_id=$(python3 -B "$root/acceptance/runtime-server-bootstrap/sentinel-config.py" "$work/sentinel.tar" "$donor_arch")
  [[ "$donor_id" =~ ^sha256:[a-f0-9]{64}$ ]]
@@ -108,6 +117,22 @@ main() {
   volume_id=$(recover_owned volume "$owner-data") || return 1
   return 1
  fi
+ if ! pg_volume=$(docker volume create --label "$label=$owner" "$owner-pgdata"); then
+  pg_volume=$(recover_owned volume "$owner-pgdata") || return 1
+  return 1
+ fi
+ if ! pg_id=$(docker create --name "$owner-pg" --label "$label=$owner" --network "$network_id" --env POSTGRES_HOST_AUTH_METHOD=trust --mount "type=volume,src=$pg_volume,dst=/var/lib/postgresql/data" "$postgres"); then
+  pg_id=$(recover_owned container "$owner-pg") || return 1
+  return 1
+ fi
+ docker inspect "$pg_id" >"$evidence/postgres-inspect.json"
+ docker volume inspect "$pg_volume" >"$evidence/postgres-volume-inspect.json"
+ printf 'owned PostgreSQL container=%s volume=%s internal-only trust-auth disposable fixture\n' "$pg_id" "$pg_volume"
+ docker start "$pg_id" >/dev/null
+ for _ in $(seq 1 40); do if docker exec "$pg_id" pg_isready -U postgres >/dev/null 2>&1; then break; fi; sleep 0.5; done
+ docker exec "$pg_id" pg_isready -U postgres >/dev/null
+ pg_address=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$pg_id")
+ [[ "$pg_address" =~ ^[0-9.]+$ ]]
  if ! container_id=$(docker create --name "$owner" --label "$label=$owner" --network "$network_id" --cgroupns=private --cap-add SYS_ADMIN --cap-add NET_ADMIN --security-opt seccomp=unconfined --tmpfs /run --tmpfs /run/lock --mount "type=volume,src=$volume_id,dst=/var/lib/docker" "$owner:fixture"); then
   container_id=$(recover_owned container "$owner") || return 1
   return 1
@@ -121,6 +146,8 @@ main() {
  docker cp "$work/host" "$container_id:/fixture/host"
  docker cp "$work/client.pub" "$container_id:/root/.ssh/authorized_keys"
  docker cp "$work/sentinel.tar" "$container_id:/fixture/sentinel.tar"
+ docker cp "$work/target.test" "$container_id:/fixture/target.test"
+ docker cp "$root/db/seeds/dev.sql" "$container_id:/fixture/dev.sql"
  docker start "$container_id" >/dev/null
  local ready=false
  for _ in $(seq 1 40); do
@@ -136,6 +163,14 @@ main() {
   echo 'BLOCKED: real systemd/sshd/private Docker did not become ready under frozen isolation'
   return 1
  fi
+ docker exec --detach --env NEROCD_BOOTSTRAP_INSTALL_CONTROL=owned-systemd-target --env "NEROCD_BOOTSTRAP_DATABASE_URL=postgresql://postgres@$pg_address/postgres?sslmode=disable" "$container_id" /bin/sh -c 'exec /fixture/target.test -test.v -test.run "^TestInstallerControlFixture$" -test.timeout=160s >/fixture/control.log 2>&1'
+ control_ready=false
+ for _ in $(seq 1 100); do if docker exec "$container_id" test -f /fixture/control.ready; then control_ready=true; break; fi; sleep 0.2; done
+ if [[ "$control_ready" != true ]]; then docker cp "$container_id:/fixture/control.log" "$evidence/control.log"; cat "$evidence/control.log"; return 1; fi
+ docker exec "$container_id" /fixture/target.test -test.v -test.run '^TestOwnedFilesystemBoundaries$' -test.timeout=10s >"$evidence/owned-filesystem.log" 2>&1
+ cat "$evidence/owned-filesystem.log"
+ docker cp "$container_id:/fixture/enrollment" "$work/enrollment"
+ chmod 0600 "$work/enrollment"
  local address port fingerprint
  python3 -B "$root/acceptance/runtime-server-bootstrap/relay.py" "$container_id" "$owner" "$work/relay-port" >"$evidence/relay.log" 2>&1 &
  relay_pid=$!
@@ -175,8 +210,19 @@ main() {
  ssh "${ssh_options[@]}" -o "UserKnownHostsFile=$work/known_hosts" -i "$work/client" root@127.0.0.1 "$snapshot_command" >"$evidence/sentinels-after-probe.txt"
  cmp "$evidence/sentinels-before-probe.txt" "$evidence/sentinels-after-probe.txt"
  printf 'actual Go SSH probe preserves file/service/container/marker sentinels\n'
+ NEROCD_BOOTSTRAP_INSTALL_FIXTURE=owned-systemd-target NEROCD_BOOTSTRAP_PROBE_PORT="$port" NEROCD_BOOTSTRAP_PROBE_KEY_FILE="$work/client" NEROCD_BOOTSTRAP_PROBE_FINGERPRINT="$fingerprint" NEROCD_BOOTSTRAP_INSTALL_TOKEN_FILE="$work/enrollment" NEROCD_BOOTSTRAP_INSTALL_ARTIFACT="$work/agent" NEROCD_BOOTSTRAP_INSTALL_ARCH="$donor_arch" "$work/serverbootstrap.test" -test.v -test.run '^TestInstallerPreparedHostFixture$' -test.timeout=110s >"$evidence/go-installer.log" 2>&1 || { cat "$evidence/go-installer.log"; docker cp "$container_id:/fixture/control.log" "$evidence/control.log"; cat "$evidence/control.log"; return 1; }
+ cat "$evidence/go-installer.log"
+ docker exec "$container_id" touch /fixture/control.finish
+ control_done=false
+ for _ in $(seq 1 50); do if docker exec "$container_id" test -f /fixture/control.done; then control_done=true; break; fi; sleep 0.2; done
+ docker cp "$container_id:/fixture/control.log" "$evidence/control.log"
+ cat "$evidence/control.log"
+ [[ "$control_done" == true ]] || return 1
+ ssh "${ssh_options[@]}" -o "UserKnownHostsFile=$work/known_hosts" -i "$work/client" root@127.0.0.1 "$snapshot_command" >"$evidence/sentinels-after-installer.txt"
+ cmp "$evidence/sentinels-before-probe.txt" "$evidence/sentinels-after-installer.txt"
+ printf 'actual installer preserves unrelated file/service/container/marker sentinels\n'
  docker cp "$container_id:/fixture-packages.txt" "$evidence/packages.txt"
- printf 'PASS: native fixture SSH/systemd/private Docker qualification only\n'
+ printf 'PASS: native SSH/systemd/private Docker prerequisite and bounded installer fixture only; same-host fixture TLS\n'
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

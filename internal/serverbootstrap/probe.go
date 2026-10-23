@@ -1,5 +1,5 @@
-// Package serverbootstrap observes prerequisites over an explicitly trusted SSH
-// target. It does not install software, enroll a runner, or authorize deployment.
+// Package serverbootstrap observes prerequisites and manages an exact owned agent
+// over an explicitly trusted SSH target. It does not authorize onboarding or deployment.
 package serverbootstrap
 
 import (

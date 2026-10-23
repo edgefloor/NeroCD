@@ -27,6 +27,8 @@ func run(args []string) error {
 		return runServer(args[1:])
 	case "runner":
 		return runRunner(args[1:])
+	case "bootstrap-agent":
+		return runBootstrapAgent(args[1:])
 	case "health":
 		return callAPI(args[1:], "/api/v1/health")
 	case "ready":
