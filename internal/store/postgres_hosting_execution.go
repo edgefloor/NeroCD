@@ -45,6 +45,11 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			recoveryAttempt, stop := context.WithTimeout(recoveryCtx, 3*time.Second)
 			_ = s.recoverHostingDispatch(recoveryAttempt)
 			stop()
+			// Runtime plaintext retention progresses independently of dispatch
+			// recovery errors, transactions and their timeout budget.
+			purgeAttempt, stopPurge := context.WithTimeout(recoveryCtx, 3*time.Second)
+			_, _ = s.PurgeRuntimeLogs(purgeAttempt)
+			stopPurge()
 			select {
 			case <-recoveryCtx.Done():
 				return

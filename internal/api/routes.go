@@ -3,6 +3,13 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/runtime-log-sessions"},
+	{Method: http.MethodPost, Path: "/api/v1/runtime-log-sessions/{id}/renew"},
+	{Method: http.MethodDelete, Path: "/api/v1/runtime-log-sessions/{id}"},
+	{Method: http.MethodGet, Path: "/api/v1/runtime-log-sessions/{id}/logs"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/runtime-log-sessions/claim"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/runtime-log-sessions/events"},
+
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting-observations/targets"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting-observations/report"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/runtime-status"},
@@ -219,6 +226,18 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingSourceGrants
 	case "/api/v1/resources/{id}/source-grants/{grant_id}/revoke":
 		return s.hostingSourceGrantRevoke
+	case "/api/v1/resources/{id}/runtime-log-sessions":
+		return s.runtimeLogOpen
+	case "/api/v1/runtime-log-sessions/{id}/renew":
+		return s.runtimeLogRenew
+	case "/api/v1/runtime-log-sessions/{id}":
+		return s.runtimeLogClose
+	case "/api/v1/runtime-log-sessions/{id}/logs":
+		return s.runtimeLogPage
+	case "/api/v1/runners/runtime-log-sessions/claim":
+		return s.runtimeLogClaim
+	case "/api/v1/runners/runtime-log-sessions/events":
+		return s.runtimeLogEvents
 	case "/api/v1/runners/hosting-observations/targets":
 		return s.runnerHostingObservationTargets
 	case "/api/v1/runners/hosting-observations/report":

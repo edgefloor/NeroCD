@@ -493,6 +493,46 @@ type HostingRuntimeConfigurationVersion struct {
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
+type HostingRuntimeLogEvent struct {
+	SessionID        string     `json:"session_id"`
+	Sequence         int32      `json:"sequence"`
+	Component        string     `json:"component"`
+	Stream           string     `json:"stream"`
+	Message          string     `json:"message"`
+	SourceTimestamp  *time.Time `json:"source_timestamp"`
+	MessageTruncated bool       `json:"message_truncated"`
+	ReceivedAt       time.Time  `json:"received_at"`
+}
+
+type HostingRuntimeLogSession struct {
+	ID                     string          `json:"id"`
+	ActorID                string          `json:"actor_id"`
+	ResourceID             string          `json:"resource_id"`
+	ProjectID              string          `json:"project_id"`
+	RunnerID               string          `json:"runner_id"`
+	RequestID              string          `json:"request_id"`
+	RequestHash            string          `json:"request_hash"`
+	RequestExpiresAt       time.Time       `json:"request_expires_at"`
+	Target                 json.RawMessage `json:"target"`
+	AuthorityHash          string          `json:"authority_hash"`
+	CredentialHash         string          `json:"credential_hash"`
+	State                  string          `json:"state"`
+	CreatedAt              time.Time       `json:"created_at"`
+	DemandExpiresAt        time.Time       `json:"demand_expires_at"`
+	EndedAt                *time.Time      `json:"ended_at"`
+	PurgeAfter             time.Time       `json:"purge_after"`
+	InstanceID             string          `json:"instance_id"`
+	CollectionEpoch        string          `json:"collection_epoch"`
+	EpochExpiresAt         *time.Time      `json:"epoch_expires_at"`
+	LastBatchSequence      int32           `json:"last_batch_sequence"`
+	LastSequence           int32           `json:"last_sequence"`
+	DeletedThroughSequence int32           `json:"deleted_through_sequence"`
+	SourceGap              bool            `json:"source_gap"`
+	RetainedBytes          int32           `json:"retained_bytes"`
+	RetainedRows           int32           `json:"retained_rows"`
+	Receipt                []byte          `json:"receipt"`
+}
+
 type HostingRuntimeObservation struct {
 	BindingID        string `json:"binding_id"`
 	PendingTarget    []byte `json:"pending_target"`
