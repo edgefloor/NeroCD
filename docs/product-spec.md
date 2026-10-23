@@ -5,7 +5,7 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `a92d100c6ba654e6797432e7ef7a6cfd55527272`, reviewed on 2026-10-23. Native migrations extend through 0055. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `99250c2634109cdd2008c56dae1b1740d377c0a1`, reviewed on 2026-10-23. Native migrations extend through 0057. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -890,7 +890,7 @@ The earlier revision 3 instruction to make Task collaboration and D0–D3 the fi
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0055, including runtime-configuration admission and bounded status controls. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0057, including GitHub push admission and server-readiness diagnostics. The current accepted application assessment is `99250c2634109cdd2008c56dae1b1740d377c0a1`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -918,6 +918,8 @@ The implementation campaign changed application code and exercised real infrastr
 | Runtime-log control | Decoder repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`, accepted `aa88f62e76a4ef964900db17bf81515e141da03b`; [API](../internal/api/hosting_runtime_logs_handlers.go), [PostgreSQL tests](../internal/store/postgres_hosting_runtime_logs_test.go) | Migration 0055 and 173-route contract; actor sessions/renewal/stop/bounded retained reads; exact runner claims/events, counters, replay gaps and purge; live collector/viewer were absent at that checkpoint and are accepted below |
 | Live runtime logs and embedded viewer | Accepted `3a2b524ca622a7ebfba761c590803d110192cb9f`; [collector contract](hosting-runtime-logs.md), [viewer contract](hosting-runtime-log-viewer.md), [real gate](../acceptance/runtime-hosting-logs/gate.sh) | Bounded R59/A29 evidence: registered settled deployment, fresh Docker stdout/stderr, compiled collector, API and embedded viewer; explicit Follow/30-second demand, retention/source gaps and revocation; `--hosting-runtime-logs` must match persisted `hosting_runtime_logs_v1`; trusted Unix Docker with json-file/local drivers; additional TTY proof has synthetic provenance; raw application output can be sensitive, known bearer redaction is bounded and delivery is not exactly once |
 | Exact trigger-revision prerequisite | Source `21349d3e2492dca8b8b3ca3d99132085889360e8`, accepted `0a9422194e8bff7485e7fb20c02f74418ea2ce51`; [contract and qualification](hosting-build-trigger-revision.md) | Trusted internal caller freezes commit before checkout; runner revision capability enforced; revision-bound idempotency; public/private HTTPS checkout preserves selected commit after branch movement and rejects unavailable commits without fallback; provider authentication/controller were absent at this checkpoint; the accepted GitHub integration below supersedes that absence; webhook registration remains manual |
+| Server-readiness diagnostic backend | Accepted `3cb62858e3d1e263d89d5e3c6aecd0a30792e938`; [diagnostic contract](server-readiness.md), [PostgreSQL tests](../internal/store/postgres_server_readiness_test.go) | Migration 0057; bounded runner challenge/report and administrator freshness/authority reads for `basic_image_hosting.v1`; diagnostic API only, no deployment admission or complete A01; agent and UI remain unaccepted pending combined enrollment/browser qualification |
+| Verified existing-route switch engine | Accepted `99250c2634109cdd2008c56dae1b1740d377c0a1`; [engine contract](hosting-route-switch.md), [runtime fixture](../internal/hostingproxy/runtime_test.go) | Opt-in existing-route port switches verify old/new HTTP and trusted TLS, preserve unrelated routes and verify rollback; cancellation or unverified rollback stays `Uncertain`; controller/API admission, agent capability negotiation and automatic traffic orchestration remain pending; no production ACME or complete A11/A20 |
 
 Private Railpack qualification is now accepted at
 `a92d100c6ba654e6797432e7ef7a6cfd55527272`, tree
@@ -1029,7 +1031,8 @@ The main binary hash at that control checkpoint was
 `586e4a754378f9882a447d088f986ef31f389bb92cd4ec90563fd760277d71a6`.
 The asset manifest at that control checkpoint was
 `7e8208110b92416f7ed20984141a0f63690bdd138fab331e028b1c8773ba607a`.
-The current contract has 173 routes and accepted migrations extend through 0055.
+At that runtime-log control checkpoint, the contract had 173 routes and accepted
+migrations extended through 0055.
 Those earlier results establish control prerequisites; accepted live collection
 and viewer evidence is recorded above.
 
