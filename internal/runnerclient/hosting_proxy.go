@@ -95,6 +95,9 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	}
 	proxyCapable, buildCapable, shellCapable, localBuildCapable, privateCapable := false, false, false, false, false
 	for _, capability := range result.Capabilities {
+		if capability == domain.HostingBuildTriggerRevisionCapability && !buildConfigured {
+			return "", errors.New("authenticated trigger revision capability requires build configuration")
+		}
 		privateCapable = privateCapable || capability == domain.HostingPrivateGitCapability
 		proxyCapable = proxyCapable || capability == domain.RunTypeProxyApply
 		buildCapable = buildCapable || capability == domain.HostingBuildTaskType

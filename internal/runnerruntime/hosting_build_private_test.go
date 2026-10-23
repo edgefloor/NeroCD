@@ -238,3 +238,23 @@ func TestPrivateRuntimeTransportPreflightBeforeJournalOrNetwork(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivateBuildTriggerRevisionPinsFirstCheckout(t *testing.T) {
+	e, f, a, at := privateBuildFixture(t)
+	expected := strings.Repeat("a", 40)
+	f.build.Snapshot.TriggerRevision = &domain.HostingBuildTriggerRevision{Version: 1, ExpectedCommit: expected}
+	f.build.Snapshot.InputID = ""
+	f.build.Snapshot.InputID = domain.HostingDocumentHash(f.build.Snapshot)
+	checkout := e.privateCheckout
+	e.privateCheckout = func(c context.Context, s domain.HostingBuildSnapshot, p, frozen string, credential func(context.Context) (SourceCredential, error), accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {
+		if frozen != expected {
+			t.Fatal("private first checkout did not receive trigger commit")
+		}
+		return checkout(c, s, p, frozen, credential, accept, use)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := e.Execute(ctx, a, at); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -67,9 +67,13 @@ func checkoutPublicBuild(ctx context.Context, s domain.HostingBuildSnapshot, pat
 	return checkoutBuildWithCredential(ctx, s, path, frozen, nil, accept, use)
 }
 func checkoutBuildWithCredential(ctx context.Context, s domain.HostingBuildSnapshot, path, frozen string, credential func(context.Context) (SourceCredential, error), accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {
+	frozen, err := buildFrozenCommit(s, frozen)
+	if err != nil {
+		return err
+	}
 	l := s.Policy.SourceLimits
 	var useErr error
-	_, err := WithSourceCheckout(ctx, SourceCheckoutRequest{BuildID: s.BuildID, SourceID: s.Source.ID, InputID: s.InputID, RepositoryURL: s.Source.RepositoryURL, RequestedRef: s.Source.RequestedRef, FrozenCommit: frozen, Policy: s.Source.Policy, CheckoutPath: path, Limits: SourceCheckoutLimits{MaxTreeBytes: l.MaxTreeBytes, MaxWorkspaceBytes: l.MaxWorkspaceBytes, MinFreeBytes: l.MinFreeBytes, MaxEntries: l.MaxEntries, MaxDepth: l.MaxDepth, PollInterval: l.PollInterval}}, credential, func(c context.Context, r SourceReceipt) error {
+	_, err = WithSourceCheckout(ctx, SourceCheckoutRequest{BuildID: s.BuildID, SourceID: s.Source.ID, InputID: s.InputID, RepositoryURL: s.Source.RepositoryURL, RequestedRef: s.Source.RequestedRef, FrozenCommit: frozen, Policy: s.Source.Policy, CheckoutPath: path, Limits: SourceCheckoutLimits{MaxTreeBytes: l.MaxTreeBytes, MaxWorkspaceBytes: l.MaxWorkspaceBytes, MinFreeBytes: l.MinFreeBytes, MaxEntries: l.MaxEntries, MaxDepth: l.MaxDepth, PollInterval: l.PollInterval}}, credential, func(c context.Context, r SourceReceipt) error {
 		return accept(c, domain.HostingBuildSourceReceipt{BuildID: r.BuildID, SourceID: r.SourceID, InputID: r.InputID, Commit: r.Commit, PolicyHash: r.PolicyHash, TreeDigest: r.TreeDigest})
 	}, func(c context.Context, p string, _ SourceReceipt) error {
 		// Preserve the private runtime outcome only after source monitoring and

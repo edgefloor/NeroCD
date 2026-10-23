@@ -141,6 +141,9 @@ func checkRunnerBuildJSON(d *json.Decoder, depth int) error {
 func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, specified bool, capabilities []string) ([]string, error) {
 	private := c != nil && c.PrivateGit != nil
 	for _, capability := range capabilities {
+		if capability == domain.HostingBuildTriggerRevisionCapability && c == nil {
+			return nil, errors.New("trigger revision capability requires explicit build configuration")
+		}
 		if capability == domain.HostingPrivateGitCapability && !private {
 			return nil, errors.New("private Git capability requires explicit configuration")
 		}
@@ -164,6 +167,15 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 	}
 	if c != nil && !buildCap {
 		capabilities = append(capabilities, domain.HostingBuildTaskType)
+	}
+	if c != nil {
+		found := false
+		for _, capability := range capabilities {
+			found = found || capability == domain.HostingBuildTriggerRevisionCapability
+		}
+		if !found {
+			capabilities = append(capabilities, domain.HostingBuildTriggerRevisionCapability)
+		}
 	}
 	if private {
 		found := false

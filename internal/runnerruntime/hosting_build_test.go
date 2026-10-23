@@ -399,3 +399,64 @@ func TestBuildConfigurationValidateSharesConstructorChecks(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildExecutorTriggerRevisionPinsFirstCheckout(t *testing.T) {
+	e, client, a, at := buildFixture(t)
+	expected := strings.Repeat("a", 40)
+	client.build.Snapshot.TriggerRevision = &domain.HostingBuildTriggerRevision{Version: 1, ExpectedCommit: expected}
+	client.build.Snapshot.InputID = ""
+	client.build.Snapshot.InputID = domain.HostingDocumentHash(client.build.Snapshot)
+	checkout := e.checkout
+	calls := 0
+	e.checkout = func(c context.Context, s domain.HostingBuildSnapshot, p, frozen string, accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {
+		calls++
+		if frozen != expected {
+			t.Fatalf("first checkout did not receive trigger commit: %q", frozen)
+		}
+		return checkout(c, s, p, frozen, accept, use)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := e.Execute(ctx, a, at); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || client.build.State != "succeeded" {
+		t.Fatal("trigger build did not finish exactly one checkout")
+	}
+}
+
+func TestBuildFrozenCommitRejectsSubstitution(t *testing.T) {
+	expected := strings.Repeat("a", 40)
+	s := domain.HostingBuildSnapshot{TriggerRevision: &domain.HostingBuildTriggerRevision{Version: 1, ExpectedCommit: expected}}
+	for _, frozen := range []string{"", expected} {
+		if got, err := buildFrozenCommit(s, frozen); err != nil || got != expected {
+			t.Fatal(got, err)
+		}
+	}
+	if _, err := buildFrozenCommit(s, strings.Repeat("b", 40)); err == nil {
+		t.Fatal("later checkout substituted a different commit")
+	}
+	s.TriggerRevision = nil
+	if got, err := buildFrozenCommit(s, "legacy"); err != nil || got != "legacy" {
+		t.Fatal("legacy frozen argument changed")
+	}
+}
+
+func TestBuildExecutorTriggerRevisionRejectsWrongReceipt(t *testing.T) {
+	e, client, a, at := buildFixture(t)
+	client.build.Snapshot.TriggerRevision = &domain.HostingBuildTriggerRevision{Version: 1, ExpectedCommit: strings.Repeat("b", 40)}
+	client.build.Snapshot.InputID = ""
+	client.build.Snapshot.InputID = domain.HostingDocumentHash(client.build.Snapshot)
+	e.engine = buildEngineFunc(func(context.Context, hostingbuild.Request) (hostingbuild.Result, error) {
+		t.Fatal("wrong trigger receipt reached engine")
+		return hostingbuild.Result{}, nil
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := e.Execute(ctx, a, at); err == nil {
+		t.Fatal("wrong trigger receipt accepted")
+	}
+	if client.build.SourceReceipt != nil {
+		t.Fatal("wrong source receipt committed")
+	}
+}
