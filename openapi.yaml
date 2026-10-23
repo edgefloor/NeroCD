@@ -906,6 +906,49 @@ paths:
           application/json:
             schema:
               "$ref": "#/components/schemas/HostingRouteInput"
+  "/api/v1/resources/{id}/storage-deployment-options":
+    get:
+      operationId: getHostingStorageDeploymentOptions
+      summary: Read authoritative storage redeploy choices
+      description: Read authoritative storage redeploy choices. Missing predecessor settings remain null. This read reserves nothing and does not authorize deployment. Existing POST independently rechecks all authority and settings. Current project and destination grant authority are required. Responses are no-store.
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+      responses:
+        "200":
+          description: Authorized read-only resource view
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingStorageDeploymentOptions"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  "/api/v1/resources/{id}/storage-route-continuity/{operation_id}":
+    get:
+      operationId: getHostingStorageRouteContinuityStatus
+      summary: Read resource-only continuity settlement
+      description: Read resource-only continuity settlement. loaded_generation identifies an immutable historical applied proxy receipt. It does not establish current loaded state or HTTPS health. This read cannot reconcile unresolved work. Current project and destination grant authority are required. Responses are no-store.
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+        - {name: operation_id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+      responses:
+        "200":
+          description: Authorized read-only resource view
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingStorageRouteContinuityStatus"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   "/api/v1/resources/{id}/route-switches":
     get:
       operationId: getHostingRouteSwitchOptions
@@ -5293,6 +5336,7 @@ components:
       additionalProperties: false
       required: ["id", "resource_id", "hostname", "path_prefix", "version", "selected_release_operation_id", "enabled", "state", "http_ready", "https_ready", "certificate"]
       properties:
+        reason: {type: string, description: Fixed explanation when storage replacement makes historical route readiness uncertain.}
         id:
           type: "string"
         resource_id:
@@ -5354,6 +5398,80 @@ components:
           type: "string"
         host_port:
           type: "integer"
+    HostingStorageRouteContinuityInput:
+      type: object
+      additionalProperties: false
+      required: [expected_loaded_generation, expected_loaded_proxy_operation_id, routes]
+      description: Existing opt-in for a same-port storage replacement over the complete loaded own-route scope. All selections are compared again at request and mutation admission.
+      properties:
+        expected_loaded_generation: {type: integer, format: int64, minimum: 1}
+        expected_loaded_proxy_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        routes:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: object
+            additionalProperties: false
+            required: [route_id, expected_version, expected_selected_release_operation_id]
+            properties:
+              route_id: {$ref: "#/components/schemas/HostingIdentifier"}
+              expected_version: {type: integer, format: int64, minimum: 1}
+              expected_selected_release_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+    HostingStorageRouteContinuityRef:
+      type: object
+      additionalProperties: false
+      required: [hash]
+      properties:
+        hash: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    HostingStorageDeploymentOptions:
+      type: object
+      additionalProperties: false
+      required: [resource_id, resource_generation, storage_ref, previous_healthy_operation_id, host_port, container_port, readiness, available, reason, routes, storage_route_continuity]
+      properties:
+        resource_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        resource_generation: {type: integer, format: int64, minimum: 1}
+        storage_ref:
+          anyOf: [{$ref: "#/components/schemas/HostingStorageRef"}, {type: "null"}]
+        previous_healthy_operation_id: {type: [string, "null"]}
+        host_port: {type: [integer, "null"], minimum: 1024, maximum: 65535}
+        container_port: {type: [integer, "null"], minimum: 1, maximum: 65535}
+        readiness:
+          anyOf: [{$ref: "#/components/schemas/HostingReadiness"}, {type: "null"}]
+        available: {type: boolean}
+        reason: {type: string, enum: [available, unsupported_source, unbound, storage_unconfigured, runtime_configuration_unsupported, no_previous_healthy, stale_storage, restore_hold, busy, runner_ineligible, proxy_unavailable, no_loaded_generation, stale_routes, https_unavailable, foreign_port_reference, continuity_unresolved]}
+        routes:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, hostname, path_prefix, version, selected_release_operation_id]
+            properties:
+              id: {$ref: "#/components/schemas/HostingIdentifier"}
+              hostname: {type: string}
+              path_prefix: {type: string}
+              version: {type: integer, format: int64, minimum: 1}
+              selected_release_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        storage_route_continuity:
+          description: Copy this existing accepted write field only when available. When available, null means an ordinary redeploy without own public routes.
+          anyOf: [{$ref: "#/components/schemas/HostingStorageRouteContinuityInput"}, {type: "null"}]
+    HostingStorageRouteContinuityStatus:
+      type: object
+      additionalProperties: false
+      required: [resource_id, operation_id, state, reason]
+      properties:
+        resource_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        state: {type: string, enum: [reserved, unresolved, proxy_pending, loaded, proxy_failed, released]}
+        successor_proxy_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        loaded_generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Historical generation backed by a committed applied completion receipt. It does not claim current loaded routes, certificate freshness, or HTTPS health.
+        reason: {type: string, enum: [pending, reconciliation_required, loaded_historical, released]}
     HostingRouteSwitchOptions:
       type: object
       additionalProperties: false
@@ -5686,6 +5804,7 @@ components:
         - container_port
         - readiness
       properties:
+        storage_route_continuity: {$ref: "#/components/schemas/HostingStorageRouteContinuityInput"}
         expected_runtime_configuration_generation:
           type: integer
           format: int64
@@ -6372,6 +6491,7 @@ components:
         - readiness
         - policy_version
       properties:
+        storage_route_continuity: {$ref: "#/components/schemas/HostingStorageRouteContinuityRef"}
         storage: {$ref: '#/components/schemas/HostingStorageRef'}
         runtime_configuration: {$ref: '#/components/schemas/HostingRuntimeConfigurationRef'}
         local_build: {$ref: '#/components/schemas/HostingLocalBuildSource'}

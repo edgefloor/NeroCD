@@ -248,7 +248,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/api/v1/runners/hosting/storage-create-begin" || r.URL.Path == "/api/v1/runners/hosting/storage-materialized" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if r.Method == http.MethodGet && hostingRouteSwitchReadPath(r.URL.Path) {
+	if r.Method == http.MethodGet && (hostingRouteSwitchReadPath(r.URL.Path) || hostingStorageDeploymentReadPath(r.URL.Path)) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") || strings.HasPrefix(r.URL.Path, "/api/v1/servers/") && strings.HasSuffix(r.URL.Path, "/readiness") {
