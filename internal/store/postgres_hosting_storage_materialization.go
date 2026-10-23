@@ -178,7 +178,10 @@ func finalHostingStorageAuthority(ctx context.Context, tx pgx.Tx, runner string,
 	if err := proxyCheckLegacyToken(ctx, tx, op.CreatedBy); err != nil {
 		return err
 	}
-	return hostingAuthorityExists(ctx, tx, runner, a, true)
+	if err := hostingAuthorityExists(ctx, tx, runner, a, true); err != nil {
+		return err
+	}
+	return validateStorageContinuityFinal(ctx, tx, op)
 }
 
 // First settlement has tentatively completed its own lease. Check the locked

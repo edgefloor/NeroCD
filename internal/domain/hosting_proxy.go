@@ -105,6 +105,7 @@ type HostingRoute struct {
 	Enabled                    bool                    `json:"enabled"`
 	OperationID                string                  `json:"operation_id,omitempty"`
 	State                      string                  `json:"state"`
+	Reason                     string                  `json:"reason,omitempty"`
 	HTTPReady                  bool                    `json:"http_ready"`
 	HTTPSReady                 bool                    `json:"https_ready"`
 	Certificate                HostingProxyCertificate `json:"certificate"`

@@ -80,6 +80,9 @@ func hostingFreshRuntimeGate(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 	if op.CleanupPlan != nil {
 		return nil
 	}
+	if err := validateStorageContinuityFresh(ctx, tx, op); err != nil {
+		return err
+	}
 	// Keep destination -> resource -> configuration order used by request
 	// admission, including concurrent exact idempotency replays.
 	if err := sqlcgen.New(tx).LockHostingExecutionDestination(ctx, op.Snapshot.DestinationID); err != nil {
