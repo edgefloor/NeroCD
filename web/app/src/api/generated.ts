@@ -2556,6 +2556,111 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushSecretRef: {
+            id: string;
+            version: number;
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushConfiguration: {
+            automation_actor_id: string;
+            webhook_secret: components["schemas"]["GitHubPushSecretRef"];
+            provider_read_secret?: components["schemas"]["GitHubPushSecretRef"];
+            source_grant_id?: string;
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushConfigure: {
+            expected_policy_generation: number;
+            expected_resource_generation: number;
+            expected_source_generation: number;
+            /** Format: uuid */
+            request_id: string;
+            configuration: components["schemas"]["GitHubPushConfiguration"];
+            /**
+             * @description Explicitly acknowledge that saving disables the policy and resets its branch baseline after fresh verification; this is not automatic approval of divergent history.
+             * @constant
+             */
+            reset_branch_baseline: true;
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushCommand: {
+            expected_policy_generation: number;
+            /** Format: uuid */
+            request_id: string;
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushEnable: {
+            expected_policy_generation: number;
+            /** Format: uuid */
+            request_id: string;
+            enabled: boolean;
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushRetry: {
+            expected_policy_generation: number;
+            /** Format: uuid */
+            request_id: string;
+            /** Format: uuid */
+            delivery_id: string;
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushPolicy: {
+            can_manage: boolean;
+            id: string;
+            resource_id: string;
+            project_id: string;
+            generation: number;
+            resource_generation: number;
+            source_generation: number;
+            enabled: boolean;
+            /** @enum {string} */
+            status: "unconfigured" | "disabled" | "unverified" | "verifying" | "verified" | "enabled" | "blocked";
+            /** @enum {string} */
+            reason: "" | "unsupported_source" | "unverified" | "disabled" | "repository_identity_mismatch" | "repository_or_branch_unavailable" | "provider_credentials_required" | "provider_response_invalid" | "rate_limited" | "provider_unavailable" | "comparison_limit" | "ancestry_unverified" | "authority_unavailable" | "source_changed" | "policy_changed" | "attempt_expired" | "quota_exceeded" | "ignored_event" | "ignored_disabled" | "verified" | "build_queued" | "already_queued" | "blocked_exhausted" | "obsolete" | "invalid_push" | "baseline_reset";
+            repository_id: number;
+            repository: string;
+            branch: string;
+            /** Format: date-time */
+            verified_at?: string;
+            desired_commit: string;
+            last_build_id: string;
+            callback_url: string;
+            provider_read_configured: boolean;
+            owner_configuration?: components["schemas"]["GitHubPushConfiguration"];
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushDelivery: {
+            id: string;
+            policy_id: string;
+            policy_generation: number;
+            /** @enum {string} */
+            state: "accepted" | "received" | "verifying" | "retry_wait" | "queued" | "coalesced" | "ignored" | "obsolete" | "blocked_exhausted";
+            /** @enum {string} */
+            reason: "" | "unsupported_source" | "unverified" | "disabled" | "repository_identity_mismatch" | "repository_or_branch_unavailable" | "provider_credentials_required" | "provider_response_invalid" | "rate_limited" | "provider_unavailable" | "comparison_limit" | "ancestry_unverified" | "authority_unavailable" | "source_changed" | "policy_changed" | "attempt_expired" | "quota_exceeded" | "ignored_event" | "ignored_disabled" | "verified" | "build_queued" | "already_queued" | "blocked_exhausted" | "obsolete" | "invalid_push" | "baseline_reset";
+            after_commit: string;
+            verified_commit: string;
+            build_id: string;
+            attempts: number;
+            /** Format: date-time */
+            received_at: string;
+            /** Format: date-time */
+            next_retry_at?: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushReceipt: {
+            /** Format: uuid */
+            delivery_id: string;
+            /** @enum {string} */
+            state: "accepted" | "received" | "verifying" | "retry_wait" | "queued" | "coalesced" | "ignored" | "obsolete" | "blocked_exhausted";
+        };
+        /** @description GitHub.com build-on-push only; deployments remain manual. Fixed provider API2026-03-10; ancestry proof supports at most100 commits and blocks with comparison_limit beyond that initial bound. Full trigger parity remains a later requirement. */
+        GitHubPushDeliveryPage: {
+            items: components["schemas"]["GitHubPushDelivery"][];
+            next_cursor: string;
+            has_more: boolean;
+        };
         HostingRuntimeLogOpen: {
             request_id: string;
             /** Format: date-time */
