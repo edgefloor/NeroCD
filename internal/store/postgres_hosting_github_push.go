@@ -6,16 +6,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"math"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/githubpush"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store/sqlcgen"
-	"strings"
-	"time"
 )
 
 type githubPushDocument struct {
@@ -42,6 +43,7 @@ func pushDocument(row sqlcgen.HostingGithubPushPolicy) (githubPushDocument, erro
 func pushPublic(doc githubPushDocument, owner bool) domain.GitHubPushPolicy {
 	p := doc.Policy
 	p.OwnerConfiguration = nil
+	p.OwnerAutomaticDeploymentOptions = nil
 	p.CanManage = owner
 	if owner {
 		cfg := doc.Configuration
@@ -159,7 +161,7 @@ func lockPushPolicy(ctx context.Context, tx pgx.Tx, resource string, target bool
 	if err != nil {
 		return before, err
 	}
-	if err = pushCurrent(ctx, tx, doc, target); err != nil {
+	if err = autoPushCurrent(ctx, tx, doc, target); err != nil {
 		return before, err
 	}
 	locked, err := q.LockGitHubPushPolicy(ctx, resource)
@@ -229,7 +231,7 @@ func pushAudit(ctx context.Context, tx pgx.Tx, event domain.AuditEvent, actor, a
 // GetGitHubPushPolicy returns current viewer metadata, with selectors only for current owners.
 func (s *PostgresStore) GetGitHubPushPolicy(ctx context.Context, actor, resource string) (domain.GitHubPushPolicy, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.GitHubPushPolicy, error) {
-		src, generation, err := pushScope(ctx, tx, resource, actor, "viewer")
+		src, generation, err := autoPushScope(ctx, tx, resource, actor, "viewer", false)
 		if err != nil {
 			return domain.GitHubPushPolicy{}, err
 		}
@@ -246,7 +248,7 @@ func (s *PostgresStore) GetGitHubPushPolicy(ctx context.Context, actor, resource
 				p.Repository = o + "/" + r
 				p.Branch = b
 			}
-			return p, nil
+			return autoOwnerOptions(ctx, tx, actor, src.ProjectID, p)
 		}
 		if err != nil {
 			return domain.GitHubPushPolicy{}, err
@@ -262,7 +264,11 @@ func (s *PostgresStore) GetGitHubPushPolicy(ctx context.Context, actor, resource
 		if err = authorizeBuildActor(ctx, tx, actor, src.ProjectID, "viewer"); err != nil {
 			return doc.Policy, err
 		}
-		return pushPublic(doc, owner), nil
+		doc.Policy.AutomaticDeployment, err = autoStatus(ctx, tx, doc)
+		if err != nil {
+			return doc.Policy, err
+		}
+		return autoOwnerOptions(ctx, tx, actor, src.ProjectID, pushPublic(doc, owner))
 	})
 }
 
@@ -271,8 +277,12 @@ func (s *PostgresStore) ConfigureGitHubPushPolicy(ctx context.Context, actor, re
 	if in.Validate() != nil {
 		return domain.GitHubPushPolicy{}, ErrConflict
 	}
+	if in.Configuration.AutomaticDeployment != nil {
+		cfg, _ := domain.CanonicalHostingAutoDeployConfiguration(*in.Configuration.AutomaticDeployment)
+		in.Configuration.AutomaticDeployment = &cfg
+	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.GitHubPushPolicy, error) {
-		src, generation, err := pushScope(ctx, tx, resource, actor, "owner")
+		src, generation, err := autoPushScope(ctx, tx, resource, actor, "owner", in.Configuration.AutomaticDeployment != nil)
 		if err != nil {
 			return domain.GitHubPushPolicy{}, err
 		}
@@ -297,6 +307,7 @@ func (s *PostgresStore) ConfigureGitHubPushPolicy(ctx context.Context, actor, re
 		if len(command.Receipt) > 0 {
 			var p domain.GitHubPushPolicy
 			err = json.Unmarshal(command.Receipt, &p)
+			p.OwnerAutomaticDeploymentOptions = nil
 			return p, err
 		}
 		if in.ExpectedResourceGeneration != generation || in.ExpectedSourceGeneration != src.Generation {
@@ -330,6 +341,15 @@ func (s *PostgresStore) ConfigureGitHubPushPolicy(ctx context.Context, actor, re
 		if err != nil {
 			return doc.Policy, err
 		}
+		if err = autoConfigure(ctx, tx, doc, actor); err != nil {
+			return doc.Policy, err
+		}
+		if doc.Configuration.AutomaticDeployment != nil {
+			doc.Policy.AutomaticDeployment = &domain.HostingAutoDeployStatus{Mode: domain.HostingAutoDeployMode, State: "idle", Reason: "awaiting_push"}
+			if err = pushSave(ctx, q, doc); err != nil {
+				return doc.Policy, err
+			}
+		}
 		if err = q.ObsoleteGitHubPushDeliveries(ctx, id); err != nil {
 			return doc.Policy, err
 		}
@@ -340,6 +360,11 @@ func (s *PostgresStore) ConfigureGitHubPushPolicy(ctx context.Context, actor, re
 		if err = pushFinishCommand(ctx, q, resource, in.RequestID, result); err != nil {
 			return result, err
 		}
+		if doc.Configuration.AutomaticDeployment != nil {
+			if err = autoPushCurrent(ctx, tx, doc, true); err != nil {
+				return result, err
+			}
+		}
 		return result, authorizeBuildActor(ctx, tx, actor, src.ProjectID, "owner")
 	})
 }
@@ -348,7 +373,7 @@ func (s *PostgresStore) ConfigureGitHubPushPolicy(ctx context.Context, actor, re
 func (s *PostgresStore) BeginGitHubPushVerification(ctx context.Context, actor, resource string, in domain.GitHubPushCommand) (GitHubPushAuthorization, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (GitHubPushAuthorization, error) {
 		var out GitHubPushAuthorization
-		src, _, err := pushScope(ctx, tx, resource, actor, "owner")
+		src, _, err := autoPushScope(ctx, tx, resource, actor, "owner", false)
 		if err != nil {
 			return out, err
 		}
@@ -383,7 +408,7 @@ func (s *PostgresStore) BeginGitHubPushVerification(ctx context.Context, actor, 
 		if !command.ExpiresAt.After(now) {
 			return out, ErrConflict
 		}
-		if err = pushCurrent(ctx, tx, doc, false); err != nil {
+		if err = autoPushCurrent(ctx, tx, doc, false); err != nil {
 			return out, err
 		}
 		if fresh {
@@ -420,7 +445,7 @@ func pushProof(doc githubPushDocument, e githubpush.Evidence) bool {
 func (s *PostgresStore) FinishGitHubPushVerification(ctx context.Context, a GitHubPushAuthorization, e githubpush.Evidence, reason string) (domain.GitHubPushPolicy, error) {
 	reason = pushFailureReason(reason)
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.GitHubPushPolicy, error) {
-		_, _, err := pushScope(ctx, tx, a.Policy.ResourceID, a.ActorID, "owner")
+		_, _, err := autoPushScope(ctx, tx, a.Policy.ResourceID, a.ActorID, "owner", false)
 		if err != nil {
 			return domain.GitHubPushPolicy{}, err
 		}
@@ -440,7 +465,7 @@ func (s *PostgresStore) FinishGitHubPushVerification(ctx context.Context, a GitH
 		if row.Generation != a.Policy.Generation || row.VerificationToken != a.Token || !a.Until.After(now) || row.VerificationExpiresAt == nil || !row.VerificationExpiresAt.After(now) {
 			return doc.Policy, ErrConflict
 		}
-		if err = pushCurrent(ctx, tx, doc, false); err != nil {
+		if err = autoPushCurrent(ctx, tx, doc, false); err != nil {
 			return doc.Policy, err
 		}
 		if reason == "" && !pushProof(doc, e) {
@@ -484,7 +509,7 @@ func (s *PostgresStore) FinishGitHubPushVerification(ctx context.Context, a GitH
 // SetGitHubPushEnabled consumes fresh verification or explicitly disables demand.
 func (s *PostgresStore) SetGitHubPushEnabled(ctx context.Context, actor, resource string, in domain.GitHubPushEnable, event domain.AuditEvent) (domain.GitHubPushPolicy, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.GitHubPushPolicy, error) {
-		_, _, err := pushScope(ctx, tx, resource, actor, "owner")
+		_, _, err := autoPushScope(ctx, tx, resource, actor, "owner", false)
 		if err != nil {
 			return domain.GitHubPushPolicy{}, err
 		}
@@ -511,13 +536,17 @@ func (s *PostgresStore) SetGitHubPushEnabled(ctx context.Context, actor, resourc
 		if len(command.Receipt) > 0 {
 			var p domain.GitHubPushPolicy
 			err = json.Unmarshal(command.Receipt, &p)
+			p.OwnerAutomaticDeploymentOptions = nil
 			return p, err
 		}
 		if in.Enabled {
+			if doc.Configuration.AutomaticDeployment != nil && (s.hostingJobs == nil || !s.hostingJobs.AutoDeployEnabled()) {
+				return doc.Policy, ErrGitHubPushUnavailable
+			}
 			if s.hostingJobs == nil || s.hostingBuildPolicy == nil {
 				return doc.Policy, ErrGitHubPushUnavailable
 			}
-			if err = pushCurrent(ctx, tx, doc, true); err != nil {
+			if err = autoPushCurrent(ctx, tx, doc, true); err != nil {
 				return doc.Policy, err
 			}
 			now, e := pushClock(ctx, tx)
@@ -573,7 +602,7 @@ func (s *PostgresStore) GitHubPushWebhookAuthority(ctx context.Context, id strin
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (GitHubPushAuthorization, error) {
 		var out GitHubPushAuthorization
-		_, _, err := pushScope(ctx, tx, before.ResourceID, "", "")
+		_, _, err := autoPushScope(ctx, tx, before.ResourceID, "", "", false)
 		if err != nil {
 			return out, err
 		}
@@ -585,7 +614,7 @@ func (s *PostgresStore) GitHubPushWebhookAuthority(ctx context.Context, id strin
 		if err != nil {
 			return out, err
 		}
-		if err = pushCurrent(ctx, tx, doc, false); err != nil {
+		if err = autoPushCurrent(ctx, tx, doc, false); err != nil {
 			return out, err
 		}
 		now, err := pushClock(ctx, tx)
@@ -603,7 +632,7 @@ func (s *PostgresStore) GitHubPushWebhookAuthority(ctx context.Context, id strin
 func (s *PostgresStore) AuthorizeGitHubPushSecret(ctx context.Context, a GitHubPushAuthorization, purpose string) (ManagedSecretRecord, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (ManagedSecretRecord, error) {
 		var out ManagedSecretRecord
-		_, _, err := pushScope(ctx, tx, a.Policy.ResourceID, "", "")
+		_, _, err := autoPushScope(ctx, tx, a.Policy.ResourceID, "", "", false)
 		if err != nil {
 			return out, err
 		}
@@ -619,7 +648,7 @@ func (s *PostgresStore) AuthorizeGitHubPushSecret(ctx context.Context, a GitHubP
 		if row.Generation != a.Policy.Generation {
 			return out, ErrConflict
 		}
-		if err = pushCurrent(ctx, tx, doc, false); err != nil {
+		if err = autoPushCurrent(ctx, tx, doc, false); err != nil {
 			return out, err
 		}
 		now, err := pushClock(ctx, tx)
@@ -741,7 +770,7 @@ func (s *PostgresStore) AcceptGitHubPushDelivery(ctx context.Context, a GitHubPu
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.GitHubPushReceipt, error) {
 		out := domain.GitHubPushReceipt{DeliveryID: delivery, State: "accepted"}
-		_, _, err := pushScope(ctx, tx, a.Policy.ResourceID, "", "")
+		_, _, err := autoPushScope(ctx, tx, a.Policy.ResourceID, "", "", false)
 		if err != nil {
 			return out, err
 		}
@@ -757,7 +786,7 @@ func (s *PostgresStore) AcceptGitHubPushDelivery(ctx context.Context, a GitHubPu
 		if row.Generation != a.Policy.Generation {
 			return out, ErrConflict
 		}
-		if err = pushCurrent(ctx, tx, doc, false); err != nil {
+		if err = autoPushCurrent(ctx, tx, doc, false); err != nil {
 			return out, err
 		}
 		now, err := pushClock(ctx, tx)
@@ -823,7 +852,7 @@ func (s *PostgresStore) ListGitHubPushDeliveries(ctx context.Context, actor, res
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.GitHubPushDeliveryPage, error) {
 		out := domain.GitHubPushDeliveryPage{Items: []domain.GitHubPushDelivery{}}
-		src, _, err := pushScope(ctx, tx, resource, actor, "viewer")
+		src, _, err := autoPushScope(ctx, tx, resource, actor, "viewer", false)
 		if err != nil {
 			return out, err
 		}
@@ -855,7 +884,7 @@ func (s *PostgresStore) ListGitHubPushDeliveries(ctx context.Context, actor, res
 func (s *PostgresStore) RetryGitHubPushDelivery(ctx context.Context, actor, resource string, in domain.GitHubPushRetry, event domain.AuditEvent) (domain.GitHubPushDelivery, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.GitHubPushDelivery, error) {
 		var out domain.GitHubPushDelivery
-		_, _, err := pushScope(ctx, tx, resource, actor, "owner")
+		_, _, err := autoPushScope(ctx, tx, resource, actor, "owner", false)
 		if err != nil {
 			return out, err
 		}
@@ -871,7 +900,7 @@ func (s *PostgresStore) RetryGitHubPushDelivery(ctx context.Context, actor, reso
 		if !doc.Policy.Enabled {
 			return out, ErrConflict
 		}
-		if err = pushCurrent(ctx, tx, doc, true); err != nil {
+		if err = autoPushCurrent(ctx, tx, doc, true); err != nil {
 			return out, err
 		}
 		command, _, err := pushCommand(ctx, tx, actor, resource, "retry", in.RequestID, in.ExpectedPolicyGeneration, row.Generation, in)
@@ -927,7 +956,7 @@ func (s *PostgresStore) BeginGitHubPushDelivery(ctx context.Context, id string) 
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (GitHubPushAuthorization, error) {
 		var out GitHubPushAuthorization
-		_, _, err := pushScope(ctx, tx, before.ResourceID, "", "")
+		_, _, err := autoPushScope(ctx, tx, before.ResourceID, "", "", false)
 		if err != nil {
 			return out, err
 		}
@@ -940,7 +969,7 @@ func (s *PostgresStore) BeginGitHubPushDelivery(ctx context.Context, id string) 
 		if err != nil {
 			return out, err
 		}
-		if err = pushCurrent(ctx, tx, doc, true); err != nil {
+		if err = autoPushCurrent(ctx, tx, doc, true); err != nil {
 			return out, err
 		}
 		delivery, err := q.LockGitHubPushDelivery(ctx, id)
@@ -992,7 +1021,7 @@ func (s *PostgresStore) BeginGitHubPushDelivery(ctx context.Context, id string) 
 func (s *PostgresStore) CommitGitHubPushDelivery(ctx context.Context, a GitHubPushAuthorization, e githubpush.Evidence, reason string) error {
 	reason = pushFailureReason(reason)
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (accepted bool, resultErr error) {
-		_, _, err := pushScope(ctx, tx, a.Policy.ResourceID, "", "")
+		_, _, err := autoPushScope(ctx, tx, a.Policy.ResourceID, "", "", false)
 		if err != nil {
 			return false, err
 		}
@@ -1005,7 +1034,7 @@ func (s *PostgresStore) CommitGitHubPushDelivery(ctx context.Context, a GitHubPu
 		if err != nil {
 			return false, err
 		}
-		if err = pushCurrent(ctx, tx, doc, true); err != nil {
+		if err = autoPushCurrent(ctx, tx, doc, true); err != nil {
 			return false, err
 		}
 		delivery, err := q.LockGitHubPushDelivery(ctx, a.IntentID)
@@ -1108,6 +1137,9 @@ func (s *PostgresStore) CommitGitHubPushDelivery(ctx context.Context, a GitHubPu
 		if err = pushSave(ctx, q, doc); err != nil {
 			return false, err
 		}
+		if err = s.autoRecordDemand(ctx, tx, doc, delivery, b.ID); err != nil {
+			return false, err
+		}
 		if err = finish("queued", "build_queued", e.Head, b.ID, 0); err != nil {
 			return false, err
 		}
@@ -1120,7 +1152,7 @@ func (s *PostgresStore) CommitGitHubPushDelivery(ctx context.Context, a GitHubPu
 		if !a.Until.After(now) || !delivery.ExpiresAt.After(now) {
 			return false, ErrConflict
 		}
-		return true, pushCurrent(ctx, tx, doc, true)
+		return true, autoPushCurrent(ctx, tx, doc, true)
 	})
 	return err
 }

@@ -32,10 +32,11 @@ type GitHubPushSecretRef struct {
 
 // GitHubPushConfiguration records explicit independent secret purposes.
 type GitHubPushConfiguration struct {
-	AutomationActorID  string               `json:"automation_actor_id"`
-	WebhookSecret      GitHubPushSecretRef  `json:"webhook_secret"`
-	ProviderReadSecret *GitHubPushSecretRef `json:"provider_read_secret,omitempty"`
-	SourceGrantID      string               `json:"source_grant_id,omitempty"`
+	AutomaticDeployment *HostingAutoDeployConfiguration `json:"automatic_deployment,omitempty"`
+	AutomationActorID   string                          `json:"automation_actor_id"`
+	WebhookSecret       GitHubPushSecretRef             `json:"webhook_secret"`
+	ProviderReadSecret  *GitHubPushSecretRef            `json:"provider_read_secret,omitempty"`
+	SourceGrantID       string                          `json:"source_grant_id,omitempty"`
 }
 
 // GitHubPushConfigure freezes current source intent and always saves disabled.
@@ -70,25 +71,27 @@ type GitHubPushRetry struct {
 
 // GitHubPushPolicy is viewer-safe metadata; only current owners receive configuration selectors.
 type GitHubPushPolicy struct {
-	CanManage              bool                     `json:"can_manage"`
-	ID                     string                   `json:"id"`
-	ResourceID             string                   `json:"resource_id"`
-	ProjectID              string                   `json:"project_id"`
-	Generation             int64                    `json:"generation"`
-	ResourceGeneration     int64                    `json:"resource_generation"`
-	SourceGeneration       int64                    `json:"source_generation"`
-	Enabled                bool                     `json:"enabled"`
-	Status                 string                   `json:"status"`
-	Reason                 string                   `json:"reason"`
-	RepositoryID           int64                    `json:"repository_id"`
-	Repository             string                   `json:"repository"`
-	Branch                 string                   `json:"branch"`
-	VerifiedAt             *time.Time               `json:"verified_at,omitempty"`
-	DesiredCommit          string                   `json:"desired_commit"`
-	LastBuildID            string                   `json:"last_build_id"`
-	CallbackURL            string                   `json:"callback_url"`
-	ProviderReadConfigured bool                     `json:"provider_read_configured"`
-	OwnerConfiguration     *GitHubPushConfiguration `json:"owner_configuration,omitempty"`
+	OwnerAutomaticDeploymentOptions *HostingAutoDeployOptions `json:"owner_automatic_deployment_options,omitempty"`
+	AutomaticDeployment             *HostingAutoDeployStatus  `json:"automatic_deployment,omitempty"`
+	CanManage                       bool                      `json:"can_manage"`
+	ID                              string                    `json:"id"`
+	ResourceID                      string                    `json:"resource_id"`
+	ProjectID                       string                    `json:"project_id"`
+	Generation                      int64                     `json:"generation"`
+	ResourceGeneration              int64                     `json:"resource_generation"`
+	SourceGeneration                int64                     `json:"source_generation"`
+	Enabled                         bool                      `json:"enabled"`
+	Status                          string                    `json:"status"`
+	Reason                          string                    `json:"reason"`
+	RepositoryID                    int64                     `json:"repository_id"`
+	Repository                      string                    `json:"repository"`
+	Branch                          string                    `json:"branch"`
+	VerifiedAt                      *time.Time                `json:"verified_at,omitempty"`
+	DesiredCommit                   string                    `json:"desired_commit"`
+	LastBuildID                     string                    `json:"last_build_id"`
+	CallbackURL                     string                    `json:"callback_url"`
+	ProviderReadConfigured          bool                      `json:"provider_read_configured"`
+	OwnerConfiguration              *GitHubPushConfiguration  `json:"owner_configuration,omitempty"`
 }
 
 // GitHubPushDelivery retains closed metadata, not signatures, payloads or credentials.
@@ -147,6 +150,11 @@ func (in GitHubPushConfigure) Validate() error {
 	// even through a different version of the same managed secret.
 	if provider := in.Configuration.ProviderReadSecret; provider != nil && provider.ID == in.Configuration.WebhookSecret.ID {
 		return errors.New("invalid_github_push_configuration")
+	}
+	if in.Configuration.AutomaticDeployment != nil {
+		if _, err := CanonicalHostingAutoDeployConfiguration(*in.Configuration.AutomaticDeployment); err != nil {
+			return err
+		}
 	}
 	validSecret := func(r GitHubPushSecretRef) bool { return observationID(r.ID, false) && r.Version > 0 }
 	if !in.ResetBranchBaseline || in.ExpectedPolicyGeneration < 0 || in.ExpectedResourceGeneration < 1 || in.ExpectedSourceGeneration < 1 || !ValidGitHubPushRequestID(in.RequestID) || !observationID(in.Configuration.AutomationActorID, false) || !validSecret(in.Configuration.WebhookSecret) || (in.Configuration.ProviderReadSecret != nil && !validSecret(*in.Configuration.ProviderReadSecret)) || !observationID(in.Configuration.SourceGrantID, true) {

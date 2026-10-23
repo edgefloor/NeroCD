@@ -36,6 +36,18 @@ func closedPushObject(raw []byte, typ reflect.Type) bool {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return false
 	}
+	if typ.Kind() == reflect.Slice {
+		var values []json.RawMessage
+		if json.Unmarshal(raw, &values) != nil || values == nil {
+			return false
+		}
+		for _, value := range values {
+			if !closedPushObject(value, typ.Elem()) {
+				return false
+			}
+		}
+		return true
+	}
 	if typ.Kind() != reflect.Struct {
 		return true
 	}

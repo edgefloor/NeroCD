@@ -147,7 +147,10 @@ func (s *PostgresStore) RequestHostingRouteSwitch(ctx context.Context, resource,
 	if err != nil || replayed {
 		return op, err
 	}
-	return op, tx.Commit(ctx)
+	if err = autoManualMutation(ctx, tx, resource); err != nil {
+		return op, err
+	}
+	return op, proxyCommitMutation(ctx, tx, actor)
 }
 
 // requestHostingRouteSwitchTx retains destination -> proxy -> sorted-resource
