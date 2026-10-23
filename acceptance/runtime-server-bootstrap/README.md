@@ -161,9 +161,12 @@ retained. This proves an execution lifecycle restart
 against the durable database. It does not restart the whole controller process.
 The forwarder binds only loopback, permits four connections, applies 125-second
 connection deadlines, and joins its connections and byte pumps on cancellation.
-The dedicated SSH daemon and wrapper timeout process groups are supervised and
-joined. Cleanup verifies each wrapper process's owned path before signaling it,
-then removes only the unique fixture directory. The wrapper helper check proves
+Cleanup waits for the dedicated SSH daemon parent and checks recorded timeout
+command groups, verifying each recorded process's owned path before signaling it.
+It does not inventory pre-authentication children or qualify a full daemon-group
+join. Remaining or unrecorded child lifetime is bounded by verified removal of
+the owned outer container. Cleanup removes only the unique fixture directory.
+The wrapper helper check proves
 large-input passthrough, output/status preservation, one-shot release and its
 fixed timeout before the actual recovery run.
 Separate loopback forwarded ports give the true/false grant and browser cases
