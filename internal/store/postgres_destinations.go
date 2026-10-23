@@ -50,23 +50,27 @@ func (s *PostgresStore) CreateServerWithDestination(ctx context.Context, server 
 		return domain.Server{}, domain.Destination{}, ErrConflict
 	}
 	result, err := hostingMutation(ctx, s, nil, func(q *sqlcgen.Queries) (serverDestinationPair, error) {
-		row, err := q.CreateHostingServer(ctx, sqlcgen.CreateHostingServerParams{ID: server.ID, Name: server.Name, RunnerID: server.RunnerID, CreatedBy: server.CreatedBy, CreatedAt: server.CreatedAt})
-		if err != nil {
-			return serverDestinationPair{}, err
-		}
-		dest, err := q.CreateHostingDestination(ctx, sqlcgen.CreateHostingDestinationParams{ID: destination.ID, ServerID: server.ID, Name: destination.Name, RuntimeKind: destination.RuntimeKind, CreatedAt: destination.CreatedAt})
-		if err != nil {
-			return serverDestinationPair{}, err
-		}
-		if err = auditDestinationMutation(ctx, q, event, "server.created", server.ID, map[string]any{"runner_id": server.RunnerID, "destination_id": destination.ID}); err != nil {
-			return serverDestinationPair{}, err
-		}
-		return serverDestinationPair{serverFromDestinationSQL(row), destinationFromSQL(dest)}, nil
+		return createServerDestinationTx(ctx, q, server, destination, event)
 	})
 	if err != nil {
 		return domain.Server{}, domain.Destination{}, err
 	}
 	return result.server, result.destination, nil
+}
+
+func createServerDestinationTx(ctx context.Context, q *sqlcgen.Queries, server domain.Server, destination domain.Destination, event domain.AuditEvent) (serverDestinationPair, error) {
+	row, err := q.CreateHostingServer(ctx, sqlcgen.CreateHostingServerParams{ID: server.ID, Name: server.Name, RunnerID: server.RunnerID, CreatedBy: server.CreatedBy, CreatedAt: server.CreatedAt})
+	if err != nil {
+		return serverDestinationPair{}, err
+	}
+	dest, err := q.CreateHostingDestination(ctx, sqlcgen.CreateHostingDestinationParams{ID: destination.ID, ServerID: server.ID, Name: destination.Name, RuntimeKind: destination.RuntimeKind, CreatedAt: destination.CreatedAt})
+	if err != nil {
+		return serverDestinationPair{}, err
+	}
+	if err = auditDestinationMutation(ctx, q, event, "server.created", server.ID, map[string]any{"runner_id": server.RunnerID, "destination_id": destination.ID}); err != nil {
+		return serverDestinationPair{}, err
+	}
+	return serverDestinationPair{serverFromDestinationSQL(row), destinationFromSQL(dest)}, nil
 }
 
 // GetServer retrieves stable server metadata.
@@ -111,28 +115,32 @@ func (s *PostgresStore) GrantDestinationProject(ctx context.Context, grant domai
 		return domain.DestinationProjectGrant{}, ErrConflict
 	}
 	return hostingMutation(ctx, s, nil, func(q *sqlcgen.Queries) (domain.DestinationProjectGrant, error) {
-		if _, err := q.LockHostingDestination(ctx, grant.DestinationID); err != nil {
-			return domain.DestinationProjectGrant{}, err
-		}
-		if _, err := q.GetActiveDestinationProject(ctx, grant.ProjectID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return domain.DestinationProjectGrant{}, ErrConflict
-			}
-			return domain.DestinationProjectGrant{}, err
-		}
+		return grantDestinationProjectTx(ctx, q, grant, event)
+	})
+}
 
-		row, err := q.GrantDestinationProject(ctx, sqlcgen.GrantDestinationProjectParams{DestinationID: grant.DestinationID, ProjectID: grant.ProjectID, GrantedBy: grant.GrantedBy, CreatedAt: grant.CreatedAt})
+func grantDestinationProjectTx(ctx context.Context, q *sqlcgen.Queries, grant domain.DestinationProjectGrant, event domain.AuditEvent) (domain.DestinationProjectGrant, error) {
+	if _, err := q.LockHostingDestination(ctx, grant.DestinationID); err != nil {
+		return domain.DestinationProjectGrant{}, err
+	}
+	if _, err := q.GetActiveDestinationProject(ctx, grant.ProjectID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.DestinationProjectGrant{}, ErrConflict
 		}
-		if err != nil {
-			return domain.DestinationProjectGrant{}, err
-		}
-		if err = auditDestinationMutation(ctx, q, event, "destination.project_granted", grant.DestinationID, map[string]any{"project_id": grant.ProjectID}); err != nil {
-			return domain.DestinationProjectGrant{}, err
-		}
-		return grantFromDestinationSQL(row), nil
-	})
+		return domain.DestinationProjectGrant{}, err
+	}
+
+	row, err := q.GrantDestinationProject(ctx, sqlcgen.GrantDestinationProjectParams{DestinationID: grant.DestinationID, ProjectID: grant.ProjectID, GrantedBy: grant.GrantedBy, CreatedAt: grant.CreatedAt})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.DestinationProjectGrant{}, ErrConflict
+	}
+	if err != nil {
+		return domain.DestinationProjectGrant{}, err
+	}
+	if err = auditDestinationMutation(ctx, q, event, "destination.project_granted", grant.DestinationID, map[string]any{"project_id": grant.ProjectID}); err != nil {
+		return domain.DestinationProjectGrant{}, err
+	}
+	return grantFromDestinationSQL(row), nil
 }
 
 // RevokeDestinationProject keeps all bindings and serializes with new bind admission.

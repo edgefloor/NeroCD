@@ -78,21 +78,29 @@ func (s *PostgresStore) CreateRunnerEnrollment(ctx context.Context, enrollment d
 	}
 	defer rollbackTransaction(ctx, tx)
 	queries := s.queries.WithTx(tx)
-	ttl := enrollment.ExpiresAt.Sub(enrollment.CreatedAt)
-	created, err := queries.CreateRunnerEnrollment(ctx, sqlcgen.CreateRunnerEnrollmentParams{ID: enrollment.ID, TokenHash: enrollment.TokenHash, RunnerID: enrollment.RunnerID, RunnerName: enrollment.RunnerName, Tags: enrollment.Tags, Capabilities: enrollment.Capabilities, CreatedBy: enrollment.CreatedBy, TtlMicroseconds: ttl.Microseconds()})
-	if isUniqueViolation(err) {
-		return domain.RunnerEnrollment{}, ErrConflict
-	}
+	created, err := createRunnerEnrollmentTx(ctx, queries, enrollment, audit)
 	if err != nil {
-		return domain.RunnerEnrollment{}, fmt.Errorf("create runner enrollment query: %w", err)
-	}
-	if err := createAuditWithQueries(ctx, queries, audit); err != nil {
-		return domain.RunnerEnrollment{}, fmt.Errorf("create audit event: %w", err)
+		return domain.RunnerEnrollment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.RunnerEnrollment{}, fmt.Errorf("commit transaction: %w", err)
 	}
 	return runnerEnrollmentFromSQLC(created), nil
+}
+
+func createRunnerEnrollmentTx(ctx context.Context, queries *sqlcgen.Queries, enrollment domain.RunnerEnrollment, audit domain.AuditEvent) (sqlcgen.RunnerEnrollment, error) {
+	ttl := enrollment.ExpiresAt.Sub(enrollment.CreatedAt)
+	created, err := queries.CreateRunnerEnrollment(ctx, sqlcgen.CreateRunnerEnrollmentParams{ID: enrollment.ID, TokenHash: enrollment.TokenHash, RunnerID: enrollment.RunnerID, RunnerName: enrollment.RunnerName, Tags: enrollment.Tags, Capabilities: enrollment.Capabilities, CreatedBy: enrollment.CreatedBy, TtlMicroseconds: ttl.Microseconds()})
+	if isUniqueViolation(err) {
+		return sqlcgen.RunnerEnrollment{}, ErrConflict
+	}
+	if err != nil {
+		return sqlcgen.RunnerEnrollment{}, fmt.Errorf("create runner enrollment query: %w", err)
+	}
+	if err := createAuditWithQueries(ctx, queries, audit); err != nil {
+		return sqlcgen.RunnerEnrollment{}, fmt.Errorf("create audit event: %w", err)
+	}
+	return created, nil
 }
 
 // RevokeRunnerEnrollment implements the corresponding repository operation.

@@ -26,6 +26,7 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/runner"
+	"nerocd/internal/store"
 )
 
 const backupManifestVersion = 1
@@ -276,6 +277,9 @@ func restoreDatabase(args []string) error {
 	// Even an idle or disabled proxy may have served later generations after
 	// this backup. Restored database state cannot prove its daemon generation.
 	if _, err := tx.Exec(ctx, `INSERT INTO hosting_proxy_restore_holds(proxy_id) SELECT id FROM hosting_proxies ON CONFLICT DO NOTHING`); err != nil {
+		return err
+	}
+	if err := store.InvalidateServerBootstrapForRestoreTx(ctx, tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
