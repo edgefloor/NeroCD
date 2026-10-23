@@ -704,6 +704,57 @@ func probePushApplication(t *testing.T, ctx context.Context, f *pushHTTPFixture,
 		t.Fatal("exact B application did not remain serving")
 	}
 }
+func preparePushBrowserIdentity(t *testing.T, ctx context.Context, f *pushHTTPFixture) {
+	t.Helper()
+	// Development seeds create users, but only supported bootstrap completes the
+	// durable lifecycle state consumed by the real sign-in page.
+	if _, err := f.service.BootstrapAdmin(ctx, app.BootstrapAdminInput{Email: "push-bootstrap@example.local", Name: "Push fixture bootstrap", Password: "push-browser-bootstrap-password"}); err != nil {
+		t.Fatal(err)
+	}
+	password, err := auth.HashPassword("push-browser-fixture-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, account := range []struct{ id, email string }{{"usr_bootstrap", "push-owner@example.local"}, {"usr_viewer", "push-viewer@example.local"}} {
+		if _, err = f.db.Exec(ctx, `UPDATE users SET email=$2,password_hash=$3,global_role='user' WHERE id=$1`, account.id, account.email, password); err != nil {
+			t.Fatal(err)
+		}
+		user, err := f.pg.GetUserByEmail(ctx, account.email)
+		if err != nil || user.ID != account.id || user.GlobalRole != domain.RoleUser {
+			t.Fatalf("browser account %s must retain ordinary user authority: %v", account.id, err)
+		}
+	}
+	if _, err = f.pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "push_owner_member", ProjectID: f.resource.ProjectID, UserID: "usr_bootstrap", Role: domain.RoleOwner}); err != nil {
+		t.Fatal(err)
+	}
+	var status app.BootstrapStatus
+	f.request(http.MethodGet, "/api/v1/bootstrap-status", "", nil, http.StatusOK, &status)
+	if status.Status != "complete" {
+		t.Fatalf("browser fixture bootstrap status = %q, want complete", status.Status)
+	}
+}
+
+func TestGitHubPushBrowserBootstrapWithOrdinaryProjectMembers(t *testing.T) {
+	f := newPushHTTPFixture(t)
+	var before app.BootstrapStatus
+	f.request(http.MethodGet, "/api/v1/bootstrap-status", "", nil, http.StatusOK, &before)
+	if before.Status != "required" {
+		t.Fatalf("seeded fixture bootstrap status = %q, want required", before.Status)
+	}
+	preparePushBrowserIdentity(t, t.Context(), f)
+	for _, account := range []struct{ id, email, role string }{{"usr_bootstrap", "push-owner@example.local", domain.RoleOwner}, {"usr_viewer", "push-viewer@example.local", domain.RoleViewer}} {
+		token := createTestSessionFor(t, f.api, account.email, "push-browser-fixture-password")
+		principal, err := f.service.AuthenticateSessionToken(t.Context(), token)
+		if err != nil || principal.ID != account.id || len(principal.Roles) != 0 {
+			t.Fatalf("browser login %s must authenticate as ordinary user: %+v %v", account.id, principal, err)
+		}
+		var role string
+		if err := f.db.QueryRow(t.Context(), `SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`, f.resource.ProjectID, account.id).Scan(&role); err != nil || role != account.role {
+			t.Fatalf("browser member %s role = %q, want %q: %v", account.id, role, account.role, err)
+		}
+	}
+}
+
 func runPushBrowserFixture(t *testing.T, ctx context.Context, f *pushHTTPFixture, commits [3]string, move func(int), startRunner, stopRunner func() error, awaitBuild func(string, string) domain.HostingBuild) {
 	t.Helper()
 	origin := os.Getenv("NEROCD_GITHUB_PUSH_BROWSER_ORIGIN")
@@ -715,18 +766,7 @@ func runPushBrowserFixture(t *testing.T, ctx context.Context, f *pushHTTPFixture
 	if err != nil || port < 1 || port > 65535 || origin != "http://127.0.0.1:"+strconv.Itoa(port) {
 		t.Fatal("browser origin port invalid")
 	}
-	password, err := auth.HashPassword("push-browser-fixture-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, account := range []struct{ id, email string }{{"usr_bootstrap", "push-owner@example.local"}, {"usr_viewer", "push-viewer@example.local"}} {
-		if _, err = f.db.Exec(ctx, `UPDATE users SET email=$2,password_hash=$3,global_role='user' WHERE id=$1`, account.id, account.email, password); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err = f.pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "push_owner_member", ProjectID: f.resource.ProjectID, UserID: "usr_bootstrap", Role: domain.RoleOwner}); err != nil {
-		t.Fatal(err)
-	}
+	preparePushBrowserIdentity(t, ctx, f)
 	if _, err = f.db.Exec(ctx, `UPDATE projects SET name='GitHub push fixture' WHERE id=$1`, f.resource.ProjectID); err != nil {
 		t.Fatal(err)
 	}

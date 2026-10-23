@@ -4,8 +4,13 @@ import { expect, test, type Page } from "@playwright/test";
 test.use({ trace: "off", screenshot: "off" });
 type Metadata = { base_url: string; project_id: string; environment_name: string; resource_id: string; expected_commit_a: string; expected_commit_b: string; expected_commit_c: string; step_path: string };
 async function signIn(page: Page, viewer = false) {
-  await page.goto("/sign-in");
-  await page.getByLabel("Email", { exact: true }).fill(viewer ? "push-viewer@example.local" : "push-owner@example.local");
+  const bootstrap = await page.request.get("/api/v1/bootstrap-status", { timeout: 10_000 });
+  expect(bootstrap.status(), "fixture bootstrap status must be available before sign-in").toBe(200);
+  expect(await bootstrap.json(), "fixture must complete supported administrator bootstrap").toEqual({ status: "complete" });
+  await page.goto("/sign-in", { timeout: 15_000, waitUntil: "domcontentloaded" });
+  const email = page.getByLabel("Email", { exact: true });
+  await expect(email, "actual sign-in page must render the email form").toBeVisible({ timeout: 10_000 });
+  await email.fill(viewer ? "push-viewer@example.local" : "push-owner@example.local", { timeout: 10_000 });
   await page.getByLabel("Password", { exact: true }).fill("push-browser-fixture-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
