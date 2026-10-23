@@ -1059,6 +1059,28 @@ func TestCompiledVitePortFromImage(t *testing.T) {
 	}
 }
 
+// Normalize only terminal colors in already-redacted typed fixture output.
+// Preserve all production log bytes and require evidence from the real parser.
+var compiledViteSGR = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func compiledViteSyntaxDiagnostic(text string) bool {
+	plain := compiledViteSGR.ReplaceAllString(text, "")
+	return strings.Contains(plain, "[PARSE_ERROR]") && strings.Contains(plain, "src/main.js:2") && strings.Contains(plain, "genuineSyntaxFailure")
+}
+
+func TestCompiledViteSourceSyntaxDiagnostic(t *testing.T) {
+	// Bounded actual Vite 8.2.2/Rolldown output: every source character is colored.
+	colored := "\u001b[31m[PARSE_ERROR] \u001b[0mUnexpected token\n   \u001b[38;5;246m\u256d\u001b[0m\u001b[38;5;246m\u2500\u001b[0m\u001b[38;5;246m[\u001b[0m ../../../../../private/var/folders/vn/83xc0ss13rsg8dq6f3gng0hr0000gn/T/nerocd-compiled-spa-parser-rp2qe7nt/src/main.js:2:30 \u001b[38;5;246m]\u001b[0m\n   \u001b[38;5;246m\u2502\u001b[0m\n \u001b[38;5;246m2 \u2502\u001b[0m \u001b[38;5;249mc\u001b[0m\u001b[38;5;249mo\u001b[0m\u001b[38;5;249mn\u001b[0m\u001b[38;5;249ms\u001b[0m\u001b[38;5;249mt\u001b[0m\u001b[38;5;249m \u001b[0m\u001b[38;5;249mg\u001b[0m\u001b[38;5;249me\u001b[0m\u001b[38;5;249mn\u001b[0m\u001b[38;5;249mu\u001b[0m\u001b[38;5;249mi\u001b[0m\u001b[38;5;249mn\u001b[0m\u001b[38;5;249me\u001b[0m\u001b[38;5;249mS\u001b[0m\u001b[38;5;249my\u001b[0m\u001b[38;5;249mn\u001b[0m\u001b[38;5;249mt\u001b[0m\u001b[38;5;249ma\u001b[0m\u001b[38;5;249mx\u001b[0m\u001b[38;5;249mF\u001b[0m\u001b[38;5;249ma\u001b[0m\u001b[38;5;249mi\u001b[0m\u001b[38;5;249ml\u001b[0m\u001b[38;5;249mu\u001b[0m\u001b[38;5;249mr\u001b[0m\u001b[38;5;249me\u001b[0m\u001b[38;5;249m \u001b[0m\u001b[38;5;249m=\u001b[0m\u001b[38;5;249m \u001b[0m;\n"
+	if strings.Contains(colored, "genuineSyntaxFailure") || !compiledViteSyntaxDiagnostic(colored) {
+		t.Fatal("colored compiler diagnostic not recognized")
+	}
+	for _, message := range []string{"build_failed", "network error: install failed", "error: timeout", "genuineSyntaxFailure source uploaded", "[PARSE_ERROR] src/other.js:2 genuineSyntaxFailure"} {
+		if compiledViteSyntaxDiagnostic(message) {
+			t.Fatal("non-compiler failure accepted")
+		}
+	}
+}
+
 // Diagnostic-only observer reads bounded counters and owned-container state.
 // It never changes a limit or substitutes for compiled CLI qualification.
 func compiledResourceObserver(parent context.Context, config hostingbuild.Config) func() string {
@@ -1696,7 +1718,6 @@ journey:
 				}
 				for _, row := range logs.Items {
 					compilerOutput.WriteString(row.Message)
-					compilerOutput.WriteByte('\n')
 				}
 				if logs.NextSequence <= cursor {
 					break
@@ -1704,7 +1725,7 @@ journey:
 				cursor = logs.NextSequence
 			}
 			text := compilerOutput.String()
-			if !strings.Contains(text, "genuineSyntaxFailure") || !strings.Contains(strings.ToLower(text), "error") {
+			if !compiledViteSyntaxDiagnostic(text) {
 				t.Fatal("failed compiled build lacks genuine source syntax diagnostic")
 			}
 			t.Log("compiled failure proved by typed compiler error at genuineSyntaxFailure; no artifact published")
