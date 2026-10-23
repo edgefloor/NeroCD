@@ -533,17 +533,11 @@ var _ HostingRouteSwitchRepository = (*PostgresStore)(nil)
 // switchReadScope deliberately uses no row locks. All reads share one short,
 // repeatable, read-only snapshot, including durable identity and membership.
 func switchReadScope(ctx context.Context, tx pgx.Tx, resource, actor string) (string, error) {
-	var project string
-	if err := tx.QueryRow(ctx, `SELECT r.project_id FROM resources r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND p.archived_at IS NULL`, resource).Scan(&project); err != nil {
+	project, err := sqlcgen.New(tx).ProxySwitchReadProject(ctx, resource)
+	if err != nil {
 		return "", hostingError(err)
 	}
-	var allowed bool
-	err := tx.QueryRow(ctx, `SELECT CASE
- WHEN EXISTS(SELECT 1 FROM users WHERE id=$1 AND status='active' AND archived_at IS NULL) THEN
- EXISTS(SELECT 1 FROM users u WHERE u.id=$1 AND (u.global_role='system_admin' OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=$2 AND m.user_id=u.id AND m.role IN ('owner','maintainer','viewer'))))
- WHEN EXISTS(SELECT 1 FROM api_tokens WHERE id=$1 AND service_account_id IS NULL AND status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())) THEN
- EXISTS(SELECT 1 FROM api_tokens WHERE id=$1 AND 'system_admin'=ANY(roles))
- ELSE EXISTS(SELECT 1 FROM service_accounts sa JOIN users u ON u.id=sa.owner_user_id WHERE sa.id=$1 AND sa.status='active' AND u.status='active' AND sa.project_id=$2 AND sa.role IN ('owner','maintainer','viewer')) END`, actor, project).Scan(&allowed)
+	allowed, err := sqlcgen.New(tx).ProxySwitchReadAllowed(ctx, sqlcgen.ProxySwitchReadAllowedParams{ID: actor, ProjectID: project})
 	if err != nil {
 		return "", err
 	}
@@ -634,16 +628,15 @@ func switchReadRouteTarget(ctx context.Context, tx pgx.Tx, p domain.HostingProxy
 	if busy {
 		return domain.HostingProxyRouteTarget{}, "busy", ErrConflict
 	}
-	var restore bool
-	var hold *string
-	if err := tx.QueryRow(ctx, `SELECT restore_admitted,hold_operation_id FROM hosting_binding_state WHERE binding_id=$1`, row.BindingID).Scan(&restore, &hold); err != nil {
+	bindingState, err := q.ProxySwitchReadBindingState(ctx, row.BindingID)
+	if err != nil {
 		return domain.HostingProxyRouteTarget{}, "stale_routes", hostingError(err)
 	}
 	held, err := q.HostingBindingRestoreHeld(ctx, row.BindingID)
 	if err != nil {
 		return domain.HostingProxyRouteTarget{}, "", err
 	}
-	if !restore || hold != nil || held {
+	if !bindingState.RestoreAdmitted || bindingState.HoldOperationID != nil || held {
 		return domain.HostingProxyRouteTarget{}, "restore_hold", ErrHostingRestoreHold
 	}
 	release, err := q.ProxyReleaseTarget(ctx, row.SelectedReleaseOperationID)
@@ -702,11 +695,7 @@ func (s *PostgresStore) HostingRouteSwitchOptions(ctx context.Context, resource,
 		generation := p.LoadedGeneration
 		view.LoadedGeneration = &generation
 	}
-	enabledRows, err := tx.Query(ctx, `SELECT id FROM hosting_proxy_routes WHERE proxy_id=$1 AND enabled ORDER BY id LIMIT 33`, p.ID)
-	if err != nil {
-		return view, err
-	}
-	ids, err := pgx.CollectRows(enabledRows, pgx.RowTo[string])
+	ids, err := q.ProxySwitchReadEnabledRoutes(ctx, p.ID)
 	if err != nil {
 		return view, err
 	}
@@ -738,8 +727,7 @@ func (s *PostgresStore) HostingRouteSwitchOptions(ctx context.Context, resource,
 	}
 	if pending || p.ActiveOperationID != "" || p.HoldOperationID != "" {
 		// Only an exact own-resource strict switch may supply a recovery ID.
-		var id string
-		err := tx.QueryRow(ctx, `SELECT o.id FROM hosting_proxy_operations o WHERE o.proxy_id=$1 AND o.project_id=$2 AND o.snapshot->'verified_switch'->'routes'->0->'prior_target'->>'resource_id'=$3 AND (o.id=$4 OR o.id=$5 OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')) ORDER BY o.generation LIMIT 1`, p.ID, project, resource, p.ActiveOperationID, p.HoldOperationID).Scan(&id)
+		id, err := q.ProxySwitchReadPendingOperation(ctx, sqlcgen.ProxySwitchReadPendingOperationParams{ProxyID: p.ID, ProjectID: project, ResourceID: resource, ActiveOperationID: p.ActiveOperationID, HoldOperationID: p.HoldOperationID})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return view, err
 		}
@@ -795,29 +783,15 @@ func (s *PostgresStore) HostingRouteSwitchOptions(ctx context.Context, resource,
 		return finish("stale_routes")
 	}
 	// Qualify and bound in SQL before decoding. A lookahead advertises another page.
-	candidates, err := tx.Query(ctx, `SELECT rel.operation_id,rel.state,rel.retained_running,rel.body
- FROM hosting_retained_releases rel JOIN hosting_operations o ON o.id=rel.operation_id
- WHERE o.project_id=$1 AND o.resource_id=$2 AND o.binding_id=$3 AND rel.binding_id=$3
- AND rel.destination_id=$4 AND rel.state IN ('healthy','retained') AND rel.retained_running
- AND rel.body->'snapshot'->>'resource_id'=$2 AND rel.body->'snapshot'->>'binding_id'=$3
- AND rel.body->'snapshot'->>'destination_id'=$4 AND rel.body->'snapshot'->>'server_id'=$5
- AND rel.body->'snapshot'->>'runner_id'=$6 AND rel.body->'release'->>'daemon_id'=$7
- AND rel.operation_id>$8 ORDER BY rel.operation_id LIMIT 51`, project, resource, placement.BindingID, p.DestinationID, p.ServerID, p.RunnerID, p.DaemonID, after)
+	candidates, err := q.ProxySwitchReadTargets(ctx, sqlcgen.ProxySwitchReadTargetsParams{ProjectID: project, ResourceID: resource, BindingID: placement.BindingID, DestinationID: p.DestinationID, ServerID: p.ServerID, RunnerID: p.RunnerID, DaemonID: p.DaemonID, AfterOperationID: after})
 	if err != nil {
 		return view, err
 	}
-	defer candidates.Close()
-	for candidates.Next() {
-		var id, state string
-		var running bool
-		var raw []byte
-		if err := candidates.Scan(&id, &state, &running, &raw); err != nil {
-			return view, err
-		}
+	for _, candidate := range candidates {
+		id, state, running, raw := candidate.OperationID, candidate.State, candidate.RetainedRunning, candidate.Body
 		var healthy domain.HostingHealthy
 		row := sqlcgen.HostingProxyRoute{ResourceID: resource, BindingID: placement.BindingID, SelectedReleaseOperationID: id}
 		if json.Unmarshal(raw, &healthy) != nil || !proxyReleaseQualified(p, row, state, running, healthy) {
-			candidates.Close()
 			view.Targets = make([]domain.HostingRouteSwitchTarget, 0)
 			return finish("proxy_unavailable")
 		}
@@ -832,10 +806,6 @@ func (s *PostgresStore) HostingRouteSwitchOptions(ctx context.Context, resource,
 		}
 		view.Targets = append(view.Targets, domain.HostingRouteSwitchTarget{OperationID: id, Kind: kind, ResolvedImageIdentity: healthy.Release.ImageID, SourceGeneration: healthy.Snapshot.LocalBuild.SourceGeneration})
 	}
-	if err := candidates.Err(); err != nil {
-		return view, err
-	}
-	candidates.Close()
 	if len(view.Targets) == 0 && after == "" {
 		return finish("no_targets")
 	}

@@ -423,6 +423,34 @@ type HostingProxyReceipt struct {
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
+type HostingProxyRecoveryPlan struct {
+	ID          string          `json:"id"`
+	OperationID string          `json:"operation_id"`
+	ActorID     string          `json:"actor_id"`
+	RequestKey  string          `json:"request_key"`
+	RequestHash string          `json:"request_hash"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+	ExpiresAt   time.Time       `json:"expires_at"`
+}
+
+type HostingProxyRecoveryResolution struct {
+	ID                     string          `json:"id"`
+	OperationID            string          `json:"operation_id"`
+	PlanID                 string          `json:"plan_id"`
+	ActorID                string          `json:"actor_id"`
+	PlanHash               string          `json:"plan_hash"`
+	RequestKey             string          `json:"request_key"`
+	RequestHash            string          `json:"request_hash"`
+	CompleteReceiptID      string          `json:"complete_receipt_id"`
+	CompleteReceiptHash    string          `json:"complete_receipt_hash"`
+	ConvergenceOperationID string          `json:"convergence_operation_id"`
+	Body                   json.RawMessage `json:"body"`
+	BodyHash               string          `json:"body_hash"`
+	CreatedAt              time.Time       `json:"created_at"`
+}
+
 type HostingProxyReleaseReference struct {
 	OperationID        string `json:"operation_id"`
 	RouteID            string `json:"route_id"`
