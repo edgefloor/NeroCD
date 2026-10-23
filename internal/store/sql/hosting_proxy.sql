@@ -261,3 +261,33 @@ SELECT id FROM hosting_proxy_operations WHERE proxy_id=$1 AND generation>$2 AND 
 
 -- name: ProxyLockVerifiedSwitchRunner :one
 SELECT id FROM runners WHERE id=$1 AND status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(capabilities) AND 'hosting_proxy_verified_switch_v1'=ANY(capabilities) FOR SHARE;
+
+-- name: ProxySwitchReadProject :one
+SELECT r.project_id FROM resources r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND p.archived_at IS NULL;
+
+-- name: ProxySwitchReadAllowed :one
+SELECT (CASE
+ WHEN EXISTS(SELECT 1 FROM users scope_user WHERE scope_user.id=$1 AND scope_user.status='active' AND scope_user.archived_at IS NULL) THEN
+ EXISTS(SELECT 1 FROM users u WHERE u.id=$1 AND (u.global_role='system_admin' OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=$2 AND m.user_id=u.id AND m.role IN ('owner','maintainer','viewer'))))
+ WHEN EXISTS(SELECT 1 FROM api_tokens scope_token WHERE scope_token.id=$1 AND scope_token.service_account_id IS NULL AND scope_token.status='active' AND scope_token.revoked_at IS NULL AND (scope_token.expires_at IS NULL OR scope_token.expires_at>clock_timestamp())) THEN
+ EXISTS(SELECT 1 FROM api_tokens role_token WHERE role_token.id=$1 AND 'system_admin'=ANY(role_token.roles))
+ ELSE EXISTS(SELECT 1 FROM service_accounts sa JOIN users u ON u.id=sa.owner_user_id WHERE sa.id=$1 AND sa.status='active' AND u.status='active' AND sa.project_id=$2 AND sa.role IN ('owner','maintainer','viewer')) END)::boolean;
+
+-- name: ProxySwitchReadBindingState :one
+SELECT restore_admitted,hold_operation_id FROM hosting_binding_state WHERE binding_id=$1;
+
+-- name: ProxySwitchReadEnabledRoutes :many
+SELECT id FROM hosting_proxy_routes WHERE proxy_id=$1 AND enabled ORDER BY id LIMIT 33;
+
+-- name: ProxySwitchReadPendingOperation :one
+SELECT o.id FROM hosting_proxy_operations o WHERE o.proxy_id=sqlc.arg(proxy_id)::text AND o.project_id=sqlc.arg(project_id)::text AND o.snapshot->'verified_switch'->'routes'->0->'prior_target'->>'resource_id'=sqlc.arg(resource_id)::text AND (o.id=sqlc.arg(active_operation_id)::text OR o.id=sqlc.arg(hold_operation_id)::text OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')) ORDER BY o.generation LIMIT 1;
+
+-- name: ProxySwitchReadTargets :many
+SELECT rel.operation_id,rel.state,rel.retained_running,rel.body
+ FROM hosting_retained_releases rel JOIN hosting_operations o ON o.id=rel.operation_id
+ WHERE o.project_id=sqlc.arg(project_id)::text AND o.resource_id=sqlc.arg(resource_id)::text AND o.binding_id=sqlc.arg(binding_id)::text AND rel.binding_id=sqlc.arg(binding_id)::text
+ AND rel.destination_id=sqlc.arg(destination_id)::text AND rel.state IN ('healthy','retained') AND rel.retained_running
+ AND rel.body->'snapshot'->>'resource_id'=sqlc.arg(resource_id)::text AND rel.body->'snapshot'->>'binding_id'=sqlc.arg(binding_id)::text
+ AND rel.body->'snapshot'->>'destination_id'=sqlc.arg(destination_id)::text AND rel.body->'snapshot'->>'server_id'=sqlc.arg(server_id)::text
+ AND rel.body->'snapshot'->>'runner_id'=sqlc.arg(runner_id)::text AND rel.body->'release'->>'daemon_id'=sqlc.arg(daemon_id)::text
+ AND rel.operation_id>sqlc.arg(after_operation_id)::text ORDER BY rel.operation_id LIMIT 51;

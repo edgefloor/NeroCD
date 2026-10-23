@@ -1656,6 +1656,166 @@ func (q *Queries) ProxySupersedeUnadmitted(ctx context.Context, proxyID string) 
 	return result.RowsAffected(), nil
 }
 
+const proxySwitchReadAllowed = `-- name: ProxySwitchReadAllowed :one
+SELECT (CASE
+ WHEN EXISTS(SELECT 1 FROM users scope_user WHERE scope_user.id=$1 AND scope_user.status='active' AND scope_user.archived_at IS NULL) THEN
+ EXISTS(SELECT 1 FROM users u WHERE u.id=$1 AND (u.global_role='system_admin' OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=$2 AND m.user_id=u.id AND m.role IN ('owner','maintainer','viewer'))))
+ WHEN EXISTS(SELECT 1 FROM api_tokens scope_token WHERE scope_token.id=$1 AND scope_token.service_account_id IS NULL AND scope_token.status='active' AND scope_token.revoked_at IS NULL AND (scope_token.expires_at IS NULL OR scope_token.expires_at>clock_timestamp())) THEN
+ EXISTS(SELECT 1 FROM api_tokens role_token WHERE role_token.id=$1 AND 'system_admin'=ANY(role_token.roles))
+ ELSE EXISTS(SELECT 1 FROM service_accounts sa JOIN users u ON u.id=sa.owner_user_id WHERE sa.id=$1 AND sa.status='active' AND u.status='active' AND sa.project_id=$2 AND sa.role IN ('owner','maintainer','viewer')) END)::boolean
+`
+
+type ProxySwitchReadAllowedParams struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+}
+
+func (q *Queries) ProxySwitchReadAllowed(ctx context.Context, arg ProxySwitchReadAllowedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, proxySwitchReadAllowed, arg.ID, arg.ProjectID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const proxySwitchReadBindingState = `-- name: ProxySwitchReadBindingState :one
+SELECT restore_admitted,hold_operation_id FROM hosting_binding_state WHERE binding_id=$1
+`
+
+type ProxySwitchReadBindingStateRow struct {
+	RestoreAdmitted bool    `json:"restore_admitted"`
+	HoldOperationID *string `json:"hold_operation_id"`
+}
+
+func (q *Queries) ProxySwitchReadBindingState(ctx context.Context, bindingID string) (ProxySwitchReadBindingStateRow, error) {
+	row := q.db.QueryRow(ctx, proxySwitchReadBindingState, bindingID)
+	var i ProxySwitchReadBindingStateRow
+	err := row.Scan(&i.RestoreAdmitted, &i.HoldOperationID)
+	return i, err
+}
+
+const proxySwitchReadEnabledRoutes = `-- name: ProxySwitchReadEnabledRoutes :many
+SELECT id FROM hosting_proxy_routes WHERE proxy_id=$1 AND enabled ORDER BY id LIMIT 33
+`
+
+func (q *Queries) ProxySwitchReadEnabledRoutes(ctx context.Context, proxyID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, proxySwitchReadEnabledRoutes, proxyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const proxySwitchReadPendingOperation = `-- name: ProxySwitchReadPendingOperation :one
+SELECT o.id FROM hosting_proxy_operations o WHERE o.proxy_id=$1::text AND o.project_id=$2::text AND o.snapshot->'verified_switch'->'routes'->0->'prior_target'->>'resource_id'=$3::text AND (o.id=$4::text OR o.id=$5::text OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')) ORDER BY o.generation LIMIT 1
+`
+
+type ProxySwitchReadPendingOperationParams struct {
+	ProxyID           string `json:"proxy_id"`
+	ProjectID         string `json:"project_id"`
+	ResourceID        string `json:"resource_id"`
+	ActiveOperationID string `json:"active_operation_id"`
+	HoldOperationID   string `json:"hold_operation_id"`
+}
+
+func (q *Queries) ProxySwitchReadPendingOperation(ctx context.Context, arg ProxySwitchReadPendingOperationParams) (string, error) {
+	row := q.db.QueryRow(ctx, proxySwitchReadPendingOperation,
+		arg.ProxyID,
+		arg.ProjectID,
+		arg.ResourceID,
+		arg.ActiveOperationID,
+		arg.HoldOperationID,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const proxySwitchReadProject = `-- name: ProxySwitchReadProject :one
+SELECT r.project_id FROM resources r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND p.archived_at IS NULL
+`
+
+func (q *Queries) ProxySwitchReadProject(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, proxySwitchReadProject, id)
+	var project_id string
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
+const proxySwitchReadTargets = `-- name: ProxySwitchReadTargets :many
+SELECT rel.operation_id,rel.state,rel.retained_running,rel.body
+ FROM hosting_retained_releases rel JOIN hosting_operations o ON o.id=rel.operation_id
+ WHERE o.project_id=$1::text AND o.resource_id=$2::text AND o.binding_id=$3::text AND rel.binding_id=$3::text
+ AND rel.destination_id=$4::text AND rel.state IN ('healthy','retained') AND rel.retained_running
+ AND rel.body->'snapshot'->>'resource_id'=$2::text AND rel.body->'snapshot'->>'binding_id'=$3::text
+ AND rel.body->'snapshot'->>'destination_id'=$4::text AND rel.body->'snapshot'->>'server_id'=$5::text
+ AND rel.body->'snapshot'->>'runner_id'=$6::text AND rel.body->'release'->>'daemon_id'=$7::text
+ AND rel.operation_id>$8::text ORDER BY rel.operation_id LIMIT 51
+`
+
+type ProxySwitchReadTargetsParams struct {
+	ProjectID        string `json:"project_id"`
+	ResourceID       string `json:"resource_id"`
+	BindingID        string `json:"binding_id"`
+	DestinationID    string `json:"destination_id"`
+	ServerID         string `json:"server_id"`
+	RunnerID         string `json:"runner_id"`
+	DaemonID         string `json:"daemon_id"`
+	AfterOperationID string `json:"after_operation_id"`
+}
+
+type ProxySwitchReadTargetsRow struct {
+	OperationID     string          `json:"operation_id"`
+	State           string          `json:"state"`
+	RetainedRunning bool            `json:"retained_running"`
+	Body            json.RawMessage `json:"body"`
+}
+
+func (q *Queries) ProxySwitchReadTargets(ctx context.Context, arg ProxySwitchReadTargetsParams) ([]ProxySwitchReadTargetsRow, error) {
+	rows, err := q.db.Query(ctx, proxySwitchReadTargets,
+		arg.ProjectID,
+		arg.ResourceID,
+		arg.BindingID,
+		arg.DestinationID,
+		arg.ServerID,
+		arg.RunnerID,
+		arg.DaemonID,
+		arg.AfterOperationID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProxySwitchReadTargetsRow{}
+	for rows.Next() {
+		var i ProxySwitchReadTargetsRow
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.State,
+			&i.RetainedRunning,
+			&i.Body,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const proxySwitchRoute = `-- name: ProxySwitchRoute :execrows
 UPDATE hosting_proxy_routes SET selected_release_operation_id=$2,version=version+1,updated_at=clock_timestamp()
 WHERE id=$1 AND version=$3 AND selected_release_operation_id=$4 AND enabled
