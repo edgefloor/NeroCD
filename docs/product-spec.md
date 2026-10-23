@@ -5,7 +5,7 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `e097ffa706325f55cab7a7b0416a235a0e9ad151`, reviewed on 2026-10-23. Native migrations extend through 0059. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`, reviewed on 2026-10-23. Native migrations extend through 0059. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -890,7 +890,7 @@ The earlier revision 3 instruction to make Task collaboration and D0–D3 the fi
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0059, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `e097ffa706325f55cab7a7b0416a235a0e9ad151`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0059, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -924,7 +924,8 @@ The implementation campaign changed application code and exercised real infrastr
 | Verified existing-route switch engine | Accepted `99250c2634109cdd2008c56dae1b1740d377c0a1`; [engine contract](hosting-route-switch.md), [runtime fixture](../internal/hostingproxy/runtime_test.go) | Opt-in existing-route port switches verify old/new HTTP and trusted TLS, preserve unrelated routes and verify rollback; cancellation or unverified rollback stays `Uncertain`; controller/API admission and agent capability negotiation were absent at this engine checkpoint; accepted controller evidence is below; automatic deployment orchestration remains pending; no production ACME or complete A11/A20 |
 | Guarded verified-route controller | Accepted `5687b88465839b8e341181ba8b47f54dc17f006c`; [request, authority and recovery contract](hosting-route-switch.md), [compiled runner fixture](../internal/api/hosting_route_switch_runtime_integration_test.go) | Migration 0058; resource POST selects exact healthy or retained-running releases for existing routes; explicit agent capability/opt-in, verified HTTP/trusted TLS, prior-generation rollback, lost-response idempotency and cancellation/replay holds; current authority, expiry and revocation checks; metadata conflicts remained held without reconciliation at this controller checkpoint; bounded R21/R25/R28 and A11/A20 evidence, not full R21, draining or automatic data rollback |
 | Route-switch reads and operator UI | Read API accepted `fa93d16fa09d5a7929581d5acb206029be9752d0`; UI source `1a555c514a23241bca34224380008dc42edcce49`, accepted `1c6ddb414d984372bb1f081fb6ff23db8bd81f88`; [operator contract](hosting-route-switch.md) | Resource-scoped authoritative options, explicit review, frozen retry intent, pending-operation recovery and visible holds; compiled controller 33.98 seconds/browser 19.6 seconds plus 111 normal browser cases; native Linux arm64 and local test CA; unresolved metadata conflicts remain held |
-| Completed metadata-conflict recovery API | Source `93305f8c528b8a3990ec79178584f4e170bada02`, accepted `e097ffa706325f55cab7a7b0416a235a0e9ad151`; [administrator recovery contract](hosting-proxy-recovery.md) | Migration 0059; current server administrator/control-project owner reviews eligible completed rolled-back/refused conflicts; 30-second plans and idempotent apply preserve original receipts, disabled/revoked state and release protection, settle only the matching hold and queue authorized convergence; concurrent retries return one resolution; uncertain/unfinished outcomes and generic unlock remain unsupported; administrator UI remains pending |
+| Completed metadata-conflict recovery API | Source `93305f8c528b8a3990ec79178584f4e170bada02`, accepted `e097ffa706325f55cab7a7b0416a235a0e9ad151`; [administrator recovery contract](hosting-proxy-recovery.md) | Migration 0059; current server administrator/control-project owner reviews eligible completed rolled-back/refused conflicts; 30-second plans and idempotent apply preserve original receipts, disabled/revoked state and release protection, settle only the matching hold and queue authorized convergence; concurrent retries return one resolution; uncertain/unfinished outcomes and generic unlock remain unsupported; administrator UI was absent at this API checkpoint and is accepted below |
+| Completed metadata-recovery administrator UI | Source `0e84be388bf0132e58bd9ef67b8e083a354626cb`, accepted `d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`; [UI contract and local qualification](hosting-proxy-recovery.md#local-ui-qualification), [browser fixture](../web/app/scripts/hosting-proxy-recovery-fixture.sh) | Explicit immutable 30-second plan review and confirmation, exact retry, new review after 409, current authorization, scoped operation locator, new current GET and denial masking; recorded settlement and queued convergence remain distinct from convergence completion; no general unlock, grant restoration or data restore |
 | Compiled Vite SPA qualification | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Exact pinned source compiles with Node 22.22.0, Bun 1.3.6, Vite 8.2.2 and Caddy 2.10.2; runtime 141.87 seconds/default regression 42.72 seconds; genuine parser failure preserves the prior serving application; HTTP browser bridge and independent TLS probe are separate evidence; earlier unexplained failures remain a reliability limit; not complete A04 or production ACME |
 
 Private Railpack qualification is now accepted at
@@ -940,6 +941,30 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
+Recovery UI source `0e84be388bf0132e58bd9ef67b8e083a354626cb` passed all three
+independent reviews before accepted integration
+`d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`. Retained combined evidence in
+`/tmp/nerocd-recovery-ui-combined-*` records 1,072 frontend tests in 87 files,
+72 focused tests, actual controller 26.25 seconds and nine browser cases with
+Go runtime 92.73 seconds. The separate 110-case operator run used `--no-deps`
+and omitted OIDC setup; it does not qualify OIDC. Fresh combined and accepted-main
+checks record the 189-route Go contract and 74 served assets, including
+`/tmp/nerocd-main-recovery-ui-contract.log` and
+`/tmp/nerocd-main-recovery-ui-served.log`. Runtime qualification is native Linux
+arm64 with local fixture CA trust, not production TLS or convergence completion.
+
+React Doctor 0.9.18 evidence at `baf2c3a3326dea01ce7ad9142c36daaab81102d8`
+records 122 diagnostics reduced to 107: 118 warnings and four errors became
+103 warnings and the same four retained errors. The remaining findings include
+23 selected-rule diagnostics and 84 others. This revision-specific result does
+not remove all selected findings; the newer recovery integration tree was not scanned.
+The [secret-state change and tests](../web/app/src/pages/ProjectSecrets.test.tsx)
+and `/tmp/nerocd-doctor-top-three-evidence/dispositions.json` identify the source
+and retained dispositions. Trusted automatic-deployment controller work remains
+active and unaccepted. SSH fixture qualification is in progress with no accepted
+result; two initial setup attempts failed, setup was corrected and the current
+run remains pending. SSH onboarding is not qualified.
+
 Bounded completed metadata-conflict recovery is accepted at
 `e097ffa706325f55cab7a7b0416a235a0e9ad151`, including migration 0059. Source
 `93305f8c528b8a3990ec79178584f4e170bada02` passed all three independent reviews.
@@ -954,7 +979,7 @@ architecture checks passed in `/tmp/nerocd-recovery-combined-sql-policy.log` and
 `/tmp/nerocd-main-recovery-sql-policy.log`. Main's 189-route contract and 74 served
 assets passed in `/tmp/nerocd-main-recovery-contract.log` and
 `/tmp/nerocd-main-recovery-served.log`. No fresh whole-suite or production TLS
-result is claimed. Recovery administrator UI, R17 automatic deployment, protected
+result is claimed. R17 automatic deployment, protected
 plans, SSH, production TLS, stateful hosting and remaining parity stay open.
 
 Controller qualification at `b1e42f53d06af36c086d5a8160dba4c17bced8c9`

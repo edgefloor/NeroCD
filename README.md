@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`e097ffa706325f55cab7a7b0416a235a0e9ad151`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
+`d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`, 2026-10-23. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -101,7 +101,10 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   [completed metadata-conflict recovery API](docs/hosting-proxy-recovery.md) is
   accepted at `e097ffa706325f55cab7a7b0416a235a0e9ad151`, with reviewed expiring
   plans and idempotent apply. Uncertain outcomes remain held. Recovery administrator
-  UI, automatic deployment, draining, data rollback and production ACME remain open.
+  UI is accepted at `d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`, with explicit
+  plan review, confirmation and scoped exact retry. Queued convergence is not
+  completed convergence. Automatic deployment, draining, data rollback and
+  production ACME remain open.
 - Runtime configuration UI for public literals and exact managed-secret versions,
   generation compare-and-swap, idempotent retries and fresh deployment generations.
   Accepted browser proof covers authenticated API, compiled runner and Docker,
@@ -160,9 +163,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
-and extended compatibility. Next are SSH onboarding, recovery administrator UI,
-automatic/protected deployment, then
-production TLS qualification before stateful hosting. Broader
+and extended compatibility. Next are trusted automatic deployment, then protected plans, alongside SSH
+qualification, before production TLS and stateful hosting. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
 
