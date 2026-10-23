@@ -199,7 +199,8 @@ func (f *mountedApplyFixture) install(t *testing.T) {
 				f.events = append(f.events, args[1]+" "+id)
 				switch args[1] {
 				case "stop":
-					if !(f.mode == "previous-still-running" && id != f.candidate || f.mode == "candidate-still-running" && id == f.candidate) {
+					keepRunning := f.mode == "previous-still-running" && id != f.candidate || f.mode == "candidate-still-running" && id == f.candidate
+					if !keepRunning {
 						c.State.Running = false
 					}
 					f.containers[id] = c

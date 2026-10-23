@@ -396,7 +396,11 @@ func TestOwnedStorageDisposableDocker(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer response.Body.Close()
+		defer func() {
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("fixture HTTP response close: %v", err)
+			}
+		}()
 		raw, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
 		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
 			t.Fatalf("fixture HTTP %s %s status=%d err=%v", method, path, response.StatusCode, err)
