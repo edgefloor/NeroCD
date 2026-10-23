@@ -256,8 +256,9 @@ func waitServerBootstrapRemote[T any](ctx context.Context, cancel context.Cancel
 	}
 	var renewing <-chan renewal
 	var renewCancel context.CancelFunc
+	// Remote completion leaves the caller context live for receipt construction.
+	// Only the renewal is cancelled here; authority-loss paths cancel SSH below.
 	defer func() {
-		cancel()
 		if renewCancel != nil {
 			renewCancel()
 			<-renewing
@@ -274,10 +275,12 @@ func waitServerBootstrapRemote[T any](ctx context.Context, cancel context.Cancel
 		case out := <-done:
 			// Completion racing a timer must not turn expired authority into success.
 			if err := ctx.Err(); err != nil {
+				cancel()
 				var zero T
 				return zero, err
 			}
 			if !expiresAt.After(time.Now()) {
+				cancel()
 				var zero T
 				return zero, context.DeadlineExceeded
 			}

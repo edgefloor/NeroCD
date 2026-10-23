@@ -166,8 +166,39 @@ func TestServerBootstrapRemoteCompletionCancelsAndJoinsRenewal(t *testing.T) {
 			joined = true
 			return time.Time{}, renewCtx.Err()
 		})
-		if err != nil || out != 7 || !joined || time.Since(now) != 2*time.Second {
-			t.Fatalf("completion did not join renewal: out=%d err=%v joined=%v elapsed=%v", out, err, joined, time.Since(now))
+		if err != nil || out != 7 || !joined || time.Since(now) != 2*time.Second || ctx.Err() != nil {
+			t.Fatalf("completion did not preserve authority and join renewal: out=%d err=%v joined=%v elapsed=%v ctxErr=%v", out, err, joined, time.Since(now), ctx.Err())
 		}
 	})
+}
+
+func TestServerBootstrapRemoteCompletionConstructsReceipt(t *testing.T) {
+	now := time.Now()
+	stage := domain.ServerBootstrapStage{
+		Command: domain.ServerBootstrapCommand{ID: "command", Action: "probe", Deadline: now.Add(time.Minute)},
+		LeaseID: "lease", Attempt: 1, Fence: 2, ExpiresAt: now.Add(30 * time.Second),
+	}
+	repo := bootstrapRenewalRepository{renew: func(_ context.Context, stage domain.ServerBootstrapStage) (domain.ServerBootstrapStage, error) {
+		return stage, nil
+	}}
+	op := domain.ServerBootstrapOperation{Input: domain.ServerBootstrapInput{Target: domain.ServerBootstrapTarget{IP: "192.0.2.10", Port: 22, User: "root"}}}
+	// The delivery stub supplies an empty SSH key. Probe rejects it locally before
+	// dialing, so this exercises the real caller's closed receipt path without I/O.
+	receipt, err := (&Service{}).bootstrapRemote(t.Context(), repo, "actor", op, stage)
+	if err != nil || receipt.Outcome != "refused" || receipt.CommandID != stage.Command.ID || receipt.LeaseID != stage.LeaseID || receipt.Attempt != stage.Attempt || receipt.Fence != stage.Fence {
+		t.Fatalf("completed remote call lost its receipt: receipt=%+v err=%v", receipt, err)
+	}
+}
+
+func TestServerBootstrapCompletionRejectsCancelledParent(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	done := make(chan int, 1)
+	done <- 7
+	_, err := waitServerBootstrapRemote(ctx, cancel, time.Now().Add(time.Minute), time.Second, done, func(context.Context) (time.Time, error) {
+		return time.Time{}, errors.New("unexpected renewal")
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled parent accepted completion: %v", err)
+	}
 }
