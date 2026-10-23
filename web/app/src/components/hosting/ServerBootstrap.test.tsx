@@ -737,6 +737,7 @@ test("actor change during a request rejects its late response", async () => {
         .value,
     ).toBe(""),
   );
+  expect((writes(fetch)[0]![1].signal as AbortSignal).aborted).toBe(true);
   await act(async () => {
     resolve(json(operation()));
   });
@@ -746,4 +747,242 @@ test("actor change during a request rejects its late response", async () => {
   expect(
     client.getQueryData(["serverBootstrap", "local:admin", "project", "op"]),
   ).toBeUndefined();
+});
+
+test("same-actor read denial fences an older pending command success", async () => {
+  let deny = false;
+  let resolve: (response: Response) => void = () => {};
+  const { fetch } = setup((url) => {
+    if (url.includes("/server-bootstraps?")) return json(page([operation()]));
+    if (url === "/api/v1/server-bootstraps/op")
+      return deny ? json({}, 403) : json(operation());
+    if (url.endsWith("/probe"))
+      return new Promise<Response>((done) => {
+        resolve = done;
+      });
+  });
+  await chooseProject();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Production host ·/ }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Probe host prerequisites" }),
+  );
+  await waitFor(() => expect(writes(fetch)).toHaveLength(1));
+  deny = true;
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["serverBootstrap"] });
+  });
+  await screen.findByText(/Onboarding access is unavailable/);
+  await act(async () => {
+    resolve(json(probed(operation())));
+  });
+  expect(
+    screen.queryByRole("region", { name: "Current server onboarding" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Retry exact onboarding request" }),
+  ).toBeNull();
+  expect(
+    client.getQueryState(["serverBootstrap", "local:admin", "project", "op"])
+      ?.status,
+  ).toBe("error");
+  expect((writes(fetch)[0]![1].signal as AbortSignal).aborted).toBe(true);
+});
+
+test("hung command releases exact retry and navigation, rejecting late success during retry", async () => {
+  const pending: ((response: Response) => void)[] = [];
+  const { fetch } = setup((url) => {
+    if (url.includes("/server-bootstraps?")) return json(page([operation()]));
+    if (url === "/api/v1/server-bootstraps/op") return json(operation());
+    if (url.endsWith("/probe"))
+      return new Promise<Response>((done) => {
+        pending.push(done);
+      });
+  });
+  await chooseProject();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Production host ·/ }),
+  );
+  await screen.findByRole("button", { name: "Probe host prerequisites" });
+  vi.useFakeTimers();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Probe host prerequisites" }),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(180000);
+  });
+  const retry = screen.getByRole<HTMLButtonElement>("button", {
+    name: "Retry exact onboarding request",
+  });
+  expect(retry.disabled).toBe(false);
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("Project for server onboarding")
+      .disabled,
+  ).toBe(false);
+  expect((writes(fetch)[0]![1].signal as AbortSignal).aborted).toBe(true);
+  expect(screen.getByText(/does not cancel/)).toBeTruthy();
+  fireEvent.click(retry);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(writes(fetch)).toHaveLength(2);
+  expect(writes(fetch)[0]![1].body).toBe(writes(fetch)[1]![1].body);
+  await act(async () => {
+    pending[0]!(json(probed(operation())));
+  });
+  expect(
+    screen.queryByRole("button", { name: "Review planned install" }),
+  ).toBeNull();
+  expect(retry.disabled).toBe(true);
+  await act(async () => {
+    pending[1]!(json(probed(operation())));
+  });
+  expect(
+    screen.getByRole("button", { name: "Review planned install" }),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Retry exact onboarding request" }),
+  ).toBeNull();
+});
+
+test("unmount aborts a pending mutation and ignores its late response", async () => {
+  let resolve: (response: Response) => void = () => {};
+  const { fetch } = setup((url) => {
+    if (url.includes("/server-bootstraps?")) return json(page([operation()]));
+    if (url === "/api/v1/server-bootstraps/op") return json(operation());
+    if (url.endsWith("/probe"))
+      return new Promise<Response>((done) => {
+        resolve = done;
+      });
+  });
+  await chooseProject();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Production host ·/ }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Probe host prerequisites" }),
+  );
+  await waitFor(() => expect(writes(fetch)).toHaveLength(1));
+  cleanup();
+  expect((writes(fetch)[0]![1].signal as AbortSignal).aborted).toBe(true);
+  await act(async () => {
+    resolve(json(probed(operation())));
+  });
+  expect(
+    client.getQueryData<Operation>([
+      "serverBootstrap",
+      "local:admin",
+      "project",
+      "op",
+    ])?.version,
+  ).toBe(1);
+});
+
+test("hung create retries the frozen UUID and body after its 30 second deadline", async () => {
+  const pending: ((response: Response) => void)[] = [];
+  const { fetch } = setup((url, options) => {
+    if (url === "/api/v1/server-bootstraps" && options.method === "POST")
+      return new Promise<Response>((done) => {
+        pending.push(done);
+      });
+    if (url === "/api/v1/server-bootstraps/op") return json(operation());
+  });
+  await chooseProject();
+  fireEvent.change(screen.getByLabelText("Managed SSH key"), {
+    target: { value: "key" },
+  });
+  await screen.findByRole("option", { name: "Version 2 · current" });
+  fireEvent.change(screen.getByLabelText("SSH key version"), {
+    target: { value: "2" },
+  });
+  fireEvent.change(screen.getByLabelText("Qualified runner release"), {
+    target: { value: "release" },
+  });
+  vi.useFakeTimers();
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Prepare SSH server onboarding" }),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(29999);
+  });
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "Retry exact onboarding request",
+    }).disabled,
+  ).toBe(true);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  const retry = screen.getByRole<HTMLButtonElement>("button", {
+    name: "Retry exact onboarding request",
+  });
+  expect(retry.disabled).toBe(false);
+  fireEvent.click(retry);
+  await act(async () => {
+    pending[0]!(json({}, 403));
+  });
+  expect(screen.queryByText(/Onboarding access is unavailable/)).toBeNull();
+  expect(retry.disabled).toBe(true);
+  expect(writes(fetch)[0]![1].body).toBe(writes(fetch)[1]![1].body);
+  expect(JSON.parse(writes(fetch)[1]![1].body).request_id).toBeTruthy();
+  await act(async () => {
+    pending[1]!(json(operation()));
+  });
+  expect(
+    screen.getByRole("region", { name: "Current server onboarding" }),
+  ).toBeTruthy();
+});
+
+test("fresh project authorization cannot admit a denied lifetime's late response", async () => {
+  let deny = false;
+  let resolve: (response: Response) => void = () => {};
+  setup((url) => {
+    if (url.includes("server-bootstraps?project_id=project"))
+      return json(page([operation()]));
+    if (url === "/api/v1/server-bootstraps/op")
+      return deny ? json({}, 403) : json(operation());
+    if (url.endsWith("/probe"))
+      return new Promise<Response>((done) => {
+        resolve = done;
+      });
+  });
+  await chooseProject();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Production host ·/ }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Probe host prerequisites" }),
+  );
+  deny = true;
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["serverBootstrap"] });
+  });
+  await screen.findByText(/Onboarding access is unavailable/);
+  fireEvent.change(screen.getByLabelText("Project for server onboarding"), {
+    target: { value: "second" },
+  });
+  await screen.findByText("New server for Second project");
+  deny = false;
+  fireEvent.change(screen.getByLabelText("Project for server onboarding"), {
+    target: { value: "project" },
+  });
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Production host ·/ }),
+  );
+  await screen.findByRole("region", { name: "Current server onboarding" });
+  await act(async () => {
+    resolve(json(probed(operation())));
+  });
+  expect(
+    screen.queryByRole("button", { name: "Review planned install" }),
+  ).toBeNull();
+  expect(
+    client.getQueryData<Operation>([
+      "serverBootstrap",
+      "local:admin",
+      "project",
+      "op",
+    ])?.version,
+  ).toBe(1);
 });

@@ -92,3 +92,40 @@ test("scoped metadata queries forward cancellation and reject a different projec
   );
   client.clear();
 });
+
+test("mutations forward the caller's abort signal without changing replay bodies", async () => {
+  const fetch = vi.fn(async () => new Response("{}"));
+  vi.stubGlobal("fetch", fetch);
+  const controller = new AbortController();
+  const body = { command_id: "frozen-command", expected_version: 3 };
+  await commandServerBootstrap("op", "probe", body, controller.signal);
+  expect(fetch.mock.calls[0]).toEqual([
+    "/api/v1/server-bootstraps/op/probe",
+    expect.objectContaining({
+      signal: controller.signal,
+      body: JSON.stringify(body),
+    }),
+  ]);
+  const create = {
+    request_id: "frozen-create",
+    project_id: "project",
+    name: "host",
+    target: {
+      ip: "192.0.2.1",
+      port: 22,
+      user: "root" as const,
+      host_fingerprint: "SHA256:verified",
+    },
+    ssh_secret_id: "key",
+    ssh_secret_version: 2,
+    artifact_id: "release",
+  };
+  await createServerBootstrap(create, controller.signal);
+  expect(fetch.mock.calls[1]).toEqual([
+    "/api/v1/server-bootstraps",
+    expect.objectContaining({
+      signal: controller.signal,
+      body: JSON.stringify(create),
+    }),
+  ]);
+});
