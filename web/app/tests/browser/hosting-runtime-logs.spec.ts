@@ -69,7 +69,11 @@ test("explicit sensitive runtime log demand uses real API, actor scope, bounded 
     await expect(logs.getByText(/Runtime log access is unavailable/)).toBeVisible(); releaseRevoked(); await page.waitForTimeout(200);
     await expect(logs.getByRole("list", { name: "Sensitive runtime log rows" })).toHaveCount(0); await expect(logs.getByText(session.id, { exact: true })).toHaveCount(0);
   } finally { releaseRevoked(); await page.unroute(`**/api/v1/runtime-log-sessions/${session.id}/logs?*`); }
-  await step("restore"); expect((await page.request.get(`/api/v1/runtime-log-sessions/${session.id}/logs`)).status()).not.toBe(200);
+  await step("restore");
+  // Restored current membership may authorize this actor's retained history.
+  // The cleared UI must not rehydrate it or resume demand automatically.
+  expect((await page.request.get(`/api/v1/runtime-log-sessions/${session.id}/logs`)).status()).toBe(200);
+  await expect(logs.getByRole("list", { name: "Sensitive runtime log rows" })).toHaveCount(0); await expect(logs.getByText(session.id, { exact: true })).toHaveCount(0);
   expect((await owner.request.post(meta.complete_path, { headers: { Origin: "http://127.0.0.1:1", "X-NeroCD-CSRF": "1" } })).status()).toBe(403);
   expect((await owner.request.post(meta.complete_path, { headers: headers(meta) })).status()).toBe(204);
   completion = undefined; await ownerContext.close();
