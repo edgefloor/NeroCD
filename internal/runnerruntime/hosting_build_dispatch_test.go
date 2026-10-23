@@ -3,6 +3,8 @@ package runnerruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -315,6 +317,35 @@ func TestRunContextCanceledReplayPreservesEveryFamily(t *testing.T) {
 			after, _ := json.Marshal(journal.Snapshot())
 			if string(before) != string(after) {
 				t.Fatal("canceled replay mutated retained records")
+			}
+		})
+	}
+}
+
+func TestContinuousBuildFailureBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name                 string
+		err                  error
+		once, canceled, want bool
+	}{
+		{name: "settled", err: errSettledBuildFailure, want: true},
+		{name: "wrapped settled", err: fmt.Errorf("completed: %w", errSettledBuildFailure), want: true},
+		{name: "once preserves failure", err: errSettledBuildFailure, once: true},
+		{name: "cancellation stops", err: errSettledBuildFailure, canceled: true},
+		{name: "same text is not proof", err: errors.New(errSettledBuildFailure.Error())},
+		{name: "cleanup uncertainty", err: hostingbuild.ErrCleanupUnconfirmed},
+		{name: "authority loss", err: errLeaseAuthorityLost},
+		{name: "deadline", err: context.DeadlineExceeded},
+		{name: "output uncertainty", err: hostingbuild.ErrOutputSink},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if test.canceled {
+				cancel()
+			}
+			if settledBuildMayContinue(ctx, test.once, test.err) != test.want {
+				t.Fatal("continuous/once/cancellation settlement boundary changed")
 			}
 		})
 	}

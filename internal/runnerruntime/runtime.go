@@ -312,7 +312,7 @@ func RunContext(ctx context.Context, config Config) error {
 			if !config.Execute {
 				return errors.New("hosting_build_v1 requires explicit execution; generic completion is forbidden")
 			}
-			if err := executeBuildClaim(ctx, config.Server, config.Token, claim, config.RunnerID, config.CancelPollInterval, buildExecutor, operational); err != nil {
+			if err := executeBuildClaim(ctx, config.Server, config.Token, claim, config.RunnerID, config.CancelPollInterval, buildExecutor, operational); err != nil && !settledBuildMayContinue(ctx, config.Once, err) {
 				return err
 			}
 			if config.Once {
@@ -923,4 +923,10 @@ func startLeaseWatcher(parent context.Context, server, token string, lease domai
 func attemptMutationKey(kind, leaseID string, attempt int, discriminator string) string {
 	sum := sha256.Sum256([]byte(kind + "\x00" + leaseID + "\x00" + strconv.Itoa(attempt) + "\x00" + discriminator))
 	return kind + "_" + fmt.Sprintf("%x", sum[:16])
+}
+
+// A normal failed build is settled work, while every uncertain result remains
+// fatal. Once mode keeps its command failure and cancellation always stops.
+func settledBuildMayContinue(ctx context.Context, once bool, err error) bool {
+	return !once && ctx.Err() == nil && errors.Is(err, errSettledBuildFailure)
 }
