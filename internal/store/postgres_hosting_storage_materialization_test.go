@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
@@ -417,7 +418,14 @@ func TestHostingStorageMaterializationPostgresExpiryDuringOriginLock(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = blocker.Rollback(context.Background()) }()
+	rollbackBlocker := func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if err := blocker.Rollback(cleanup); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Errorf("rollback origin blocker: %v", err)
+		}
+	}
+	t.Cleanup(rollbackBlocker)
 	var pid int
 	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid() FROM hosting_storage_materializations WHERE storage_id=$1 FOR UPDATE`, f.storage.ID).Scan(&pid); err != nil {
 		t.Fatal(err)
@@ -434,7 +442,7 @@ func TestHostingStorageMaterializationPostgresExpiryDuringOriginLock(t *testing.
 	}()
 	defer func() {
 		cancel()
-		_ = blocker.Rollback(context.Background())
+		rollbackBlocker()
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
