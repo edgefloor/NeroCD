@@ -1649,6 +1649,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read immutable desired storage metadata
+         * @description Current project viewer and destination grant required. A 404 means no configured storage or unavailable resource. Metadata is not evidence of volume materialization or workload use.
+         */
+        get: operations["getHostingStorage"];
+        put?: never;
+        /**
+         * Configure immutable retained storage for an image application
+         * @description Project owner and current destination grant required, including replay. Creates desired metadata only, not a Docker volume or deployment. The mount is immutable. Storage-capable agents and deployment preflight are still required. The first volume is empty with no image file or existing upload import. Ownership and mode initialization are unsupported.
+         */
+        post: operations["createHostingStorage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/runtime-configuration": {
         parameters: {
             query?: never;
@@ -4397,6 +4423,14 @@ export interface components {
             /** @enum {integer} */
             generation: 1;
             hash: string;
+        };
+        HostingStorageInput: {
+            /** @description 128 random bits retained unchanged across identical retries */
+            request_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** @description Canonical absolute container path excluding root and proc/sys/dev namespaces; immutable after creation */
+            mount_path: string;
         };
         HostingStorage: {
             id: string;
@@ -8942,6 +8976,67 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    getHostingStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Desired metadata only, Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    createHostingStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageInput"];
+            };
+        };
+        responses: {
+            /** @description Desired metadata saved or exact request replayed, Cache-Control no-store */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getHostingRuntimeConfiguration: {

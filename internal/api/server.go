@@ -242,6 +242,9 @@ func (s *Server) clientSource(r *http.Request) string {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if hostingStoragePath(r.URL.Path) {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if r.URL.Path == "/api/v1/runners/hosting/storage-create-begin" || r.URL.Path == "/api/v1/runners/hosting/storage-materialized" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
@@ -334,6 +337,9 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	limit := maxJSONBodyBytes
+	if hostingStoragePath(r.URL.Path) {
+		limit = 4096
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") {
 		limit = domain.ServerReadinessJSONLimit
 	}
@@ -650,6 +656,9 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
+	case errors.Is(err, store.ErrHostingStorageUnavailable):
+		status = http.StatusServiceUnavailable
+		code = "hosting_storage_unavailable"
 	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable), errors.Is(err, store.ErrHostingRuntimeConfigurationUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_unavailable"
@@ -696,6 +705,7 @@ func writeError(w http.ResponseWriter, err error) {
 		"bad_request":                    "invalid request",
 		"internal_error":                 "internal server error",
 		"unavailable":                    "managed secrets are unavailable",
+		"hosting_storage_unavailable":    "persistent storage metadata requires compatible PostgreSQL storage",
 		"hosting_unavailable":            "hosting execution requires PostgreSQL and a migrated River consumer",
 	}[code]
 	writeErrorEnvelope(w, status, code, message)

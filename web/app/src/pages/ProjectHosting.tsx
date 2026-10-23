@@ -16,6 +16,8 @@ import { ResourceRuntimeConfiguration } from "./ResourceRuntimeConfiguration";
 import { ResourceRuntimeStatus } from "./ResourceRuntimeStatus";
 import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
 
+import { ResourceStorage } from "./ResourceStorage";
+
 const pageSize = 20;
 const selectClass = "h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm";
 const environmentKey = (projectID: string) => ["projectEnvironments", projectID] as const;
@@ -161,6 +163,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <ResourceRuntimeStatus resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} />
       <ResourceRuntimeLogs resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} />
       <ResourceRuntimeConfiguration resource={resource} blocked={blocked || resources.isError || resources.isPending} />
+      <ResourceStorage resource={resource} blocked={blocked || resources.isError || resources.isPending} />
       <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceRoutes resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {canWrite && editing?.id !== resource.id ? <Button type="button" variant="outline" disabled={busy || Boolean(editing)} onClick={() => { setEditing(resource); setNotice(""); }}>Edit configuration</Button> : null}
