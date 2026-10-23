@@ -201,6 +201,9 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 		if queryErr != nil {
 			return queryErr
 		}
+		if row.Kind != "application" {
+			return ErrConflict
+		}
 		projectID = row.ProjectID
 		snap.ResourceGeneration = row.Generation
 		source = row.Source

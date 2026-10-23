@@ -242,6 +242,9 @@ func (s *Server) clientSource(r *http.Request) string {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if hostingDatabasePath(r.URL.Path) {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if hostingStoragePath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}

@@ -193,6 +193,9 @@ func (s *Service) UpdateResource(ctx context.Context, id string, in ResourcePatc
 	if err != nil {
 		return domain.Resource{}, err
 	}
+	if item.Kind != "application" {
+		return domain.Resource{}, InvalidInput(errors.New("database resources require a qualified engine operation"))
+	}
 	if in.ExpectedGeneration < 1 || in.Name == nil && in.Source == nil {
 		return domain.Resource{}, InvalidInput(errors.New("expected_generation and at least one of name or source are required"))
 	}

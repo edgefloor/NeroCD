@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -111,6 +112,13 @@ func (s *PostgresStore) RotateManagedSecret(ctx context.Context, id string, expe
 		if err != nil {
 			return domain.ManagedSecret{}, err
 		}
+		owned, err := q.HostingDatabaseSecretOwned(ctx, id)
+		if err != nil {
+			return domain.ManagedSecret{}, fmt.Errorf("read database credential ownership: %w", err)
+		}
+		if owned {
+			return domain.ManagedSecret{}, ErrConflict
+		}
 		if old.Status != "active" || old.CurrentVersion != expected {
 			return domain.ManagedSecret{}, ErrConflict
 		}
@@ -138,6 +146,13 @@ func (s *PostgresStore) RevokeManagedSecret(ctx context.Context, id string, expe
 		old, err := q.LockManagedSecret(ctx, id)
 		if err != nil {
 			return domain.ManagedSecret{}, err
+		}
+		owned, err := q.HostingDatabaseSecretOwned(ctx, id)
+		if err != nil {
+			return domain.ManagedSecret{}, fmt.Errorf("read database credential ownership: %w", err)
+		}
+		if owned {
+			return domain.ManagedSecret{}, ErrConflict
 		}
 		if old.Status != "active" || old.CurrentVersion != expected {
 			return domain.ManagedSecret{}, ErrConflict

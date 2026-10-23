@@ -3,6 +3,8 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/databases"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage"},
 	{Method: http.MethodGet, Path: "/api/v1/server-bootstrap-options"},
@@ -223,6 +225,10 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/databases":
+		return s.createHostingDatabase
+	case "/api/v1/resources/{id}/database":
+		return s.getHostingDatabase
 	case "/api/v1/resources/{id}/storage":
 		return s.hostingStorage
 	case "/api/v1/server-bootstrap-options":

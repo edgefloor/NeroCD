@@ -1280,7 +1280,7 @@ func (q *Queries) LockHostingReleaseSlot(ctx context.Context, arg LockHostingRel
 }
 
 const lockHostingResourceTarget = `-- name: LockHostingResourceTarget :one
-SELECT r.project_id,r.generation,r.source,b.id AS binding_id,b.destination_id,b.runtime_namespace,d.server_id,s.runner_id
+SELECT r.project_id,r.generation,r.kind,r.source,b.id AS binding_id,b.destination_id,b.runtime_namespace,d.server_id,s.runner_id
  FROM resources r JOIN resource_bindings b ON b.resource_id=r.id JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id
  WHERE r.id=$1 FOR UPDATE OF r
 `
@@ -1288,6 +1288,7 @@ SELECT r.project_id,r.generation,r.source,b.id AS binding_id,b.destination_id,b.
 type LockHostingResourceTargetRow struct {
 	ProjectID        string          `json:"project_id"`
 	Generation       int64           `json:"generation"`
+	Kind             string          `json:"kind"`
 	Source           json.RawMessage `json:"source"`
 	BindingID        string          `json:"binding_id"`
 	DestinationID    string          `json:"destination_id"`
@@ -1302,6 +1303,7 @@ func (q *Queries) LockHostingResourceTarget(ctx context.Context, id string) (Loc
 	err := row.Scan(
 		&i.ProjectID,
 		&i.Generation,
+		&i.Kind,
 		&i.Source,
 		&i.BindingID,
 		&i.DestinationID,

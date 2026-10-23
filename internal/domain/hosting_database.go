@@ -7,6 +7,7 @@ import (
 	"io"
 )
 
+// Database recipes pin desired images; engine execution remains unqualified.
 const (
 	HostingDatabasePostgresRecipe = "postgresql-17.11-bookworm.v1"
 	HostingDatabaseRedisRecipe    = "redis-8.2.10-bookworm.v1"

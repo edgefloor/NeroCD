@@ -314,6 +314,38 @@ type HostingCleanupTarget struct {
 	PlanHash          string          `json:"plan_hash"`
 }
 
+type HostingDatabase struct {
+	ResourceID     string    `json:"resource_id"`
+	ProjectID      string    `json:"project_id"`
+	BindingID      string    `json:"binding_id"`
+	DestinationID  string    `json:"destination_id"`
+	StorageID      string    `json:"storage_id"`
+	Engine         string    `json:"engine"`
+	RecipeVersion  string    `json:"recipe_version"`
+	ImageReference string    `json:"image_reference"`
+	RuntimeState   string    `json:"runtime_state"`
+	CreatedBy      string    `json:"created_by"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type HostingDatabaseCredential struct {
+	ResourceID string `json:"resource_id"`
+	Role       string `json:"role"`
+	Username   string `json:"username"`
+	SecretID   string `json:"secret_id"`
+	Version    int64  `json:"version"`
+}
+
+type HostingDatabaseReceipt struct {
+	ProjectID       string          `json:"project_id"`
+	RequestID       string          `json:"request_id"`
+	ResourceID      string          `json:"resource_id"`
+	ActorID         string          `json:"actor_id"`
+	RequestHash     string          `json:"request_hash"`
+	AcceptedRequest json.RawMessage `json:"accepted_request"`
+	AuditID         string          `json:"audit_id"`
+}
+
 type HostingDispatchReceipt struct {
 	OperationID string    `json:"operation_id"`
 	RunID       string    `json:"run_id"`

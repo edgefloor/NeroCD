@@ -10,6 +10,18 @@ import (
 	"nerocd/internal/store"
 )
 
+func TestHostingDatabaseGenericResourceEditDenied(t *testing.T) {
+	s, repo, admin, in := databaseServiceFixture(t)
+	view, err := s.CreateHostingDatabase(admin, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "forbidden generic rename"
+	if _, err = s.UpdateResource(admin, view.Resource.ID, ResourcePatch{Name: &name, ExpectedGeneration: 1}); !errors.Is(err, ErrInvalidInput) || repo.updates != 0 {
+		t.Fatalf("database reached generic repository mutation: calls=%d err=%v", repo.updates, err)
+	}
+}
+
 func TestHostingServiceAuthorizationAndGeneration(t *testing.T) {
 	service, mem := newServiceAccountTestService(t)
 	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))

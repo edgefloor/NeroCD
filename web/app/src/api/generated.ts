@@ -4,6 +4,43 @@
  */
 
 export interface paths {
+    "/api/v1/databases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Atomically save a database recipe, retained storage and encrypted credentials
+         * @description Requires current project owner and destination grant authority. Exact project-scoped request and actor replay retains the saved credential references. No engine is started, no endpoint is returned, and runtime_state remains adapter_unqualified.
+         */
+        post: operations["createHostingDatabase"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read nonsecret database metadata under current resource and destination authority */
+        get: operations["getHostingDatabase"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/server-bootstrap-options": {
         parameters: {
             query?: never;
@@ -5063,13 +5100,58 @@ export interface components {
             /** Format: int64 */
             expected_generation: number;
         } | unknown | unknown;
+        HostingDatabaseCreateInput: {
+            request_id: string;
+            project_id: components["schemas"]["HostingIdentifier"];
+            project_environment_id: components["schemas"]["HostingIdentifier"];
+            name: string;
+            destination_id: components["schemas"]["HostingIdentifier"];
+            /** @enum {string} */
+            engine: "postgresql" | "redis";
+            /** @enum {string} */
+            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1";
+        } & ({
+            /** @constant */
+            engine?: "postgresql";
+            /** @constant */
+            recipe_version?: "postgresql-17.11-bookworm.v1";
+        } | {
+            /** @constant */
+            engine?: "redis";
+            /** @constant */
+            recipe_version?: "redis-8.2.10-bookworm.v1";
+        });
+        HostingDatabaseCredentialRef: {
+            /** @enum {string} */
+            role: "admin" | "app" | "probe";
+            /** @enum {string} */
+            username: "postgres" | "ncd_app" | "ncd_probe";
+            secret_id: components["schemas"]["HostingIdentifier"];
+            /**
+             * Format: int64
+             * @enum {integer}
+             */
+            version: 1;
+        };
+        HostingDatabase: {
+            resource: components["schemas"]["Resource"];
+            binding: components["schemas"]["ResourceBinding"];
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            /** @enum {string} */
+            engine: "postgresql" | "redis";
+            /** @enum {string} */
+            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1";
+            credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
+            /** @enum {string} */
+            runtime_state: "adapter_unqualified";
+        };
         Resource: {
             id: string;
             project_id: string;
             project_environment_id: string;
             name: string;
             /** @enum {string} */
-            kind: "application";
+            kind: "application" | "database";
             source: components["schemas"]["ResourceSource"];
             /** Format: int64 */
             generation: number;
@@ -6161,6 +6243,66 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    createHostingDatabase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Saved database metadata, including matching replay */
+            201: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabase"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingDatabase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Database metadata with versioned credential references and unqualified runtime state */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabase"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     serverBootstrapOptions: {
         parameters: {
             query: {

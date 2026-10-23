@@ -17,7 +17,7 @@ SELECT o.id,o.project_id,o.resource_id,o.binding_id,coalesce(o.run_id,'') AS run
  LEFT JOIN hosting_releases rel ON rel.operation_id=o.id LEFT JOIN hosting_apply_plans plan ON plan.operation_id=o.id WHERE o.id=$1;
 
 -- name: LockHostingResourceTarget :one
-SELECT r.project_id,r.generation,r.source,b.id AS binding_id,b.destination_id,b.runtime_namespace,d.server_id,s.runner_id
+SELECT r.project_id,r.generation,r.kind,r.source,b.id AS binding_id,b.destination_id,b.runtime_namespace,d.server_id,s.runner_id
  FROM resources r JOIN resource_bindings b ON b.resource_id=r.id JOIN destinations d ON d.id=b.destination_id JOIN servers s ON s.id=d.server_id
  WHERE r.id=$1 FOR UPDATE OF r;
 
