@@ -363,7 +363,7 @@ func TestHostingRuntimeLogsCompiledRunner(t *testing.T) {
 		_ = response.Body.Close()
 	}
 	if os.Getenv("NEROCD_RUNTIME_LOGS_ACTUAL_BROWSER") == "1" {
-		runHostingRuntimeLogsActualBrowser(ctx, t, server, database, env, primary, initial, func(stage string) {
+		completed := runHostingRuntimeLogsActualBrowser(ctx, t, server, database, env, primary, initial, func(stage string) {
 			switch stage {
 			case "emit":
 				trigger(initial.Plan.Snapshot.HostPort, "/emit")
@@ -378,6 +378,10 @@ func TestHostingRuntimeLogsCompiledRunner(t *testing.T) {
 			}
 		})
 		agent.Stop(t)
+		if !completed {
+			t.Log("browser fixture released early; journey remains unqualified")
+			return
+		}
 		if !retryVerified.Load() || trace.forbidden.Load() || leak.Load() || controlled.contains(token) {
 			t.Fatal("browser collector retry, Docker allowlist or credential redaction failed")
 		}

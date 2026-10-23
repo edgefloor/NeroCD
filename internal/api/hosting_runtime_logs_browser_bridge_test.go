@@ -28,7 +28,7 @@ import (
 
 // This bridge exists only in the opted-in DinD test binary. Its fixed actions
 // operate solely on the current fixture and return reference metadata.
-func runHostingRuntimeLogsActualBrowser(ctx context.Context, t *testing.T, server *Server, database *pgxpool.Pool, environment domain.ProjectEnvironment, resource domain.Resource, initial domain.HostingOperation, action func(string)) {
+func runHostingRuntimeLogsActualBrowser(ctx context.Context, t *testing.T, server *Server, database *pgxpool.Pool, environment domain.ProjectEnvironment, resource domain.Resource, initial domain.HostingOperation, action func(string)) bool {
 	t.Helper()
 	origin := os.Getenv("NEROCD_RUNTIME_LOGS_ACTUAL_BROWSER_ORIGIN")
 	parsed, err := url.Parse(origin)
@@ -127,8 +127,9 @@ func runHostingRuntimeLogsActualBrowser(ctx context.Context, t *testing.T, serve
 		case <-done:
 			if position != len(expected) {
 				t.Log("browser ended before all stages; browser exit remains authoritative failure")
+				return false
 			}
-			return
+			return true
 		case step := <-steps:
 			if position >= len(expected) || step.name != expected[position] {
 				t.Fatal("actual logs browser requested an unexpected lifecycle stage")

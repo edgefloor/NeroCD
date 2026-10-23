@@ -61,8 +61,9 @@ test("settled deployment streams fresh Docker stdout and stderr through compiled
     await page.setViewportSize({ width, height: 1000 }); await logs.scrollIntoViewIfNeeded(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await logs.evaluate(node => { node.scrollIntoView({ block: "start" }); window.scrollBy(0, -80); }); await page.screenshot({ path: info.outputPath(`actual-runtime-logs-${width}.png`), animations: "disabled" });
   }
-  await press(logs, "Stop following"); await expect(logs.getByText(/Historical output; no live-follow claim/)).toBeVisible();
-  const stopped = await (await page.request.get(`/api/v1/runtime-log-sessions/${session}/logs?limit=200`)).json(); expect(stopped.session.state).toBe("closed");
+  const closed = page.waitForResponse(r => r.request().method() === "DELETE" && new URL(r.url()).pathname === `/api/v1/runtime-log-sessions/${session}`);
+  await press(logs, "Stop following"); expect((await closed).status()).toBe(200); await expect(logs.getByText(/Historical output; no live-follow claim/)).toBeVisible();
+  const stopped = await (await page.request.get(`/api/v1/runtime-log-sessions/${session}/logs?limit=200`)).json(); expect(stopped.session.state).toBe("ended"); expect(stopped.session.ended_at).toBeTruthy();
   const renewedSession = await follow(); expect(renewedSession).not.toBe(session);
   await step("burst"); await expect(logs.getByText(/Retention prefix removed/)).toBeVisible({ timeout: 25_000 });
   await step("disconnect"); await step("resume"); await expect(logs.getByText(/Source gap: collection coverage is incomplete/)).toBeVisible({ timeout: 25_000 });
