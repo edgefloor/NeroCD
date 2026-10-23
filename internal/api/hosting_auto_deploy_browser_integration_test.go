@@ -61,7 +61,7 @@ func TestHostingAutomaticDeploymentBrowser(t *testing.T) {
 	handler := browserAPI.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, e := f.service.CurrentPrincipal(r.Context())
 		if e != nil || principal.ID != "usr_bootstrap" || r.Method != http.MethodPost || r.Header.Get("Origin") != origin || r.Header.Get("X-NeroCD-CSRF") != "1" || r.URL.RawQuery != "" {
-			http.Error(w, "denied", 403)
+			http.Error(w, "denied", http.StatusForbidden)
 			return
 		}
 		raw, e := io.ReadAll(io.LimitReader(r.Body, 1))
