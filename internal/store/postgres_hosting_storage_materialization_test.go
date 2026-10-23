@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -484,4 +485,57 @@ func TestHostingStorageMaterializationPostgresExpiryDuringOriginLock(t *testing.
 		t.Fatal("expired blocked attempt committed new materialization")
 	}
 	f.count(t, 1, 1, 0)
+}
+
+func TestHostingStorageMaterializationPostgresAttemptBounds(t *testing.T) {
+	f := newStorageMaterializationFixture(t)
+	if f.authority.Attempt != 1 {
+		t.Fatalf("fixture attempt=%d, expected 1", f.authority.Attempt)
+	}
+	for _, attempt := range []int{1<<32 + 1, 0, -1, math.MaxInt32 + 1} {
+		request := f.request()
+		request.Attempt = attempt
+		if ack, err := f.pg.HostingStorageCreateBegin(t.Context(), f.runner, request); !errors.Is(err, store.ErrConflict) || ack.CreatePermitted {
+			t.Fatalf("invalid attempt %d received creation permission: %+v %v", attempt, ack, err)
+		}
+	}
+	f.count(t, 0, 0, 0)
+	ack, err := f.pg.HostingStorageCreateBegin(t.Context(), f.runner, f.request())
+	if err != nil || !ack.CreatePermitted {
+		t.Fatalf("valid attempt lost creation permission: %+v %v", ack, err)
+	}
+	proof := f.proof(ack)
+	for _, attempt := range []int{0, -1, math.MaxInt32 + 1, 1<<32 + 1} {
+		invalid := proof
+		invalid.Attempt = attempt
+		if _, err = f.pg.HostingStorageMaterialized(t.Context(), f.runner, invalid); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("invalid attempt %d published materialization: %v", attempt, err)
+		}
+	}
+	ready, err := f.pg.HostingStorageMaterialized(t.Context(), f.runner, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range []int{0, -1, math.MaxInt32 + 1, 1<<32 + 1} {
+		invalid := f.authority
+		invalid.Attempt = attempt
+		if _, err = f.pg.HostingApplyBegin(t.Context(), f.runner, invalid); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("invalid attempt %d admitted writer: %v", attempt, err)
+		}
+		if _, err = f.pg.HostingRunnerPlan(t.Context(), f.runner, invalid); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("invalid attempt %d resolved shared hosting authority: %v", attempt, err)
+		}
+		invalidProof := proof
+		invalidProof.Attempt = attempt
+		if _, err = f.pg.HostingStorageMaterialized(t.Context(), f.runner, invalidProof); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("invalid attempt %d replayed historical receipt: %v", attempt, err)
+		}
+	}
+	if replay, err := f.pg.HostingStorageMaterialized(t.Context(), f.runner, proof); err != nil || replay.Receipt != ready.Receipt {
+		t.Fatalf("valid historical ACK rejected: %+v %v", replay, err)
+	}
+	if op, err := f.pg.HostingApplyBegin(t.Context(), f.runner, f.authority); err != nil || op.State != "applying" {
+		t.Fatalf("valid writer rejected: %+v %v", op, err)
+	}
+	f.count(t, 1, 1, 1)
 }

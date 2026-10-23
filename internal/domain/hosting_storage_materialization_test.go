@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"maps"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -43,10 +44,24 @@ func TestHostingStorageMaterializationIdentityAndFamilies(t *testing.T) {
 	if origin.Validate(storage) != nil || len(origin.Labels) != 11 || origin.Labels["io.nerocd.storage.origin_plan"] != plan.Hash {
 		t.Fatal(origin)
 	}
-	proof := HostingStorageMaterializedRequest{ReceiptID: "receipt", PlanHash: plan.Hash, StorageRef: storage.Reference(), CreationOperationID: origin.CreationOperationID, CreationPlanHash: origin.CreationPlanHash, CreationNonce: origin.CreationNonce, DaemonID: origin.DaemonID, VolumeName: volume, Driver: "local", Scope: "local", Labels: maps.Clone(origin.Labels)}
+	proof := HostingStorageMaterializedRequest{HostingAuthority: HostingAuthority{Attempt: 1}, ReceiptID: "receipt", PlanHash: plan.Hash, StorageRef: storage.Reference(), CreationOperationID: origin.CreationOperationID, CreationPlanHash: origin.CreationPlanHash, CreationNonce: origin.CreationNonce, DaemonID: origin.DaemonID, VolumeName: volume, Driver: "local", Scope: "local", Labels: maps.Clone(origin.Labels)}
 	if proof.Matches(storage, origin) != nil {
 		t.Fatal("exact proof rejected")
 	}
+	create := HostingStorageCreateRequest{HostingAuthority: proof.HostingAuthority, StorageRef: proof.StorageRef, PlanHash: proof.PlanHash, CreationNonce: proof.CreationNonce}
+	for _, attempt := range []int{1, math.MaxInt32} {
+		create.Attempt, proof.Attempt = attempt, attempt
+		if create.Validate() != nil || proof.Validate() != nil {
+			t.Fatalf("valid attempt rejected: %d", attempt)
+		}
+	}
+	for _, attempt := range []int{-1, 0, math.MaxInt32 + 1, 1<<32 + 1} {
+		create.Attempt, proof.Attempt = attempt, attempt
+		if create.Validate() == nil || proof.Validate() == nil {
+			t.Errorf("unrepresentable lease attempt accepted: %d", attempt)
+		}
+	}
+	proof.Attempt = 1
 	for _, mutate := range []func(*HostingStorageMaterializedRequest){
 		func(p *HostingStorageMaterializedRequest) { p.CreationNonce = strings.Repeat("0", 32) }, func(p *HostingStorageMaterializedRequest) { p.Driver = "nfs" }, func(p *HostingStorageMaterializedRequest) { p.Scope = "global" }, func(p *HostingStorageMaterializedRequest) { p.Options = map[string]string{"type": "nfs"} }, func(p *HostingStorageMaterializedRequest) { p.DaemonID = "other" }, func(p *HostingStorageMaterializedRequest) { p.Labels["io.nerocd.storage.id"] = "foreign" }, func(p *HostingStorageMaterializedRequest) { p.Labels["extra"] = "adopted" },
 	} {

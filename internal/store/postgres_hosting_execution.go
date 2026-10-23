@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"strconv"
@@ -522,6 +523,11 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 }
 
 func hostingAuthorityExists(ctx context.Context, tx pgx.Tx, runnerID string, a domain.HostingAuthority, live bool) error {
+	// PostgreSQL stores attempts as int32. Reject values before narrowing so
+	// another submitted integer cannot alias the persisted lease authority.
+	if a.Attempt < 1 || a.Attempt > math.MaxInt32 {
+		return ErrConflict
+	}
 	if _, err := sqlcgen.New(tx).LockHostingTaskForAuthority(ctx, a.RunID); err != nil {
 		return err
 	}

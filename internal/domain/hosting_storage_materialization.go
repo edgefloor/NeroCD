@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"maps"
+	"math"
 )
 
 // These versions identify explicit owned-storage admission and compilation.
@@ -178,7 +179,7 @@ func (m HostingStorageMaterialization) Validate(storage HostingStorage) error {
 
 // Validate checks creation document shape; the store checks live authority.
 func (in HostingStorageCreateRequest) Validate() error {
-	if !validHostingStorageRef(in.StorageRef) || !imageSHA256.MatchString(in.PlanHash) || !hostingStorageRequest.MatchString(in.CreationNonce) {
+	if in.Attempt < 1 || in.Attempt > math.MaxInt32 || !validHostingStorageRef(in.StorageRef) || !imageSHA256.MatchString(in.PlanHash) || !hostingStorageRequest.MatchString(in.CreationNonce) {
 		return ErrInvalidHostingStorage
 	}
 	return nil
@@ -186,7 +187,7 @@ func (in HostingStorageCreateRequest) Validate() error {
 
 // Validate rejects observations outside the closed local-volume contract.
 func (in HostingStorageMaterializedRequest) Validate() error {
-	if !validRuntimeReferenceID(in.ReceiptID) || !validHostingStorageRef(in.StorageRef) || !imageSHA256.MatchString(in.PlanHash) || !imageSHA256.MatchString(in.CreationPlanHash) || !validRuntimeReferenceID(in.CreationOperationID) || !validRuntimeReferenceID(in.DaemonID) || !hostingStorageRequest.MatchString(in.CreationNonce) || in.VolumeName != "ncdv_"+in.StorageRef.StorageID[4:] || in.Driver != "local" || in.Scope != "local" || len(in.Options) != 0 || len(in.Labels) != 11 {
+	if in.Attempt < 1 || in.Attempt > math.MaxInt32 || !validRuntimeReferenceID(in.ReceiptID) || !validHostingStorageRef(in.StorageRef) || !imageSHA256.MatchString(in.PlanHash) || !imageSHA256.MatchString(in.CreationPlanHash) || !validRuntimeReferenceID(in.CreationOperationID) || !validRuntimeReferenceID(in.DaemonID) || !hostingStorageRequest.MatchString(in.CreationNonce) || in.VolumeName != "ncdv_"+in.StorageRef.StorageID[4:] || in.Driver != "local" || in.Scope != "local" || len(in.Options) != 0 || len(in.Labels) != 11 {
 		return ErrInvalidHostingStorage
 	}
 	for key, value := range in.Labels {
