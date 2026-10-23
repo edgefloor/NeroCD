@@ -36,7 +36,12 @@ and creates a source grant. A lost response is injected only after the real API
 commits; explicit retry sends the identical body and receives the same grant.
 The browser then builds with the compiled production CLI, inspects typed build
 output, deploys the exact recorded local artifact, and saves a managed route.
-Railpack output must include the Railpack component.
+The admitted snapshot must retain the Railpack strategy. Actual Docker events
+confirm the pinned planner image started, and the fixture validates its generated
+plan and records its hash. Typed BuildKit rows must show the Railpack plan and
+Railpack-generated work. A quiet planner emits no fabricated `railpack` row;
+components depend on actual tool output. Separate engine tests retain planner
+output transport coverage.
 
 A fixture-only stage independently probes the serving HTTPS application with the
 fixture CA before committing failing source. Dockerfile uses `RUN exit 9`.

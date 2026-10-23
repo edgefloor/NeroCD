@@ -3,8 +3,10 @@
 package runnerruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
@@ -803,6 +805,18 @@ func TestPrivateGitBrowser(t *testing.T) {
 			t.Fatalf("browser HTTPS actual response %d %q err=%v", response.StatusCode, body, err)
 		}
 	}
+	// Record only fixed planner container names, never argv, environment or output.
+	// This invocation is scoped to the immutable planner image in this owned DinD.
+	eventsCtx, stopEvents := context.WithCancel(ctx)
+	var plannerEvents bytes.Buffer
+	events := exec.CommandContext(eventsCtx, "/usr/local/bin/docker", "events", "--filter", "image="+f.config.Engine.PlannerImage, "--filter", "event=start", "--format", "{{.Actor.Attributes.name}}")
+	events.Stdout, events.Stderr = &plannerEvents, io.Discard
+	if err := events.Start(); err != nil {
+		t.Fatal(err)
+	}
+	eventsDone := make(chan struct{})
+	go func() { defer close(eventsDone); _ = events.Wait() }()
+	defer func() { stopEvents(); <-eventsDone }()
 	type work struct{ kind, id string }
 	queue := make(chan work, 1)
 	results := make(chan error, 1)
@@ -997,6 +1011,7 @@ journey:
 	}
 	cancel()
 	<-workerDone
+	<-eventsDone
 	recordsMu.Lock()
 	ids := append([]string(nil), buildIDs...)
 	output := append([]byte(nil), cliOutput...)
@@ -1016,6 +1031,27 @@ journey:
 			t.Fatal("genuine failed build published an artifact or unexpected status")
 		}
 		privateRuntimeNoSecrets(t, f, id, patterns...)
+		if i == 0 && strategy == "railpack" {
+			plan, err := os.ReadFile(filepath.Join(f.config.Engine.StateDir, id, "context", "railpack-plan.json"))
+			if err != nil || !json.Valid(plan) {
+				t.Fatal("actual pinned planner output plan missing or invalid")
+			}
+			starts := strings.Fields(plannerEvents.String())
+			if len(starts) != 2 {
+				t.Fatal("pinned planner success/failure invocations missing")
+			}
+			for _, name := range starts {
+				if !strings.HasPrefix(name, "nerocd-planner-") || len(name) != len("nerocd-planner-")+32 {
+					t.Fatal("unexpected planner event identity")
+				}
+			}
+			for _, pattern := range patterns {
+				if strings.Contains(string(plan), pattern) {
+					t.Fatal("known credential in planner output plan")
+				}
+			}
+			t.Logf("actual pinned planner image=%s toolchain=%s starts=%d valid_plan_sha256=%x", f.config.Engine.PlannerImage, f.config.Policy.ToolchainIdentity, len(starts), sha256.Sum256(plan))
+		}
 		var typed domain.HostingBuildLogPage
 		f.request(t, "GET", "/api/v1/hosting-builds/"+id+"/logs?limit=200", f.admin, nil, 200, &typed)
 		raw, err := json.Marshal(typed)
