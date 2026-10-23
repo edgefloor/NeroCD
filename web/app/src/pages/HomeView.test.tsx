@@ -3,7 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { apiSnapshot } from "@/api/compat";
 import { HomeView } from "./HomeView";
 
-vi.mock("@tanstack/react-router", () => ({ Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a> }));
 
 afterEach(cleanup);
 
@@ -59,4 +59,14 @@ test("dashboard filtering matches displayed log sequence numbers", () => {
   show("#1");
   expect(screen.getByText("Artifact uploaded")).toBeTruthy();
   expect(screen.getByText("1 matching records")).toBeTruthy();
+});
+
+
+test.each([true, false])("hosting guidance leads while legacy activity loading is %s", (loading) => {
+  render(<HomeView snapshot={snapshot} busy={false} onDecide={vi.fn()} loading={loading} />);
+  expect(screen.getByRole("heading", { name: "Host an application" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Connect a server" }).getAttribute("href")).toBe("/runners");
+  expect(screen.getByRole("link", { name: "Configure an application" }).getAttribute("href")).toBe("/projects");
+  expect(screen.getByText(/Server enrollment and administration require/)).toBeTruthy();
+  if (!loading) expect(screen.getByRole("heading", { name: "Host an application" }).compareDocumentPosition(screen.getByRole("heading", { name: "Advanced automation activity" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

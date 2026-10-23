@@ -37,6 +37,8 @@ test("project hosting saves image configuration and recovers stale generations a
   await page.goto("/projects");
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const requestedDeployments: string[] = [];
+  page.on("request", (request) => { if (request.method() === "POST" && /\/api\/v1\/resources\/[^/]+\/deployments(?:\/|$)/.test(new URL(request.url()).pathname)) requestedDeployments.push(request.url()); });
   const project = await postJSON<{ id: string }>(page, "/api/v1/projects", { name: `Hosting browser ${Date.now()}` });
   await page.reload();
   const section = page.getByRole("region", { name: "Project hosting", exact: true });
@@ -86,7 +88,7 @@ test("project hosting saves image configuration and recovers stale generations a
     await section.getByRole("button", { name: environmentName, exact: true }).click();
     await expect(section.getByRole("heading", { name: `Draft ${width}`, exact: true })).toBeVisible();
     await expect(section.getByText("Saved configuration · Generation 3", { exact: true })).toBeVisible();
-    await expect(section.getByRole("button", { name: /deploy/i })).toHaveCount(0);
+    expect(requestedDeployments, "saving application configuration does not request deployment").toEqual([]);
     await page.screenshot({ path: testInfo.outputPath(`hosting-saved-${width}.png`), fullPage: true, animations: "disabled" });
   }
 });
@@ -263,13 +265,13 @@ test("dashboard route states retain the shell and retry a transient loader failu
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
   await expect(page.getByLabel("Loading dashboard")).toBeVisible({ timeout: 3_500 });
-  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced automation activity" })).toBeVisible();
   await page.unroute(dashboardRequests);
 
   await page.getByRole("link", { name: "Projects" }).click();
   await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
   await page.getByRole("link", { name: "Home" }).click();
-  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced automation activity" })).toBeVisible();
 
   let failHealth = true;
   await page.route("**/api/v1/health", async (route) => {
@@ -281,7 +283,7 @@ test("dashboard route states retain the shell and retry a transient loader failu
   await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
   failHealth = false;
   await page.getByRole("button", { name: "Try again" }).click();
-  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced automation activity" })).toBeVisible();
   await page.getByRole("searchbox", { name: "Filter this page", exact: true }).fill("dashboard recovery");
   failHealth = true;
   await page.getByRole("button", { name: "Account", exact: true }).click();
@@ -289,7 +291,7 @@ test("dashboard route states retain the shell and retry a transient loader failu
   await expect(page.getByRole("alert")).toHaveText("Unable to refresh dashboard. Showing previously loaded information.", { timeout: 16_000 });
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
-    await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Advanced automation activity" })).toBeVisible();
     await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toHaveValue("dashboard recovery");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("dashboard-refresh-error-320.png"), animations: "disabled" });
@@ -297,7 +299,7 @@ test("dashboard route states retain the shell and retry a transient loader failu
   failHealth = false;
   await page.getByRole("button", { name: "Retry dashboard" }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced automation activity" })).toBeVisible();
   await page.unroute("**/api/v1/health");
 });
 
@@ -363,7 +365,7 @@ test("dashboard reports unfinished work truthfully and shared cards keep bounded
   await postJSON(page, "/api/v1/runs", { template_id: template.id });
   await page.reload({ waitUntil: "networkidle" });
 
-  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced automation activity" })).toBeVisible();
   await expect(page.getByText(/\d+ unfinished run(?:s)?/)).toBeVisible();
   await expect(page.getByText("No approvals are waiting.")).toBeVisible();
   await expect(page.getByText("All Systems Green")).toHaveCount(0);
@@ -806,7 +808,7 @@ test("runner enrollment stays local to the reveal dialog and browser avoids runn
   });
   await page.goto("/runners");
   await signIn(page);
-  await expect(page.getByRole("heading", { name: "Runners" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Servers and runners" })).toBeVisible();
   const suffix = `${Date.now()}${Math.floor(Math.random() * 10_000)}`;
   await page.getByLabel("Runner ID").fill(`runner_browser_${suffix}_${"x".repeat(24)}`);
   await page.getByLabel("Runner name").fill("Browser enrollment runner");
@@ -941,7 +943,7 @@ test("deployment operations navigation, deep links, search, and mobile menu stay
 test("dashboard filtering removes unrelated rows and its Clear action restores the URL and input", async ({ page }) => {
   await page.goto("/");
   await signIn(page);
-  await expect(page.getByRole("heading", { name: "Current activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced automation activity" })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   const filter = page.getByRole("searchbox", { name: "Filter this page", exact: true });
   const historyLength = await page.evaluate(() => history.length);
@@ -2347,20 +2349,20 @@ test("page code loads on demand during navigation", async ({ page }) => {
   });
   await page.goto("/runners");
   await signIn(page);
-  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Servers and runners", exact: true })).toBeVisible();
   expect(operationsChunks).toEqual([]);
   await page.getByRole("link", { name: "Operations", exact: true }).click();
   await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();
   expect(operationsChunks).toEqual([200]);
   await page.goBack();
-  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Servers and runners", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
 test("failed page downloads offer reload recovery at the same URL", async ({ page }, testInfo) => {
   await page.goto("/runners");
   await signIn(page);
-  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Servers and runners", exact: true })).toBeVisible();
   let fail = true;
   await page.route("**/assets/_authenticated.operations-*.js", (route) => fail ? route.abort("failed") : route.continue());
   await page.goto("/operations");
@@ -2384,7 +2386,7 @@ test("failed page downloads offer reload recovery at the same URL", async ({ pag
 test("unknown URLs provide a usable return to the dashboard", async ({ page }, testInfo) => {
   await page.goto("/runners");
   await signIn(page);
-  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Servers and runners", exact: true })).toBeVisible();
   for (const path of ["/missing-page", "/runners/missing/extra", "/deployments/missing/extra"]) {
     await page.goto(path);
     await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
@@ -2434,14 +2436,14 @@ test("keyboard users can skip shell navigation to page content", async ({ page }
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/runners?q=keyboard");
-    await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Servers and runners", exact: true })).toBeVisible();
     await page.keyboard.press("Tab");
     const skip = page.getByRole("link", { name: "Skip to page content", exact: true });
     await expect(skip).toBeFocused();
     await expect(skip).toBeInViewport();
     if (width === 320) await page.screenshot({ path: testInfo.outputPath("skip-navigation-320.png"), fullPage: false });
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("main", { name: "Runners", exact: true })).toBeFocused();
+    await expect(page.getByRole("main", { name: "Servers and runners", exact: true })).toBeFocused();
     await expect(page).toHaveURL((url) => url.pathname === "/runners" && url.searchParams.get("q") === "keyboard" && !url.hash);
     await page.keyboard.press("Tab");
     await expect(page.getByRole("searchbox", { name: "Filter this page", exact: true })).toBeFocused();
@@ -2454,13 +2456,13 @@ test("browser titles follow navigation and history", async ({ page }) => {
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   await expect(page).toHaveTitle("Home · NeroCD");
-  await page.getByRole("link", { name: "Runners", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
-  await expect(page).toHaveTitle("Runners · NeroCD");
+  await page.getByRole("link", { name: "Servers and runners", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Servers and runners", exact: true })).toBeVisible();
+  await expect(page).toHaveTitle("Servers and runners · NeroCD");
   await page.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page).toHaveTitle("Runs · NeroCD");
   await page.goBack();
-  await expect(page).toHaveTitle("Runners · NeroCD");
+  await expect(page).toHaveTitle("Servers and runners · NeroCD");
   await page.goto("/unknown-title-page");
   await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
   await expect(page).toHaveTitle("Page not found · NeroCD");
@@ -2483,11 +2485,11 @@ test("navigation resets scroll and Back restores the previous page position", as
       await page.getByRole("button", { name: "Open mobile navigation", exact: true }).click();
       await expect(page.getByRole("dialog", { name: "Mobile navigation", exact: true })).toBeVisible();
       expect(await page.evaluate(() => window.scrollY), "opening the menu retains page scroll").toBe(previousScroll);
-      await page.getByRole("dialog", { name: "Mobile navigation", exact: true }).getByRole("link", { name: "Runners", exact: true }).click();
+      await page.getByRole("dialog", { name: "Mobile navigation", exact: true }).getByRole("link", { name: "Servers and runners", exact: true }).click();
     } else {
-      await page.getByRole("navigation", { name: "Desktop navigation", exact: true }).getByRole("link", { name: "Runners", exact: true }).click();
+      await page.getByRole("navigation", { name: "Desktop navigation", exact: true }).getByRole("link", { name: "Servers and runners", exact: true }).click();
     }
-    await expect(page.getByRole("heading", { name: "Runners", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Servers and runners", exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
     await page.goBack();
     await expect(page.getByRole("heading", { name: "System Operations", exact: true })).toBeVisible();

@@ -1,11 +1,11 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { allProjectMembersQuery, principalQuery, useApprovalDecision, approvalsQuery, healthQuery, projectsQuery, runLogsQuery, runsQuery, shouldPollRunList, templatesQuery } from "@/api";
+import { ApiError, allProjectMembersQuery, principalQuery, useApprovalDecision, approvalsQuery, healthQuery, projectsQuery, runLogsQuery, runsQuery, shouldPollRunList, templatesQuery } from "@/api";
 import { apiSnapshot } from "@/api/compat";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { HomeView } from "@/pages/HomeView";
+import { HomeView, HostingStart } from "@/pages/HomeView";
 import { canMaintainProject } from "@/lib/permissions";
 import { validateSearch } from "@/router/search";
 
@@ -13,7 +13,7 @@ const dashboardQueryKeys = [principalQuery().queryKey, allProjectMembersQuery().
 
 export const Route = createFileRoute("/_authenticated/")({
   validateSearch,
-  loader: ({ context }) => Promise.all([context.queryClient.ensureQueryData(healthQuery()), context.queryClient.ensureQueryData(projectsQuery()), context.queryClient.ensureQueryData(templatesQuery()), context.queryClient.ensureQueryData(runsQuery()), context.queryClient.ensureQueryData(approvalsQuery()), context.queryClient.ensureQueryData(runLogsQuery({ limit: 5, offset: 0 }))]),
+  loader: ({ context }) => context.queryClient.ensureQueryData(principalQuery()),
   pendingComponent: DashboardPending,
   errorComponent: DashboardUnavailable,
   component: HomeRoute,
@@ -33,19 +33,24 @@ function DashboardUnavailable({ reset }: { reset?: () => void }) {
 function HomeRoute() {
   const { q } = Route.useSearch();
   const navigate = Route.useNavigate();
-  const health = useQuery(healthQuery());
-  const projects = useQuery(projectsQuery());
-  const templates = useQuery(templatesQuery());
-  const runs = useQuery({ ...runsQuery(), refetchInterval: (query) => query.state.status !== "error" && shouldPollRunList(query.state.data) ? 3_000 : false });
-  const approvals = useQuery(approvalsQuery());
-  const logs = useQuery(runLogsQuery({ limit: 5, offset: 0 }));
-  const { busy, decide, error } = useApprovalDecision();
   const principal = useQuery(principalQuery());
-  const members = useQuery(allProjectMembersQuery());
+  const verified = Boolean(principal.data && !principal.isPending && !principal.isFetching && !principal.isError);
+  const scope = JSON.stringify([principal.data?.provider, principal.data?.id, [...(principal.data?.roles ?? [])].sort()]);
+  const scoped = <T extends { queryKey: readonly unknown[] }>(options: T) => ({ ...options, queryKey: [...options.queryKey, "home", scope], enabled: verified, gcTime: 0 });
+  const health = useQuery(scoped(healthQuery()));
+  const projects = useQuery(scoped(projectsQuery()));
+  const templates = useQuery(scoped(templatesQuery()));
+  const runs = useQuery({ ...scoped(runsQuery()), refetchInterval: (query) => query.state.status !== "error" && shouldPollRunList(query.state.data) ? 3_000 : false });
+  const approvals = useQuery(scoped(approvalsQuery()));
+  const logs = useQuery(scoped(runLogsQuery({ limit: 5, offset: 0 })));
+  const { busy, decide, error } = useApprovalDecision();
+  const members = useQuery(scoped(allProjectMembersQuery()));
   const queries = [health, projects, templates, runs, approvals, logs, principal, members];
   const failed = queries.filter((query) => query.isError);
   const hasSnapshot = queries.every((query) => query.data !== undefined);
-  if (failed.length > 0 && !hasSnapshot) return <DashboardUnavailable />;
+  const denied = failed.some((query) => query.error instanceof ApiError && [401, 403].includes(query.error.status));
+  if (!verified || denied) return <DashboardUnavailable />;
+  if (failed.length > 0 && !hasSnapshot) return <div className="grid min-w-0 gap-4"><HostingStart /><DashboardUnavailable /></div>;
   const snapshot = apiSnapshot({ health: health.data, projects: projects.data, templates: templates.data, runs: runs.data, approvals: approvals.data, logs: logs.data });
   return <div className="grid min-w-0 gap-4">
     {failed.length > 0 ? <section className="space-y-3">

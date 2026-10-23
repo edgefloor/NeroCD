@@ -22,13 +22,19 @@ describe("resource query options", () => {
     globalThis.fetch = vi.fn<typeof fetch>((path) => { calls.push(String(path)); return Promise.resolve(String(path).includes("health") ? new Response(JSON.stringify({ status: "ok" }), { headers: { "Content-Type": "application/json" } }) : list()); });
     const homeClient = client();
     await HomeRoute.options.loader!({ context: { queryClient: homeClient } } as never);
-    expect(calls).toEqual(["/api/v1/health", "/api/v1/projects", "/api/v1/templates", "/api/v1/runs", "/api/v1/approvals", "/api/v1/run-logs?limit=5&offset=0"]);
+    expect(calls).toEqual(["/api/v1/me"]);
     calls.length = 0;
     await ProjectsRoute.options.loader!({ context: { queryClient: client() }, deps: { offset: 50 } } as never);
     expect(calls).toEqual(["/api/v1/projects?limit=50&offset=50", "/api/v1/projects?limit=100&offset=0", "/api/v1/repositories"]);
     calls.length = 0;
     await RunDetailRoute.options.loader!({ context: { queryClient: client() }, params: { runId: "run_1" } } as never);
     expect(calls).toEqual(["/api/v1/runs/run_1"]);
+  });
+  test.each([401, 403, 503])("home loader propagates principal HTTP %s instead of treating it as legacy failure", async (status) => {
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ error: "Session unavailable" }), { status }));
+    await expect(HomeRoute.options.loader!({ context: { queryClient: client() } } as never)).rejects.toMatchObject({ status });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(status === 503 ? 3 : 1);
+    expect(vi.mocked(globalThis.fetch).mock.calls.every(([path]) => path === "/api/v1/me")).toBe(true);
   });
   test("home ownership fetches its six resources and no snapshot-only collections", async () => {
     const calls: string[] = [];

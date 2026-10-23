@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { ReactNode } from "react";
 import { Activity, AlertCircle, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,18 @@ import { cn } from "@/lib/utils";
 
 function CompactEmpty({ children }: { children: ReactNode }): ReactNode {
   return <p className="px-4 py-5 text-sm text-muted-foreground">{children}</p>;
+}
+
+export function HostingStart() {
+  return <section aria-labelledby="hosting-start-heading" className="min-w-0 space-y-4 rounded-xl border bg-card p-5">
+    <h2 id="hosting-start-heading" className="text-xl font-semibold">Host an application</h2>
+    <p className="text-sm text-muted-foreground">Connect a server, then configure an application in a project and environment using an image or Git source.</p>
+    <div className="grid min-w-0 gap-4 md:grid-cols-2">
+      <div className="min-w-0 space-y-2"><Link className="inline-flex min-h-10 items-center rounded-lg border px-3 py-2 font-medium underline" to="/runners">Connect a server</Link><p className="text-sm text-muted-foreground">Enroll a dedicated runner and register its hosting server. Server enrollment and administration require a system administrator or runner administrator.</p></div>
+      <div className="min-w-0 space-y-2"><Link className="inline-flex min-h-10 items-center rounded-lg border px-3 py-2 font-medium underline" to="/projects">Configure an application</Link><p className="text-sm text-muted-foreground">Choose your project and environment, then save an image or Git application. Project permissions control application changes.</p></div>
+    </div>
+    <p className="text-sm text-muted-foreground">The application controls its destination, deployment, runtime status, logs, and routes. Saving configuration does not deploy it. A heartbeat does not establish readiness, and a saved route does not establish HTTPS.</p>
+  </section>;
 }
 
 export function HomeView({
@@ -55,7 +68,8 @@ export function HomeView({
 
   if (loading) {
     return (
-      <div className="grid gap-6">
+      <div aria-label="Loading dashboard" className="grid min-w-0 gap-6">
+        <HostingStart />
         <section className="grid gap-4 border-b border-border/60 pb-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
           <div className="space-y-2">
             <Skeleton className="h-7 w-40 rounded-md" />
@@ -76,14 +90,15 @@ export function HomeView({
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid min-w-0 gap-6">
+      <HostingStart />
       {query && onClearQuery ? (
         <SearchScope query={query} resultCount={resultCount} onClear={onClearQuery} />
       ) : null}
       
       <section aria-labelledby="current-activity-heading" className="grid gap-4 border-b border-border/60 pb-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
         <div className="space-y-2">
-          <h2 id="current-activity-heading" className="text-xl font-semibold tracking-tight">Current activity</h2>
+          <h2 id="current-activity-heading" className="text-xl font-semibold tracking-tight">Advanced automation activity</h2>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
             <span className={cn("inline-flex items-center gap-1.5", summary.liveRunCount > 0 && "text-warning")}><Activity className="h-3.5 w-3.5" />{summary.liveRunCount} unfinished run{summary.liveRunCount === 1 ? "" : "s"} in loaded page</span>
             <span className={cn("inline-flex items-center gap-1.5", pending.length > 0 && "text-warning")}><Clock className="h-3.5 w-3.5" />{pending.length} pending approval{pending.length === 1 ? "" : "s"} in loaded page</span>
