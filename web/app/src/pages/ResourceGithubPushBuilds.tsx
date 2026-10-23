@@ -149,7 +149,17 @@ function SecretReference({ label, actor, resource, locked, value, onChange, onDe
 }
 function DeliveryRetry(props: ManagerProps & { delivery: GitHubPushDelivery }) {
   const decision = useDecision(props), d = props.delivery;
-  const eligible = ["retry_wait", "blocked_exhausted"].includes(d.state) && d.policy_id === props.policy.id && d.policy_generation === props.policy.generation && props.policy.enabled && props.policy.can_manage;
+  const [retainedPolicyID, setRetainedPolicyID] = useState<string>();
+  const currentAuthority = d.policy_id === props.policy.id && d.policy_generation === props.policy.generation && props.policy.enabled && props.policy.can_manage;
+  const freshEligible = currentAuthority && ["retry_wait", "blocked_exhausted"].includes(d.state);
+  const replayEligible = currentAuthority && decision.attempt?.action === "retry" && retainedPolicyID === props.policy.id && decision.attempt.body.expected_policy_generation === props.policy.generation && decision.attempt.body.delivery_id === d.id;
+  const eligible = decision.attempt ? replayEligible : freshEligible;
   if (!eligible && !decision.attempt) return null;
-  return <div className="space-y-2"><Button className={button} type="button" disabled={props.paused || decision.busy || decision.conflict || decision.retryBlocked || !eligible} onClick={() => { if (eligible) void decision.send({ action: "retry", body: { expected_policy_generation: props.policy.generation, request_id: crypto.randomUUID(), delivery_id: d.id } }); }}>{decision.attempt ? "Retry identical delivery decision" : `Retry retained delivery ${d.id}`}</Button>{decision.attempt ? <p className="break-all text-xs">Retained retry request {decision.attempt.body.request_id}. If accepted, this owner decision starts one new bounded recovery window. An identical retry returns the same window without extending it.</p> : null}{decision.error ? <p role="alert">{decision.error}</p> : null}{decision.conflict ? <p>Review refreshed policy and delivery history before another retry decision.</p> : null}</div>;
+  function retry() {
+    if (!eligible) return;
+    if (decision.attempt) { void decision.send(decision.attempt); return; }
+    setRetainedPolicyID(props.policy.id);
+    void decision.send({ action: "retry", body: { expected_policy_generation: props.policy.generation, request_id: crypto.randomUUID(), delivery_id: d.id } });
+  }
+  return <div className="space-y-2"><Button className={button} type="button" disabled={props.paused || decision.busy || decision.conflict || decision.retryBlocked || !eligible} onClick={retry}>{decision.attempt ? "Retry identical delivery decision" : `Retry retained delivery ${d.id}`}</Button>{decision.attempt ? <p className="break-all text-xs">Retained retry request {decision.attempt.body.request_id}. If accepted, this owner decision starts one new bounded recovery window. An identical retry returns the same window without extending it.</p> : null}{decision.error ? <p role="alert">{decision.error}</p> : null}{decision.conflict ? <p>Review refreshed policy and delivery history before another retry decision.</p> : null}</div>;
 }
