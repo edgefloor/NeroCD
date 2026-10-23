@@ -245,7 +245,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/api/v1/runners/hosting/storage-create-begin" || r.URL.Path == "/api/v1/runners/hosting/storage-materialized" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if r.Method == http.MethodGet && hostingRouteSwitchReadPath(r.URL.Path) {
+	if r.Method == http.MethodGet && (hostingRouteSwitchReadPath(r.URL.Path) || hostingStorageDeploymentReadPath(r.URL.Path)) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") || strings.HasPrefix(r.URL.Path, "/api/v1/servers/") && strings.HasSuffix(r.URL.Path, "/readiness") {
@@ -650,7 +650,7 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
-	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable), errors.Is(err, store.ErrHostingRuntimeConfigurationUnavailable):
+	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable), errors.Is(err, store.ErrHostingRuntimeConfigurationUnavailable), errors.Is(err, store.ErrHostingStorageUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_unavailable"
 	case errors.Is(err, app.ErrManagedSecretsUnavailable), errors.Is(err, app.ErrHostingSourceCredentialUnavailable), errors.Is(err, app.ErrHostingRuntimeEnvironmentUnavailable):

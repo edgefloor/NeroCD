@@ -963,6 +963,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/storage-deployment-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read authoritative storage redeploy choices
+         * @description Read authoritative storage redeploy choices. Missing predecessor settings remain null. This read reserves nothing and does not authorize deployment. Existing POST independently rechecks all authority and settings. Current project and destination grant authority are required. Responses are no-store.
+         */
+        get: operations["getHostingStorageDeploymentOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/storage-route-continuity/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read resource-only continuity settlement
+         * @description Read resource-only continuity settlement. loaded_generation identifies an immutable historical applied proxy receipt. It does not establish current loaded state or HTTPS health. This read cannot reconcile unresolved work. Current project and destination grant authority are required. Responses are no-store.
+         */
+        get: operations["getHostingStorageRouteContinuityStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/route-switches": {
         parameters: {
             query?: never;
@@ -4134,6 +4174,8 @@ export interface components {
             idempotency_key: string;
         };
         HostingRoute: {
+            /** @description Fixed explanation when storage replacement makes historical route readiness uncertain. */
+            reason?: string;
             id: string;
             resource_id: string;
             hostname: string;
@@ -4164,6 +4206,58 @@ export interface components {
             hostname: string;
             path_prefix: string;
             host_port: number;
+        };
+        /** @description Existing opt-in for a same-port storage replacement over the complete loaded own-route scope. All selections are compared again at request and mutation admission. */
+        HostingStorageRouteContinuityInput: {
+            /** Format: int64 */
+            expected_loaded_generation: number;
+            expected_loaded_proxy_operation_id: components["schemas"]["HostingIdentifier"];
+            routes: {
+                route_id: components["schemas"]["HostingIdentifier"];
+                /** Format: int64 */
+                expected_version: number;
+                expected_selected_release_operation_id: components["schemas"]["HostingIdentifier"];
+            }[];
+        };
+        HostingStorageRouteContinuityRef: {
+            hash: string;
+        };
+        HostingStorageDeploymentOptions: {
+            resource_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            resource_generation: number;
+            storage_ref: components["schemas"]["HostingStorageRef"] | null;
+            previous_healthy_operation_id: string | null;
+            host_port: number | null;
+            container_port: number | null;
+            readiness: components["schemas"]["HostingReadiness"] | null;
+            available: boolean;
+            /** @enum {string} */
+            reason: "available" | "unsupported_source" | "unbound" | "storage_unconfigured" | "runtime_configuration_unsupported" | "no_previous_healthy" | "stale_storage" | "restore_hold" | "busy" | "runner_ineligible" | "proxy_unavailable" | "no_loaded_generation" | "stale_routes" | "https_unavailable" | "foreign_port_reference" | "continuity_unresolved";
+            routes: {
+                id: components["schemas"]["HostingIdentifier"];
+                hostname: string;
+                path_prefix: string;
+                /** Format: int64 */
+                version: number;
+                selected_release_operation_id: components["schemas"]["HostingIdentifier"];
+            }[];
+            /** @description Copy this existing accepted write field only when available. When available, null means an ordinary redeploy without own public routes. */
+            storage_route_continuity: components["schemas"]["HostingStorageRouteContinuityInput"] | null;
+        };
+        HostingStorageRouteContinuityStatus: {
+            resource_id: components["schemas"]["HostingIdentifier"];
+            operation_id: components["schemas"]["HostingIdentifier"];
+            /** @enum {string} */
+            state: "reserved" | "unresolved" | "proxy_pending" | "loaded" | "proxy_failed" | "released";
+            successor_proxy_operation_id?: components["schemas"]["HostingIdentifier"];
+            /**
+             * Format: int64
+             * @description Historical generation backed by a committed applied completion receipt. It does not claim current loaded routes, certificate freshness, or HTTPS health.
+             */
+            loaded_generation?: number;
+            /** @enum {string} */
+            reason: "pending" | "reconciliation_required" | "loaded_historical" | "released";
         };
         HostingRouteSwitchOptions: {
             resource_id: components["schemas"]["HostingIdentifier"];
@@ -4334,6 +4428,7 @@ export interface components {
             timeout_seconds: number;
         };
         HostingDeploymentInput: {
+            storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityInput"];
             /**
              * Format: int64
              * @description Saved runtime generation to admit. Omitted zero requires an untouched configuration; positive generations require hosting_runtime_env_v1 and image_release_ports_v1. This admission reference does not implement container environment delivery.
@@ -4512,6 +4607,7 @@ export interface components {
             receipt: components["schemas"]["HostingReceipt"];
         };
         HostingSnapshot: {
+            storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityRef"];
             storage?: components["schemas"]["HostingStorageRef"];
             runtime_configuration?: components["schemas"]["HostingRuntimeConfigurationRef"];
             local_build?: components["schemas"]["HostingLocalBuildSource"];
@@ -7728,6 +7824,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostingRoute"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingStorageDeploymentOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized read-only resource view */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageDeploymentOptions"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingStorageRouteContinuityStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+                operation_id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized read-only resource view */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageRouteContinuityStatus"];
                 };
             };
             400: components["responses"]["Error"];
