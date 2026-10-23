@@ -84,6 +84,25 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             module.Relay(self.container_id, self.owner, profile="5432")
 
+    async def test_https_parallel_assets_admit_sixteen_and_reject_seventeenth(self):
+        self.relay = module.Relay(self.container_id, self.owner, connection_timeout=5, profile="onboarding-https")
+        port = await self.relay.start()
+        self.assertEqual(self.relay.max_connections, 16)
+        clients = [await asyncio.open_connection("127.0.0.1", port) for _ in range(17)]
+        for _, writer in clients[:16]:
+            writer.write(b"parallel asset")
+            await writer.drain()
+        responses = await asyncio.wait_for(asyncio.gather(*(reader.readexactly(14) for reader, _ in clients[:16])), 4)
+        self.assertEqual(responses, [b"parallel asset"] * 16)
+        self.assertEqual(await asyncio.wait_for(clients[16][0].read(), 2), b"")
+        self.assertEqual(sum(call[1] == "exec" for call in self.calls), 16)
+        self.assertLessEqual(len(self.relay.tasks), 16)
+        await self.relay.close()
+        for reader, writer in clients:
+            self.assertEqual(await asyncio.wait_for(reader.read(), 2), b"")
+            writer.close()
+            await writer.wait_closed()
+
     async def test_wrong_start_identity_never_listens_or_executes(self):
         self.mode = "wrong-identity"
         with self.assertRaises(RuntimeError):

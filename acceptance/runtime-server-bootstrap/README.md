@@ -165,8 +165,10 @@ and retries the identical body. It checks keyboard review at widths 320, 390,
 For this browser fixture only, the Docker-exec TCP relay has a fixed HTTPS
 profile from host loopback port 19443 to target loopback port 19443. The original
 SSH profile and its 180-second lifetime remain the default. The HTTPS profile
-uses the same full ID/name/owner checks, four-connection admission and 25-second
-per-connection deadline, with a 600-second whole-run lifetime. The browser's
+uses the same full ID/name/owner checks and 25-second per-connection deadline,
+with sixteen connections and a 600-second whole-run lifetime. Chromium's parallel
+HTTP asset loading requires that bounded HTTPS capacity. The default SSH profile
+retains its four-connection limit. The browser's
 Chromium process trusts the exact ephemeral certificate SPKI from this run.
 It does not use `ignoreHTTPSErrors`, bypass CSP, or change authentication/CSRF
 rules. This is fixture certificate pinning and same-host transport qualification.

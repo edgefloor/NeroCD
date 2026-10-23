@@ -20,6 +20,7 @@ class Relay:
             raise ValueError("unknown fixed fixture relay profile")
         self.profile = profile
         self.target_port = 22 if profile == "ssh" else 19443
+        self.max_connections = 4 if profile == "ssh" else 16
         self.tasks = set()
         self.children = set()
         self.server = None
@@ -64,7 +65,7 @@ class Relay:
             await self.reap(process)
 
     def accept(self, reader, writer):
-        if len(self.tasks) >= 4:
+        if len(self.tasks) >= self.max_connections:
             writer.close()
             return
         task = asyncio.create_task(self.connection(reader, writer))
