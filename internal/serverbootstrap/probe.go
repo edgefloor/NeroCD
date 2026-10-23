@@ -4,6 +4,7 @@ package serverbootstrap
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/base64"
 	"errors"
 	"net"
@@ -55,7 +56,8 @@ func (code ErrorCode) Is(target error) bool {
 const maxOutput = 16 * 1024
 
 // Probe runs one fixed read-only recipe. A caller deadline is mandatory and the
-// whole operation is additionally capped at 15 seconds. Failures return zero
+// network lifetime is additionally capped at 15 seconds. Synchronous key parsing
+// and cryptographic work are not context-preemptible. Failures return zero
 // observations. The caller owns key bytes; this function neither retains nor
 // logs them and does not promise that Go erases key material from memory.
 func Probe(ctx context.Context, target Target, privateKey []byte) (Observations, error) {
@@ -79,6 +81,11 @@ func Probe(ctx context.Context, target Target, privateKey []byte) (Observations,
 	signer, err := ssh.ParsePrivateKey(privateKey)
 	if err != nil {
 		return Observations{}, InvalidPrivateKey
+	}
+	if public, ok := signer.PublicKey().(ssh.CryptoPublicKey); ok {
+		if key, ok := public.CryptoPublicKey().(*rsa.PublicKey); ok && key.N.BitLen() > 8192 {
+			return Observations{}, InvalidPrivateKey
+		}
 	}
 	address := net.JoinHostPort(target.Address.Unmap().String(), strconv.Itoa(int(target.Port)))
 	var dialer net.Dialer

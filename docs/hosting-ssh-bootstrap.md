@@ -15,8 +15,12 @@ Private and loopback IPs are explicit trusted operator inputs, not a public endp
 
 Private keys are limited to 64 KiB and parsed with the existing pinned `golang.org/x/crypto/ssh` dependency.
 Unencrypted forms accepted by `ssh.ParsePrivateKey`, including OpenSSH Ed25519 and supported PEM keys, are accepted.
+RSA moduli above 8192 bits return `InvalidPrivateKey` before dialing, limiting subsequent client signing work.
 Encrypted or malformed keys return `InvalidPrivateKey`. The package does not log or retain keys after the call.
 Go does not guarantee erasure of key bytes or parsed key material from memory.
+The dependency's synchronous key parser is not context-preemptible. The 64 KiB input limit bounds its input,
+but the deadline does not provide a hard CPU-time guarantee for parsing or other synchronous cryptographic work.
+Callers must supply trusted operator key material; this package is not a public untrusted-key parsing endpoint.
 
 The host-key callback compares the trusted fingerprint before client authentication.
 The TCP socket has the effective deadline, and a joined cancellation helper closes it during handshake, channel creation, or execution.

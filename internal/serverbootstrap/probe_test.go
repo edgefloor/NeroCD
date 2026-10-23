@@ -5,9 +5,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"io"
+	"math/big"
 	"net"
 	"net/netip"
 	"strings"
@@ -176,6 +179,65 @@ func TestProbeWrongClientKey(t *testing.T) {
 	got, err := Probe(probeContext(t), server.target, wrong)
 	if !errors.Is(err, HandshakeFailed) || got != (Observations{}) || server.auth.Load() == 0 {
 		t.Fatalf("wrong client error=%v observations=%+v", err, got)
+	}
+}
+
+// These synthetic factors are not cryptographic primes and must never be used
+// for authentication. They satisfy the parser's arithmetic checks with supplied
+// CRT values, exercising actual parsed-key admission without huge prime searches.
+func syntheticRSAKey(t *testing.T, bits int) []byte {
+	t.Helper()
+	one := big.NewInt(1)
+	p := new(big.Int).Add(new(big.Int).Lsh(one, 4096), one)
+	var q *big.Int
+	if bits == 8192 {
+		q = new(big.Int).Add(new(big.Int).Lsh(one, 4095), one)
+	} else {
+		q = new(big.Int).Add(new(big.Int).Lsh(one, 4096), new(big.Int).Lsh(one, 4000))
+		q.Add(q, one)
+	}
+	pMinusOne, qMinusOne := new(big.Int).Sub(p, one), new(big.Int).Sub(q, one)
+	phi := new(big.Int).Mul(pMinusOne, qMinusOne)
+	d := new(big.Int).ModInverse(big.NewInt(65537), phi)
+	qInv := new(big.Int).ModInverse(q, p)
+	if d == nil || qInv == nil {
+		t.Fatal("synthetic RSA arithmetic is inconsistent")
+	}
+	key := &rsa.PrivateKey{
+		PublicKey: rsa.PublicKey{N: new(big.Int).Mul(p, q), E: 65537},
+		D:         d,
+		Primes:    []*big.Int{p, q},
+		Precomputed: rsa.PrecomputedValues{
+			Dp: new(big.Int).Mod(d, pMinusOne), Dq: new(big.Int).Mod(d, qMinusOne), Qinv: qInv,
+		},
+	}
+	if key.N.BitLen() != bits {
+		t.Fatalf("synthetic modulus has %d bits, expected %d", key.N.BitLen(), bits)
+	}
+	encoded := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if _, err := ssh.ParsePrivateKey(encoded); err != nil {
+		t.Fatalf("synthetic key is not parser-compatible: %v", err)
+	}
+	return encoded
+}
+
+func TestProbeRSAModulusAdmissionBoundary(t *testing.T) {
+	server := serve(t, func(ssh.Channel) { t.Error("synthetic key must never authenticate") })
+	_, otherHost := makeKey(t)
+	server.target.HostKeyFingerprint = ssh.FingerprintSHA256(otherHost.PublicKey())
+	// A mismatched server stops before signing, after proving the 8192-bit
+	// parsed key passed admission and reached a real SSH handshake.
+	if got, err := Probe(probeContext(t), server.target, syntheticRSAKey(t, 8192)); !errors.Is(err, HostKeyMismatch) || got != (Observations{}) {
+		t.Fatalf("8192-bit boundary admission: %+v %v", got, err)
+	}
+	if server.dials.Load() != 1 || server.auth.Load() != 0 {
+		t.Fatal("boundary key did not reach exactly one pre-authentication handshake")
+	}
+	if got, err := Probe(probeContext(t), server.target, syntheticRSAKey(t, 8193)); !errors.Is(err, InvalidPrivateKey) || got != (Observations{}) {
+		t.Fatalf("oversized RSA admission: %+v %v", got, err)
+	}
+	if server.dials.Load() != 1 || server.auth.Load() != 0 {
+		t.Fatal("oversized RSA key dialed or attempted authentication")
 	}
 }
 
