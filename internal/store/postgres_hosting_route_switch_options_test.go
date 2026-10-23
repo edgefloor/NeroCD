@@ -35,7 +35,11 @@ func TestPostgresRouteSwitchOptions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer lock.Rollback(ctx)
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = lock.Rollback(cleanup)
+		})
 		if _, err = lock.Exec(ctx, `SELECT id FROM resources WHERE id=$1 FOR UPDATE`, f.resource.ID); err != nil {
 			t.Fatal(err)
 		}
