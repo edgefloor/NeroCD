@@ -51,6 +51,13 @@ test("administrator reviews exact server plan and recovers genuine metadata conf
   // original expiry. Concurrent identical API retries must return one resolution.
   await page.route(meta.origin + planPath + "/**/apply", async route => { const response = await route.fetch(); expect(response.status()).toBe(200); await route.abort("connectionfailed"); }, { times: 1 });
   await confirm(panel); await expect(panel.getByText(/The apply response was not confirmed/)).toBeVisible(); const frozen = applyBodies.at(-1)!;
+  // The real proxy pointer advances after accepted metadata apply, but its lost
+  // response must keep this exact request recoverable instead of navigating.
+  await page.getByRole("region", { name: "Managed proxy", exact: true }).getByRole("button", { name: "Refresh proxy information", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "Read current proxy operation", exact: true })).toBeDisabled();
+  await panel.getByText("Look up an exact operation", { exact: true }).click();
+  await expect(panel.getByRole("button", { name: "Read exact metadata recovery", exact: true })).toBeDisabled();
+  await expect(panel.getByText("Recovery operation: " + meta.operation_id, { exact: true })).toBeVisible();
   await page.waitForTimeout(Math.max(0, Date.parse(expiresAt) - Date.now() + 1200));
   const responses = await Promise.all([page.request.post(frozen.path, { headers: headers(meta), data: JSON.parse(frozen.body) }), page.request.post(frozen.path, { headers: headers(meta), data: JSON.parse(frozen.body) })]); expect(responses.map(response => response.status())).toEqual([200, 200]); const copies = await Promise.all(responses.map(response => response.json())); expect(copies[0]).toEqual(copies[1]);
   await panel.getByRole("button", { name: "Retry identical recovery apply request", exact: true }).click(); const recorded = panel.getByRole("region", { name: "Recorded metadata recovery resolution", exact: true }); await expect(recorded).toBeVisible(); expect(applyBodies.at(-1)!.body).toBe(frozen.body); await expect(recorded).toContainText(copies[0].id); await expect(recorded).toContainText(meta.receipt_id);
@@ -59,11 +66,15 @@ test("administrator reviews exact server plan and recovers genuine metadata conf
   const verification = await page.request.post(meta.verify_path, { headers: headers(meta) }); expect(verification.status()).toBe(200); expect((await verification.json()).id).toBe(copies[0].id);
   // The real queued ordinary convergence has no completed strict receipt and
   // remains unsupported for this API; it cannot be adopted as an unlock.
-  await panel.getByText("Look up an exact operation", { exact: true }).click();
-  await panel.getByLabel("Original proxy operation ID", { exact: true }).fill(copies[0].convergence_operation_id);
-  await panel.getByRole("button", { name: "Read exact metadata recovery", exact: true }).click();
+  await expect(panel.getByText(`Current proxy operation: ${copies[0].convergence_operation_id}. Recovery eligibility requires a fresh authorized read.`, { exact: true })).toBeVisible();
+  const current = panel.getByRole("button", { name: "Read current proxy operation", exact: true });
+  await current.focus(); await expect(current).toBeFocused(); await page.keyboard.press("Enter");
   await expect(panel.getByText(/Recovery is unsupported or unfinished/)).toBeVisible();
   await expect(panel.getByRole("button", { name: "Request server recovery plan", exact: true })).toHaveCount(0);
+  await page.setViewportSize({ width: 320, height: 1000 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await panel.screenshot({ path: info.outputPath("proxy-recovery-current-operation-320.png"), animations: "disabled" });
+  await panel.getByText("Look up an exact operation", { exact: true }).click();
   await panel.getByLabel("Original proxy operation ID", { exact: true }).fill(meta.operation_id);
   await panel.getByRole("button", { name: "Read exact metadata recovery", exact: true }).click();
   await expect(panel.getByRole("region", { name: "Recorded metadata recovery resolution", exact: true })).toBeVisible();
