@@ -17,6 +17,9 @@ func TestServerBootstrapHTTPRequiresAuthenticationAndRejectsProof(t *testing.T) 
 		request.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, request)
+		if rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s %s missing no-store on authentication denial", route.Method, route.Path)
+		}
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s status=%d", route.Method, route.Path, rec.Code)
 		}
@@ -46,5 +49,43 @@ func TestServerBootstrapHTTPRequiresAuthenticationAndRejectsProof(t *testing.T) 
 		if rec.Code != 400 {
 			t.Fatalf("create input accepted %s: %d", body, rec.Code)
 		}
+	}
+}
+
+func TestServerBootstrapNoStoreBoundaries(t *testing.T) {
+	s, _ := newTestServer()
+	for _, path := range []string{
+		"/api/v1/server-bootstrap-options?limit=invalid",
+		"/api/v1/server-bootstraps?limit=invalid",
+		"/api/v1/server-bootstraps/sbo_test/unknown",
+	} {
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s status=%d missing no-store", path, rec.Code)
+		}
+	}
+	for _, path := range []string{
+		"/api/v1/server-bootstrap-options-extra",
+		"/api/v1/server-bootstrap-options/extra",
+		"/api/v1/server-bootstraps-extra",
+	} {
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := rec.Header().Get("Cache-Control"); got == "no-store" {
+			t.Fatalf("%s unexpectedly received bootstrap no-store", path)
+		}
+	}
+}
+
+func TestServerBootstrapNoStoreOnAuthorizationDenial(t *testing.T) {
+	s, _ := newTestServer()
+	viewer := createTestSessionFor(t, s, "viewer@example.local", "viewer")
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/server-bootstrap-options?project_id=proj_platform", nil)
+	request.Header.Set("Authorization", "Bearer "+viewer)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, request)
+	if rec.Code != http.StatusForbidden || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d cache=%q body=%s", rec.Code, rec.Header().Get("Cache-Control"), rec.Body.String())
 	}
 }

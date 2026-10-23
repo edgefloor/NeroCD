@@ -62,7 +62,7 @@ func TestServerBootstrapRenewalFailureCancelsAndJoins(t *testing.T) {
 	go func() { close(started); <-ctx.Done(); time.Sleep(10 * time.Millisecond); joined.Store(true); done <- 1 }()
 	<-started
 	want := errors.New("authority revoked")
-	_, e := waitServerBootstrapRemote(ctx, cancel, time.Millisecond, done, func() error { return want })
+	_, e := waitServerBootstrapRemote(ctx, cancel, time.Now().Add(time.Minute), time.Millisecond, done, func(context.Context) (time.Time, error) { return time.Time{}, want })
 	if !errors.Is(e, want) || !joined.Load() {
 		t.Fatalf("returned before join: %v joined=%v", e, joined.Load())
 	}

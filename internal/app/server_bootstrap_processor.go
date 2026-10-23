@@ -129,7 +129,9 @@ func bootstrapSystemCommandID(id, action string) string {
 }
 
 func (s *Service) bootstrapRemote(parent context.Context, r store.ServerBootstrapRepository, actor string, op domain.ServerBootstrapOperation, stage domain.ServerBootstrapStage) (domain.ServerBootstrapReceipt, error) {
-	ctx, cancel := context.WithTimeout(parent, 125*time.Second)
+	commandCtx, commandCancel := context.WithDeadline(parent, stage.Command.Deadline)
+	defer commandCancel()
+	ctx, cancel := context.WithTimeout(commandCtx, 125*time.Second)
 	defer cancel()
 	receipt := domain.ServerBootstrapReceipt{CommandID: stage.Command.ID, LeaseID: stage.LeaseID, Attempt: stage.Attempt, Fence: stage.Fence}
 	event, e := s.auditEvent(ctx, actor, "server_bootstrap.delivery", op.IDs.OperationID, nil)
@@ -141,8 +143,21 @@ func (s *Service) bootstrapRemote(parent context.Context, r store.ServerBootstra
 		return receipt, e
 	}
 	// Recheck current authority immediately after materialization and before submission.
-	if _, e = r.RenewServerBootstrapStage(ctx, actor, op.IDs.OperationID, stage); e != nil {
+	renewCtx, renewCancel := serverBootstrapRenewalContext(ctx, stage.ExpiresAt)
+	stage, e = r.RenewServerBootstrapStage(renewCtx, actor, op.IDs.OperationID, stage)
+	renewErr := renewCtx.Err()
+	renewCancel()
+	if e != nil {
 		return receipt, e
+	}
+	if renewErr != nil {
+		return receipt, renewErr
+	}
+	if !stage.ExpiresAt.After(time.Now()) {
+		return receipt, context.DeadlineExceeded
+	}
+	if ctx.Err() != nil {
+		return receipt, ctx.Err()
 	}
 	target := serverbootstrap.Target{Address: netip.MustParseAddr(op.Input.Target.IP), Port: op.Input.Target.Port, User: op.Input.Target.User, HostKeyFingerprint: op.Input.Target.HostFingerprint}
 	type result struct {
@@ -181,7 +196,10 @@ func (s *Service) bootstrapRemote(parent context.Context, r store.ServerBootstra
 		}
 		done <- out
 	}()
-	out, e := waitServerBootstrapRemote(ctx, cancel, 10*time.Second, done, func() error { _, err := r.RenewServerBootstrapStage(ctx, actor, op.IDs.OperationID, stage); return err })
+	out, e := waitServerBootstrapRemote(ctx, cancel, stage.ExpiresAt, 10*time.Second, done, func(renewCtx context.Context) (time.Time, error) {
+		renewed, err := r.RenewServerBootstrapStage(renewCtx, actor, op.IDs.OperationID, stage)
+		return renewed.ExpiresAt, err
+	})
 	if e != nil {
 		return receipt, e
 	}
@@ -214,26 +232,90 @@ func (s *Service) bootstrapRemote(parent context.Context, r store.ServerBootstra
 	return receipt, nil
 }
 
-// waitServerBootstrapRemote cancels and joins the owned call on every authority loss.
-func waitServerBootstrapRemote[T any](ctx context.Context, cancel context.CancelFunc, interval time.Duration, done <-chan T, renew func() error) (T, error) {
+// serverBootstrapRenewalContext bounds database waits by confirmed authority and
+// a short renewal budget. A successful response is the only source of new expiry.
+func serverBootstrapRenewalContext(ctx context.Context, expiresAt time.Time) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(5 * time.Second)
+	if expiresAt.Before(deadline) {
+		deadline = expiresAt
+	}
+	return context.WithDeadline(ctx, deadline)
+}
+
+// waitServerBootstrapRemote cancels SSH independently of a stalled renewal, then
+// joins both owned calls. Repository and transport calls must honor cancellation;
+// joining cannot impose a bound on a dependency that ignores its context.
+func waitServerBootstrapRemote[T any](ctx context.Context, cancel context.CancelFunc, expiresAt time.Time, interval time.Duration, done <-chan T, renew func(context.Context) (time.Time, error)) (T, error) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	expiry := time.NewTimer(time.Until(expiresAt))
+	defer expiry.Stop()
+	type renewal struct {
+		expiresAt time.Time
+		err       error
+	}
+	var renewing <-chan renewal
+	var renewCancel context.CancelFunc
+	// Remote completion leaves the caller context live for receipt construction.
+	// Only the renewal is cancelled here; authority-loss paths cancel SSH below.
+	defer func() {
+		if renewCancel != nil {
+			renewCancel()
+			<-renewing
+		}
+	}()
+	fail := func(err error) (T, error) {
+		cancel()
+		<-done
+		var zero T
+		return zero, err
+	}
 	for {
 		select {
 		case out := <-done:
-			return out, nil
-		case <-ctx.Done():
-			cancel()
-			<-done
-			var zero T
-			return zero, ctx.Err()
-		case <-ticker.C:
-			if err := renew(); err != nil {
+			// Completion racing a timer must not turn expired authority into success.
+			if err := ctx.Err(); err != nil {
 				cancel()
-				<-done
 				var zero T
 				return zero, err
 			}
+			if !expiresAt.After(time.Now()) {
+				cancel()
+				var zero T
+				return zero, context.DeadlineExceeded
+			}
+			return out, nil
+		case <-ctx.Done():
+			return fail(ctx.Err())
+		case <-expiry.C:
+			return fail(context.DeadlineExceeded)
+		case result := <-renewing:
+			renewCancel()
+			renewCancel = nil
+			renewing = nil
+			if result.err != nil {
+				return fail(result.err)
+			}
+			if !expiresAt.After(time.Now()) || !result.expiresAt.After(time.Now()) {
+				return fail(context.DeadlineExceeded)
+			}
+			expiresAt = result.expiresAt
+			expiry.Reset(time.Until(expiresAt))
+		case <-ticker.C:
+			if renewing != nil {
+				continue
+			}
+			renewCtx, stop := serverBootstrapRenewalContext(ctx, expiresAt)
+			renewCancel = stop
+			result := make(chan renewal, 1)
+			renewing = result
+			go func() {
+				next, err := renew(renewCtx)
+				if err == nil {
+					err = renewCtx.Err()
+				}
+				result <- renewal{expiresAt: next, err: err}
+			}()
 		}
 	}
 }
