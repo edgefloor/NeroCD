@@ -131,14 +131,16 @@ Servers and runners leading direct hosting and advanced workflows preserved.
 See the [navigation evidence and limits](compatibility.md#accepted-foundations-and-evidence).
 
 Automatic deployment and SSH onboarding have bounded accepted evidence. Proceed
-to H2 stateful hosting next: managed volumes, storage runtime/UI and PostgreSQL/Redis.
+to H2 stateful hosting next: managed volumes, broader storage runtime and deployment-review/recovery UI and PostgreSQL/Redis.
 Storage metadata, the private helper and durable materialization admission are
 accepted through `8e00631aac26e0787a43398332e31a35980f067d`, with migrations
 0062–0063. The opt-in API/compiled-runner uploaded-file workflow now has physical
 qualification through migration 0064, including public options/status and typed
 materialization acknowledgment. Bounded unqueued-continuity recovery is accepted
 at `284f45cf1659a559d55d54342a902d0eeb112685`; its contract/database tests do not
-prove proxy convergence. Storage UI and PostgreSQL/Redis remain in progress and
+prove proxy convergence. Metadata API/UI is accepted at
+`2f8beb9b555e651bcccb47d3c0dbc7ccfdb268db`; saving metadata does not mount a
+volume or prove persistence. Storage deployment-review/recovery UI and PostgreSQL/Redis remain in progress and
 unaccepted; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
 under R17/R19 and applicable A09/A10 checks, production TLS and remaining parity
 remain separate unfinished work. Live GitHub webhook configuration,

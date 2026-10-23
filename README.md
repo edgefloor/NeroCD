@@ -166,7 +166,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   now qualifies an opt-in mounted workflow through replacement, lost acknowledgment
   and runner restart, and failed-readiness restoration. Bounded unqueued-continuity
   recovery is accepted at `284f45cf1659a559d55d54342a902d0eeb112685`.
-  Storage UI and PostgreSQL/Redis remain in progress and unaccepted. Backups/restore,
+  Metadata API/UI is accepted at `2f8beb9b555e651bcccb47d3c0dbc7ccfdb268db`;
+  saving mount intent alone does not materialize or mount a volume.
+  Storage deployment-review/recovery UI and PostgreSQL/Redis remain in progress and unaccepted. Backups/restore,
   unknown-writer recovery, production ACME and complete A19/A26 remain open.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
@@ -188,7 +190,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
 and extended compatibility. Automatic deployment and SSH onboarding are accepted within their stated limits.
-Stateful hosting is next: managed volumes, storage runtime/UI, PostgreSQL and Redis. Protected plans and production TLS
+Stateful hosting is next: managed volumes, broader storage runtime and deployment-review/recovery UI, PostgreSQL and Redis. Protected plans and production TLS
 remain visible unfinished work. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
