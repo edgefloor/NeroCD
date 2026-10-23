@@ -53,6 +53,9 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			pushAttempt, stopPush := context.WithTimeout(recoveryCtx, 3*time.Second)
 			_ = s.recoverGitHubPushDispatch(pushAttempt)
 			stopPush()
+			autoAttempt, stopAuto := context.WithTimeout(recoveryCtx, 3*time.Second)
+			_ = s.recoverAutoDeployDispatch(autoAttempt)
+			stopAuto()
 			select {
 			case <-recoveryCtx.Done():
 				return
@@ -833,6 +836,9 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 		}
 		return op, nil
 	}
+	if err = autoFirstMutation(ctx, tx, op.ID, true); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	if err = hostingFreshRuntimeGate(ctx, tx, op); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -891,6 +897,9 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 		return domain.HostingOperation{}, err
 	}
 	if err = finalHostingRuntimeAuthority(ctx, tx, runnerID, a, op); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = autoFirstMutation(ctx, tx, op.ID, false); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	return op, tx.Commit(ctx)
@@ -1017,6 +1026,9 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 		if _, err = sqlcgen.New(tx).ReleaseHostingFailedClaim(ctx, op.ID); err != nil {
 			return domain.HostingOperation{}, err
 		}
+	}
+	if err = s.autoWakeup(ctx, tx, op.ResourceID); err != nil {
+		return domain.HostingOperation{}, err
 	}
 	if err = hostingPhaseAudit(ctx, tx, s.queries, op, runnerID, "completed"); err != nil {
 		return domain.HostingOperation{}, err

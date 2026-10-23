@@ -320,6 +320,9 @@ func (s *PostgresStore) RunnerProxyApplyBegin(ctx context.Context, runner string
 	if op.State == "applying" && op.MutationHold {
 		return op, tx.Commit(ctx)
 	}
+	if err = autoFirstMutation(ctx, tx, op.ID, true); err != nil {
+		return domain.HostingProxyOperation{}, err
+	}
 	if op.State != "prepared" || op.Plan == nil || op.Preparation == nil || p.HoldOperationID != "" || p.DesiredGeneration != op.Generation || op.Plan.PreviousGeneration != p.LoadedGeneration || op.Preparation.DaemonID != p.DaemonID || op.Preparation.StaticHash != p.StaticHash {
 		return domain.HostingProxyOperation{}, ErrConflict
 	}
@@ -367,6 +370,9 @@ func (s *PostgresStore) RunnerProxyApplyBegin(ctx context.Context, runner string
 		if err = proxyCheckLegacyToken(ctx, tx, op.CreatedBy); err != nil {
 			return domain.HostingProxyOperation{}, err
 		}
+	}
+	if err = autoFirstMutation(ctx, tx, op.ID, false); err != nil {
+		return domain.HostingProxyOperation{}, err
 	}
 	return op, tx.Commit(ctx)
 }
@@ -510,6 +516,11 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 	}
 	if op.Snapshot.VerifiedSwitch != nil && in.Result.Outcome != "uncertain" && !metadataConflict {
 		if err = s.proxyFinishDeferredWithdrawal(ctx, tx, p, op); err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
+	}
+	for _, route := range op.Snapshot.Routes {
+		if err = s.autoWakeup(ctx, tx, route.ResourceID); err != nil {
 			return domain.HostingProxyOperation{}, err
 		}
 	}
@@ -1266,6 +1277,9 @@ func (s *PostgresStore) RequestHostingRoute(ctx context.Context, resourceID, rou
 		}
 		return record.Route, proxyCheckLegacyToken(ctx, tx, actor)
 	}
+	if err = autoManualPrelock(ctx, tx, resourceID); err != nil {
+		return domain.HostingRoute{}, err
+	}
 	if !p.Enabled || p.RestoreOwnershipHeld || in.ExpectedRouteVersion < 0 || in.ExpectedHealthyOperationID == "" {
 		return domain.HostingRoute{}, ErrConflict
 	}
@@ -1367,6 +1381,9 @@ func (s *PostgresStore) RequestHostingRoute(ctx context.Context, resourceID, rou
 		return domain.HostingRoute{}, err
 	}
 	record.Route.OperationID = op.ID
+	if err = autoManualMutation(ctx, tx, resourceID); err != nil {
+		return domain.HostingRoute{}, err
+	}
 	return record.Route, proxyCommitMutation(ctx, tx, actor)
 }
 
@@ -1422,6 +1439,9 @@ func (s *PostgresStore) DeleteHostingRoute(ctx context.Context, id, operationID,
 		}
 		return record.Route, proxyCheckLegacyToken(ctx, tx, actor)
 	}
+	if err = autoManualPrelock(ctx, tx, row.ResourceID); err != nil {
+		return domain.HostingRoute{}, err
+	}
 	if in.ExpectedRouteVersion < 1 {
 		return domain.HostingRoute{}, ErrConflict
 	}
@@ -1441,5 +1461,8 @@ func (s *PostgresStore) DeleteHostingRoute(ctx context.Context, id, operationID,
 		return domain.HostingRoute{}, err
 	}
 	record.Route.OperationID = op.ID
+	if err = autoManualMutation(ctx, tx, row.ResourceID); err != nil {
+		return domain.HostingRoute{}, err
+	}
 	return record.Route, proxyCommitMutation(ctx, tx, actor)
 }

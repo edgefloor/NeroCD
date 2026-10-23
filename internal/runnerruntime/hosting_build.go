@@ -22,6 +22,10 @@ import (
 	"nerocd/internal/runnerclient"
 )
 
+// errSettledBuildFailure is returned only after exact server completion proof
+// and durable local journal acknowledgment. It does not describe uncertainty.
+var errSettledBuildFailure = errors.New("local build failed after confirmed completion")
+
 // BuildPhaseClient is the authenticated nonsecret build protocol. Implementations
 // must support concurrent status requests and honor cancellation.
 type BuildPhaseClient interface {
@@ -541,7 +545,7 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 		return err
 	}
 	if completion.State != "succeeded" {
-		return buildFailed
+		return errSettledBuildFailure
 	}
 	return nil
 }

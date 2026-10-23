@@ -1,8 +1,9 @@
+import { Profiler } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import type { Resource } from "@/api/hosting";
-import type { GitHubPushPolicy } from "@/api/hosting-github-push";
+import type { AutomaticDeploymentOptions, AutomaticDeploymentConfiguration, GitHubPushPolicy } from "@/api/hosting-github-push";
 import { ResourceGithubPushBuilds } from "./ResourceGithubPushBuilds";
 const resource: Resource = { id: "resource", project_id: "project", project_environment_id: "environment", name: "Web", kind: "application", generation: 2, created_by: "user", created_at: "", updated_at: "", source: { kind: "git", git: { source_id: "source", generation: 3, repository_url: "https://github.com/owner/repo.git", requested_ref: "main", credential_kind: "public", settings: { strategy: "static" } } } };
 const policy: GitHubPushPolicy = { id: "policy", can_manage: true, resource_id: "resource", project_id: "project", generation: 1, resource_generation: 2, source_generation: 3, enabled: false, status: "unverified", reason: "unverified", repository_id: 1, repository: "owner/repo", branch: "main", desired_commit: "", last_build_id: "", callback_url: "https://control.test/fixed-hook", provider_read_configured: false };
@@ -10,10 +11,11 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const page = (items: unknown[]) => ({ items, count: items.length, total: items.length, limit: 20, offset: 0 });
 let client: QueryClient;
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-function setup(p = policy, r = resource, handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined) {
+function setup(p = policy, r = resource, handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined, onCommit?: () => void) {
  const fetch = vi.fn(async (url: string, options: RequestInit) => await handler?.(url, options) ?? (url.endsWith("/github-push-policy") ? json(p) : url.includes("/deliveries?") ? json({ items: [], next_cursor: "", has_more: false }) : url.includes("/service-accounts?") ? json(page([{ id: "actor", project_id: "project", name: "Build actor", status: "active", role: "maintainer" }, { id: "viewer", project_id: "project", name: "Viewer actor", status: "active", role: "viewer" }])) : url.includes("/managed-secrets?") ? json(page([{ id: "webhook", project_id: "project", name: "Signing secret", status: "active" }, { id: "provider", project_id: "project", name: "Provider secret", status: "active" }])) : url.includes("/versions?") ? json(page([{ secret_id: url.includes("webhook") ? "webhook" : "provider", version: 1 }])) : url.includes("/source-grants?") ? json(page([{ id: "grant", resource_id: "resource", source_id: "source", source_generation: 3, version: 1, kind: "https_basic", revoked: false }])) : json({}))); vi.stubGlobal("fetch", fetch);
  client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
- const view = render(<QueryClientProvider client={client}><ResourceGithubPushBuilds actor="actor-identity" resource={r} blocked={false} /></QueryClientProvider>); return { fetch, ...view };
+ const content = <QueryClientProvider client={client}><ResourceGithubPushBuilds actor="actor-identity" resource={r} blocked={false} /></QueryClientProvider>;
+ const view = render(onCommit ? <Profiler id="push" onRender={onCommit}>{content}</Profiler> : content); return { fetch, ...view };
 }
 async function references(provider = false) {
  await screen.findByRole("option", { name: /Build actor/ }); fireEvent.change(screen.getByLabelText("Automation service account"), { target: { value: "actor" } }); fireEvent.change(screen.getByLabelText("Webhook signing managed secret"), { target: { value: "webhook" } }); await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Webhook signing immutable version").disabled).toBe(false)); fireEvent.change(screen.getByLabelText("Webhook signing immutable version"), { target: { value: "1" } });
@@ -37,7 +39,8 @@ test("private source requires distinct provider reference and eligible current g
  setup(policy, privateResource); await references(); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save disabled push configuration" }).disabled).toBe(true); fireEvent.change(screen.getByLabelText("GitHub provider read managed secret"), { target: { value: "provider" } }); await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("GitHub provider read immutable version").disabled).toBe(false)); fireEvent.change(screen.getByLabelText("GitHub provider read immutable version"), { target: { value: "1" } }); fireEvent.change(screen.getByLabelText("Push private source grant"), { target: { value: "grant" } }); fireEvent.click(screen.getByLabelText(/I reviewed these exact references/)); await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save disabled push configuration" }).disabled).toBe(false));
 });
 test("blocked verify result never enables and stale verification cannot enable", async () => {
- const { fetch } = setup(policy, resource, (url, o) => url.endsWith("/verify") && o.method === "POST" ? json({ ...policy, status: "blocked", reason: "provider_unavailable" }) : undefined); fireEvent.click(await screen.findByRole("button", { name: "Verify GitHub repository and branch" })); await screen.findByText("GitHub is unavailable. Retry verification later."); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Enable build on push" }).disabled).toBe(true); expect(fetch.mock.calls.filter(([, o]) => o.method === "POST")).toHaveLength(1);
+ let current = policy;
+ const { fetch } = setup(policy, resource, (url, o) => { if (url.endsWith("/verify") && o.method === "POST") { current = { ...policy, status: "blocked", reason: "provider_unavailable" }; return json(current); } return url.endsWith("/github-push-policy") ? json(current) : undefined; }); fireEvent.click(await screen.findByRole("button", { name: "Verify GitHub repository and branch" })); await screen.findByText("GitHub is unavailable. Retry verification later."); expect(screen.getByRole<HTMLButtonElement>("button", { name: "Enable build on push" }).disabled).toBe(true); expect(fetch.mock.calls.filter(([, o]) => o.method === "POST")).toHaveLength(1);
 });
 test.each([401, 403, 404])("policy read %s never opens owner selectors", async (status) => {
  const { fetch } = setup(policy, resource, (url) => url.endsWith("/github-push-policy") ? json({}, status) : undefined); await screen.findByText(/Reload to verify current access/); expect(screen.queryByRole("form")).toBeNull(); expect(fetch.mock.calls.some(([url]) => /managed-secrets|service-accounts/.test(url))).toBe(false);
@@ -149,4 +152,135 @@ test.each(["policy identity", "policy generation", "disabled policy", "viewer", 
  }
  await waitFor(() => { const button = screen.queryByRole<HTMLButtonElement>("button", { name: "Retry identical delivery decision" }); expect(!button || button.disabled).toBe(true); });
  const button = screen.queryByRole("button", { name: "Retry identical delivery decision" }); if (button) fireEvent.click(button); await act(async () => {}); expect(writes).toBe(1); expect(fetch.mock.calls.filter(([url]) => url.endsWith("/retry"))).toHaveLength(1);
+});
+
+
+const automaticOptions: AutomaticDeploymentOptions = { available: true, reason: "eligible", baseline: { healthy_operation_id: "hop_manual", loaded_proxy_operation_id: "pop_loaded", loaded_generation: 7, runtime_configuration_generation: 2, container_port: 8080, readiness: { path: "/ready", timeout_seconds: 10 }, manual_epoch: 1, routes: [{ route_id: "route_b", hostname: "b.example.test", path_prefix: "/", version: 3, selected_release_operation_id: "hop_manual" }, { route_id: "route_a", hostname: "a.example.test", path_prefix: "/app", version: 2, selected_release_operation_id: "hop_manual" }] } };
+const savedAutomatic: AutomaticDeploymentConfiguration = { mode: "automatic_unprotected", expected_healthy_operation_id: "hop_manual", expected_loaded_proxy_operation_id: "pop_loaded", expected_loaded_generation: 7, expected_runtime_configuration_generation: 2, container_port: 8080, readiness: { path: "/ready", timeout_seconds: 10 }, routes: [{ route_id: "route_a", expected_version: 2, expected_selected_release_operation_id: "hop_manual" }] };
+const automaticPolicy: GitHubPushPolicy = { ...policy, owner_automatic_deployment_options: automaticOptions };
+async function automaticReferences() {
+  await references();
+  fireEvent.click(screen.getByRole("radio", { name: "Automatic deployment without approval" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "https://b.example.test/" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "https://a.example.test/app" }));
+  fireEvent.click(screen.getByLabelText(/I reviewed these exact references/));
+}
+
+test("owner explicitly selects automatic deployment with sorted server routes and readonly healthy baseline", async () => {
+  const { fetch } = setup(automaticPolicy); await automaticReferences();
+  expect(screen.queryByRole("textbox", { name: /route.*id/i })).toBeNull();
+  expect(screen.getByText(/no approval step.*does not configure or enforce GitHub branch protection/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" }));
+  await waitFor(() => expect(fetch.mock.calls.some(([, options]) => options.method === "PUT")).toBe(true));
+  const body = JSON.parse(fetch.mock.calls.find(([, options]) => options.method === "PUT")![1].body as string);
+  expect(body.configuration.automatic_deployment).toEqual({ ...savedAutomatic, routes: [...savedAutomatic.routes, { route_id: "route_b", expected_version: 3, expected_selected_release_operation_id: "hop_manual" }] });
+  expect(body.request_id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(body.configuration.automatic_deployment).not.toHaveProperty("hostname");
+});
+
+test("build-only stays default even when automatic options are available", async () => {
+  const { fetch } = setup(automaticPolicy); await references();
+  expect(screen.getByRole<HTMLInputElement>("radio", { name: /Build only/ }).checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" }));
+  await waitFor(() => expect(fetch.mock.calls.some(([, options]) => options.method === "PUT")).toBe(true));
+  expect(JSON.parse(fetch.mock.calls.find(([, options]) => options.method === "PUT")![1].body as string).configuration).not.toHaveProperty("automatic_deployment");
+});
+
+test("saved automatic configuration is never silently removed when fresh owner options are unavailable", async () => {
+  const p: GitHubPushPolicy = { ...policy, owner_configuration: { automation_actor_id: "actor", webhook_secret: { id: "webhook", version: 1 }, automatic_deployment: savedAutomatic }, owner_automatic_deployment_options: { available: false, reason: "proxy_not_ready" } };
+  const { fetch } = setup(p); await references();
+  expect(screen.getByRole<HTMLInputElement>("radio", { name: "Automatic deployment without approval" }).checked).toBe(true);
+  fireEvent.submit(screen.getByRole("form", { name: "Configure GitHub build on push" }));
+  expect(fetch.mock.calls.some(([, options]) => options.method === "PUT")).toBe(false);
+  expect(screen.getByRole("status").textContent).toMatch(/saved automatic configuration is retained/);
+  fireEvent.click(screen.getByRole("radio", { name: /Build only/ }));
+  fireEvent.click(screen.getByLabelText(/I reviewed these exact references/));
+  fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" }));
+  await waitFor(() => expect(fetch.mock.calls.some(([, options]) => options.method === "PUT")).toBe(true));
+  expect(JSON.parse(fetch.mock.calls.find(([, options]) => options.method === "PUT")![1].body as string).configuration).not.toHaveProperty("automatic_deployment");
+});
+
+test("fresh baseline drift blocks a new decision before submission and requires explicit route review", async () => {
+  const { fetch } = setup(automaticPolicy); await automaticReferences();
+  await act(async () => client.setQueryData(["githubPushPolicy", "actor-identity", "project", "resource"], { ...automaticPolicy, owner_automatic_deployment_options: { ...automaticOptions, baseline: { ...automaticOptions.baseline!, loaded_generation: 8 } } }));
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save disabled push configuration" }).disabled).toBe(true));
+  fireEvent.submit(screen.getByRole("form", { name: "Configure GitHub build on push" }));
+  expect(fetch.mock.calls.some(([, options]) => options.method === "PUT")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Review current automatic deployment baseline" }));
+  expect(screen.getByRole<HTMLInputElement>("checkbox", { name: "https://a.example.test/app" }).checked).toBe(false);
+  expect(screen.getByLabelText<HTMLInputElement>(/I reviewed these exact references/).checked).toBe(false);
+});
+
+test("lost automatic configure response keeps the exact UUID and baseline across a later options snapshot", async () => {
+  let writes = 0;
+  const { fetch } = setup(automaticPolicy, resource, (_url, options) => options.method === "PUT" ? ++writes === 1 ? Promise.reject(new TypeError("lost")) : json({ ...automaticPolicy, owner_configuration: { automation_actor_id: "actor", webhook_secret: { id: "webhook", version: 1 }, automatic_deployment: savedAutomatic } }) : undefined);
+  await automaticReferences(); fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" }));
+  const retry = await screen.findByRole("button", { name: "Retry identical push decision" });
+  const firstBody = fetch.mock.calls.find(([, options]) => options.method === "PUT")![1].body;
+  await act(async () => client.setQueryData(["githubPushPolicy", "actor-identity", "project", "resource"], { ...automaticPolicy, owner_automatic_deployment_options: { ...automaticOptions, baseline: { ...automaticOptions.baseline!, loaded_generation: 99, container_port: 9090 } } }));
+  fireEvent.click(retry);
+  await waitFor(() => expect(fetch.mock.calls.filter(([, options]) => options.method === "PUT")).toHaveLength(2));
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "PUT")[1]![1].body).toBe(firstBody);
+});
+
+test("configure receipt forces a fresh GET before another automatic review or enable", async () => {
+  let reads = 0;
+  const saved: GitHubPushPolicy = { ...policy, status: "verified", reason: "verified", verified_at: new Date().toISOString(), owner_configuration: { automation_actor_id: "actor", webhook_secret: { id: "webhook", version: 1 }, automatic_deployment: savedAutomatic } };
+  const { fetch } = setup(automaticPolicy, resource, (url, options) => url.endsWith("/github-push-policy") ? options.method === "PUT" ? json({ ...saved, owner_automatic_deployment_options: automaticOptions }) : ++reads > 1 ? json({ ...saved, owner_automatic_deployment_options: { available: false, reason: "restore_hold" } }) : json(automaticPolicy) : undefined);
+  await automaticReferences(); fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" }));
+  await screen.findByText(/restore hold prevents new automatic deployment review/);
+  expect(reads).toBeGreaterThanOrEqual(2);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Enable build and automatic deployment" }).disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save disabled push configuration" }).disabled).toBe(true);
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "PUT")).toHaveLength(1);
+});
+
+test.each(["permission", "actor", "resource"])("automatic draft and late configure response cannot survive %s change", async (scope) => {
+  let resolve!: (response: Response) => void;
+  const { fetch, rerender } = setup(automaticPolicy, resource, (_url, options) => options.method === "PUT" ? new Promise<Response>((done) => { resolve = done; }) : undefined);
+  await automaticReferences(); fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" }));
+  await waitFor(() => expect(resolve).toBeTypeOf("function"));
+  const signal = fetch.mock.calls.find(([, options]) => options.method === "PUT")![1].signal!;
+  if (scope === "permission") await act(async () => client.setQueryData(["githubPushPolicy", "actor-identity", "project", "resource"], { ...automaticPolicy, can_manage: false }));
+  else rerender(<QueryClientProvider client={client}><ResourceGithubPushBuilds actor={scope === "actor" ? "other-owner" : "actor-identity"} resource={scope === "resource" ? { ...resource, id: "other-resource" } : resource} blocked={false} /></QueryClientProvider>);
+  await waitFor(() => expect(signal.aborted).toBe(true));
+  await act(async () => resolve(json({ ...automaticPolicy, generation: 99 })));
+  expect(screen.queryByText(/Retained configure request/)).toBeNull();
+  expect(screen.queryByText("99")).toBeNull();
+  if (scope === "permission") expect(screen.queryByRole("radio", { name: "Automatic deployment without approval" })).toBeNull();
+});
+
+
+test("automatic configure conflict refreshes the baseline and requires a new explicit UUID decision", async () => {
+  let writes = 0;
+  const fresh: GitHubPushPolicy = { ...automaticPolicy, generation: 2, owner_automatic_deployment_options: { ...automaticOptions, baseline: { ...automaticOptions.baseline!, loaded_generation: 8, routes: automaticOptions.baseline!.routes.map((route) => ({ ...route, version: route.version + 1 })) } } };
+  const { fetch } = setup(automaticPolicy, resource, (url, options) => options.method === "PUT" ? ++writes === 1 ? json({}, 409) : json(fresh) : url.endsWith("/github-push-policy") && writes > 0 ? json(fresh) : undefined);
+  await automaticReferences(); fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" }));
+  await screen.findByText(/The policy or source changed/);
+  expect(writes).toBe(1);
+  const first = JSON.parse(fetch.mock.calls.find(([, options]) => options.method === "PUT")![1].body as string);
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Use reviewed policy for a separate decision" }).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Use reviewed policy for a separate decision" }));
+  await automaticReferences(); fireEvent.click(screen.getByRole("button", { name: "Save disabled push configuration" }));
+  await waitFor(() => expect(writes).toBe(2));
+  const second = JSON.parse(fetch.mock.calls.filter(([, options]) => options.method === "PUT")[1]![1].body as string);
+  expect(second.request_id).not.toBe(first.request_id);
+  expect(second.configuration.automatic_deployment.expected_loaded_generation).toBe(8);
+  expect(first.configuration.automatic_deployment.expected_loaded_generation).toBe(7);
+  expect(second.expected_policy_generation).toBe(2);
+});
+
+
+test("a confirmed policy denial never commits retained owner automatic selectors", async () => {
+  let denied = false;
+  const deniedCommits: boolean[] = [];
+  setup(automaticPolicy, resource, (url) => denied && url.endsWith("/github-push-policy") ? json({}, 403) : undefined, () => {
+    if (client.getQueryState(["githubPushPolicy", "actor-identity", "project", "resource"])?.status === "error") deniedCommits.push(Boolean(screen.queryByRole("radio", { name: "Automatic deployment without approval" })));
+  });
+  await automaticReferences();
+  denied = true; fireEvent.click(screen.getByRole("button", { name: "Refresh build-on-push metadata" }));
+  await screen.findByText(/Build-on-push access is unavailable/);
+  expect(deniedCommits.length).toBeGreaterThan(0);
+  expect(deniedCommits.every((shown) => !shown)).toBe(true);
+  expect(screen.queryByRole("form")).toBeNull();
 });

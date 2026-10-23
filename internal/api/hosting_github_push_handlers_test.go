@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
-	"nerocd/internal/domain"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"nerocd/internal/domain"
 )
 
 func TestGitHubPushClosedOwnerCommands(t *testing.T) {
@@ -108,6 +110,49 @@ func TestGitHubPushPUTRejectsWebhookProviderIDReuse(t *testing.T) {
 		s.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid_request"`) {
 			t.Fatalf("shared purpose IDs reached resource mutation: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestGitHubPushClosedAutomaticReview(t *testing.T) {
+	body := `{"expected_policy_generation":0,"expected_resource_generation":1,"expected_source_generation":1,"request_id":"00000000-0000-0000-0000-000000000001","reset_branch_baseline":true,"configuration":{"automation_actor_id":"bot","webhook_secret":{"id":"secret","version":1},"automatic_deployment":{"mode":"automatic_unprotected","expected_healthy_operation_id":"hop_a","expected_loaded_proxy_operation_id":"pop_a","expected_loaded_generation":1,"expected_runtime_configuration_generation":0,"container_port":80,"readiness":{"path":"/","timeout_seconds":5},"routes":[{"route_id":"route_a","expected_version":1,"expected_selected_release_operation_id":"hop_a"}]}}}`
+	var valid domain.GitHubPushConfigure
+	if !decodeGitHubPushCommand(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), &valid) || valid.Validate() != nil {
+		t.Fatal("valid existing-app review rejected")
+	}
+	for _, bad := range []string{strings.Replace(body, `"route_id":"route_a"`, `"Route_ID":"route_a"`, 1), strings.Replace(body, `"route_id":"route_a"`, `"route_id":"route_a","route_id":"route_b"`, 1), strings.Replace(body, `"route_id":"route_a"`, `"route_id":"route_a","host_port":12345`, 1), strings.Replace(body, `"routes":[{`, `"routes":[null,{`, 1), strings.Replace(body, `"expected_runtime_configuration_generation":0,`, "", 1), strings.Replace(body, `"automatic_deployment":{`, `"automatic_deployment":null,"unknown":{`, 1)} {
+		var value domain.GitHubPushConfigure
+		if decodeGitHubPushCommand(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/", strings.NewReader(bad)), &value) {
+			t.Fatal("open or ambiguous automatic selector accepted")
+		}
+	}
+}
+
+func TestGitHubPushOwnerOptionsRegisteredGET(t *testing.T) {
+	f := newPushHTTPFixture(t)
+	path := "/api/v1/resources/" + f.resource.ID + "/github-push-policy"
+	var owner domain.GitHubPushPolicy
+	raw := f.request(http.MethodGet, path, f.owner, nil, http.StatusOK, &owner)
+	if !owner.CanManage || owner.Status != "unconfigured" || owner.OwnerAutomaticDeploymentOptions == nil || owner.OwnerAutomaticDeploymentOptions.Available || owner.OwnerAutomaticDeploymentOptions.Baseline != nil || owner.OwnerAutomaticDeploymentOptions.Reason != "runner_unsupported" {
+		t.Fatal("unconfigured owner options missing")
+	}
+	var closed domain.GitHubPushPolicy
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&closed); err != nil {
+		t.Fatal("closed registered response DTO", err)
+	}
+	var viewer domain.GitHubPushPolicy
+	raw = f.request(http.MethodGet, path, f.viewer, nil, http.StatusOK, &viewer)
+	if viewer.CanManage || viewer.OwnerAutomaticDeploymentOptions != nil || bytes.Contains(raw, []byte("owner_automatic_deployment_options")) {
+		t.Fatal("viewer review facts leaked")
+	}
+	in := domain.GitHubPushConfigure{ExpectedResourceGeneration: f.resource.Generation, ExpectedSourceGeneration: f.resource.Source.Git.Generation, RequestID: pushAPIUUID(190), ResetBranchBaseline: true, Configuration: domain.GitHubPushConfiguration{AutomationActorID: f.accountID, WebhookSecret: domain.GitHubPushSecretRef{ID: f.signing.ID, Version: 1}, ProviderReadSecret: &domain.GitHubPushSecretRef{ID: f.provider.ID, Version: 1}}}
+	for n := 0; n < 2; n++ {
+		var configured domain.GitHubPushPolicy
+		raw = f.request(http.MethodPut, path, f.owner, in, http.StatusOK, &configured)
+		if configured.OwnerAutomaticDeploymentOptions != nil || bytes.Contains(raw, []byte("owner_automatic_deployment_options")) {
+			t.Fatal("mutation replay masquerades as fresh options")
 		}
 	}
 }

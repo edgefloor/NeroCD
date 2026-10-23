@@ -5,9 +5,10 @@ import type { Resource } from "@/api/hosting";
 import { listServiceAccounts } from "@/api/service-accounts";
 import { listManagedSecrets, listManagedSecretVersions } from "@/api/managed-secrets";
 import { eligibleSourceGrant, listHostingSourceGrants } from "@/api/hosting-source-grants";
-import { withGitHubPushDeadline, executeGitHubPushDecision, getGitHubPushPolicy, githubPushDenied, githubPushError, listGitHubPushDeliveries, pushReason, verificationCurrent, type GitHubPushConfiguration, type GitHubPushDelivery, type GitHubPushPolicy, type PushDecision } from "@/api/hosting-github-push";
+import { automaticDeploymentFromOptions, automaticDeploymentMatchesOptions, withGitHubPushDeadline, executeGitHubPushDecision, getGitHubPushPolicy, githubPushDenied, githubPushError, listGitHubPushDeliveries, pushReason, verificationCurrent, type GitHubPushConfiguration, type GitHubPushDelivery, type GitHubPushPolicy, type PushDecision } from "@/api/hosting-github-push";
 import { Button } from "@/components/ui/button";
 import { PageNavigation } from "@/components/common/PageNavigation";
+import { AutomaticDeploymentSummary, ResourceAutomaticDeployment, type AutomaticDeploymentDraft } from "./ResourceAutomaticDeployment";
 const button = "h-auto max-w-full whitespace-normal break-all";
 const select = "min-h-10 w-full min-w-0 rounded border bg-background p-2 text-sm";
 const limit = 20;
@@ -29,38 +30,55 @@ function PushPolicy({ actor, resource, blocked }: { actor: string; resource: Res
     for (const name of ["githubPushPolicy", "githubPushDeliveries", "githubPushAccounts", "githubPushGrants", "githubPushSecrets", "githubPushVersions"]) void client.cancelQueries({ queryKey: [name, actor, resource.project_id, resource.id] });
   }, [blocked, denied, actor, resource.project_id, resource.id, client]);
   const p = policy.data;
+  const accessDenied = denied || githubPushDenied(policy.error) || githubPushDenied(history.error);
+  const hasAutomatic = Boolean(p?.automatic_deployment || p?.owner_configuration?.automatic_deployment);
   const paused = blocked || denied || policy.isPending || policy.isError || policy.isFetching || history.isError;
   useEffect(() => {
     if (!paused) return;
     for (const name of ["githubPushAccounts", "githubPushGrants", "githubPushSecrets", "githubPushVersions"]) void client.cancelQueries({ queryKey: [name, actor, resource.project_id, resource.id] });
   }, [paused, actor, resource.project_id, resource.id, client]);
   const refresh = async () => {
-    if (blocked || denied) return;
+    if (blocked || accessDenied) return;
     const result = await policy.refetch();
     if (result.isError || !result.data || !result.data.can_manage) { await history.refetch(); return; }
     await Promise.all([history.refetch(), ...["githubPushAccounts", "githubPushGrants", "githubPushSecrets", "githubPushVersions"].map((name) => client.invalidateQueries({ queryKey: [name, actor, resource.project_id, resource.id] }))]);
   };
   const changed = (result: GitHubPushPolicy | GitHubPushDelivery) => {
-    if ("can_manage" in result) { if (result.project_id !== resource.project_id) throw new Error("Push policy project mismatch"); client.setQueryData(policyKey(actor, resource), result); }
+    if ("can_manage" in result) { if (result.project_id !== resource.project_id) throw new Error("Push policy project mismatch"); client.setQueryData(policyKey(actor, resource), result); void policy.refetch(); }
     void history.refetch();
   };
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label="Build on push"><h5 className="font-medium">Build on push</h5>
-    <p className="text-sm">Signed GitHub.com pushes can build the configured branch. Deployments remain manual. A queued or successful build does not deploy the application.</p>
-    <Button className={button} type="button" variant="outline" disabled={blocked || denied || policy.isFetching || history.isFetching} onClick={() => void refresh()}>Refresh build-on-push metadata</Button>
+    <p className="text-sm">Signed GitHub.com pushes can build the configured branch. {hasAutomatic ? "The saved policy requests automatic deployment without approval. A build alone does not prove deployment or HTTPS switch completion." : "Deployments remain manual unless an owner explicitly configures automatic deployment without approval. A queued or successful build alone does not deploy the application."}</p>
+    <Button className={button} type="button" variant="outline" disabled={blocked || accessDenied || policy.isFetching || history.isFetching} onClick={() => void refresh()}>Refresh build-on-push metadata</Button>
     {policy.isPending && !blocked ? <p role="status">Loading build-on-push policy...</p> : null}
-    {denied ? <p role="alert">Build-on-push access is unavailable. Reload to verify current access.</p> : policy.isError || history.isError ? <p role="alert">Unable to refresh build-on-push metadata. Retained information may be stale; actions are paused.</p> : null}
-    {p && !denied ? <><dl className="break-all text-sm"><dt>Policy state</dt><dd>{p.status} · {p.enabled ? "enabled" : "disabled"}</dd><dt>Policy generation</dt><dd>{p.generation}</dd><dt>Repository and branch</dt><dd>{p.repository || "No supported repository"} · {p.branch || "No branch"}</dd><dt>Saved source generations</dt><dd>Resource {p.resource_generation} / source {p.source_generation}</dd><dt>Policy outcome</dt><dd>{pushReason[p.reason] ?? "Review current policy metadata."}</dd>{p.desired_commit ? <><dt>Desired commit</dt><dd>{p.desired_commit}</dd></> : null}{p.last_build_id ? <><dt>Last build</dt><dd>{p.last_build_id}. Select it in build history below to inspect the artifact and deploy manually.</dd></> : null}</dl>
+    {accessDenied ? <p role="alert">Build-on-push access is unavailable. Reload to verify current access.</p> : policy.isError || history.isError ? <p role="alert">Unable to refresh build-on-push metadata. Retained information may be stale; actions are paused.</p> : null}
+    {p && !accessDenied ? <><dl className="break-all text-sm"><dt>Policy state</dt><dd>{p.status} · {p.enabled ? "enabled" : "disabled"}</dd><dt>Policy generation</dt><dd>{p.generation}</dd><dt>Repository and branch</dt><dd>{p.repository || "No supported repository"} · {p.branch || "No branch"}</dd><dt>Saved source generations</dt><dd>Resource {p.resource_generation} / source {p.source_generation}</dd><dt>Policy outcome</dt><dd>{pushReason[p.reason] ?? "Review current policy metadata."}</dd>{p.desired_commit ? <><dt>Desired commit</dt><dd>{p.desired_commit}</dd></> : null}{p.last_build_id ? <><dt>Last build</dt><dd>{p.last_build_id}. {hasAutomatic ? "Inspect its artifact and the recorded automatic deployment outcomes separately." : "Select it in build history below to inspect the artifact and deploy manually."}</dd></> : null}</dl>
+      {p.automatic_deployment ? <AutomaticDeploymentSummary status={p.automatic_deployment} /> : null}
       {p.can_manage ? <PushManager actor={actor} resource={resource} policy={p} paused={paused} onDenied={() => setDenied(true)} changed={changed} refresh={refresh} /> : <p className="text-xs">A current project owner or administrator configures build on push. Maintainer build access does not grant policy management.</p>}
       {p.id && p.callback_url ? <section className="min-w-0 space-y-2 rounded border p-3" aria-label="GitHub webhook setup"><h6 className="font-medium">Manual GitHub webhook setup</h6><label className="block text-sm">Server callback URL<input className={`${select} break-all`} readOnly value={p.callback_url} /></label><p className="text-sm">In the repository’s Settings → Webhooks, add this exact payload URL. Choose application/json, select only push events, and keep SSL verification enabled. Set GitHub’s secret to the exact value of the selected webhook secret version using your approved secret-management process.</p><p className="text-xs">This panel selects existing secret references. It never reveals values or creates provider credentials.</p></section> : null}
     </> : null}
-    <p className="text-xs">Ancestry proof is bounded to 100 commits. Automatic retries stop after 32 attempts or 24 hours and use their existing bounded deadline. An authorized owner can explicitly retry to start one new bounded recovery window. Replaying the identical command returns the same window without extending it. Retry does not enable the policy, reset its branch baseline, or reset deduplication.</p>
-    <ol className="min-w-0 space-y-2" aria-label="GitHub push deliveries">{!denied && history.data?.items.map((d) => <li key={d.id} className="min-w-0 space-y-1 break-all rounded border p-2 text-sm"><p>Delivery {d.id} · {d.state} · policy generation {d.policy_generation}</p><p>{pushReason[d.reason] ?? "Review delivery metadata."}</p><p>Received {d.received_at} · attempts {d.attempts}/32 · expires {d.expires_at}</p>{d.next_retry_at ? <p>Next retry {d.next_retry_at}</p> : null}<p>Push commit {d.after_commit || "unavailable"} · verified commit {d.verified_commit || "unavailable"}</p>{d.build_id ? <p>Build {d.build_id}. Deployment remains manual.</p> : null}{p?.can_manage ? <DeliveryRetry actor={actor} resource={resource} policy={p} delivery={d} paused={paused} changed={changed} onDenied={() => setDenied(true)} refresh={refresh} /> : null}</li>)}</ol>
-    {!history.isPending && !denied && history.data?.items.length === 0 ? <p>No push deliveries recorded.</p> : null}
-    <div className="flex flex-wrap gap-2"><Button className={button} type="button" variant="outline" disabled={blocked || denied || !cursor || history.isFetching} onClick={() => setCursor("")}>First push deliveries</Button><Button className={button} type="button" variant="outline" disabled={blocked || denied || history.isFetching || history.isError || !history.data?.has_more} onClick={() => { if (history.data?.has_more) setCursor(history.data.next_cursor); }}>Next push deliveries</Button></div>
+    <p className="text-xs">Ancestry proof is bounded to 100 commits. Automatic retries stop after 32 attempts or 24 hours and use their existing bounded deadline. An authorized owner can explicitly retry a delivery to start one new bounded delivery recovery window. Replaying the identical command returns the same window without extending it. Retry does not enable the policy, reset its branch baseline, reset deduplication, or reset an automatic deployment demand's budget or expiry.</p>
+    <ol className="min-w-0 space-y-2" aria-label="GitHub push deliveries">{!accessDenied && history.data?.items.map((d) => <li key={d.id} className="min-w-0 space-y-1 break-all rounded border p-2 text-sm"><p>Delivery {d.id} · {d.state} · policy generation {d.policy_generation}</p><p>{pushReason[d.reason] ?? "Review delivery metadata."}</p><p>Received {d.received_at} · attempts {d.attempts}/32 · expires {d.expires_at}</p>{d.next_retry_at ? <p>Next retry {d.next_retry_at}</p> : null}<p>Push commit {d.after_commit || "unavailable"} · verified commit {d.verified_commit || "unavailable"}</p>{d.build_id ? <p>Build {d.build_id}. {hasAutomatic ? "Inspect the recorded automatic deployment and HTTPS switch outcomes separately." : "Deployment remains manual."}</p> : null}{p?.can_manage ? <DeliveryRetry actor={actor} resource={resource} policy={p} delivery={d} paused={paused} changed={changed} onDenied={() => setDenied(true)} refresh={refresh} /> : null}</li>)}</ol>
+    {!history.isPending && !accessDenied && history.data?.items.length === 0 ? <p>No push deliveries recorded.</p> : null}
+    <div className="flex flex-wrap gap-2"><Button className={button} type="button" variant="outline" disabled={blocked || accessDenied || !cursor || history.isFetching} onClick={() => setCursor("")}>First push deliveries</Button><Button className={button} type="button" variant="outline" disabled={blocked || accessDenied || history.isFetching || history.isError || !history.data?.has_more} onClick={() => { if (history.data?.has_more) setCursor(history.data.next_cursor); }}>Next push deliveries</Button></div>
   </section>;
 }
 
 type ManagerProps = { actor: string; resource: Resource; policy: GitHubPushPolicy; paused: boolean; changed: (p: GitHubPushPolicy | GitHubPushDelivery) => void; onDenied: () => void; refresh: () => Promise<void> };
+function automaticDraft(policy: GitHubPushPolicy): AutomaticDeploymentDraft {
+  const saved = policy.owner_configuration?.automatic_deployment;
+  return { mode: saved || policy.automatic_deployment ? "automatic_unprotected" : "build_only", routeIDs: saved?.routes.map((route) => route.route_id) ?? [], baselineKey: policy.owner_automatic_deployment_options?.baseline ? JSON.stringify(policy.owner_automatic_deployment_options.baseline) : "" };
+}
+function immutableDecision(decision: PushDecision): PushDecision {
+  const copy = structuredClone(decision);
+  const freeze = (value: unknown) => {
+    if (value === null || typeof value !== "object") return;
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  };
+  freeze(copy);
+  return copy;
+}
 function useDecision(props: ManagerProps) {
   const client = useQueryClient();
   const [attempt, setAttempt] = useState<PushDecision>(), [busy, setBusy] = useState(false), [conflict, setConflict] = useState(false), [error, setError] = useState(""), [retryAt, setRetryAt] = useState(0);
@@ -76,7 +94,7 @@ function useDecision(props: ManagerProps) {
   useEffect(() => { if (!retryAt) return; const timer = setTimeout(() => setRetryAt(0), Math.max(0, retryAt - Date.now())); return () => clearTimeout(timer); }, [retryAt]);
   async function send(decision: PushDecision) {
     if (props.paused || busy || conflict || retryAt > Date.now() || request.current) return undefined;
-    const frozen = attempt ?? decision, controller = new AbortController(); request.current = controller; setAttempt(frozen); setBusy(true); setError("");
+    const frozen = attempt ?? immutableDecision(decision), controller = new AbortController(); request.current = controller; setAttempt(frozen); setBusy(true); setError("");
     const owns = () => active.current && request.current === controller && !controller.signal.aborted;
     try {
       const result = await withGitHubPushDeadline(controller.signal, frozen.action === "verify" ? 25_000 : 10_000, (signal) => executeGitHubPushDecision(props.resource.id, frozen, { signal }), () => retire(controller, true));
@@ -88,7 +106,7 @@ function useDecision(props: ManagerProps) {
       setError(githubPushError(cause));
       if (cause instanceof ApiError && cause.status === 503) setRetryAt(Date.now() + 10_000);
       if (githubPushDenied(cause)) props.onDenied();
-      if (cause instanceof ApiError && cause.status === 409) { setConflict(true); await props.refresh(); }
+      if (cause instanceof ApiError && cause.status === 409) { setConflict(true); retire(controller, false); await props.refresh(); }
     } finally { retire(controller, false); }
   }
   return { attempt, busy, conflict, error, retryBlocked: retryAt > 0, send, reset: () => { setAttempt(undefined); setConflict(false); setError(""); } };
@@ -97,6 +115,7 @@ function PushManager(props: ManagerProps) {
   const { actor, resource, policy, paused, onDenied } = props;
   const [base, setBase] = useState(policy), [account, setAccount] = useState(""), [webhook, setWebhook] = useState({ id: "", version: 0 }), [provider, setProvider] = useState({ id: "", version: 0 }), [grantID, setGrantID] = useState(""), [confirmed, setConfirmed] = useState(false), [offset, setOffset] = useState(0), [grantOffset, setGrantOffset] = useState(0);
   const decision = useDecision(props);
+  const [automatic, setAutomatic] = useState(() => automaticDraft(policy));
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   const locked = paused || decision.busy || Boolean(decision.attempt), stale = base.generation !== policy.generation || base.resource_generation !== policy.resource_generation || base.source_generation !== policy.source_generation;
@@ -106,12 +125,17 @@ function PushManager(props: ManagerProps) {
   useEffect(() => { if (githubPushDenied(accounts.error) || githubPushDenied(grants.error)) onDenied(); }, [accounts.error, grants.error]);
   const selectedAccount = accounts.data?.items.find((a) => a.id === account && a.status === "active" && ["maintainer", "owner"].includes(a.role));
   const selectedGrant = grants.data?.items.find((g) => g.id === grantID && eligibleSourceGrant(g, resource));
+  const automaticConfiguration = automaticDeploymentFromOptions(policy.owner_automatic_deployment_options, automatic.routeIDs);
+  const baselineKey = policy.owner_automatic_deployment_options?.baseline ? JSON.stringify(policy.owner_automatic_deployment_options.baseline) : "";
+  const automaticReady = automatic.mode === "build_only" || Boolean(automaticConfiguration && baselineKey && automatic.baselineKey === baselineKey);
+  const savedAutomatic = base.owner_configuration?.automatic_deployment;
+  const automaticEnableReady = !savedAutomatic && !base.automatic_deployment || Boolean(savedAutomatic && automaticDeploymentMatchesOptions(savedAutomatic, policy.owner_automatic_deployment_options));
   const ready = Boolean(policy.repository && policy.branch && selectedAccount && webhook.id && webhook.version > 0 && (!privateSource || provider.id && provider.version > 0 && selectedGrant) && (!provider.id || provider.version > 0 && provider.id !== webhook.id) && resource.generation === policy.resource_generation && resource.source.kind === "git" && resource.source.git.generation === policy.source_generation && !accounts.isError && !accounts.isPending && (!privateSource || !grants.isError && !grants.isPending));
   async function send(command: PushDecision) { const result = await decision.send(command); if (result && "can_manage" in result) { setBase(result); setConfirmed(false); } }
   const command = (action: "verify" | "enabled", enabled?: boolean): PushDecision => action === "verify" ? { action, body: { expected_policy_generation: base.generation, request_id: crypto.randomUUID() } } : { action, body: { expected_policy_generation: base.generation, request_id: crypto.randomUUID(), enabled: Boolean(enabled) } };
   function configure() {
-    if (!confirmed || !ready || locked || stale || decision.conflict) return;
-    const configuration: GitHubPushConfiguration = { automation_actor_id: account, webhook_secret: webhook, ...(provider.id ? { provider_read_secret: provider } : {}), ...(privateSource ? { source_grant_id: grantID } : {}) };
+    if (!confirmed || !ready || !automaticReady || locked || stale || decision.conflict) return;
+    const configuration: GitHubPushConfiguration = { automation_actor_id: account, webhook_secret: webhook, ...(provider.id ? { provider_read_secret: provider } : {}), ...(privateSource ? { source_grant_id: grantID } : {}), ...(automatic.mode === "automatic_unprotected" && automaticConfiguration ? { automatic_deployment: automaticConfiguration } : {}) };
     void send({ action: "configure", body: { expected_policy_generation: base.generation, expected_resource_generation: base.resource_generation, expected_source_generation: base.source_generation, request_id: crypto.randomUUID(), configuration, reset_branch_baseline: true } });
   }
   return <section className="min-w-0 space-y-3 rounded border p-3" aria-label="Manage build on push"><p className="text-sm">Only a current project owner or administrator can manage this policy. The automation actor must be an active service account in this project with maintainer or owner access.</p><p className="text-sm"><a className="underline" href="/settings">Manage service accounts</a> · <a className="underline" href="/projects">Manage project secrets and source grants</a></p>
@@ -123,15 +147,17 @@ function PushManager(props: ManagerProps) {
       <SecretReference label="GitHub provider read" actor={actor} resource={resource} locked={locked} onDenied={onDenied} value={provider} onChange={(value) => { setProvider(value); setConfirmed(false); }} />
       <p className="text-xs">Choose distinct existing managed secrets and explicit immutable versions for webhook signing and provider reads. Private Git requires a provider read secret and a current source grant. Public repositories may omit provider credentials and use GitHub’s unauthenticated rate limit.</p>
       {privateSource ? <><label className="block">Push private source grant<select className={select} value={grantID} disabled={locked} onChange={(event) => { setGrantID(event.target.value); setConfirmed(false); }}><option value="">Choose a current HTTPS source grant</option>{grants.data?.items.filter((g) => eligibleSourceGrant(g, resource)).map((g) => <option key={g.id} value={g.id}>{g.id} · source {g.source_generation}</option>)}</select></label><PageNavigation label="push source grants" page={grants.data} loading={locked || grants.isFetching} onFirst={() => { setGrantOffset(0); setGrantID(""); }} onPrevious={() => { setGrantOffset(Math.max(0, grantOffset - limit)); setGrantID(""); }} onNext={() => { setGrantOffset(nextOffset(grantOffset)); setGrantID(""); }} /></> : null}
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={locked} onChange={(event) => setConfirmed(event.target.checked)} /><span>I reviewed these exact references and generations. Saving disables the policy, resets the branch baseline, and requires new verification before enabling.</span></label>
-      <Button className={button} type="submit" disabled={locked || stale || decision.conflict || !confirmed || !ready}>Save disabled push configuration</Button>
+      <ResourceAutomaticDeployment options={policy.owner_automatic_deployment_options} saved={base.owner_configuration?.automatic_deployment} draft={automatic} locked={locked} onChange={(draft) => { setAutomatic(draft); setConfirmed(false); }} />
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={locked} onChange={(event) => setConfirmed(event.target.checked)} /><span>I reviewed these exact references and generations, including deployment mode and routes. Saving disables the policy, resets the branch baseline, and requires new verification before enabling.</span></label>
+      <Button className={button} type="submit" disabled={locked || stale || decision.conflict || !confirmed || !ready || !automaticReady}>Save disabled push configuration</Button>
     </form>
     {accounts.isError || grants.isError ? <p role="alert">Unable to verify current account or source grant metadata. Configuration is paused.</p> : null}
-    <div className="flex flex-wrap gap-2"><Button className={button} type="button" disabled={locked || stale || decision.conflict || !base.id} onClick={() => void send(command("verify"))}>Verify GitHub repository and branch</Button><Button className={button} type="button" disabled={locked || stale || decision.conflict || !base.id || base.enabled || !verificationCurrent(base, now)} onClick={() => void send(command("enabled", true))}>Enable build on push</Button><Button className={button} type="button" disabled={locked || stale || decision.conflict || !base.id || !base.enabled} onClick={() => void send(command("enabled", false))}>Disable build on push</Button></div>
+    <div className="flex flex-wrap gap-2"><Button className={button} type="button" disabled={locked || stale || decision.conflict || !base.id} onClick={() => void send(command("verify"))}>Verify GitHub repository and branch</Button><Button className={button} type="button" disabled={locked || stale || decision.conflict || !base.id || base.enabled || !verificationCurrent(policy, now) || !automaticEnableReady} onClick={() => void send(command("enabled", true))}>{savedAutomatic || base.automatic_deployment ? "Enable build and automatic deployment" : "Enable build on push"}</Button><Button className={button} type="button" disabled={locked || stale || decision.conflict || !base.id || !base.enabled} onClick={() => void send(command("enabled", false))}>{savedAutomatic || base.automatic_deployment ? "Disable build and automatic deployment" : "Disable build on push"}</Button></div>
     <p className="text-xs">Enabling requires verification of the current configuration within 60 seconds. Provider failures can return a blocked policy even when the command succeeds; review the recorded outcome above.</p>
+    {!automaticEnableReady ? <p className="text-sm">The saved automatic deployment review does not match fresh owner baseline evidence. Refresh, review and save a disabled configuration before verifying and enabling it again. This does not release an operation hold.</p> : null}
     {decision.attempt ? <><p className="break-all text-xs">Retained {decision.attempt.action} request {decision.attempt.body.request_id} · expected policy generation {decision.attempt.body.expected_policy_generation}</p><Button className={button} type="button" disabled={paused || decision.busy || decision.conflict || decision.retryBlocked} onClick={() => { if (decision.attempt) void send(decision.attempt); }}>Retry identical push decision</Button></> : null}
     {decision.error ? <p role="alert">{decision.error}</p> : null}
-    {decision.conflict || stale || decision.attempt ? <section className="space-y-2" aria-label="Review refreshed push policy"><p className="break-all text-sm">Current policy {policy.generation} · resource {policy.resource_generation} / source {policy.source_generation}. Check delivery and build history before replacing an unconfirmed decision.</p><Button className={button} type="button" disabled={paused || decision.busy} onClick={() => { setBase(policy); decision.reset(); setConfirmed(false); setAccount(""); setWebhook({ id: "", version: 0 }); setProvider({ id: "", version: 0 }); setGrantID(""); }}>Use reviewed policy for a separate decision</Button></section> : null}
+    {decision.conflict || stale || decision.attempt ? <section className="space-y-2" aria-label="Review refreshed push policy"><p className="break-all text-sm">Current policy {policy.generation} · resource {policy.resource_generation} / source {policy.source_generation}. Check delivery and build history before replacing an unconfirmed decision.</p><Button className={button} type="button" disabled={paused || decision.busy} onClick={() => { setBase(policy); decision.reset(); setConfirmed(false); setAccount(""); setWebhook({ id: "", version: 0 }); setProvider({ id: "", version: 0 }); setGrantID(""); setAutomatic(automaticDraft(policy)); }}>Use reviewed policy for a separate decision</Button></section> : null}
   </section>;
 }
 function SecretReference({ label, actor, resource, locked, value, onChange, onDenied }: { label: string; actor: string; resource: Resource; locked: boolean; value: { id: string; version: number }; onChange: (value: { id: string; version: number }) => void; onDenied: () => void }) {

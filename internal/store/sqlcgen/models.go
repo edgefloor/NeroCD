@@ -174,6 +174,47 @@ type HostingApplyPlan struct {
 	BodyHash    string          `json:"body_hash"`
 }
 
+type HostingAutoDeployControl struct {
+	ResourceID       string          `json:"resource_id"`
+	PolicyID         string          `json:"policy_id"`
+	PolicyGeneration int64           `json:"policy_generation"`
+	ManualEpoch      int64           `json:"manual_epoch"`
+	Body             json.RawMessage `json:"body"`
+	BodyHash         string          `json:"body_hash"`
+}
+
+type HostingAutoDeployDemand struct {
+	ResourceID               string          `json:"resource_id"`
+	ID                       string          `json:"id"`
+	PolicyID                 string          `json:"policy_id"`
+	PolicyGeneration         int64           `json:"policy_generation"`
+	BuildID                  string          `json:"build_id"`
+	CommitSha                string          `json:"commit_sha"`
+	Body                     json.RawMessage `json:"body"`
+	Stage                    string          `json:"stage"`
+	Reason                   string          `json:"reason"`
+	Attempts                 int32           `json:"attempts"`
+	CreatedAt                time.Time       `json:"created_at"`
+	ExpiresAt                time.Time       `json:"expires_at"`
+	NextRetryAt              time.Time       `json:"next_retry_at"`
+	UpdatedAt                time.Time       `json:"updated_at"`
+	LastWakeupAt             time.Time       `json:"last_wakeup_at"`
+	ObservedLoadedGeneration int64           `json:"observed_loaded_generation"`
+}
+
+type HostingAutoDeployOrigin struct {
+	OperationID           string          `json:"operation_id"`
+	Kind                  string          `json:"kind"`
+	ResourceID            string          `json:"resource_id"`
+	DemandID              string          `json:"demand_id"`
+	BuildID               string          `json:"build_id"`
+	DeploymentOperationID *string         `json:"deployment_operation_id"`
+	ProxyOperationID      *string         `json:"proxy_operation_id"`
+	Body                  json.RawMessage `json:"body"`
+	BodyHash              string          `json:"body_hash"`
+	CreatedAt             time.Time       `json:"created_at"`
+}
+
 type HostingBindingRestoreHold struct {
 	BindingID string    `json:"binding_id"`
 	CreatedAt time.Time `json:"created_at"`

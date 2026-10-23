@@ -51,6 +51,12 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
  ALTER TABLE hosting_github_push_deliveries ADD CONSTRAINT hosting_github_push_deliveries_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE`); err != nil {
 		t.Fatal(err)
 	}
+	// Restore the 0060 resource references removed by the same deliberate teardown.
+	if _, err := database.Exec(ctx, `ALTER TABLE hosting_auto_deploy_controls ADD CONSTRAINT hosting_auto_deploy_controls_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT;
+ ALTER TABLE hosting_auto_deploy_demands ADD CONSTRAINT hosting_auto_deploy_demands_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT;
+ ALTER TABLE hosting_auto_deploy_origins ADD CONSTRAINT hosting_auto_deploy_origins_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT`); err != nil {
+		t.Fatal(err)
+	}
 	var restored bool
 	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='resource_bindings'::regclass AND conname='resource_bindings_resource_id_fkey' AND contype='f' AND convalidated) AND NOT EXISTS(SELECT 1 FROM resource_bindings b LEFT JOIN resources r ON r.id=b.resource_id WHERE r.id IS NULL)`).Scan(&restored); err != nil || !restored {
 		t.Fatalf("restored binding FK: %v %v", restored, err)

@@ -233,6 +233,9 @@ func (s *PostgresStore) CompleteHostingBuild(ctx context.Context, runner string,
 		if err = casBuild(q.SetHostingBuildState(ctx, sqlcgen.SetHostingBuildStateParams{ID: b.ID, Revision: revision, State: c.State, FailureCode: c.FailureCode})); err != nil {
 			return b, err
 		}
+		if err = s.autoWakeup(ctx, tx, b.ResourceID); err != nil {
+			return b, err
+		}
 		if err = buildRunnerAudit(ctx, tx, b, phase, id); err != nil {
 			return b, err
 		}

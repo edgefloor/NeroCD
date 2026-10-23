@@ -460,3 +460,68 @@ func TestBuildExecutorTriggerRevisionRejectsWrongReceipt(t *testing.T) {
 		t.Fatal("wrong source receipt committed")
 	}
 }
+
+// completionFixture changes only the completion transport/proof after the real
+// executor has performed checkout, output flushing and durable result append.
+type completionFixture struct {
+	*buildFixtureClient
+	complete func(context.Context, hostingbuildprotocol.CompleteRequest) (hostingbuildprotocol.PhaseResponse, error)
+}
+
+func (f completionFixture) BuildComplete(ctx context.Context, in hostingbuildprotocol.CompleteRequest) (hostingbuildprotocol.PhaseResponse, error) {
+	return f.complete(ctx, in)
+}
+
+func TestBuildExecutorSettledFailureRequiresExactDurableAcknowledgment(t *testing.T) {
+	for _, mode := range []string{"settled", "missing-ack", "changed-ack", "transport", "journal", "cleanup", "output", "authority"} {
+		t.Run(mode, func(t *testing.T) {
+			e, client, authority, attempt := buildFixture(t)
+			e.engine = buildEngineFunc(func(context.Context, hostingbuild.Request) (hostingbuild.Result, error) {
+				err := errors.New("source compiler failure")
+				if mode == "cleanup" {
+					err = hostingbuild.ErrCleanupUnconfirmed
+				}
+				if mode == "output" {
+					err = hostingbuild.ErrOutputSink
+				}
+				return hostingbuild.Result{}, err
+			})
+			e.client = completionFixture{buildFixtureClient: client, complete: func(ctx context.Context, in hostingbuildprotocol.CompleteRequest) (hostingbuildprotocol.PhaseResponse, error) {
+				if mode == "transport" {
+					return hostingbuildprotocol.PhaseResponse{}, errors.New("unacknowledged response")
+				}
+				if mode == "authority" {
+					client.mu.Lock()
+					client.live = false
+					client.mu.Unlock()
+				}
+				response, err := client.BuildComplete(ctx, in)
+				if mode == "missing-ack" {
+					response.Acknowledgment = nil
+				}
+				if mode == "changed-ack" {
+					response.Acknowledgment.BodyHash = domain.HostingDocumentHash("different completion")
+				}
+				if mode == "journal" {
+					if closeErr := e.journal.Close(); closeErr != nil {
+						t.Error(closeErr)
+					}
+				}
+				return response, err
+			}}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			err := e.Execute(ctx, authority, attempt)
+			if err == nil || errors.Is(err, errSettledBuildFailure) != (mode == "settled") {
+				t.Fatalf("wrong settled result: mode=%s error=%v", mode, err)
+			}
+			if mode == "settled" {
+				if client.build.State != "failed" || client.build.Artifact != nil || len(e.journal.Snapshot().Build) != 0 {
+					t.Fatal("settled failure lacks exact completion or durable journal cleanup")
+				}
+			} else if len(e.journal.Snapshot().Build) == 0 {
+				t.Fatal("uncertain failure lost retained journal")
+			}
+		})
+	}
+}

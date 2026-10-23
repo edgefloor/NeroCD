@@ -32,6 +32,15 @@ func (s *PostgresStore) RequestHostingBuildDeployment(ctx context.Context, id, r
 	if replayed {
 		return op, tx.Commit(ctx)
 	}
+	if err = autoManualMutation(ctx, tx, resourceID); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = authorizeBuildActor(ctx, tx, actorID, op.ProjectID, "maintainer"); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = requireHostingRuntimeAgent(ctx, tx, op.Snapshot); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return domain.HostingOperation{}, err
 	}
