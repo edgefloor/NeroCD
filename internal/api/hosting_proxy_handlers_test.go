@@ -160,6 +160,11 @@ func TestHostingRetainedReleaseAPIMemoryFailsClosed(t *testing.T) {
 		method, path, token, body string
 		status                    int
 	}{
+		{http.MethodPost, "/route-switches", "", `{}`, 401},
+		{http.MethodPost, "/route-switches", viewer, `{"idempotency_key":"switch","expected_loaded_generation":1,"target_release_operation_id":"hop_b","routes":[{"route_id":"route_a","expected_version":1,"expected_selected_release_operation_id":"hop_a"}]}`, 403},
+		{http.MethodPost, "/route-switches", admin, `{"idempotency_key":"switch","expected_loaded_generation":1,"target_release_operation_id":"hop_b","routes":[{"route_id":"route_a","expected_version":1,"expected_selected_release_operation_id":"hop_a"}]}`, 503},
+		{http.MethodPost, "/route-switches", admin, `{"idempotency_key":"switch","host_port":18080}`, 400},
+		{http.MethodPost, "/route-switches", admin, `{"idempotency_key":"switch","expected_loaded_generation":1,"target_release_operation_id":"hop_b","routes":[]}`, 400},
 		{http.MethodGet, "/retained-releases", "", "", 401},
 		{http.MethodGet, "/retained-releases", viewer, "", 503},
 		{http.MethodPost, "/retained-releases/hop_previous/cleanup", viewer, `{"expected_generation":1,"idempotency_key":"cleanup"}`, 403},

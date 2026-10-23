@@ -120,10 +120,11 @@ EXISTS(SELECT 1 FROM hosting_proxy_restore_holds h WHERE h.proxy_id=o.proxy_id) 
 (SELECT body FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='prepared') AS prepared,
 (SELECT jsonb_build_object('id',receipt_id,'body_hash',body_hash,'created_at',created_at) FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='complete') AS complete_receipt,
 (SELECT body FROM hosting_proxy_receipts WHERE operation_id=o.id AND phase='complete') AS result
+ ,EXISTS(SELECT 1 FROM audit_events WHERE target_id=o.id AND action='hosting.route_switch_metadata_conflict') AS metadata_conflict
 FROM hosting_proxy_operations o WHERE o.id=$1;
 
 -- name: ProxyRouteOperation :one
-SELECT o.id FROM hosting_proxy_operations o WHERE o.route_id=$1 OR EXISTS(SELECT 1 FROM hosting_proxy_release_references ref WHERE ref.operation_id=o.id AND ref.route_id=$1) ORDER BY o.generation DESC LIMIT 1;
+SELECT o.id FROM hosting_proxy_operations o WHERE o.route_id=$1 OR EXISTS(SELECT 1 FROM hosting_proxy_release_references ref WHERE ref.operation_id=o.id AND ref.route_id=$1) ORDER BY CASE WHEN EXISTS(SELECT 1 FROM hosting_proxies p WHERE p.hold_operation_id=o.id) THEN 0 ELSE 1 END,o.generation DESC LIMIT 1;
 
 -- name: ProxyQueuedRecovery :many
 SELECT id FROM hosting_proxy_operations WHERE state='queued' AND run_id IS NULL ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED;
@@ -146,12 +147,13 @@ SELECT EXISTS(SELECT 1 FROM hosting_proxy_task_targets WHERE run_id=$1);
 -- name: ProxyClaimEligible :one
 SELECT EXISTS(SELECT 1 FROM hosting_proxy_task_targets t JOIN hosting_proxy_operations o ON o.id=t.operation_id JOIN hosting_proxies p ON p.id=t.proxy_id JOIN runners r ON r.id=t.runner_id
 WHERE t.run_id=$1 AND t.runner_id=$2 AND t.mode='apply' AND o.state IN ('dispatched','prepared') AND o.run_id=t.run_id AND p.active_operation_id=o.id AND p.hold_operation_id IS NULL AND r.status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(r.capabilities)
+AND (NOT (o.snapshot ? 'verified_switch') OR 'hosting_proxy_verified_switch_v1'=ANY(r.capabilities))
 AND NOT EXISTS(SELECT 1 FROM hosting_proxy_restore_holds h WHERE h.proxy_id=p.id));
 
 -- name: ProxyCheckAuthority :one
 SELECT l.id FROM run_leases l JOIN task_runs r ON r.id=l.run_id JOIN hosting_proxy_task_targets t ON t.run_id=r.id JOIN hosting_proxy_operations o ON o.id=t.operation_id JOIN hosting_proxies p ON p.id=t.proxy_id JOIN runners agent ON agent.id=t.runner_id
 WHERE l.id=$1 AND l.run_id=$2 AND l.runner_id=$3 AND l.attempt=$4 AND l.fence=$5 AND o.id=$6 AND t.mode='apply' AND t.runner_id=l.runner_id AND t.server_id=p.server_id AND t.destination_id=p.destination_id AND t.runner_id=p.runner_id AND r.run_spec->>'type'='proxy_apply' AND r.run_spec->>'proxy_operation_id'=o.id AND r.run_spec->>'proxy_mode'='apply'
-AND (NOT sqlc.arg(live)::boolean OR (l.status='active' AND l.expires_at>clock_timestamp() AND o.state NOT IN ('cancel_requested','canceled','superseded') AND r.status NOT IN ('succeeded','failed','canceled') AND agent.status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(agent.capabilities))) FOR UPDATE OF l;
+AND (NOT sqlc.arg(live)::boolean OR (l.status='active' AND l.expires_at>clock_timestamp() AND o.state NOT IN ('cancel_requested','canceled','superseded') AND r.status NOT IN ('succeeded','failed','canceled') AND agent.status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(agent.capabilities) AND (NOT (o.snapshot ? 'verified_switch') OR 'hosting_proxy_verified_switch_v1'=ANY(agent.capabilities)))) FOR UPDATE OF l;
 
 -- name: ProxyReceipt :one
 SELECT * FROM hosting_proxy_receipts WHERE operation_id=$1 AND phase=$2;
@@ -176,3 +178,37 @@ UPDATE hosting_proxies SET loaded_generation=$3,hold_operation_id=NULL,active_op
 
 -- name: ProxySettleUnadmitted :execrows
 UPDATE hosting_proxies SET active_operation_id=NULL,updated_at=clock_timestamp() WHERE id=$1 AND active_operation_id=$2 AND hold_operation_id IS NULL;
+
+-- name: ProxyVerifiedSwitchRunnerEligible :one
+SELECT EXISTS(SELECT 1 FROM runners WHERE id=$1 AND status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(capabilities) AND 'hosting_proxy_verified_switch_v1'=ANY(capabilities));
+
+-- name: ProxyLoadedAppliedOperation :one
+SELECT o.id FROM hosting_proxy_operations o WHERE o.proxy_id=$1 AND o.generation=$2 AND o.state='applied'
+AND EXISTS(SELECT 1 FROM hosting_proxy_receipts r WHERE r.operation_id=o.id AND r.phase='complete' AND r.body->>'outcome'='applied' AND (r.body->>'loaded_generation')::bigint=o.generation);
+
+-- name: ProxyStrictPending :many
+SELECT o.id FROM hosting_proxy_operations o JOIN hosting_proxies p ON p.id=o.proxy_id WHERE o.proxy_id=$1 AND o.snapshot ? 'verified_switch'
+AND (p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')) ORDER BY o.generation;
+
+-- name: ProxyPending :one
+SELECT EXISTS(SELECT 1 FROM hosting_proxy_operations o JOIN hosting_proxies p ON p.id=o.proxy_id WHERE o.proxy_id=$1 AND (p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')));
+
+-- name: ProxySwitchRoute :execrows
+UPDATE hosting_proxy_routes SET selected_release_operation_id=$2,version=version+1,updated_at=clock_timestamp()
+WHERE id=$1 AND version=$3 AND selected_release_operation_id=$4 AND enabled;
+
+-- name: ProxyRestoreSwitchRoute :execrows
+UPDATE hosting_proxy_routes SET selected_release_operation_id=$2,version=version+1,updated_at=clock_timestamp()
+WHERE id=$1 AND version=$3 AND selected_release_operation_id=$4;
+
+-- name: ProxyReferencePriorRelease :execrows
+INSERT INTO hosting_proxy_switch_prior_references(operation_id,route_id,prior_proxy_operation_id,prior_release_operation_id,prior_version) VALUES($1,$2,$3,$4,$5);
+
+-- name: ProxyPriorReleaseReferences :many
+SELECT * FROM hosting_proxy_switch_prior_references WHERE operation_id=$1 ORDER BY route_id;
+
+-- name: ProxyDeferredWithdrawals :many
+SELECT id FROM hosting_proxy_operations WHERE proxy_id=$1 AND generation>$2 AND state='queued' AND NOT (snapshot ? 'verified_switch') ORDER BY generation;
+
+-- name: ProxyLockVerifiedSwitchRunner :one
+SELECT id FROM runners WHERE id=$1 AND status NOT IN ('disabled','revoked') AND 'proxy_apply'=ANY(capabilities) AND 'hosting_proxy_verified_switch_v1'=ANY(capabilities) FOR SHARE;

@@ -26,6 +26,29 @@ type fakeManagedProxy struct {
 	effects  atomic.Int32
 }
 
+func TestVerifiedSwitchCannotUseLegacyAgentOrEngine(t *testing.T) {
+	_, op, _, config, engine := proxyRuntimeFixture(t)
+	prior := op.Plan.Snapshot.Routes[0]
+	prior.ReleaseOperationID = "hop_prior"
+	prior.HostPort--
+	snapshot := op.Plan.Snapshot
+	snapshot.VerifiedSwitch = &domain.HostingVerifiedSwitch{Version: 1, ExpectedLoadedGeneration: 1, PriorAppliedProxyOperationID: "pop_prior", Routes: []domain.HostingVerifiedSwitchRoute{{RouteID: prior.RouteID, PriorVersion: 1, PriorTarget: prior}}}
+	plan, err := domain.CompileHostingProxyPlan(snapshot, 1, "daemon_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err = prepareProxyEngine(t.Context(), config, plan, nil); err == nil {
+		t.Fatal("old agent accepted strict plan")
+	}
+	config.VerifiedSwitch = true
+	if _, _, _, err = prepareProxyEngine(t.Context(), config, plan, nil); err == nil {
+		t.Fatal("unsupported engine silently fell back")
+	}
+	if engine.effects.Load() != 0 {
+		t.Fatal("strict refusal caused external effects")
+	}
+}
+
 func TestProxyCanceledCompletionOnlyReplaysExactCommittedReceipt(t *testing.T) {
 	for _, mode := range []string{"committed", "uncommitted", "wrong_receipt", "wrong_body", "changed_result", "changed_plan", "changed_preparation", "restore", "held", "wrong_tuple"} {
 		t.Run(mode, func(t *testing.T) {
@@ -404,5 +427,56 @@ func TestProxyStartupReplayNeverRetriesEffectsOrClearsUncertainty(t *testing.T) 
 				t.Fatal("changed local engine plan sent a receipt")
 			}
 		})
+	}
+}
+
+func TestRuntimeIdentityPropagatesVerifiedSwitchOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name                              string
+		configured, advertised, wantError bool
+	}{{"strict_opt_in", true, true, false}, {"legacy_false", false, false, false}, {"unconfigured_strict", false, true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				caps := []string{domain.RunTypeProxyApply}
+				if tc.advertised {
+					caps = append(caps, domain.HostingProxyVerifiedSwitchCapability)
+				}
+				if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_proxy_identity", "capabilities": caps}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			config := Config{Server: server.URL, Token: "fixture", Proxy: ProxyConfig{Directory: t.TempDir(), VerifiedSwitch: tc.configured}}
+			id, err := runtimeEnvironmentIdentity(t.Context(), config)
+			if (err != nil) != tc.wantError || err == nil && id != "runner_proxy_identity" {
+				t.Fatalf("runtime identity id=%s err=%v", id, err)
+			}
+		})
+	}
+}
+
+func TestRuntimeIdentityPropagatesReadinessAndVerifiedSwitch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_combined", "capabilities": []string{domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.ServerReadinessCapability}}); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	config := Config{Server: server.URL, Token: "fixture", Proxy: ProxyConfig{Directory: t.TempDir(), VerifiedSwitch: true}, HostingReadiness: &HostingReadinessConfig{TrustedLoopbackHTTP: true}}
+	if id, err := runtimeEnvironmentIdentity(t.Context(), config); err != nil || id != "runner_combined" {
+		t.Fatalf("combined runtime identity id=%s err=%v", id, err)
+	}
+	config.Proxy.VerifiedSwitch = false
+	if _, err := runtimeEnvironmentIdentity(t.Context(), config); err == nil {
+		t.Fatal("readiness masked missing verified-switch opt-in")
+	}
+	config.Proxy.VerifiedSwitch = true
+	config.HostingReadiness = nil
+	if _, err := runtimeEnvironmentIdentity(t.Context(), config); err == nil {
+		t.Fatal("verified switch masked missing readiness opt-in")
+	}
+	config.HostingReadiness = &HostingReadinessConfig{}
+	if _, err := runtimeEnvironmentIdentity(t.Context(), config); err == nil {
+		t.Fatal("combined identity bypassed readiness transport trust")
 	}
 }

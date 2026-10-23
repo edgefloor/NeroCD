@@ -54,6 +54,9 @@ func (j *AttemptJournal) AppendProxy(entry JournalProxy) (JournalProxy, error) {
 	if j.state.Version < 4 {
 		j.state.Version = 4
 	}
+	if entry.Plan.Snapshot.VerifiedSwitch != nil {
+		j.state.Version = 9
+	}
 	j.state.Proxy = append(j.state.Proxy, entry)
 	if err = validateJournalState(j.state); err == nil {
 		err = j.persistLocked()
@@ -157,6 +160,9 @@ func validateJournalProxy(entry JournalProxy) error {
 			// Historical committed results remain replayable after certificate
 			// expiry. Fresh report authority and validity are checked by the server.
 			seen[route.RouteID] = true
+		}
+		if err := domain.ValidateHostingVerifiedSwitchResult(entry.Plan, result, time.Time{}); err != nil {
+			return err
 		}
 	default:
 		return errors.New("unknown proxy journal phase")

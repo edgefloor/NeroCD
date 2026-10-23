@@ -759,6 +759,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/route-switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch existing routes with verified HTTPS and rollback
+         * @description Requires current resource-project maintainer authority and active destination and hostname grants. Selects only a settled healthy or exact retained-running release on the same binding and pinned daemon. Route IDs, versions and selected releases are compared atomically with the exact loaded generation. Hostnames, paths and ports cannot be supplied. Returns only project-safe operation status. Metadata conflicts retain a visible mutation hold; physical withdrawal can remain deferred under uncertainty.
+         */
+        post: operations["requestHostingRouteSwitch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/routes/{id}": {
         parameters: {
             query?: never;
@@ -3532,7 +3552,33 @@ export interface components {
             path_prefix: string;
             host_port: number;
         };
+        HostingRouteSwitchInput: {
+            idempotency_key: string;
+            /** Format: int64 */
+            expected_loaded_generation: number;
+            target_release_operation_id: components["schemas"]["HostingIdentifier"];
+            routes: {
+                route_id: components["schemas"]["HostingIdentifier"];
+                /** Format: int64 */
+                expected_version: number;
+                expected_selected_release_operation_id: components["schemas"]["HostingIdentifier"];
+            }[];
+        };
+        HostingVerifiedSwitch: {
+            /** @enum {integer} */
+            version: 1;
+            /** Format: int64 */
+            expected_loaded_generation: number;
+            prior_applied_proxy_operation_id: components["schemas"]["HostingIdentifier"];
+            routes: {
+                route_id: components["schemas"]["HostingIdentifier"];
+                /** Format: int64 */
+                prior_version: number;
+                prior_target: components["schemas"]["HostingProxyRouteTarget"];
+            }[];
+        };
         HostingProxySnapshot: {
+            verified_switch?: components["schemas"]["HostingVerifiedSwitch"];
             proxy_id: string;
             server_id: string;
             destination_id: string;
@@ -3592,6 +3638,8 @@ export interface components {
             fence: string;
         };
         HostingProxyOperation: {
+            /** @description Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no recovery API exists. */
+            metadata_conflict?: boolean;
             id: string;
             proxy_id: string;
             project_id: string;
@@ -3611,6 +3659,8 @@ export interface components {
         };
         /** @description Contains only authorized own-route status, without placement, snapshots, engine configuration, lease authority or other project identities. */
         HostingProxyOperationView: {
+            /** @description Desired metadata could not be restored by exact CAS. Mutation hold requires reviewed reconciliation; no recovery API exists. */
+            metadata_conflict?: boolean;
             id: string;
             state: string;
             mutation_hold: boolean;
@@ -6551,6 +6601,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostingRoute"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingRouteSwitch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRouteSwitchInput"];
+            };
+        };
+        responses: {
+            /** @description Verified switch admitted or exact idempotent request replayed */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingProxyOperationView"];
                 };
             };
             400: components["responses"]["Error"];

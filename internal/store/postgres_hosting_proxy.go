@@ -86,9 +86,12 @@ func (s *PostgresStore) PrepareProxy(ctx context.Context, id string) error {
 	if !eligible {
 		return nil
 	}
-	if err = proxyValidateSnapshot(ctx, tx, p, op.Snapshot); err != nil {
-		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+	if err = proxyValidateOperationSnapshot(ctx, tx, p, op); err != nil {
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrForbidden) || errors.Is(err, ErrHostingRestoreHold) {
 			if _, err = q.ProxySetState(ctx, sqlcgen.ProxySetStateParams{ID: id, State: "refused"}); err != nil {
+				return err
+			}
+			if _, err = proxyRestoreSwitchMetadata(ctx, tx, p, op); err != nil {
 				return err
 			}
 			return tx.Commit(ctx)
@@ -320,7 +323,7 @@ func (s *PostgresStore) RunnerProxyApplyBegin(ctx context.Context, runner string
 	if op.State != "prepared" || op.Plan == nil || op.Preparation == nil || p.HoldOperationID != "" || p.DesiredGeneration != op.Generation || op.Plan.PreviousGeneration != p.LoadedGeneration || op.Preparation.DaemonID != p.DaemonID || op.Preparation.StaticHash != p.StaticHash {
 		return domain.HostingProxyOperation{}, ErrConflict
 	}
-	if err = proxyValidateSnapshot(ctx, tx, p, op.Snapshot); err != nil {
+	if err = proxyValidateOperationSnapshot(ctx, tx, p, op); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
 	if err = proxyAuthority(ctx, tx, runner, a, true); err != nil {
@@ -351,6 +354,19 @@ func (s *PostgresStore) RunnerProxyApplyBegin(ctx context.Context, runner string
 	op, err = proxyOperation(ctx, tx, op.ID)
 	if err != nil {
 		return op, err
+	}
+	if op.Snapshot.VerifiedSwitch != nil {
+		// Stabilize the current agent through commit, after every potentially
+		// blocking write. Existing task/lease ownership precedes this tail lock.
+		if _, err = q.ProxyLockVerifiedSwitchRunner(ctx, runner); err != nil {
+			return domain.HostingProxyOperation{}, hostingError(err)
+		}
+		if err = proxyAuthority(ctx, tx, runner, a, true); err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
+		if err = proxyCheckLegacyToken(ctx, tx, op.CreatedBy); err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
 	}
 	return op, tx.Commit(ctx)
 }
@@ -385,7 +401,7 @@ func proxyValidateResult(op domain.HostingProxyOperation, in domain.HostingProxy
 			return ErrConflict
 		}
 	case "rolled_back", "refused":
-		if in.LoadedGeneration != op.Plan.PreviousGeneration || len(in.Routes) != 0 {
+		if in.LoadedGeneration != op.Plan.PreviousGeneration || (op.Snapshot.VerifiedSwitch == nil || in.Outcome == "refused") && len(in.Routes) != 0 {
 			return ErrConflict
 		}
 	case "uncertain":
@@ -393,6 +409,9 @@ func proxyValidateResult(op domain.HostingProxyOperation, in domain.HostingProxy
 			return ErrConflict
 		}
 	default:
+		return ErrConflict
+	}
+	if err := domain.ValidateHostingVerifiedSwitchResult(*op.Plan, in, time.Now()); err != nil {
 		return ErrConflict
 	}
 	targets := map[string]domain.HostingProxyRouteTarget{}
@@ -446,6 +465,7 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 	if err = proxyValidateResult(op, in.Result); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
+	originalPlan := *op.Plan
 	if err = proxyAuthority(ctx, tx, runner, in.HostingAuthority, true); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
@@ -466,7 +486,14 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 	if _, err = q.CompleteHostingTask(ctx, sqlcgen.CompleteHostingTaskParams{ID: in.RunID, Status: status}); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
-	if in.Result.Outcome != "uncertain" {
+	metadataConflict := false
+	if in.Result.Outcome == "rolled_back" || in.Result.Outcome == "refused" {
+		metadataConflict, err = proxyRestoreSwitchMetadata(ctx, tx, p, op)
+		if err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
+	}
+	if in.Result.Outcome != "uncertain" && !metadataConflict {
 		if op.MutationHold {
 			changed, err := q.ProxySettle(ctx, sqlcgen.ProxySettleParams{ID: p.ID, ActiveOperationID: proxyPointer(op.ID), LoadedGeneration: in.Result.LoadedGeneration})
 			if err != nil {
@@ -481,6 +508,11 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 			}
 		}
 	}
+	if op.Snapshot.VerifiedSwitch != nil && in.Result.Outcome != "uncertain" && !metadataConflict {
+		if err = s.proxyFinishDeferredWithdrawal(ctx, tx, p, op); err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
+	}
 	audit := domain.AuditEvent{ID: "aud_proxy_complete_" + op.ID, ActorID: op.CreatedBy, Action: "hosting.proxy_completed", TargetID: op.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"proxy_id": p.ID, "generation": op.Generation, "outcome": in.Result.Outcome, "runner_id": runner}}
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
 		return domain.HostingProxyOperation{}, err
@@ -488,6 +520,15 @@ func (s *PostgresStore) RunnerProxyComplete(ctx context.Context, runner string, 
 	op, err = proxyOperation(ctx, tx, op.ID)
 	if err != nil {
 		return op, err
+	}
+	if originalPlan.Snapshot.VerifiedSwitch != nil && (in.Result.Outcome == "applied" || in.Result.Outcome == "rolled_back") {
+		acceptedAt, err := q.DatabaseClock(ctx)
+		if err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
+		if err = domain.ValidateHostingVerifiedSwitchResult(originalPlan, in.Result, acceptedAt); err != nil {
+			return domain.HostingProxyOperation{}, ErrConflict
+		}
 	}
 	return op, tx.Commit(ctx)
 }
@@ -541,10 +582,20 @@ func (s *PostgresStore) CancelHostingProxyOperation(ctx context.Context, id, act
 	if op.MutationHold {
 		state = "cancel_requested"
 	}
+	metadataConflict := false
+	if !op.MutationHold {
+		metadataConflict, err = proxyRestoreSwitchMetadata(ctx, tx, p, op)
+		if err != nil {
+			return domain.HostingProxyOperation{}, err
+		}
+	}
+	if metadataConflict {
+		state = "uncertain"
+	}
 	if _, err = q.ProxySetState(ctx, sqlcgen.ProxySetStateParams{ID: id, State: state}); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
-	if !op.MutationHold {
+	if !op.MutationHold && !metadataConflict {
 		if _, err = q.ProxySettleUnadmitted(ctx, sqlcgen.ProxySettleUnadmittedParams{ID: p.ID, ActiveOperationID: proxyPointer(id)}); err != nil {
 			return domain.HostingProxyOperation{}, err
 		}
@@ -692,7 +743,7 @@ func proxyOperation(ctx context.Context, db sqlcgen.DBTX, id string) (domain.Hos
 	if err != nil {
 		return domain.HostingProxyOperation{}, hostingError(err)
 	}
-	op := domain.HostingProxyOperation{ID: r.ID, ProxyID: r.ProxyID, ProjectID: proxyString(r.ProjectID), RouteID: proxyString(r.RouteID), Generation: r.Generation, State: r.State, RunID: proxyString(r.RunID), CreatedBy: r.CreatedBy, MutationHold: r.MutationHold, RestoreOwnershipHeld: r.RestoreHeld}
+	op := domain.HostingProxyOperation{ID: r.ID, ProxyID: r.ProxyID, ProjectID: proxyString(r.ProjectID), RouteID: proxyString(r.RouteID), Generation: r.Generation, State: r.State, RunID: proxyString(r.RunID), CreatedBy: r.CreatedBy, MutationHold: r.MutationHold, RestoreOwnershipHeld: r.RestoreHeld, MetadataConflict: r.MetadataConflict}
 	for _, document := range []struct {
 		raw    []byte
 		target any
@@ -729,12 +780,20 @@ func proxyRouteStatus(ctx context.Context, db sqlcgen.DBTX, row sqlcgen.HostingP
 	if op.MutationHold {
 		record.Route.State = "uncertain"
 	}
+	if op.MetadataConflict {
+		record.Route.State = "metadata_conflict"
+	}
 	if op.RestoreOwnershipHeld {
 		record.Route.State = "restore_ownership_held"
 	}
-	if op.Result != nil && op.Result.Outcome == "applied" && op.Result.LoadedGeneration == op.Generation && row.Enabled {
+	verifiedResult := op.Result != nil && (op.Result.Outcome == "applied" && op.Result.LoadedGeneration == op.Generation || op.Snapshot.VerifiedSwitch != nil && op.Result.Outcome == "rolled_back" && op.Plan != nil && op.Result.LoadedGeneration == op.Plan.PreviousGeneration)
+	if verifiedResult && !op.MutationHold && row.Enabled {
+		targets := op.Snapshot.Routes
+		if op.Result.Outcome == "rolled_back" {
+			targets = domain.HostingProxyPriorRoutes(op.Snapshot)
+		}
 		matches := false
-		for _, target := range op.Snapshot.Routes {
+		for _, target := range targets {
 			if target.RouteID == row.ID && target.ReleaseOperationID == row.SelectedReleaseOperationID && target.Hostname == row.Hostname && target.PathPrefix == row.PathPrefix {
 				matches = true
 			}
@@ -951,7 +1010,12 @@ func (s *PostgresStore) SetHostingProxyEnabled(ctx context.Context, id, actor, k
 	} else if replay != "" {
 		return p, proxyCheckLegacyToken(ctx, tx, actor)
 	}
+	var strict *domain.HostingProxyOperation
 	if !enabled {
+		p, strict, err = proxyPrepareRevocation(ctx, tx, p)
+		if err != nil {
+			return p, err
+		}
 		if _, err = q.ProxyWithdrawAllRoutes(ctx, id); err != nil {
 			return p, err
 		}
@@ -960,7 +1024,7 @@ func (s *PostgresStore) SetHostingProxyEnabled(ctx context.Context, id, actor, k
 		return p, err
 	}
 	p.Enabled = enabled
-	if _, err = s.queueProxyGeneration(ctx, tx, p, "pop_"+strings.TrimPrefix(domain.HostingDocumentHash(audit.ID), "sha256:")[:24], p.ControlProjectID, "", actor, requestKey, hash, audit); err != nil {
+	if _, err = s.proxyQueueRevocation(ctx, tx, p, strict, "pop_"+strings.TrimPrefix(domain.HostingDocumentHash(audit.ID), "sha256:")[:24], actor, requestKey, hash, audit); err != nil {
 		return p, err
 	}
 	p, err = proxyLoad(ctx, tx, id)
@@ -1063,13 +1127,17 @@ func (s *PostgresStore) RevokeHostingHostname(ctx context.Context, id, grantID, 
 	if grant.ProxyID != id {
 		return p, ErrConflict
 	}
+	p, strict, err := proxyPrepareRevocation(ctx, tx, p)
+	if err != nil {
+		return p, err
+	}
 	if _, err = q.ProxyRevokeGrant(ctx, sqlcgen.ProxyRevokeGrantParams{ID: grantID, ProxyID: id}); err != nil {
 		return p, err
 	}
 	if _, err = q.ProxyWithdrawGrantRoutes(ctx, grantID); err != nil {
 		return p, err
 	}
-	if _, err = s.queueProxyGeneration(ctx, tx, p, "pop_"+strings.TrimPrefix(domain.HostingDocumentHash(audit.ID), "sha256:")[:24], p.ControlProjectID, "", actor, requestKey, hash, audit); err != nil {
+	if _, err = s.proxyQueueRevocation(ctx, tx, p, strict, "pop_"+strings.TrimPrefix(domain.HostingDocumentHash(audit.ID), "sha256:")[:24], actor, requestKey, hash, audit); err != nil {
 		return p, err
 	}
 	p, err = proxyLoad(ctx, tx, id)
@@ -1113,6 +1181,9 @@ func proxyHealthyTarget(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, r
 }
 
 func (s *PostgresStore) queueProxyGeneration(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, operationID, project, routeID, actor, key, requestHash string, audit domain.AuditEvent) (domain.HostingProxyOperation, error) {
+	if err := proxyOrdinaryMutationAllowed(ctx, tx, p); err != nil {
+		return domain.HostingProxyOperation{}, err
+	}
 	q := sqlcgen.New(tx)
 	rows, err := q.ProxyListRoutes(ctx, p.ID)
 	if err != nil {
@@ -1139,41 +1210,7 @@ func (s *PostgresStore) queueProxyGeneration(ctx context.Context, tx pgx.Tx, p d
 		return domain.HostingProxyOperation{}, err
 	}
 	snapshot := domain.HostingProxySnapshot{ProxyID: p.ID, ServerID: p.ServerID, DestinationID: p.DestinationID, RunnerID: p.RunnerID, Generation: generation, Configuration: p.Configuration, Routes: routes}
-	if _, err = domain.CompileHostingProxyPlan(snapshot, p.LoadedGeneration, p.DaemonID); err != nil {
-		return domain.HostingProxyOperation{}, ErrConflict
-	}
-	raw, err := json.Marshal(snapshot)
-	if err != nil {
-		return domain.HostingProxyOperation{}, err
-	}
-	if len(raw) > 32<<10 {
-		return domain.HostingProxyOperation{}, ErrConflict
-	}
-	if _, err = q.ProxySupersedeUnadmitted(ctx, p.ID); err != nil {
-		return domain.HostingProxyOperation{}, err
-	}
-	if _, err = q.ProxyClearUnadmittedActive(ctx, p.ID); err != nil {
-		return domain.HostingProxyOperation{}, err
-	}
-	if _, err = q.ProxyCreateOperation(ctx, sqlcgen.ProxyCreateOperationParams{ID: operationID, ProxyID: p.ID, ProjectID: proxyPointer(project), RouteID: proxyPointer(routeID), Generation: generation, IdempotencyKey: key, RequestHash: requestHash, Snapshot: raw, SnapshotHash: domain.HostingDocumentHash(snapshot), CreatedBy: actor}); err != nil {
-		return domain.HostingProxyOperation{}, hostingError(err)
-	}
-	for _, route := range routes {
-		if _, err = q.ProxyReferenceRelease(ctx, sqlcgen.ProxyReferenceReleaseParams{OperationID: operationID, RouteID: route.RouteID, ReleaseOperationID: route.ReleaseOperationID}); err != nil {
-			return domain.HostingProxyOperation{}, err
-		}
-	}
-	if _, err = s.hostingJobs.EnqueueProxyTx(ctx, tx, hostingjobs.PrepareProxyArgs{OperationID: operationID}); err != nil {
-		return domain.HostingProxyOperation{}, err
-	}
-	audit.ActorID = actor
-	audit.Action = "hosting.proxy_generation_requested"
-	audit.TargetID = operationID
-	audit.Metadata = map[string]any{"proxy_id": p.ID, "generation": generation, "route_id": routeID, "project_id": project}
-	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {
-		return domain.HostingProxyOperation{}, err
-	}
-	return proxyOperation(ctx, tx, operationID)
+	return s.proxyInsertSnapshot(ctx, tx, p, snapshot, operationID, project, routeID, actor, key, requestHash, audit, true)
 }
 
 // RequestHostingRoute selects only the current settled healthy release of an

@@ -1014,6 +1014,7 @@ SELECT EXISTS(
  SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots hs ON hs.operation_id=ref.release_operation_id
  WHERE (hs.body->>'destination_id')=$1::text AND (hs.body->>'host_port')::integer=$2::integer
  AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
+ UNION ALL SELECT 1 FROM hosting_proxy_switch_prior_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots hs ON hs.operation_id=ref.prior_release_operation_id WHERE hs.body->>'destination_id'=$1::text AND (hs.body->>'host_port')::integer=$2::integer AND (p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
 )
 `
 
@@ -1034,7 +1035,7 @@ SELECT EXISTS(
  SELECT 1 FROM hosting_proxy_routes r WHERE r.enabled AND r.selected_release_operation_id=$1
  UNION ALL
  SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id
- WHERE ref.release_operation_id=$1 AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
+ WHERE ref.release_operation_id=$1 AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')) UNION ALL SELECT 1 FROM hosting_proxy_switch_prior_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id WHERE ref.prior_release_operation_id=$1 AND (p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled'))
 )
 `
 
@@ -1415,6 +1416,7 @@ AND NOT EXISTS(SELECT 1 FROM hosting_binding_restore_holds h WHERE h.binding_id=
 AND NOT EXISTS(SELECT 1 FROM hosting_operations o JOIN hosting_snapshots sn ON sn.operation_id=o.id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND o.state NOT IN ('succeeded','failed','canceled'))
 AND NOT EXISTS(SELECT 1 FROM hosting_proxy_routes r JOIN hosting_snapshots sn ON sn.operation_id=r.selected_release_operation_id WHERE r.enabled AND sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port)
 AND NOT EXISTS(SELECT 1 FROM hosting_proxy_release_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots sn ON sn.operation_id=ref.release_operation_id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND (p.loaded_generation=o.generation OR p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')))
+AND NOT EXISTS(SELECT 1 FROM hosting_proxy_switch_prior_references ref JOIN hosting_proxy_operations o ON o.id=ref.operation_id JOIN hosting_proxies p ON p.id=o.proxy_id JOIN hosting_snapshots sn ON sn.operation_id=ref.prior_release_operation_id WHERE sn.body->>'destination_id'=s.destination_id AND (sn.body->>'host_port')::integer=s.host_port AND (p.hold_operation_id=o.id OR o.state NOT IN ('applied','rolled_back','refused','superseded','canceled')))
 `
 
 // Caller holds destination admission. Keep immutable claims/snapshots/receipts;

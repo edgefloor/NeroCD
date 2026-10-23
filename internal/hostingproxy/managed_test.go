@@ -15,7 +15,7 @@ import (
 )
 
 func TestManagedPreparationPinsOnlyConfiguredUnixDaemonBeforeEffects(t *testing.T) {
-	for _, mode := range []string{"valid", "changed", "nonlinux", "platform", "failed", "canceled"} {
+	for _, mode := range []string{"valid", "strict", "strict-empty", "changed", "nonlinux", "platform", "failed", "canceled"} {
 		t.Run(mode, func(t *testing.T) {
 			directory, err := os.MkdirTemp("", "proxy-socket-")
 			if err != nil {
@@ -76,13 +76,29 @@ func TestManagedPreparationPinsOnlyConfiguredUnixDaemonBeforeEffects(t *testing.
 			if mode == "canceled" {
 				cancel()
 			}
-			plan, daemon, err := engine.PrepareManaged(ctx, identity, 1, 0, nil)
-			if mode == "valid" {
+			var plan Plan
+			var daemon string
+			if mode == "strict" || mode == "strict-empty" {
+				ids := []string{"one"}
+				if mode == "strict-empty" {
+					ids = nil
+				}
+				plan, daemon, err = engine.PrepareManagedVerifiedSwitch(ctx, identity, 2, 1, []Route{{ID: "one", Hostname: "app.example.test", PathPrefix: "/", HostPort: 19001}}, ids)
+			} else {
+				plan, daemon, err = engine.PrepareManaged(ctx, identity, 1, 0, nil)
+			}
+			if mode == "valid" || mode == "strict" {
 				if err != nil || daemon != "daemon" || len(plan.Hash()) != 64 || calls.Load() != 1 {
 					t.Fatalf("plan=%s daemon=%s calls=%d err=%v", plan.Hash(), daemon, calls.Load(), err)
 				}
 			} else if err == nil || daemon != "" {
 				t.Fatalf("invalid daemon accepted: %s %v", daemon, err)
+			}
+			if mode == "strict" && plan.verification == nil {
+				t.Fatal("strict preparation downgraded to legacy")
+			}
+			if mode == "strict-empty" && calls.Load() != 0 {
+				t.Fatal("invalid strict selection probed daemon")
 			}
 			if mode == "changed" && !strings.Contains(err.Error(), "identity changed") {
 				t.Fatal(err)

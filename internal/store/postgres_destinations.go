@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -136,26 +137,96 @@ func (s *PostgresStore) GrantDestinationProject(ctx context.Context, grant domai
 
 // RevokeDestinationProject keeps all bindings and serializes with new bind admission.
 func (s *PostgresStore) RevokeDestinationProject(ctx context.Context, destination, project string, event domain.AuditEvent) (domain.DestinationProjectGrant, error) {
-	return hostingMutation(ctx, s, nil, func(q *sqlcgen.Queries) (domain.DestinationProjectGrant, error) {
-		if _, err := q.LockHostingDestination(ctx, destination); err != nil {
-			return domain.DestinationProjectGrant{}, err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.DestinationProjectGrant{}, hostingError(err)
+	}
+	defer rollbackTransaction(ctx, tx)
+	q := s.queries.WithTx(tx)
+	if err = q.LockHostingExecutionDestination(ctx, destination); err != nil {
+		return domain.DestinationProjectGrant{}, hostingError(err)
+	}
+	placement, err := q.LockHostingDestination(ctx, destination)
+	if err != nil {
+		return domain.DestinationProjectGrant{}, hostingError(err)
+	}
+	old, err := q.GetDestinationProjectGrant(ctx, sqlcgen.GetDestinationProjectGrantParams{DestinationID: destination, ProjectID: project})
+	if err != nil {
+		return domain.DestinationProjectGrant{}, hostingError(err)
+	}
+	if old.RevokedAt != nil {
+		return domain.DestinationProjectGrant{}, ErrConflict
+	}
+	// Proxy ownership and all route resources precede either grant or desired-route mutation.
+	var proxy *domain.HostingProxy
+	var held *domain.HostingProxyOperation
+	proxyRow, err := q.ProxyGetByServer(ctx, placement.ServerID)
+	if err == nil {
+		p, e := proxyLock(ctx, tx, proxyRow.ID)
+		if e != nil {
+			return domain.DestinationProjectGrant{}, hostingError(e)
 		}
-		old, err := q.GetDestinationProjectGrant(ctx, sqlcgen.GetDestinationProjectGrantParams{DestinationID: destination, ProjectID: project})
+		rows, e := q.ProxyListRoutes(ctx, p.ID)
+		if e != nil {
+			return domain.DestinationProjectGrant{}, hostingError(e)
+		}
+		if e = proxyLockRouteResources(ctx, tx, rows); e != nil {
+			return domain.DestinationProjectGrant{}, hostingError(e)
+		}
+		p, held, e = proxyPrepareRevocation(ctx, tx, p)
+		if e != nil {
+			return domain.DestinationProjectGrant{}, hostingError(e)
+		}
+		proxy = &p
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.DestinationProjectGrant{}, hostingError(err)
+	}
+	row, err := q.RevokeDestinationProject(ctx, sqlcgen.RevokeDestinationProjectParams{DestinationID: destination, ProjectID: project, RevokedAt: &event.CreatedAt})
+	if err != nil {
+		return domain.DestinationProjectGrant{}, hostingError(err)
+	}
+	if proxy != nil {
+		if err = s.proxyWithdrawDestinationProject(ctx, tx, *proxy, held, project, event); err != nil {
+			return domain.DestinationProjectGrant{}, hostingError(err)
+		}
+	}
+	if err = auditDestinationMutation(ctx, q, event, "destination.project_revoked", destination, map[string]any{"project_id": project}); err != nil {
+		return domain.DestinationProjectGrant{}, hostingError(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.DestinationProjectGrant{}, hostingError(err)
+	}
+	return grantFromDestinationSQL(row), nil
+}
+
+func (s *PostgresStore) proxyWithdrawDestinationProject(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, held *domain.HostingProxyOperation, project string, event domain.AuditEvent) error {
+	q := sqlcgen.New(tx)
+	rows, err := q.ProxyListRoutes(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, r := range rows {
+		if r.ProjectID != project || !r.Enabled {
+			continue
+		}
+		count, err := q.ProxyDeleteRoute(ctx, sqlcgen.ProxyDeleteRouteParams{ID: r.ID, Version: r.Version})
 		if err != nil {
-			return domain.DestinationProjectGrant{}, err
+			return err
 		}
-		if old.RevokedAt != nil {
-			return domain.DestinationProjectGrant{}, ErrConflict
+		if count != 1 {
+			return ErrConflict
 		}
-		row, err := q.RevokeDestinationProject(ctx, sqlcgen.RevokeDestinationProjectParams{DestinationID: destination, ProjectID: project, RevokedAt: &event.CreatedAt})
-		if err != nil {
-			return domain.DestinationProjectGrant{}, err
-		}
-		if err = auditDestinationMutation(ctx, q, event, "destination.project_revoked", destination, map[string]any{"project_id": project}); err != nil {
-			return domain.DestinationProjectGrant{}, err
-		}
-		return grantFromDestinationSQL(row), nil
-	})
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	digest := strings.TrimPrefix(domain.HostingDocumentHash(event.ID), "sha256:")
+	withdrawalAudit := event
+	withdrawalAudit.ID = "aud_destination_withdraw_" + digest[:24]
+	_, err = s.proxyQueueRevocation(ctx, tx, p, held, "pop_destination_withdraw_"+digest[:24], event.ActorID, "destination-withdraw:"+digest, domain.HostingDocumentHash(struct{ Destination, Project, Event string }{p.DestinationID, project, event.ID}), withdrawalAudit)
+	return err
 }
 
 // BindResourceDestination derives project from persisted resource scope and generates its namespace internally.

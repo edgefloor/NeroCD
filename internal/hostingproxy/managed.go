@@ -15,6 +15,19 @@ import (
 // It performs no installation or routing mutation. A supplied daemon identity
 // must match; an initial empty identity is resolved before controller preparation.
 func (e *Engine) PrepareManaged(ctx context.Context, identity Identity, generation, previous uint64, routes []Route) (plan Plan, daemonID string, err error) {
+	return e.prepareManaged(ctx, identity, generation, previous, routes, nil)
+}
+
+// PrepareManagedVerifiedSwitch probes the same pinned daemon and compiles strict intent.
+// It never falls back to a legacy plan when verification inputs are invalid.
+func (e *Engine) PrepareManagedVerifiedSwitch(ctx context.Context, identity Identity, generation, previous uint64, routes []Route, requiredRouteIDs []string) (Plan, string, error) {
+	if len(requiredRouteIDs) == 0 {
+		return Plan{}, "", errors.New("verified switch requires selected routes")
+	}
+	return e.prepareManaged(ctx, identity, generation, previous, routes, requiredRouteIDs)
+}
+
+func (e *Engine) prepareManaged(ctx context.Context, identity Identity, generation, previous uint64, routes []Route, requiredRouteIDs []string) (plan Plan, daemonID string, err error) {
 	transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", e.settings.DockerSocket)
 	}}
@@ -37,7 +50,11 @@ func (e *Engine) PrepareManaged(ctx context.Context, identity Identity, generati
 		return Plan{}, "", errors.New("configured proxy Docker daemon identity changed")
 	}
 	identity.DaemonID = daemon.ID
-	plan, err = Prepare(identity, e.settings, generation, previous, routes)
+	if requiredRouteIDs == nil {
+		plan, err = Prepare(identity, e.settings, generation, previous, routes)
+	} else {
+		plan, err = PrepareVerifiedSwitch(identity, e.settings, generation, previous, routes, requiredRouteIDs)
+	}
 	if err != nil {
 		return Plan{}, "", err
 	}
