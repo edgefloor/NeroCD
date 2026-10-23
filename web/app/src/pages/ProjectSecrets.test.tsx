@@ -1,3 +1,4 @@
+import { Profiler, StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -304,4 +305,48 @@ test("conflict metadata failure requires refresh, then revoke requires renewed e
   expect(screen.getByRole<HTMLInputElement>("checkbox").checked).toBe(false);
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Revoke Database" }).disabled).toBe(true);
   expect(api.revokeManagedSecret).toHaveBeenCalledTimes(1);
+});
+
+
+test.each(["actor", "role", "unavailable"])("%s transition never commits an obsolete revealed value", async (transition) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); clients.push(client);
+  const members = [{ id: "member", project_id: "one", user_id: principal.id, role: "owner" }] as ProjectMember[];
+  const committedPlaintext: string[] = [];
+  const observe = () => committedPlaintext.push(document.querySelector('[aria-label="Revealed secret value"]')?.textContent ?? "");
+  const ui = (actor: Principal, access: ProjectMember[], unavailable = false) => <StrictMode><QueryClientProvider client={client}><Profiler id="secrets" onRender={observe}><ProjectSecrets projects={projects} principal={actor} members={access} unavailable={unavailable} /></Profiler></QueryClientProvider></StrictMode>;
+  const { rerender } = render(ui(principal, members));
+  fireEvent.change(screen.getByLabelText("Secrets project"), { target: { value: "one" } });
+  vi.mocked(api.revealManagedSecret).mockResolvedValue({ secret_id: secret.id, version: 1, value: "previous-actor-revealed-value" });
+  await reveal(); await screen.findByLabelText("Revealed secret value");
+  committedPlaintext.length = 0;
+  const nextPrincipal = transition === "actor" ? { ...principal, id: "other-owner" } : principal;
+  const nextMembers = members.map((member) => ({ ...member, user_id: nextPrincipal.id, role: transition === "role" ? "viewer" as const : "owner" as const }));
+  rerender(ui(nextPrincipal, nextMembers, transition === "unavailable"));
+  expect(committedPlaintext.length).toBeGreaterThan(0);
+  expect(committedPlaintext).not.toContain("previous-actor-revealed-value");
+  expect(screen.queryByLabelText("Revealed secret value")).toBeNull();
+});
+
+test("same-project owner identity changes erase drafts and abort a pending reveal without resurrection", async () => {
+  let resolve!: (value: Awaited<ReturnType<typeof api.revealManagedSecret>>) => void;
+  vi.mocked(api.revealManagedSecret).mockImplementation(() => new Promise((done) => { resolve = done; }));
+  const { client, members, rerender } = setup();
+  await reveal();
+  const signal = vi.mocked(api.revealManagedSecret).mock.calls[0]![2]!.signal!;
+  fireEvent.change(screen.getByLabelText("Secret name"), { target: { value: "Prior owner draft" } });
+  pasteValue("Secret value", "prior-owner-draft");
+  pasteValue("New secret value", "prior-owner-rotation");
+  const renderActor = (id: string) => rerender(<QueryClientProvider client={client}><ProjectSecrets projects={projects} principal={{ ...principal, id }} members={members.map((member) => ({ ...member, user_id: id }))} /></QueryClientProvider>);
+  renderActor("other-owner");
+  expect(signal.aborted).toBe(true);
+  expect(screen.queryByRole("region", { name: "Secret Database" })).toBeNull();
+  expect(screen.getByLabelText<HTMLInputElement>("Secret name").value).toBe("");
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Secret value").value).toBe("");
+  await act(async () => resolve({ secret_id: secret.id, version: 1, value: "late-prior-owner-value" }));
+  expect(screen.queryByText("late-prior-owner-value")).toBeNull();
+  renderActor(principal.id);
+  expect(screen.queryByLabelText("Revealed secret value")).toBeNull();
+  expect(screen.getByLabelText<HTMLInputElement>("Secret name").value).toBe("");
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Secret value").value).toBe("");
+  expect(api.revealManagedSecret).toHaveBeenCalledTimes(1);
 });
