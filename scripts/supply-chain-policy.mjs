@@ -35,6 +35,7 @@ const allowedGoDirectDependencies = new Set([
   "github.com/riverqueue/river/riverdriver/riverpgxv5",
   "github.com/riverqueue/river/rivertype",
   "github.com/sqlc-dev/sqlc",
+  "golang.org/x/crypto",
   "golang.org/x/oauth2",
   "golang.org/x/sys",
 ]);
