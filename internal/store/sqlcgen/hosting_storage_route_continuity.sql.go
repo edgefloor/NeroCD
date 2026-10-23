@@ -34,16 +34,17 @@ func (q *Queries) CreateStorageRouteContinuity(ctx context.Context, arg CreateSt
 }
 
 const queueStorageContinuity = `-- name: QueueStorageContinuity :execrows
-UPDATE hosting_storage_route_continuities SET state='proxy_pending',successor_proxy_operation_id=$2 WHERE operation_id=$1 AND state='reserved'
+UPDATE hosting_storage_route_continuities SET state='proxy_pending',successor_proxy_operation_id=$2 WHERE operation_id=$1 AND state=$3 AND successor_proxy_operation_id IS NULL
 `
 
 type QueueStorageContinuityParams struct {
 	OperationID               string  `json:"operation_id"`
 	SuccessorProxyOperationID *string `json:"successor_proxy_operation_id"`
+	State                     string  `json:"state"`
 }
 
 func (q *Queries) QueueStorageContinuity(ctx context.Context, arg QueueStorageContinuityParams) (int64, error) {
-	result, err := q.db.Exec(ctx, queueStorageContinuity, arg.OperationID, arg.SuccessorProxyOperationID)
+	result, err := q.db.Exec(ctx, queueStorageContinuity, arg.OperationID, arg.SuccessorProxyOperationID, arg.State)
 	if err != nil {
 		return 0, err
 	}

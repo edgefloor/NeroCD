@@ -949,6 +949,33 @@ paths:
         "404": {$ref: "#/components/responses/Error"}
         "409": {$ref: "#/components/responses/Error"}
         "503": {$ref: "#/components/responses/Error"}
+  "/api/v1/resources/{id}/storage-route-continuity/{operation_id}/recover":
+    post:
+      operationId: recoverHostingStorageRouteContinuity
+      summary: Queue unlinked proxy continuity for a confirmed healthy storage replacement
+      description: Requires current maintainer authority and exact immutable deployment evidence. Retries only an unresolved continuity with no successor. Matching replay returns linked historical status, including proxy failure, without repeating storage or writer mutations.
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+        - {name: operation_id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/HostingStorageRouteRecoveryInput"}
+      responses:
+        "200":
+          description: Current linked continuity status, without a new storage admission
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingStorageRouteContinuityStatus"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   "/api/v1/resources/{id}/route-switches":
     get:
       operationId: getHostingRouteSwitchOptions
@@ -5457,6 +5484,22 @@ components:
         storage_route_continuity:
           description: Copy this existing accepted write field only when available. When available, null means an ordinary redeploy without own public routes.
           anyOf: [{$ref: "#/components/schemas/HostingStorageRouteContinuityInput"}, {type: "null"}]
+    HostingStorageRouteRecoveryInput:
+      type: object
+      additionalProperties: false
+      required: [expected_descriptor_hash, expected_complete_receipt_id, expected_complete_receipt_hash]
+      properties:
+        expected_descriptor_hash:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: Exact snapshot.storage_route_continuity.hash from the authorized deployment operation.
+        expected_complete_receipt_id:
+          allOf: [{$ref: "#/components/schemas/HostingIdentifier"}]
+          description: Exact complete_receipt.id from the authorized deployment operation.
+        expected_complete_receipt_hash:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: Exact complete_receipt.body_hash from the authorized deployment operation.
     HostingStorageRouteContinuityStatus:
       type: object
       additionalProperties: false

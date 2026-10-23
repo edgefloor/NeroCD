@@ -30,7 +30,7 @@ SELECT EXISTS(SELECT 1 FROM hosting_auto_deploy_origins WHERE operation_id=$1 OR
 UPDATE hosting_storage_route_continuities SET state=$2 WHERE operation_id=$1 AND state='reserved';
 
 -- name: QueueStorageContinuity :execrows
-UPDATE hosting_storage_route_continuities SET state='proxy_pending',successor_proxy_operation_id=$2 WHERE operation_id=$1 AND state='reserved';
+UPDATE hosting_storage_route_continuities SET state='proxy_pending',successor_proxy_operation_id=$2 WHERE operation_id=$1 AND state=$3 AND successor_proxy_operation_id IS NULL;
 
 -- name: SettleStorageContinuityProxy :execrows
 UPDATE hosting_storage_route_continuities SET state=$2 WHERE successor_proxy_operation_id=$1 AND state='proxy_pending';

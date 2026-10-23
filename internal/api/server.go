@@ -245,6 +245,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if hostingStoragePath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	if hostingStorageRouteRecoveryPath(r.URL.Path) {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if r.URL.Path == "/api/v1/runners/hosting/storage-create-begin" || r.URL.Path == "/api/v1/runners/hosting/storage-materialized" {
 		w.Header().Set("Cache-Control", "no-store")
 	}

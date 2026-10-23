@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -361,7 +362,7 @@ func (s *PostgresStore) settleStorageContinuity(ctx context.Context, tx pgx.Tx, 
 	if err != nil {
 		return err
 	}
-	err = s.queueStorageContinuity(ctx, nested, op)
+	err = s.queueStorageContinuity(ctx, nested, op, "reserved", op.CreatedBy, domain.AuditEvent{ID: "aud_proxy_storage_" + op.ID, CreatedAt: time.Now().UTC()})
 	if err == nil {
 		return nested.Commit(ctx)
 	}
@@ -372,7 +373,10 @@ func (s *PostgresStore) settleStorageContinuity(ctx context.Context, tx pgx.Tx, 
 	return markErr
 }
 
-func (s *PostgresStore) queueStorageContinuity(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) error {
+func (s *PostgresStore) queueStorageContinuity(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, sourceState, actor string, audit domain.AuditEvent) error {
+	if sourceState != "reserved" && sourceState != "unresolved" {
+		return ErrConflict
+	}
 	p, rows, err := storageContinuityPrelock(ctx, tx, op.ResourceID)
 	if err != nil {
 		return err
@@ -381,7 +385,7 @@ func (s *PostgresStore) queueStorageContinuity(ctx context.Context, tx pgx.Tx, o
 	if err != nil {
 		return err
 	}
-	if state != "reserved" {
+	if state != sourceState {
 		return ErrConflict
 	}
 	// Current healthy now names the successor. Compare the pinned metadata and
@@ -449,12 +453,18 @@ func (s *PostgresStore) queueStorageContinuity(ctx context.Context, tx pgx.Tx, o
 	// queueProxyGeneration uses the existing ordinary full-generation path and
 	// keeps every unrelated route, with no strict rollback to a stopped writer.
 	proxyID := "pop_storage_" + op.ID
-	_, err = s.queueProxyGeneration(ctx, tx, p, proxyID, op.ProjectID, "", op.CreatedBy, "storage-continuity:"+op.ID, c.RequestHash, domain.AuditEvent{ID: "aud_proxy_storage_" + op.ID, CreatedAt: time.Now().UTC()})
+	_, err = s.queueProxyGeneration(ctx, tx, p, proxyID, op.ProjectID, "", actor, "storage-continuity:"+op.ID, c.RequestHash, audit)
 	if err != nil {
 		return err
 	}
-	_, err = sqlcgen.New(tx).QueueStorageContinuity(ctx, sqlcgen.QueueStorageContinuityParams{OperationID: op.ID, SuccessorProxyOperationID: hostingStringPointer(proxyID)})
-	return err
+	changed, err := sqlcgen.New(tx).QueueStorageContinuity(ctx, sqlcgen.QueueStorageContinuityParams{OperationID: op.ID, SuccessorProxyOperationID: hostingStringPointer(proxyID), State: sourceState})
+	if err != nil {
+		return fmt.Errorf("link storage route continuity: %w", err)
+	}
+	if changed != 1 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func settleStorageContinuityProxy(ctx context.Context, tx pgx.Tx, op domain.HostingProxyOperation, result domain.HostingProxyResult) error {
