@@ -45,6 +45,13 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
   const ownerPolicy = await ownerOptions.json() as { can_manage: boolean; owner_automatic_deployment_options?: { available: boolean; reason: string } };
   expect(ownerPolicy.can_manage).toBe(true);
   expect(ownerPolicy.owner_automatic_deployment_options, "ordinary owner requires real eligible manual A + loaded HTTPS options").toMatchObject({ available: true, reason: "eligible" });
+  // Initial metadata may have been read while the real runner negotiated its
+  // capabilities. Refresh through the UI and require the same current evidence.
+  const refreshedOptions = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}/github-push-policy` && r.request().method() === "GET");
+  await panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true }).click();
+  const refreshedPolicy = await refreshedOptions;
+  expect(refreshedPolicy.status()).toBe(200);
+  expect((await refreshedPolicy.json() as typeof ownerPolicy).owner_automatic_deployment_options).toMatchObject({ available: true, reason: "eligible" });
   const form = panel.getByRole("form", { name: "Configure GitHub build on push", exact: true });
   await expect(form.getByRole("radio", { name: "Build only. Deploy each successful build manually.", exact: true })).toBeChecked();
   async function reviewConfiguration() {
@@ -56,6 +63,7 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
   const provider = form.getByRole("combobox", { name: "GitHub provider read managed secret", exact: true });
   const providerID = await provider.getByRole("option").filter({ hasText: /^push-provider-read · / }).getAttribute("value"); expect(providerID).toBeTruthy(); await provider.selectOption(providerID!);
   await form.getByRole("combobox", { name: "GitHub provider read immutable version", exact: true }).selectOption("1");
+    await expect(form.getByRole("radio", { name: "Automatic deployment without approval", exact: true })).toBeEnabled();
     await form.getByRole("radio", { name: "Automatic deployment without approval", exact: true }).check();
     const route = form.getByRole("checkbox", { name: "https://automatic.example.test/", exact: true });
     await expect(route).toBeVisible(); await route.check();
