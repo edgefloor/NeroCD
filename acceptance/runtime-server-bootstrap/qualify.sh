@@ -83,6 +83,11 @@ main() {
  exec > >(tee "$evidence/qualification.log") 2>&1
  printf 'fixture-only source=%s owner=%s label=%s\n' "$(git -C "$root" rev-parse HEAD)" "$owner" "$label"
  shasum -a 256 "$root"/acceptance/runtime-server-bootstrap/* >"$evidence/source-sha256.txt"
+ shasum -a 256 "$root"/internal/serverbootstrap/*.go "$root/go.mod" "$root/docs/hosting-ssh-bootstrap.md" >>"$evidence/source-sha256.txt"
+ go version
+ go list -m golang.org/x/crypto
+ go test -c -o "$work/serverbootstrap.test" ./internal/serverbootstrap
+ shasum -a 256 "$work/serverbootstrap.test" >"$evidence/probe-binary-sha256.txt"
  docker version --format 'host Docker={{.Server.Version}} API={{.Server.APIVersion}} arch={{.Server.Arch}}'
  for key in host client wrong-client wrong-host; do ssh-keygen -q -t ed25519 -N '' -f "$work/$key"; done
  docker build --label "$label=$owner" --tag "$owner:fixture" "$root/acceptance/runtime-server-bootstrap"
@@ -162,6 +167,14 @@ main() {
   cat "$evidence/ssh-journal.log"
   return 1
  fi
+ # Fixed read-only assertions surround the single package integration entry point.
+ snapshot_command="sha256sum /fixture/sentinel; systemctl show fixture-sentinel -p MainPID --value; systemctl is-active fixture-sentinel; docker inspect --format '{{.Id}} {{.State.Running}}' unrelated-sentinel; wc -l /fixture/marker; systemctl is-active fixture-marker || test \"\$(systemctl is-active fixture-marker)\" = inactive"
+ ssh "${ssh_options[@]}" -o "UserKnownHostsFile=$work/known_hosts" -i "$work/client" root@127.0.0.1 "$snapshot_command" >"$evidence/sentinels-before-probe.txt"
+ NEROCD_BOOTSTRAP_PROBE_FIXTURE=owned-systemd-target NEROCD_BOOTSTRAP_PROBE_PORT="$port" NEROCD_BOOTSTRAP_PROBE_KEY_FILE="$work/client" NEROCD_BOOTSTRAP_PROBE_FINGERPRINT="$fingerprint" "$work/serverbootstrap.test" -test.v -test.run '^TestPreparedHostFixture$' -test.timeout=45s >"$evidence/go-probe.log" 2>&1
+ cat "$evidence/go-probe.log"
+ ssh "${ssh_options[@]}" -o "UserKnownHostsFile=$work/known_hosts" -i "$work/client" root@127.0.0.1 "$snapshot_command" >"$evidence/sentinels-after-probe.txt"
+ cmp "$evidence/sentinels-before-probe.txt" "$evidence/sentinels-after-probe.txt"
+ printf 'actual Go SSH probe preserves file/service/container/marker sentinels\n'
  docker cp "$container_id:/fixture-packages.txt" "$evidence/packages.txt"
  printf 'PASS: native fixture SSH/systemd/private Docker qualification only\n'
 }

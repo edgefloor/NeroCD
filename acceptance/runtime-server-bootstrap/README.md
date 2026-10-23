@@ -13,6 +13,12 @@ The authenticated SSH session starts, checks, restarts, and stops a fixed marker
 It also checks that an unrelated sentinel file, service process, and running container survive those operations.
 No fixture operation targets a live server or a product-managed resource.
 
+The qualifier also compiles and hashes the fixed `internal/serverbootstrap` test binary.
+It invokes only `TestPreparedHostFixture` against the same target and ephemeral key files.
+That integration test calls the real Go SSH probe and checks its prerequisite observations, host mismatch, and wrong-client denial.
+Fixed snapshots before and after prove that the probe leaves the unrelated file, service process, container, and marker unchanged.
+Source and binary hashes bind this evidence to the candidate. This remains prerequisite probing, not installation or enrollment.
+
 ## Run the fixture
 
 Run these commands from the repository root with Bash, Python 3.11 or newer, OpenSSH, and Docker available:
