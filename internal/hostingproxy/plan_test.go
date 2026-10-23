@@ -1,10 +1,45 @@
 package hostingproxy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 )
+
+func TestRollbackReceiptCancellation(t *testing.T) {
+	writeErr := errors.New("receipt sync failed")
+	for _, tc := range []struct {
+		name       string
+		strict     bool
+		cancelSave bool
+		saveErr    error
+		outcome    Outcome
+		wantErr    error
+	}{
+		{"strict canceled during save", true, true, nil, Uncertain, context.Canceled},
+		{"legacy canceled during save", false, true, nil, RolledBack, nil},
+		{"strict completed save", true, false, nil, RolledBack, nil},
+		{"strict failed save", true, false, writeErr, Uncertain, writeErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			saves := 0
+			outcome, err := persistRollbackReceipt(ctx, tc.strict, func() error {
+				saves++
+				if tc.cancelSave {
+					cancel()
+				}
+				return tc.saveErr
+			})
+			if saves != 1 || outcome != tc.outcome || !errors.Is(err, tc.wantErr) {
+				t.Fatalf("receipt saves=%d, outcome=%s, error=%v; want outcome=%s, error=%v", saves, outcome, err, tc.outcome, tc.wantErr)
+			}
+		})
+	}
+}
 
 func TestVerifiedSwitchPlan(t *testing.T) {
 	routes := []Route{{"one", "app.example.test", "/api", 12000}}

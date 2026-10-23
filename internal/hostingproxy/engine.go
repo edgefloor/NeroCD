@@ -257,10 +257,11 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 		if x = ctx.Err(); x != nil {
 			return result, x
 		}
-		if x = s.save(old); x != nil {
+		outcome, x := persistRollbackReceipt(ctx, p.verification != nil, func() error { return s.save(old) })
+		if x != nil {
 			return result, x
 		}
-		result.Outcome = RolledBack
+		result.Outcome = outcome
 		result.LoadedGeneration = old.Generation
 		if p.verification != nil {
 			result.Routes = restored.Routes
@@ -281,6 +282,17 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 		return e.observation(ctx, p, c.ID), nil
 	}
 	return verified, nil
+}
+
+// persistRollbackReceipt keeps durable restoration separate from acknowledgment.
+func persistRollbackReceipt(ctx context.Context, strict bool, save func() error) (Outcome, error) {
+	if err := save(); err != nil {
+		return Uncertain, err
+	}
+	if strict && ctx.Err() != nil {
+		return Uncertain, ctx.Err()
+	}
+	return RolledBack, nil
 }
 
 // Observe verifies the committed receipt, owned container, loaded routes, and probes.
