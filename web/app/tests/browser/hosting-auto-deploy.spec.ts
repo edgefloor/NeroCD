@@ -38,6 +38,13 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
     if (/\/reveal(?:\/|$)|\/service-accounts\/rotate|\/runner-enrollments/.test(path)) forbiddenReads.push(path);
     if (request.method() !== "GET" && path.includes("/github-push-policy")) commands.push({ path, body: request.postDataJSON() });
   });
+  const started = Date.now();
+  page.on("response", async (response) => {
+    if (new URL(response.url()).pathname !== `/api/v1/resources/${meta.resource_id}/github-push-policy` || response.request().method() !== "GET" || response.status() !== 200) return;
+    const snapshot = await response.json() as { owner_automatic_deployment_options?: { available: boolean; reason: string } };
+    const options = snapshot.owner_automatic_deployment_options;
+    console.info("owner options snapshot", JSON.stringify({ elapsed_ms: Date.now() - started, available: options?.available, reason: options?.reason }));
+  });
   await signIn(page); await page.setViewportSize({ width: 320, height: 1000 });
   const article = await resourceArticle(page, meta), panel = article.getByRole("region", { name: "Build on push", exact: true });
   const ownerOptions = await page.request.get(`/api/v1/resources/${meta.resource_id}/github-push-policy`);
@@ -45,8 +52,7 @@ test("owner reviews automatic unprotected deployment, B reaches HTTPS automatica
   const ownerPolicy = await ownerOptions.json() as { can_manage: boolean; owner_automatic_deployment_options?: { available: boolean; reason: string } };
   expect(ownerPolicy.can_manage).toBe(true);
   expect(ownerPolicy.owner_automatic_deployment_options, "ordinary owner requires real eligible manual A + loaded HTTPS options").toMatchObject({ available: true, reason: "eligible" });
-  // Initial metadata may have been read while the real runner negotiated its
-  // capabilities. Refresh through the UI and require the same current evidence.
+  // Review current server evidence through the existing explicit UI refresh.
   const refreshedOptions = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}/github-push-policy` && r.request().method() === "GET");
   await panel.getByRole("button", { name: "Refresh build-on-push metadata", exact: true }).click();
   const refreshedPolicy = await refreshedOptions;
