@@ -110,6 +110,27 @@ Each service is checked separately with `systemctl is-active`, followed by a suc
 A multi-unit `systemctl is-active` result alone cannot prove that every listed service is active.
 Only a complete qualification exit of zero counts as a fixture pass.
 
+## Complete API onboarding extension
+
+`NEROCD_BOOTSTRAP_ONBOARDING=owned-systemd-target bash acceptance/runtime-server-bootstrap/qualify.sh`
+also compiles the Linux API fixture and runs it after the adapter qualification.
+It uses a separate database in the same owned PostgreSQL container. Production
+HTTP handlers admit every operation and command. The normal River consumer calls
+the configured production bootstrap processor, which connects to the target's
+real OpenSSH server and starts the transferred agent through systemd. The agent
+consumes enrollment over HTTPS independently of the test driver.
+
+The extension requires native arm64. It covers explicit true and false project
+grant choices, a later explicit grant, committed create and command response
+loss with exact retries, enrollment response loss, a real expired review and
+fresh probe, rejected artifact and receipt input, viewer denial, registration
+binding, and a separately observed readiness report. It never seeds bootstrap
+operations or submits SSH observations through a test endpoint. Its controller
+and SSH target share the disposable container. The HTTPS test CA is trusted
+explicitly by the API client and installed only inside that container for the
+agent. This does not qualify production DNS, TLS issuance, or network reachability.
+The original qualifier remains unchanged unless this opt-in is set.
+
 Cleanup compares full container, network, and image IDs, exact names, and unique owner labels before deletion.
 Docker volumes have names rather than independent immutable IDs, so cleanup checks their exact names and owner labels.
 Deletion and absence checks fail explicitly even when the cleanup helper runs in a shell `||` list.
