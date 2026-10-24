@@ -35,6 +35,22 @@ func applicationDatabaseFixtureImage(reference string) error {
 	return nil
 }
 
+func applicationDatabaseCreateInput(engine, environment, destination string) domain.HostingDatabaseCreateInput {
+	input := databaseUpgradeCreateInput(engine, environment, destination)
+	input.RequestID = strings.Repeat("01", 16)
+	if engine == "redis" {
+		input.RequestID = strings.Repeat("02", 16)
+	}
+	input.Name = "connected physical " + engine
+	return input
+}
+
+// Complete hashes the immutable result body. The original authority and entire
+// request remain independently pinned by the pending journal and wire replay.
+func applicationDatabaseCompleteReceiptMatches(op domain.HostingOperation, original domain.HostingCompleteRequest) bool {
+	return op.Result != nil && *op.Result == original.Result && op.CompleteReceipt != nil && op.CompleteReceipt.ID == original.ReceiptID && op.CompleteReceipt.BodyHash == domain.HostingDocumentHash(original.Result)
+}
+
 func applicationDatabaseCompleted(op domain.HostingOperation) bool {
 	if op.State != "succeeded" || op.Plan == nil || op.Release == nil || op.Result == nil || !op.Result.Ready || op.Result.Uncertain || op.Result.ContainerID == "" || op.CompleteReceipt == nil || op.MutationHold || op.RestoreOwnershipHeld {
 		return false
@@ -224,7 +240,7 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 	for i, engine := range []string{"postgresql", "redis"} {
 		t.Run(engine, func(t *testing.T) {
 			f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
-			view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", databaseUpgradeCreateInput(engine, f.environment, f.destination), 201)
+			view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseCreateInput(engine, f.environment, f.destination), 201)
 			source := f.await(f.deploy(view, "connected_source_v1").ID)
 			if source.Plan.Database.Network != nil {
 				t.Fatal("first Connect must start from ordinary V1 database")
@@ -319,7 +335,7 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				t.Fatal("missing original committed Complete")
 			}
 			c, err := f.operation(t.Context(), third.ID)
-			if err != nil || !applicationDatabaseCompleted(c) || *c.Result != original.Result || c.CompleteReceipt.ID != original.ReceiptID || c.CompleteReceipt.BodyHash != domain.HostingDocumentHash(original) {
+			if err != nil || !applicationDatabaseCompleted(c) || !applicationDatabaseCompleteReceiptMatches(c, original) {
 				t.Fatal("controller did not atomically settle app before ACK loss")
 			}
 			pending := false
@@ -349,6 +365,7 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			case <-time.After(30 * time.Second):
 				t.Fatal("saved app Complete did not replay")
 			}
+			f.awaitSourceJournalRetired()
 			f.stop()
 			until := time.Now().UTC().Format(time.RFC3339Nano)
 			after := f.applicationContainer(c)
@@ -388,6 +405,32 @@ func TestApplicationDatabaseRuntimeImageProfile(t *testing.T) {
 		if applicationDatabaseFixtureImage(bad) == nil {
 			t.Fatal("foreign image profile accepted")
 		}
+	}
+}
+
+func TestApplicationDatabaseRuntimeCompleteReceiptContract(t *testing.T) {
+	original := domain.HostingCompleteRequest{HostingAuthority: domain.HostingAuthority{OperationID: "operation_fixture", RunID: "run_fixture", LeaseID: "lease_fixture", Attempt: 1, Fence: "private_fence_fixture"}, ReceiptID: "complete_fixture", Result: domain.HostingResult{Outcome: "applied", ContainerID: strings.Repeat("a", 64), PlanHash: "sha256:" + strings.Repeat("b", 64), Ready: true}}
+	for _, test := range []string{"exact_result", "whole_request_hash", "wrong_receipt", "changed_result", "missing_result", "missing_receipt"} {
+		t.Run(test, func(t *testing.T) {
+			result := original.Result
+			receipt := domain.HostingReceipt{ID: original.ReceiptID, BodyHash: domain.HostingDocumentHash(original.Result)}
+			op := domain.HostingOperation{Result: &result, CompleteReceipt: &receipt}
+			switch test {
+			case "whole_request_hash":
+				receipt.BodyHash = domain.HostingDocumentHash(original)
+			case "wrong_receipt":
+				receipt.ID = "foreign_receipt"
+			case "changed_result":
+				result.ContainerID = strings.Repeat("c", 64)
+			case "missing_result":
+				op.Result = nil
+			case "missing_receipt":
+				op.CompleteReceipt = nil
+			}
+			if applicationDatabaseCompleteReceiptMatches(op, original) != (test == "exact_result") {
+				t.Fatal("Complete receipt did not retain the controller result-body hash contract")
+			}
+		})
 	}
 }
 

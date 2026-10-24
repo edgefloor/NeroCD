@@ -617,6 +617,34 @@ func TestDatabaseUpgradeRuntimeFixtureInputs(t *testing.T) {
 	}
 }
 
+func TestDatabaseUpgradeRuntimeAllScenarioIdentities(t *testing.T) {
+	requests, resources := map[string]bool{}, map[string]bool{}
+	for i, engine := range []string{"postgresql", "redis"} {
+		// The ordinary compiled fixture uses these fixed project request IDs.
+		ordinary := databaseUpgradeCreateInput(engine, "penv_fixture", "dest_fixture")
+		ordinary.RequestID = strings.Repeat(string(rune('a'+i)), 32)
+		for _, input := range []domain.HostingDatabaseCreateInput{
+			ordinary,
+			databaseCaptureCreateInput(engine, false, "penv_fixture", "dest_fixture"),
+			databaseCaptureCreateInput(engine, true, "penv_fixture", "dest_fixture"),
+			databaseUpgradeCreateInput(engine, "penv_fixture", "dest_fixture"),
+			applicationDatabaseCreateInput(engine, "penv_fixture", "dest_fixture"),
+		} {
+			if input.Validate() != nil {
+				t.Fatal("scenario database input is not a valid 32-hex identity")
+			}
+			resource := domain.HostingDatabaseResourceID(input.ProjectID, input.RequestID)
+			if requests[input.RequestID] || resource == "" || resources[resource] {
+				t.Fatal("compiled scenarios share a persistent database identity")
+			}
+			requests[input.RequestID], resources[resource] = true, true
+		}
+	}
+	if len(requests) != 10 || len(resources) != 10 {
+		t.Fatal("scenario identity coverage omitted an engine or capture mode")
+	}
+}
+
 func databaseUpgradeReceiptJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(value)
