@@ -107,9 +107,8 @@ func appendCaptureExecution(j databaseNetworkCaptureJournal, e runner.JournalDat
 	return nil
 }
 
-// executeDatabaseNetworkCapture is private and exact-ID only. It is not wired to
-// runtime startup, generic claims, a CLI option or advertised capabilities.
-// Its caller serializes execution/replay for this journal, as runner startup does.
+// executeDatabaseNetworkCapture preserves exact-ID selection. Its caller
+// serializes selection and replay for this journal.
 func executeDatabaseNetworkCapture(parent context.Context, j databaseNetworkCaptureJournal, client databaseNetworkCaptureClient, observer databaseNetworkCaptureObserver, runnerID, id string) error {
 	if j == nil || !databaseNetworkCaptureRunnerID.MatchString(runnerID) || !databaseNetworkCaptureID.MatchString(id) {
 		return errDatabaseNetworkCaptureExecution
@@ -131,6 +130,21 @@ func executeDatabaseNetworkCapture(parent context.Context, j databaseNetworkCapt
 	claim, err := client.ClaimHostingDatabaseNetworkCapture(ctx, runnerID, id)
 	cancel()
 	if err != nil || !captureExecutionTarget(claim.Capture, runnerID, id) {
+		return captureExecutionFailure(parent)
+	}
+	return executeClaimedDatabaseNetworkCapture(parent, j, client, observer, runnerID, claim)
+}
+
+// Both selectors hand off only a validated, live claim. Its complete authority
+// is durable before plan retrieval, observer creation, or origin publication.
+func executeClaimedDatabaseNetworkCapture(parent context.Context, j databaseNetworkCaptureJournal, client databaseNetworkCaptureClient, observer databaseNetworkCaptureObserver, runnerID string, claim domain.HostingDatabaseNetworkCaptureClaim) error {
+	id := claim.Capture.ID
+	l := claim.Lease
+	if j == nil || client == nil || observer == nil || parent.Err() != nil || !databaseNetworkCaptureRunnerID.MatchString(runnerID) || !databaseNetworkCaptureID.MatchString(id) || !captureExecutionTarget(claim.Capture, runnerID, id) || l.RunID != claim.Capture.RunID || l.RunnerID != runnerID || l.Status != domain.LeaseActive || l.CompletedAt != nil || l.CompletionKey != "" || l.CreatedAt.IsZero() || !l.ExpiresAt.After(time.Now()) {
+		return captureExecutionFailure(parent)
+	}
+	chain, err := captureExecutionChain(j, runnerID, id)
+	if err != nil || len(chain) != 0 {
 		return captureExecutionFailure(parent)
 	}
 	at := journalAttemptIdentity(claim.Lease.RunID, claim.Lease, nil)

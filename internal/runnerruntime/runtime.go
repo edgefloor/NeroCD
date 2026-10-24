@@ -239,12 +239,12 @@ func RunContext(ctx context.Context, config Config) error {
 	if config.Proxy.Enabled() && !config.Execute {
 		return errors.New("configured managed proxy requires execution")
 	}
-	if config.Database != nil {
+	if config.Database != nil && !config.Database.NetworkCapture {
 		if err := ValidateDatabaseExecution(ctx, *config.Database, config.ImageDockerEndpoint); err != nil {
 			return err
 		}
 	}
-	if config.StorageArchive != nil {
+	if config.StorageArchive != nil && (config.Database == nil || !config.Database.NetworkCapture) {
 		if err := ValidateStorageArchiveExecution(ctx, *config.StorageArchive, config.ImageDockerEndpoint); err != nil {
 			return err
 		}
@@ -267,7 +267,17 @@ func RunContext(ctx context.Context, config Config) error {
 		return fmt.Errorf("open runner journal: %w", err)
 	}
 	defer func() { _ = journal.Close() }()
-	if len(journal.Snapshot().DatabaseNetworkCapture) != 0 {
+	captureDispatcher, err := newAutomaticDatabaseNetworkCaptureDispatcher(config, journal)
+	if err != nil {
+		return err
+	}
+	if captureDispatcher != nil {
+		if err := reconcileAutomaticCaptureStartup(ctx, config, captureDispatcher, func(ctx context.Context) error {
+			return ValidateStorageArchiveExecution(ctx, *config.StorageArchive, config.ImageDockerEndpoint)
+		}); err != nil {
+			return err
+		}
+	} else if len(journal.Snapshot().DatabaseNetworkCapture) != 0 {
 		return errors.New("retained database network capture requires explicit exact-ID capture mode")
 	}
 	if err := validateLocalBuildJournalConfiguration(journal, config.LocalBuildDeploy); err != nil {
@@ -331,7 +341,16 @@ func RunContext(ctx context.Context, config Config) error {
 		if err := runnerclient.New(config.Server, config.Token).ReportTelemetry(ctx, runnerclient.OperationalTelemetry{JournalDepth: journal.Depth(), RetryCount: retryCount, RenewFailures: renewFailures}); err != nil {
 			return fmt.Errorf("report runner telemetry: %w", err)
 		}
-		claim, err := runnerclient.New(config.Server, config.Token).Claim(ctx)
+		claim, capture, err := claimRunnerIteration(ctx, captureDispatcher, runnerclient.New(config.Server, config.Token).Claim)
+		if err == nil && capture != captureDispatchEmpty {
+			if capture == captureDispatchCompleted && config.Once {
+				return nil
+			}
+			if !waitWorkerInterval(ctx, config.PollInterval) {
+				return ctx.Err()
+			}
+			continue
+		}
 		if err != nil {
 			if runnerHTTPStatus(err, http.StatusNotFound) {
 				if config.Once {

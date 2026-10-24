@@ -126,22 +126,15 @@ func runDatabaseNetworkCaptureRuntimeWith(parent context.Context, c Config, clie
 	if err != nil {
 		return errDatabaseNetworkCaptureExecution
 	}
-	var observer databaseNetworkCaptureObserver
-	if len(chain) < 3 {
-		// An expired pre-origin chain is retained without touching the host.
-		if len(chain) > 0 && !chain[0].Attempt.ExpiresAt.After(time.Now()) {
-			return errDatabaseNetworkCaptureExecution
-		}
-		var closeObserver func() error
-		observer, closeObserver, err = open(ctx, c.DatabaseNetworkCapture.Engine, c.ImageDockerEndpoint)
-		if err != nil {
-			return errDatabaseNetworkCaptureExecution
-		}
-		defer func() {
-			if closeObserver() != nil {
-				err = errors.Join(err, errDatabaseNetworkCaptureExecution)
-			}
-		}()
+	// Preserve the original deadline and avoid opening the host for expired work.
+	if len(chain) > 0 && len(chain) < 3 && !chain[0].Attempt.ExpiresAt.After(time.Now()) {
+		return errDatabaseNetworkCaptureExecution
 	}
+	observer := &lazyCaptureRuntimeObserver{config: c.DatabaseNetworkCapture.Engine, endpoint: c.ImageDockerEndpoint, open: open}
+	defer func() {
+		if observer.Close() != nil {
+			err = errors.Join(err, errDatabaseNetworkCaptureExecution)
+		}
+	}()
 	return executeDatabaseNetworkCapture(ctx, j, client, observer, c.RunnerID, target)
 }

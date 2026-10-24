@@ -19,6 +19,11 @@ func TestDatabaseNetworkCaptureIdentityProfiles(t *testing.T) {
 		options RuntimeExecutionOptions
 		valid   bool
 	}{
+		{"automatic combined", db, RuntimeExecutionOptions{Database: true, DatabaseNetworkCaptureAutomatic: true}, true},
+		{"automatic missing capability", db[:4], RuntimeExecutionOptions{Database: true, DatabaseNetworkCaptureAutomatic: true}, false},
+		{"automatic without database", db, RuntimeExecutionOptions{DatabaseNetworkCaptureAutomatic: true}, false},
+		{"automatic plus exact ID", db, RuntimeExecutionOptions{Database: true, DatabaseNetworkCapture: true, DatabaseNetworkCaptureAutomatic: true}, false},
+		{"automatic shell", append(append([]string(nil), db...), "shell"), RuntimeExecutionOptions{Database: true, DatabaseNetworkCaptureAutomatic: true}, false},
 		{"capture only", []string{domain.HostingDatabaseNetworkCaptureCapability}, RuntimeExecutionOptions{DatabaseNetworkCapture: true}, true},
 		{"source profile", db, RuntimeExecutionOptions{DatabaseNetworkCapture: true}, true},
 		{"ordinary database with capture", db, RuntimeExecutionOptions{Database: true}, true},
@@ -68,5 +73,14 @@ func TestDatabaseNetworkCaptureIdentityProtectsTransport(t *testing.T) {
 	}
 	if leaked.Load() != 0 {
 		t.Fatal("identity bearer reached unprotected destination")
+	}
+}
+
+func TestDatabaseNetworkCaptureAutomaticIdentityCannotUseLoopbackHTTPException(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer server.Close()
+	if _, err := New(server.URL, "protected_canary").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Database: true, DatabaseNetworkCaptureAutomatic: true, DatabaseTrustedLoopbackHTTP: true}); err == nil || calls.Load() != 0 {
+		t.Fatal("automatic identity escaped verified HTTPS")
 	}
 }

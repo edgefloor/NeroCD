@@ -60,6 +60,7 @@ func runRunner(args []string) error {
 	hostingReadiness := fs.Bool("hosting-readiness", false, "enable read-only basic image hosting readiness diagnostics over HTTPS")
 	hostingObservation := fs.Bool("hosting-observation", false, "enable independent read-only hosting status collection over HTTPS")
 	databaseCaptureID := fs.String("database-network-capture-id", "", "perform one exact-ID read-only database origin capture and return")
+	hostingDatabaseCapture := fs.Bool("hosting-database-network-capture", false, "explicitly select queued database origin captures before ordinary database work")
 	hostingDatabaseUpgrade := fs.Bool("hosting-database-network-upgrade", false, "explicitly enable existing-volume empty database network upgrades")
 	hostingDatabase := fs.Bool("hosting-database", false, "explicitly enable private database execution on a qualified native Linux arm64 host")
 	storageArchiveFile := fs.String("storage-archive-config-file", "", "explicit owned mode0600 qualified native helper configuration; storage archive execution is disabled when absent")
@@ -84,6 +85,9 @@ func runRunner(args []string) error {
 	if err = runnerDatabaseUpgradeConfig(*hostingDatabaseUpgrade, databaseConfig); err != nil {
 		return err
 	}
+	if err = runnerDatabaseCaptureConfig(*hostingDatabaseCapture, databaseConfig, *credentialFile, *journalDir, explicitCaptureFlags); err != nil {
+		return err
+	}
 	archiveConfig, err := loadRunnerStorageArchiveConfig(*storageArchiveFile, *execute, *completeStatus)
 	if err != nil {
 		return err
@@ -99,8 +103,10 @@ func runRunner(args []string) error {
 		if err := runnerclient.ValidateRuntimeEnvironmentServer(*server, runnerclient.RuntimeEnvironmentTransport{}); err != nil {
 			return err
 		}
-		if err := runnerruntime.ValidateStorageArchiveExecution(runnerContext, *archiveConfig, *imageDockerEndpoint); err != nil {
-			return err
+		if databaseConfig == nil || !databaseConfig.NetworkCapture {
+			if err := runnerruntime.ValidateStorageArchiveExecution(runnerContext, *archiveConfig, *imageDockerEndpoint); err != nil {
+				return err
+			}
 		}
 	}
 	if databaseConfig != nil {
@@ -108,8 +114,10 @@ func runRunner(args []string) error {
 		if err := runnerclient.ValidateRuntimeEnvironmentServer(*server, runnerclient.RuntimeEnvironmentTransport{}); err != nil {
 			return err
 		}
-		if err := runnerruntime.ValidateDatabaseExecution(runnerContext, *databaseConfig, *imageDockerEndpoint); err != nil {
-			return err
+		if !databaseConfig.NetworkCapture {
+			if err := runnerruntime.ValidateDatabaseExecution(runnerContext, *databaseConfig, *imageDockerEndpoint); err != nil {
+				return err
+			}
 		}
 	}
 	buildConfig, err := loadRunnerBuildConfig(*buildConfigFile)
@@ -202,6 +210,10 @@ func runRunner(args []string) error {
 		return err
 	}
 	registrationCapabilities, err = runnerStorageArchiveCapabilities(archiveConfig != nil, capabilitiesSpecified || *hostingDatabase || proxyConfig.Enabled() || buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv || *hostingObservation || *hostingRuntimeLogs, registrationCapabilities)
+	if err != nil {
+		return err
+	}
+	registrationCapabilities, err = runnerDatabaseCaptureCapabilities(*hostingDatabaseCapture, *hostingDatabase, registrationCapabilities)
 	if err != nil {
 		return err
 	}
@@ -315,7 +327,7 @@ func runRunner(args []string) error {
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{StorageArchive: archiveConfig != nil, Database: *hostingDatabase, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{StorageArchive: archiveConfig != nil, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}

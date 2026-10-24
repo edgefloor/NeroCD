@@ -82,3 +82,37 @@ func runnerDatabaseUpgradeCapabilities(enabled, database bool, capabilities []st
 	}
 	return capabilities, nil
 }
+
+func runnerDatabaseCaptureConfig(enabled bool, config *runnerruntime.DatabaseExecutionConfig, credential, journal string, explicit map[string]bool) error {
+	if !enabled {
+		if config != nil {
+			config.NetworkCapture = false
+		}
+		return nil
+	}
+	if config == nil || credential == "" || journal == "" {
+		return errors.New("automatic database capture requires database execution, credential and journal")
+	}
+	for _, name := range []string{"credential-file", "journal-dir", "database-state-root", "database-secret-root"} {
+		if !explicit[name] {
+			return errors.New("automatic database capture requires explicit credential, journal and protected roots")
+		}
+	}
+	config.NetworkCapture = true
+	return nil
+}
+
+func runnerDatabaseCaptureCapabilities(enabled, database bool, capabilities []string) ([]string, error) {
+	if !enabled {
+		return capabilities, nil
+	} // Persisted capture capabilities remain usable by exact-ID mode.
+	if !database {
+		return nil, errors.New("automatic database capture requires database execution")
+	}
+	for _, cap := range capabilities {
+		if cap == domain.HostingDatabaseNetworkCaptureCapability {
+			return capabilities, nil
+		}
+	}
+	return append(capabilities, domain.HostingDatabaseNetworkCaptureCapability), nil
+}

@@ -14,6 +14,7 @@ type DatabaseExecutionConfig struct {
 	StateRoot, SecretRoot string
 	TrustedLoopbackHTTP   bool
 	NetworkUpgrade        bool
+	NetworkCapture        bool
 }
 
 // Format redacts protected host paths for every formatting verb.
@@ -27,6 +28,9 @@ func (DatabaseExecutionConfig) MarshalJSON() ([]byte, error) {
 }
 
 func validateDatabaseExecutionConfig(c Config) error {
+	if err := validateAutomaticDatabaseNetworkCaptureConfig(c); err != nil {
+		return err
+	}
 	if c.Database == nil {
 		return nil
 	}

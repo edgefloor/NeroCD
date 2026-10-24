@@ -67,6 +67,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
+	DatabaseNetworkCaptureAutomatic                                                                                              bool
 	DatabaseNetworkCapture, DatabaseUpgrade                                                                                      bool
 	StorageArchive, StorageArchiveTrustedLoopbackHTTP                                                                            bool
 	Database, Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, Readiness, ProxyVerifiedSwitch bool
@@ -75,10 +76,15 @@ type RuntimeExecutionOptions struct {
 
 // RuntimeExecutionIdentityWithOptions checks every protected execution capability.
 func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options RuntimeExecutionOptions) (string, error) {
+	if options.DatabaseNetworkCaptureAutomatic {
+		if ValidateRuntimeEnvironmentServer(c.Server, RuntimeEnvironmentTransport{}) != nil {
+			return "", errors.New("automatic database capture requires verified HTTPS")
+		}
+	}
 	if options.StorageArchive {
 		ctx = WithStorageArchiveTransport(ctx, StorageArchiveTransport{TrustedLoopbackHTTP: options.StorageArchiveTrustedLoopbackHTTP})
 	}
-	if options.Database || options.DatabaseNetworkCapture {
+	if options.Database || options.DatabaseNetworkCapture || options.DatabaseNetworkCaptureAutomatic {
 		ctx = WithDatabaseTransport(ctx, DatabaseTransport{TrustedLoopbackHTTP: options.DatabaseTrustedLoopbackHTTP})
 	}
 	if options.Readiness {
@@ -164,7 +170,7 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	for _, capability := range result.Capabilities {
 		captureCapable = captureCapable || capability == domain.HostingDatabaseNetworkCaptureCapability
 	}
-	if options.DatabaseNetworkCapture && (!captureCapable || options.Database || proxyConfigured || buildConfigured || localBuildConfigured || private || options.StorageArchive || options.RuntimeEnvironment || options.Observation || options.RuntimeLogs || options.Readiness || options.ProxyVerifiedSwitch) || captureCapable && shellCapable {
+	if options.DatabaseNetworkCapture && (!captureCapable || options.Database || proxyConfigured || buildConfigured || localBuildConfigured || private || options.StorageArchive || options.RuntimeEnvironment || options.Observation || options.RuntimeLogs || options.Readiness || options.ProxyVerifiedSwitch) || captureCapable && shellCapable || options.DatabaseNetworkCaptureAutomatic && (!captureCapable || !options.Database || options.DatabaseNetworkCapture) {
 		return "", errors.New("authenticated capture capability does not match explicit exact-ID configuration")
 	}
 	upgradeCapable := false

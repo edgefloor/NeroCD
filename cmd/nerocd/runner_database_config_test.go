@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/runnerruntime"
 )
 
 func TestRunnerDatabaseConfigRequiresExplicitExecution(t *testing.T) {
@@ -100,5 +101,45 @@ func TestRunnerDatabaseBootstrapRejectsVerifiedTLSToHTTPRedirect(t *testing.T) {
 				t.Fatal("bootstrap error leaked protected values")
 			}
 		})
+	}
+}
+
+func TestRunnerDatabaseAutomaticCaptureExplicitConfiguration(t *testing.T) {
+	config := &runnerruntime.DatabaseExecutionConfig{StateRoot: "/protected/state", SecretRoot: "/protected/secret"}
+	explicit := map[string]bool{"credential-file": true, "journal-dir": true, "database-state-root": true, "database-secret-root": true}
+	if runnerDatabaseCaptureConfig(true, nil, "/protected/credential", "/protected/journal", explicit) == nil {
+		t.Fatal("automatic capture without database accepted")
+	}
+	for _, missing := range []string{"credential-file", "journal-dir", "database-state-root", "database-secret-root"} {
+		flags := map[string]bool{}
+		for k, v := range explicit {
+			flags[k] = v
+		}
+		delete(flags, missing)
+		if runnerDatabaseCaptureConfig(true, config, "/protected/credential", "/protected/journal", flags) == nil {
+			t.Fatal("automatic capture inferred explicit configuration", missing)
+		}
+	}
+	if runnerDatabaseCaptureConfig(false, config, "", "", nil) != nil || config.NetworkCapture {
+		t.Fatal("automatic capture enabled by default")
+	}
+	if err := runnerDatabaseCaptureConfig(true, config, "/protected/credential", "/protected/journal", explicit); err != nil || !config.NetworkCapture {
+		t.Fatal("explicit automatic capture rejected", err)
+	}
+	base := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+	got, err := runnerDatabaseCaptureCapabilities(true, true, base)
+	if err != nil || !slices.Contains(got, domain.HostingDatabaseNetworkCaptureCapability) {
+		t.Fatal("automatic capture capability missing", err)
+	}
+	if got, err = runnerDatabaseCaptureCapabilities(false, true, got); err != nil || !slices.Contains(got, domain.HostingDatabaseNetworkCaptureCapability) {
+		t.Fatal("disabled automatic mode rejected persisted exact-ID capability")
+	}
+	if _, err = runnerDatabaseCaptureCapabilities(true, false, base); err == nil {
+		t.Fatal("capture capability without database execution accepted")
+	}
+	flags := captureExplicitFlags()
+	flags["hosting-database-network-capture"] = true
+	if validateRunnerDatabaseCaptureFlags("hnc_"+strings.Repeat("a", 32), true, "", flags) == nil {
+		t.Fatal("exact-ID and automatic CLI modes combined")
 	}
 }
