@@ -369,6 +369,9 @@ func (p HostingStorageArchivePlan) Validate() error {
 	}
 	if p.Target != nil {
 		t := p.Target
+		if t.Storage.BindingID == p.SourceStorage.BindingID || t.Storage.ID == p.SourceStorage.ID || t.Storage.VolumeName == p.SourceStorage.VolumeName {
+			return ErrInvalidStorageArchive
+		}
 		if t.Storage.Validate() != nil || t.Resource.ID == s.ResourceID || t.Resource.ProjectID != p.ProjectID || t.Resource.Kind != "application" || t.Resource.Source.Kind != "image" || t.Resource.Source.Image.Reference != h.Release.CanonicalImage || t.Storage.ResourceID != t.Resource.ID || t.Storage.ProjectID != p.ProjectID || t.Storage.DestinationID != p.DestinationID || t.Storage.MountPath != p.SourceStorage.MountPath || t.Plan.Reference != (HostingStorageRef{StorageID: t.Storage.ID, Generation: t.Storage.Generation, Hash: t.Storage.Hash}) || t.Plan.VolumeName != t.Storage.VolumeName || t.Plan.MountPath != t.Storage.MountPath || t.Plan.CreationOperationID == "" || t.Plan.DaemonID != p.Helper.DaemonID || t.Plan.CreationNonce != HostingStorageCreationNonce(t.Plan.Reference, t.Plan.CreationOperationID, t.Plan.DaemonID) {
 			return ErrInvalidStorageArchive
 		}

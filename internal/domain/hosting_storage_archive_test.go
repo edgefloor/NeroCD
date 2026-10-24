@@ -160,6 +160,21 @@ func TestStorageArchiveRestoreNeverAuthorizesSourceWriter(t *testing.T) {
 	if p.Validate() != nil {
 		t.Fatal("isolated restore target refused")
 	}
+	t.Run("source_binding_cannot_be_restore_target", func(t *testing.T) {
+		bad := p
+		target := *p.Target
+		bad.Target = &target
+		target.Storage = p.SourceStorage
+		target.Storage.ResourceID = target.Resource.ID
+		target.Storage.Hash = target.Storage.DocumentHash()
+		target.Plan = HostingStoragePlan{Reference: target.Storage.Reference(), VolumeName: target.Storage.VolumeName, MountPath: target.Storage.MountPath, CreationOperationID: p.OperationID, DaemonID: p.Helper.DaemonID}
+		target.Plan.CreationNonce = HostingStorageCreationNonce(target.Plan.Reference, target.Plan.CreationOperationID, target.Plan.DaemonID)
+		bad.Hash = ""
+		bad.Hash = HostingDocumentHash(bad)
+		if bad.Validate() == nil {
+			t.Fatal("restore accepted source binding and volume as new target")
+		}
+	})
 	p.Mode = "recover"
 	p.RecoveryOfOperationID = "original_restore"
 	p.Hash = ""
