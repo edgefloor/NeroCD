@@ -15,9 +15,12 @@ type DatabaseExecutionConfig struct {
 	TrustedLoopbackHTTP   bool
 }
 
+// Format redacts protected host paths for every formatting verb.
 func (DatabaseExecutionConfig) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "[database execution configuration]")
 }
+
+// MarshalJSON refuses serialization to keep protected host paths out of output.
 func (DatabaseExecutionConfig) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("database execution configuration is not exportable")
 }

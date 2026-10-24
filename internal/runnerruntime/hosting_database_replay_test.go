@@ -31,7 +31,11 @@ func TestDatabaseReplayLostCompletionACKHasNoEngineWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	t.Cleanup(func() {
+		if err := j.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	c.journal = j
 	c.lostComplete = false
 	beforeCreates, beforeCredentials := f.creates, c.credentials
