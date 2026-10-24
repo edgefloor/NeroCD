@@ -204,7 +204,7 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	}
 	hostingStorageArchivePolicy, err := loadHostingStorageArchivePolicy()
 	if err != nil {
-		return runtimeConfig{}, err
+		return runtimeConfig{}, fmt.Errorf("load hosting storage archive policy: %w", err)
 	}
 	if hostingStorageArchivePolicy != nil && databaseURL == "" {
 		return runtimeConfig{}, errors.New("hosting storage archive controller requires PostgreSQL")
