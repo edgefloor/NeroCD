@@ -67,6 +67,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
+	ApplicationDatabase, DatabaseMaintenance                                                                                     bool
 	DatabaseNetworkCaptureAutomatic                                                                                              bool
 	DatabaseNetworkCapture, DatabaseUpgrade                                                                                      bool
 	StorageArchive, StorageArchiveTrustedLoopbackHTTP                                                                            bool
@@ -194,6 +195,14 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		}
 	} else if upgradeCapable != options.DatabaseUpgrade || options.DatabaseUpgrade && !options.Database {
 		return "", errors.New("authenticated database upgrade capability does not match explicit configuration")
+	}
+	applicationCap, maintenanceCap := false, false
+	for _, capability := range result.Capabilities {
+		applicationCap = applicationCap || capability == domain.HostingApplicationDatabaseCapability
+		maintenanceCap = maintenanceCap || capability == domain.HostingDatabaseMaintenanceCapability
+	}
+	if applicationCap != options.ApplicationDatabase || maintenanceCap != options.DatabaseMaintenance || (applicationCap || maintenanceCap) && (!options.Database || !options.DatabaseNetworkCaptureAutomatic || !options.DatabaseUpgrade || !options.RuntimeEnvironment || !imageCap || !releaseCap || !databaseCapable || !storageCapable || !captureCapable || !upgradeCapable || shellCapable || options.DatabaseNetworkCapture) {
+		return "", errors.New("authenticated connected database capabilities do not match explicit configuration")
 	}
 	archiveCapability, archiveTask := false, false
 	for _, capability := range result.Capabilities {

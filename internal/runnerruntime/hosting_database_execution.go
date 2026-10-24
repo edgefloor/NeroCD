@@ -35,7 +35,7 @@ func validateDatabasePlatformConfig(c DatabaseExecutionConfig) error {
 }
 
 func databaseOperationScope(op domain.HostingOperation, a domain.HostingAuthority, runnerID, mode string, ref domain.HostingDatabaseExecutionRef) bool {
-	if domain.ValidateHostingDatabaseUpgradeOperation(op) != nil || (mode != "deploy" && mode != "observe") || op.TaskMode != mode || op.ID != a.OperationID || op.Snapshot.RunnerID != runnerID || op.ResourceID != op.Snapshot.ResourceID || op.BindingID != op.Snapshot.BindingID || op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) || op.Snapshot.Database != ref || domain.ValidateHostingDatabaseSnapshot(op.Snapshot) != nil || op.CleanupPlan != nil {
+	if !databaseOperationSidecarValid(op) || (mode != "deploy" && mode != "observe") || op.TaskMode != mode || op.ID != a.OperationID || op.Snapshot.RunnerID != runnerID || op.ResourceID != op.Snapshot.ResourceID || op.BindingID != op.Snapshot.BindingID || op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) || op.Snapshot.Database != ref || domain.ValidateHostingDatabaseSnapshot(op.Snapshot) != nil || op.CleanupPlan != nil {
 		return false
 	}
 	if mode == "deploy" && op.RunID != a.RunID || mode == "observe" && op.ReconciliationRunID != a.RunID {
@@ -48,6 +48,7 @@ func databaseOperationPlan(op domain.HostingOperation) bool {
 }
 func databaseEntry(entry *runner.JournalHosting, op domain.HostingOperation) {
 	entry.DatabaseUpgrade = op.DatabaseUpgrade
+	entry.DatabaseMaintenance = op.DatabaseMaintenance
 	entry.Database = true
 	entry.DatabaseRef = op.Snapshot.Database
 	entry.StorageRef = op.Snapshot.Storage
@@ -82,7 +83,7 @@ func databaseCurrentAuthority(s *attemptSupervisor, c runnerclient.Client, a dom
 			// idempotent throughout apply and never refreshes credentials.
 			current, err = c.HostingStatus(ctx, domain.HostingStatusRequest{HostingAuthority: a, Phase: "verifying"})
 		}
-		if err != nil || !databaseOperationScope(current, a, op.Snapshot.RunnerID, "deploy", op.Snapshot.Database) || current.RestoreOwnershipHeld || current.Result != nil || current.Snapshot != op.Snapshot || !databaseUpgradeProofMatches(current.DatabaseUpgrade, op.DatabaseUpgrade) || !slices.Contains(states, current.State) {
+		if err != nil || !databaseOperationScope(current, a, op.Snapshot.RunnerID, "deploy", op.Snapshot.Database) || current.RestoreOwnershipHeld || current.Result != nil || current.Snapshot != op.Snapshot || !databaseOperationProofMatches(current, op) || !slices.Contains(states, current.State) {
 			return errors.New("database current mutation authority unavailable")
 		}
 		if op.Plan != nil && (!databaseOperationPlan(current) || domain.HostingDocumentHash(current.Plan) != domain.HostingDocumentHash(op.Plan)) {
@@ -117,7 +118,7 @@ func executeDatabaseClaim(s *attemptSupervisor, journal *runner.AttemptJournal, 
 	if err = retryAttemptRequest(s, func(ctx context.Context) error { var e error; op, e = c.HostingPlan(ctx, a); return e }); err != nil {
 		return err
 	}
-	if op.DatabaseUpgrade != nil && !config.NetworkUpgrade {
+	if op.DatabaseUpgrade != nil && !config.NetworkUpgrade || op.DatabaseMaintenance != nil && !config.MembershipMaintenance {
 		return errors.New("database network upgrade requires explicit execution configuration")
 	}
 	mode := claim.Run.RunSpec.HostingMode
@@ -125,7 +126,7 @@ func executeDatabaseClaim(s *attemptSupervisor, journal *runner.AttemptJournal, 
 		return errors.New("database task target changed")
 	}
 	if mode == "observe" {
-		return executeDatabaseObservation(s, c, engine, a, op, *config, engineConfig)
+		return executeDatabaseObservation(s, c, engine, a, op, *config, engineConfig, drain)
 	}
 	return executeDatabaseDeployment(s, journal, drain, c, engine, a, claim.Lease, op, *config, engineConfig)
 }
@@ -144,7 +145,7 @@ func validateDatabaseDaemon(ctx context.Context, e *imageEngine, c DatabaseEngin
 }
 
 func executeDatabaseDeployment(s *attemptSupervisor, j *runner.AttemptJournal, drain func(context.Context) error, c runnerclient.Client, e databaseExecutionEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation, config DatabaseExecutionConfig, ec DatabaseEngineConfig) error {
-	if op.DatabaseUpgrade != nil && !config.NetworkUpgrade {
+	if op.DatabaseUpgrade != nil && !config.NetworkUpgrade || op.DatabaseMaintenance != nil && !config.MembershipMaintenance {
 		return errors.New("database network upgrade execution disabled")
 	}
 	if a != hostingAuthority(lease.RunID, op.ID, lease) || !databaseOperationScope(op, a, lease.RunnerID, "deploy", op.Snapshot.Database) || (op.Release == nil) != (op.Plan == nil) || op.State != "preparing" && op.State != "prepared" || op.Result != nil || op.RestoreOwnershipHeld {
@@ -175,11 +176,11 @@ func executeDatabaseDeployment(s *attemptSupervisor, j *runner.AttemptJournal, d
 			return err
 		}
 		before := op.Snapshot
-		upgrade := op.DatabaseUpgrade
+		proof := op
 		if err = retryAttemptRequest(s, func(ctx context.Context) error { var err error; op, err = c.HostingPrepared(ctx, req); return err }); err != nil {
 			return err
 		}
-		if !databaseUpgradeProofMatches(upgrade, op.DatabaseUpgrade) || op.Snapshot != before || !databaseOperationScope(op, a, lease.RunnerID, "deploy", before.Database) || !databaseOperationPlan(op) || *op.Release != release || op.PreparedReceipt == nil || op.PreparedReceipt.ID != req.ReceiptID || op.PreparedReceipt.BodyHash != domain.HostingDocumentHash(release) {
+		if !databaseOperationProofMatches(proof, op) || op.Snapshot != before || !databaseOperationScope(op, a, lease.RunnerID, "deploy", before.Database) || !databaseOperationPlan(op) || *op.Release != release || op.PreparedReceipt == nil || op.PreparedReceipt.ID != req.ReceiptID || op.PreparedReceipt.BodyHash != domain.HostingDocumentHash(release) {
 			return errors.New("database preparation acknowledgement changed")
 		}
 		// Retain preparation evidence until exact terminal settlement.
@@ -260,8 +261,8 @@ func convertValidatedDatabaseCredentials(protected *hostingdatabaseprotocol.Cred
 	return out, nil
 }
 
-func executeDatabasePrepared(supervisor *attemptSupervisor, journal *runner.AttemptJournal, drain func(context.Context) error, client runnerclient.Client, engine databaseExecutionEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation, config DatabaseExecutionConfig, ec DatabaseEngineConfig) error {
-	if op.DatabaseUpgrade != nil && (!config.NetworkUpgrade || !databaseUpgradeEngineAvailable(engine)) {
+func executeDatabasePrepared(supervisor *attemptSupervisor, journal *runner.AttemptJournal, drain func(context.Context) error, client runnerclient.Client, engine databaseExecutionEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation, config DatabaseExecutionConfig, ec DatabaseEngineConfig, drains ...func(context.Context) error) error {
+	if op.DatabaseUpgrade != nil && (!config.NetworkUpgrade || !databaseUpgradeEngineAvailable(engine)) || !databaseMaintenanceEngineConfigured(op, config, engine) {
 		return errors.New("database upgrade engine or explicit configuration unavailable")
 	}
 	if !databaseOperationPlan(op) || !databaseOperationScope(op, a, lease.RunnerID, "deploy", op.Snapshot.Database) || op.State != "prepared" || op.Result != nil || op.RestoreOwnershipHeld || supervisor.Context().Err() != nil {
@@ -269,7 +270,7 @@ func executeDatabasePrepared(supervisor *attemptSupervisor, journal *runner.Atte
 	}
 	// Every phase binds the same full sidecar, including plan-free receipts.
 	for _, pending := range journal.Snapshot().Hosting {
-		if storageEntryAuthority(pending) == a && (!pending.Database || pending.DatabaseRef != op.Snapshot.Database || pending.StorageRef != op.Snapshot.Storage || !databaseUpgradeProofMatches(pending.DatabaseUpgrade, op.DatabaseUpgrade)) {
+		if storageEntryAuthority(pending) == a && (!pending.Database || pending.DatabaseRef != op.Snapshot.Database || pending.StorageRef != op.Snapshot.Storage || !databaseJournalProofMatches(pending, op)) {
 			return errors.New("database retained operation proof changed")
 		}
 	}
@@ -370,7 +371,7 @@ func executeDatabasePrepared(supervisor *attemptSupervisor, journal *runner.Atte
 	}); err != nil {
 		return err
 	}
-	if !databaseUpgradeProofMatches(admitted.DatabaseUpgrade, op.DatabaseUpgrade) || !databaseOperationScope(admitted, a, lease.RunnerID, "deploy", op.Snapshot.Database) || !databaseOperationPlan(admitted) || domain.HostingDocumentHash(admitted.Plan) != domain.HostingDocumentHash(plan) || admitted.State != "applying" || !admitted.MutationHold || admitted.RestoreOwnershipHeld || admitted.Result != nil {
+	if !databaseOperationProofMatches(admitted, op) || !databaseOperationScope(admitted, a, lease.RunnerID, "deploy", op.Snapshot.Database) || !databaseOperationPlan(admitted) || domain.HostingDocumentHash(admitted.Plan) != domain.HostingDocumentHash(plan) || admitted.State != "applying" || !admitted.MutationHold || admitted.RestoreOwnershipHeld || admitted.Result != nil {
 		return errors.New("database apply admission changed exact plan")
 	}
 	result := applyDatabaseOperation(supervisor.Context(), engine, op, volume, evidence, credentials, ec, databaseCurrentAuthority(supervisor, client, a, op, "applying", "verifying"))
@@ -412,7 +413,7 @@ func journalDatabaseResult(s *attemptSupervisor, j *runner.AttemptJournal, drain
 	if err != nil {
 		return finished, err
 	}
-	if !databaseUpgradeProofMatches(finished.DatabaseUpgrade, op.DatabaseUpgrade) || !databaseOperationScope(finished, a, lease.RunnerID, "deploy", op.Snapshot.Database) || finished.CompleteReceipt == nil || finished.CompleteReceipt.ID != req.ReceiptID || finished.CompleteReceipt.BodyHash != domain.HostingDocumentHash(result) || finished.Result == nil || *finished.Result != result {
+	if !databaseOperationProofMatches(finished, op) || !databaseOperationScope(finished, a, lease.RunnerID, "deploy", op.Snapshot.Database) || finished.CompleteReceipt == nil || finished.CompleteReceipt.ID != req.ReceiptID || finished.CompleteReceipt.BodyHash != domain.HostingDocumentHash(result) || finished.Result == nil || *finished.Result != result {
 		return finished, errors.New("database result acknowledgement changed")
 	}
 	return finished, nil
@@ -427,6 +428,12 @@ func databaseSettled(op domain.HostingOperation, a domain.HostingAuthority, runn
 func retireDatabaseAttempt(ctx context.Context, j *runner.AttemptJournal, a domain.HostingAuthority) error {
 	for _, entry := range j.Snapshot().Hosting {
 		if storageEntryAuthority(entry) == a && runner.HostingJournalUsesDatabase(entry) {
+			if entry.DatabaseMaintenance != nil {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return j.AckHostingConnection(a)
+			}
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -438,8 +445,8 @@ func retireDatabaseAttempt(ctx context.Context, j *runner.AttemptJournal, a doma
 	return nil
 }
 
-func executeDatabaseObservation(s *attemptSupervisor, c runnerclient.Client, e databaseExecutionEngine, a domain.HostingAuthority, op domain.HostingOperation, config DatabaseExecutionConfig, ec DatabaseEngineConfig) error {
-	if op.DatabaseUpgrade != nil && (!config.NetworkUpgrade || !databaseUpgradeEngineAvailable(e)) {
+func executeDatabaseObservation(s *attemptSupervisor, c runnerclient.Client, e databaseExecutionEngine, a domain.HostingAuthority, op domain.HostingOperation, config DatabaseExecutionConfig, ec DatabaseEngineConfig, drains ...func(context.Context) error) error {
+	if op.DatabaseUpgrade != nil && (!config.NetworkUpgrade || !databaseUpgradeEngineAvailable(e)) || !databaseMaintenanceEngineConfigured(op, config, e) {
 		return errors.New("database upgrade observation disabled")
 	}
 	if op.TaskMode != "observe" || !op.ReconcileRequested || !databaseOperationScope(op, a, op.Snapshot.RunnerID, "observe", op.Snapshot.Database) || !databaseOperationPlan(op) || op.Result == nil || op.Result.ContainerID == "" {
@@ -459,6 +466,13 @@ func executeDatabaseObservation(s *attemptSupervisor, c runnerclient.Client, e d
 		return err
 	}
 	observation.HostingAuthority = a
+	if op.DatabaseMaintenance != nil {
+		for _, drain := range drains {
+			if err := drain(s.Context()); err != nil {
+				return err
+			}
+		}
+	}
 	var observed domain.HostingOperation
 	if err = retryAttemptRequest(s, func(ctx context.Context) error {
 		var err error
@@ -467,7 +481,16 @@ func executeDatabaseObservation(s *attemptSupervisor, c runnerclient.Client, e d
 	}); err != nil {
 		return err
 	}
-	if !databaseUpgradeProofMatches(observed.DatabaseUpgrade, op.DatabaseUpgrade) || !databaseOperationScope(observed, a, op.Snapshot.RunnerID, "observe", op.Snapshot.Database) || !databaseOperationPlan(observed) || domain.HostingDocumentHash(observed.Plan) != domain.HostingDocumentHash(op.Plan) || observed.MutationHold || observed.RestoreOwnershipHeld {
+	if !databaseOperationProofMatches(observed, op) || !databaseOperationScope(observed, a, op.Snapshot.RunnerID, "observe", op.Snapshot.Database) || !databaseOperationPlan(observed) || domain.HostingDocumentHash(observed.Plan) != domain.HostingDocumentHash(op.Plan) {
+		return errors.New("database observation target changed")
+	}
+	if op.DatabaseMaintenance != nil {
+		if observed.MutationHold != op.MutationHold || observed.RestoreOwnershipHeld != op.RestoreOwnershipHeld || observed.State != op.State || domain.HostingDocumentHash(observed.Result) != domain.HostingDocumentHash(op.Result) {
+			return errors.New("database maintenance observation changed original settlement")
+		}
+		return nil
+	}
+	if observed.MutationHold || observed.RestoreOwnershipHeld {
 		return errors.New("database observation retains unresolved ownership")
 	}
 	return nil

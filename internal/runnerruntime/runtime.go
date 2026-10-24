@@ -267,6 +267,11 @@ func RunContext(ctx context.Context, config Config) error {
 		return fmt.Errorf("open runner journal: %w", err)
 	}
 	defer func() { _ = journal.Close() }()
+	// A saved connected completion needs no daemon. Capture chains retain their
+	// dedicated first dispatch and mixed-evidence hold before any other replay.
+	if err := reconcileConnectedBeforeCapture(ctx, journal.Snapshot(), func(ctx context.Context) error { return reconcileApplicationDatabaseJournal(ctx, config, journal) }); err != nil {
+		return err
+	}
 	captureDispatcher, err := newAutomaticDatabaseNetworkCaptureDispatcher(config, journal)
 	if err != nil {
 		return err
@@ -274,11 +279,13 @@ func RunContext(ctx context.Context, config Config) error {
 	if captureDispatcher != nil {
 		if err := reconcileAutomaticCaptureStartup(ctx, config, captureDispatcher, func(ctx context.Context) error {
 			return ValidateStorageArchiveExecution(ctx, *config.StorageArchive, config.ImageDockerEndpoint)
-		}); err != nil {
+		}, func(ctx context.Context) error { return reconcileApplicationDatabaseJournal(ctx, config, journal) }); err != nil {
 			return err
 		}
 	} else if len(journal.Snapshot().DatabaseNetworkCapture) != 0 {
 		return errors.New("retained database network capture requires explicit exact-ID capture mode")
+	} else if err := reconcileApplicationDatabaseJournal(ctx, config, journal); err != nil {
+		return err
 	}
 	if err := validateLocalBuildJournalConfiguration(journal, config.LocalBuildDeploy); err != nil {
 		return err
@@ -554,7 +561,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
 	var validators []func(domain.RunLease) error
-	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
 		validate := exactBuildLease(claim.Lease)
 		if err := validate(initialRenew); err != nil {
 			return err
@@ -583,6 +590,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return executeProxyClaim(supervisor, journal, reporter, server, token, claim, options.proxy)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+		if options.database != nil && options.database.ApplicationDatabase {
+			return executeConnectedImageClaim(supervisor, journal, reporter, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment, options.database)
+		}
 		return executeImageClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment)
 	}
 	if claim.PrimitivePlan.Process == nil {
@@ -1033,4 +1043,13 @@ func attemptMutationKey(kind, leaseID string, attempt int, discriminator string)
 // fatal. Once mode keeps its command failure and cancellation always stops.
 func settledBuildMayContinue(ctx context.Context, once bool, err error) bool {
 	return !once && ctx.Err() == nil && errors.Is(err, errSettledBuildFailure)
+}
+
+// Capture evidence must pass its dedicated mixed-chain validator before another
+// family can replay. An empty capture slice does not suppress other validation.
+func reconcileConnectedBeforeCapture(ctx context.Context, snapshot runner.JournalSnapshot, replay func(context.Context) error) error {
+	if len(snapshot.DatabaseNetworkCapture) != 0 {
+		return nil
+	}
+	return replay(ctx)
 }

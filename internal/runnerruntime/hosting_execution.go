@@ -16,7 +16,7 @@ func hostingAuthority(runID, operationID string, lease domain.RunLease) domain.H
 	return domain.HostingAuthority{OperationID: operationID, RunID: runID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
 }
 func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAuthority, runnerID, mode string) error {
-	if op.StorageArchive != nil || runner.HostingJournalUsesDatabase(runner.JournalHosting{Plan: op.Plan, CleanupPlan: op.CleanupPlan}) || op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) || op.ID != a.OperationID || op.Snapshot.RunnerID != runnerID || op.Snapshot.BindingID != op.BindingID || op.TaskMode != mode {
+	if op.ApplicationDatabase != nil || op.DatabaseMaintenance != nil || op.Snapshot.ApplicationDatabase != (domain.HostingApplicationDatabaseRef{}) || op.StorageArchive != nil || runner.HostingJournalUsesDatabase(runner.JournalHosting{Plan: op.Plan, CleanupPlan: op.CleanupPlan}) || op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) || op.ID != a.OperationID || op.Snapshot.RunnerID != runnerID || op.Snapshot.BindingID != op.BindingID || op.TaskMode != mode {
 		return errors.New("hosting response does not match the exact task target")
 	}
 	if (mode == "deploy" || mode == "cleanup") && op.RunID != a.RunID {

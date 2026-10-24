@@ -31,6 +31,9 @@ func databaseUpgradeProofMatches(a, b *domain.HostingDatabaseUpgradeProof) bool 
 }
 
 func databasePlanValid(op domain.HostingOperation) bool {
+	if op.DatabaseMaintenance != nil {
+		return domain.ValidateHostingDatabaseMaintenanceOperation(op) == nil
+	}
 	if op.DatabaseUpgrade != nil {
 		return domain.ValidateHostingDatabaseUpgradeOperation(op) == nil
 	}
@@ -51,6 +54,12 @@ func databaseOperationUpgradeInput(op domain.HostingOperation) (databaseNetworkU
 
 func prepareDatabaseOperation(s *attemptSupervisor, c runnerclient.Client, e databaseExecutionEngine, a domain.HostingAuthority, op domain.HostingOperation, ec DatabaseEngineConfig) (domain.HostingRelease, error) {
 	before := databaseCurrentAuthority(s, c, a, op, "preparing")
+	if op.DatabaseMaintenance != nil {
+		if _, ok := e.(databaseMaintenanceExecutionEngine); !ok || domain.ValidateHostingDatabaseMaintenanceOperation(op) != nil || before(s.Context()) != nil {
+			return domain.HostingRelease{}, domain.ErrInvalidHostingDatabaseMaintenance
+		}
+		return op.DatabaseMaintenance.PreviousPlan.Release, nil
+	}
 	if op.DatabaseUpgrade == nil {
 		return e.PrepareDatabase(s.Context(), op.Snapshot, ec, before)
 	}
@@ -67,6 +76,10 @@ func prepareDatabaseOperation(s *attemptSupervisor, c runnerclient.Client, e dat
 // original creation receipt. Contradictory create permission is an error even
 // when a later engine check would refuse to exercise it.
 func databaseUpgradeVolumeMatches(op domain.HostingOperation, ack domain.HostingStorageCreateAck) bool {
+	if op.DatabaseMaintenance != nil {
+		proof := op.DatabaseMaintenance
+		return !ack.CreatePermitted && ack.Materialization.State == "materialized" && domain.HostingDocumentHash(ack.Storage) == domain.HostingDocumentHash(proof.CapturePlan.Storage) && domain.HostingDocumentHash(ack.Materialization) == domain.HostingDocumentHash(proof.CapturePlan.Materialization)
+	}
 	if op.DatabaseUpgrade == nil {
 		return true
 	}
@@ -75,6 +88,9 @@ func databaseUpgradeVolumeMatches(op domain.HostingOperation, ack domain.Hosting
 }
 
 func applyDatabaseOperation(ctx context.Context, e databaseExecutionEngine, op domain.HostingOperation, volume hostingOwnedVolumeRequest, evidence hostingOwnedVolumeEvidence, credentials *DatabaseCredentials, ec DatabaseEngineConfig, before func(context.Context) error) domain.HostingResult {
+	if op.DatabaseMaintenance != nil {
+		return applyDatabaseMaintenance(ctx, e, op, volume, evidence, credentials, ec, before)
+	}
 	if op.DatabaseUpgrade == nil {
 		return e.ApplyDatabase(ctx, op.ID, *op.Plan, volume, evidence, credentials, ec, before)
 	}
@@ -87,6 +103,9 @@ func applyDatabaseOperation(ctx context.Context, e databaseExecutionEngine, op d
 }
 
 func observeDatabaseOperation(ctx context.Context, e databaseExecutionEngine, op domain.HostingOperation, credentials *DatabaseCredentials, ec DatabaseEngineConfig) (domain.HostingObservation, error) {
+	if op.DatabaseMaintenance != nil {
+		return observeDatabaseMaintenance(ctx, e, op, credentials, ec)
+	}
 	if op.DatabaseUpgrade == nil {
 		return e.ObserveDatabase(ctx, op, credentials, ec)
 	}
@@ -99,6 +118,9 @@ func observeDatabaseOperation(ctx context.Context, e databaseExecutionEngine, op
 }
 
 func fetchDatabaseOperationCredentials(s *attemptSupervisor, c runnerclient.Client, runnerID string, request domain.HostingDatabaseCredentialRequest, op domain.HostingOperation, config DatabaseExecutionConfig, deadline time.Time) (*DatabaseCredentials, error) {
+	if op.DatabaseMaintenance != nil {
+		return fetchDatabaseMaintenanceCredentials(s, c, runnerID, request, op, config, deadline)
+	}
 	if op.DatabaseUpgrade == nil {
 		return fetchDatabaseCredentials(s, c, runnerID, request, *op.Plan, config, deadline)
 	}

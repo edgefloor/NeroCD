@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,48 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingdatabaseprotocol"
 )
+
+func TestConnectedDatabaseIdentityRequiresExactOptInAndAutomaticCapture(t *testing.T) {
+	base := []string{domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.HostingRuntimeEnvironmentCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingDatabaseNetworkCaptureCapability, domain.HostingDatabaseUpgradeCapability}
+	full := append(slices.Clone(base), domain.HostingApplicationDatabaseCapability, domain.HostingDatabaseMaintenanceCapability)
+	options := RuntimeExecutionOptions{Database: true, DatabaseUpgrade: true, DatabaseNetworkCaptureAutomatic: true, RuntimeEnvironment: true, ApplicationDatabase: true, DatabaseMaintenance: true}
+	for _, mode := range []string{"complete", "ordinary", "missing_auto", "missing_upgrade", "missing_runtime", "missing_application", "shell", "old_profile"} {
+		t.Run(mode, func(t *testing.T) {
+			caps := slices.Clone(full)
+			o := options
+			switch mode {
+			case "ordinary":
+				o.ApplicationDatabase, o.DatabaseMaintenance = false, false
+			case "missing_auto":
+				o.DatabaseNetworkCaptureAutomatic = false
+			case "missing_upgrade":
+				o.DatabaseUpgrade = false
+			case "missing_runtime":
+				o.RuntimeEnvironment = false
+			case "missing_application":
+				caps = slices.DeleteFunc(caps, func(c string) bool { return c == domain.HostingApplicationDatabaseCapability })
+			case "shell":
+				caps = append(caps, "shell")
+			case "old_profile":
+				caps = base
+				o.ApplicationDatabase, o.DatabaseMaintenance = false, false
+				o.DatabaseNetworkCaptureAutomatic = false
+			}
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if err := json.NewEncoder(w).Encode(proxyIdentityResponse{RunnerID: "runner", Capabilities: caps}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			c := New(server.URL, "fixture")
+			c.HTTP = server.Client()
+			_, err := c.RuntimeExecutionIdentityWithOptions(t.Context(), o)
+			if (err == nil) != (mode == "complete" || mode == "old_profile") {
+				t.Fatal("identity/config mismatch", err)
+			}
+		})
+	}
+}
 
 func connectionClientOperation(t *testing.T, engine string, replacement bool) domain.HostingOperation {
 	t.Helper()

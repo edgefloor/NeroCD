@@ -15,6 +15,8 @@ type DatabaseExecutionConfig struct {
 	TrustedLoopbackHTTP   bool
 	NetworkUpgrade        bool
 	NetworkCapture        bool
+	ApplicationDatabase   bool
+	MembershipMaintenance bool
 }
 
 // Format redacts protected host paths for every formatting verb.
@@ -33,6 +35,11 @@ func validateDatabaseExecutionConfig(c Config) error {
 	}
 	if c.Database == nil {
 		return nil
+	}
+	if c.Database.ApplicationDatabase || c.Database.MembershipMaintenance {
+		if !c.Database.NetworkCapture || !c.Database.NetworkUpgrade || c.RuntimeEnvironment == nil || c.DatabaseNetworkCapture != nil || c.JournalDir == "" || c.Token == "" || c.Database.TrustedLoopbackHTTP || c.RuntimeEnvironment.TrustedLoopbackHTTP {
+			return errors.New("connected database execution requires protected runtime delivery, automatic capture, upgrade and explicit journal configuration")
+		}
 	}
 	if !c.Execute || c.CompleteStatus != "" {
 		return errors.New("database execution requires execution and forbids generic completion")

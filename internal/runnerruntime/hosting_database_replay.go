@@ -60,7 +60,7 @@ func reconcileDatabaseJournalWithEngine(parent context.Context, config Config, j
 	return nil
 }
 func reconcileDatabaseAttempt(parent context.Context, config Config, c runnerclient.Client, j *runner.AttemptJournal, first runner.JournalHosting, open func() (databaseExecutionEngine, DatabaseEngineConfig, error)) error {
-	if first.DatabaseUpgrade != nil && !config.Database.NetworkUpgrade {
+	if first.DatabaseUpgrade != nil && !config.Database.NetworkUpgrade || first.DatabaseMaintenance != nil && !config.Database.MembershipMaintenance {
 		return errors.New("database upgrade journal requires explicit upgrade configuration")
 	}
 	a := storageEntryAuthority(first)
@@ -70,7 +70,7 @@ func reconcileDatabaseAttempt(parent context.Context, config Config, c runnercli
 		if storageEntryAuthority(entry) != a {
 			continue
 		}
-		if !entry.Database || entry.DatabaseRef != ref || entry.StorageRef != first.StorageRef || !databaseUpgradeProofMatches(entry.DatabaseUpgrade, first.DatabaseUpgrade) {
+		if !entry.Database || entry.DatabaseRef != ref || entry.StorageRef != first.StorageRef || !databaseUpgradeProofMatches(entry.DatabaseUpgrade, first.DatabaseUpgrade) || !databaseMaintenanceProofMatches(entry.DatabaseMaintenance, first.DatabaseMaintenance) {
 			return errors.New("database recovery journal family changed")
 		}
 		if entry.Result == nil && entry.Prepared == nil && entry.StorageMaterialized == nil {
@@ -92,12 +92,12 @@ func reconcileDatabaseAttempt(parent context.Context, config Config, c runnercli
 				cancel()
 				continue
 			}
-			if err == nil && (!databaseUpgradeProofMatches(op.DatabaseUpgrade, entry.DatabaseUpgrade) || !databaseOperationScope(op, a, config.RunnerID, "deploy", ref) || op.Result == nil || *op.Result != entry.Result.Result || op.CompleteReceipt == nil || op.CompleteReceipt.ID != entry.Result.ReceiptID || op.CompleteReceipt.BodyHash != domain.HostingDocumentHash(entry.Result.Result)) {
+			if err == nil && (!databaseJournalProofMatches(entry, op) || !databaseOperationScope(op, a, config.RunnerID, "deploy", ref) || op.Result == nil || *op.Result != entry.Result.Result || op.CompleteReceipt == nil || op.CompleteReceipt.ID != entry.Result.ReceiptID || op.CompleteReceipt.BodyHash != domain.HostingDocumentHash(entry.Result.Result)) {
 				err = errors.New("database completion replay changed exact receipt")
 			}
 		case entry.Prepared != nil:
 			op, err = c.HostingPrepared(ctx, *entry.Prepared)
-			if err == nil && (!databaseUpgradeProofMatches(op.DatabaseUpgrade, entry.DatabaseUpgrade) || !databaseOperationScope(op, a, config.RunnerID, "deploy", ref) || !databaseOperationPlan(op) || *op.Release != entry.Prepared.Release || op.PreparedReceipt == nil || op.PreparedReceipt.ID != entry.Prepared.ReceiptID || op.PreparedReceipt.BodyHash != domain.HostingDocumentHash(entry.Prepared.Release)) {
+			if err == nil && (!databaseJournalProofMatches(entry, op) || !databaseOperationScope(op, a, config.RunnerID, "deploy", ref) || !databaseOperationPlan(op) || *op.Release != entry.Prepared.Release || op.PreparedReceipt == nil || op.PreparedReceipt.ID != entry.Prepared.ReceiptID || op.PreparedReceipt.BodyHash != domain.HostingDocumentHash(entry.Prepared.Release)) {
 				err = errors.New("database preparation replay changed exact receipt")
 			}
 		case entry.StorageMaterialized != nil:
@@ -114,7 +114,7 @@ func reconcileDatabaseAttempt(parent context.Context, config Config, c runnercli
 	if err != nil {
 		return err
 	}
-	if !databaseUpgradeProofMatches(op.DatabaseUpgrade, first.DatabaseUpgrade) || !databaseOperationScope(op, a, config.RunnerID, "deploy", ref) || op.Snapshot.Storage != first.StorageRef {
+	if !databaseJournalProofMatches(first, op) || !databaseOperationScope(op, a, config.RunnerID, "deploy", ref) || op.Snapshot.Storage != first.StorageRef {
 		return errors.New("database recovery target changed")
 	}
 	for _, entry := range j.Snapshot().Hosting {
@@ -208,7 +208,7 @@ func observeDatabaseRecovery(parent context.Context, config Config, c runnerclie
 	if err = retryAttemptRequest(s, func(ctx context.Context) error { var err error; plan, err = c.HostingPlan(ctx, observeA); return err }); err != nil {
 		return err
 	}
-	if !databaseUpgradeProofMatches(plan.DatabaseUpgrade, op.DatabaseUpgrade) || !databaseOperationScope(plan, observeA, config.RunnerID, "observe", op.Snapshot.Database) || !databaseOperationPlan(plan) || domain.HostingDocumentHash(plan.Plan) != domain.HostingDocumentHash(op.Plan) || plan.Result == nil || *plan.Result != *op.Result {
+	if !databaseOperationProofMatches(plan, op) || !databaseOperationScope(plan, observeA, config.RunnerID, "observe", op.Snapshot.Database) || !databaseOperationPlan(plan) || domain.HostingDocumentHash(plan.Plan) != domain.HostingDocumentHash(op.Plan) || plan.Result == nil || *plan.Result != *op.Result {
 		return errors.New("database observation plan or durable candidate changed")
 	}
 	e, ec, err := open()
@@ -216,5 +216,5 @@ func observeDatabaseRecovery(parent context.Context, config Config, c runnerclie
 		return err
 	}
 	defer func() { _ = e.Close() }()
-	return executeDatabaseObservation(s, c, e, observeA, plan, *config.Database, ec)
+	return executeDatabaseObservation(s, c, e, observeA, plan, *config.Database, ec, func(ctx context.Context) error { watcher.Stop(); renewer.Stop(); return ctx.Err() })
 }

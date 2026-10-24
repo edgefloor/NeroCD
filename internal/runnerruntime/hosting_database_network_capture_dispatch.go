@@ -57,9 +57,14 @@ func claimRunnerIteration(ctx context.Context, capture automaticDatabaseNetworkC
 
 // Capture publication precedes every Docker preflight. Other families keep their
 // established host prerequisites before their recovery or background work.
-func reconcileAutomaticCaptureStartup(ctx context.Context, c Config, capture automaticDatabaseNetworkCaptureDispatcher, archivePreflight func(context.Context) error) error {
+func reconcileAutomaticCaptureStartup(ctx context.Context, c Config, capture automaticDatabaseNetworkCaptureDispatcher, archivePreflight func(context.Context) error, beforeHost ...func(context.Context) error) error {
 	if err := capture.Reconcile(ctx); err != nil {
 		return err
+	}
+	for _, replay := range beforeHost {
+		if err := replay(ctx); err != nil {
+			return err
+		}
 	}
 	if c.StorageArchive != nil {
 		if err := archivePreflight(ctx); err != nil {
