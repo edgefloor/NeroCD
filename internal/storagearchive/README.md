@@ -1,0 +1,23 @@
+# Upload archive helper v1
+
+This internal dependency creates and restores uncompressed upload archives. It does not authorize backups, quiesce a workload, publish artifacts, coordinate writer replacement, or implement a backup/restore API. A later coordinator must provide a quiesced read-only source and an exclusively owned empty target. Source metadata checks detect some concurrent changes and are not a transactional snapshot.
+
+`Write(ctx, source *os.Root, writer io.Writer, limits Limits)` returns a `Summary` and error. The caller owns the writer and its cancellation. Context checks cannot interrupt arbitrary blocked IO. `Validate(ctx, archive *os.File, limits)` accepts an exclusively owned pinned regular archive file. `Extract(ctx, archive *os.File, target *os.Root, limits)` fully validates and hashes before target mutation, then checks and hashes the archive again during extraction. Archive mutation between passes fails the restore. The caller must retain exclusive ownership of archive and roots throughout each operation.
+
+Filesystem creation/extraction supports Linux only. Other platforms fail with `ErrUnsupported`; local Darwin parser/CLI-validation tests do not qualify the Linux filesystem implementation. Numeric UID/GID and ordinary permission bits are preserved. Ownership-setting, metadata inspection or fsync failures fail the operation rather than silently dropping metadata. Root and final directory modes are applied after descendants. Timestamps are deliberately outside v1's supported metadata and are not preserved.
+
+V1 is strict USTAR with exactly two terminal zero blocks and no trailing bytes. Its first record is a `.` directory carrying root UID/GID/mode and the fixed Uname `nerocd-storage-v1`. All later records are regular files or directories, with explicit parents before children. UID/GID must fit USTAR's 21-bit unsigned fields. Paths are canonical graphical ASCII, at most 255 bytes, without absolute paths, dot components, empty components, backslashes, colons, whitespace or trailing dots. `.nerocd-restore-incomplete` and its descendants are reserved. PAX/GNU extensions, links, special/sparse files, xattrs, ACLs and privileged permission bits are rejected. Source hard links, cross-device entries and sparse files are rejected too. A filesystem without required metadata or hole inspection fails closed.
+
+Limits bound physical archive size, total payload, each file, member count including root, depth and path bytes. Defaults are 256 MiB archive, 128 MiB payload, 64 MiB per file, 100000 members, depth 32 and 255 path bytes. The summary contains only format, SHA-256 digest and bounded counts. The digest establishes integrity of these passes, not authenticity or caller authority; artifactfs publication and durable receipts remain outside this helper.
+
+The internal-use `nerocd-storage-archive` command has three fixed modes:
+
+```
+nerocd-storage-archive create   # /source read-only mount to stdout tar
+nerocd-storage-archive validate # stdin to private bounded local spool; JSON summary
+nerocd-storage-archive restore  # stdin to private spool, then empty /target; JSON summary
+```
+
+The command accepts only numeric `--max-archive-bytes`, `--max-data-bytes`, `--max-file-bytes`, `--max-members`, `--max-depth` and `--max-path-bytes` options. It accepts no mount/path arguments, runs no shell or Docker commands, and performs no network operations. Its process owns stdin/stdout and closes them on cancellation to interrupt pipe IO. Private 0600 spool files are removed on return. Failure stderr is fixed text; upload names, bytes and parser/OS diagnostics are not printed.
+
+A restore must begin with an empty target owned by the helper's effective UID, with owner read/write/search permission and no group/other write permission. The helper restricts its root to 0700 while restoring descendants. Once it creates its exclusive incomplete marker, every failure wraps `ErrPartialRestore`, including failures to persist or remove that marker. The target must not be reused after this error. No automatic erase, rollback or retry occurs. On ordinary failures the incomplete marker remains; a failing filesystem can prevent marker persistence, so the error and later coordinator state are authoritative. Successful extraction fsyncs files/directories and removes the marker. Artifact publication, target handoff and live qualification still require separate integration.
