@@ -398,3 +398,62 @@ func TestHostingDatabaseBindingPlanAndAuthorityBoundaries(t *testing.T) {
 		t.Fatal("v1 database compiler or hash changed")
 	}
 }
+
+func TestHostingDatabaseBindingRejectsOutOfScopeApplicationFamilies(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, family := range []string{"application_storage", "local_build", "local_build_sidecar", "route_continuity", "database", "wrong_policy", "missing_runtime"} {
+			t.Run(engine+"/"+family, func(t *testing.T) {
+				b, h, database, p := databaseBindingFixture(t, engine)
+				switch family {
+				case "application_storage":
+					id, _ := HostingStorageIdentity(h.Snapshot.BindingID)
+					h.Snapshot.Storage = HostingStorageRef{StorageID: id, Generation: 1, Hash: "sha256:" + strings.Repeat("2", 64)}
+				case "local_build":
+					h.Snapshot.PolicyVersion = HostingLocalBuildRuntimePolicyVersion
+					h.Snapshot.LocalBuild.SourceGeneration = 1
+				case "local_build_sidecar":
+					h.Snapshot.LocalBuild.SourceGeneration = 1
+				case "route_continuity":
+					h.Snapshot.StorageRouteContinuity.Hash = "sha256:" + strings.Repeat("2", 64)
+				case "database":
+					h.Snapshot.Database = b.Database
+				case "wrong_policy":
+					h.Snapshot.PolicyVersion = HostingReleasePolicyVersion
+				case "missing_runtime":
+					h.Snapshot.RuntimeConfiguration = HostingRuntimeConfigurationRef{}
+				}
+				if b.ValidateTargets("project", h.Snapshot, "project", database) == nil {
+					t.Error("desired target validator accepted out-of-scope application family")
+				}
+				if p.ValidateApplication(b, h) == nil {
+					t.Error("endpoint validator accepted out-of-scope application family")
+				}
+			})
+		}
+		for _, sidecar := range []string{"storage", "local_build_release"} {
+			t.Run(engine+"/healthy_"+sidecar, func(t *testing.T) {
+				b, h, database, p := databaseBindingFixture(t, engine)
+				switch sidecar {
+				case "storage":
+					h.Storage = &HostingHealthyStorage{}
+				case "local_build_release":
+					var err error
+					h.Release, err = NewHostingLocalBuildRelease(localBuildArtifactFixture())
+					if err != nil || ValidateHostingRelease(h.Release) != nil {
+						t.Fatal("valid local-build release fixture required")
+					}
+					// Match all pinned release fields, so an unrelated identity
+					// mismatch cannot hide acceptance of the forbidden sidecar.
+					p.Target.ImageID, p.Target.ReleaseHash, p.Target.DaemonID = h.Release.ImageID, h.Release.Hash, h.Release.DaemonID
+					p.Hash = p.DocumentHash()
+				}
+				if b.ValidateTargets("project", h.Snapshot, "project", database) != nil {
+					t.Fatal("valid ordinary application snapshot was rejected")
+				}
+				if p.ValidateApplication(b, h) == nil {
+					t.Fatal("endpoint validator accepted inconsistent healthy-record sidecar")
+				}
+			})
+		}
+	}
+}
