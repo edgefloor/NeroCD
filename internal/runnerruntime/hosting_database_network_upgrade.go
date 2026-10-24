@@ -139,14 +139,27 @@ func databaseContainerMatchesWithInspection(container databaseContainer, operati
 	}
 	dns := append([]string{strings.TrimPrefix(container.Name, "/")}, aliases...)
 	dns = append(dns, container.ID[:12])
-	if !slices.Equal(n.Aliases, aliases) || !slices.Equal(n.DNSNames, dns) || len(n.Links) != 0 || len(n.IPAMConfig) != 0 || len(n.DriverOpts) != 0 || n.GwPriority != 0 {
+	if !slices.Equal(n.Aliases, aliases) || len(n.Links) != 0 || len(n.IPAMConfig) != 0 || len(n.DriverOpts) != 0 || n.GwPriority != 0 {
 		return false
 	}
 	if !container.State.Running {
-		return n.EndpointID == "" && n.IPAddress == ""
+		if container.State.Pid != 0 || n.EndpointID != "" || n.IPAddress != "" {
+			return false
+		}
+		switch container.State.Status {
+		case "created":
+			// Native Docker29 reports the exact declared alias before first
+			// start, but no generated DNSNames or active network identity yet.
+			return n.NetworkID == "" && (slices.Equal(n.DNSNames, dns) || plan.CompilerVersion == domain.HostingDatabaseNetworkCompilerVersion && len(n.DNSNames) == 0)
+		case "exited":
+			// A previously started/stopped writer retains its generated names.
+			return slices.Equal(n.DNSNames, dns)
+		default:
+			return false
+		}
 	}
 	address, err := netip.ParseAddr(n.IPAddress)
-	return n.NetworkID == record.NetworkID && dockerObjectID.MatchString(n.EndpointID) && err == nil && address.Is4() && address.IsPrivate()
+	return slices.Equal(n.DNSNames, dns) && n.NetworkID == record.NetworkID && dockerObjectID.MatchString(n.EndpointID) && err == nil && address.Is4() && address.IsPrivate()
 }
 
 func (e *imageEngine) databaseNetworkForInspection(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, known map[string]bool, in *databaseUpgradeInspection) (databaseNetwork, error) {

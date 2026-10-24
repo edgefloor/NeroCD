@@ -115,8 +115,15 @@ func upgradeFixture(t *testing.T, engine string) (*databaseFake, databaseNetwork
 						aliases = append(aliases, a[i+1])
 					}
 				}
-				upgradeEndpoint(f, strings.TrimSpace(string(raw)), aliases, true)
-			case "start", "stop":
+				id := strings.TrimSpace(string(raw))
+				upgradeEndpoint(f, id, aliases, true)
+				f.containers[id]["NetworkSettings"].(map[string]any)["Networks"].(map[string]any)[f.plan.Database.NetworkName].(map[string]any)["DNSNames"] = nil
+			case "start":
+				id := a[len(a)-1]
+				n := f.containers[id]["NetworkSettings"].(map[string]any)["Networks"].(map[string]any)[f.plan.Database.NetworkName].(map[string]any)
+				aliases, _ := n["Aliases"].([]string)
+				upgradeEndpoint(f, id, aliases, true)
+			case "stop":
 				upgradeEndpoint(f, a[len(a)-1], nil, false)
 			}
 		}
@@ -396,5 +403,99 @@ func TestDatabaseNetworkUpgradeProcessOutputBounds(t *testing.T) {
 		if databaseUpgradeTopMatches([]byte(raw), 1001) {
 			t.Fatal("unsupported or unbounded process output accepted")
 		}
+	}
+}
+
+// The reviewed native Docker29 PG receipt has State=created, exact declared
+// alias, nil DNSNames, PID=0 and no active network/endpoint/address before start.
+func TestDatabaseNetworkUpgradeCreatedEndpointShape(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f, in, credentials := upgradeFixture(t, engine)
+			result := applyUpgrade(f, in, credentials, f.before)
+			if !result.Ready {
+				t.Fatal("shape fixture upgrade failed")
+			}
+			inspectCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			candidate, err := f.e.inspectDatabaseContainer(inspectCtx, result.ContainerID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := databaseNetworkRecord(in.Proof.Origin)
+			inspection := &databaseUpgradeInspection{Previous: in.PreviousPlan, Origin: in.Proof.Origin}
+			for _, mode := range []string{"created_nil", "created_empty", "created_exact", "exited_exact", "created_foreign_dns", "created_partial_dns", "created_wrong_alias", "created_pid", "created_network", "created_endpoint", "created_address", "exited_missing_dns", "exited_pid", "unknown_state", "running_missing_dns", "running_wrong_dns", "running_exact", "base_changed"} {
+				t.Run(mode, func(t *testing.T) {
+					var c databaseContainer
+					if json.Unmarshal(raw, &c) != nil {
+						t.Fatal("shape clone failed")
+					}
+					c.imageEnvironment = append([]string(nil), candidate.imageEnvironment...)
+					n := c.NetworkSettings.Networks[in.Plan.Database.NetworkName]
+					c.State.Running, c.State.Status, c.State.Pid = false, "created", 0
+					n.NetworkID, n.EndpointID, n.IPAddress = "", "", ""
+					n.DNSNames = nil
+					want := false
+					switch mode {
+					case "created_nil":
+						want = true
+					case "created_empty":
+						n.DNSNames = []string{}
+						want = true
+					case "created_exact":
+						n.DNSNames = candidate.NetworkSettings.Networks[in.Plan.Database.NetworkName].DNSNames
+						want = true
+					case "exited_exact":
+						c.State.Status = "exited"
+						n.DNSNames = candidate.NetworkSettings.Networks[in.Plan.Database.NetworkName].DNSNames
+						want = true
+					case "created_foreign_dns":
+						n.DNSNames = []string{"foreign"}
+					case "created_partial_dns":
+						n.DNSNames = []string{in.Plan.Database.Network.Alias}
+					case "created_wrong_alias":
+						n.Aliases = []string{"foreign"}
+					case "created_pid":
+						c.State.Pid = 123
+					case "created_network":
+						n.NetworkID = record.NetworkID
+					case "created_endpoint":
+						n.EndpointID = strings.Repeat("a", 64)
+					case "created_address":
+						n.IPAddress = "172.28.0.2"
+					case "exited_missing_dns":
+						c.State.Status = "exited"
+					case "exited_pid":
+						c.State.Status = "exited"
+						c.State.Pid = 123
+						n.DNSNames = candidate.NetworkSettings.Networks[in.Plan.Database.NetworkName].DNSNames
+					case "unknown_state":
+						c.State.Status = "dead"
+					case "running_missing_dns":
+						c.State = candidate.State
+						n = candidate.NetworkSettings.Networks[in.Plan.Database.NetworkName]
+						n.DNSNames = nil
+					case "running_wrong_dns":
+						c.State = candidate.State
+						n = candidate.NetworkSettings.Networks[in.Plan.Database.NetworkName]
+						n.DNSNames = []string{"foreign"}
+					case "running_exact":
+						c.State = candidate.State
+						n = candidate.NetworkSettings.Networks[in.Plan.Database.NetworkName]
+						want = true
+					case "base_changed":
+						c.Config.User = "root"
+					}
+					c.NetworkSettings.Networks[in.Plan.Database.NetworkName] = n
+					if got := databaseContainerMatchesWithInspection(c, "database_upgrade", in.Plan, record, filepath.Join(f.config.secretRoot, databaseGeneration("database_upgrade", in.Plan)), inspection); got != want {
+						t.Fatalf("endpoint shape %s accepted=%t want=%t", mode, got, want)
+					}
+				})
+			}
+		})
 	}
 }
