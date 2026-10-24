@@ -7267,6 +7267,7 @@ export interface components {
             expected_generation: number;
             /** Format: int64 */
             expected_membership_revision: number;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             idempotency_key: string;
         };
         HostingDatabaseConnectionRecoveryInput: {
@@ -7277,6 +7278,7 @@ export interface components {
             candidate_hash: string;
             /** Format: int64 */
             expected_membership_revision: number;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             idempotency_key: string;
         } & ({
             /** @enum {unknown} */
@@ -7290,15 +7292,18 @@ export interface components {
         HostingApplicationDatabaseStageRequest: {
             operation_id: string;
             run_id: string;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             lease_id: string;
             /** Format: int32 */
             attempt: number;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             fence: string;
             stage: components["schemas"]["HostingApplicationDatabaseStage"];
         };
         HostingApplicationDatabaseStage: {
             /** @enum {string} */
             version: "application-database.stage.v1";
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             receipt_id: string;
             operation_id: string;
             plan_hash: string;
@@ -7318,6 +7323,7 @@ export interface components {
             create_nonce: string;
             container_id: string;
             image_id: string;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             daemon_id: string;
             default_network_id: string;
             hash: string;
@@ -7343,11 +7349,13 @@ export interface components {
             container_plan_hash: string;
             network_id: string;
             network_name: string;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             daemon_id: string;
         };
         HostingDatabaseBindingEndpointReceipt: {
             /** @enum {string} */
             version: "database-binding.private.v1";
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             receipt_id: string;
             operation_id: string;
             plan_hash: string;
@@ -7372,9 +7380,11 @@ export interface components {
         HostingApplicationDatabaseRetirementRequest: {
             operation_id: string;
             run_id: string;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             lease_id: string;
             /** Format: int32 */
             attempt: number;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             fence: string;
             plan_hash: string;
             receipt: components["schemas"]["HostingDatabaseBindingEndpointReceipt"];
@@ -7382,9 +7392,11 @@ export interface components {
         HostingApplicationDatabaseEffectRequest: {
             operation_id: string;
             run_id: string;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             lease_id: string;
             /** Format: int32 */
             attempt: number;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             fence: string;
             authorization_id: string;
             expected_stage_hash: string;
@@ -7398,9 +7410,11 @@ export interface components {
             /** @enum {string} */
             action: "create" | "configure" | "start" | "retire";
             stage_hash: string;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             lease_id: string;
             /** Format: int32 */
             attempt: number;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             fence: string;
             /** Format: int64 */
             membership_revision: number;
@@ -7511,6 +7525,7 @@ export interface components {
             binding_id: string;
             binding_hash: string;
             endpoint_plan_hash: string;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             receipt_id: string;
             receipt_hash: string;
             endpoint: components["schemas"]["HostingDatabaseBindingEndpoint"];

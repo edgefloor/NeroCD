@@ -12241,7 +12241,7 @@ components:
       properties:
         expected_generation: {"type": "integer", "format": "int64", "minimum": 1}
         expected_membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
-        idempotency_key: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        idempotency_key: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
     HostingDatabaseConnectionRecoveryInput:
       type: "object"
       additionalProperties: false
@@ -12252,7 +12252,7 @@ components:
         stage_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
         candidate_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
         expected_membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
-        idempotency_key: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        idempotency_key: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
       oneOf: [{"properties": {"stage_hash": {"enum": [""]}, "candidate_hash": {"enum": [""]}}}, {"properties": {"stage_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "candidate_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}}]
     HostingApplicationDatabaseStageRequest:
       type: "object"
@@ -12261,9 +12261,9 @@ components:
       properties:
         operation_id: {"type": "string"}
         run_id: {"type": "string"}
-        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
-        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         stage: {"$ref": "#/components/schemas/HostingApplicationDatabaseStage"}
     HostingApplicationDatabaseStage:
       type: "object"
@@ -12271,7 +12271,7 @@ components:
       required: ["version", "receipt_id", "operation_id", "plan_hash", "phase", "candidate", "attach_plan", "hash"]
       properties:
         version: {"type": "string", "enum": ["application-database.stage.v1"]}
-        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         operation_id: {"type": "string"}
         plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         phase: {"type": "string", "enum": ["candidate_created", "attach_intent", "network_configured", "attached", "ready", "uncertain"]}
@@ -12291,7 +12291,7 @@ components:
         create_nonce: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
         container_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
         image_id: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
-        daemon_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        daemon_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         default_network_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
         hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
     HostingDatabaseBindingEndpointPlan:
@@ -12319,14 +12319,14 @@ components:
         container_plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         network_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
         network_name: {"type": "string"}
-        daemon_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        daemon_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
     HostingDatabaseBindingEndpointReceipt:
       type: "object"
       additionalProperties: false
       required: ["version", "receipt_id", "operation_id", "plan_hash", "binding_hash", "membership_revision", "phase", "hash"]
       properties:
         version: {"type": "string", "enum": ["database-binding.private.v1"]}
-        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         operation_id: {"type": "string"}
         plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         binding_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
@@ -12357,9 +12357,9 @@ components:
       properties:
         operation_id: {"type": "string"}
         run_id: {"type": "string"}
-        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
-        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         receipt: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointReceipt"}
     HostingApplicationDatabaseEffectRequest:
@@ -12369,9 +12369,9 @@ components:
       properties:
         operation_id: {"type": "string"}
         run_id: {"type": "string"}
-        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
-        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         authorization_id: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
         expected_stage_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
         action: {"type": "string", "enum": ["create", "configure", "start", "retire"]}
@@ -12385,9 +12385,9 @@ components:
         plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         action: {"type": "string", "enum": ["create", "configure", "start", "retire"]}
         stage_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
-        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
-        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
         use_until: {"type": "string", "format": "date-time"}
     HostingApplicationDatabaseExecutionState:
@@ -12511,7 +12511,7 @@ components:
         binding_id: {"type": "string"}
         binding_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         endpoint_plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
-        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
         receipt_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         endpoint: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpoint"}
     HostingDatabaseNetworkPlan:

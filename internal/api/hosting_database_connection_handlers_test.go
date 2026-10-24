@@ -493,3 +493,125 @@ func TestDatabaseConnectionHTTPNamedSchemaParity(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabaseConnectionHTTPRuntimeReferenceSchemaValues(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := map[string][]string{
+		"HostingDatabaseMaintenanceInput":               {"idempotency_key"},
+		"HostingDatabaseConnectionRecoveryInput":        {"idempotency_key"},
+		"HostingApplicationDatabaseStageRequest":        {"lease_id", "fence"},
+		"HostingApplicationDatabaseStage":               {"receipt_id"},
+		"HostingApplicationDatabaseCandidate":           {"daemon_id"},
+		"HostingDatabaseBindingEndpointTarget":          {"daemon_id"},
+		"HostingDatabaseBindingEndpointReceipt":         {"receipt_id"},
+		"HostingApplicationDatabaseRetirementRequest":   {"lease_id", "fence"},
+		"HostingApplicationDatabaseEffectRequest":       {"lease_id", "fence"},
+		"HostingApplicationDatabaseEffectAuthorization": {"lease_id", "fence"},
+		"HostingDatabaseNetworkMember":                  {"receipt_id"},
+	}
+	values := []struct{ name, value string }{
+		{"interior_space", "maintain members"}, {"interior_repeated_space", "maintain  members"}, {"single", "a"}, {"ascii_limit", strings.Repeat("x", 128)},
+		{"unicode_interior", "内 部"}, {"unicode_byte_limit", strings.Repeat("é", 64)}, {"interior_separator", "a\u2028b"},
+		{"empty", ""}, {"leading_space", " leading"}, {"trailing_space", "trailing "}, {"leading_unicode_space", "\u00a0leading"}, {"trailing_unicode_space", "trailing\u3000"},
+		{"tab_control", "a\tb"}, {"newline_control", "a\nb"}, {"null_control", "a\x00b"}, {"unicode_control", "a\u0085b"}, {"ascii_over_limit", strings.Repeat("x", 129)},
+	}
+	for name, properties := range fields {
+		for _, field := range properties {
+			t.Run(name+"/"+field, func(t *testing.T) {
+				schema := doc.Components.Schemas[name].Value.Properties[field].Value
+				for _, sample := range values {
+					// This exported validator exercises the same validRuntimeReferenceID
+					// contract as each scalar above without replacing its domain validator.
+					valid := (domain.HostingDatabaseMaintenanceInput{ExpectedGeneration: 1, ExpectedMembershipRevision: 1, IdempotencyKey: sample.value}).Validate() == nil
+					if got := schema.VisitJSONString(sample.value) == nil; got != valid {
+						t.Fatalf("scalar parity differs for %s: schema=%t domain=%t", sample.name, got, valid)
+					}
+				}
+			})
+		}
+	}
+	// Deployment idempotency retains its separate whitespace-forbidding
+	// domain contract. Its accepted shared schema is outside this repair.
+	deployment := domain.HostingDeploymentInput{ExpectedGeneration: 1, IdempotencyKey: "maintain members", ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 5}}
+	if domain.ValidateHostingDeployment(deployment) == nil {
+		t.Fatal("shared deployment validator was relaxed")
+	}
+
+}
+
+func TestDatabaseConnectionHTTPRuntimeReferenceRequestParity(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, service, repo, user := connectionHTTPFixture(t, true)
+	admin := auth.WithPrincipal(t.Context(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+	runner, err := service.RegisterRunner(admin, app.RunnerInput{ID: "runner_reference", Name: "reference", Capabilities: []string{domain.HostingApplicationDatabaseCapability}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodies := connectionPublicBodies()
+	for _, item := range []struct{ path, schema string }{
+		{"/api/v1/resources/connection_database/database/maintenance", "HostingDatabaseMaintenanceInput"},
+		{"/api/v1/resources/connection_app/database-connection/recovery", "HostingDatabaseConnectionRecoveryInput"},
+	} {
+		var body map[string]any
+		if json.Unmarshal([]byte(bodies[item.path]), &body) != nil {
+			t.Fatal("request fixture")
+		}
+		body["idempotency_key"] = "maintain members"
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if doc.Components.Schemas[item.schema].Value.VisitJSON(body) != nil {
+			t.Fatal("schema rejects domain-valid owner request", item.schema)
+		}
+		count := len(repo.calls)
+		if w := connectionCall(t, s, "POST", item.path, user, string(raw)); w.Code != 202 || len(repo.calls) != count+1 {
+			t.Fatal("owner HTTP rejects valid interior spaces", w.Code)
+		}
+	}
+	for _, phase := range []string{"stage", "retirement", "authorize"} {
+		var body map[string]any
+		if json.Unmarshal([]byte(connectionRunnerBodies(t)[phase]), &body) != nil {
+			t.Fatal("runner fixture")
+		}
+		body["lease_id"], body["fence"] = "lease interior", "fence interior"
+		name := map[string]string{"stage": "HostingApplicationDatabaseStageRequest", "retirement": "HostingApplicationDatabaseRetirementRequest", "authorize": "HostingApplicationDatabaseEffectRequest"}[phase]
+		if doc.Components.Schemas[name].Value.VisitJSON(body) != nil {
+			t.Fatal("schema rejects domain-valid runner request", name)
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := len(repo.calls)
+		if w := connectionCall(t, s, "POST", "/api/v1/runners/hosting/database-binding/"+phase, runner.Token, string(raw)); w.Code != 200 || len(repo.calls) != count+1 || repo.authority.LeaseID != "lease interior" || repo.authority.Fence != "fence interior" {
+			t.Fatal("runner HTTP reference parity", phase, w.Code)
+		}
+	}
+	deploymentPath := "/api/v1/resources/connection_app/database-connection/deployments"
+	count := len(repo.calls)
+	deploymentBody := strings.Replace(bodies[deploymentPath], `"connection_deploy"`, `"maintain members"`, 1)
+	if w := connectionCall(t, s, "POST", deploymentPath, user, deploymentBody); w.Code != 400 || len(repo.calls) != count {
+		t.Fatal("deployment idempotency whitespace was admitted")
+	}
+	// JSON strings require valid Unicode. Test invalid raw UTF-8 at the HTTP
+	// boundary, before JSON replacement could erase the invalid input bytes.
+	invalid := string([]byte{'b', 0xff, 'd'})
+	if (domain.HostingDatabaseMaintenanceInput{ExpectedGeneration: 1, ExpectedMembershipRevision: 1, IdempotencyKey: invalid}).Validate() == nil {
+		t.Fatal("domain accepted invalid UTF-8")
+	}
+	path := "/api/v1/resources/connection_database/database/maintenance"
+	for _, value := range []string{invalid, strings.Repeat("é", 65)} {
+		raw := `{"expected_generation":1,"expected_membership_revision":1,"idempotency_key":"` + value + `"}`
+		count := len(repo.calls)
+		if w := connectionCall(t, s, "POST", path, user, raw); w.Code != 400 || len(repo.calls) != count {
+			t.Fatal("invalid UTF-8 or byte-over-limit request reached repository")
+		}
+	}
+}
