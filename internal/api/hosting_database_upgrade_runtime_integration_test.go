@@ -199,6 +199,14 @@ func databaseUpgradeMatches(source, previous, current domain.HostingOperation, r
 	return p.PreviousHealthy.OperationID == previous.ID && p.PreviousHealthy.ContainerID == previous.Result.ContainerID && domain.HostingDocumentHash(p.PreviousPlan) == domain.HostingDocumentHash(*previous.Plan) && current.Snapshot == previous.Snapshot && *current.Release == *source.Release && *current.Plan.Storage == *source.Plan.Storage && reflect.DeepEqual(current.Plan.Database.Credentials, source.Plan.Database.Credentials) && n.Members != nil && len(n.Members) == 0 && n.MembershipRevision == 1 && n.OriginHash == receipt.OriginHash && n.NetworkID == receipt.Origin.NetworkID && n.Predecessor.PlanHash == previous.Plan.Hash && current.Result.ContainerID != previous.Result.ContainerID && current.Result.PreviousContainerID == previous.Result.ContainerID
 }
 
+func databaseUpgradeCreateInput(engine, environment, destination string) domain.HostingDatabaseCreateInput {
+	version, requestID := domain.HostingDatabasePostgresRecipe, strings.Repeat("e", 32)
+	if engine == "redis" {
+		version, requestID = domain.HostingDatabaseRedisRecipe, strings.Repeat("f", 32)
+	}
+	return domain.HostingDatabaseCreateInput{RequestID: requestID, ProjectID: "proj_platform", ProjectEnvironmentID: environment, Name: "upgrade physical " + engine, DestinationID: destination, Engine: engine, RecipeVersion: version}
+}
+
 func TestHostingDatabaseUpgradeCompiledRunner(t *testing.T) {
 	if os.Getenv("NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME") != "disposable-dind" {
 		t.Skip("run reviewed three-test compiled database gate after exact physical authorization")
@@ -211,11 +219,7 @@ func TestHostingDatabaseUpgradeCompiledRunner(t *testing.T) {
 		if index > 0 {
 			f.start()
 		}
-		version := domain.HostingDatabasePostgresRecipe
-		if engine == "redis" {
-			version = domain.HostingDatabaseRedisRecipe
-		}
-		view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", domain.HostingDatabaseCreateInput{RequestID: strings.Repeat(string(rune('u'+index)), 32), ProjectID: "proj_platform", ProjectEnvironmentID: f.environment, Name: "upgrade physical " + engine, DestinationID: f.destination, Engine: engine, RecipeVersion: version}, 201)
+		view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", databaseUpgradeCreateInput(engine, f.environment, f.destination), 201)
 		source := f.await(f.deploy(view, "upgrade_source").ID)
 		marker := "upgrade_physical_" + engine + "_before"
 		f.marker(view, source, marker, true)
@@ -449,5 +453,41 @@ func TestDatabaseUpgradeRuntimeCompleteForwardingAndBounds(t *testing.T) {
 	}
 	if _, ok := wire.original(); ok {
 		t.Fatal("malformed request qualified as committed ACK loss")
+	}
+}
+
+func TestDatabaseUpgradeRuntimeFixtureInputs(t *testing.T) {
+	seen := map[string]bool{}
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			input := databaseUpgradeCreateInput(engine, "penv_fixture", "dest_fixture")
+			if input.Validate() != nil {
+				t.Fatal("generated database-create fixture input rejected by actual validator")
+			}
+			for _, reserved := range []string{"a", "b", "c", "d"} {
+				if input.RequestID == strings.Repeat(reserved, 32) {
+					t.Fatal("upgrade request identity overlaps existing compiled fixtures")
+				}
+			}
+			resource := domain.HostingDatabaseResourceID(input.ProjectID, input.RequestID)
+			if seen[resource] {
+				t.Fatal("database-create fixture identities collide")
+			}
+			seen[resource] = true
+			raw, err := json.Marshal(input)
+			var decoded domain.HostingDatabaseCreateInput
+			if err != nil || json.Unmarshal(raw, &decoded) != nil || decoded != input {
+				t.Fatal("generated database-create fixture input rejected by strict wire decoder")
+			}
+			if (domain.HostingDatabaseDeploymentInput{ExpectedGeneration: 1, IdempotencyKey: "upgrade_source"}).Validate() != nil {
+				t.Fatal("fixture source deployment identity invalid")
+			}
+			for _, key := range []string{"upgrade_empty_first", "upgrade_empty_maintenance"} {
+				upgrade := domain.HostingDatabaseUpgradeInput{ExpectedGeneration: 1, CaptureID: domain.HostingDatabaseNetworkCaptureID("hop_upgrade_source"), ExpectedOriginHash: domain.HostingDocumentHash("fixture_origin"), IdempotencyKey: key}
+				if upgrade.Validate() != nil {
+					t.Fatal("fixture upgrade request identity invalid")
+				}
+			}
+		})
 	}
 }
