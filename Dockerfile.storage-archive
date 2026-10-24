@@ -1,0 +1,12 @@
+FROM scratch
+
+LABEL io.nerocd.storage-archive.recipe="scratch-v1" \
+      io.nerocd.storage-archive.source-commit="@SOURCE_COMMIT@" \
+      io.nerocd.storage-archive.executable-sha256="@EXECUTABLE_SHA256@"
+
+WORKDIR /source
+WORKDIR /target
+WORKDIR /tmp
+WORKDIR /
+COPY --chmod=0555 nerocd-storage-archive /nerocd-storage-archive
+ENTRYPOINT ["/nerocd-storage-archive"]

@@ -21,3 +21,31 @@ nerocd-storage-archive restore  # stdin to private spool, then empty /target; JS
 The command accepts only numeric `--max-archive-bytes`, `--max-data-bytes`, `--max-file-bytes`, `--max-members`, `--max-depth` and `--max-path-bytes` options. It accepts no mount/path arguments, runs no shell or Docker commands, and performs no network operations. On Linux/Darwin, used stdin/stdout streams must be process-owned FIFOs or `SOCK_STREAM` sockets. Datagram and sequence-packet sockets are rejected before descriptor flags change. Regular-file redirection, TTYs and devices are unsupported, so callers must pipe archive bytes. Nonblocking descriptor reads/writes use polling of at most 50 ms between context checks, without a background IO goroutine. Original descriptor flags are restored and streams closed synchronously after use. Package regular-file validation/extraction remains unchanged; no bound is claimed for stalled regular-filesystem operations. Private 0600 spool files are removed on return. Failure stderr is fixed text; upload names, bytes and parser/OS diagnostics are not printed. Diagnostics use one nonblocking write to a FIFO or `SOCK_STREAM` sink and may be dropped or partial when it is full, closed or interrupted. Unsupported stderr sinks, including regular files and TTYs, receive no diagnostic. The command never waits or starts a background writer for diagnostics, including on failures without cancellation.
 
 A restore must begin with an empty target owned by the helper's effective UID, with owner read/write/search permission and no group/other write permission. The helper restricts its root to 0700 while restoring descendants. Once it creates its exclusive incomplete marker, every failure wraps `ErrPartialRestore`, including failures to persist or remove that marker. The target must not be reused after this error. No automatic erase, rollback or retry occurs. On ordinary failures the incomplete marker remains; a failing filesystem can prevent marker persistence, so the error and later coordinator state are authoritative. Successful extraction fsyncs files/directories and removes the marker. Artifact publication, target handoff and live qualification still require separate integration.
+
+## Prepare the local helper image
+
+Use a clean committed checkout and the exact Go toolchain named in `go.mod`. The selected executable is a trusted operator input; its path and reported version do not establish its trustworthiness. Dependencies must already exist in the default `$HOME/go/pkg/mod` cache. Preparation disables proxy access, toolchain downloads, workspace files and inherited build overrides. It does not invoke Docker or pull an image.
+
+Create a private parent directory, then select an unused absolute canonical output path beneath it. Symlink aliases, traversal, existing output directories and output inside the source checkout are rejected. The parent must be owned by the effective user and not writable by group or others.
+
+```sh
+python3 scripts/build-storage-archive-helper.py \
+  --output /absolute/private-parent/prepared \
+  --go /absolute/go1.26.10/bin/go
+```
+
+Preparation exports only tracked helper sources at `HEAD` into a temporary build tree, ignoring untracked and ignored files. It builds a static Linux arm64 executable with `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`, read-only modules and an empty build ID. Each subprocess has a 60-second deadline and bounded output; timeout or excess output terminates its owned process group and joins the subprocess. Missing dependencies or a different toolchain fail preparation. A failed publication may leave a partial output directory; inspect it and choose a new unused path rather than overwriting it.
+
+The output contains `context/Dockerfile`, `context/nerocd-storage-archive` and `provenance.json`. The context contains no source tree, credentials or other host files. Provenance records the source commit and timestamp, toolchain version, executable SHA-256, recipe SHA-256 and rendered Dockerfile SHA-256. Its `prepared_only` status and null `image_config_id` mean no image has been built or qualified. The rendered scratch recipe has exact source/executable labels, a fixed `/nerocd-storage-archive` entrypoint and empty `/source`, `/target` and `/tmp` mount points. It contains no shell and declares no capabilities, ports or volumes.
+
+After separate authorization for the target Docker daemon, build only this prepared context:
+
+```sh
+docker build --platform linux/arm64 --pull=false --network=none \
+  --iidfile /absolute/private-parent/image-id \
+  /absolute/private-parent/prepared/context
+```
+
+Inspect the returned image config ID and compare all three `io.nerocd.storage-archive.*` labels with the recipe/source/executable values in `provenance.json`. Keep that exact `sha256:...` config ID with the preparation metadata and actual image qualification evidence. It is a local image identity, not a registry manifest digest. Trusted operator configuration must pin that exact qualified image ID; this recipe grants no permission to choose arbitrary images or commands.
+
+Runtime qualification must use a read-only root, no network, no Docker socket, separate authorized source/target mounts and a bounded private writable tmpfs at `/tmp`. Pipe archive bytes and summaries through supported streams. Validation needs no capabilities. Creation needs read/search access to the authorized source. Restore starts with an empty target owned by the helper UID; restoring different numeric owners requires explicitly authorized `CHOWN` and `FOWNER` capabilities. Drop all other capabilities and use `no-new-privileges`; do not make the container privileged. These are runtime requirements, not Dockerfile privileges. Actual image validation and create/restore roundtrips remain separate gates; packaging does not complete A26/A37 or the backup/restore API.
