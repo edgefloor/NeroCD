@@ -755,6 +755,66 @@ type HostingStorage struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type HostingStorageArchiveBlob struct {
+	BackupID    string          `json:"backup_id"`
+	OperationID string          `json:"operation_id"`
+	Phase       string          `json:"phase"`
+	Body        json.RawMessage `json:"body"`
+}
+
+type HostingStorageArchivePlan struct {
+	OperationID           string          `json:"operation_id"`
+	Mode                  string          `json:"mode"`
+	BackupID              string          `json:"backup_id"`
+	SourceResourceID      string          `json:"source_resource_id"`
+	SourceBindingID       string          `json:"source_binding_id"`
+	SourceStorageID       string          `json:"source_storage_id"`
+	TargetResourceID      *string         `json:"target_resource_id"`
+	TargetBindingID       *string         `json:"target_binding_id"`
+	TargetStorageID       *string         `json:"target_storage_id"`
+	RecoveryOfOperationID *string         `json:"recovery_of_operation_id"`
+	Body                  json.RawMessage `json:"body"`
+	BodyHash              string          `json:"body_hash"`
+}
+
+type HostingStorageArchiveReceipt struct {
+	OperationID string          `json:"operation_id"`
+	Phase       string          `json:"phase"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	PlanHash    string          `json:"plan_hash"`
+	AuditID     string          `json:"audit_id"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingStorageArchiveRecovery struct {
+	OperationID         string `json:"operation_id"`
+	OriginalOperationID string `json:"original_operation_id"`
+	RequestID           string `json:"request_id"`
+	RequestHash         string `json:"request_hash"`
+	CreatedBy           string `json:"created_by"`
+}
+
+type HostingStorageArchiveTaskTarget struct {
+	RunID       string `json:"run_id"`
+	OperationID string `json:"operation_id"`
+	RunnerID    string `json:"runner_id"`
+	Mode        string `json:"mode"`
+}
+
+type HostingStorageBackup struct {
+	ID          string    `json:"id"`
+	OperationID string    `json:"operation_id"`
+	ProjectID   string    `json:"project_id"`
+	ResourceID  string    `json:"resource_id"`
+	RequestID   string    `json:"request_id"`
+	RequestHash string    `json:"request_hash"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type HostingStorageMaterialization struct {
 	StorageID               string          `json:"storage_id"`
 	OriginOperationID       string          `json:"origin_operation_id"`
@@ -793,6 +853,55 @@ type HostingStorageReceipt struct {
 	RequestHash                string `json:"request_hash"`
 	ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
 	AuditID                    string `json:"audit_id"`
+}
+
+type HostingStorageRestore struct {
+	OperationID string    `json:"operation_id"`
+	BackupID    string    `json:"backup_id"`
+	ResourceID  string    `json:"resource_id"`
+	RequestID   string    `json:"request_id"`
+	RequestHash string    `json:"request_hash"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type HostingStorageRestoreMaterialized struct {
+	StorageID   string          `json:"storage_id"`
+	OperationID string          `json:"operation_id"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	AuditID     string          `json:"audit_id"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingStorageRestoreOrigin struct {
+	StorageID         string          `json:"storage_id"`
+	OriginOperationID string          `json:"origin_operation_id"`
+	OriginPlanHash    string          `json:"origin_plan_hash"`
+	Origin            json.RawMessage `json:"origin"`
+	OriginHash        string          `json:"origin_hash"`
+	Authority         json.RawMessage `json:"authority"`
+}
+
+type HostingStorageRestoreUseAdmission struct {
+	OperationID string          `json:"operation_id"`
+	StorageID   string          `json:"storage_id"`
+	PlanHash    string          `json:"plan_hash"`
+	Authority   json.RawMessage `json:"authority"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingStorageRestoreUseReceipt struct {
+	OperationID string          `json:"operation_id"`
+	StorageID   string          `json:"storage_id"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	AuditID     string          `json:"audit_id"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 type HostingStorageRouteContinuity struct {
