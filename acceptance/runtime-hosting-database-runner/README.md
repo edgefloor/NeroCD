@@ -18,6 +18,8 @@ The client uses an explicit-version owner-authorized managed-secret reveal and c
 
 The fixture also checks that workload ports remain private and scans API/runner output and public durable metadata for protected values. Database metadata continues reporting `adapter_unqualified`. C exercises runner-process restart and persistent database data across replacement; it does not claim a database restart API, application binding, or archive restore.
 
+Before and after Complete replay, with the runner joined and the private client absent, the fixture captures all container IDs for that binding and all users of its retained volume, including stopped containers. Each identity must belong to the known A/B/C operations, have the expected labels, image and volume mount, and preserve the exact scoped inventories across replay. Foreign users, unknown containers and extra stopped residue fail the gate. These snapshots establish the absence of additional persistent residue; they do not count transient Docker create-and-delete operations or require unrelated global inventories to stay unchanged.
+
 Harmless validation uses executable Docker stubs and never contacts a Docker daemon:
 
 ```sh

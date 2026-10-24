@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -551,6 +552,120 @@ func (f *databaseRunnerFixture) volumeProof(op domain.HostingOperation) string {
 	return string(raw)
 }
 
+type databaseRunnerReplayInventory struct {
+	BindingContainers []databaseRunnerContainer
+	VolumeUsers       []string
+}
+
+type databaseRunnerReplayIdentities struct {
+	BindingIDs  []string
+	VolumeUsers []string
+}
+
+// Include stopped containers. These inventories prove retained identities and
+// absence of extra residue, not a count of transient Docker create operations.
+func databaseRunnerReplayIdentitiesFor(in databaseRunnerReplayInventory, known []domain.HostingOperation, current domain.HostingOperation) (databaseRunnerReplayIdentities, error) {
+	var result databaseRunnerReplayIdentities
+	if current.Plan == nil || current.Plan.Storage == nil || current.Result == nil {
+		return result, errors.New("replay inventory lacks current scope")
+	}
+	allowed := make(map[string]domain.HostingOperation, len(known))
+	for _, op := range known {
+		if op.BindingID != current.BindingID || op.ResourceID != current.ResourceID || op.Plan == nil || op.Plan.Storage == nil || op.Release == nil || op.Result == nil || op.Plan.Storage.VolumeName != current.Plan.Storage.VolumeName || op.Result.ContainerID == "" {
+			return result, errors.New("replay inventory known scope changed")
+		}
+		if _, duplicate := allowed[op.Result.ContainerID]; duplicate {
+			return result, errors.New("replay inventory repeats known identity")
+		}
+		allowed[op.Result.ContainerID] = op
+	}
+	seen := map[string]bool{}
+	for _, container := range in.BindingContainers {
+		op, ok := allowed[container.ID]
+		if !ok || seen[container.ID] || len(container.ID) != 64 || strings.ToLower(container.ID) != container.ID {
+			return result, errors.New("replay inventory has unknown or duplicate binding residue")
+		}
+		if _, err := hex.DecodeString(container.ID); err != nil {
+			return result, errors.New("replay inventory identity invalid")
+		}
+		if container.Config.Labels["io.nerocd.binding"] != op.BindingID || container.Config.Labels["io.nerocd.operation"] != op.ID || container.Config.Labels["io.nerocd.plan"] != op.Plan.Hash || container.Config.Labels["io.nerocd.release"] != op.Release.Hash || container.Image != op.Release.ImageID || container.State.Running != (container.ID == current.Result.ContainerID) {
+			return result, errors.New("replay inventory container ownership or writer state changed")
+		}
+		mounted := false
+		for _, mount := range container.Mounts {
+			if mount.Type == "volume" && mount.Name == op.Plan.Storage.VolumeName && mount.Destination == op.Plan.Storage.MountPath && mount.RW {
+				mounted = true
+			}
+		}
+		if !mounted {
+			return result, errors.New("replay inventory binding lacks exact retained volume")
+		}
+		seen[container.ID] = true
+		result.BindingIDs = append(result.BindingIDs, container.ID)
+	}
+	if !seen[current.Result.ContainerID] {
+		return result, errors.New("replay inventory current writer missing")
+	}
+	users := map[string]bool{}
+	for _, id := range in.VolumeUsers {
+		if !seen[id] || users[id] {
+			return result, errors.New("replay inventory has foreign or duplicate retained volume user")
+		}
+		users[id] = true
+		result.VolumeUsers = append(result.VolumeUsers, id)
+	}
+	if len(users) != len(seen) {
+		return result, errors.New("replay inventory retained volume users do not match binding")
+	}
+	slices.Sort(result.BindingIDs)
+	slices.Sort(result.VolumeUsers)
+	return result, nil
+}
+
+func databaseRunnerReplayInventoryMatches(before, after databaseRunnerReplayInventory, known []domain.HostingOperation, current domain.HostingOperation) error {
+	want, err := databaseRunnerReplayIdentitiesFor(before, known, current)
+	if err != nil {
+		return err
+	}
+	got, err := databaseRunnerReplayIdentitiesFor(after, known, current)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(want, got) {
+		return errors.New("replay changed scoped all-state container or retained volume identities")
+	}
+	return nil
+}
+
+func (f *databaseRunnerFixture) replayInventory(known []domain.HostingOperation, current domain.HostingOperation) databaseRunnerReplayInventory {
+	f.t.Helper()
+	if f.process != nil {
+		f.t.Fatal("replay inventory requires joined runner")
+	}
+	if strings.TrimSpace(string(f.docker("container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "name=^/"+databaseRunnerOwner+"-client$"))) != "" {
+		f.t.Fatal("replay inventory requires absent private client")
+	}
+	ids := strings.Fields(string(f.docker("container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "label=io.nerocd.binding="+current.BindingID)))
+	if len(ids) > len(known) {
+		f.t.Fatal("replay inventory has extra all-state binding containers")
+	}
+	var snapshot databaseRunnerReplayInventory
+	for _, id := range ids {
+		var container databaseRunnerContainer
+		if json.Unmarshal(f.docker("container", "inspect", id, "--format", "{{json .}}"), &container) != nil || container.ID != id {
+			f.t.Fatal("replay all-state binding inspection failed")
+		}
+		snapshot.BindingContainers = append(snapshot.BindingContainers, container)
+	}
+	snapshot.VolumeUsers = strings.Fields(string(f.docker("container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "volume="+current.Plan.Storage.VolumeName)))
+	identities, err := databaseRunnerReplayIdentitiesFor(snapshot, known, current)
+	if err != nil {
+		f.t.Fatal("scoped replay inventory contains unknown container or volume residue")
+	}
+	f.t.Logf("joined replay inventory operation=%s binding_ids=%v retained_volume_users=%v", current.ID, identities.BindingIDs, identities.VolumeUsers)
+	return snapshot
+}
+
 func databaseRunnerClientMatches(got databaseRunnerContainer, id, name, image, network string) bool {
 	if len(id) != 64 || strings.ToLower(id) != id {
 		return false
@@ -841,6 +956,8 @@ func TestHostingDatabaseCompiledRunner(t *testing.T) {
 		if !pending {
 			t.Fatal("completion response loss did not retain exact durable result")
 		}
+		knownContainers := []domain.HostingOperation{first, second, third}
+		beforeInventory := f.replayInventory(knownContainers, third)
 		beforeComplete := f.completionCount(thirdID)
 		beforeClaim := f.claimRequests.Load()
 		beforeApply, beforeDelivery := f.applyRequests.Load(), f.deliveryRequests.Load()
@@ -865,6 +982,10 @@ func TestHostingDatabaseCompiledRunner(t *testing.T) {
 		}
 		// Join the replay process before reopening its exclusive journal.
 		f.stop()
+		afterInventory := f.replayInventory(knownContainers, replayed)
+		if databaseRunnerReplayInventoryMatches(beforeInventory, afterInventory, knownContainers, replayed) != nil {
+			t.Fatal("Complete replay changed scoped all-state container or retained volume residue")
+		}
 		replayJournal, e := runner.OpenAttemptJournal(filepath.Join(f.root, "journal"))
 		if e != nil {
 			t.Fatal("replayed journal unavailable")
@@ -888,6 +1009,64 @@ func TestHostingDatabaseCompiledRunner(t *testing.T) {
 			t.Fatal("runtime fixture changed metadata contract")
 		}
 		t.Logf("engine=%s A=%s B=%s C=%s container=%s volume=%s network=%s recipe=%s child=%s", engine, first.ID, second.ID, third.ID, c.ID, third.Plan.Storage.VolumeName, third.Plan.Database.NetworkName, version, third.Release.CanonicalImage)
+	}
+}
+
+func TestDatabaseRunnerReplayInventoryRejectsStoppedResidue(t *testing.T) {
+	binding, resource, volume := "binding_inventory", "resource_inventory", "ncdv_inventory"
+	operation := func(id, containerID string) domain.HostingOperation {
+		return domain.HostingOperation{ID: id, BindingID: binding, ResourceID: resource, Plan: &domain.HostingApplyPlan{Hash: "plan_" + id, Storage: &domain.HostingStoragePlan{VolumeName: volume, MountPath: "/data"}}, Release: &domain.HostingRelease{Hash: "release_" + id, ImageID: "image_" + id}, Result: &domain.HostingResult{ContainerID: containerID}}
+	}
+	previous := operation("previous", strings.Repeat("a", 64))
+	current := operation("current", strings.Repeat("b", 64))
+	container := func(op domain.HostingOperation, running bool) databaseRunnerContainer {
+		var c databaseRunnerContainer
+		c.ID = op.Result.ContainerID
+		c.Image = op.Release.ImageID
+		c.State.Running = running
+		c.Config.Labels = map[string]string{"io.nerocd.binding": binding, "io.nerocd.operation": op.ID, "io.nerocd.plan": op.Plan.Hash, "io.nerocd.release": op.Release.Hash}
+		c.Mounts = append(c.Mounts, struct {
+			Type, Name, Source, Destination string
+			RW                              bool
+		}{Type: "volume", Name: volume, Destination: "/data", RW: true})
+		return c
+	}
+	known := []domain.HostingOperation{previous, current}
+	before := databaseRunnerReplayInventory{BindingContainers: []databaseRunnerContainer{container(current, true)}, VolumeUsers: []string{current.Result.ContainerID}}
+	if err := databaseRunnerReplayInventoryMatches(before, before, known, current); err != nil {
+		t.Fatal("unchanged scoped inventory rejected", err)
+	}
+	withStopped := databaseRunnerReplayInventory{BindingContainers: []databaseRunnerContainer{container(previous, false), container(current, true)}, VolumeUsers: []string{previous.Result.ContainerID, current.Result.ContainerID}}
+	reordered := databaseRunnerReplayInventory{BindingContainers: []databaseRunnerContainer{container(current, true), container(previous, false)}, VolumeUsers: []string{current.Result.ContainerID, previous.Result.ContainerID}}
+	if err := databaseRunnerReplayInventoryMatches(withStopped, reordered, known, current); err != nil {
+		t.Fatal("unchanged known stopped identity rejected", err)
+	}
+	for _, change := range []string{"unknown_stopped_binding", "known_extra_stopped_binding", "foreign_stopped_volume_user", "lost_stopped_identity", "duplicate_binding", "foreign_label"} {
+		t.Run(change, func(t *testing.T) {
+			after := databaseRunnerReplayInventory{BindingContainers: slices.Clone(before.BindingContainers), VolumeUsers: slices.Clone(before.VolumeUsers)}
+			start := before
+			switch change {
+			case "unknown_stopped_binding":
+				extra := container(operation("unknown", strings.Repeat("c", 64)), false)
+				after.BindingContainers = append(after.BindingContainers, extra)
+				after.VolumeUsers = append(after.VolumeUsers, extra.ID)
+			case "known_extra_stopped_binding":
+				after.BindingContainers = append(after.BindingContainers, container(previous, false))
+				after.VolumeUsers = append(after.VolumeUsers, previous.Result.ContainerID)
+			case "foreign_stopped_volume_user":
+				after.VolumeUsers = append(after.VolumeUsers, strings.Repeat("c", 64))
+			case "lost_stopped_identity":
+				start = databaseRunnerReplayInventory{BindingContainers: append(slices.Clone(before.BindingContainers), container(previous, false)), VolumeUsers: append(slices.Clone(before.VolumeUsers), previous.Result.ContainerID)}
+			case "duplicate_binding":
+				after.BindingContainers = append(after.BindingContainers, container(current, true))
+			case "foreign_label":
+				after.BindingContainers[0] = container(current, true)
+				after.BindingContainers[0].Config.Labels["io.nerocd.binding"] = "foreign"
+			}
+			if databaseRunnerReplayInventoryMatches(start, after, known, current) == nil {
+				t.Fatal("replay inventory accepted stopped or foreign residue")
+			}
+		})
 	}
 }
 
