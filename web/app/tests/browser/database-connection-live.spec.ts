@@ -9,11 +9,14 @@ const raw = process.env.NEROCD_DATABASE_CONNECTION_BROWSER_META;
 const meta = raw ? JSON.parse(raw) as Metadata : undefined;
 const headers = (m: Metadata) => ({ Origin: m.origin, "X-NeroCD-CSRF": "1" });
 async function login(page: Page, viewer = false) {
-  await page.goto("/sign-in");
-  await page.getByLabel("Email", { exact: true }).fill(viewer ? "viewer@example.local" : "admin@example.local");
-  await page.getByLabel("Password", { exact: true }).fill(viewer ? "viewer" : "admin");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const bootstrap = await page.request.get("/api/v1/bootstrap-status", { timeout: 5000 });
+  expect(bootstrap.status(), "live installation bootstrap status must be available before login").toBe(200);
+  expect(await bootstrap.json(), "live installation must retain its bootstrap administrator").toEqual({ status: "complete" });
+  await page.goto("/sign-in", { waitUntil: "domcontentloaded", timeout: 15_000 });
+  await page.getByLabel("Email", { exact: true }).fill(viewer ? "viewer@example.local" : "admin@example.local", { timeout: 10_000 });
+  await page.getByLabel("Password", { exact: true }).fill(viewer ? "viewer" : "admin", { timeout: 10_000 });
+  await page.getByRole("button", { name: "Sign in", exact: true }).click({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible({ timeout: 15_000 });
 }
 async function panel(page: Page, m: Metadata) {
   await page.goto("/projects");

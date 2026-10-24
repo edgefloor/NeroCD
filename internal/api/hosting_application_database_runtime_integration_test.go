@@ -538,11 +538,28 @@ func applicationDatabaseBrowserOrigin(origin string) bool {
 	return err == nil && n >= 1024 && n <= 65535 && strconv.Itoa(n) == port
 }
 
+func applicationDatabaseBrowserBootstrapComplete(ctx context.Context, handler http.Handler) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/bootstrap-status", nil))
+	var status app.BootstrapStatus
+	return response.Code == http.StatusOK && json.Unmarshal(response.Body.Bytes(), &status) == nil && status.Status == "complete"
+}
+
 func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.Resource, database domain.HostingDatabase, engine string) *applicationDatabaseBrowser {
 	f.t.Helper()
 	origin := os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN")
 	if !applicationDatabaseBrowserOrigin(origin) {
 		f.t.Fatal("browser requires exact owned loopback origin")
+	}
+	// Supported bootstrap creates the retained installation administrator and its
+	// durable lifecycle state. The seeded browser owner is a different account.
+	const bootstrapPassword = "database-browser-bootstrap-password"
+	f.protected = append(f.protected, []byte(bootstrapPassword))
+	administrator, err := f.service.BootstrapAdmin(f.t.Context(), app.BootstrapAdminInput{Email: "database-bootstrap@example.local", Name: "Database browser bootstrap", Password: bootstrapPassword})
+	if err != nil || administrator.ID == "" || administrator.ID == "usr_bootstrap" || administrator.ID == "usr_viewer" || administrator.GlobalRole != domain.RoleSystemAdmin {
+		f.t.Fatal("browser installation bootstrap did not create a distinct administrator")
 	}
 	// Public setup establishes explicit ordinary owner/viewer memberships.
 	for _, member := range []app.ProjectMemberInput{{ProjectID: resource.ProjectID, Email: "admin@example.local", Role: "owner"}, {ProjectID: resource.ProjectID, Email: "viewer@example.local", Role: "viewer"}} {
@@ -559,7 +576,7 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 	privateEnvironment := databaseRunnerJSON[domain.ProjectEnvironment](f, viewer.Token, "POST", "/api/v1/project-environments", app.ProjectEnvironmentInput{ProjectID: private.ID, Name: "private"}, 201)
 	foreign := databaseRunnerJSON[domain.Resource](f, viewer.Token, "POST", "/api/v1/resources", app.ResourceInput{ProjectID: private.ID, ProjectEnvironmentID: privateEnvironment.ID, Name: "private app", Kind: "application", Source: resource.Source}, 201)
 	// Fixture-only exception: the public API has no local-user role update. This
-	// exact isolated seed demotion proves owner authorization, not provisioning.
+	// exact isolated seed demotion preserves the distinct bootstrap administrator.
 	changed, err := f.database.Exec(f.t.Context(), `UPDATE users SET global_role='user' WHERE id='usr_bootstrap' AND global_role='system_admin'`)
 	if err != nil || changed.RowsAffected() != 1 {
 		f.t.Fatal("browser owner demotion did not affect exactly the seeded admin")
@@ -567,6 +584,14 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 	var global, role string
 	if f.database.QueryRow(f.t.Context(), `SELECT u.global_role,m.role FROM users u JOIN project_members m ON m.user_id=u.id AND m.project_id=$1 WHERE u.id='usr_bootstrap'`, resource.ProjectID).Scan(&global, &role) != nil || global != "user" || role != "owner" {
 		f.t.Fatal("browser does not have exact ordinary project-owner authority")
+	}
+	var administratorRole, administratorStatus string
+	if f.database.QueryRow(f.t.Context(), `SELECT global_role,status FROM users WHERE id=$1`, administrator.ID).Scan(&administratorRole, &administratorStatus) != nil || administratorRole != domain.RoleSystemAdmin || administratorStatus != domain.UserActive {
+		f.t.Fatal("browser installation lost its active bootstrap administrator")
+	}
+	api := NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static(), ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
+	if !applicationDatabaseBrowserBootstrapComplete(f.t.Context(), api) {
+		f.t.Fatal("browser requires public bootstrap status complete before login")
 	}
 	ctx, cancel := context.WithTimeout(f.t.Context(), 12*time.Minute)
 	b := &applicationDatabaseBrowser{f: f, ctx: ctx, phase: "connect", seen: map[string]applicationDatabaseBrowserSeen{}, proofs: map[string]applicationDatabaseBrowserProof{}, admissions: make(chan applicationDatabaseBrowserAdmission, 4), finished: make(chan struct{}), failed: make(chan struct{})}
@@ -576,7 +601,6 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 		f.t.Fatal("browser nonce unavailable")
 	}
 	prefix := "/api/v1/fixture/database-connection/" + hex.EncodeToString(nonce)
-	api := NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static(), ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
 	ownerOnly := api.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, e := f.service.CurrentPrincipal(r.Context())
 		projectRole, roleErr := f.service.ProjectRole(r.Context(), resource.ProjectID)
@@ -725,6 +749,34 @@ func (b *applicationDatabaseBrowser) awaitFinished() {
 	defer b.mu.Unlock()
 	if b.invalid || len(b.seen) != 4 {
 		b.f.t.Fatal("browser admitted an unexpected mutation")
+	}
+}
+
+func TestApplicationDatabaseRuntimeBrowserBootstrapPrerequisite(t *testing.T) {
+	server, _ := newTestServer()
+	if !applicationDatabaseBrowserBootstrapComplete(t.Context(), server) {
+		t.Fatal("actual public API complete status rejected")
+	}
+	for _, test := range []struct {
+		name string
+		code int
+		body string
+	}{{"required", 200, `{"status":"required"}`}, {"unavailable", 503, `{"status":"complete"}`}, {"invalid", 200, `{`}, {"missing", 200, `{}`}} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/v1/bootstrap-status" || r.Header.Get("Authorization") != "" {
+					t.Error("bootstrap prerequisite must use the public status endpoint")
+				}
+				if deadline, ok := r.Context().Deadline(); !ok || time.Until(deadline) > 5*time.Second {
+					t.Error("bootstrap prerequisite lacks a bounded request context")
+				}
+				w.WriteHeader(test.code)
+				_, _ = io.WriteString(w, test.body)
+			})
+			if applicationDatabaseBrowserBootstrapComplete(t.Context(), handler) {
+				t.Fatal("incomplete or unavailable installation admitted browser login")
+			}
+		})
 	}
 }
 
