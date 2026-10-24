@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 type input struct {
 	Engine   string `json:"engine"`
 	Host     string `json:"host"`
+	Address  string `json:"address,omitempty"`
 	Username string `json:"username"`
 	Password []byte `json:"password"`
 	Marker   string `json:"marker"`
@@ -53,12 +55,15 @@ func run() error {
 	if e != nil || n != 32 {
 		return errors.New("invalid client credential")
 	}
-	ip := net.ParseIP(in.Host)
-	if ip == nil || !ip.IsPrivate() || ip.To4() == nil {
-		return errors.New("invalid private endpoint")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
+	address, err := privateEndpoint(ctx, in.Host, in.Address, net.DefaultResolver.LookupHost)
+	if err != nil {
+		return err
+	}
+	// Authenticate only against the verified IP. A second DNS lookup could return
+	// another endpoint after the alias qualification and expose the credential.
+	in.Host = address
 	switch in.Engine {
 	case "postgresql":
 		return postgres(ctx, in)
@@ -67,6 +72,28 @@ func run() error {
 	default:
 		return errors.New("unsupported client engine")
 	}
+}
+
+func privateEndpoint(ctx context.Context, host, address string, lookup func(context.Context, string) ([]string, error)) (string, error) {
+	if address == "" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsPrivate() || ip.To4() == nil {
+			return "", errors.New("invalid private endpoint")
+		}
+		return host, nil
+	}
+	if len(host) != 37 || !strings.HasPrefix(host, "ncdb-") || strings.Trim(host[5:], "0123456789abcdef") != "" {
+		return "", errors.New("invalid private alias")
+	}
+	ip, err := netip.ParseAddr(address)
+	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.String() != address {
+		return "", errors.New("invalid private endpoint")
+	}
+	addresses, err := lookup(ctx, host)
+	if err != nil || len(addresses) != 1 || addresses[0] != address {
+		return "", errors.New("private alias qualification failed")
+	}
+	return address, nil
 }
 
 func postgres(ctx context.Context, in input) (err error) {
