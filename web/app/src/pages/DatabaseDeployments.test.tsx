@@ -247,6 +247,50 @@ test("an ambiguous response keeps the exact original intent and prevents concurr
   await act(async () => resolve(json(operation, 202)));
   await screen.findByRole("region", { name: "Recorded database operation" });
 });
+test("held history after a lost response permits only the retained byte-identical retry", async () => {
+  let writes = 0;
+  const { operation } = fixture();
+  const { fetch } = setup({
+    handler: (url, init) => {
+      if (url.includes("/deployments?") && writes > 0)
+        return json(page([operation]));
+      if (init.method !== "POST") return undefined;
+      if (++writes === 1) return Promise.reject(new TypeError("lost response"));
+      return json(operation, 202);
+    },
+  });
+  await deploy();
+  await screen.findByRole("button", {
+    name: "Retry identical deployment request",
+  });
+  const original = fetch.mock.calls.find(
+    ([, init]) => init.method === "POST",
+  )![1].body;
+  fireEvent.click(
+    screen.getByRole("button", { name: "Refresh database deployment history" }),
+  );
+  await screen.findByRole("button", {
+    name: /operation · generation 2 · queued/,
+  });
+  const retry = screen.getByRole("button", {
+    name: "Retry identical deployment request",
+  });
+  await waitFor(() => expect(retry.hasAttribute("disabled")).toBe(false));
+  expect(writes).toBe(1);
+  fireEvent.click(retry);
+  fireEvent.click(retry);
+  await screen.findByRole("region", { name: "Recorded database operation" });
+  const requests = fetch.mock.calls.filter(
+    ([, init]) => init.method === "POST",
+  );
+  expect(requests).toHaveLength(2);
+  expect(requests[1]![1].body).toBe(original);
+  expect(
+    screen
+      .getByRole("button", { name: "Deploy again" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+});
 test("409 requires explicit refresh and review without silently replacing the request identity", async () => {
   const { fetch } = setup({
     handler: (_url, init) =>

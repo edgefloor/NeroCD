@@ -167,7 +167,9 @@ export function DatabaseDeployments({
     operation.isError ||
     operation.isFetching ||
     offset !== 0 ||
-    knownHold;
+    // A hold blocks new intent. Retrying the retained identity asks the server
+    // for that original admission receipt without creating another operation.
+    (knownHold && !attempt);
   async function submit() {
     if (
       unavailable ||

@@ -97,7 +97,7 @@ test("private database deployment retry, recorded status, and read-only history 
     updated_at: time,
     snapshot: {
       resource_id: "db_fixture",
-      resource_generation: 1,
+      resource_generation: 2,
       image_reference: database().resource.source.image.reference,
       binding_id: "binding_fixture",
       destination_id: "destination_fixture",
@@ -133,6 +133,7 @@ test("private database deployment retry, recorded status, and read-only history 
     },
   });
   let admitted = false;
+  let retainedHold = false;
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -175,15 +176,24 @@ test("private database deployment retry, recorded status, and read-only history 
       bodies.push(request.postDataJSON());
       if (loseNext) {
         loseNext = false;
+        admitted = true;
+        retainedHold = true;
         return route.abort("failed");
       }
       admitted = true;
+      retainedHold = false;
       const receipt = operation();
       receipt.snapshot.resource_generation = 2;
       return route.fulfill({ status: 202, json: receipt });
-    } else if (path === "/api/v1/resources/db_fixture/deployments")
-      body = list(admitted ? [operation()] : []);
-    else if (path === "/api/v1/hosting-operations/operation_fixture")
+    } else if (path === "/api/v1/resources/db_fixture/deployments") {
+      const recorded = operation();
+      if (retainedHold) {
+        recorded.state = "applying";
+        recorded.mutation_hold = true;
+        recorded.result.ready = false;
+      }
+      body = list(admitted ? [recorded] : []);
+    } else if (path === "/api/v1/hosting-operations/operation_fixture")
       body = operation();
     else if (path === "/api/v1/health") body = { status: "ok" };
     else if (
@@ -207,6 +217,7 @@ test("private database deployment retry, recorded status, and read-only history 
     role = "maintainer";
     loseNext = true;
     admitted = false;
+    retainedHold = false;
     bodies.length = 0;
     await page.setViewportSize({ width, height: 1000 });
     await page.goto("/projects");
@@ -235,6 +246,19 @@ test("private database deployment retry, recorded status, and read-only history 
       name: "Retry identical deployment request",
       exact: true,
     });
+    await expect(retry).toBeEnabled();
+    await deployments
+      .getByRole("button", {
+        name: "Refresh database deployment history",
+        exact: true,
+      })
+      .click();
+    await expect(
+      deployments.getByRole("button", {
+        name: /operation_fixture · generation 2 · applying/,
+      }),
+    ).toBeVisible();
+    expect(bodies).toHaveLength(1);
     await expect(retry).toBeEnabled();
     await retry.focus();
     await page.keyboard.press("Enter");
@@ -290,7 +314,7 @@ test("private database deployment retry, recorded status, and read-only history 
     deployments.getByRole("button", { name: /^Deploy/ }),
   ).toHaveCount(0);
   const history = deployments.getByRole("button", {
-    name: /operation_fixture · generation 1 · succeeded/,
+    name: /operation_fixture · generation 2 · succeeded/,
   });
   await history.focus();
   await page.keyboard.press("Enter");
