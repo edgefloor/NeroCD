@@ -127,6 +127,11 @@ func databaseRunnerJSON[T any](f *databaseRunnerFixture, token, method, path str
 	return result
 }
 
+func databaseRunnerEnrollmentConsumeInput(credential string) app.RunnerEnrollmentConsumeInput {
+	sum := sha256.Sum256([]byte(credential))
+	return app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("a", 32), CredentialHash: hex.EncodeToString(sum[:])}
+}
+
 func newDatabaseRunnerFixture(t *testing.T) *databaseRunnerFixture {
 	t.Helper()
 	_, pg, database := newHostingBuildAPIFixture(t)
@@ -217,8 +222,7 @@ func newDatabaseRunnerFixture(t *testing.T) *databaseRunnerFixture {
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
 	enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, 201)
 	credential := "ncr_database_runner_fixture_only"
-	sum := sha256.Sum256([]byte(credential))
-	enrolled := databaseRunnerJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", app.RunnerEnrollmentConsumeInput{RequestID: "consume_" + strings.Repeat("a", 32), CredentialHash: hex.EncodeToString(sum[:])}, 200)
+	enrolled := databaseRunnerJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", databaseRunnerEnrollmentConsumeInput(credential), 200)
 	if err = os.WriteFile(filepath.Join(root, "credential"), []byte(credential), 0600); err != nil {
 		t.Fatal("runner credential file failed")
 	}
@@ -1010,6 +1014,41 @@ func TestHostingDatabaseCompiledRunner(t *testing.T) {
 		}
 		t.Logf("engine=%s A=%s B=%s C=%s container=%s volume=%s network=%s recipe=%s child=%s", engine, first.ID, second.ID, third.ID, c.ID, third.Plan.Storage.VolumeName, third.Plan.Database.NetworkName, version, third.Release.CanonicalImage)
 	}
+}
+
+func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
+	server, _ := newTestServer()
+	token := createTestSession(t, server)
+	post := func(path, bearer string, body any, status int) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal("fixture enrollment input encoding failed")
+		}
+		defer clear(raw)
+		r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+bearer)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, r)
+		if rec.Code != status {
+			t.Fatalf("fixture enrollment API path=%s status=%d want=%d", path, rec.Code, status)
+		}
+		return rec
+	}
+	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+	created := post("/api/v1/runner-enrollments", token, app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, http.StatusCreated)
+	var enrollment app.CreatedRunnerEnrollment
+	if json.Unmarshal(created.Body.Bytes(), &enrollment) != nil {
+		t.Fatal("fixture enrollment response decoding failed")
+	}
+	credential := "ncr_database_runner_fixture_only"
+	consumed := post("/api/v1/runner-enrollments/consume", enrollment.Token, databaseRunnerEnrollmentConsumeInput(credential), http.StatusOK)
+	var enrolled app.ConsumedRunnerEnrollment
+	if json.Unmarshal(consumed.Body.Bytes(), &enrolled) != nil || enrolled.Runner.ID != "runner_database_acceptance" {
+		t.Fatal("fixture enrollment returned a different runner")
+	}
+	post("/api/v1/runners/heartbeat", credential, struct{}{}, http.StatusOK)
 }
 
 func TestDatabaseRunnerReplayInventoryRejectsStoppedResidue(t *testing.T) {
