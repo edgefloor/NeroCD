@@ -11,7 +11,7 @@ import { ResourceDestination } from "./ResourceDestination";
 import { ResourceRoutes } from "./ResourceRoutes";
 import { GitApplicationFields, emptyGitDraft, type GitApplicationDraft } from "./GitApplicationFields";
 import { ResourceBuilds } from "./ResourceBuilds";
-import { ResourceDeployments } from "./ResourceDeployments";
+import { ResourceDatabaseConnections } from "./ResourceDatabaseConnections";
 import { ResourceRuntimeConfiguration } from "./ResourceRuntimeConfiguration";
 import { ResourceRuntimeStatus } from "./ResourceRuntimeStatus";
 import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
@@ -166,7 +166,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <ResourceRuntimeLogs resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} />
       <ResourceRuntimeConfiguration resource={resource} blocked={blocked || resources.isError || resources.isPending} />
       <ResourceStorage resource={resource} blocked={blocked || resources.isError || resources.isPending} />
-      <ResourceDeployments resource={resource} writable={writable} blocked={blocked || resources.isError} />
+      <ResourceDatabaseConnections resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceRoutes resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {canWrite && editing?.id !== resource.id ? <Button type="button" variant="outline" disabled={busy || Boolean(editing)} onClick={() => { setEditing(resource); setNotice(""); }}>Edit configuration</Button> : null}
       {editing?.id === resource.id ? <ApplicationEditor key={resource.id} resource={editing} writable={canWrite} onClose={() => setEditing(undefined)} onSaved={async () => { await refresh(); setNotice("Application configuration updated. Deployment is a separate request."); }} /> : null}
