@@ -14,7 +14,7 @@ const (
 	RunTypeStorageArchive                 = "storage_archive"
 	HostingStorageArchiveCapability       = "hosting_storage_archive_v1"
 	HostingStorageArchiveVersion          = "owned-upload.local-archive.v1"
-	HostingStorageArchiveFormat           = "nerocd-owned-upload.tar.v1"
+	HostingStorageArchiveFormat           = "nerocd-storage-v1"
 	HostingStorageArchiveMaxBytes   int64 = 1 << 30
 )
 
@@ -144,7 +144,7 @@ type HostingStorageArchiveLimits struct {
 
 // Validate bounds every helper codec limit without defaults.
 func (l HostingStorageArchiveLimits) Validate() error {
-	if l.ArchiveBytes < 1 || l.ArchiveBytes > HostingStorageArchiveMaxBytes || l.DataBytes < 1 || l.DataBytes > HostingStorageArchiveMaxBytes || l.FileBytes < 1 || l.FileBytes > l.DataBytes || l.Members < 1 || l.Members > 1000000 || l.Depth < 1 || l.Depth > 128 || l.PathBytes < 1 || l.PathBytes > 4096 {
+	if l.ArchiveBytes < 1536 || l.ArchiveBytes > HostingStorageArchiveMaxBytes || l.DataBytes < 1 || l.DataBytes > l.ArchiveBytes || l.FileBytes < 1 || l.FileBytes > l.DataBytes || l.Members < 1 || l.Members > 1000000 || l.Depth < 1 || l.Depth > 128 || l.PathBytes < 1 || l.PathBytes > 255 {
 		return ErrInvalidStorageArchive
 	}
 	return nil

@@ -45,7 +45,7 @@ func archiveDomainPlan(t *testing.T) HostingStorageArchivePlan {
 	m.Labels = ExpectedHostingStorageLabels(st, m)
 	helper := HostingStorageArchiveHelper{Mode: "local_image", RecipeVersion: HostingStorageArchiveVersion, ExecutableSHA256: "sha256:" + strings.Repeat("d", 64), SourceCommit: strings.Repeat("f", 40), ImageID: "sha256:" + strings.Repeat("e", 64), OS: "linux", Architecture: "arm64", DaemonID: "daemon"}
 	helper.Hash = HostingDocumentHash(helper)
-	p := HostingStorageArchivePlan{OperationID: "archive", ProjectID: st.ProjectID, ServerID: "server", DestinationID: st.DestinationID, RunnerID: "runner", Mode: "backup", BackupID: "backup", SourceHealthy: h, SourceStorage: st, SourceMaterialization: m, Writers: []HostingHealthy{h}, Helper: helper, Limits: HostingStorageArchiveLimits{ArchiveBytes: 1 << 20, DataBytes: 1 << 20, FileBytes: 1 << 20, Members: 1000, Depth: 16, PathBytes: 512}, CompilerVersion: HostingStorageArchiveVersion, PolicyVersion: HostingStorageArchiveVersion}
+	p := HostingStorageArchivePlan{OperationID: "archive", ProjectID: st.ProjectID, ServerID: "server", DestinationID: st.DestinationID, RunnerID: "runner", Mode: "backup", BackupID: "backup", SourceHealthy: h, SourceStorage: st, SourceMaterialization: m, Writers: []HostingHealthy{h}, Helper: helper, Limits: HostingStorageArchiveLimits{ArchiveBytes: 1 << 20, DataBytes: 1 << 20, FileBytes: 1 << 20, Members: 1000, Depth: 16, PathBytes: 255}, CompilerVersion: HostingStorageArchiveVersion, PolicyVersion: HostingStorageArchiveVersion}
 	p.Hash = HostingDocumentHash(p)
 	if p.Validate() != nil {
 		t.Fatal("valid archive fixture refused")
@@ -172,5 +172,27 @@ func TestStorageArchiveRestoreNeverAuthorizesSourceWriter(t *testing.T) {
 	p.Hash = HostingDocumentHash(p)
 	if p.Validate() == nil {
 		t.Fatal("restore recovery gained source stop authority")
+	}
+}
+
+func TestStorageArchiveCodecContractParity(t *testing.T) {
+	// Literal parity with storagearchive.Format and Limits.valid at helper 6bce.
+	// The codec is a separately reviewed dependency, not present in this base.
+	if HostingStorageArchiveFormat != "nerocd-storage-v1" {
+		t.Fatal("archive format differs from maintained helper")
+	}
+	codecAccepts := func(l HostingStorageArchiveLimits) bool {
+		return l.ArchiveBytes >= 1536 && l.ArchiveBytes <= 1<<40 && l.DataBytes > 0 && l.DataBytes <= l.ArchiveBytes && l.FileBytes > 0 && l.FileBytes <= l.DataBytes && l.Members > 0 && l.Members <= 1000000 && l.Depth > 0 && l.Depth <= 256 && l.PathBytes > 0 && l.PathBytes <= 255
+	}
+	for _, archive := range []int64{0, 1535, 1536, 1 << 30, 1<<30 + 1} {
+		for _, data := range []int64{0, 1, 1536, 1 << 30, 1<<30 + 1} {
+			for _, path := range []int{0, 1, 255, 256, 4096} {
+				l := HostingStorageArchiveLimits{ArchiveBytes: archive, DataBytes: data, FileBytes: 1, Members: 1, Depth: 128, PathBytes: path}
+				want := codecAccepts(l) && archive <= HostingStorageArchiveMaxBytes
+				if (l.Validate() == nil) != want {
+					t.Fatal("controller limit profile differs from bounded helper subset")
+				}
+			}
+		}
 	}
 }
