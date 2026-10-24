@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"maps"
@@ -29,11 +30,12 @@ import (
 // This hook observes the compiled process's real HTTP requests. It drops exactly
 // one response only after the real origin handler returns its committed 200.
 type databaseCaptureRuntimeWire struct {
-	mu                     sync.Mutex
-	journalPath            string
-	claim, plan, forbidden int
-	bodies, acks           [][]byte
-	lost, invalid          bool
+	mu                               sync.Mutex
+	journalPath                      string
+	identity, claim, plan, forbidden int
+	suppressed200                    bool
+	bodies, acks                     [][]byte
+	lost, invalid                    bool
 }
 
 func (c *databaseCaptureRuntimeWire) serve(w http.ResponseWriter, r *http.Request, handler http.Handler) bool {
@@ -41,6 +43,7 @@ func (c *databaseCaptureRuntimeWire) serve(w http.ResponseWriter, r *http.Reques
 	defer c.mu.Unlock()
 	switch r.URL.Path {
 	case "/api/v1/runners/identity":
+		c.identity++
 		return false
 	case "/api/v1/runners/database-network-captures/claim":
 		c.claim++
@@ -82,6 +85,7 @@ func (c *databaseCaptureRuntimeWire) serve(w http.ResponseWriter, r *http.Reques
 		c.acks = append(c.acks, bytes.Clone(rec.Body.Bytes()))
 	}
 	if !c.lost {
+		c.suppressed200 = rec.Code == http.StatusOK
 		c.lost = true
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -160,7 +164,7 @@ func databaseCaptureArguments(f *databaseRunnerFixture, id, endpoint string) []s
 	return []string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--database-network-capture-id", id, "--journal-dir", filepath.Join(f.root, "journal"), "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--image-docker-endpoint", endpoint}
 }
 
-func (f *databaseRunnerFixture) awaitCaptureExit(success bool) {
+func (f *databaseRunnerFixture) awaitCaptureExit(success bool, checkpoint string, cursor int, wire *databaseCaptureRuntimeWire) string {
 	f.t.Helper()
 	p := f.process
 	if p == nil {
@@ -175,9 +179,17 @@ func (f *databaseRunnerFixture) awaitCaptureExit(success bool) {
 	}
 	exit := p.status()
 	f.stop()
-	if !exit.Exited || success && (exit.Kind != "success" || exit.Code != 0) || !success && (exit.Kind != "process_exit" || exit.Code <= 0) {
-		f.t.Fatalf("capture process exit mismatch success=%t exited=%t kind=%s code=%d", success, exit.Exited, exit.Kind, exit.Code)
+	output := f.logs.snapshot()
+	if cursor < 0 || cursor > len(output) {
+		cursor = len(output)
 	}
+	diagnostic := databaseCaptureDiagnostic(checkpoint, p.command.Process.Pid, exit, filepath.Join(f.root, "journal", "journal.json"), wire, output[cursor:])
+	clear(output)
+	f.t.Logf("capture checkpoint %s", diagnostic)
+	if !exit.Exited || success && (exit.Kind != "success" || exit.Code != 0) || !success && (exit.Kind != "process_exit" || exit.Code <= 0) {
+		f.t.Fatalf("capture process exit mismatch success=%t %s", success, diagnostic)
+	}
+	return diagnostic
 }
 
 func (f *databaseRunnerFixture) captureChain() []runner.JournalDatabaseNetworkCapture {
@@ -334,11 +346,15 @@ func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 			t.Fatal("capture wire hook already active")
 		}
 		args := databaseCaptureArguments(f, capture.ID, "unix:///var/run/docker.sock")
+		cursor := f.captureLogCursor()
 		f.startRunner(args)
-		f.awaitCaptureExit(false)
+		diagnostic := f.awaitCaptureExit(false, "initial", cursor, wire)
+		if !wire.committedACKLost() {
+			t.Fatalf("initial capture did not satisfy the committed ACK-loss boundary: %s", diagnostic)
+		}
 		chain := f.captureChain()
-		if len(chain) != 3 || chain[0].Phase != "claim" || chain[1].Phase != "plan" || chain[2].Phase != "origin" || chain[2].Origin == nil || chain[0].Claim == nil {
-			t.Fatal("compiled ACK loss did not retain original three-phase journal")
+		if stage := databaseCaptureChainStage(chain); stage != "origin_pending_ack" {
+			t.Fatalf("compiled ACK loss journal stage=%s %s", stage, diagnostic)
 		}
 		original := *chain[2].Origin
 		stored := f.captureStored(capture.ID)
@@ -353,8 +369,9 @@ func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 		if claimCount != 1 || planCount == 0 || originCount != 1 || forbidden != 0 {
 			t.Fatal("dedicated capture used unexpected API authority")
 		}
+		cursor = f.captureLogCursor()
 		f.start()
-		f.awaitCaptureExit(false)
+		f.awaitCaptureExit(false, "ordinary_hold", cursor, wire)
 		if !reflect.DeepEqual(chain, f.captureChain()) {
 			t.Fatal("ordinary mode discarded unresolved capture state")
 		}
@@ -368,8 +385,9 @@ func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 			t.Fatal("replay absence proof socket already exists")
 		}
 		replayArgs := databaseCaptureArguments(f, capture.ID, "unix://"+absent)
+		cursor = f.captureLogCursor()
 		f.startRunner(replayArgs)
-		f.awaitCaptureExit(true)
+		f.awaitCaptureExit(true, "historical_replay", cursor, wire)
 		if len(f.captureChain()) != 0 || !wire.exactReplay() {
 			t.Fatal("compiled historical replay changed wire body/ACK or failed durable retirement")
 		}
@@ -477,5 +495,228 @@ func TestDatabaseCaptureRuntimeWireDropsOnlyFirstCommittedACK(t *testing.T) {
 	}
 	if calls != 2 || !wire.exactReplay() {
 		t.Fatal("wire changed repeated request or committed ACK")
+	}
+}
+
+// The diagnostic vocabulary is closed. Journal content and captured output only
+// select fixed labels or booleans; they never become output strings.
+func databaseCapturePhase(phase string) string {
+	switch phase {
+	case "claim", "plan", "origin", "ack":
+		return phase
+	}
+	return "unknown"
+}
+
+func databaseCaptureBound(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > 9999 {
+		return 9999
+	}
+	return n
+}
+
+func databaseCaptureLogCategories(raw []byte) string {
+	// These labels report observed complete lines, not inferred root causes.
+	markers := []struct{ line, category string }{
+		{"capture persistent configuration unavailable", "persistent_configuration"},
+		{"capture credential unavailable", "credential"},
+		{"capture runner identity not confirmed", "identity"},
+		{"capture requires verified HTTPS", "verified_transport"},
+		{"database network capture requires verified HTTPS", "verified_transport"},
+		{"capture requires one exact ID and execution without generic completion", "flags"},
+		{"capture cannot share registration or other execution options", "flags"},
+		{"capture requires explicit credential, journal and persistent root flags", "flags"},
+		{"capture requires explicit credential and journal", "flags"},
+		{"database network capture requires a separate exact-ID execution mode", "mode"},
+		{"database network capture remains unresolved", "unresolved"},
+		{"retained database network capture requires explicit exact-ID capture mode", "ordinary_hold"},
+		{"context canceled", "canceled"},
+		{"context deadline exceeded", "deadline"},
+	}
+	var categories []string
+	for _, marker := range markers {
+		for line := range bytes.SplitSeq(raw, []byte("\n")) {
+			if bytes.Equal(line, []byte(marker.line)) && !slices.Contains(categories, marker.category) {
+				categories = append(categories, marker.category)
+				break
+			}
+		}
+	}
+	if len(categories) == 0 {
+		return "unclassified"
+	}
+	return strings.Join(categories, ",")
+}
+
+func databaseCaptureJournalSummary(path string) string {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "state=absent entries=0"
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 8<<20 {
+		return "state=unavailable entries=0"
+	}
+	raw, err := os.ReadFile(path)
+	defer clear(raw)
+	if err != nil || len(raw) > 8<<20 {
+		return "state=unavailable entries=0"
+	}
+	var disk struct {
+		Version int `json:"version"`
+		Entries []struct {
+			Phase                    string `json:"phase"`
+			Claim, Plan, Origin, Ack json.RawMessage
+		} `json:"database_network_capture"`
+	}
+	if json.Unmarshal(raw, &disk) != nil {
+		return "state=malformed entries=0"
+	}
+	version := "other_version"
+	if disk.Version == 13 {
+		version = "v13"
+	}
+	var entries []string
+	present := func(raw json.RawMessage) bool {
+		return len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+	}
+	for i, entry := range disk.Entries {
+		if i == 4 {
+			break
+		}
+		entries = append(entries, fmt.Sprintf("%s:%t/%t/%t/%t", databaseCapturePhase(entry.Phase), present(entry.Claim), present(entry.Plan), present(entry.Origin), present(entry.Ack)))
+	}
+	return fmt.Sprintf("state=%s entries=%d phase_payloads=[%s]", version, databaseCaptureBound(len(disk.Entries)), strings.Join(entries, ","))
+}
+
+func (c *databaseCaptureRuntimeWire) committedACKLost() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lost && c.suppressed200 && !c.invalid && len(c.bodies) == 1 && len(c.acks) == 1
+}
+
+func databaseCaptureDiagnostic(checkpoint string, pid int, exit databaseRunnerExit, path string, wire *databaseCaptureRuntimeWire, output []byte) string {
+	switch checkpoint {
+	case "initial", "ordinary_hold", "historical_replay":
+	default:
+		checkpoint = "unknown"
+	}
+	kind := "unknown"
+	switch exit.Kind {
+	case "running", "success", "process_exit", "wait_error":
+		kind = exit.Kind
+	}
+	code := exit.Code
+	if code < -1 || code > 255 {
+		code = -1
+	}
+	if pid < 1 {
+		pid = -1
+	}
+	wire.mu.Lock()
+	counts := fmt.Sprintf("identity=%d claim=%d plan=%d origin=%d forbidden=%d committed200=%d suppressed200=%t invalid=%t", databaseCaptureBound(wire.identity), databaseCaptureBound(wire.claim), databaseCaptureBound(wire.plan), databaseCaptureBound(len(wire.bodies)), databaseCaptureBound(wire.forbidden), databaseCaptureBound(len(wire.acks)), wire.suppressed200, wire.invalid)
+	wire.mu.Unlock()
+	return fmt.Sprintf("process=%s pid=%d exited=%t exit_kind=%s exit_code=%d journal=[%s] wire_totals=[%s] log_categories=[%s]", checkpoint, pid, exit.Exited, kind, code, databaseCaptureJournalSummary(path), counts, databaseCaptureLogCategories(output))
+}
+
+func (f *databaseRunnerFixture) captureLogCursor() int {
+	raw := f.logs.snapshot()
+	defer clear(raw)
+	return len(raw)
+}
+
+func databaseCaptureChainStage(chain []runner.JournalDatabaseNetworkCapture) string {
+	if len(chain) == 0 {
+		return "before_claim"
+	}
+	if len(chain) > 3 {
+		return "unexpected_depth"
+	}
+	if chain[0].Phase != "claim" {
+		return "claim_phase_mismatch"
+	}
+	if chain[0].Claim == nil {
+		return "claim_payload_missing"
+	}
+	if len(chain) == 1 {
+		return "before_plan"
+	}
+	if chain[1].Phase != "plan" {
+		return "plan_phase_mismatch"
+	}
+	if chain[1].Plan == nil {
+		return "plan_payload_missing"
+	}
+	if len(chain) == 2 {
+		return "before_origin"
+	}
+	if chain[2].Phase != "origin" {
+		return "origin_phase_mismatch"
+	}
+	if chain[2].Origin == nil {
+		return "origin_payload_missing"
+	}
+	return "origin_pending_ack"
+}
+
+func TestDatabaseCaptureRuntimeDiagnosticSeparatesEarlyExitFromACKLoss(t *testing.T) {
+	wire := &databaseCaptureRuntimeWire{}
+	if wire.committedACKLost() {
+		t.Fatal("early exit classified as committed ACK loss")
+	}
+	if stage := databaseCaptureChainStage(nil); stage != "before_claim" {
+		t.Fatal("empty chain lost stage")
+	}
+	chain := []runner.JournalDatabaseNetworkCapture{{Phase: "claim", Claim: &domain.HostingDatabaseNetworkCaptureClaim{}}}
+	if stage := databaseCaptureChainStage(chain); stage != "before_plan" {
+		t.Fatal("claim-only chain lost stage")
+	}
+	chain = append(chain, runner.JournalDatabaseNetworkCapture{Phase: "plan", Plan: &domain.HostingDatabaseNetworkCapture{}})
+	if stage := databaseCaptureChainStage(chain); stage != "before_origin" {
+		t.Fatal("plan-only chain lost stage")
+	}
+	chain = append(chain, runner.JournalDatabaseNetworkCapture{Phase: "origin", Origin: &domain.HostingDatabaseNetworkOriginRequest{}})
+	if stage := databaseCaptureChainStage(chain); stage != "origin_pending_ack" {
+		t.Fatal("retained origin lost stage")
+	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"id":"committed"}`)
+	})
+	rec := httptest.NewRecorder()
+	wire.serve(rec, httptest.NewRequest("POST", "/api/v1/runners/database-network-captures/origin", strings.NewReader(`{}`)), handler)
+	if rec.Code != 503 || !wire.committedACKLost() {
+		t.Fatal("committed suppressed200 not distinguished from early exit")
+	}
+	rejected := &databaseCaptureRuntimeWire{}
+	rejected.serve(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/runners/database-network-captures/origin", strings.NewReader(`{}`)), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(409) }))
+	if rejected.committedACKLost() {
+		t.Fatal("rejected origin classified as committed ACK loss")
+	}
+}
+
+func TestDatabaseCaptureRuntimeDiagnosticRedactsCanaries(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "private_journal_path_canary")
+	raw := []byte(`{"version":13,"database_network_capture":[{"phase":"private_fence_canary","claim":{"secret":"ncr_bearer_canary"}},{"phase":"plan","plan":{}},{"phase":"origin","origin":{"url":"https://private.invalid/?token=canary"}}]}`)
+	if os.WriteFile(path, raw, 0600) != nil {
+		t.Fatal("diagnostic fixture write failed")
+	}
+	output := []byte("capture persistent configuration unavailable\ncapture persistent configuration unavailable ncr_bearer_canary\nprivate log canary\nhttps://private.invalid/?token=canary\n")
+	got := databaseCaptureDiagnostic("private_checkpoint_canary", 42, databaseRunnerExit{Exited: true, Kind: "private_exit_canary", Code: 1000}, path, &databaseCaptureRuntimeWire{identity: 10000}, output)
+	for _, secret := range []string{root, path, "private_", "ncr_", "https://", "?token=", "canary"} {
+		if strings.Contains(got, secret) {
+			t.Fatal("diagnostic exposed untrusted source text")
+		}
+	}
+	for _, expected := range []string{"process=unknown pid=42", "exit_kind=unknown exit_code=-1", "state=v13 entries=3", "unknown:true/false/false/false", "plan:false/true/false/false", "origin:false/false/true/false", "identity=9999", "log_categories=[persistent_configuration]"} {
+		if !strings.Contains(got, expected) {
+			t.Fatal("diagnostic omitted bounded stage evidence")
+		}
+	}
+	if category := databaseCaptureLogCategories([]byte("capture credential unavailable: private_canary\nprivate_canary\n")); category != "unclassified" {
+		t.Fatal("diagnostic accepted partial error match")
 	}
 }
