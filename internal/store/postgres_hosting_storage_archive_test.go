@@ -74,12 +74,12 @@ func newArchiveControlFixture(t *testing.T) archiveControlFixture {
 			t.Fatal("queue migration did not terminate")
 		}
 	}
-	stop, err := pg.StartHostingExecution(ctx)
-	if err != nil {
+	var schema string
+	if err := db.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
 		t.Fatal(err)
 	}
-	var schema string
-	if err = db.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+	stop, err := pg.StartHostingExecution(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
