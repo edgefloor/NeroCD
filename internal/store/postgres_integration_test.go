@@ -3,6 +3,7 @@ package store_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -4002,21 +4003,27 @@ func openPostgresIntegrationStore(t *testing.T, ctx context.Context, label strin
 	if databaseURL == "" {
 		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
 	}
-	schema := fmt.Sprintf("nerocd_%s_%d", label, time.Now().UTC().UnixNano())
+	schema := fmt.Sprintf("nerocd_%s_%s", label, strings.ToLower(rand.Text()))
 	adminDB, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := adminDB.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
-		adminDB.Close()
-		t.Fatalf("create schema: %v", err)
-	}
+	created := false
 	t.Cleanup(func() {
+		defer adminDB.Close()
+		if !created {
+			return // A CREATE collision never grants ownership of that schema.
+		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanupCancel()
-		_, _ = adminDB.Exec(cleanupCtx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
-		adminDB.Close()
+		if _, err := adminDB.Exec(cleanupCtx, `DROP SCHEMA `+pgx.Identifier{schema}.Sanitize()+` CASCADE`); err != nil {
+			t.Error("drop test-owned schema", schema, err)
+		}
 	})
+	if _, err := adminDB.Exec(ctx, `CREATE SCHEMA `+pgx.Identifier{schema}.Sanitize()); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	created = true
 	schemaURL := databaseURLWithSearchPath(t, databaseURL, schema)
 	database, err := pgxpool.New(ctx, schemaURL)
 	if err != nil {

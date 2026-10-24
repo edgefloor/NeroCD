@@ -75,7 +75,7 @@ func (s *PostgresStore) databaseCredentialTransaction(ctx context.Context, runne
 	if err != nil {
 		return result, fmt.Errorf("read locked credential operation: %w", err)
 	}
-	if op.RunID != before.RunID || op.ReconciliationRunID != before.ReconciliationRunID || op.Snapshot.RunnerID != runner || op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) || op.Plan == nil || op.Plan.Database == nil || op.Release == nil || op.PreparedReceipt == nil || op.CleanupPlan != nil || op.Plan.Hash != in.PlanHash || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) || domain.ValidateHostingDatabasePlan(*op.Plan) != nil {
+	if op.RunID != before.RunID || op.ReconciliationRunID != before.ReconciliationRunID || op.Snapshot.RunnerID != runner || op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) || op.Plan == nil || op.Plan.Database == nil || op.Release == nil || op.PreparedReceipt == nil || op.CleanupPlan != nil || op.Plan.Hash != in.PlanHash || !hostingOperationPlanMatches(op) {
 		return result, ErrConflict
 	}
 	observe := in.Mode == "observe"

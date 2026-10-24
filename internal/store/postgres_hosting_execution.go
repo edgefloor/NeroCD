@@ -167,12 +167,24 @@ func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.Ho
 			}
 		}
 	}
+	if err = loadDatabaseUpgrade(ctx, q, &op); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	return op, nil
 }
 
 // GetHostingOperation loads immutable evidence without exposing lease authority.
 func (s *PostgresStore) GetHostingOperation(ctx context.Context, id string) (domain.HostingOperation, error) {
-	return hostingOperation(ctx, s.pool, id)
+	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingOperation, error) {
+		op, err := hostingOperation(ctx, tx, id)
+		if err != nil || op.DatabaseUpgrade == nil {
+			return op, err
+		}
+		if err = databaseUpgradeHistoricalRead(ctx, tx, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		return op, nil
+	})
 }
 
 // RequestHostingDeployment captures desired state and inserts the River job in
@@ -560,6 +572,11 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 			return err
 		}
 	}
+	if op.DatabaseUpgrade != nil {
+		if err = finalizeDatabaseUpgradeRequest(ctx, tx, op); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -940,7 +957,7 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 		}
 	}
 	if op.MutationHold && op.State == "applying" && op.CleanupPlan == nil {
-		if op.Plan == nil || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) {
+		if !hostingOperationPlanMatches(op) {
 			return domain.HostingOperation{}, ErrConflict
 		}
 		if err = replayHostingApplyAdmission(ctx, tx, a, op); err != nil {
@@ -963,7 +980,7 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	if err = hostingRequireMode(ctx, tx, a, "deploy"); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if op.Plan == nil || op.Release == nil || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) {
+	if op.Release == nil || !hostingOperationPlanMatches(op) {
 		return domain.HostingOperation{}, ErrConflict
 	}
 	if op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) && !op.Plan.RetainPrevious {
@@ -1874,7 +1891,7 @@ func (s *PostgresStore) ListHostingOperations(ctx context.Context, resourceID st
 	}
 	result := PageResult[domain.HostingOperation]{Items: make([]domain.HostingOperation, 0, len(ids)), Limit: page.Limit, Offset: page.Offset, Total: total}
 	for _, id := range ids {
-		op, err := hostingOperation(ctx, s.pool, id)
+		op, err := s.GetHostingOperation(ctx, id)
 		if err != nil {
 			return PageResult[domain.HostingOperation]{}, err
 		}

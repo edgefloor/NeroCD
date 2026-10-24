@@ -399,6 +399,16 @@ type HostingDatabaseNetworkOriginReceipt struct {
 	AuditID   string          `json:"audit_id"`
 }
 
+type HostingDatabaseNetworkUpgrade struct {
+	OperationID         string          `json:"operation_id"`
+	CaptureID           string          `json:"capture_id"`
+	OriginReceiptID     string          `json:"origin_receipt_id"`
+	PreviousOperationID string          `json:"previous_operation_id"`
+	Proof               json.RawMessage `json:"proof"`
+	ProofHash           string          `json:"proof_hash"`
+	AuditID             string          `json:"audit_id"`
+}
+
 type HostingDatabaseReceipt struct {
 	ProjectID       string          `json:"project_id"`
 	RequestID       string          `json:"request_id"`

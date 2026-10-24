@@ -48,6 +48,11 @@ func requireHostingDatabaseAgent(ctx context.Context, tx pgx.Tx, snap domain.Hos
 // Settlement has tentatively completed its lease; every other first mutation
 // requires the same tuple to remain live after audit and lock waits.
 func finalDatabaseAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation, observe, settled bool) error {
+	if op.DatabaseUpgrade != nil {
+		if err := sqlcgen.New(tx).FlushDatabaseNetworkUpgrade(ctx); err != nil {
+			return err
+		}
+	}
 	if a.OperationID != op.ID || observe && a.RunID != op.ReconciliationRunID || !observe && a.RunID != op.RunID {
 		return ErrConflict
 	}
@@ -82,6 +87,10 @@ func finalDatabaseAuthority(ctx context.Context, tx pgx.Tx, runner string, a dom
 // databaseOperationAuthority checks current immutable metadata without reading
 // secret values. Marker references pin the exact versions accepted at request.
 func databaseOperationAuthority(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, observe bool) (err error) {
+	return databaseOperationAuthorityMode(ctx, tx, op, observe, false)
+}
+
+func databaseOperationAuthorityMode(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, observe, historical bool) (err error) {
 	defer func() {
 		if errors.Is(err, auth.ErrForbidden) || errors.Is(err, auth.ErrUnauthenticated) {
 			err = ErrConflict
@@ -134,7 +143,18 @@ func databaseOperationAuthority(ctx context.Context, tx pgx.Tx, op domain.Hostin
 	if err = authorizeBuildActor(ctx, tx, actor, op.ProjectID, role); err != nil {
 		return err
 	}
-	return requireHostingDatabaseAgent(ctx, tx, op.Snapshot)
+	if err = requireHostingDatabaseAgent(ctx, tx, op.Snapshot); err != nil {
+		return err
+	}
+	if err = databaseUpgradeAuthority(ctx, tx, op, observe || historical); err != nil {
+		return err
+	}
+	if op.DatabaseUpgrade != nil {
+		// Capture, credential and materialization reads can wait after the
+		// first actor check. Recheck the selected actor's advancing clock.
+		return authorizeBuildActor(ctx, tx, actor, op.ProjectID, role)
+	}
+	return nil
 }
 
 // RequestHostingDatabaseDeployment commits one private operation and River job.
@@ -227,6 +247,9 @@ func (s *PostgresStore) RequestHostingDatabaseDeployment(ctx context.Context, id
 	}
 	if state.HostPort != 0 || !state.RestoreAdmitted || state.HoldOperationID != nil || busy {
 		return zero, fmt.Errorf("database binding is busy or held: %w", ErrConflict)
+	}
+	if err = databaseUpgradeAuthority(ctx, tx, domain.HostingOperation{BindingID: snap.BindingID}, false); err != nil {
+		return zero, err
 	}
 	if err = q.CreateHostingDatabaseDeployment(ctx, sqlcgen.CreateHostingDatabaseDeploymentParams{OperationID: id, ResourceID: resource, BindingID: snap.BindingID, DestinationID: snap.DestinationID, Reference: buildJSON(snap.Database), Credentials: buildJSON(view.Credentials)}); err != nil {
 		return zero, fmt.Errorf("insert database family marker: %w", hostingError(err))

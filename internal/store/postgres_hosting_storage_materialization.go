@@ -146,6 +146,19 @@ func compileHostingStoragePlan(ctx context.Context, tx pgx.Tx, op domain.Hosting
 		if len(retained) != 0 {
 			return domain.HostingApplyPlan{}, ErrConflict
 		}
+		if op.DatabaseUpgrade != nil {
+			proof := op.DatabaseUpgrade
+			if previous == nil || !networkCaptureDocumentEqual(*previous, proof.PreviousHealthy) || release != proof.PreviousPlan.Release || descriptor != *proof.PreviousPlan.Storage {
+				return domain.HostingApplyPlan{}, ErrConflict
+			}
+			input, e := domain.HostingDatabaseUpgradePlanInput(*proof)
+			if e != nil {
+				return domain.HostingApplyPlan{}, ErrConflict
+			}
+			database := *proof.PreviousPlan.Database
+			database.Network = nil
+			return domain.CompileHostingDatabasePlanV2(op.Snapshot, release, *previous, proof.PreviousPlan, descriptor, database, input)
+		}
 		view, readErr := hostingDatabaseLoad(ctx, sqlcgen.New(tx), op.ResourceID)
 		if readErr != nil {
 			return domain.HostingApplyPlan{}, fmt.Errorf("read database credential references for plan: %w", readErr)
@@ -168,7 +181,7 @@ func storageAttemptOperation(ctx context.Context, tx pgx.Tx, runner string, a do
 	if err != nil {
 		return op, zero, err
 	}
-	if op.CleanupPlan != nil || op.Plan == nil || op.Release == nil || op.Snapshot.Storage == (domain.HostingStorageRef{}) || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) {
+	if op.CleanupPlan != nil || op.Release == nil || op.Snapshot.Storage == (domain.HostingStorageRef{}) || !hostingOperationPlanMatches(op) {
 		return op, zero, ErrConflict
 	}
 	if err = hostingRequireMode(ctx, tx, a, "deploy"); err != nil {
@@ -205,7 +218,13 @@ func finalHostingStorageAuthority(ctx context.Context, tx pgx.Tx, runner string,
 	if err := hostingAuthorityExists(ctx, tx, runner, a, true); err != nil {
 		return err
 	}
-	return validateStorageContinuityFinal(ctx, tx, op)
+	if err := validateStorageContinuityFinal(ctx, tx, op); err != nil {
+		return err
+	}
+	if op.DatabaseUpgrade != nil {
+		return finalDatabaseAuthority(ctx, tx, runner, a, op, false, false)
+	}
+	return nil
 }
 
 // First settlement has tentatively completed its own lease. Check the locked
@@ -213,6 +232,9 @@ func finalHostingStorageAuthority(ctx context.Context, tx pgx.Tx, runner string,
 func finalHostingStorageSettlementAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation, observe bool) error {
 	if op.Snapshot.Storage == (domain.HostingStorageRef{}) {
 		return nil
+	}
+	if op.DatabaseUpgrade != nil {
+		return finalDatabaseAuthority(ctx, tx, runner, a, op, observe, true)
 	}
 	if err := hostingFreshStorageGate(ctx, tx, op); err != nil {
 		return err
