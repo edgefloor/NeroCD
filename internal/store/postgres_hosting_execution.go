@@ -761,7 +761,11 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		op.TaskMode = "deploy"
 		return op, nil
 	}
-	if op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) {
+	if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
+		if domain.ValidateHostingDatabaseRelease(op.Snapshot, in.Release) != nil {
+			return domain.HostingOperation{}, ErrConflict
+		}
+	} else if op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) {
 		if domain.ValidateHostingSnapshotRelease(op.Snapshot, in.Release) != nil {
 			return domain.HostingOperation{}, ErrConflict
 		}
@@ -797,7 +801,9 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		}
 	}
 	var plan domain.HostingApplyPlan
-	if op.Snapshot.PolicyVersion == domain.HostingOwnedStoragePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildPolicyVersion || op.Snapshot.PolicyVersion == domain.HostingRuntimePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildRuntimePolicyVersion {
+	if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
+		plan, err = compileHostingStoragePlan(ctx, tx, op, in.Release, previous, nil)
+	} else if op.Snapshot.PolicyVersion == domain.HostingOwnedStoragePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildPolicyVersion || op.Snapshot.PolicyVersion == domain.HostingRuntimePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildRuntimePolicyVersion {
 		var retained []domain.HostingHealthy
 		rows, readErr := sqlcgen.New(tx).GetHostingRetainedReleases(ctx, op.BindingID)
 		if readErr != nil {
@@ -946,7 +952,7 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	if op.Plan == nil || op.Release == nil || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) {
 		return domain.HostingOperation{}, ErrConflict
 	}
-	if !op.Plan.RetainPrevious {
+	if op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) && !op.Plan.RetainPrevious {
 		referenced, checkErr := sqlcgen.New(tx).HostingReleasePortReferenced(ctx, sqlcgen.HostingReleasePortReferencedParams{DestinationID: op.Snapshot.DestinationID, HostPort: int32(op.Snapshot.HostPort)})
 		if checkErr != nil {
 			return domain.HostingOperation{}, checkErr
@@ -1125,7 +1131,7 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 			if err != nil {
 				return domain.HostingOperation{}, err
 			}
-			if op.Plan.PreviousHealthy != nil {
+			if op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) && op.Plan.PreviousHealthy != nil {
 				if _, err = sqlcgen.New(tx).RetainPreviousHostingRelease(ctx, sqlcgen.RetainPreviousHostingReleaseParams{OperationID: op.Plan.PreviousHealthy.OperationID, RetainedRunning: op.Plan.RetainPrevious}); err != nil {
 					return domain.HostingOperation{}, err
 				}
@@ -1134,11 +1140,13 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 			if marshalErr != nil {
 				return domain.HostingOperation{}, marshalErr
 			}
-			if _, err = sqlcgen.New(tx).RecordHostingHealthyRelease(ctx, sqlcgen.RecordHostingHealthyReleaseParams{OperationID: op.ID, BindingID: op.BindingID, DestinationID: op.Snapshot.DestinationID, HostPort: int32(op.Snapshot.HostPort), Body: healthyRaw}); err != nil {
-				return domain.HostingOperation{}, err
-			}
-			if _, err = sqlcgen.New(tx).RetainHostingReleaseClaim(ctx, op.ID); err != nil {
-				return domain.HostingOperation{}, err
+			if op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) {
+				if _, err = sqlcgen.New(tx).RecordHostingHealthyRelease(ctx, sqlcgen.RecordHostingHealthyReleaseParams{OperationID: op.ID, BindingID: op.BindingID, DestinationID: op.Snapshot.DestinationID, HostPort: int32(op.Snapshot.HostPort), Body: healthyRaw}); err != nil {
+					return domain.HostingOperation{}, err
+				}
+				if _, err = sqlcgen.New(tx).RetainHostingReleaseClaim(ctx, op.ID); err != nil {
+					return domain.HostingOperation{}, err
+				}
 			}
 
 			raw, err := json.Marshal(healthy)
@@ -1214,7 +1222,7 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 	if err = sqlcgen.New(tx).LockHostingExecutionDestination(ctx, before.Snapshot.DestinationID); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	local := before.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{})
+	local := before.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) || before.Snapshot.Database != (domain.HostingDatabaseExecutionRef{})
 	role := "maintainer"
 	if reconcile {
 		role = "owner"
@@ -1563,7 +1571,7 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 		}
 		return sqlcgen.New(tx).ProxyClaimEligible(ctx, sqlcgen.ProxyClaimEligibleParams{RunID: run.ID, RunnerID: runnerID})
 	}
-	if run.RunSpec.Type != domain.RunTypeImageDeploy && run.RunSpec.Type != domain.RunTypeLocalBuildDeploy {
+	if run.RunSpec.Type != domain.RunTypeImageDeploy && run.RunSpec.Type != domain.RunTypeLocalBuildDeploy && run.RunSpec.Type != domain.RunTypeDatabaseDeploy {
 		return !domain.ContainsHostingExecution(run.RunSpec, run.Workflow), nil
 	}
 	if validateHostingDeploymentTask(run) != nil {
@@ -1984,6 +1992,9 @@ func (s *PostgresStore) RequestHostingReleaseCleanup(ctx context.Context, id, re
 	target, err := sqlcgen.New(tx).LockHostingResourceTarget(ctx, resourceID)
 	if err != nil {
 		return domain.HostingOperation{}, hostingError(err)
+	}
+	if target.Kind == "database" {
+		return domain.HostingOperation{}, ErrConflict
 	}
 	var resourceSource domain.ResourceSource
 	if err = json.Unmarshal(target.Source, &resourceSource); err != nil {

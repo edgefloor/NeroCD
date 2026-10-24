@@ -336,6 +336,15 @@ type HostingDatabaseCredential struct {
 	Version    int64  `json:"version"`
 }
 
+type HostingDatabaseDeployment struct {
+	OperationID   string          `json:"operation_id"`
+	ResourceID    string          `json:"resource_id"`
+	BindingID     string          `json:"binding_id"`
+	DestinationID string          `json:"destination_id"`
+	Reference     json.RawMessage `json:"reference"`
+	Credentials   json.RawMessage `json:"credentials"`
+}
+
 type HostingDatabaseReceipt struct {
 	ProjectID       string          `json:"project_id"`
 	RequestID       string          `json:"request_id"`

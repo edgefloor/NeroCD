@@ -4,6 +4,7 @@ import "net/http"
 
 var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/databases"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database/deployments"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage"},
@@ -228,6 +229,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
 	case "/api/v1/databases":
 		return s.createHostingDatabase
+	case "/api/v1/resources/{id}/database/deployments":
+		return s.hostingDatabaseDeploymentRequest
 	case "/api/v1/resources/{id}/database":
 		return s.getHostingDatabase
 	case "/api/v1/resources/{id}/storage":

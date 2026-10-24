@@ -24,6 +24,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/database/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue an immutable private database deployment
+         * @description Requires current project maintainer and destination grant authority. Pins the saved recipe, owned storage and credential versions; uses no public host port. Runtime metadata remains adapter_unqualified pending separate engine qualification.
+         */
+        post: operations["requestHostingDatabaseDeployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/database": {
         parameters: {
             query?: never;
@@ -4705,7 +4725,25 @@ export interface components {
             materialization: components["schemas"]["HostingStorageMaterialization"];
             receipt: components["schemas"]["HostingReceipt"];
         };
+        HostingDatabaseDeploymentInput: {
+            /** Format: int64 */
+            expected_generation: number;
+            idempotency_key: string;
+        };
+        HostingDatabaseExecutionRef: {
+            /** @enum {string} */
+            engine: "postgresql" | "redis";
+            /** @enum {string} */
+            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1";
+            configuration_hash: string;
+        };
+        HostingDatabasePlan: {
+            reference: components["schemas"]["HostingDatabaseExecutionRef"];
+            network_name: string;
+            credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
+        };
         HostingSnapshot: {
+            database?: components["schemas"]["HostingDatabaseExecutionRef"];
             storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityRef"];
             storage?: components["schemas"]["HostingStorageRef"];
             runtime_configuration?: components["schemas"]["HostingRuntimeConfigurationRef"];
@@ -4723,7 +4761,7 @@ export interface components {
             host_port: number;
             readiness: components["schemas"]["HostingReadiness"];
             /** @enum {string} */
-            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1";
+            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "database.private.owned-storage.v1";
         };
         HostingRelease: {
             local_build?: components["schemas"]["HostingLocalBuildArtifact"];
@@ -4764,6 +4802,7 @@ export interface components {
             cleanup_operation_id?: string;
         };
         HostingApplyPlan: {
+            database?: components["schemas"]["HostingDatabasePlan"];
             storage?: components["schemas"]["HostingStoragePlan"];
             retained_releases?: components["schemas"]["HostingHealthy"][];
             retain_previous?: boolean;
@@ -4771,7 +4810,7 @@ export interface components {
             release: components["schemas"]["HostingRelease"];
             previous_healthy?: components["schemas"]["HostingHealthy"];
             /** @enum {string} */
-            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1";
+            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1" | "database-hosting.private.owned-storage.v1";
             hash: string;
         };
         HostingReceipt: {
@@ -6292,6 +6331,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostingDatabase"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingDatabaseDeployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseDeploymentInput"];
+            };
+        };
+        responses: {
+            /** @description Durable private database operation, including exact actor-bound replay */
+            202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
                 };
             };
             400: components["responses"]["Error"];
