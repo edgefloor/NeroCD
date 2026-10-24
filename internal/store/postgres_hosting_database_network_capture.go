@@ -232,6 +232,19 @@ func (s *PostgresStore) RequestHostingDatabaseNetworkCapture(ctx context.Context
 		if err != nil {
 			return zero, err
 		}
+		// A concurrent identical request may have committed while this caller
+		// waited for the destination lock. Recheck after serialization and current
+		// authorization, before inserting the deterministic task/capture IDs.
+		c, err = readNetworkCapture(ctx, q, p.OperationID)
+		if err == nil {
+			if c.CreatedBy != actor || !reflect.DeepEqual(c.Plan, p) {
+				return zero, ErrConflict
+			}
+			return c, finalizeNetworkCapture(ctx, tx, c, "", false)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return zero, err
+		}
 		run := domain.TaskRun{ID: "capture_" + p.OperationID, RunSpec: domain.RunSpec{Type: domain.RunTypeDatabaseNetworkCapture, HostingOperationID: p.OperationID, HostingMode: "capture", Inputs: map[string]any{}}}
 		if domain.ValidateHostingDatabaseNetworkCaptureTask(run) != nil {
 			return zero, ErrConflict

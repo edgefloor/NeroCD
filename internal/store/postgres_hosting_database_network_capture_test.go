@@ -340,6 +340,105 @@ func TestPostgresDatabaseNetworkCaptureClaimsAndStaleAttempt(t *testing.T) {
 	}
 }
 
+func TestPostgresDatabaseNetworkCaptureConcurrentRequestsConverge(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f := newNetworkCaptureFixture(t, engine)
+			ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+			defer cancel()
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			type outcome struct {
+				capture domain.HostingDatabaseNetworkCapture
+				err     error
+			}
+			// Exactly two callers each report once; cleanup must drain both.
+			done := make(chan outcome, 2)
+			started, joined := 0, 0
+			defer func() {
+				cancel()
+				cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stop()
+				if err := blocker.Rollback(cleanup); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+					t.Error("request barrier rollback failed")
+				}
+				for joined < started {
+					select {
+					case <-done:
+						joined++
+					case <-cleanup.Done():
+						t.Error("capture request did not join")
+						return
+					}
+				}
+			}()
+			var pid int
+			if blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid) != nil {
+				t.Fatal("request barrier identity unavailable")
+			}
+			if _, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0))`, f.op.Snapshot.DestinationID); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				started++
+				go func() {
+					capture, err := f.pg.RequestHostingDatabaseNetworkCapture(ctx, f.op.ID, "usr_bootstrap", destinationEvent("same_capture"))
+					done <- outcome{capture, err}
+				}()
+			}
+			ticker := time.NewTicker(10 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				var waiting int
+				if f.db.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiting) != nil {
+					t.Fatal("request barrier observation failed")
+				}
+				if waiting == 2 {
+					break
+				}
+				select {
+				case <-done:
+					joined++
+					t.Fatal("request returned before both reached the barrier")
+				case <-ctx.Done():
+					t.Fatal("both requests did not reach destination barrier")
+				case <-ticker.C:
+				}
+			}
+			if err = blocker.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var accepted []domain.HostingDatabaseNetworkCapture
+			for joined < started {
+				select {
+				case result := <-done:
+					joined++
+					if result.err != nil {
+						t.Errorf("identical concurrent request failed: %v", result.err)
+					} else {
+						accepted = append(accepted, result.capture)
+					}
+				case <-ctx.Done():
+					t.Fatal("concurrent request join deadline")
+				}
+			}
+			if len(accepted) != 2 || !reflect.DeepEqual(accepted[0], accepted[1]) {
+				t.Error("concurrent requests did not return the same accepted capture")
+			}
+			var captures, tasks, audits, receipts, leases int
+			id := domain.HostingDatabaseNetworkCaptureID(f.op.ID)
+			if err = f.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_database_network_captures WHERE id=$1),(SELECT count(*) FROM task_runs WHERE id='capture_'||$1::text),(SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='hosting.database_network_capture.requested'),(SELECT count(*) FROM hosting_database_network_origin_receipts WHERE capture_id=$1),(SELECT count(*) FROM run_leases WHERE run_id='capture_'||$1::text)`, id).Scan(&captures, &tasks, &audits, &receipts, &leases); err != nil {
+				t.Fatal(err)
+			}
+			if captures != 1 || tasks != 1 || audits != 1 || receipts != 0 || leases != 0 {
+				t.Fatal("concurrent request created duplicate or premature effects")
+			}
+		})
+	}
+}
+
 func TestPostgresDatabaseNetworkCaptureHistoricalOriginSurvivesRedeploy(t *testing.T) {
 	for _, engine := range []string{"postgresql", "redis"} {
 		t.Run(engine, func(t *testing.T) {
