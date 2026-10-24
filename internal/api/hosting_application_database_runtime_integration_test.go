@@ -429,13 +429,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			// Effect authorization requires a live lease before it reads historical
 			// authorization IDs. Complete retired this exact lease, so denial is
 			// specifically 404/not_found, while saved Complete ACK replay remains valid.
-			denied := databaseRunnerJSON[struct {
-				Error struct {
-					Code string `json:"code"`
-				} `json:"error"`
-			}](f, string(credential), "POST", "/api/v1/runners/hosting/database-binding/authorize", staleAuthority, http.StatusNotFound)
+			denied := databaseRunnerJSON[map[string]string](f, string(credential), "POST", "/api/v1/runners/hosting/database-binding/authorize", staleAuthority, http.StatusNotFound)
 			clear(credential)
-			if denied.Error.Code != "not_found" || f.connectionDurableCounts() != counts || f.applyRequests.Load() != applies || f.deliveryRequests.Load() != deliveries || f.runtimeDeliveryRequests.Load() != runtimeDeliveries || f.connectionAuthorizationRequests.Load() != authorizations+1 || !reflect.DeepEqual(before, f.applicationContainer(c)) {
+			if denied["code"] != "not_found" || f.connectionDurableCounts() != counts || f.applyRequests.Load() != applies || f.deliveryRequests.Load() != deliveries || f.runtimeDeliveryRequests.Load() != runtimeDeliveries || f.connectionAuthorizationRequests.Load() != authorizations+1 || !reflect.DeepEqual(before, f.applicationContainer(c)) {
 				t.Fatal("terminal original authorization was not denied without mutation or delivery")
 			}
 			authorizations++
@@ -515,6 +511,18 @@ func TestApplicationDatabaseRuntimeCompleteReceiptContract(t *testing.T) {
 				t.Fatal("Complete receipt did not retain the controller result-body hash contract")
 			}
 		})
+	}
+}
+
+func TestApplicationDatabaseRuntimeTerminalDenialEnvelope(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeErrorEnvelope(w, http.StatusNotFound, "not_found", "resource not found")
+	}))
+	t.Cleanup(server.Close)
+	f := &databaseRunnerFixture{t: t, server: server, client: server.Client()}
+	denied := databaseRunnerJSON[map[string]string](f, "", http.MethodPost, "/api/v1/runners/hosting/database-binding/authorize", nil, http.StatusNotFound)
+	if denied["code"] != "not_found" || denied["error"] != "resource not found" {
+		t.Fatal("terminal denial did not decode the established flat public error envelope")
 	}
 }
 
