@@ -36,6 +36,9 @@ func reconcileHostingDatabaseJournal(parent context.Context, config Config, j *r
 	})
 }
 func reconcileDatabaseJournalWithEngine(parent context.Context, config Config, j *runner.AttemptJournal, open func() (databaseExecutionEngine, DatabaseEngineConfig, error)) error {
+	if config.Database != nil {
+		parent = runnerclient.WithDatabaseTransport(parent, runnerclient.DatabaseTransport{TrustedLoopbackHTTP: config.Database.TrustedLoopbackHTTP})
+	}
 	c := runnerclient.New(config.Server, config.Token)
 	seen := map[domain.HostingAuthority]bool{}
 	for _, first := range j.Snapshot().Hosting {

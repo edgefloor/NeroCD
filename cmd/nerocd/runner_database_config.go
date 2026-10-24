@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"nerocd/internal/domain"
 	"nerocd/internal/runnerruntime"
@@ -47,4 +48,13 @@ func runnerDatabaseCapabilities(enabled, specified bool, capabilities []string) 
 		}
 	}
 	return capabilities, nil
+}
+
+// postRunnerBootstrap keeps database and readiness enrollment on the protected
+// transport before any runner credential is available for ordinary requests.
+func postRunnerBootstrap(ctx context.Context, database, readiness bool, server, path string, in any, token string, out any) error {
+	if database || readiness {
+		return postRunnerReadinessBootstrap(ctx, server, path, in, token, out)
+	}
+	return postAPIInto(server+path, in, token, out)
 }

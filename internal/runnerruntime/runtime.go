@@ -195,6 +195,9 @@ func Run(config Config) error { return RunContext(context.Background(), config) 
 // RunContext joins attempt cleanup before returning after parent cancellation.
 // It retains unresolved journal evidence and never treats cancellation as success.
 func RunContext(ctx context.Context, config Config) error {
+	if config.Database != nil {
+		ctx = runnerclient.WithDatabaseTransport(ctx, runnerclient.DatabaseTransport{TrustedLoopbackHTTP: config.Database.TrustedLoopbackHTTP})
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -417,6 +420,9 @@ func executeClaimWithOptions(server string, token string, claim domain.ClaimedRu
 	return executeClaimWithOptionsContext(context.Background(), server, token, claim, workDir, cancelPollInterval, journal, secretRoot, imagePolicy, operational, options)
 }
 func executeClaimWithOptionsContext(parent context.Context, server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, options claimExecutionOptions) error {
+	if options.database != nil {
+		parent = runnerclient.WithDatabaseTransport(parent, runnerclient.DatabaseTransport{TrustedLoopbackHTTP: options.database.TrustedLoopbackHTTP})
+	}
 	if parent.Err() != nil {
 		return parent.Err()
 	}

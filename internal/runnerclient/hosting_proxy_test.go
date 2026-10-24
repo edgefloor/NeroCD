@@ -397,7 +397,7 @@ func TestDatabaseExecutionIdentityRequiresExactConfigurationAndPrerequisites(t *
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": tc.caps})
 		}))
-		_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Database: tc.configured})
+		_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Database: tc.configured, DatabaseTrustedLoopbackHTTP: true})
 		server.Close()
 		if (err == nil) != tc.valid {
 			t.Fatalf("database identity accepted mismatch configured=%v caps=%v err=%v", tc.configured, tc.caps, err)

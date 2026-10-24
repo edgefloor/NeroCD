@@ -80,6 +80,7 @@ func runRunner(args []string) error {
 		defer stop()
 	}
 	if databaseConfig != nil {
+		runnerContext = runnerclient.WithDatabaseTransport(runnerContext, runnerclient.DatabaseTransport{})
 		if err := runnerclient.ValidateRuntimeEnvironmentServer(*server, runnerclient.RuntimeEnvironmentTransport{}); err != nil {
 			return err
 		}
@@ -231,8 +232,8 @@ func runRunner(args []string) error {
 		var consumed app.ConsumedRunnerEnrollment
 		var consumeErr error
 		backoff := 100 * time.Millisecond
-		if *hostingReadiness {
-			consumeErr = postRunnerReadinessBootstrap(runnerContext, *server, "/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
+		if *hostingReadiness || *hostingDatabase {
+			consumeErr = postRunnerBootstrap(runnerContext, *hostingDatabase, *hostingReadiness, *server, "/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
 		} else {
 			for attempt := 0; attempt < 5; attempt++ {
 				consumeErr = postAPIInto(*server+"/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
@@ -265,12 +266,7 @@ func runRunner(args []string) error {
 		}
 		registerBody := runnerRegisterRequest{ID: *id, Name: *name, Tags: splitCSV(*tags), Capabilities: registrationCapabilities}
 		var registered runnerRegisterResponse
-		var registerErr error
-		if *hostingReadiness {
-			registerErr = postRunnerReadinessBootstrap(runnerContext, *server, "/api/v1/runners/register", registerBody, registrationToken, &registered)
-		} else {
-			registerErr = postAPIInto(*server+"/api/v1/runners/register", registerBody, registrationToken, &registered)
-		}
+		registerErr := postRunnerBootstrap(runnerContext, *hostingDatabase, *hostingReadiness, *server, "/api/v1/runners/register", registerBody, registrationToken, &registered)
 		if registerErr != nil {
 			return registerErr
 		}

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -380,5 +381,138 @@ func TestDatabaseCoordinatorPersistsResultBeforeDrainAndCompletesAfterEventsACK(
 	}
 	if eventCalls < 2 || c.completeCalls != 1 || len(j.Snapshot().Events) != 0 {
 		t.Fatal("event/result acknowledgement sequence incomplete")
+	}
+}
+
+// Trust the fixture CA while preserving certificate verification. Requests still
+// use production client construction, supervisor, watcher, reporter, and replay.
+func databaseRedirectFixture(t *testing.T, passPath string) (string, <-chan string, *atomic.Int32) {
+	t.Helper()
+	leaks := &atomic.Int32{}
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { leaks.Add(1); _, _ = w.Write([]byte(`{}`)) }))
+	t.Cleanup(destination.Close)
+	paths := make(chan string, 16)
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths <- r.URL.Path
+		if r.URL.Path == passPath {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.Redirect(w, r, destination.URL+"/leak", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(source.Close)
+	previous := http.DefaultTransport
+	trusted := source.Client().Transport.(*http.Transport).Clone()
+	http.DefaultTransport = trusted
+	t.Cleanup(func() { http.DefaultTransport = previous; trusted.CloseIdleConnections() })
+	return source.URL, paths, leaks
+}
+func TestDatabaseTransportPolicyReachesExecutionAndLifecycle(t *testing.T) {
+	for _, mode := range []string{"execution preflight", "renewal", "cancellation watcher", "event reporter", "journaled completion", "generic replay", "database replay"} {
+		t.Run(mode, func(t *testing.T) {
+			_, j, _, c, _ := databaseCoordinatorFixture(t, "redis")
+			passPath := ""
+			if mode == "renewal" {
+				passPath = "/api/v1/runners/heartbeat"
+			}
+			server, paths, leaks := databaseRedirectFixture(t, passPath)
+			parent := runnerclient.WithDatabaseTransport(t.Context(), runnerclient.DatabaseTransport{})
+			s := newAttemptSupervisorFrom(parent, c.lease)
+			defer s.Close()
+			expected := ""
+			var err error
+			switch mode {
+			case "execution preflight":
+				expected = "/api/v1/runners/renew"
+				claim := domain.ClaimedRun{Run: domain.TaskRun{ID: c.a.RunID, RunSpec: domain.RunSpec{Type: domain.RunTypeDatabaseDeploy, HostingOperationID: c.a.OperationID, HostingMode: "deploy"}}, Lease: c.lease}
+				// The entrypoint must attach policy to an untagged parent before renewal.
+				err = executeClaimWithOptionsContext(t.Context(), server, "database_bearer_canary", claim, t.TempDir(), time.Millisecond, j, "", composeImagePolicyPreloaded, &runnerOperationalCounters{}, claimExecutionOptions{database: &DatabaseExecutionConfig{}})
+			case "renewal":
+				expected = "/api/v1/runners/renew"
+				worker := startLeaseRenewer(s.Context(), s, server, "database_bearer_canary", c.lease, time.Millisecond)
+				select {
+				case <-s.Context().Done():
+					err = s.Context().Err()
+				case <-time.After(3 * time.Second):
+					t.Error("renewal did not stop on rejected redirect")
+				}
+				worker.Stop()
+			case "cancellation watcher":
+				expected = "/api/v1/runners/lease"
+				worker := startLeaseWatcher(s.Context(), server, "database_bearer_canary", c.lease, time.Millisecond, s.cancel)
+				select {
+				case <-s.Context().Done():
+					err = s.Context().Err()
+				case <-time.After(3 * time.Second):
+					t.Error("watcher did not stop on rejected redirect")
+				}
+				worker.Stop()
+			case "event reporter":
+				expected = "/api/v1/runners/events/batch"
+				reporter := startAttemptReporter(s.Context(), s, j, server, "database_bearer_canary", c.a.RunID, c.lease)
+				if emitErr := reporter.Emit(domain.LogSystem, "durable event", 4); emitErr != nil {
+					reporter.Stop()
+					t.Fatal(emitErr)
+				}
+				err = reporter.WaitEmpty(s.Context())
+				reporter.Stop()
+				if len(j.Snapshot().Events) != 1 {
+					t.Error("redirect discarded durable event")
+				}
+			case "journaled completion":
+				expected = "/api/v1/runners/complete"
+				err = journaledCompletion(s, j, server, "database_bearer_canary", c.a.RunID, c.lease, "failed", nil)
+				if len(j.Snapshot().Completions) != 1 {
+					t.Error("redirect discarded durable completion")
+				}
+			case "generic replay":
+				expected = "/api/v1/runners/lease"
+				if _, appendErr := j.AppendEvent(runner.JournalEvent{ID: "pending", Attempt: journalAttemptIdentity(c.a.RunID, c.lease, nil), Sequence: 4, Stream: domain.LogSystem, Message: "pending", CreatedAt: time.Now().UTC()}); appendErr != nil {
+					t.Fatal(appendErr)
+				}
+				err = reconcileRunnerJournalWithCounters(server, "database_bearer_canary", j, &runnerOperationalCounters{}, parent)
+				if len(j.Snapshot().Events) != 1 {
+					t.Error("redirect discarded replay evidence")
+				}
+			case "database replay":
+				expected = "/api/v1/runners/hosting/status"
+				entry := runner.JournalHosting{ID: "intent", Attempt: journalAttemptIdentity(c.a.RunID, c.lease, nil), OperationID: c.a.OperationID, Phase: "apply_intent", Plan: c.op.Plan, DeliveryID: strings.Repeat("a", 32), CreatedAt: time.Now().UTC()}
+				databaseEntry(&entry, c.op)
+				if _, appendErr := j.AppendHosting(entry); appendErr != nil {
+					t.Fatal(appendErr)
+				}
+				cfg := databaseReplayConfig(server, c)
+				cfg.Database.TrustedLoopbackHTTP = false
+				err = reconcileDatabaseJournalWithEngine(t.Context(), cfg, j, func() (databaseExecutionEngine, DatabaseEngineConfig, error) {
+					t.Error("redirect opened database engine")
+					return nil, DatabaseEngineConfig{}, errors.New("unexpected engine")
+				})
+				if len(j.Snapshot().Hosting) != 1 {
+					t.Error("redirect discarded database evidence")
+				}
+			}
+			if err == nil {
+				t.Fatal("redirect accepted")
+			}
+			found := false
+		drainPaths:
+			for {
+				select {
+				case path := <-paths:
+					found = found || path == expected
+				default:
+					break drainPaths
+				}
+			}
+			if !found {
+				t.Fatalf("protected production call was not exercised: %s", expected)
+			}
+			if leaks.Load() != 0 {
+				t.Fatal("authority reached HTTP redirect destination")
+			}
+			if strings.Contains(err.Error(), "database_bearer_canary") || strings.Contains(err.Error(), c.lease.Fence) {
+				t.Fatal("error leaked authority")
+			}
+		})
 	}
 }

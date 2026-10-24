@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"nerocd/internal/domain"
@@ -68,5 +69,36 @@ func TestRunnerDatabaseCommandRejectsBeforeControllerEffects(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatal("invalid database command contacted controller")
+	}
+}
+
+func TestRunnerDatabaseBootstrapRejectsVerifiedTLSToHTTPRedirect(t *testing.T) {
+	for _, path := range []string{"/api/v1/runners/register", "/api/v1/runner-enrollments/consume"} {
+		t.Run(path, func(t *testing.T) {
+			var destinationCalls atomic.Int32
+			destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { destinationCalls.Add(1); _, _ = w.Write([]byte(`{}`)) }))
+			defer destination.Close()
+			sourceCalls := 0
+			source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				sourceCalls++
+				if r.URL.Path != path || r.Header.Get("Authorization") != "Bearer bootstrap_token_canary" {
+					t.Error("bootstrap request lost exact route/authority")
+				}
+				http.Redirect(w, r, destination.URL+"/leak", http.StatusTemporaryRedirect)
+			}))
+			defer source.Close()
+			previous := http.DefaultTransport
+			trusted := source.Client().Transport.(*http.Transport).Clone()
+			http.DefaultTransport = trusted
+			t.Cleanup(func() { http.DefaultTransport = previous; trusted.CloseIdleConnections() })
+			var out map[string]any
+			err := postRunnerBootstrap(t.Context(), true, false, source.URL, path, map[string]any{"credential_hash": "bootstrap_body_canary"}, "bootstrap_token_canary", &out)
+			if err == nil || sourceCalls != 1 || destinationCalls.Load() != 0 {
+				t.Fatalf("database bootstrap followed redirect: requests=%d leaks=%d err=%v", sourceCalls, destinationCalls.Load(), err)
+			}
+			if strings.Contains(err.Error(), "bootstrap_token_canary") || strings.Contains(err.Error(), "bootstrap_body_canary") {
+				t.Fatal("bootstrap error leaked protected values")
+			}
+		})
 	}
 }

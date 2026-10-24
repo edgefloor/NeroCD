@@ -68,11 +68,14 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
 	Database, Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, Readiness, ProxyVerifiedSwitch bool
-	ReadinessTrustedLoopbackHTTP                                                                                                 bool
+	DatabaseTrustedLoopbackHTTP, ReadinessTrustedLoopbackHTTP                                                                    bool
 }
 
 // RuntimeExecutionIdentityWithOptions checks every protected execution capability.
 func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options RuntimeExecutionOptions) (string, error) {
+	if options.Database {
+		ctx = WithDatabaseTransport(ctx, DatabaseTransport{TrustedLoopbackHTTP: options.DatabaseTrustedLoopbackHTTP})
+	}
 	if options.Readiness {
 		secured, closeTransport, err := c.serverReadinessHTTP(ServerReadinessTransport{TrustedLoopbackHTTP: options.ReadinessTrustedLoopbackHTTP})
 		if err != nil {
