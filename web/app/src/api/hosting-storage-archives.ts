@@ -1,4 +1,5 @@
 import { request } from "./client";
+import { ApiError } from "./errors";
 import type { components } from "./generated";
 import {
   boundedStorageRequest,
@@ -363,10 +364,31 @@ export async function refreshArchiveConfiguration(
   signal?: AbortSignal,
 ) {
   const path = `/api/v1/resources/${encodeURIComponent(scope.resource)}`;
-  const [resource, currentStorage, binding] = await Promise.all([
+  const reads = [
     read<components["schemas"]["Resource"]>(path, signal),
     read<HostingStorage>(`${path}/storage`, signal),
     read<components["schemas"]["ResourceBinding"]>(`${path}/binding`, signal),
+  ] as const;
+  // Observe denials immediately, but retain ordinary failures until every sibling
+  // has settled. Both race participants handle all later read rejections.
+  const denied = new Promise<never>((_, reject) => {
+    for (const reading of reads) {
+      void reading.catch((cause) => {
+        if (cause instanceof ApiError && [401, 403].includes(cause.status))
+          reject(cause);
+      });
+    }
+  });
+  const settled = Promise.allSettled(reads).then((results) => {
+    const [resource, currentStorage, binding] = results;
+    if (resource.status === "rejected") throw resource.reason;
+    if (currentStorage.status === "rejected") throw currentStorage.reason;
+    if (binding.status === "rejected") throw binding.reason;
+    return [resource.value, currentStorage.value, binding.value] as const;
+  });
+  const [resource, currentStorage, binding] = await Promise.race([
+    denied,
+    settled,
   ]);
   if (
     resource.id !== scope.resource ||

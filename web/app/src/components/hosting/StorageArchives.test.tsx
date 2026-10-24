@@ -83,7 +83,67 @@ afterEach(() => {
   client?.clear();
   vi.resetAllMocks();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
+test.each([401, 403])(
+  "actual refresh adapter masks a saved intent when delayed %i follows 503, without waiting for a stalled read",
+  async (status) => {
+    const actual = await vi.importActual<typeof api>(
+      "@/api/hosting-storage-archives",
+    );
+    vi.mocked(api.refreshArchiveConfiguration).mockImplementation(
+      actual.refreshArchiveConfiguration,
+    );
+    vi.mocked(api.requestArchiveBackup).mockRejectedValueOnce(
+      new Error("lost delivery"),
+    );
+    let deny!: (response: Response) => void;
+    let finishTail!: (cause: unknown) => void;
+    const fetch = vi.fn((path: string) => {
+      if (path.endsWith("/storage"))
+        return new Promise<Response>((resolve) => {
+          deny = resolve;
+        });
+      if (path.endsWith("/binding"))
+        return new Promise<Response>((_, reject) => {
+          finishTail = reject;
+        });
+      return Promise.resolve(new Response("{}", { status: 503 }));
+    });
+    vi.stubGlobal("fetch", fetch);
+    setup();
+    await loaded();
+    fireEvent.click(screen.getByRole("checkbox"));
+    click("Request upload backup");
+    await screen.findByText(/Saved backup request/);
+    click("Refresh archive status");
+    try {
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText(/Saved backup request/)).toBeTruthy();
+      await act(async () => {
+        deny(new Response("{}", { status }));
+      });
+      await screen.findByText(/Archive access is unavailable. Reload the page/);
+      expect(screen.queryByText(/Saved backup request/)).toBeNull();
+      expect(
+        screen.queryByRole("button", {
+          name: "Retry identical archive request",
+        }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Backup backup" }),
+      ).toBeNull();
+      expect(api.requestArchiveBackup).toHaveBeenCalledTimes(1);
+      expect(fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      await act(async () => {
+        finishTail(new Error("late tail"));
+      });
+    }
+  },
+);
 function setup(owner = true) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(

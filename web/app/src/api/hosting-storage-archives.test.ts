@@ -13,6 +13,7 @@ import {
   type ArchiveScope,
 } from "./hosting-storage-archives";
 import type { components } from "./generated";
+import { ApiError } from "./errors";
 const hash = `sha256:${"a".repeat(64)}`;
 const scope: ArchiveScope = {
   actor: "u",
@@ -99,6 +100,117 @@ const op = (value: unknown) => value as Operation;
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+function deferredResponse() {
+  let resolve!: (value: Response) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<Response>((accept, fail) => {
+    resolve = accept;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+test.each(
+  [0, 1, 2].flatMap((endpoint) =>
+    [401, 403].map((status) => ({ endpoint, status })),
+  ),
+)(
+  "refresh prioritizes delayed $status from endpoint $endpoint over early 503 and a stalled sibling",
+  async ({ endpoint, status }) => {
+    vi.useFakeTimers();
+    const replies = [
+      deferredResponse(),
+      deferredResponse(),
+      deferredResponse(),
+    ];
+    const fetch = vi
+      .fn()
+      .mockImplementationOnce(() => replies[0]!.promise)
+      .mockImplementationOnce(() => replies[1]!.promise)
+      .mockImplementationOnce(() => replies[2]!.promise);
+    vi.stubGlobal("fetch", fetch);
+    const observed = vi.fn();
+    const pending = refreshArchiveConfiguration(
+      scope,
+      storage as components["schemas"]["HostingStorage"],
+    );
+    void pending.then(
+      () => observed("resolved"),
+      (cause) => observed(cause),
+    );
+    try {
+      replies[(endpoint + 1) % 3]!.resolve(new Response("{}", { status: 503 }));
+      await vi.advanceTimersByTimeAsync(1);
+      expect(observed).not.toHaveBeenCalled();
+      replies[endpoint]!.resolve(new Response("{}", { status }));
+      await vi.advanceTimersByTimeAsync(1);
+      expect(observed).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ status }),
+      );
+      expect(fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      replies.forEach((reply) =>
+        reply.reject(new Error("late sibling rejection")),
+      );
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+test("refresh waits for ordinary siblings and then preserves the first endpoint error", async () => {
+  vi.useFakeTimers();
+  const replies = [deferredResponse(), deferredResponse(), deferredResponse()];
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockImplementationOnce(() => replies[0]!.promise)
+      .mockImplementationOnce(() => replies[1]!.promise)
+      .mockImplementationOnce(() => replies[2]!.promise),
+  );
+  const observed = vi.fn();
+  const pending = refreshArchiveConfiguration(
+    scope,
+    storage as components["schemas"]["HostingStorage"],
+  );
+  void pending.then(
+    () => observed("resolved"),
+    (cause) => observed(cause),
+  );
+  replies[0]!.resolve(new Response("{}", { status: 503 }));
+  await vi.advanceTimersByTimeAsync(1);
+  expect(observed).not.toHaveBeenCalled();
+  replies[1]!.reject(new Error("ordinary network failure"));
+  replies[2]!.resolve(new Response("{}", { status: 500 }));
+  await expect(pending).rejects.toMatchObject({ status: 503 });
+  expect(vi.getTimerCount()).toBe(0);
+});
+test("refresh cancellation retires every bounded read and consumes late transport rejections", async () => {
+  vi.useFakeTimers();
+  const replies = [deferredResponse(), deferredResponse(), deferredResponse()];
+  const fetch = vi
+    .fn()
+    .mockImplementationOnce(() => replies[0]!.promise)
+    .mockImplementationOnce(() => replies[1]!.promise)
+    .mockImplementationOnce(() => replies[2]!.promise);
+  vi.stubGlobal("fetch", fetch);
+  const cancel = new AbortController();
+  const pending = refreshArchiveConfiguration(
+    scope,
+    storage as components["schemas"]["HostingStorage"],
+    cancel.signal,
+  );
+  const observed = expect(pending).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  cancel.abort();
+  await observed;
+  replies.forEach((reply) =>
+    reply.reject(new ApiError(503, "late failure", null)),
+  );
+  await vi.advanceTimersByTimeAsync(1);
+  expect(vi.getTimerCount()).toBe(0);
+  expect(fetch).toHaveBeenCalledTimes(3);
 });
 test("safe projection separates archive success, resume uncertainty and holds", () => {
   const result = archiveOperation(op(fixture()), scope, "op", "backup");
