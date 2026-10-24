@@ -32,7 +32,7 @@ const (
 // workflow pointer once, without recursive traversal of untrusted graph depth.
 func ContainsHostingExecution(spec RunSpec, workflow Workflow) bool {
 	internal := func(spec RunSpec) bool {
-		return strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeDatabaseDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
+		return strings.TrimSpace(spec.Type) == RunTypeStorageArchive || strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeDatabaseDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
 	}
 	if internal(spec) {
 		return true
@@ -174,29 +174,30 @@ type HostingResult struct {
 
 // HostingOperation exposes control state independently from task run terminal state.
 type HostingOperation struct {
-	CleanupPlan           *HostingCleanupPlan `json:"cleanup_plan,omitempty"`
-	ObservationLease      *RunLease           `json:"observation_lease,omitempty"`
-	TaskMode              string              `json:"task_mode,omitempty"`
-	ReconciliationRunID   string              `json:"reconciliation_run_id,omitempty"`
-	ReconciliationHealthy *HostingHealthy     `json:"reconciliation_healthy,omitempty"`
-	ID                    string              `json:"id"`
-	ProjectID             string              `json:"project_id"`
-	ResourceID            string              `json:"resource_id"`
-	BindingID             string              `json:"binding_id"`
-	RunID                 string              `json:"run_id,omitempty"`
-	State                 string              `json:"state"`
-	Snapshot              HostingSnapshot     `json:"snapshot"`
-	Release               *HostingRelease     `json:"release,omitempty"`
-	Plan                  *HostingApplyPlan   `json:"plan,omitempty"`
-	PreparedReceipt       *HostingReceipt     `json:"prepared_receipt,omitempty"`
-	CompleteReceipt       *HostingReceipt     `json:"complete_receipt,omitempty"`
-	Result                *HostingResult      `json:"result,omitempty"`
-	RestoreOwnershipHeld  bool                `json:"restore_ownership_held"`
-	MutationHold          bool                `json:"mutation_hold"`
-	ReconcileRequested    bool                `json:"reconcile_requested"`
-	CreatedBy             string              `json:"created_by"`
-	CreatedAt             time.Time           `json:"created_at"`
-	UpdatedAt             time.Time           `json:"updated_at"`
+	StorageArchive        *HostingStorageArchive `json:"storage_archive,omitempty"`
+	CleanupPlan           *HostingCleanupPlan    `json:"cleanup_plan,omitempty"`
+	ObservationLease      *RunLease              `json:"observation_lease,omitempty"`
+	TaskMode              string                 `json:"task_mode,omitempty"`
+	ReconciliationRunID   string                 `json:"reconciliation_run_id,omitempty"`
+	ReconciliationHealthy *HostingHealthy        `json:"reconciliation_healthy,omitempty"`
+	ID                    string                 `json:"id"`
+	ProjectID             string                 `json:"project_id"`
+	ResourceID            string                 `json:"resource_id"`
+	BindingID             string                 `json:"binding_id"`
+	RunID                 string                 `json:"run_id,omitempty"`
+	State                 string                 `json:"state"`
+	Snapshot              HostingSnapshot        `json:"snapshot"`
+	Release               *HostingRelease        `json:"release,omitempty"`
+	Plan                  *HostingApplyPlan      `json:"plan,omitempty"`
+	PreparedReceipt       *HostingReceipt        `json:"prepared_receipt,omitempty"`
+	CompleteReceipt       *HostingReceipt        `json:"complete_receipt,omitempty"`
+	Result                *HostingResult         `json:"result,omitempty"`
+	RestoreOwnershipHeld  bool                   `json:"restore_ownership_held"`
+	MutationHold          bool                   `json:"mutation_hold"`
+	ReconcileRequested    bool                   `json:"reconcile_requested"`
+	CreatedBy             string                 `json:"created_by"`
+	CreatedAt             time.Time              `json:"created_at"`
+	UpdatedAt             time.Time              `json:"updated_at"`
 }
 
 // HostingAuthority must match the authenticated runner and persisted task target.

@@ -1,0 +1,176 @@
+package domain
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestStorageArchiveStrictPublicDocuments(t *testing.T) {
+	request := strings.Repeat("a", 32)
+	for _, tc := range []struct {
+		name, valid string
+		out         func() any
+	}{
+		{"backup", `{"request_id":"` + request + `","expected_resource_generation":1}`, func() any { return new(HostingStorageBackupInput) }},
+		{"restore", `{"request_id":"` + request + `","name":"restored uploads"}`, func() any { return new(HostingStorageRestoreInput) }},
+		{"recovery", `{"request_id":"` + request + `","expected_plan_hash":"sha256:` + strings.Repeat("b", 64) + `"}`, func() any { return new(HostingStorageArchiveRecoveryInput) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if json.Unmarshal([]byte(tc.valid), tc.out()) != nil {
+				t.Fatal("valid document refused")
+			}
+			for _, raw := range []string{`null`, `[]`, `{}`, tc.valid + `{}`, strings.Replace(tc.valid, `"request_id"`, `"Request_ID"`, 1), strings.Replace(tc.valid, `"request_id":`, `"request_id":"`+request+`","request_id":`, 1), strings.Replace(tc.valid, request, strings.Repeat("A", 32), 1), strings.Replace(tc.valid, `}`, `,"path":"/etc/passwd"}`, 1), strings.Replace(tc.valid, `"`+request+`"`, `null`, 1)} {
+				if json.Unmarshal([]byte(raw), tc.out()) == nil {
+					t.Fatal("ambiguous archive input accepted")
+				}
+			}
+		})
+	}
+}
+
+func archiveDomainPlan(t *testing.T) HostingStorageArchivePlan {
+	t.Helper()
+	id, volume := HostingStorageIdentity("binding")
+	st := HostingStorage{ID: id, ProjectID: "project", ResourceID: "resource", BindingID: "binding", DestinationID: "destination", Kind: "platform_managed", Driver: "local", VolumeName: volume, MountPath: "/uploads", AccessMode: "read_write", Retention: "retain", Generation: 1, CreatedBy: "owner", CreatedAt: time.Now().UTC()}
+	st.Hash = st.DocumentHash()
+	r := HostingRelease{CanonicalImage: "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat("b", 64), OS: "linux", Architecture: "arm64", DaemonID: "daemon"}
+	r.Hash = HostingDocumentHash(r)
+	d := HostingStoragePlan{Reference: st.Reference(), VolumeName: volume, MountPath: st.MountPath, CreationOperationID: "origin", DaemonID: r.DaemonID}
+	d.CreationNonce = HostingStorageCreationNonce(d.Reference, d.CreationOperationID, d.DaemonID)
+	hash := "sha256:" + strings.Repeat("c", 64)
+	h := HostingHealthy{Snapshot: HostingSnapshot{ResourceID: st.ResourceID, BindingID: st.BindingID, DestinationID: st.DestinationID, ServerID: "server", RunnerID: "runner", Storage: st.Reference(), PolicyVersion: HostingOwnedStoragePolicyVersion}, Storage: &HostingHealthyStorage{Plan: d, CreationPlanHash: hash}, OperationID: "origin", ContainerID: "container", Release: r, PlanHash: hash}
+	m := HostingStorageMaterialization{StorageRef: st.Reference(), State: "materialized", CreationOperationID: d.CreationOperationID, CreationPlanHash: hash, CreationNonce: d.CreationNonce, DaemonID: r.DaemonID, MaterializedReceipt: &HostingReceipt{ID: "receipt", BodyHash: hash, CreatedAt: time.Now().UTC()}}
+	m.Labels = ExpectedHostingStorageLabels(st, m)
+	helper := HostingStorageArchiveHelper{Mode: "local_image", RecipeVersion: HostingStorageArchiveVersion, ExecutableSHA256: "sha256:" + strings.Repeat("d", 64), SourceCommit: strings.Repeat("f", 40), ImageID: "sha256:" + strings.Repeat("e", 64), OS: "linux", Architecture: "arm64", DaemonID: "daemon"}
+	helper.Hash = HostingDocumentHash(helper)
+	p := HostingStorageArchivePlan{OperationID: "archive", ProjectID: st.ProjectID, ServerID: "server", DestinationID: st.DestinationID, RunnerID: "runner", Mode: "backup", BackupID: "backup", SourceHealthy: h, SourceStorage: st, SourceMaterialization: m, Writers: []HostingHealthy{h}, Helper: helper, Limits: HostingStorageArchiveLimits{ArchiveBytes: 1 << 20, DataBytes: 1 << 20, FileBytes: 1 << 20, Members: 1000, Depth: 16, PathBytes: 512}, CompilerVersion: HostingStorageArchiveVersion, PolicyVersion: HostingStorageArchiveVersion}
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() != nil {
+		t.Fatal("valid archive fixture refused")
+	}
+	return p
+}
+
+func TestStorageArchivePlanIdentityAndExplicitLimits(t *testing.T) {
+	p := archiveDomainPlan(t)
+	for name, mutate := range map[string]func(*HostingStorageArchivePlan){
+		"hash":   func(p *HostingStorageArchivePlan) { p.Hash = "" },
+		"daemon": func(p *HostingStorageArchivePlan) { p.Helper.DaemonID = "foreign" },
+		"unmaterialized": func(p *HostingStorageArchivePlan) {
+			p.SourceMaterialization.State = "create_admitted"
+			p.SourceMaterialization.MaterializedReceipt = nil
+		},
+		"archive_limit":           func(p *HostingStorageArchivePlan) { p.Limits.ArchiveBytes = HostingStorageArchiveMaxBytes + 1 },
+		"data_limit":              func(p *HostingStorageArchivePlan) { p.Limits.DataBytes = 0 },
+		"file_limit":              func(p *HostingStorageArchivePlan) { p.Limits.FileBytes = p.Limits.DataBytes + 1 },
+		"members":                 func(p *HostingStorageArchivePlan) { p.Limits.Members = 0 },
+		"depth":                   func(p *HostingStorageArchivePlan) { p.Limits.Depth = 0 },
+		"path":                    func(p *HostingStorageArchivePlan) { p.Limits.PathBytes = 0 },
+		"unknown_writer":          func(p *HostingStorageArchivePlan) { p.Writers[0].ContainerID = "foreign" },
+		"duplicate_writer":        func(p *HostingStorageArchivePlan) { p.Writers = append(p.Writers, p.Writers[0]) },
+		"wrong_family":            func(p *HostingStorageArchivePlan) { p.SourceHealthy.Snapshot.Database.Engine = "postgresql" },
+		"restore_without_target":  func(p *HostingStorageArchivePlan) { p.Mode = "restore" },
+		"recovery_without_origin": func(p *HostingStorageArchivePlan) { p.Mode = "recover" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var changed HostingStorageArchivePlan
+			if json.Unmarshal(raw, &changed) != nil {
+				t.Fatal("fixture decode")
+			}
+			mutate(&changed)
+			if name != "hash" {
+				changed.Hash = ""
+				changed.Hash = HostingDocumentHash(changed)
+			}
+			if changed.Validate() == nil {
+				t.Fatal("changed archive identity or missing limit accepted")
+			}
+		})
+	}
+}
+
+func TestStorageArchiveTaskRejectsGenericExecution(t *testing.T) {
+	for mode, prefix := range map[string]string{"backup": "backup_", "restore": "restore_", "recover": "archive_recover_"} {
+		r := TaskRun{ID: prefix + "operation", RunSpec: RunSpec{Type: RunTypeStorageArchive, HostingOperationID: "operation", HostingMode: mode}}
+		if ValidateStorageArchiveTask(r) != nil {
+			t.Fatal("typed archive task refused")
+		}
+		for _, mutate := range []func(*TaskRun){func(r *TaskRun) { r.ID = "run_operation" }, func(r *TaskRun) { r.RunSpec.HostingMode = "deploy" }, func(r *TaskRun) { r.RunSpec.Inputs = map[string]any{"path": "/"} }, func(r *TaskRun) { r.RunSpec.Workflow = &Workflow{} }, func(r *TaskRun) { r.RunSpec.HostingBuildID = "build" }} {
+			bad := r
+			mutate(&bad)
+			if ValidateStorageArchiveTask(bad) == nil {
+				t.Fatal("generic archive execution admitted")
+			}
+		}
+		if !ContainsHostingExecution(RunSpec{Type: RunTypeStorageArchive}, Workflow{}) {
+			t.Fatal("archive escaped internal-family guard")
+		}
+	}
+}
+
+func TestStorageArchiveHelperRequiresQualifiedLocalIdentity(t *testing.T) {
+	h := archiveDomainPlan(t).Helper
+	for _, change := range []func(*HostingStorageArchiveHelper){
+		func(h *HostingStorageArchiveHelper) { h.Mode = "registry" },
+		func(h *HostingStorageArchiveHelper) { h.ImageID = "archive:latest" },
+		func(h *HostingStorageArchiveHelper) { h.ExecutableSHA256 = "" },
+		func(h *HostingStorageArchiveHelper) { h.SourceCommit = strings.Repeat("A", 40) },
+		func(h *HostingStorageArchiveHelper) { h.Architecture = "amd64" },
+		func(h *HostingStorageArchiveHelper) { h.DaemonID = "" },
+	} {
+		bad := h
+		change(&bad)
+		bad.Hash = ""
+		bad.Hash = HostingDocumentHash(bad)
+		if bad.Validate() == nil {
+			t.Fatal("unqualified local helper accepted")
+		}
+	}
+	if (HostingStorageArchiveHelper{}).Validate() == nil {
+		t.Fatal("missing helper configuration accepted")
+	}
+}
+
+func TestStorageArchiveRestoreNeverAuthorizesSourceWriter(t *testing.T) {
+	p := archiveDomainPlan(t)
+	storage := p.SourceStorage
+	storage.ResourceID = "restored_resource"
+	storage.BindingID = "restored_binding"
+	storage.ID, storage.VolumeName = HostingStorageIdentity(storage.BindingID)
+	storage.Hash = storage.DocumentHash()
+	d := HostingStoragePlan{Reference: storage.Reference(), VolumeName: storage.VolumeName, MountPath: storage.MountPath, CreationOperationID: p.OperationID, DaemonID: p.Helper.DaemonID}
+	d.CreationNonce = HostingStorageCreationNonce(d.Reference, d.CreationOperationID, d.DaemonID)
+	p.Mode = "restore"
+	p.Target = &HostingStorageArchiveTarget{Resource: Resource{ID: storage.ResourceID, ProjectID: p.ProjectID, Kind: "application", Source: ResourceSource{Kind: "image", Image: ImageSource{Reference: p.SourceHealthy.Release.CanonicalImage}}}, Storage: storage, Plan: d}
+	p.Blob = &HostingStorageArchiveBlob{BackupID: p.BackupID, DestinationID: p.DestinationID, DaemonID: p.Helper.DaemonID, SHA256: "sha256:" + strings.Repeat("f", 64), SizeBytes: 1024, Format: HostingStorageArchiveFormat}
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() == nil {
+		t.Fatal("restore granted source stop authority")
+	}
+	p.Writers = nil
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() != nil {
+		t.Fatal("isolated restore target refused")
+	}
+	p.Mode = "recover"
+	p.RecoveryOfOperationID = "original_restore"
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() != nil {
+		t.Fatal("restore recovery rejected empty source writer obligations")
+	}
+	p.Writers = []HostingHealthy{p.SourceHealthy}
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() == nil {
+		t.Fatal("restore recovery gained source stop authority")
+	}
+}
