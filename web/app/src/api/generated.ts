@@ -3541,6 +3541,193 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/database-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. */
+        post: operations["connectHostingApplicationDatabase"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. */
+        get: operations["getHostingDatabaseConnection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database-connections/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. */
+        get: operations["listEligibleHostingDatabases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database-connection/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. */
+        post: operations["requestHostingApplicationDatabaseDeployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database-connection/recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. */
+        post: operations["requestHostingDatabaseConnectionRecovery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database/maintenance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. */
+        post: operations["requestHostingDatabaseMaintenance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-binding/stage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded. */
+        post: operations["recordHostingApplicationDatabaseStage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-binding/retirement-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded. */
+        post: operations["getHostingApplicationDatabaseRetirementPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-binding/retirement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded. */
+        post: operations["recordHostingApplicationDatabaseRetirement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-binding/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded. */
+        post: operations["authorizeHostingApplicationDatabaseEffect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-binding/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded. */
+        post: operations["getHostingApplicationDatabaseState"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5089,11 +5276,13 @@ export interface components {
             configuration_hash: string;
         };
         HostingDatabasePlan: {
+            network?: components["schemas"]["HostingDatabaseNetworkPlan"];
             reference: components["schemas"]["HostingDatabaseExecutionRef"];
             network_name: string;
             credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
         };
         HostingSnapshot: {
+            application_database?: components["schemas"]["HostingApplicationDatabaseRef"];
             database?: components["schemas"]["HostingDatabaseExecutionRef"];
             storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityRef"];
             storage?: components["schemas"]["HostingStorageRef"];
@@ -5112,7 +5301,7 @@ export interface components {
             host_port: number;
             readiness: components["schemas"]["HostingReadiness"] | components["schemas"]["HostingDatabaseReadiness"];
             /** @enum {string} */
-            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "database.private.owned-storage.v1";
+            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "database.private.owned-storage.v1" | "public-image.runtime-env.database.release-ports.v1";
         } & ({
             /** @enum {string} */
             policy_version?: "database.private.owned-storage.v1";
@@ -5124,6 +5313,10 @@ export interface components {
         } | {
             /** @enum {string} */
             policy_version?: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1";
+            readiness?: components["schemas"]["HostingReadiness"];
+        } | {
+            /** @enum {string} */
+            policy_version?: "public-image.runtime-env.database.release-ports.v1";
             readiness?: components["schemas"]["HostingReadiness"];
         });
         HostingRelease: {
@@ -5165,6 +5358,7 @@ export interface components {
             cleanup_operation_id?: string;
         };
         HostingApplyPlan: {
+            application_database?: components["schemas"]["HostingApplicationDatabasePlan"];
             database?: components["schemas"]["HostingDatabasePlan"];
             storage?: components["schemas"]["HostingStoragePlan"];
             retained_releases?: components["schemas"]["HostingHealthy"][];
@@ -5173,7 +5367,7 @@ export interface components {
             release: components["schemas"]["HostingRelease"];
             previous_healthy?: components["schemas"]["HostingHealthy"];
             /** @enum {string} */
-            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1" | "database-hosting.private.owned-storage.v1";
+            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1" | "database-hosting.private.owned-storage.v1" | "database-hosting.private.membership.v2" | "image-hosting.runtime-env.database.v1";
             hash: string;
         };
         HostingReceipt: {
@@ -5254,6 +5448,8 @@ export interface components {
             /** @enum {string} */
             state: "queued" | "dispatched" | "preparing" | "prepared" | "applying" | "verifying" | "succeeded" | "failed" | "canceled" | "cancel_requested" | "reconciliation_required";
             snapshot: components["schemas"]["HostingSnapshot"] | components["schemas"]["HostingStorageArchiveZeroSnapshot"];
+            application_database?: components["schemas"]["HostingApplicationDatabaseExecutionProof"];
+            database_maintenance?: components["schemas"]["HostingDatabaseMaintenanceProof"];
             database_upgrade?: components["schemas"]["HostingDatabaseUpgradeProof"];
             cleanup_plan?: components["schemas"]["HostingCleanupPlan"];
             release?: components["schemas"]["HostingRelease"];
@@ -7020,6 +7216,324 @@ export interface components {
             previous_plan: components["schemas"]["HostingApplyPlan"];
             previous_healthy: components["schemas"]["HostingHealthy"];
             hash: string;
+        };
+        HostingDatabaseConnectionInput: {
+            binding: components["schemas"]["HostingDatabaseBindingInput"];
+            deployment: components["schemas"]["HostingDeploymentInput"];
+        };
+        HostingDatabaseBindingInput: {
+            database_resource_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** Format: int64 */
+            expected_runtime_generation: number;
+            /** Format: int64 */
+            expected_database_generation: number;
+            request_id: string;
+        };
+        HostingDatabaseConnection: {
+            id: string;
+            project_id: string;
+            application_resource_id: string;
+            database_resource_id: string;
+            binding_id: string;
+            binding_hash: string;
+            state: string;
+            reason_code: string;
+            capture_id: string;
+            upgrade_operation_id: string;
+            application_operation_id: string;
+            /** Format: int64 */
+            membership_revision: number;
+            hold_operation_id?: string;
+            recovery_limit?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        HostingDatabaseConnectionOption: {
+            resource_id: string;
+            name: string;
+            engine: string;
+            /** Format: int64 */
+            generation: number;
+            destination_id: string;
+            status: string;
+            reason_code: string;
+        };
+        HostingDatabaseMaintenanceInput: {
+            /** Format: int64 */
+            expected_generation: number;
+            /** Format: int64 */
+            expected_membership_revision: number;
+            idempotency_key: string;
+        };
+        HostingDatabaseConnectionRecoveryInput: {
+            /** @enum {string} */
+            action: "observe";
+            operation_id: string;
+            stage_hash: string;
+            candidate_hash: string;
+            /** Format: int64 */
+            expected_membership_revision: number;
+            idempotency_key: string;
+        } & ({
+            /** @enum {unknown} */
+            stage_hash?: "";
+            /** @enum {unknown} */
+            candidate_hash?: "";
+        } | {
+            stage_hash?: string;
+            candidate_hash?: string;
+        });
+        HostingApplicationDatabaseStageRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            /** Format: int32 */
+            attempt: number;
+            fence: string;
+            stage: components["schemas"]["HostingApplicationDatabaseStage"];
+        };
+        HostingApplicationDatabaseStage: {
+            /** @enum {string} */
+            version: "application-database.stage.v1";
+            receipt_id: string;
+            operation_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            phase: "candidate_created" | "attach_intent" | "network_configured" | "attached" | "ready" | "uncertain";
+            candidate: components["schemas"]["HostingApplicationDatabaseCandidate"];
+            attach_plan: components["schemas"]["HostingDatabaseBindingEndpointPlan"];
+            endpoint_receipt?: components["schemas"]["HostingDatabaseBindingEndpointReceipt"];
+            failure_code?: string;
+            hash: string;
+        };
+        HostingApplicationDatabaseCandidate: {
+            /** @enum {string} */
+            version: "application-database.candidate.v1";
+            operation_id: string;
+            plan_hash: string;
+            create_nonce: string;
+            container_id: string;
+            image_id: string;
+            daemon_id: string;
+            default_network_id: string;
+            hash: string;
+        };
+        HostingDatabaseBindingEndpointPlan: {
+            /** @enum {string} */
+            version: "database-binding.private.v1";
+            operation_id: string;
+            binding_hash: string;
+            /** Format: int64 */
+            membership_revision: number;
+            /** @enum {string} */
+            action: "attach" | "retire";
+            target: components["schemas"]["HostingDatabaseBindingEndpointTarget"];
+            expected_endpoint_id?: string;
+            hash: string;
+        };
+        HostingDatabaseBindingEndpointTarget: {
+            container_id: string;
+            container_operation_id: string;
+            image_id: string;
+            release_hash: string;
+            container_plan_hash: string;
+            network_id: string;
+            network_name: string;
+            daemon_id: string;
+        };
+        HostingDatabaseBindingEndpointReceipt: {
+            /** @enum {string} */
+            version: "database-binding.private.v1";
+            receipt_id: string;
+            operation_id: string;
+            plan_hash: string;
+            binding_hash: string;
+            /** Format: int64 */
+            membership_revision: number;
+            /** @enum {string} */
+            phase: "attach_intent" | "retire_intent" | "attached" | "detached" | "uncertain";
+            intent?: components["schemas"]["HostingDatabaseBindingEndpoint"];
+            observation?: components["schemas"]["HostingDatabaseBindingEndpointObservation"];
+            failure_code?: string;
+            hash: string;
+        };
+        HostingDatabaseBindingEndpoint: {
+            target: components["schemas"]["HostingDatabaseBindingEndpointTarget"];
+            endpoint_id?: string;
+        };
+        HostingDatabaseBindingEndpointObservation: {
+            endpoint: components["schemas"]["HostingDatabaseBindingEndpoint"];
+            present: boolean;
+        };
+        HostingApplicationDatabaseRetirementRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            /** Format: int32 */
+            attempt: number;
+            fence: string;
+            plan_hash: string;
+            receipt: components["schemas"]["HostingDatabaseBindingEndpointReceipt"];
+        };
+        HostingApplicationDatabaseEffectRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            /** Format: int32 */
+            attempt: number;
+            fence: string;
+            authorization_id: string;
+            expected_stage_hash: string;
+            /** @enum {string} */
+            action: "create" | "configure" | "start" | "retire";
+        };
+        HostingApplicationDatabaseEffectAuthorization: {
+            authorization_id: string;
+            operation_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            action: "create" | "configure" | "start" | "retire";
+            stage_hash: string;
+            lease_id: string;
+            /** Format: int32 */
+            attempt: number;
+            fence: string;
+            /** Format: int64 */
+            membership_revision: number;
+            /** Format: date-time */
+            use_until: string;
+        };
+        HostingApplicationDatabaseExecutionState: {
+            operation_id: string;
+            plan_hash: string;
+            stage?: components["schemas"]["HostingApplicationDatabaseStage"];
+            retirement_plan?: components["schemas"]["HostingDatabaseBindingEndpointPlan"];
+            retirement_receipt?: components["schemas"]["HostingDatabaseBindingEndpointReceipt"];
+            /** Format: int64 */
+            membership_revision: number;
+            hold_operation_id: string;
+        };
+        HostingApplicationDatabaseExecutionProof: {
+            /** @enum {string} */
+            version: "application-database.execution.v1";
+            operation_id: string;
+            create_nonce: string;
+            binding: components["schemas"]["HostingDatabaseBinding"];
+            application_project_id: string;
+            database_project_id: string;
+            binding_application_snapshot: components["schemas"]["HostingSnapshot"];
+            binding_database_plan: components["schemas"]["HostingApplyPlan"];
+            database_plan: components["schemas"]["HostingApplyPlan"];
+            database_healthy: components["schemas"]["HostingHealthy"];
+            origin: components["schemas"]["HostingDatabaseNetworkOrigin"];
+            /** Format: int64 */
+            membership_revision: number;
+            members: components["schemas"]["HostingDatabaseNetworkMemberEvidence"][];
+            retired: components["schemas"]["HostingDatabaseNetworkRetirementEvidence"][];
+            hash: string;
+        };
+        HostingDatabaseBinding: {
+            /** @enum {string} */
+            version: "database-binding.private.v1";
+            id: string;
+            /** Format: int64 */
+            generation: number;
+            application_resource_id: string;
+            /** Format: int64 */
+            application_resource_generation: number;
+            application_binding_id: string;
+            database_resource_id: string;
+            /** Format: int64 */
+            database_resource_generation: number;
+            database_binding_id: string;
+            project_id: string;
+            destination_id: string;
+            server_id: string;
+            runner_id: string;
+            database: components["schemas"]["HostingDatabaseExecutionRef"];
+            credential: components["schemas"]["HostingDatabaseCredentialRef"];
+            network_name: string;
+            alias: string;
+            environment_names: string[];
+            runtime_configuration: components["schemas"]["HostingRuntimeConfigurationRef"];
+            hash: string;
+        };
+        HostingDatabaseNetworkMemberEvidence: {
+            binding: components["schemas"]["HostingDatabaseBinding"];
+            endpoint_plan: components["schemas"]["HostingDatabaseBindingEndpointPlan"];
+            receipt: components["schemas"]["HostingDatabaseBindingEndpointReceipt"];
+            application_healthy: components["schemas"]["HostingHealthy"];
+            database_plan: components["schemas"]["HostingApplyPlan"];
+            application_project_id: string;
+            database_project_id: string;
+        };
+        HostingDatabaseNetworkRetirementEvidence: {
+            attached: components["schemas"]["HostingDatabaseNetworkMemberEvidence"];
+            retire_plan: components["schemas"]["HostingDatabaseBindingEndpointPlan"];
+            retire_intent: components["schemas"]["HostingDatabaseBindingEndpointReceipt"];
+            detached: components["schemas"]["HostingDatabaseBindingEndpointReceipt"];
+        };
+        HostingDatabaseMaintenanceProof: {
+            /** @enum {string} */
+            version: "database-network.maintenance.v1";
+            capture_plan: components["schemas"]["HostingDatabaseNetworkCapturePlan"];
+            origin_receipt: components["schemas"]["HostingDatabaseNetworkOriginReceipt"];
+            previous_plan: components["schemas"]["HostingApplyPlan"];
+            previous_healthy: components["schemas"]["HostingHealthy"];
+            /** Format: int64 */
+            membership_revision: number;
+            members: components["schemas"]["HostingDatabaseNetworkMemberEvidence"][];
+            retired: components["schemas"]["HostingDatabaseNetworkRetirementEvidence"][];
+            hash: string;
+        };
+        HostingApplicationDatabaseRef: {
+            binding_id: string;
+            binding_hash: string;
+        };
+        HostingApplicationDatabasePlan: {
+            /** @enum {string} */
+            version: "application-database.private.v1";
+            operation_id: string;
+            create_nonce: string;
+            binding: components["schemas"]["HostingDatabaseBinding"];
+            database_plan_hash: string;
+            origin: components["schemas"]["HostingDatabaseNetworkOrigin"];
+            /** Format: int64 */
+            membership_revision: number;
+            previous_members: components["schemas"]["HostingDatabaseNetworkMember"][];
+            hash: string;
+        };
+        HostingDatabaseNetworkMember: {
+            binding_id: string;
+            binding_hash: string;
+            endpoint_plan_hash: string;
+            receipt_id: string;
+            receipt_hash: string;
+            endpoint: components["schemas"]["HostingDatabaseBindingEndpoint"];
+        };
+        HostingDatabaseNetworkPlan: {
+            /** @enum {string} */
+            version: "database-network.private.membership.v2";
+            network_id: string;
+            origin_hash: string;
+            alias: string;
+            /** Format: int64 */
+            membership_revision: number;
+            members: components["schemas"]["HostingDatabaseNetworkMember"][];
+            predecessor: components["schemas"]["HostingDatabaseNetworkPredecessor"];
+            hash: string;
+        };
+        HostingDatabaseNetworkPredecessor: {
+            compiler_version: string;
+            plan_hash: string;
+            alias?: string;
+        };
+        HostingDatabaseConnectionOptions: {
+            items: components["schemas"]["HostingDatabaseConnectionOption"][];
         };
     };
     responses: {
@@ -13749,6 +14263,373 @@ export interface operations {
                 };
             };
             401: components["responses"]["Error"];
+        };
+    };
+    connectHostingApplicationDatabase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseConnectionInput"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseConnection"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingDatabaseConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseConnection"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listEligibleHostingDatabases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseConnectionOptions"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingApplicationDatabaseDeployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDeploymentInput"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingDatabaseConnectionRecovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseConnectionRecoveryInput"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestHostingDatabaseMaintenance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseMaintenanceInput"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recordHostingApplicationDatabaseStage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingApplicationDatabaseStageRequest"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingApplicationDatabaseRetirementPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBindingEndpointPlan"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recordHostingApplicationDatabaseRetirement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingApplicationDatabaseRetirementRequest"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    authorizeHostingApplicationDatabaseEffect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingApplicationDatabaseEffectRequest"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingApplicationDatabaseEffectAuthorization"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingApplicationDatabaseState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingApplicationDatabaseExecutionState"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
 }

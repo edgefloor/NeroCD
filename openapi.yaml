@@ -5253,6 +5253,180 @@ paths:
                 $ref: "#/components/schemas/AuditEventListResponse"
         "401":
           $ref: "#/components/responses/Error"
+  /api/v1/resources/{id}/database-connections:
+    post:
+      operationId: "connectHostingApplicationDatabase"
+      description: "Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects."
+      responses:
+        "202": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDatabaseConnection"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDatabaseConnectionInput"}}}}
+  /api/v1/resources/{id}/database-connection:
+    get:
+      operationId: "getHostingDatabaseConnection"
+      description: "Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDatabaseConnection"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}}]
+  /api/v1/resources/{id}/database-connections/options:
+    get:
+      operationId: "listEligibleHostingDatabases"
+      description: "Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDatabaseConnectionOptions"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}}]
+  /api/v1/resources/{id}/database-connection/deployments:
+    post:
+      operationId: "requestHostingApplicationDatabaseDeployment"
+      description: "Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects."
+      responses:
+        "202": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDeploymentInput"}}}}
+  /api/v1/resources/{id}/database-connection/recovery:
+    post:
+      operationId: "requestHostingDatabaseConnectionRecovery"
+      description: "Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects."
+      responses:
+        "202": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDatabaseConnectionRecoveryInput"}}}}
+  /api/v1/resources/{id}/database/maintenance:
+    post:
+      operationId: "requestHostingDatabaseMaintenance"
+      description: "Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects."
+      responses:
+        "202": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      parameters: [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDatabaseMaintenanceInput"}}}}
+  /api/v1/runners/hosting/database-binding/stage:
+    post:
+      operationId: "recordHostingApplicationDatabaseStage"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseStageRequest"}}}}
+  /api/v1/runners/hosting/database-binding/retirement-plan:
+    post:
+      operationId: "getHostingApplicationDatabaseRetirementPlan"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointPlan"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingAuthority"}}}}
+  /api/v1/runners/hosting/database-binding/retirement:
+    post:
+      operationId: "recordHostingApplicationDatabaseRetirement"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseRetirementRequest"}}}}
+  /api/v1/runners/hosting/database-binding/authorize:
+    post:
+      operationId: "authorizeHostingApplicationDatabaseEffect"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseEffectAuthorization"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseEffectRequest"}}}}
+  /api/v1/runners/hosting/database-binding/state:
+    post:
+      operationId: "getHostingApplicationDatabaseState"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseExecutionState"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingAuthority"}}}}
 components:
   securitySchemes:
     bearerAuth:
@@ -7623,6 +7797,7 @@ components:
       additionalProperties: false
       required: [reference, network_name, credentials]
       properties:
+        network: {$ref: "#/components/schemas/HostingDatabaseNetworkPlan"}
         reference: {$ref: '#/components/schemas/HostingDatabaseExecutionRef'}
         network_name: {type: string, pattern: '^ncdn_[0-9a-f]{32}$'}
         credentials:
@@ -7645,7 +7820,11 @@ components:
               - required: [local_build]
               - required: [runtime_configuration]
               - required: [storage_route_continuity]
-        - not: {required: [database]}
+              - required: [application_database]
+        - not:
+            anyOf:
+              - required: [database]
+              - required: [application_database]
           properties:
             policy_version:
               type: string
@@ -7657,6 +7836,16 @@ components:
                 - local-build.runtime-env.release-ports.v1
                 - public-image.owned-storage.release-ports.v1
             readiness: {$ref: '#/components/schemas/HostingReadiness'}
+        - required: [application_database, runtime_configuration]
+          properties:
+            policy_version: {type: string, enum: [public-image.runtime-env.database.release-ports.v1]}
+            readiness: {$ref: "#/components/schemas/HostingReadiness"}
+          not:
+            anyOf:
+              - required: [database]
+              - required: [storage]
+              - required: [local_build]
+              - required: [storage_route_continuity]
       required:
         - resource_id
         - image_reference
@@ -7671,6 +7860,7 @@ components:
         - readiness
         - policy_version
       properties:
+        application_database: {$ref: "#/components/schemas/HostingApplicationDatabaseRef"}
         database: {$ref: "#/components/schemas/HostingDatabaseExecutionRef"}
         storage_route_continuity: {$ref: "#/components/schemas/HostingStorageRouteContinuityRef"}
         storage: {$ref: '#/components/schemas/HostingStorageRef'}
@@ -7711,6 +7901,7 @@ components:
             - local-build.runtime-env.release-ports.v1
             - public-image.owned-storage.release-ports.v1
             - database.private.owned-storage.v1
+            - public-image.runtime-env.database.release-ports.v1
     HostingRelease:
       type: object
       additionalProperties: false
@@ -7810,6 +8001,7 @@ components:
         - compiler_version
         - hash
       properties:
+        application_database: {$ref: "#/components/schemas/HostingApplicationDatabasePlan"}
         database: {$ref: "#/components/schemas/HostingDatabasePlan"}
         storage: {$ref: '#/components/schemas/HostingStoragePlan'}
         retained_releases:
@@ -7835,6 +8027,8 @@ components:
             - local-build-hosting.runtime-env.v1
             - image-hosting.owned-storage.v1
             - database-hosting.private.owned-storage.v1
+            - database-hosting.private.membership.v2
+            - image-hosting.runtime-env.database.v1
         hash:
           type: string
     HostingReceipt:
@@ -8119,6 +8313,8 @@ components:
               }
             ]
           },
+          "application_database": {"$ref": "#/components/schemas/HostingApplicationDatabaseExecutionProof"},
+          "database_maintenance": {"$ref": "#/components/schemas/HostingDatabaseMaintenanceProof"},
           "database_upgrade": {
             "$ref": "#/components/schemas/HostingDatabaseUpgradeProof"
           },
@@ -11988,3 +12184,360 @@ components:
           "hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         }
       }
+    HostingDatabaseConnectionInput:
+      type: "object"
+      additionalProperties: false
+      required: ["binding", "deployment"]
+      properties:
+        binding: {"$ref": "#/components/schemas/HostingDatabaseBindingInput"}
+        deployment: {"$ref": "#/components/schemas/HostingDeploymentInput"}
+    HostingDatabaseBindingInput:
+      type: "object"
+      additionalProperties: false
+      required: ["database_resource_id", "expected_resource_generation", "expected_runtime_generation", "expected_database_generation", "request_id"]
+      properties:
+        database_resource_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}
+        expected_resource_generation: {"type": "integer", "format": "int64", "minimum": 1}
+        expected_runtime_generation: {"type": "integer", "format": "int64", "minimum": 0}
+        expected_database_generation: {"type": "integer", "format": "int64", "minimum": 1}
+        request_id: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+    HostingDatabaseConnection:
+      type: "object"
+      additionalProperties: false
+      required: ["id", "project_id", "application_resource_id", "database_resource_id", "binding_id", "binding_hash", "state", "reason_code", "capture_id", "upgrade_operation_id", "application_operation_id", "membership_revision", "created_at", "updated_at"]
+      properties:
+        id: {"type": "string", "maxLength": 128}
+        project_id: {"type": "string", "maxLength": 128}
+        application_resource_id: {"type": "string", "maxLength": 128}
+        database_resource_id: {"type": "string", "maxLength": 128}
+        binding_id: {"type": "string", "maxLength": 128}
+        binding_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$", "maxLength": 128}
+        state: {"type": "string", "maxLength": 128}
+        reason_code: {"type": "string", "maxLength": 128}
+        capture_id: {"type": "string", "maxLength": 128}
+        upgrade_operation_id: {"type": "string", "maxLength": 128}
+        application_operation_id: {"type": "string", "maxLength": 128}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 0}
+        hold_operation_id: {"type": "string", "maxLength": 128}
+        recovery_limit: {"type": "string", "maxLength": 128}
+        created_at: {"type": "string", "format": "date-time", "maxLength": 128}
+        updated_at: {"type": "string", "format": "date-time", "maxLength": 128}
+    HostingDatabaseConnectionOption:
+      type: "object"
+      additionalProperties: false
+      required: ["resource_id", "name", "engine", "generation", "destination_id", "status", "reason_code"]
+      properties:
+        resource_id: {"type": "string", "maxLength": 128}
+        name: {"type": "string", "maxLength": 128}
+        engine: {"type": "string", "maxLength": 128}
+        generation: {"type": "integer", "format": "int64", "minimum": 1}
+        destination_id: {"type": "string", "maxLength": 128}
+        status: {"type": "string", "maxLength": 128}
+        reason_code: {"type": "string", "maxLength": 128}
+    HostingDatabaseMaintenanceInput:
+      type: "object"
+      additionalProperties: false
+      required: ["expected_generation", "expected_membership_revision", "idempotency_key"]
+      properties:
+        expected_generation: {"type": "integer", "format": "int64", "minimum": 1}
+        expected_membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        idempotency_key: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+    HostingDatabaseConnectionRecoveryInput:
+      type: "object"
+      additionalProperties: false
+      required: ["action", "operation_id", "stage_hash", "candidate_hash", "expected_membership_revision", "idempotency_key"]
+      properties:
+        action: {"type": "string", "enum": ["observe"]}
+        operation_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}
+        stage_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
+        candidate_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
+        expected_membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        idempotency_key: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+      oneOf: [{"properties": {"stage_hash": {"enum": [""]}, "candidate_hash": {"enum": [""]}}}, {"properties": {"stage_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "candidate_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}}]
+    HostingApplicationDatabaseStageRequest:
+      type: "object"
+      additionalProperties: false
+      required: ["operation_id", "run_id", "lease_id", "attempt", "fence", "stage"]
+      properties:
+        operation_id: {"type": "string"}
+        run_id: {"type": "string"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        stage: {"$ref": "#/components/schemas/HostingApplicationDatabaseStage"}
+    HostingApplicationDatabaseStage:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "receipt_id", "operation_id", "plan_hash", "phase", "candidate", "attach_plan", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["application-database.stage.v1"]}
+        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        operation_id: {"type": "string"}
+        plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        phase: {"type": "string", "enum": ["candidate_created", "attach_intent", "network_configured", "attached", "ready", "uncertain"]}
+        candidate: {"$ref": "#/components/schemas/HostingApplicationDatabaseCandidate"}
+        attach_plan: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointPlan"}
+        endpoint_receipt: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointReceipt"}
+        failure_code: {"type": "string"}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingApplicationDatabaseCandidate:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "operation_id", "plan_hash", "create_nonce", "container_id", "image_id", "daemon_id", "default_network_id", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["application-database.candidate.v1"]}
+        operation_id: {"type": "string"}
+        plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        create_nonce: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+        container_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        image_id: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        daemon_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        default_network_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingDatabaseBindingEndpointPlan:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "operation_id", "binding_hash", "membership_revision", "action", "target", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["database-binding.private.v1"]}
+        operation_id: {"type": "string"}
+        binding_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        action: {"type": "string", "enum": ["attach", "retire"]}
+        target: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointTarget"}
+        expected_endpoint_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingDatabaseBindingEndpointTarget:
+      type: "object"
+      additionalProperties: false
+      required: ["container_id", "container_operation_id", "image_id", "release_hash", "container_plan_hash", "network_id", "network_name", "daemon_id"]
+      properties:
+        container_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        container_operation_id: {"type": "string"}
+        image_id: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        release_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        container_plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        network_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        network_name: {"type": "string"}
+        daemon_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+    HostingDatabaseBindingEndpointReceipt:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "receipt_id", "operation_id", "plan_hash", "binding_hash", "membership_revision", "phase", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["database-binding.private.v1"]}
+        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        operation_id: {"type": "string"}
+        plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        binding_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        phase: {"type": "string", "enum": ["attach_intent", "retire_intent", "attached", "detached", "uncertain"]}
+        intent: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpoint"}
+        observation: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointObservation"}
+        failure_code: {"type": "string"}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingDatabaseBindingEndpoint:
+      type: "object"
+      additionalProperties: false
+      required: ["target"]
+      properties:
+        target: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointTarget"}
+        endpoint_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    HostingDatabaseBindingEndpointObservation:
+      type: "object"
+      additionalProperties: false
+      required: ["endpoint", "present"]
+      properties:
+        endpoint: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpoint"}
+        present: {"type": "boolean"}
+    HostingApplicationDatabaseRetirementRequest:
+      type: "object"
+      additionalProperties: false
+      required: ["operation_id", "run_id", "lease_id", "attempt", "fence", "plan_hash", "receipt"]
+      properties:
+        operation_id: {"type": "string"}
+        run_id: {"type": "string"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        receipt: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointReceipt"}
+    HostingApplicationDatabaseEffectRequest:
+      type: "object"
+      additionalProperties: false
+      required: ["operation_id", "run_id", "lease_id", "attempt", "fence", "authorization_id", "expected_stage_hash", "action"]
+      properties:
+        operation_id: {"type": "string"}
+        run_id: {"type": "string"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        authorization_id: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+        expected_stage_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
+        action: {"type": "string", "enum": ["create", "configure", "start", "retire"]}
+    HostingApplicationDatabaseEffectAuthorization:
+      type: "object"
+      additionalProperties: false
+      required: ["authorization_id", "operation_id", "plan_hash", "action", "stage_hash", "lease_id", "attempt", "fence", "membership_revision", "use_until"]
+      properties:
+        authorization_id: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+        operation_id: {"type": "string"}
+        plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        action: {"type": "string", "enum": ["create", "configure", "start", "retire"]}
+        stage_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        use_until: {"type": "string", "format": "date-time"}
+    HostingApplicationDatabaseExecutionState:
+      type: "object"
+      additionalProperties: false
+      required: ["operation_id", "plan_hash", "membership_revision", "hold_operation_id"]
+      properties:
+        operation_id: {"type": "string"}
+        plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        stage: {"$ref": "#/components/schemas/HostingApplicationDatabaseStage"}
+        retirement_plan: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointPlan"}
+        retirement_receipt: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointReceipt"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        hold_operation_id: {"type": "string"}
+    HostingApplicationDatabaseExecutionProof:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "operation_id", "create_nonce", "binding", "application_project_id", "database_project_id", "binding_application_snapshot", "binding_database_plan", "database_plan", "database_healthy", "origin", "membership_revision", "members", "retired", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["application-database.execution.v1"]}
+        operation_id: {"type": "string"}
+        create_nonce: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+        binding: {"$ref": "#/components/schemas/HostingDatabaseBinding"}
+        application_project_id: {"type": "string"}
+        database_project_id: {"type": "string"}
+        binding_application_snapshot: {"$ref": "#/components/schemas/HostingSnapshot"}
+        binding_database_plan: {"$ref": "#/components/schemas/HostingApplyPlan"}
+        database_plan: {"$ref": "#/components/schemas/HostingApplyPlan"}
+        database_healthy: {"$ref": "#/components/schemas/HostingHealthy"}
+        origin: {"$ref": "#/components/schemas/HostingDatabaseNetworkOrigin"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        members: {"type": "array", "items": {"$ref": "#/components/schemas/HostingDatabaseNetworkMemberEvidence"}, "maxItems": 1}
+        retired: {"type": "array", "items": {"$ref": "#/components/schemas/HostingDatabaseNetworkRetirementEvidence"}}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingDatabaseBinding:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "id", "generation", "application_resource_id", "application_resource_generation", "application_binding_id", "database_resource_id", "database_resource_generation", "database_binding_id", "project_id", "destination_id", "server_id", "runner_id", "database", "credential", "network_name", "alias", "environment_names", "runtime_configuration", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["database-binding.private.v1"]}
+        id: {"type": "string"}
+        generation: {"type": "integer", "format": "int64", "minimum": 1}
+        application_resource_id: {"type": "string"}
+        application_resource_generation: {"type": "integer", "format": "int64", "minimum": 1}
+        application_binding_id: {"type": "string"}
+        database_resource_id: {"type": "string"}
+        database_resource_generation: {"type": "integer", "format": "int64", "minimum": 1}
+        database_binding_id: {"type": "string"}
+        project_id: {"type": "string"}
+        destination_id: {"type": "string"}
+        server_id: {"type": "string"}
+        runner_id: {"type": "string"}
+        database: {"$ref": "#/components/schemas/HostingDatabaseExecutionRef"}
+        credential: {"$ref": "#/components/schemas/HostingDatabaseCredentialRef"}
+        network_name: {"type": "string"}
+        alias: {"type": "string"}
+        environment_names: {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 5, "uniqueItems": true}
+        runtime_configuration: {"$ref": "#/components/schemas/HostingRuntimeConfigurationRef"}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingDatabaseNetworkMemberEvidence:
+      type: "object"
+      additionalProperties: false
+      required: ["binding", "endpoint_plan", "receipt", "application_healthy", "database_plan", "application_project_id", "database_project_id"]
+      properties:
+        binding: {"$ref": "#/components/schemas/HostingDatabaseBinding"}
+        endpoint_plan: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointPlan"}
+        receipt: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointReceipt"}
+        application_healthy: {"$ref": "#/components/schemas/HostingHealthy"}
+        database_plan: {"$ref": "#/components/schemas/HostingApplyPlan"}
+        application_project_id: {"type": "string"}
+        database_project_id: {"type": "string"}
+    HostingDatabaseNetworkRetirementEvidence:
+      type: "object"
+      additionalProperties: false
+      required: ["attached", "retire_plan", "retire_intent", "detached"]
+      properties:
+        attached: {"$ref": "#/components/schemas/HostingDatabaseNetworkMemberEvidence"}
+        retire_plan: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointPlan"}
+        retire_intent: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointReceipt"}
+        detached: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointReceipt"}
+    HostingDatabaseMaintenanceProof:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "capture_plan", "origin_receipt", "previous_plan", "previous_healthy", "membership_revision", "members", "retired", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["database-network.maintenance.v1"]}
+        capture_plan: {"$ref": "#/components/schemas/HostingDatabaseNetworkCapturePlan"}
+        origin_receipt: {"$ref": "#/components/schemas/HostingDatabaseNetworkOriginReceipt"}
+        previous_plan: {"$ref": "#/components/schemas/HostingApplyPlan"}
+        previous_healthy: {"$ref": "#/components/schemas/HostingHealthy"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        members: {"type": "array", "items": {"$ref": "#/components/schemas/HostingDatabaseNetworkMemberEvidence"}, "maxItems": 2}
+        retired: {"type": "array", "items": {"$ref": "#/components/schemas/HostingDatabaseNetworkRetirementEvidence"}}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingApplicationDatabaseRef:
+      type: "object"
+      additionalProperties: false
+      required: ["binding_id", "binding_hash"]
+      properties:
+        binding_id: {"type": "string"}
+        binding_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingApplicationDatabasePlan:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "operation_id", "create_nonce", "binding", "database_plan_hash", "origin", "membership_revision", "previous_members", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["application-database.private.v1"]}
+        operation_id: {"type": "string"}
+        create_nonce: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+        binding: {"$ref": "#/components/schemas/HostingDatabaseBinding"}
+        database_plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        origin: {"$ref": "#/components/schemas/HostingDatabaseNetworkOrigin"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        previous_members: {"type": "array", "items": {"$ref": "#/components/schemas/HostingDatabaseNetworkMember"}, "maxItems": 1}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingDatabaseNetworkMember:
+      type: "object"
+      additionalProperties: false
+      required: ["binding_id", "binding_hash", "endpoint_plan_hash", "receipt_id", "receipt_hash", "endpoint"]
+      properties:
+        binding_id: {"type": "string"}
+        binding_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        endpoint_plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        receipt_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\s\\p{Cc}]+$"}
+        receipt_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        endpoint: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpoint"}
+    HostingDatabaseNetworkPlan:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "network_id", "origin_hash", "alias", "membership_revision", "members", "predecessor", "hash"]
+      properties:
+        version: {"type": "string", "enum": ["database-network.private.membership.v2"]}
+        network_id: {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        origin_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        alias: {"type": "string"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        members: {"type": "array", "items": {"$ref": "#/components/schemas/HostingDatabaseNetworkMember"}, "maxItems": 2}
+        predecessor: {"$ref": "#/components/schemas/HostingDatabaseNetworkPredecessor"}
+        hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingDatabaseNetworkPredecessor:
+      type: "object"
+      additionalProperties: false
+      required: ["compiler_version", "plan_hash"]
+      properties:
+        compiler_version: {"type": "string"}
+        plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        alias: {"type": "string"}
+    HostingDatabaseConnectionOptions:
+      type: "object"
+      additionalProperties: false
+      required: ["items"]
+      properties:
+        items: {"type": "array", "items": {"$ref": "#/components/schemas/HostingDatabaseConnectionOption"}}

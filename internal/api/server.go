@@ -242,7 +242,7 @@ func (s *Server) clientSource(r *http.Request) string {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if hostingDatabasePath(r.URL.Path) || hostingDatabaseDeploymentPath(r.URL.Path) {
+	if databaseConnectionPath(r.URL.Path) || hostingDatabasePath(r.URL.Path) || hostingDatabaseDeploymentPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	// Generic operation reads also carry the safe archive progress sidecar.
@@ -347,6 +347,9 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	limit := maxJSONBodyBytes
+	if databaseConnectionPath(r.URL.Path) {
+		limit = domain.HostingDatabaseConnectionJSONLimit
+	}
 	if databaseNetworkCapturePath(r.URL.Path) {
 		limit = domain.HostingDatabaseBindingJSONLimit
 	}
@@ -468,7 +471,7 @@ func requiresAuth(path string) bool {
 }
 
 func requiresRunnerAuth(path string) bool {
-	if databaseNetworkCapturePath(path) || hostingStorageArchiveRunnerPath(path) {
+	if databaseConnectionRunnerPath(path) || databaseNetworkCapturePath(path) || hostingStorageArchiveRunnerPath(path) {
 		return true
 	}
 	switch path {

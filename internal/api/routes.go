@@ -3,6 +3,17 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-connections"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-connection"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-connections/options"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-connection/deployments"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-connection/recovery"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database/maintenance"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/stage"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/retirement-plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/retirement"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/authorize"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/state"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/claim"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/claim-next"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/plan"},
@@ -245,6 +256,28 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/resources/{id}/database-connections":
+		return s.connectHostingDatabase
+	case "/api/v1/resources/{id}/database-connection":
+		return s.getHostingDatabaseConnection
+	case "/api/v1/resources/{id}/database-connections/options":
+		return s.hostingDatabaseConnectionOptions
+	case "/api/v1/resources/{id}/database-connection/deployments":
+		return s.deployHostingDatabaseConnection
+	case "/api/v1/resources/{id}/database-connection/recovery":
+		return s.recoverHostingDatabaseConnection
+	case "/api/v1/resources/{id}/database/maintenance":
+		return s.maintainHostingDatabaseConnection
+	case "/api/v1/runners/hosting/database-binding/stage":
+		return s.runnerDatabaseConnectionStage
+	case "/api/v1/runners/hosting/database-binding/retirement-plan":
+		return s.runnerDatabaseConnectionRetirementPlan
+	case "/api/v1/runners/hosting/database-binding/retirement":
+		return s.runnerDatabaseConnectionRetirement
+	case "/api/v1/runners/hosting/database-binding/authorize":
+		return s.runnerDatabaseConnectionAuthorize
+	case "/api/v1/runners/hosting/database-binding/state":
+		return s.runnerDatabaseConnectionState
 	case "/api/v1/resources/{id}/storage-backups":
 		return s.hostingStorageBackups
 	case "/api/v1/storage-backups/{id}":
