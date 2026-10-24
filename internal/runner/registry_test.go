@@ -88,3 +88,62 @@ func TestLocalBuildDeploymentRegistryIsTypedAndEmpty(t *testing.T) {
 		t.Fatal("mixed authority accepted")
 	}
 }
+
+func TestDatabaseDeploymentRegistryRequiresCanonicalInternalTask(t *testing.T) {
+	registry := NewRegistry()
+	valid := domain.TaskRun{ID: "run_hop_database", RunSpec: domain.RunSpec{Type: domain.RunTypeDatabaseDeploy, HostingOperationID: "hop_database", HostingMode: "deploy"}}
+	for _, mode := range []string{"deploy", "observe"} {
+		t.Run(mode, func(t *testing.T) {
+			run := valid
+			run.RunSpec.HostingMode = mode
+			if mode == "observe" {
+				run.ID = "observe_hop_database"
+			}
+			plan, err := registry.BuildPlan(run)
+			if err != nil || !reflect.DeepEqual(plan, domain.RunnerPrimitivePlan{RunID: run.ID}) {
+				t.Fatal("canonical database task did not produce an identity-only plan")
+			}
+		})
+	}
+	for name, change := range map[string]func(*domain.TaskRun){
+		"missing_operation": func(run *domain.TaskRun) { run.RunSpec.HostingOperationID = "" },
+		"wrong_identity":    func(run *domain.TaskRun) { run.ID = "run_other" },
+		"generic_mode":      func(run *domain.TaskRun) { run.RunSpec.HostingMode = "generic" },
+		"cleanup_mode":      func(run *domain.TaskRun) { run.RunSpec.HostingMode = "cleanup" },
+		"mixed_build":       func(run *domain.TaskRun) { run.RunSpec.HostingBuildID = "build" },
+		"mixed_proxy":       func(run *domain.TaskRun) { run.RunSpec.ProxyOperationID = "proxy" },
+		"process": func(run *domain.TaskRun) {
+			run.RunSpec.Process = &domain.ProcessSpec{Command: []string{"fixture-only-never-executed"}}
+		},
+		"repository": func(run *domain.TaskRun) {
+			run.RunSpec.Repository = &domain.RepositoryRef{URL: "https://example.invalid/fixture"}
+		},
+		"inputs": func(run *domain.TaskRun) { run.RunSpec.Inputs = map[string]any{"command": "fixture-only"} },
+		"workflow": func(run *domain.TaskRun) {
+			run.Workflow.Steps = []domain.WorkflowStep{{ID: "generic", RunSpec: domain.RunSpec{Type: "shell"}}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := valid
+			change(&bad)
+			if _, err := registry.BuildPlan(bad); err == nil {
+				t.Fatal("noncanonical database task reached generic execution")
+			}
+		})
+	}
+	for _, specWorkflow := range []bool{false, true} {
+		nested := domain.Workflow{Steps: []domain.WorkflowStep{{ID: "database", RunSpec: valid.RunSpec}}}
+		run := domain.TaskRun{ID: "run_generic", RunSpec: domain.RunSpec{Type: "shell"}}
+		if specWorkflow {
+			run.RunSpec.Workflow = &nested
+		} else {
+			run.Workflow = nested
+		}
+		if _, err := registry.BuildPlan(run); err == nil {
+			t.Fatal("nested database task reached generic execution")
+		}
+	}
+	if registry.Supports(domain.RunTypeDatabaseDeploy) {
+		t.Fatal("internal database routing registered a generic adapter")
+	}
+}
