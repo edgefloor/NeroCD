@@ -36,6 +36,9 @@ func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
 
 // HostingPlanFamilyMatches rejects mixed policy/compiler families and substituted snapshots.
 func HostingPlanFamilyMatches(s HostingSnapshot, p HostingApplyPlan) bool {
+	if s.Database != (HostingDatabaseExecutionRef{}) || p.Database != nil || s.PolicyVersion == HostingDatabasePolicyVersion {
+		return p.Snapshot == s && ValidateHostingDatabasePlan(p) == nil
+	}
 	if ValidateHostingRuntimeConfigurationRef(s) != nil || ValidateHostingStorageSnapshot(s) != nil || p.Snapshot != s {
 		return false
 	}
@@ -45,11 +48,11 @@ func HostingPlanFamilyMatches(s HostingSnapshot, p HostingApplyPlan) bool {
 	if s.Storage != (HostingStorageRef{}) && (p.Storage == nil || p.Storage.Validate(s, p.Release) != nil) {
 		return false
 	}
-	if p.PreviousHealthy != nil && (ValidateHostingHealthyStorage(*p.PreviousHealthy) != nil || s.Storage == (HostingStorageRef{}) && p.PreviousHealthy.Storage != nil) {
+	if p.PreviousHealthy != nil && (p.PreviousHealthy.Snapshot.Database != (HostingDatabaseExecutionRef{}) || ValidateHostingHealthyStorage(*p.PreviousHealthy) != nil || s.Storage == (HostingStorageRef{}) && p.PreviousHealthy.Storage != nil) {
 		return false
 	}
 	for _, healthy := range p.RetainedReleases {
-		if ValidateHostingHealthyStorage(healthy) != nil || s.Storage == (HostingStorageRef{}) && healthy.Storage != nil {
+		if healthy.Snapshot.Database != (HostingDatabaseExecutionRef{}) || ValidateHostingHealthyStorage(healthy) != nil || s.Storage == (HostingStorageRef{}) && healthy.Storage != nil {
 			return false
 		}
 	}

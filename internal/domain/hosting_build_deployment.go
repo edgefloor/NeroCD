@@ -88,6 +88,9 @@ func validateLocalBuildRelease(r HostingRelease) error {
 
 // ValidateHostingSnapshotRelease enforces the exclusive registry/local union.
 func ValidateHostingSnapshotRelease(s HostingSnapshot, r HostingRelease) error {
+	if s.Database != (HostingDatabaseExecutionRef{}) || s.PolicyVersion == HostingDatabasePolicyVersion {
+		return ValidateHostingDatabaseRelease(s, r)
+	}
 	if err := ValidateHostingStorageSnapshot(s); err != nil {
 		return err
 	}
