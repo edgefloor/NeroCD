@@ -12,6 +12,10 @@ async function request(page: Pick<Page, "request">, method: "get" | "post", path
   try { return await page.request[method](path, { ...options, timeout: options.timeout ?? 5000 }); }
   catch { throw new Error(`live browser fixture ${method.toUpperCase()} request failed`); }
 }
+async function reportFailure(page: Pick<Page, "request">, m: Metadata) {
+  const response=await request(page,"post",m.control_path+"/failure",{headers:headers(m)});
+  if(response.status()!==204) throw new Error(`live browser failure diagnostic acknowledgement status ${response.status()}`);
+}
 test("browser fixture transport diagnostics discard cookie-bearing errors", async () => {
   for (const method of ["get", "post"] as const) {
     let timeout: number | undefined;
@@ -22,6 +26,18 @@ test("browser fixture transport diagnostics discard cookie-bearing errors", asyn
   const denied = { status: () => 403 };
   const available = { request: { get: async () => denied } } as unknown as Page;
   expect(await request(available, "get", "/fixture")).toBe(denied);
+});
+test("browser failure waits for the diagnostic acknowledgement and rejects denial", async () => {
+  const events:string[]=[];
+  const m={origin:"http://127.0.0.1:18080",control_path:"/api/v1/fixture/database-connection/"+"a".repeat(32)} as Metadata;
+  const reporting={request:{post:async(path:string,options:{headers:Record<string,string>;timeout:number})=>{
+    expect(path).toBe(m.control_path+"/failure");expect(options.headers.Origin).toBe(m.origin);expect(options.timeout).toBe(5000);
+    events.push("diagnostic_emitted");return {status:()=>204};
+  }}} as unknown as Page;
+  await reportFailure(reporting,m);events.push("cleanup_allowed");
+  expect(events).toEqual(["diagnostic_emitted","cleanup_allowed"]);
+  const denied={request:{post:async()=>({status:()=>403})}} as unknown as Page;
+  await expect(reportFailure(denied,m)).rejects.toThrow("live browser failure diagnostic acknowledgement status 403");
 });
 async function login(page: Page, viewer = false) {
   const bootstrap = await request(page, "get", "/api/v1/bootstrap-status");
@@ -82,50 +98,55 @@ test("live owner connects, redeploys and maintains a retained database; viewer o
   const errors: string[] = [], reveals: string[] = [];
   page.on("pageerror", () => errors.push("page error"));
   page.on("request", (r) => { if (new URL(r.url()).pathname.endsWith("/reveal")) reveals.push("reveal"); });
-  await login(page);
-  const connection = await panel(page, m);
-  await expect(page.getByLabel("Hosting project", { exact: true }).getByRole("option", { name: "browser private project", exact: true })).toHaveCount(0);
-  await connection.getByLabel("Database to connect", { exact: true }).selectOption(m.database_resource_id);
-  await connection.getByLabel("Application container port", { exact: true }).fill("8080");
-  await connection.getByLabel("Application readiness path", { exact: true }).fill("/ready");
-  const connectPath = `/api/v1/resources/${m.application_resource_id}/database-connections`;
-  const deployPath = `/api/v1/resources/${m.application_resource_id}/database-connection/deployments`;
-  const maintenancePath = `/api/v1/resources/${m.database_resource_id}/database/maintenance`;
-  const connectBody = await admit(page, connection, "Connect database and deploy application", connectPath);
-  const first = await progress(page, m, "redeploy"); await settled(connection, first);
-  const a = await proof(page, m, first, 1);
-  for (const width of [320, 390, 430, 1440]) {
-    await page.setViewportSize({ width, height: 1000 });
-    await expect(connection.getByRole("button", { name: "Redeploy connected application", exact: true })).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    expect(await connection.evaluate((node) => { const bounds = node.getBoundingClientRect(); return [...node.querySelectorAll("button,input,select")].every((control) => { const box = control.getBoundingClientRect(); return box.left >= bounds.left && box.right <= bounds.right + 1; }); })).toBe(true);
-    await connection.screenshot({ path: info.outputPath(`live-${m.engine}-connection-${width}.png`), animations: "disabled" });
-  }
-  const deployBody = await admit(page, connection, "Redeploy connected application", deployPath);
-  const second = await progress(page, m, "maintenance"); await settled(connection, second);
-  const b = await proof(page, m, second, 2); expect(b).not.toBe(a);
-  const maintenanceBody = await admit(page, connection, "Redeploy connected database", maintenancePath);
-  const maintained = await progress(page, m, "replay"); await settled(connection, maintained);
-  expect(await proof(page, m, maintained, 3)).toBe(b);
-  await admit(page, connection, "Redeploy connected application", deployPath);
-  const final = await progress(page, m, "finish"); await settled(connection, final);
-  const c = await proof(page, m, final, 4); expect(c).not.toBe(b);
-  const viewerContext = await browser.newContext({ baseURL: m.origin, viewport: { width: 390, height: 1000 } });
   try {
-    const viewer = await viewerContext.newPage(); await login(viewer, true); const read = await panel(viewer, m);
-    await expect(read.getByText("Project owner access is required for database connection changes.", { exact: true })).toBeVisible();
-    await expect(read.getByRole("form", { name: "Review database connection request", exact: true })).toHaveCount(0);
-    await expect(read.getByText("Connection workflow completed", { exact: true })).toBeVisible();
-    expect((await request(viewer, "get", `/api/v1/resources/${m.application_resource_id}/database-connection`)).status()).toBe(200);
-    for (const [path, data] of [[connectPath, connectBody], [deployPath, deployBody], [maintenancePath, maintenanceBody]] as const) expect((await request(viewer, "post", path, { headers: headers(m), data })).status()).toBe(403);
-    expect((await request(viewer, "get", m.control_path + "/state", { headers: headers(m) })).status()).toBe(403);
-    expect((await request(viewer, "post", m.control_path + "/finish", { headers: headers(m) })).status()).toBe(403);
-  } finally { await viewerContext.close(); }
-  const anonymous = await browser.newContext({ baseURL: m.origin });
-  try { expect((await request(anonymous, "get", `/api/v1/resources/${m.application_resource_id}/database-connection`)).status()).toBe(401); expect((await request(anonymous, "get", m.control_path + "/state", { headers: headers(m) })).status()).toBe(401); } finally { await anonymous.close(); }
-  expect((await request(page, "get", `/api/v1/resources/${m.foreign_resource_id}/database-connection`)).status()).toBe(403);
-  expect((await request(page, "post", `/api/v1/resources/${m.foreign_resource_id}/database-connections`, { headers: headers(m), data: connectBody })).status()).toBe(403);
-  expect((await request(page, "post", m.control_path + "/finish", { headers: { ...headers(m), Origin: "http://127.0.0.1:1" } })).status()).toBe(403);
-  expect(errors).toEqual([]); expect(reveals).toEqual([]);
-  expect((await request(page, "post", m.control_path + "/finish", { headers: headers(m) })).status()).toBe(204);
+    await login(page);
+    const connection = await panel(page, m);
+    await expect(page.getByLabel("Hosting project", { exact: true }).getByRole("option", { name: "browser private project", exact: true })).toHaveCount(0);
+    await connection.getByLabel("Database to connect", { exact: true }).selectOption(m.database_resource_id);
+    await connection.getByLabel("Application container port", { exact: true }).fill("8080");
+    await connection.getByLabel("Application readiness path", { exact: true }).fill("/ready");
+    const connectPath = `/api/v1/resources/${m.application_resource_id}/database-connections`;
+    const deployPath = `/api/v1/resources/${m.application_resource_id}/database-connection/deployments`;
+    const maintenancePath = `/api/v1/resources/${m.database_resource_id}/database/maintenance`;
+    const connectBody = await admit(page, connection, "Connect database and deploy application", connectPath);
+    const first = await progress(page, m, "redeploy"); await settled(connection, first);
+    const a = await proof(page, m, first, 1);
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(connection.getByRole("button", { name: "Redeploy connected application", exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(await connection.evaluate((node) => { const bounds = node.getBoundingClientRect(); return [...node.querySelectorAll("button,input,select")].every((control) => { const box = control.getBoundingClientRect(); return box.left >= bounds.left && box.right <= bounds.right + 1; }); })).toBe(true);
+      await connection.screenshot({ path: info.outputPath(`live-${m.engine}-connection-${width}.png`), animations: "disabled" });
+    }
+    const deployBody = await admit(page, connection, "Redeploy connected application", deployPath);
+    const second = await progress(page, m, "maintenance"); await settled(connection, second);
+    const b = await proof(page, m, second, 2); expect(b).not.toBe(a);
+    const maintenanceBody = await admit(page, connection, "Redeploy connected database", maintenancePath);
+    const maintained = await progress(page, m, "replay"); await settled(connection, maintained);
+    expect(await proof(page, m, maintained, 3)).toBe(b);
+    await admit(page, connection, "Redeploy connected application", deployPath);
+    const final = await progress(page, m, "finish"); await settled(connection, final);
+    const c = await proof(page, m, final, 4); expect(c).not.toBe(b);
+    const viewerContext = await browser.newContext({ baseURL: m.origin, viewport: { width: 390, height: 1000 } });
+    try {
+      const viewer = await viewerContext.newPage(); await login(viewer, true); const read = await panel(viewer, m);
+      await expect(read.getByText("Project owner access is required for database connection changes.", { exact: true })).toBeVisible();
+      await expect(read.getByRole("form", { name: "Review database connection request", exact: true })).toHaveCount(0);
+      await expect(read.getByText("Connection workflow completed", { exact: true })).toBeVisible();
+      expect((await request(viewer, "get", `/api/v1/resources/${m.application_resource_id}/database-connection`)).status()).toBe(200);
+      for (const [path, data] of [[connectPath, connectBody], [deployPath, deployBody], [maintenancePath, maintenanceBody]] as const) expect((await request(viewer, "post", path, { headers: headers(m), data })).status()).toBe(403);
+      expect((await request(viewer, "get", m.control_path + "/state", { headers: headers(m) })).status()).toBe(403);
+      expect((await request(viewer, "post", m.control_path + "/finish", { headers: headers(m) })).status()).toBe(403);
+    } finally { await viewerContext.close(); }
+    const anonymous = await browser.newContext({ baseURL: m.origin });
+    try { expect((await request(anonymous, "get", `/api/v1/resources/${m.application_resource_id}/database-connection`)).status()).toBe(401); expect((await request(anonymous, "get", m.control_path + "/state", { headers: headers(m) })).status()).toBe(401); } finally { await anonymous.close(); }
+    expect((await request(page, "get", `/api/v1/resources/${m.foreign_resource_id}/database-connection`)).status()).toBe(403);
+    expect((await request(page, "post", `/api/v1/resources/${m.foreign_resource_id}/database-connections`, { headers: headers(m), data: connectBody })).status()).toBe(403);
+    expect((await request(page, "post", m.control_path + "/finish", { headers: { ...headers(m), Origin: "http://127.0.0.1:1" } })).status()).toBe(403);
+    expect(errors).toEqual([]); expect(reveals).toEqual([]);
+    expect((await request(page, "post", m.control_path + "/finish", { headers: headers(m) })).status()).toBe(204);
+  } catch (error) {
+    await reportFailure(page,m);
+    throw error;
+  }
 });

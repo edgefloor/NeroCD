@@ -134,6 +134,9 @@ var databaseRunnerDiagnosticRoutes = [...]struct{ method, path string }{
 	{"POST", "/api/v1/runners/hosting/status"},
 	{"POST", "/api/v1/runners/hosting/complete"},
 	{"POST", "/api/v1/runners/hosting/reconciliation"},
+	{"POST", "/api/v1/runners/hosting/database-binding/state"},
+	{"POST", "/api/v1/runners/hosting/database-binding/authorize"},
+	{"POST", "/api/v1/runners/hosting/database-binding/stage"},
 	{"GET", "/api/v1/hosting-operations/{id}"},
 }
 
@@ -179,6 +182,47 @@ func (c *databaseRunnerAPICounts) summary() string {
 		}
 	}
 	return strings.Join(out, ",")
+}
+
+// Fixed categories only: runner output can contain private authority and must
+// never become a failure-report message, even when a canary scan passes.
+func databaseRunnerFailureCategories(raw []byte) []string {
+	var categories []string
+	for _, item := range []struct{ text, category string }{
+		{"application database execution requires exact retained evidence and current authority", "application_execution"},
+		{"application database engine", "application_engine"},
+		{"lease authority", "lease_authority"},
+		{"journal", "journal"},
+		{"context deadline exceeded", "deadline"},
+		{"context canceled", "canceled"},
+	} {
+		if bytes.Contains(raw, []byte(item.text)) {
+			categories = append(categories, item.category)
+		}
+	}
+	return categories
+}
+
+func waitApplicationDatabaseComplete(ctx context.Context, process *databaseRunnerProcess, entered, failed <-chan struct{}) string {
+	var exited <-chan struct{}
+	if process != nil {
+		exited = process.done
+	}
+	select {
+	case <-entered:
+		return ""
+	case <-exited:
+		select {
+		case <-entered:
+			return ""
+		default:
+		}
+		return "runner_exit"
+	case <-failed:
+		return "browser_failure"
+	case <-ctx.Done():
+		return "deadline"
+	}
 }
 
 type databaseRunnerStatusWriter struct {
@@ -231,9 +275,11 @@ type databaseRunnerFixture struct {
 	client                                *http.Client
 	root, token, destination, environment string
 	process                               *databaseRunnerProcess
+	processMu                             sync.Mutex
 	lastExit                              databaseRunnerExit
 	apiCounts                             databaseRunnerAPICounts
 	logs                                  *databaseRunnerLog
+	failureOutput                         io.Writer // Private test sink; physical fixture defaults to stdout.
 	fault                                 atomic.Pointer[databaseRunnerFault]
 	claimRequests                         atomic.Int64
 	completeMu                            sync.Mutex
@@ -526,25 +572,43 @@ func (f *databaseRunnerFixture) startRunner(args []string) {
 		f.t.Fatal("compiled runner start failed")
 	}
 	p := newDatabaseRunnerProcess(cmd, cancel)
+	f.processMu.Lock()
 	f.process = p
+	f.processMu.Unlock()
 	f.t.Logf("compiled database runner started pid=%d", cmd.Process.Pid)
 }
 
 func (f *databaseRunnerFixture) stop() {
 	f.t.Helper()
+	f.processMu.Lock()
 	p := f.process
+	f.processMu.Unlock()
 	if p == nil {
 		return
 	}
 	p.cancel()
 	select {
 	case <-p.done:
+		f.processMu.Lock()
 		f.lastExit = p.status()
 		f.process = nil
+		f.processMu.Unlock()
 		f.t.Logf("compiled database runner joined pid=%d exited=%t kind=%s code=%d", p.command.Process.Pid, f.lastExit.Exited, f.lastExit.Kind, f.lastExit.Code)
 	case <-time.After(15 * time.Second):
 		f.t.Fatal("compiled database runner did not join")
 	}
+}
+
+func (f *databaseRunnerFixture) failureRunnerStatus() databaseRunnerExit {
+	f.processMu.Lock()
+	defer f.processMu.Unlock()
+	if f.process == nil {
+		if f.lastExit.Kind == "" {
+			return databaseRunnerExit{Kind: "unknown", Code: -1}
+		}
+		return f.lastExit
+	}
+	return f.process.status()
 }
 
 func (f *databaseRunnerFixture) deploy(view domain.HostingDatabase, key string) domain.HostingOperation {

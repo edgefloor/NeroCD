@@ -27,6 +27,7 @@ import (
 
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
+	"nerocd/internal/store/sqlcgen"
 	"nerocd/web"
 )
 
@@ -377,10 +378,20 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			wire := newDatabaseUpgradeCompleteWire(third.ID)
 			f.upgradeComplete.Store(wire)
 			f.start()
-			select {
-			case <-wire.entered:
-			case <-time.After(180 * time.Second):
-				t.Fatal("app committed Complete response loss did not enter")
+			var failed <-chan struct{}
+			if browser != nil {
+				failed = browser.failed
+			}
+			wait, stopWait := context.WithTimeout(t.Context(), 180*time.Second)
+			reason := waitApplicationDatabaseComplete(wait, f.process, wire.entered, failed)
+			stopWait()
+			if reason != "" {
+				if browser != nil {
+					browser.reportFailure(reason)
+				} else {
+					_ = f.emitApplicationDatabaseFailure(third.ID, reason)
+				}
+				t.Fatal("app committed Complete response loss failed before entry: " + reason)
 			}
 			f.stop()
 			select {
@@ -608,20 +619,177 @@ type applicationDatabaseBrowserProof struct {
 	Records   map[string]string
 }
 type applicationDatabaseBrowser struct {
-	f          *databaseRunnerFixture
-	ctx        context.Context
-	mu         sync.Mutex
-	phase      string
-	revision   int64
-	operation  string
-	invalid    bool
-	seen       map[string]applicationDatabaseBrowserSeen
-	proofs     map[string]applicationDatabaseBrowserProof
-	admissions chan applicationDatabaseBrowserAdmission
-	finished   chan struct{}
-	failed     chan struct{}
-	fail       sync.Once
-	finish     sync.Once
+	f               *databaseRunnerFixture
+	ctx             context.Context
+	mu              sync.Mutex
+	phase           string
+	revision        int64
+	operation       string
+	latestOperation string
+	invalid         bool
+	seen            map[string]applicationDatabaseBrowserSeen
+	proofs          map[string]applicationDatabaseBrowserProof
+	admissions      chan applicationDatabaseBrowserAdmission
+	finished        chan struct{}
+	failed          chan struct{}
+	fail            sync.Once
+	finish          sync.Once
+	report          sync.Once
+	reported        bool
+}
+
+type applicationDatabaseFailure struct {
+	Reason, Stage, OperationState, Candidate, Running, Identity, PrivateNetwork, DefaultBridge, PredecessorEndpoint, StartGrant, LeaseStatus, LeaseFresh string
+	Runner                                                                                                                                               databaseRunnerExit
+	Requests                                                                                                                                             string
+	Errors                                                                                                                                               []string
+}
+
+func applicationDatabaseFailureUnknown() applicationDatabaseFailure {
+	return applicationDatabaseFailure{Reason: "unknown", Stage: "unknown", OperationState: "unknown", Candidate: "unknown", Running: "unknown", Identity: "unknown", PrivateNetwork: "unknown", DefaultBridge: "unknown", PredecessorEndpoint: "unknown", StartGrant: "unknown", LeaseStatus: "unknown", LeaseFresh: "unknown"}
+}
+
+func applicationDatabaseFact(value bool) string {
+	if value {
+		return "match"
+	}
+	return "mismatch"
+}
+
+func applicationDatabaseFailureContainer(raw []byte, op domain.HostingOperation, stage domain.HostingApplicationDatabaseStage, out *applicationDatabaseFailure) {
+	var container struct {
+		ID, Image       string
+		Config          struct{ Labels map[string]string }
+		State           struct{ Running bool }
+		NetworkSettings struct {
+			Networks map[string]struct{ NetworkID, EndpointID, IPAddress string }
+		}
+	}
+	if json.Unmarshal(raw, &container) != nil || container.ID != stage.Candidate.ContainerID {
+		return
+	}
+	out.Candidate = "present"
+	out.Running = strconv.FormatBool(container.State.Running)
+	out.Identity = applicationDatabaseFact(container.Image == stage.Candidate.ImageID && container.Config.Labels["io.nerocd.binding"] == op.BindingID && container.Config.Labels["io.nerocd.operation"] == op.ID && container.Config.Labels["io.nerocd.plan"] == op.Plan.Hash && container.Config.Labels["io.nerocd.release"] == op.Release.Hash)
+	n := container.NetworkSettings.Networks[op.ApplicationDatabase.Binding.NetworkName]
+	out.PrivateNetwork = applicationDatabaseFact(n.NetworkID == op.ApplicationDatabase.Origin.NetworkID && n.EndpointID != "" && n.IPAddress != "")
+	d := container.NetworkSettings.Networks["bridge"]
+	out.DefaultBridge = applicationDatabaseFact(d.NetworkID == stage.Candidate.DefaultNetworkID && d.EndpointID != "")
+}
+
+func (f *databaseRunnerFixture) emitApplicationDatabaseFailure(operation, reason string) bool {
+	out := applicationDatabaseFailureUnknown()
+	if slices.Contains([]string{"runner_exit", "browser_failure", "deadline", "go_failure"}, reason) {
+		out.Reason = reason
+	}
+	out.Runner = f.failureRunnerStatus()
+	out.Requests = f.apiCounts.summary()
+	if len(out.Requests) > 2048 {
+		out.Requests = out.Requests[:2048]
+	}
+	logs := f.logs.snapshot()
+	out.Errors = databaseRunnerFailureCategories(logs)
+	clear(logs)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(f.t.Context()), 2*time.Second)
+	defer cancel()
+	if f.database != nil && operation != "" {
+		op, err := f.operation(ctx, operation)
+		row, stageErr := sqlcgen.New(f.database).ReadApplicationDatabaseStage(ctx, operation)
+		var stage domain.HostingApplicationDatabaseStage
+		if err == nil && op.ApplicationDatabase != nil && op.Plan != nil && op.Release != nil {
+			if slices.Contains([]string{"queued", "preparing", "prepared", "applying", "verifying", "succeeded", "failed", "uncertain"}, op.State) {
+				out.OperationState = op.State
+			}
+			input, inputErr := domain.HostingApplicationDatabaseExecutionPlanInput(*op.ApplicationDatabase)
+			if stageErr == nil && inputErr == nil && len(row.Stage) <= domain.HostingApplicationDatabaseJournalJSONLimit && json.Unmarshal(row.Stage, &stage) == nil && stage.OperationID == op.ID && stage.Validate(*op.Plan, input) == nil {
+				out.Stage = stage.Phase
+				var grants int
+				if f.database.QueryRow(ctx, `SELECT count(*) FROM hosting_application_database_effect_authorizations WHERE operation_id=$1 AND request->>'action'='start'`, operation).Scan(&grants) == nil {
+					out.StartGrant = "none"
+					if grants > 0 {
+						out.StartGrant = "recorded"
+					}
+				}
+				var authority domain.HostingAuthority
+				var lease string
+				var fresh bool
+				if json.Unmarshal(row.Authority, &authority) == nil && authority.OperationID == op.ID && authority.RunID == op.RunID && f.database.QueryRow(ctx, `SELECT status,expires_at>clock_timestamp() FROM run_leases WHERE id=$1 AND run_id=$2 AND attempt=$3 AND fence=$4`, authority.LeaseID, authority.RunID, authority.Attempt, authority.Fence).Scan(&lease, &fresh) == nil {
+					if slices.Contains([]string{"active", "succeeded", "failed", "canceled", "expired"}, lease) {
+						out.LeaseStatus = lease
+					}
+					out.LeaseFresh = strconv.FormatBool(fresh)
+				}
+				// Only the validated candidate, and its one authenticated predecessor,
+				// may be inspected. Selected output excludes Config.Env and commands.
+				const format = `{"Id":{{json .Id}},"Image":{{json .Image}},"Config":{"Labels":{{json .Config.Labels}}},"State":{"Running":{{json .State.Running}}},"NetworkSettings":{"Networks":{{json .NetworkSettings.Networks}}}}`
+				if raw, e := databaseRunnerDocker(ctx, nil, "container", "inspect", stage.Candidate.ContainerID, "--format", format); e == nil {
+					applicationDatabaseFailureContainer(raw, op, stage, &out)
+					clear(raw)
+				}
+				if op.Plan.ApplicationDatabase != nil && len(op.Plan.ApplicationDatabase.PreviousMembers) == 1 {
+					member := op.Plan.ApplicationDatabase.PreviousMembers[0]
+					if raw, e := databaseRunnerDocker(ctx, nil, "container", "inspect", member.Endpoint.Target.ContainerID, "--format", format); e == nil {
+						var old struct {
+							ID              string
+							NetworkSettings struct {
+								Networks map[string]struct{ NetworkID, EndpointID string }
+							}
+						}
+						if json.Unmarshal(raw, &old) == nil && old.ID == member.Endpoint.Target.ContainerID {
+							endpoint := old.NetworkSettings.Networks[member.Endpoint.Target.NetworkName]
+							out.PredecessorEndpoint = applicationDatabaseFact(endpoint.NetworkID == member.Endpoint.Target.NetworkID && endpoint.EndpointID == member.Endpoint.EndpointID)
+						}
+						clear(raw)
+					}
+				}
+			}
+		}
+	}
+	raw, err := json.Marshal(out)
+	if err != nil || len(raw) > 4096 {
+		return false
+	}
+	output := f.failureOutput
+	if output == nil {
+		output = os.Stdout
+	}
+	_, err = fmt.Fprintf(output, "DATABASE_CONNECTION_BROWSER_FAILURE %s\n", raw)
+	return err == nil
+}
+
+func (b *applicationDatabaseBrowser) reportFailure(reason string) bool {
+	b.report.Do(func() {
+		b.mu.Lock()
+		operation := b.latestOperation
+		b.mu.Unlock()
+		b.reported = b.f.emitApplicationDatabaseFailure(operation, reason)
+		b.fail.Do(func() { close(b.failed) })
+	})
+	return b.reported
+}
+
+func (b *applicationDatabaseBrowser) failureResponse(w http.ResponseWriter) {
+	if !b.reportFailure("browser_failure") {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func applicationDatabaseBrowserOwner(api *Server, project, origin string, next http.Handler) http.Handler {
+	return api.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, e := api.app.CurrentPrincipal(r.Context())
+		role, roleErr := api.app.ProjectRole(r.Context(), project)
+		if !applicationDatabaseBrowserControlRequest(r, origin, e == nil && roleErr == nil && principal.ID == "usr_bootstrap" && role.Role == "owner") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+func applicationDatabaseBrowserControlRequest(r *http.Request, origin string, owner bool) bool {
+	return owner && r.Header.Get("Origin") == origin && r.Host == strings.TrimPrefix(origin, "http://") && r.URL.RawQuery == "" && !r.URL.ForceQuery && r.ContentLength == 0 && len(r.TransferEncoding) == 0
 }
 
 func applicationDatabaseBrowserOrigin(origin string) bool {
@@ -696,14 +864,12 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 		f.t.Fatal("browser nonce unavailable")
 	}
 	prefix := "/api/v1/fixture/database-connection/" + hex.EncodeToString(nonce)
-	ownerOnly := api.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		principal, e := f.service.CurrentPrincipal(r.Context())
-		projectRole, roleErr := f.service.ProjectRole(r.Context(), resource.ProjectID)
-		if e != nil || roleErr != nil || principal.ID != "usr_bootstrap" || projectRole.Role != "owner" || r.Header.Get("Origin") != origin || r.Host != strings.TrimPrefix(origin, "http://") || r.URL.RawQuery != "" || r.URL.ForceQuery || r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
-			w.WriteHeader(403)
+	ownerOnly := applicationDatabaseBrowserOwner(api, resource.ProjectID, origin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method == "POST" && r.URL.Path == prefix+"/failure" {
+			b.failureResponse(w)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-store")
 		if r.Method == "GET" && r.URL.Path == prefix+"/state" {
 			b.mu.Lock()
 			defer b.mu.Unlock()
@@ -800,6 +966,11 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 			f.t.Error("browser listener did not join")
 		}
 	})
+	f.t.Cleanup(func() {
+		if f.t.Failed() {
+			b.reportFailure("go_failure")
+		}
+	})
 	metadata := map[string]any{"origin": origin, "engine": engine, "project_id": resource.ProjectID, "environment": "database runner acceptance", "application_resource_id": resource.ID, "application_name": resource.Name, "database_resource_id": database.Resource.ID, "foreign_resource_id": foreign.ID, "control_path": prefix}
 	raw, metadataErr := json.Marshal(metadata)
 	if metadataErr != nil {
@@ -845,6 +1016,152 @@ func (b *applicationDatabaseBrowser) awaitFinished() {
 	if b.invalid || len(b.seen) != 4 {
 		b.f.t.Fatal("browser admitted an unexpected mutation")
 	}
+}
+
+func TestApplicationDatabaseRuntimeFailureCapture(t *testing.T) {
+	t.Run("exact_candidate_facts_and_unknown", func(t *testing.T) {
+		op := domain.HostingOperation{ID: "operation", BindingID: "binding", Plan: &domain.HostingApplyPlan{Hash: "plan"}, Release: &domain.HostingRelease{Hash: "release"}, ApplicationDatabase: &domain.HostingApplicationDatabaseExecutionProof{Binding: domain.HostingDatabaseBinding{NetworkName: "private"}, Origin: domain.HostingDatabaseNetworkOrigin{NetworkID: "network"}}}
+		stage := domain.HostingApplicationDatabaseStage{Candidate: domain.HostingApplicationDatabaseCandidate{ContainerID: "candidate", ImageID: "image", DefaultNetworkID: "bridge"}}
+		raw := []byte(`{"Id":"candidate","Image":"image","Config":{"Labels":{"io.nerocd.binding":"binding","io.nerocd.operation":"operation","io.nerocd.plan":"plan","io.nerocd.release":"release"},"Env":["SECRET-CANARY"]},"State":{"Running":true},"NetworkSettings":{"Networks":{"private":{"NetworkID":"network","EndpointID":"endpoint","IPAddress":"10.0.0.2"},"bridge":{"NetworkID":"bridge","EndpointID":"default"}}}}`)
+		facts := applicationDatabaseFailureUnknown()
+		applicationDatabaseFailureContainer(raw, op, stage, &facts)
+		if facts.Candidate != "present" || facts.Running != "true" || facts.Identity != "match" || facts.PrivateNetwork != "match" || facts.DefaultBridge != "match" {
+			t.Fatal("exact candidate facts lost")
+		}
+		encoded, _ := json.Marshal(facts)
+		if bytes.Contains(encoded, []byte("CANARY")) {
+			t.Fatal("inspection emitted raw fields")
+		}
+		facts = applicationDatabaseFailureUnknown()
+		applicationDatabaseFailureContainer(bytes.ReplaceAll(raw, []byte(`"Id":"candidate"`), []byte(`"Id":"foreign"`)), op, stage, &facts)
+		if facts.Candidate != "unknown" || facts.Running != "unknown" {
+			t.Fatal("foreign or failed inspection became absence or a candidate")
+		}
+	})
+	t.Run("runner_exit_is_prompt", func(t *testing.T) {
+		process := &databaseRunnerProcess{done: make(chan struct{}), exit: databaseRunnerExit{Exited: true, Kind: "process_exit", Code: 1}}
+		close(process.done)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		if waitApplicationDatabaseComplete(ctx, process, make(chan struct{}), nil) != "runner_exit" || ctx.Err() != nil {
+			t.Fatal("exited runner waited for the phase deadline")
+		}
+	})
+	t.Run("browser_and_context_failure", func(t *testing.T) {
+		failed := make(chan struct{})
+		close(failed)
+		if waitApplicationDatabaseComplete(t.Context(), nil, make(chan struct{}), failed) != "browser_failure" {
+			t.Fatal("browser failure was ignored")
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if waitApplicationDatabaseComplete(ctx, nil, make(chan struct{}), nil) != "deadline" {
+			t.Fatal("cancellation was ignored")
+		}
+	})
+	t.Run("diagnostic_before_ack_and_canary_exclusion", func(t *testing.T) {
+		var output databaseRunnerLog
+		f := &databaseRunnerFixture{t: t, logs: &databaseRunnerLog{}, failureOutput: &output}
+		_, _ = f.logs.Write([]byte("Cookie: COOKIE-CANARY private_fence SECRET-CANARY application database execution requires exact retained evidence and current authority"))
+		b := &applicationDatabaseBrowser{f: f, failed: make(chan struct{})}
+		ack := &applicationDatabaseFailureAck{t: t, ResponseRecorder: httptest.NewRecorder(), output: &output}
+		b.failureResponse(ack)
+		if ack.Code != 204 {
+			t.Fatal("diagnostic was not acknowledged")
+		}
+		b.failureResponse(httptest.NewRecorder())
+		raw := output.snapshot()
+		if bytes.Contains(raw, []byte("CANARY")) || bytes.Contains(raw, []byte("private_fence")) || bytes.Count(raw, []byte("DATABASE_CONNECTION_BROWSER_FAILURE")) != 1 {
+			t.Fatal("failure snapshot leaked raw material or duplicated output")
+		}
+		var snapshot applicationDatabaseFailure
+		if json.Unmarshal(bytes.TrimSpace(bytes.TrimPrefix(raw, []byte("DATABASE_CONNECTION_BROWSER_FAILURE "))), &snapshot) != nil || snapshot.Candidate != "unknown" || snapshot.Running != "unknown" || len(snapshot.Errors) != 1 || snapshot.Errors[0] != "application_execution" {
+			t.Fatal("missing inspection was not explicit unknown or error category escaped allowlist")
+		}
+		select {
+		case <-b.failed:
+		default:
+			t.Fatal("failure did not unblock Go wait")
+		}
+	})
+	t.Run("owner_origin_host_and_body_guard", func(t *testing.T) {
+		const origin = "http://127.0.0.1:18080"
+		api, _ := newTestServerWithConfig(ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
+		loginCookie := func(email, password string) *http.Cookie {
+			raw, _ := json.Marshal(map[string]string{"email": email, "password": password})
+			login := httptest.NewRequest(http.MethodPost, origin+"/api/v1/browser-sessions", bytes.NewReader(raw))
+			login.Header.Set("Content-Type", "application/json")
+			login.Header.Set("Origin", origin)
+			response := httptest.NewRecorder()
+			api.ServeHTTP(response, login)
+			if response.Code != 201 || len(response.Result().Cookies()) != 1 {
+				t.Fatal("fixture cookie unavailable")
+			}
+			return response.Result().Cookies()[0]
+		}
+		cookie := loginCookie("admin@example.local", "admin")
+		viewerCookie := loginCookie("viewer@example.local", "viewer")
+		for _, mode := range []string{"system_admin", "anonymous", "foreign_origin", "foreign_host", "body", "query", "viewer"} {
+			t.Run(mode, func(t *testing.T) {
+				called := false
+				handler := applicationDatabaseBrowserOwner(api, "proj_platform", origin, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { called = true; w.WriteHeader(204) }))
+				r := httptest.NewRequest(http.MethodPost, origin+"/nonce/failure", nil)
+				r.Header.Set("Origin", origin)
+				r.Header.Set("X-NeroCD-CSRF", "1")
+				if mode != "anonymous" {
+					r.AddCookie(cookie)
+				}
+				switch mode {
+				case "foreign_origin":
+					r.Header.Set("Origin", "http://127.0.0.1:1")
+				case "foreign_host":
+					r.Host = "127.0.0.1:1"
+				case "body":
+					r.ContentLength = 1
+				case "query":
+					r.URL.RawQuery = "unexpected=1"
+				case "viewer":
+					r.Header.Del("Cookie")
+					r.AddCookie(viewerCookie)
+				}
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, r)
+				if called || (rec.Code != 401 && rec.Code != 403) {
+					t.Fatal("failure endpoint authorization guard changed")
+				}
+			})
+		}
+		for _, mode := range []string{"owner", "foreign_origin", "foreign_host", "body", "query", "nonowner"} {
+			r := httptest.NewRequest(http.MethodPost, origin+"/nonce/failure", nil)
+			r.Header.Set("Origin", origin)
+			switch mode {
+			case "foreign_origin":
+				r.Header.Set("Origin", "http://127.0.0.1:1")
+			case "foreign_host":
+				r.Host = "127.0.0.1:1"
+			case "body":
+				r.ContentLength = 1
+			case "query":
+				r.URL.RawQuery = "unexpected=1"
+			}
+			if applicationDatabaseBrowserControlRequest(r, origin, mode != "nonowner") != (mode == "owner") {
+				t.Fatal("exact owner control request guard changed")
+			}
+		}
+	})
+}
+
+type applicationDatabaseFailureAck struct {
+	*httptest.ResponseRecorder
+	t      *testing.T
+	output *databaseRunnerLog
+}
+
+func (w *applicationDatabaseFailureAck) WriteHeader(status int) {
+	if status == 204 && len(w.output.snapshot()) == 0 {
+		w.t.Error("acknowledgement preceded diagnostic emission")
+	}
+	w.ResponseRecorder.WriteHeader(status)
 }
 
 func TestApplicationDatabaseRuntimeBrowserBootstrapPrerequisite(t *testing.T) {
@@ -928,6 +1245,7 @@ func (b *applicationDatabaseBrowser) observe(action string, raw, response []byte
 		return
 	}
 	b.seen[phase] = evidence
+	b.latestOperation = id
 	select {
 	case b.admissions <- admitted:
 	default:
