@@ -121,7 +121,7 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 				_ = store.Close()
 				return nil, err
 			}
-		case 10, 11, 14:
+		case 10, 11, 14, 15:
 			if err := decodeStorageJournal(contents, &j.state); err != nil {
 				_ = store.Close()
 				return nil, err
@@ -402,6 +402,9 @@ func (j *AttemptJournal) entryCountLocked() int {
 }
 
 func (j *AttemptJournal) persistLocked() error {
+	if err := validateApplicationDatabaseJournalChain(j.state.Hosting); err != nil {
+		return err
+	}
 	if err := validateJournalDatabaseNetworkCaptures(j.state); err != nil {
 		return err
 	}
@@ -415,6 +418,9 @@ func (j *AttemptJournal) persistLocked() error {
 		return err
 	}
 	state := j.state
+	if state.Version == 15 && !journalStateUsesConnection(state) {
+		state.Version = 14
+	}
 	if state.Version == 14 && !journalStateUsesDatabaseUpgrade(state) {
 		state.Version = 13
 	}
@@ -454,6 +460,9 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
+	if err := validateApplicationDatabaseJournalChain(state.Hosting); err != nil {
+		return err
+	}
 	if err := validateDatabaseUpgradeJournalChain(state.Hosting); err != nil {
 		return err
 	}
@@ -463,7 +472,7 @@ func validateJournalState(state journalState) error {
 	if err := validateJournalStorageArchives(state); err != nil {
 		return err
 	}
-	if state.Version < journalFormatVersion || state.Version > 14 {
+	if state.Version < journalFormatVersion || state.Version > 15 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
 	if len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
@@ -524,7 +533,13 @@ func validateJournalState(state journalState) error {
 	if state.Version == 14 && !journalStateUsesDatabaseUpgrade(state) {
 		return errors.New("journal version 14 requires database upgrade evidence")
 	}
+	if state.Version == 15 && !journalStateUsesConnection(state) {
+		return errors.New("journal version 15 requires connection evidence")
+	}
 	for _, entry := range state.Hosting {
+		if hostingJournalUsesConnection(entry) && state.Version < 15 {
+			return errors.New("connection journal requires version 15")
+		}
 		if entry.DatabaseUpgrade != nil && state.Version < 14 {
 			return errors.New("database upgrade journal requires version 14")
 		}

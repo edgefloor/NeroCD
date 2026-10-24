@@ -14,7 +14,7 @@ import (
 // HostingJournalUsesDatabase detects database evidence at every retained level.
 // The marker and reference also protect receipts without embedded snapshots.
 func HostingJournalUsesDatabase(entry JournalHosting) bool {
-	if entry.DatabaseUpgrade != nil || entry.Database || entry.DatabaseRef != (domain.HostingDatabaseExecutionRef{}) || entry.Plan != nil && (entry.Plan.Database != nil || entry.Plan.CompilerVersion == domain.HostingDatabaseCompilerVersion) {
+	if entry.DatabaseMaintenance != nil || entry.DatabaseUpgrade != nil || entry.Database || entry.DatabaseRef != (domain.HostingDatabaseExecutionRef{}) || entry.Plan != nil && (entry.Plan.Database != nil || entry.Plan.CompilerVersion == domain.HostingDatabaseCompilerVersion) {
 		return true
 	}
 	for _, snapshot := range hostingJournalSnapshots(entry) {
@@ -50,7 +50,11 @@ func validateHostingJournalDatabase(entry JournalHosting) error {
 			return errors.New("journal database snapshot family mismatch")
 		}
 	}
-	if entry.DatabaseUpgrade != nil {
+	if entry.DatabaseMaintenance != nil {
+		if err := validateDatabaseMaintenanceJournal(entry); err != nil {
+			return err
+		}
+	} else if entry.DatabaseUpgrade != nil {
 		proof := entry.DatabaseUpgrade
 		if proof.Validate() != nil || proof.PreviousPlan.Snapshot.Database != ref || proof.PreviousPlan.Snapshot.Storage != entry.StorageRef || entry.OperationID == proof.PreviousHealthy.OperationID {
 			return errors.New("journal database upgrade proof mismatch")

@@ -15,26 +15,33 @@ import (
 // JournalHosting is nonsecret immutable prepare, apply-intent, or result
 // evidence. Apply intent is never discarded merely because its lease is stale.
 type JournalHosting struct {
-	DatabaseUpgrade      *domain.HostingDatabaseUpgradeProof       `json:"database_upgrade,omitempty"`
-	Database             bool                                      `json:"database,omitempty"`
-	DatabaseRef          domain.HostingDatabaseExecutionRef        `json:"database_ref,omitzero"`
-	StorageRef           domain.HostingStorageRef                  `json:"storage_ref,omitzero"`
-	StorageCreate        *domain.HostingStorageCreateRequest       `json:"storage_create,omitempty"`
-	StorageMaterialized  *domain.HostingStorageMaterializedRequest `json:"storage_materialized,omitempty"`
-	StorageMetadata      *domain.HostingStorage                    `json:"storage_metadata,omitempty"`
-	RuntimeEnvironment   bool                                      `json:"runtime_environment,omitempty"`
-	RuntimeConfiguration domain.HostingRuntimeConfigurationRef     `json:"runtime_configuration,omitzero"`
-	DeliveryID           string                                    `json:"delivery_id,omitempty"`
-	LocalBuild           bool                                      `json:"local_build,omitempty"`
-	ID                   string                                    `json:"id"`
-	Attempt              AttemptIdentity                           `json:"attempt_authority"`
-	OperationID          string                                    `json:"operation_id"`
-	Phase                string                                    `json:"phase"`
-	Prepared             *domain.HostingPreparedRequest            `json:"prepared,omitempty"`
-	CleanupPlan          *domain.HostingCleanupPlan                `json:"cleanup_plan,omitempty"`
-	Plan                 *domain.HostingApplyPlan                  `json:"plan,omitempty"`
-	Result               *domain.HostingCompleteRequest            `json:"result,omitempty"`
-	CreatedAt            time.Time                                 `json:"created_at"`
+	ApplicationDatabase       *domain.HostingApplicationDatabaseExecutionProof `json:"application_database,omitempty"`
+	ApplicationSnapshot       *domain.HostingSnapshot                          `json:"application_snapshot,omitempty"`
+	ApplicationCandidate      *domain.HostingApplicationDatabaseCandidate      `json:"application_candidate,omitempty"`
+	ApplicationStage          *domain.HostingApplicationDatabaseStage          `json:"application_stage,omitempty"`
+	ApplicationRetirementPlan *domain.HostingDatabaseBindingEndpointPlan       `json:"application_retirement_plan,omitempty"`
+	ApplicationRetirement     *domain.HostingDatabaseBindingEndpointReceipt    `json:"application_retirement,omitempty"`
+	DatabaseMaintenance       *domain.HostingDatabaseMaintenanceProof          `json:"database_maintenance,omitempty"`
+	DatabaseUpgrade           *domain.HostingDatabaseUpgradeProof              `json:"database_upgrade,omitempty"`
+	Database                  bool                                             `json:"database,omitempty"`
+	DatabaseRef               domain.HostingDatabaseExecutionRef               `json:"database_ref,omitzero"`
+	StorageRef                domain.HostingStorageRef                         `json:"storage_ref,omitzero"`
+	StorageCreate             *domain.HostingStorageCreateRequest              `json:"storage_create,omitempty"`
+	StorageMaterialized       *domain.HostingStorageMaterializedRequest        `json:"storage_materialized,omitempty"`
+	StorageMetadata           *domain.HostingStorage                           `json:"storage_metadata,omitempty"`
+	RuntimeEnvironment        bool                                             `json:"runtime_environment,omitempty"`
+	RuntimeConfiguration      domain.HostingRuntimeConfigurationRef            `json:"runtime_configuration,omitzero"`
+	DeliveryID                string                                           `json:"delivery_id,omitempty"`
+	LocalBuild                bool                                             `json:"local_build,omitempty"`
+	ID                        string                                           `json:"id"`
+	Attempt                   AttemptIdentity                                  `json:"attempt_authority"`
+	OperationID               string                                           `json:"operation_id"`
+	Phase                     string                                           `json:"phase"`
+	Prepared                  *domain.HostingPreparedRequest                   `json:"prepared,omitempty"`
+	CleanupPlan               *domain.HostingCleanupPlan                       `json:"cleanup_plan,omitempty"`
+	Plan                      *domain.HostingApplyPlan                         `json:"plan,omitempty"`
+	Result                    *domain.HostingCompleteRequest                   `json:"result,omitempty"`
+	CreatedAt                 time.Time                                        `json:"created_at"`
 }
 
 // AppendHosting durably records nonsecret hosting evidence before external mutation or delivery.
@@ -70,6 +77,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	if err := validateDatabaseUpgradeJournalChain(append(slices.Clone(j.state.Hosting), entry)); err != nil {
 		return JournalHosting{}, err
 	}
+	if err := validateApplicationDatabaseJournalChain(append(slices.Clone(j.state.Hosting), entry)); err != nil {
+		return JournalHosting{}, err
+	}
 	oldVersion := j.state.Version
 	if j.state.Version < 2 {
 		j.state.Version = 2
@@ -91,6 +101,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	}
 	if entry.DatabaseUpgrade != nil && j.state.Version < 14 {
 		j.state.Version = 14
+	}
+	if hostingJournalUsesConnection(entry) && j.state.Version < 15 {
+		j.state.Version = 15
 	}
 	j.state.Hosting = append(j.state.Hosting, entry)
 	if err = j.persistLocked(); err != nil {
@@ -255,6 +268,9 @@ func cloneHostingEntries(entries []JournalHosting) []JournalHosting {
 	return copy
 }
 func validateJournalHosting(entry JournalHosting) error {
+	if hostingJournalUsesApplicationDatabase(entry) {
+		return validateApplicationDatabaseJournal(entry)
+	}
 	if err := validateHostingJournalDatabase(entry); err != nil {
 		return err
 	}
@@ -325,7 +341,11 @@ func validateJournalHosting(entry JournalHosting) error {
 		return errors.New("unknown hosting journal phase")
 	}
 	raw, err := json.Marshal(entry)
-	if err != nil || len(raw) > journalMaxProvenanceBytes {
+	limit := journalMaxProvenanceBytes
+	if entry.DatabaseMaintenance != nil {
+		limit = domain.HostingApplicationDatabaseJournalJSONLimit
+	}
+	if err != nil || len(raw) > limit {
 		return errors.New("hosting journal document exceeds limit")
 	}
 	return nil

@@ -9,7 +9,7 @@ import (
 )
 
 func decodeStorageJournal(raw []byte, state *journalState) error {
-	if state.Version == 11 || state.Version == 14 {
+	if state.Version == 11 || state.Version == 14 || state.Version == 15 {
 		return decodeDatabaseJournal(raw, state)
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -74,7 +74,7 @@ func validateHostingJournalStorage(entry JournalHosting) error {
 		hash := plan.Hash
 		plan.Hash = ""
 		familyMatches := domain.HostingPlanFamilyMatches(entry.Plan.Snapshot, *entry.Plan)
-		if entry.DatabaseUpgrade != nil {
+		if entry.DatabaseUpgrade != nil || entry.DatabaseMaintenance != nil {
 			familyMatches = validateHostingJournalDatabase(entry) == nil
 		}
 		if hash != domain.HostingDocumentHash(plan) || !familyMatches || plan.Snapshot.Storage != ref || plan.Storage == nil {
