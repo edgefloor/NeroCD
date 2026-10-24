@@ -1142,10 +1142,10 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 			}
 			if op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) {
 				if _, err = sqlcgen.New(tx).RecordHostingHealthyRelease(ctx, sqlcgen.RecordHostingHealthyReleaseParams{OperationID: op.ID, BindingID: op.BindingID, DestinationID: op.Snapshot.DestinationID, HostPort: int32(op.Snapshot.HostPort), Body: healthyRaw}); err != nil {
-					return domain.HostingOperation{}, err
+					return domain.HostingOperation{}, fmt.Errorf("record healthy public release: %w", err)
 				}
 				if _, err = sqlcgen.New(tx).RetainHostingReleaseClaim(ctx, op.ID); err != nil {
-					return domain.HostingOperation{}, err
+					return domain.HostingOperation{}, fmt.Errorf("retain healthy public release claim: %w", err)
 				}
 			}
 
