@@ -31,7 +31,8 @@ func (s *MemoryStore) eligibleDestinationRunnerLocked(id string) bool {
 		if v.ID == id {
 			// Retain the historical alias while admitting the runner protocol's canonical capability.
 			compose := contains(v.Capabilities, domain.RunTypeComposeDeploy) || contains(v.Capabilities, "compose_deploy")
-			eligible = v.Status == domain.RunnerActive && v.TokenHash != "" && compose && !contains(v.Capabilities, "shell")
+			database := contains(v.Capabilities, domain.RunTypeDatabaseDeploy) && contains(v.Capabilities, domain.HostingDatabaseCapability) && contains(v.Capabilities, domain.HostingOwnedStorageCapability)
+			eligible = v.Status == domain.RunnerActive && v.TokenHash != "" && (compose || database) && !contains(v.Capabilities, "shell")
 			break
 		}
 	}
@@ -46,7 +47,7 @@ func (s *MemoryStore) eligibleDestinationRunnerLocked(id string) bool {
 	return false
 }
 
-// CreateServerWithDestination commits stable association and audit after enrolled Compose-runner admission.
+// CreateServerWithDestination commits stable association and audit after enrolled hosting-runner admission.
 // The unique association does not change legacy tag scheduling or prove physical runtime continuity.
 func (s *MemoryStore) CreateServerWithDestination(_ context.Context, server domain.Server, destination domain.Destination, event domain.AuditEvent) (domain.Server, domain.Destination, error) {
 	s.mu.Lock()

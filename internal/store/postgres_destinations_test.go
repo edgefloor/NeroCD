@@ -18,6 +18,76 @@ import (
 	"nerocd/internal/store"
 )
 
+func TestPostgresDatabaseServerAdmissionUpgradeAndReadiness(t *testing.T) {
+	ctx := t.Context()
+	pg, database := openPostgresIntegrationStore(t, ctx, "database_server_upgrade")
+	t.Cleanup(func() { closePostgresStore(t, pg) })
+	runner := enrollDestinationRunner(t, pg, "runner_database_upgrade", []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability})
+	previous, err := db.Files.ReadFile("migrations/0044_destination_capability_compatibility.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAdmission := strings.Split(string(previous), "-- Readiness")[0]
+	if _, err := database.Exec(ctx, oldAdmission+"DROP FUNCTION nerocd_hosting_database_server_schema_compatible()"); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := pg.SchemaCompatible(ctx); ready || err == nil {
+		t.Fatalf("missing0067 readiness=%v err=%v", ready, err)
+	}
+	if opened, err := store.OpenPostgres(ctx, database.Config().ConnConfig.ConnString()); err == nil {
+		closePostgresStore(t, opened)
+		t.Fatal("missing0067 startup accepted")
+	}
+	event := destinationEvent("database_upgrade")
+	server := domain.Server{ID: "server_database_upgrade", RunnerID: runner.ID, Name: "database upgrade", CreatedBy: event.ActorID, CreatedAt: event.CreatedAt}
+	destination := domain.Destination{ID: "destination_database_upgrade", ServerID: server.ID, Name: "database upgrade", RuntimeKind: "docker_compose", CreatedAt: event.CreatedAt}
+	_, err = database.Exec(ctx, `INSERT INTO servers(id,name,runner_id,created_by,created_at) VALUES($1,$2,$3,$4,$5)`, server.ID, server.Name, server.RunnerID, server.CreatedBy, server.CreatedAt)
+	var admissionError *pgconn.PgError
+	if !errors.As(err, &admissionError) || admissionError.Code != "23514" {
+		t.Fatalf("0066 did not reproduce database capability rejection: %v", err)
+	}
+	if err := applyEmbeddedMigrations(ctx, database, "0066_hosting_database_execution.sql", "0067_hosting_database_server_admission.sql"); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := store.OpenPostgres(ctx, database.Config().ConnConfig.ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closePostgresStore(t, upgraded) })
+	if _, _, err := upgraded.CreateServerWithDestination(ctx, server, destination, event); err != nil {
+		t.Fatalf("0067 did not admit the same consumed enrollment: %v", err)
+	}
+	if ready, err := upgraded.SchemaCompatible(ctx); err != nil || !ready {
+		t.Fatalf("0067 readiness=%v err=%v", ready, err)
+	}
+	if _, err := database.Exec(ctx, oldAdmission); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := upgraded.SchemaCompatible(ctx); err != nil || ready {
+		t.Fatalf("restored Compose-only admission readiness=%v err=%v", ready, err)
+	}
+	if opened, err := store.OpenPostgres(ctx, database.Config().ConnConfig.ConnString()); err == nil {
+		closePostgresStore(t, opened)
+		t.Fatal("restored Compose-only admission startup accepted")
+	}
+	current, err := db.Files.ReadFile("migrations/0067_hosting_database_server_admission.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(ctx, string(current)); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := upgraded.SchemaCompatible(ctx); err != nil || !ready {
+		t.Fatalf("restored0067 readiness=%v err=%v", ready, err)
+	}
+	if _, err := database.Exec(ctx, `ALTER TABLE servers DISABLE TRIGGER servers_runner_admission`); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := upgraded.SchemaCompatible(ctx); err != nil || ready {
+		t.Fatalf("disabled server admission readiness=%v err=%v", ready, err)
+	}
+}
+
 func TestPostgresDestinationCapabilityUpgradeFrom0043(t *testing.T) {
 	ctx := t.Context()
 	// The ordinary helper proves a fresh migration succeeds as well.

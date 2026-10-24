@@ -257,36 +257,48 @@ func TestDestinationRunnerAdmission(t *testing.T) {
 				t.Cleanup(func() { closePostgresStore(t, pg) })
 				s = pg
 			}
-			for _, mode := range []string{"legacy", "shell", "historical shell", "wrong capability", "inactive", "empty credential", "unused enrollment", "revoked enrollment", "valid", "historical alias"} {
+			for _, mode := range []string{"legacy", "shell", "historical shell", "wrong capability", "inactive", "empty credential", "unused enrollment", "revoked enrollment", "valid", "historical alias", "database valid", "database missing deploy", "database missing database", "database missing storage", "database shell", "database inactive", "database empty credential", "database unused enrollment", "database revoked enrollment", "database legacy"} {
 				t.Run(mode, func(t *testing.T) {
 					id := "runner_" + strings.ReplaceAll(mode, " ", "_")
+					scenario := strings.TrimPrefix(mode, "database ")
+					caps := []string{domain.RunTypeComposeDeploy}
+					if strings.HasPrefix(mode, "database ") {
+						caps = []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+						switch scenario {
+						case "missing deploy":
+							caps = caps[1:]
+						case "missing database":
+							caps = []string{domain.RunTypeDatabaseDeploy, domain.HostingOwnedStorageCapability}
+						case "missing storage":
+							caps = caps[:2]
+						}
+					}
 					var runner domain.Runner
-					if mode == "unused enrollment" || mode == "revoked enrollment" {
+					if scenario == "unused enrollment" || scenario == "revoked enrollment" {
 						now := time.Now().UTC()
-						if _, err := s.CreateRunnerEnrollment(t.Context(), domain.RunnerEnrollment{ID: "pending_" + id, TokenHash: "pendinghash_" + id, RunnerID: id, RunnerName: id, Capabilities: []string{"compose_deploy"}, Tags: []string{}, CreatedBy: "usr_bootstrap", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}, destinationEvent("pending_"+id)); err != nil {
+						if _, err := s.CreateRunnerEnrollment(t.Context(), domain.RunnerEnrollment{ID: "pending_" + id, TokenHash: "pendinghash_" + id, RunnerID: id, RunnerName: id, Capabilities: caps, Tags: []string{}, CreatedBy: "usr_bootstrap", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}, destinationEvent("pending_"+id)); err != nil {
 							t.Fatal(err)
 						}
-						if mode == "revoked enrollment" {
+						if scenario == "revoked enrollment" {
 							if _, err := s.RevokeRunnerEnrollment(t.Context(), "pending_"+id, destinationEvent("revoke_"+id)); err != nil {
 								t.Fatal(err)
 							}
 						}
 					}
-					if mode == "legacy" || mode == "unused enrollment" || mode == "revoked enrollment" {
+					if scenario == "legacy" || scenario == "unused enrollment" || scenario == "revoked enrollment" {
 						var err error
-						runner, err = s.RegisterRunner(t.Context(), domain.Runner{ID: id, Name: id, Capabilities: []string{"compose_deploy"}, Tags: []string{"shared-tag"}, TokenHash: "credential", Status: domain.RunnerActive, RegisteredAt: time.Now(), LastHeartbeatAt: time.Now()})
+						runner, err = s.RegisterRunner(t.Context(), domain.Runner{ID: id, Name: id, Capabilities: caps, Tags: []string{"shared-tag"}, TokenHash: "credential", Status: domain.RunnerActive, RegisteredAt: time.Now(), LastHeartbeatAt: time.Now()})
 						if err != nil {
 							t.Fatal(err)
 						}
 					} else {
-						caps := []string{domain.RunTypeComposeDeploy}
 						if mode == "historical alias" {
 							caps = []string{"compose_deploy"}
 						}
 						if mode == "historical shell" {
 							caps = []string{"compose_deploy", "shell"}
 						}
-						if mode == "shell" {
+						if scenario == "shell" {
 							caps = append(caps, "shell")
 						}
 						if mode == "wrong capability" {
@@ -294,14 +306,14 @@ func TestDestinationRunnerAdmission(t *testing.T) {
 						}
 						runner = enrollDestinationRunner(t, s, id, caps)
 					}
-					if mode == "inactive" {
+					if scenario == "inactive" {
 						var err error
 						runner, err = s.UpdateRunnerToken(t.Context(), runner.ID, runner.TokenHash, domain.RunnerRevoked, time.Now())
 						if err != nil {
 							t.Fatal(err)
 						}
 					}
-					if mode == "empty credential" {
+					if scenario == "empty credential" {
 						var err error
 						runner, err = s.UpdateRunnerToken(t.Context(), runner.ID, "", domain.RunnerActive, time.Now())
 						if err != nil {
@@ -312,7 +324,7 @@ func TestDestinationRunnerAdmission(t *testing.T) {
 					server := domain.Server{ID: "server_" + id, RunnerID: runner.ID, Name: id, CreatedBy: event.ActorID, CreatedAt: event.CreatedAt}
 					destination := domain.Destination{ID: "destination_" + id, ServerID: server.ID, Name: id, RuntimeKind: "docker_compose", CreatedAt: event.CreatedAt}
 					_, _, err := s.CreateServerWithDestination(t.Context(), server, destination, event)
-					if mode == "valid" || mode == "historical alias" {
+					if scenario == "valid" || mode == "historical alias" {
 						if _, revokeErr := s.RevokeRunnerEnrollment(t.Context(), "enroll_"+id, destinationEvent("revoke_used_"+id)); !errors.Is(revokeErr, store.ErrNotFound) {
 							t.Fatalf("consumed enrollment revocation unexpectedly changed runner authority: %v", revokeErr)
 						}
@@ -349,7 +361,7 @@ func TestDestinationRunnerAdmission(t *testing.T) {
 							}
 						}
 					}
-					if want := mode == "valid" || mode == "historical alias"; found != want {
+					if want := scenario == "valid" || mode == "historical alias"; found != want {
 						t.Fatalf("server admission audit present=%v want=%v", found, want)
 					}
 				})
