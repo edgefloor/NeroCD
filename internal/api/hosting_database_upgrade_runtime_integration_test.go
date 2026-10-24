@@ -22,6 +22,7 @@ import (
 
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
+	"nerocd/internal/store/sqlcgen"
 )
 
 // This fault withholds only the first successful real Complete response. The
@@ -142,16 +143,112 @@ func (f *databaseRunnerFixture) upgradeJournal() runner.JournalSnapshot {
 	return snapshot
 }
 
-func (f *databaseRunnerFixture) upgradeStorageIdentity(source domain.HostingOperation) [sha256.Size]byte {
+// The original materialization pointer is stable. Later deployments each add
+// their own immutable inspection receipt without becoming the creation origin.
+type databaseUpgradeStorageReceipt struct {
+	Receipt   sqlcgen.HostingStorageMaterializedReceipt
+	Admission sqlcgen.HostingStorageOperationAdmission
+	Authority domain.HostingAuthority
+	RunnerID  string
+}
+
+type databaseUpgradeStorageSnapshot struct {
+	Origin   sqlcgen.HostingStorageMaterialization
+	Receipts []databaseUpgradeStorageReceipt
+}
+
+func databaseUpgradeStorageContract(c domain.HostingDatabaseNetworkCapturePlan, expected []domain.HostingOperation, snapshot databaseUpgradeStorageSnapshot) error {
+	invalid := errors.New("upgrade storage receipt contract invalid")
+	origin := snapshot.Origin
+	m := c.Materialization
+	if c.Storage.Validate() != nil || m.Validate(c.Storage) != nil || m.State != "materialized" || m.MaterializedReceipt == nil || origin.StorageID != c.Storage.ID || origin.OriginOperationID != m.CreationOperationID || origin.OriginPlanHash != m.CreationPlanHash || origin.MaterializedOperationID == nil || *origin.MaterializedOperationID != m.CreationOperationID || origin.MaterializedReceiptID == nil || *origin.MaterializedReceiptID != m.MaterializedReceipt.ID || origin.CreatedAt.IsZero() {
+		return invalid
+	}
+	var admitted domain.HostingStorageMaterialization
+	if domain.DecodeHostingStorageProtocolJSON(origin.Origin, &admitted) != nil || admitted.State != "create_admitted" || admitted.MaterializedReceipt != nil || domain.HostingDocumentHash(admitted) != origin.OriginHash || admitted.Validate(c.Storage) != nil {
+		return invalid
+	}
+	admitted.State, admitted.MaterializedReceipt = "materialized", m.MaterializedReceipt
+	if domain.HostingDocumentHash(admitted) != domain.HostingDocumentHash(m) || len(expected) < 1 || len(expected) > 3 || len(snapshot.Receipts) != len(expected) {
+		return invalid
+	}
+	operations := make(map[string]domain.HostingOperation, len(expected))
+	for _, op := range expected {
+		if _, duplicate := operations[op.ID]; duplicate || op.ID == "" || op.RunID == "" || op.Plan == nil || op.Plan.Storage == nil || op.ProjectID != c.Storage.ProjectID || op.ResourceID != c.Storage.ResourceID || op.BindingID != c.Storage.BindingID || op.Snapshot.RunnerID != c.RunnerID || op.Snapshot.Storage != m.StorageRef || op.Plan.Storage.Reference != m.StorageRef {
+			return invalid
+		}
+		operations[op.ID] = op
+	}
+	seen := make(map[string]bool, len(expected))
+	for _, entry := range snapshot.Receipts {
+		r, a, authority := entry.Receipt, entry.Admission, entry.Authority
+		op, found := operations[r.OperationID]
+		var body domain.HostingStorageMaterializedRequest
+		var receiptAuthority, admissionAuthority domain.HostingAuthority
+		if !found || seen[r.OperationID] || r.StorageID != c.Storage.ID || a.StorageID != r.StorageID || a.OperationID != op.ID || a.PlanHash != op.Plan.Hash || authority.OperationID != op.ID || authority.RunID != op.RunID || authority.LeaseID == "" || authority.Fence == "" || authority.Attempt < 1 || entry.RunnerID != c.RunnerID || r.CreatedAt.IsZero() || a.CreatedAt.IsZero() || r.CreatedAt.Before(a.CreatedAt) || r.AuditID != "aud_storage_materialized_"+op.ID || domain.DecodeHostingStorageProtocolJSON(r.Authority, &receiptAuthority) != nil || domain.DecodeHostingStorageProtocolJSON(a.Authority, &admissionAuthority) != nil || receiptAuthority != authority || admissionAuthority != authority || domain.DecodeHostingStorageProtocolJSON(r.Body, &body) != nil || body.HostingAuthority != authority || body.ReceiptID != r.ReceiptID || body.PlanHash != op.Plan.Hash || body.Matches(c.Storage, m) != nil || r.BodyHash != domain.HostingDocumentHash(body) {
+			return invalid
+		}
+		if r.OperationID == m.CreationOperationID && domain.HostingDocumentHash(domain.HostingReceipt{ID: r.ReceiptID, BodyHash: r.BodyHash, CreatedAt: r.CreatedAt}) != domain.HostingDocumentHash(*m.MaterializedReceipt) {
+			return invalid
+		}
+		seen[r.OperationID] = true
+	}
+	if !seen[m.CreationOperationID] {
+		return invalid
+	}
+	return nil
+}
+
+// A later operation may add its own receipt, but can never rewrite the original
+// row, source receipt, admission or any already committed inspection receipt.
+func databaseUpgradeStoragePreserved(before, after databaseUpgradeStorageSnapshot) bool {
+	if domain.HostingDocumentHash(before.Origin) != domain.HostingDocumentHash(after.Origin) || len(after.Receipts) < len(before.Receipts) {
+		return false
+	}
+	retained := make(map[string]string, len(after.Receipts))
+	for _, entry := range after.Receipts {
+		id := entry.Receipt.OperationID
+		if _, duplicate := retained[id]; duplicate {
+			return false
+		}
+		retained[id] = domain.HostingDocumentHash(entry)
+	}
+	for _, entry := range before.Receipts {
+		if retained[entry.Receipt.OperationID] != domain.HostingDocumentHash(entry) {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *databaseRunnerFixture) upgradeStorageIdentity(c domain.HostingDatabaseNetworkCapturePlan, expected []domain.HostingOperation) databaseUpgradeStorageSnapshot {
 	f.t.Helper()
 	ctx, cancel := context.WithTimeout(f.t.Context(), 5*time.Second)
 	defer cancel()
+	var snapshot databaseUpgradeStorageSnapshot
 	var raw []byte
-	var receipts, foreignReceipts int
-	if f.database.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_storage_materialized_receipts WHERE storage_id=$1),(SELECT count(*) FROM hosting_storage_materialized_receipts WHERE storage_id=$1 AND operation_id<>$2),jsonb_build_object('materialization',m,'receipt',(SELECT to_jsonb(r) FROM hosting_storage_materialized_receipts r WHERE r.storage_id=$1))::text FROM hosting_storage_materializations m WHERE storage_id=$1`, source.Plan.Storage.Reference.StorageID, source.ID).Scan(&receipts, &foreignReceipts, &raw) != nil || receipts != 1 || foreignReceipts != 0 {
-		f.t.Fatal("upgrade changed original materialization identity")
+	if f.database.QueryRow(ctx, `SELECT to_jsonb(m)::text FROM hosting_storage_materializations m WHERE storage_id=$1`, c.Storage.ID).Scan(&raw) != nil || len(raw) > domain.HostingStorageProtocolJSONLimit || json.Unmarshal(raw, &snapshot.Origin) != nil {
+		f.t.Fatal("upgrade original materialization unavailable")
 	}
-	return sha256.Sum256(raw)
+	// Each row is one operation's inspection and admission. Joining the exact
+	// recorded lease pins its full authority independently of the supplied body.
+	rows, err := f.database.Query(ctx, `SELECT to_jsonb(r)::text,to_jsonb(a)::text,jsonb_build_object('operation_id',r.operation_id,'run_id',l.run_id,'lease_id',l.id,'attempt',l.attempt,'fence',l.fence)::text,l.runner_id FROM hosting_storage_materialized_receipts r LEFT JOIN hosting_storage_operation_admissions a ON a.operation_id=r.operation_id AND a.storage_id=r.storage_id LEFT JOIN run_leases l ON l.id=r.authority->>'lease_id' WHERE r.storage_id=$1 ORDER BY r.operation_id`, c.Storage.ID)
+	if err != nil {
+		f.t.Fatal("upgrade materialization receipts unavailable")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var receipt, admission, authority []byte
+		var entry databaseUpgradeStorageReceipt
+		if len(snapshot.Receipts) >= 3 || rows.Scan(&receipt, &admission, &authority, &entry.RunnerID) != nil || len(receipt) > domain.HostingStorageProtocolJSONLimit || len(admission) > domain.HostingStorageProtocolJSONLimit || len(authority) > 2048 || json.Unmarshal(receipt, &entry.Receipt) != nil || json.Unmarshal(admission, &entry.Admission) != nil || domain.DecodeHostingStorageProtocolJSON(authority, &entry.Authority) != nil {
+			f.t.Fatal("upgrade materialization receipt set invalid")
+		}
+		snapshot.Receipts = append(snapshot.Receipts, entry)
+	}
+	if rows.Err() != nil || databaseUpgradeStorageContract(c, expected, snapshot) != nil {
+		f.t.Fatal("upgrade materialization receipt contract invalid")
+	}
+	return snapshot
 }
 
 func (f *databaseRunnerFixture) upgradeCredentialIdentity(view domain.HostingDatabase) map[string][sha256.Size]byte {
@@ -227,7 +324,7 @@ func TestHostingDatabaseUpgradeCompiledRunner(t *testing.T) {
 		f.stop()
 		capture, stored, trees := f.captureWithRecovery(source)
 		volume := f.volumeProof(source)
-		storage := f.upgradeStorageIdentity(source)
+		storage := f.upgradeStorageIdentity(capture.Plan, []domain.HostingOperation{source})
 		credentials := f.upgradeCredentialIdentity(view)
 		sourceDocument := domain.HostingDocumentHash(source)
 		firstRequest := f.requestUpgrade(view, capture, stored.Receipt, "upgrade_empty_first")
@@ -239,7 +336,8 @@ func TestHostingDatabaseUpgradeCompiledRunner(t *testing.T) {
 			t.Fatal("initial upgrade changed controller proof or predecessor")
 		}
 		f.upgradeInventory(first)
-		if f.volumeProof(first) != volume || f.upgradeStorageIdentity(source) != storage || !reflect.DeepEqual(credentials, f.upgradeCredentialIdentity(view)) {
+		firstStorage := f.upgradeStorageIdentity(capture.Plan, []domain.HostingOperation{source, first})
+		if f.volumeProof(first) != volume || !databaseUpgradeStoragePreserved(storage, firstStorage) || !reflect.DeepEqual(credentials, f.upgradeCredentialIdentity(view)) {
 			t.Fatal("initial upgrade changed retained volume/materialization/credentials")
 		}
 		f.markerAt(view, first, marker, false, true)
@@ -294,6 +392,10 @@ func TestHostingDatabaseUpgradeCompiledRunner(t *testing.T) {
 		if !pending {
 			t.Fatal("upgrade committed ACK loss did not retain exact durable result and proof")
 		}
+		maintenanceStorage := f.upgradeStorageIdentity(capture.Plan, []domain.HostingOperation{source, first, maintenance})
+		if !databaseUpgradeStoragePreserved(firstStorage, maintenanceStorage) {
+			t.Fatal("maintenance rewrote original or earlier inspection receipts")
+		}
 		beforeInventory := f.upgradeInventory(maintenance)
 		beforeTrees := f.captureTrees()
 		beforeApply, beforeDelivery := f.applyRequests.Load(), f.deliveryRequests.Load()
@@ -326,7 +428,11 @@ func TestHostingDatabaseUpgradeCompiledRunner(t *testing.T) {
 		if !f.upgradeComplete.CompareAndSwap(wire, nil) {
 			t.Fatal("upgrade completion hook identity changed")
 		}
-		if f.volumeProof(replayed) != volume || f.upgradeStorageIdentity(source) != storage || !reflect.DeepEqual(credentials, f.upgradeCredentialIdentity(view)) || domain.HostingDocumentHash(stored) != domain.HostingDocumentHash(f.captureStored(capture.ID)) {
+		replayedStorage := f.upgradeStorageIdentity(capture.Plan, []domain.HostingOperation{source, first, replayed})
+		if domain.HostingDocumentHash(maintenanceStorage) != domain.HostingDocumentHash(replayedStorage) {
+			t.Fatal("Complete replay added or rewrote materialization receipts")
+		}
+		if f.volumeProof(replayed) != volume || !databaseUpgradeStoragePreserved(storage, replayedStorage) || !reflect.DeepEqual(credentials, f.upgradeCredentialIdentity(view)) || domain.HostingDocumentHash(stored) != domain.HostingDocumentHash(f.captureStored(capture.ID)) {
 			t.Fatal("maintenance/replay changed original retained evidence")
 		}
 		retained := f.captureTrees()
@@ -486,6 +592,142 @@ func TestDatabaseUpgradeRuntimeFixtureInputs(t *testing.T) {
 				upgrade := domain.HostingDatabaseUpgradeInput{ExpectedGeneration: 1, CaptureID: domain.HostingDatabaseNetworkCaptureID("hop_upgrade_source"), ExpectedOriginHash: domain.HostingDocumentHash("fixture_origin"), IdempotencyKey: key}
 				if upgrade.Validate() != nil {
 					t.Fatal("fixture upgrade request identity invalid")
+				}
+			}
+		})
+	}
+}
+
+func databaseUpgradeReceiptJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal("storage receipt fixture encoding failed")
+	}
+	return raw
+}
+
+// These are local contract documents, not physical evidence or retained data
+// from either failed run. Each observation must pass the production validator.
+func databaseUpgradeStorageContractFixture(t *testing.T, engine string) (domain.HostingDatabaseNetworkCapturePlan, []domain.HostingOperation, databaseUpgradeStorageSnapshot) {
+	t.Helper()
+	recipe := domain.HostingDatabasePostgresRecipe
+	if engine == "redis" {
+		recipe = domain.HostingDatabaseRedisRecipe
+	}
+	r, err := domain.HostingDatabaseRecipeFor(engine, recipe)
+	if err != nil {
+		t.Fatal("receipt fixture recipe unavailable")
+	}
+	id, volume := domain.HostingStorageIdentity("binding_upgrade_receipts")
+	now := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
+	storage := domain.HostingStorage{ID: id, ProjectID: "proj_platform", ResourceID: "resource_receipts", BindingID: "binding_upgrade_receipts", DestinationID: "destination_receipts", Kind: "platform_managed", Driver: "local", VolumeName: volume, MountPath: r.MountPath, AccessMode: "read_write", Retention: "retain", Generation: 1, CreatedBy: "owner_fixture", CreatedAt: now}
+	storage.Hash = storage.DocumentHash()
+	m := domain.HostingStorageMaterialization{StorageRef: storage.Reference(), State: "create_admitted", CreationOperationID: "hop_source", CreationPlanHash: domain.HostingDocumentHash("hop_source"), DaemonID: "daemon_receipts"}
+	m.CreationNonce = domain.HostingStorageCreationNonce(m.StorageRef, m.CreationOperationID, m.DaemonID)
+	m.Labels = domain.ExpectedHostingStorageLabels(storage, m)
+	admitted := m
+	c := domain.HostingDatabaseNetworkCapturePlan{Storage: storage, RunnerID: "runner_receipts", SourceOperationID: m.CreationOperationID}
+	var operations []domain.HostingOperation
+	var snapshot databaseUpgradeStorageSnapshot
+	for index, name := range []string{"hop_source", "hop_first", "hop_maintenance"} {
+		op := domain.HostingOperation{ID: name, RunID: "run_" + name, ProjectID: storage.ProjectID, ResourceID: storage.ResourceID, BindingID: storage.BindingID, Snapshot: domain.HostingSnapshot{Storage: storage.Reference(), RunnerID: c.RunnerID}, Plan: &domain.HostingApplyPlan{Hash: domain.HostingDocumentHash(name), Storage: &domain.HostingStoragePlan{Reference: storage.Reference()}}}
+		a := domain.HostingAuthority{OperationID: op.ID, RunID: op.RunID, LeaseID: "lease_" + name, Attempt: 1, Fence: "fence_" + name}
+		body := domain.HostingStorageMaterializedRequest{HostingAuthority: a, ReceiptID: "receipt_" + name, PlanHash: op.Plan.Hash, StorageRef: m.StorageRef, CreationOperationID: m.CreationOperationID, CreationPlanHash: m.CreationPlanHash, CreationNonce: m.CreationNonce, DaemonID: m.DaemonID, VolumeName: storage.VolumeName, Driver: "local", Scope: "local", Labels: m.Labels, Options: map[string]string{}}
+		if body.Validate() != nil || body.Matches(storage, m) != nil {
+			t.Fatal("inspection receipt failed actual domain contract")
+		}
+		created := now.Add(time.Duration(index+1) * time.Second)
+		entry := databaseUpgradeStorageReceipt{Receipt: sqlcgen.HostingStorageMaterializedReceipt{OperationID: name, StorageID: id, ReceiptID: body.ReceiptID, Authority: databaseUpgradeReceiptJSON(t, a), Body: databaseUpgradeReceiptJSON(t, body), BodyHash: domain.HostingDocumentHash(body), AuditID: "aud_storage_materialized_" + name, CreatedAt: created}, Admission: sqlcgen.HostingStorageOperationAdmission{OperationID: name, StorageID: id, PlanHash: op.Plan.Hash, Authority: databaseUpgradeReceiptJSON(t, a), CreatedAt: now}, Authority: a, RunnerID: c.RunnerID}
+		if index == 0 {
+			m.State = "materialized"
+			m.MaterializedReceipt = &domain.HostingReceipt{ID: entry.Receipt.ReceiptID, BodyHash: entry.Receipt.BodyHash, CreatedAt: created}
+		}
+		operations = append(operations, op)
+		snapshot.Receipts = append(snapshot.Receipts, entry)
+	}
+	c.Materialization = m
+	snapshot.Origin = sqlcgen.HostingStorageMaterialization{StorageID: id, OriginOperationID: m.CreationOperationID, OriginPlanHash: m.CreationPlanHash, Origin: databaseUpgradeReceiptJSON(t, admitted), OriginHash: domain.HostingDocumentHash(admitted), MaterializedOperationID: &m.CreationOperationID, MaterializedReceiptID: &m.MaterializedReceipt.ID, CreatedAt: now}
+	return c, operations, snapshot
+}
+
+func TestDatabaseUpgradeRuntimeStorageInspectionReceipts(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			c, ops, all := databaseUpgradeStorageContractFixture(t, engine)
+			before := all
+			before.Receipts = slices.Clone(all.Receipts[:1])
+			for count := 1; count <= 3; count++ {
+				after := all
+				after.Receipts = slices.Clone(all.Receipts[:count])
+				if databaseUpgradeStorageContract(c, ops[:count], after) != nil || !databaseUpgradeStoragePreserved(before, after) {
+					t.Fatal("legitimate per-operation inspection receipt changed original creation identity")
+				}
+				before = after
+			}
+			// A byte-identical replay preserves the exact bounded set, including every
+			// receipt, admission, audit identity, timestamp and independent lease tuple.
+			var replay databaseUpgradeStorageSnapshot
+			if json.Unmarshal(databaseUpgradeReceiptJSON(t, all), &replay) != nil || databaseUpgradeStorageContract(c, ops, replay) != nil || !databaseUpgradeStoragePreserved(all, replay) || domain.HostingDocumentHash(all) != domain.HostingDocumentHash(replay) {
+				t.Fatal("identical inspection replay changed retained evidence")
+			}
+			for name, change := range map[string]func(*databaseUpgradeStorageSnapshot){
+				"original_hash":    func(s *databaseUpgradeStorageSnapshot) { s.Origin.OriginHash = domain.HostingDocumentHash("foreign") },
+				"original_pointer": func(s *databaseUpgradeStorageSnapshot) { s.Origin.MaterializedOperationID = &ops[1].ID },
+				"source_receipt": func(s *databaseUpgradeStorageSnapshot) {
+					s.Receipts[0].Receipt.BodyHash = domain.HostingDocumentHash("rewritten")
+				},
+				"unexpected_operation": func(s *databaseUpgradeStorageSnapshot) { s.Receipts[1].Receipt.OperationID = "hop_unexpected" },
+				"missing_receipt":      func(s *databaseUpgradeStorageSnapshot) { s.Receipts = s.Receipts[:2] },
+				"duplicate_receipt":    func(s *databaseUpgradeStorageSnapshot) { s.Receipts[2] = s.Receipts[1] },
+				"plan": func(s *databaseUpgradeStorageSnapshot) {
+					s.Receipts[1].Admission.PlanHash = domain.HostingDocumentHash("foreign")
+				},
+				"authority": func(s *databaseUpgradeStorageSnapshot) { s.Receipts[1].Authority.Fence = "private_authority_canary" },
+				"runner":    func(s *databaseUpgradeStorageSnapshot) { s.Receipts[1].RunnerID = "private_authority_canary" },
+				"body_hash": func(s *databaseUpgradeStorageSnapshot) {
+					s.Receipts[1].Receipt.BodyHash = domain.HostingDocumentHash("foreign")
+				},
+				"audit": func(s *databaseUpgradeStorageSnapshot) { s.Receipts[1].Receipt.AuditID = "private_authority_canary" },
+			} {
+				t.Run(name, func(t *testing.T) {
+					var changed databaseUpgradeStorageSnapshot
+					if json.Unmarshal(databaseUpgradeReceiptJSON(t, all), &changed) != nil {
+						t.Fatal("receipt fixture clone failed")
+					}
+					change(&changed)
+					err := databaseUpgradeStorageContract(c, ops, changed)
+					if err == nil || strings.Contains(err.Error(), "private_authority_canary") {
+						t.Fatal("changed or unexpected inspection evidence accepted or disclosed")
+					}
+				})
+			}
+			// Even a shape-valid rewrite is forbidden once a receipt or original row
+			// has been observed. Merely revalidating hashes would miss these changes.
+			for _, change := range []func(*databaseUpgradeStorageSnapshot){
+				func(s *databaseUpgradeStorageSnapshot) { s.Origin.CreatedAt = s.Origin.CreatedAt.Add(time.Nanosecond) },
+				func(s *databaseUpgradeStorageSnapshot) {
+					s.Receipts[1].Receipt.CreatedAt = s.Receipts[1].Receipt.CreatedAt.Add(time.Nanosecond)
+				},
+				func(s *databaseUpgradeStorageSnapshot) {
+					entry := &s.Receipts[1]
+					var body domain.HostingStorageMaterializedRequest
+					if json.Unmarshal(entry.Receipt.Body, &body) != nil {
+						t.Fatal("receipt body clone failed")
+					}
+					body.ReceiptID = "receipt_rewritten"
+					entry.Receipt.ReceiptID = body.ReceiptID
+					entry.Receipt.Body = databaseUpgradeReceiptJSON(t, body)
+					entry.Receipt.BodyHash = domain.HostingDocumentHash(body)
+				},
+			} {
+				var changed databaseUpgradeStorageSnapshot
+				if json.Unmarshal(databaseUpgradeReceiptJSON(t, all), &changed) != nil {
+					t.Fatal("receipt fixture clone failed")
+				}
+				change(&changed)
+				if databaseUpgradeStorageContract(c, ops, changed) != nil || databaseUpgradeStoragePreserved(all, changed) {
+					t.Fatal("shape-valid immutable evidence rewrite escaped snapshot comparison")
 				}
 			}
 		})
