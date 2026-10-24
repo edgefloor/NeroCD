@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, principalQuery } from "@/api";
 import {
@@ -9,8 +9,13 @@ import {
   type HostingDatabase,
 } from "@/api/hosting-databases";
 import type { Resource } from "@/api/hosting";
-import { canOwnProject } from "@/lib/permissions";
+import { canMaintainProject, canOwnProject } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
+import { DatabaseDeployments } from "./DatabaseDeployments";
+import {
+  databaseDeploymentKey,
+  databaseOperationKey,
+} from "@/api/hosting-database-deployments";
 
 export function useDatabaseAccess(project: string, environment: string) {
   const identity = useQuery(principalQuery());
@@ -19,6 +24,10 @@ export function useDatabaseAccess(project: string, environment: string) {
   const actor = principal
     ? JSON.stringify([principal.provider, principal.id])
     : "";
+  const scope = useMemo(
+    () => ({ actor, project, environment }),
+    [actor, project, environment],
+  );
   const ready =
     Boolean(principal) &&
     !identity.isPending &&
@@ -33,18 +42,31 @@ export function useDatabaseAccess(project: string, environment: string) {
       )),
   );
   const owner = canOwnProject(principal, members.data ?? [], project);
+  const maintainer = canMaintainProject(principal, members.data ?? [], project);
   const errors = [
     identity.isError ? identity.error : undefined,
     members.isError ? members.error : undefined,
   ];
   return {
     ready,
-    refreshing: identity.isFetching || members.isFetching || identity.isError || members.isError,
+    refreshing:
+      identity.isFetching ||
+      members.isFetching ||
+      identity.isError ||
+      members.isError,
     error: errors.find(databaseDenied) ?? errors.find(Boolean),
     viewer,
     owner,
-    scope: { actor, project, environment },
-    epoch: JSON.stringify([actor, project, environment, viewer, owner]),
+    maintainer,
+    scope,
+    epoch: JSON.stringify([
+      actor,
+      project,
+      environment,
+      viewer,
+      owner,
+      maintainer,
+    ]),
   };
 }
 
@@ -62,8 +84,10 @@ export function DatabaseMetadata({
     >
       <h4 className="break-all font-medium">{database.resource.name}</h4>
       <p role="status">
-        Adapter unqualified. This saves database configuration only; it does not
-        start an engine or confirm a running database.
+        Saved database configuration does not start an engine or confirm a
+        running database. The legacy metadata state "adapter_unqualified" is not
+        a current runner qualification result. Deployment admission checks the
+        runner.
       </p>
       <dl className="space-y-1 break-all text-sm">
         <dt>Engine</dt>
@@ -98,7 +122,7 @@ export function DatabaseMetadata({
       </ul>
       <p className="text-xs text-muted-foreground">
         Credential references contain no password or connection string. Engine
-        execution remains unqualified.
+        execution requires separate deployment admission.
       </p>
     </section>
   );
@@ -116,7 +140,8 @@ export function ResourceDatabase({
     resource.project_environment_id,
   );
   const [denied, setDenied] = useState("");
-  if (!access.ready || access.refreshing || blocked)
+  const onDenied = useCallback(() => setDenied(access.epoch), [access.epoch]);
+  if (!access.ready)
     return (
       <p role="status">Database metadata access is pending or unavailable.</p>
     );
@@ -128,39 +153,52 @@ export function ResourceDatabase({
     );
   return (
     <DatabaseDetail
-      key={JSON.stringify([access.epoch, resource.id, resource.generation])}
+      key={JSON.stringify([access.epoch, resource.id])}
       resource={resource}
       scope={access.scope}
-      onDenied={() => setDenied(access.epoch)}
+      maintainer={access.maintainer}
+      blocked={access.refreshing || blocked}
+      accessError={access.error}
+      onDenied={onDenied}
     />
   );
 }
 function DatabaseDetail({
   resource,
   scope,
+  maintainer,
+  blocked,
+  accessError,
   onDenied,
 }: {
   resource: Resource;
   scope: ReturnType<typeof useDatabaseAccess>["scope"];
+  maintainer: boolean;
+  blocked: boolean;
+  accessError?: unknown;
   onDenied: () => void;
 }) {
   const client = useQueryClient();
-  const detail = useQuery(databaseQuery(scope, resource.id));
+  const detail = useQuery({
+    ...databaseQuery(scope, resource.id),
+    enabled: !blocked,
+  });
+  const denial = [detail.error, accessError].find(databaseDenied);
+  const deny = useCallback(() => {
+    void client.cancelQueries({ queryKey: databaseKey(scope, resource.id) });
+    client.removeQueries({ queryKey: databaseKey(scope, resource.id) });
+    client.removeQueries({
+      queryKey: databaseDeploymentKey(scope, resource.id),
+    });
+    client.removeQueries({
+      queryKey: databaseOperationKey(scope, resource.id, "").slice(0, -1),
+    });
+    onDenied();
+  }, [client, scope, resource.id, onDenied]);
   useEffect(() => {
-    if (detail.isError && databaseDenied(detail.error)) {
-      client.removeQueries({ queryKey: databaseKey(scope, resource.id) });
-      onDenied();
-    }
-  }, [
-    detail.isError,
-    detail.error,
-    client,
-    scope.actor,
-    scope.project,
-    scope.environment,
-    resource.id,
-    onDenied,
-  ]);
+    if (denial) deny();
+  }, [denial, deny]);
+  if (denial) return <p role="alert">Database access is unavailable.</p>;
   return (
     <section
       className="min-w-0 space-y-2"
@@ -174,14 +212,24 @@ function DatabaseDetail({
           Database metadata is unavailable. {databaseError(detail.error)}
         </p>
       ) : null}
-      {!detail.isError && detail.data ? (
+      {!detail.isError && !blocked && detail.data ? (
         <DatabaseMetadata database={detail.data} />
+      ) : null}
+      {detail.data ? (
+        <DatabaseDeployments
+          database={detail.data}
+          scope={scope}
+          maintainer={maintainer}
+          blocked={blocked || detail.isError || detail.isFetching}
+          onDenied={deny}
+          onRefresh={async () => !(await detail.refetch()).isError}
+        />
       ) : null}
       <Button
         type="button"
         variant="outline"
         className="h-auto max-w-full whitespace-normal"
-        disabled={detail.isFetching}
+        disabled={detail.isFetching || blocked}
         onClick={() => void detail.refetch()}
       >
         Refresh database metadata

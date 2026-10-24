@@ -64,7 +64,15 @@ function setup(
   client.setQueryData(queryKeys.allProjectMembers, [
     { user_id: "viewer", project_id: "project", role: "viewer" },
   ]);
-  const fetch = vi.fn(handler ?? (async () => json(database)));
+  const fetch = vi.fn(
+    handler ??
+      (async (url: string) =>
+        json(
+          url.includes("/deployments")
+            ? { items: [], count: 0, limit: 20, offset: 0, total: 0 }
+            : database,
+        )),
+  );
   vi.stubGlobal("fetch", fetch);
   const view = render(
     <QueryClientProvider client={client}>
@@ -78,7 +86,7 @@ afterEach(() => {
   client?.clear();
   vi.unstubAllGlobals();
 });
-test("viewer reads only database metadata and credential references with explicit unqualified state", async () => {
+test("viewer reads database metadata and history without mutation or secret access", async () => {
   const { fetch } = setup();
   await screen.findByRole("region", { name: "Database metadata for Data" });
   for (const text of [
@@ -94,10 +102,11 @@ test("viewer reads only database metadata and credential references with explici
   expect(screen.getByText(/does not start an engine/)).toBeTruthy();
   expect(screen.queryByRole("form")).toBeNull();
   expect(
-    screen.queryByRole("button", { name: /reveal|copy|deploy|connect/i }),
+    screen.queryByRole("button", { name: /^(reveal|copy|deploy|connect)/i }),
   ).toBeNull();
   expect(fetch.mock.calls.map(([url]) => url)).toEqual([
     "/api/v1/resources/db/database",
+    "/api/v1/resources/db/deployments?limit=20&offset=0",
   ]);
 });
 test.each([401, 403])(

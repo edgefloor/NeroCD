@@ -157,6 +157,13 @@ test.each(["maintainer", "viewer", "admin"])(
     expect(fetch).not.toHaveBeenCalled();
   },
 );
+test("deployment permission does not grant metadata creation after a viewer becomes maintainer", async () => {
+  const { fetch } = setup("viewer");
+  await act(async () => client.setQueryData(queryKeys.allProjectMembers, [{ user_id: "owner", project_id: "project", role: "maintainer" }]));
+  expect(screen.queryByRole("form")).toBeNull();
+  expect(screen.getByText(/Project owner access/)).toBeTruthy();
+  expect(fetch).not.toHaveBeenCalled();
+});
 test("owner chooses paged project-granted destination and receives metadata immediately without a first-page refetch", async () => {
   const { fetch } = setup();
   await draft();
