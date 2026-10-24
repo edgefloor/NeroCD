@@ -158,7 +158,7 @@ test("owner downgrade retires pending mutation and ignores its late accepted res
   act(() => client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "actor", role: "viewer" }]));
   await act(async () => resolve(json(connection, 202)));
   expect(screen.queryByText(/Request accepted/)).toBeNull();
-  expect(screen.queryByRole("form", { name: "Review database connection request" })).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("form", { name: "Review database connection request" })).toBeNull());
 });
 test("unknown authoritative option status remains unavailable even after a synthetic selection", async () => {
   const { fetch } = setup((url) => url.endsWith("/options") ? json({ items: [{ ...option, status: "future" }] }) : undefined);
