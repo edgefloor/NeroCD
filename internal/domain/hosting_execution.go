@@ -114,6 +114,7 @@ type HostingSnapshot struct {
 	PolicyVersion          string                           `json:"policy_version"`
 	LocalBuild             HostingLocalBuildSource          `json:"local_build,omitzero"`
 	RuntimeConfiguration   HostingRuntimeConfigurationRef   `json:"runtime_configuration,omitzero"`
+	ApplicationDatabase    HostingApplicationDatabaseRef    `json:"application_database,omitzero"`
 }
 
 // HostingRelease binds registry content and local image identity to one daemon.
@@ -140,15 +141,16 @@ type HostingHealthy struct {
 
 // HostingApplyPlan is compiled once from an immutable release and target.
 type HostingApplyPlan struct {
-	Database         *HostingDatabasePlan `json:"database,omitempty"`
-	Storage          *HostingStoragePlan  `json:"storage,omitempty"`
-	RetainedReleases []HostingHealthy     `json:"retained_releases,omitempty"`
-	RetainPrevious   bool                 `json:"retain_previous,omitempty"`
-	Snapshot         HostingSnapshot      `json:"snapshot"`
-	Release          HostingRelease       `json:"release"`
-	PreviousHealthy  *HostingHealthy      `json:"previous_healthy,omitempty"`
-	CompilerVersion  string               `json:"compiler_version"`
-	Hash             string               `json:"hash"`
+	Database            *HostingDatabasePlan            `json:"database,omitempty"`
+	Storage             *HostingStoragePlan             `json:"storage,omitempty"`
+	RetainedReleases    []HostingHealthy                `json:"retained_releases,omitempty"`
+	RetainPrevious      bool                            `json:"retain_previous,omitempty"`
+	Snapshot            HostingSnapshot                 `json:"snapshot"`
+	Release             HostingRelease                  `json:"release"`
+	PreviousHealthy     *HostingHealthy                 `json:"previous_healthy,omitempty"`
+	CompilerVersion     string                          `json:"compiler_version"`
+	Hash                string                          `json:"hash"`
+	ApplicationDatabase *HostingApplicationDatabasePlan `json:"application_database,omitempty"`
 }
 
 // HostingReceipt acknowledges one stable, immutable runner document.
@@ -316,7 +318,7 @@ func CompileHostingPlan(snapshot HostingSnapshot, release HostingRelease, previo
 	if snapshot.PolicyVersion != HostingPolicyVersion || snapshot.Storage != (HostingStorageRef{}) {
 		return HostingApplyPlan{}, errors.New("unsupported hosting policy")
 	}
-	if previous != nil && (previous.Storage != nil || ValidateHostingHealthyStorage(*previous) != nil) {
+	if previous != nil && (previous.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || previous.Storage != nil || ValidateHostingHealthyStorage(*previous) != nil) {
 		return HostingApplyPlan{}, ErrInvalidHostingStorage
 	}
 	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: HostingCompilerVersion}
@@ -357,7 +359,7 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: compiler, RetainedReleases: append([]HostingHealthy(nil), retained...)}
 	seen := map[string]bool{}
 	for _, old := range plan.RetainedReleases {
-		if ValidateHostingHealthyStorage(old) != nil || policy != HostingOwnedStoragePolicyVersion && old.Storage != nil {
+		if policy != HostingApplicationDatabasePolicyVersion && old.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(old) != nil || policy != HostingOwnedStoragePolicyVersion && old.Storage != nil {
 			return HostingApplyPlan{}, ErrInvalidHostingStorage
 		}
 		if old.OperationID == "" || seen[old.OperationID] || old.Snapshot.HostPort < 1024 || old.Snapshot.HostPort > 65535 || old.Snapshot.BindingID != snapshot.BindingID || old.Snapshot.DestinationID != snapshot.DestinationID || old.Release.DaemonID != release.DaemonID || old.ContainerID == "" || ValidateHostingSnapshotRelease(old.Snapshot, old.Release) != nil {
@@ -366,7 +368,7 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 		seen[old.OperationID] = true
 	}
 	if previous != nil {
-		if ValidateHostingHealthyStorage(*previous) != nil || policy != HostingOwnedStoragePolicyVersion && previous.Storage != nil {
+		if policy != HostingApplicationDatabasePolicyVersion && previous.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(*previous) != nil || policy != HostingOwnedStoragePolicyVersion && previous.Storage != nil {
 			return HostingApplyPlan{}, ErrInvalidHostingStorage
 		}
 		if ValidateHostingSnapshotRelease(previous.Snapshot, previous.Release) != nil || previous.OperationID == "" || previous.Snapshot.HostPort < 1024 || previous.Snapshot.HostPort > 65535 || previous.Snapshot.BindingID != snapshot.BindingID || previous.Snapshot.DestinationID != snapshot.DestinationID || previous.Release.DaemonID != release.DaemonID || previous.ContainerID == "" || seen[previous.OperationID] {
@@ -422,7 +424,7 @@ type HostingCleanupPlan struct {
 
 // CompileHostingCleanupPlan pins the cleanup target independently of current traffic.
 func CompileHostingCleanupPlan(target HostingHealthy, current string) (HostingCleanupPlan, error) {
-	if target.OperationID == "" || target.OperationID == current || current == "" || target.ContainerID == "" || target.Snapshot.HostPort < 1024 || target.Snapshot.HostPort > 65535 || ValidateHostingSnapshotRelease(target.Snapshot, target.Release) != nil {
+	if target.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || target.OperationID == "" || target.OperationID == current || current == "" || target.ContainerID == "" || target.Snapshot.HostPort < 1024 || target.Snapshot.HostPort > 65535 || ValidateHostingSnapshotRelease(target.Snapshot, target.Release) != nil {
 		return HostingCleanupPlan{}, errors.New("invalid retained cleanup target")
 	}
 	compiler := HostingReleaseCompilerVersion

@@ -149,7 +149,7 @@ func (n HostingDatabaseNetworkPlan) validate(s HostingSnapshot, r HostingRelease
 // Contextual proof and original predecessor checks require ValidateHostingDatabasePlanTransition.
 // Existing generic validators deliberately continue to reject this family.
 func ValidateHostingDatabasePlanV2(p HostingApplyPlan) error {
-	if p.CompilerVersion != HostingDatabaseNetworkCompilerVersion || p.Database == nil || p.Database.Network == nil || p.Storage == nil || p.PreviousHealthy == nil || p.RetainPrevious || len(p.RetainedReleases) != 0 || p.Database.Network.validate(p.Snapshot, p.Release) != nil || p.Database.Network.Predecessor.PlanHash != p.PreviousHealthy.PlanHash {
+	if p.ApplicationDatabase != nil || p.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || p.CompilerVersion != HostingDatabaseNetworkCompilerVersion || p.Database == nil || p.Database.Network == nil || p.Storage == nil || p.PreviousHealthy == nil || p.RetainPrevious || len(p.RetainedReleases) != 0 || p.Database.Network.validate(p.Snapshot, p.Release) != nil || p.Database.Network.Predecessor.PlanHash != p.PreviousHealthy.PlanHash {
 		return ErrInvalidHostingDatabaseNetworkPlan
 	}
 	db := *p.Database

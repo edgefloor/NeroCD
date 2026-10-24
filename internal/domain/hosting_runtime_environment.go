@@ -20,15 +20,23 @@ type HostingRuntimeConfigurationRef struct {
 
 // ValidateHostingRuntimeConfigurationRef binds runtime references to their policy family.
 func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
+	combined := s.PolicyVersion == HostingApplicationDatabasePolicyVersion
+	if combined {
+		if !hostingProxyID.MatchString(s.ApplicationDatabase.BindingID) || !imageSHA256.MatchString(s.ApplicationDatabase.BindingHash) || s.LocalBuild != (HostingLocalBuildSource{}) || s.Storage != (HostingStorageRef{}) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) || s.Database != (HostingDatabaseExecutionRef{}) {
+			return ErrInvalidHostingApplicationDatabasePlan
+		}
+	} else if s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) {
+		return ErrInvalidHostingApplicationDatabasePlan
+	}
 	ref := s.RuntimeConfiguration
-	runtimePolicy := s.PolicyVersion == HostingRuntimePolicyVersion || s.PolicyVersion == HostingLocalBuildRuntimePolicyVersion
+	runtimePolicy := s.PolicyVersion == HostingRuntimePolicyVersion || s.PolicyVersion == HostingLocalBuildRuntimePolicyVersion || combined
 	if ref == (HostingRuntimeConfigurationRef{}) {
 		if runtimePolicy {
 			return errors.New("runtime policy requires configuration reference")
 		}
 		return nil
 	}
-	if ref.Generation < 1 || !imageSHA256.MatchString(ref.Hash) || !runtimePolicy || (s.LocalBuild == (HostingLocalBuildSource{})) != (s.PolicyVersion == HostingRuntimePolicyVersion) {
+	if ref.Generation < 1 || !imageSHA256.MatchString(ref.Hash) || !runtimePolicy || (s.LocalBuild == (HostingLocalBuildSource{})) != (s.PolicyVersion == HostingRuntimePolicyVersion || combined) {
 		return errors.New("invalid runtime configuration reference policy")
 	}
 	return nil
@@ -36,6 +44,9 @@ func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
 
 // HostingPlanFamilyMatches rejects mixed policy/compiler families and substituted snapshots.
 func HostingPlanFamilyMatches(s HostingSnapshot, p HostingApplyPlan) bool {
+	if p.ApplicationDatabase != nil || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) {
+		return false
+	}
 	if s.Database != (HostingDatabaseExecutionRef{}) || p.Database != nil || s.PolicyVersion == HostingDatabasePolicyVersion {
 		return p.Snapshot == s && ValidateHostingDatabasePlan(p) == nil
 	}
@@ -48,11 +59,11 @@ func HostingPlanFamilyMatches(s HostingSnapshot, p HostingApplyPlan) bool {
 	if s.Storage != (HostingStorageRef{}) && (p.Storage == nil || p.Storage.Validate(s, p.Release) != nil) {
 		return false
 	}
-	if p.PreviousHealthy != nil && (p.PreviousHealthy.Snapshot.Database != (HostingDatabaseExecutionRef{}) || ValidateHostingHealthyStorage(*p.PreviousHealthy) != nil || s.Storage == (HostingStorageRef{}) && p.PreviousHealthy.Storage != nil) {
+	if p.PreviousHealthy != nil && (p.PreviousHealthy.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || p.PreviousHealthy.Snapshot.Database != (HostingDatabaseExecutionRef{}) || ValidateHostingHealthyStorage(*p.PreviousHealthy) != nil || s.Storage == (HostingStorageRef{}) && p.PreviousHealthy.Storage != nil) {
 		return false
 	}
 	for _, healthy := range p.RetainedReleases {
-		if healthy.Snapshot.Database != (HostingDatabaseExecutionRef{}) || ValidateHostingHealthyStorage(healthy) != nil || s.Storage == (HostingStorageRef{}) && healthy.Storage != nil {
+		if healthy.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || healthy.Snapshot.Database != (HostingDatabaseExecutionRef{}) || ValidateHostingHealthyStorage(healthy) != nil || s.Storage == (HostingStorageRef{}) && healthy.Storage != nil {
 			return false
 		}
 	}

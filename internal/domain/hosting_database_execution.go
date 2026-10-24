@@ -71,7 +71,7 @@ func HostingDatabaseNetworkName(binding string) string {
 }
 
 func hostingDatabaseSnapshotRecipe(s HostingSnapshot) (HostingDatabaseRecipe, error) {
-	if s.PolicyVersion != HostingDatabasePolicyVersion || !validHostingStorageRef(s.Storage) || s.HostPort != 0 || s.Readiness != (HostingReadiness{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) || s.ResourceGeneration < 1 {
+	if s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || s.PolicyVersion != HostingDatabasePolicyVersion || !validHostingStorageRef(s.Storage) || s.HostPort != 0 || s.Readiness != (HostingReadiness{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) || s.ResourceGeneration < 1 {
 		return HostingDatabaseRecipe{}, errors.New("invalid private database snapshot family")
 	}
 	for _, id := range []string{s.ResourceID, s.BindingID, s.DestinationID, s.ServerID, s.RunnerID} {
@@ -227,7 +227,7 @@ func CompileHostingDatabasePlan(s HostingSnapshot, r HostingRelease, previous *H
 
 // ValidateHostingDatabasePlan checks the canonical compiler output and hash.
 func ValidateHostingDatabasePlan(p HostingApplyPlan) error {
-	if p.Storage == nil || p.Database == nil || p.CompilerVersion != HostingDatabaseCompilerVersion || p.RetainPrevious || len(p.RetainedReleases) != 0 {
+	if p.ApplicationDatabase != nil || p.Storage == nil || p.Database == nil || p.CompilerVersion != HostingDatabaseCompilerVersion || p.RetainPrevious || len(p.RetainedReleases) != 0 {
 		return errors.New("invalid private database plan family")
 	}
 	if p.Database.Validate(p.Snapshot, p.Release) != nil {
