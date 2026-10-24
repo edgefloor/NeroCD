@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,7 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/runner"
+	"nerocd/internal/runnerclient"
 	"nerocd/internal/secretcrypto"
 	"nerocd/web"
 )
@@ -66,12 +68,163 @@ type databaseRunnerFault struct {
 	operationID       string
 	request           domain.HostingCompleteRequest
 }
+
+type databaseRunnerExit struct {
+	Exited bool
+	Kind   string
+	Code   int
+}
+
+type databaseRunnerProcess struct {
+	command *exec.Cmd
+	cancel  context.CancelFunc
+	done    chan struct{}
+	exit    databaseRunnerExit // Written once before done closes.
+}
+
+func databaseRunnerExitFor(err error) databaseRunnerExit {
+	if err == nil {
+		return databaseRunnerExit{Exited: true, Kind: "success", Code: 0}
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return databaseRunnerExit{Exited: true, Kind: "process_exit", Code: exit.ExitCode()}
+	}
+	return databaseRunnerExit{Exited: true, Kind: "wait_error", Code: -1}
+}
+
+func (p *databaseRunnerProcess) status() databaseRunnerExit {
+	if p != nil {
+		select {
+		case <-p.done:
+			return p.exit
+		default:
+		}
+	}
+	return databaseRunnerExit{Kind: "running", Code: -1}
+}
+
+// The caller has started cmd. This goroutine is its only Wait owner; closing
+// done publishes a retained result to both wait diagnostics and cleanup.
+func newDatabaseRunnerProcess(cmd *exec.Cmd, cancel context.CancelFunc) *databaseRunnerProcess {
+	p := &databaseRunnerProcess{command: cmd, cancel: cancel, done: make(chan struct{})}
+	go func() {
+		p.exit = databaseRunnerExitFor(cmd.Wait())
+		close(p.done)
+	}()
+	return p
+}
+
+var databaseRunnerDiagnosticRoutes = [...]struct{ method, path string }{
+	{"GET", "/api/v1/runners/identity"},
+	{"POST", "/api/v1/runners/heartbeat"},
+	{"POST", "/api/v1/runners/claim"},
+	{"POST", "/api/v1/runners/renew"},
+	{"GET", "/api/v1/runners/lease"},
+	{"POST", "/api/v1/runners/complete"},
+	{"POST", "/api/v1/runners/events/batch"},
+	{"POST", "/api/v1/runners/telemetry"},
+	{"POST", "/api/v1/runners/hosting/plan"},
+	{"POST", "/api/v1/runners/hosting/prepared"},
+	{"POST", "/api/v1/runners/hosting/storage-create-begin"},
+	{"POST", "/api/v1/runners/hosting/storage-materialized"},
+	{"POST", "/api/v1/runners/hosting/database-credentials"},
+	{"POST", "/api/v1/runners/hosting/apply-begin"},
+	{"POST", "/api/v1/runners/hosting/status"},
+	{"POST", "/api/v1/runners/hosting/complete"},
+	{"POST", "/api/v1/runners/hosting/reconciliation"},
+	{"GET", "/api/v1/hosting-operations/{id}"},
+}
+
+var databaseRunnerDiagnosticStatuses = [...]int{0, 200, 201, 202, 204, 400, 401, 403, 404, 409, 413, 429, 500, 503}
+
+type databaseRunnerAPICounts struct {
+	mu     sync.Mutex
+	counts [len(databaseRunnerDiagnosticRoutes)][len(databaseRunnerDiagnosticStatuses)]uint32
+}
+
+func (c *databaseRunnerAPICounts) record(method, path string, status int) {
+	if strings.HasPrefix(path, "/api/v1/hosting-operations/") {
+		path = "/api/v1/hosting-operations/{id}"
+	}
+	for i, route := range databaseRunnerDiagnosticRoutes {
+		if method != route.method || path != route.path {
+			continue
+		}
+		column := 0 // Unknown statuses have one closed bucket.
+		for j, allowed := range databaseRunnerDiagnosticStatuses {
+			if status == allowed {
+				column = j
+			}
+		}
+		c.mu.Lock()
+		if c.counts[i][column] < 9999 {
+			c.counts[i][column]++
+		}
+		c.mu.Unlock()
+		return
+	}
+}
+
+func (c *databaseRunnerAPICounts) summary() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for i, route := range databaseRunnerDiagnosticRoutes {
+		for j, status := range databaseRunnerDiagnosticStatuses {
+			if n := c.counts[i][j]; n != 0 {
+				out = append(out, route.method+" "+route.path+" "+strconv.Itoa(status)+"="+strconv.FormatUint(uint64(n), 10))
+			}
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+type databaseRunnerStatusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *databaseRunnerStatusWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+		w.ResponseWriter.WriteHeader(status)
+	}
+}
+
+func (w *databaseRunnerStatusWriter) Write(raw []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(raw)
+}
+
+func databaseRunnerDiagnostic(op domain.HostingOperation, exit databaseRunnerExit, api *databaseRunnerAPICounts) string {
+	state := "unknown"
+	switch op.State {
+	case "queued", "dispatched", "preparing", "prepared", "applying", "verifying", "succeeded", "failed", "canceled", "cancel_requested", "reconciliation_required":
+		state = op.State
+	}
+	kind := "unknown"
+	switch exit.Kind {
+	case "running", "success", "process_exit", "wait_error":
+		kind = exit.Kind
+	}
+	code := exit.Code
+	if code < -1 || code > 255 {
+		code = -1
+	}
+	return fmt.Sprintf("state=%s release=%t plan=%t prepared=%t result=%t complete=%t mutation_hold=%t restore_hold=%t runner_exited=%t exit_kind=%s exit_code=%d api=[%s]", state, op.Release != nil, op.Plan != nil, op.PreparedReceipt != nil, op.Result != nil, op.CompleteReceipt != nil, op.MutationHold, op.RestoreOwnershipHeld, exit.Exited, kind, code, api.summary())
+}
+
 type databaseRunnerFixture struct {
 	t                                     *testing.T
 	server                                *httptest.Server
 	client                                *http.Client
 	root, token, destination, environment string
-	process                               *pushRunnerProcess
+	process                               *databaseRunnerProcess
+	lastExit                              databaseRunnerExit
+	apiCounts                             databaseRunnerAPICounts
 	logs                                  *databaseRunnerLog
 	fault                                 atomic.Pointer[databaseRunnerFault]
 	claimRequests                         atomic.Int64
@@ -160,6 +313,9 @@ func newDatabaseRunnerFixture(t *testing.T) *databaseRunnerFixture {
 	f := &databaseRunnerFixture{t: t, root: root, logs: &databaseRunnerLog{}, completeCounts: map[string]int{}}
 	handler := NewServer(service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static())
 	f.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed := &databaseRunnerStatusWriter{ResponseWriter: w}
+		defer func() { f.apiCounts.record(r.Method, r.URL.Path, observed.status) }()
+		w = observed
 		if r.URL.Path == "/api/v1/runners/claim" {
 			f.claimRequests.Add(1)
 		}
@@ -303,9 +459,8 @@ func (f *databaseRunnerFixture) start() {
 		cancel()
 		f.t.Fatal("compiled runner start failed")
 	}
-	p := &pushRunnerProcess{command: cmd, cancel: cancel, done: make(chan error, 1)}
+	p := newDatabaseRunnerProcess(cmd, cancel)
 	f.process = p
-	go func() { p.done <- cmd.Wait() }()
 	f.t.Logf("compiled database runner started pid=%d", cmd.Process.Pid)
 }
 
@@ -318,8 +473,9 @@ func (f *databaseRunnerFixture) stop() {
 	p.cancel()
 	select {
 	case <-p.done:
+		f.lastExit = p.status()
 		f.process = nil
-		f.t.Logf("compiled database runner joined pid=%d", p.command.Process.Pid)
+		f.t.Logf("compiled database runner joined pid=%d exited=%t kind=%s code=%d", p.command.Process.Pid, f.lastExit.Exited, f.lastExit.Kind, f.lastExit.Code)
 	case <-time.After(15 * time.Second):
 		f.t.Fatal("compiled database runner did not join")
 	}
@@ -332,25 +488,94 @@ func (f *databaseRunnerFixture) deploy(view domain.HostingDatabase, key string) 
 
 func (f *databaseRunnerFixture) await(id string) domain.HostingOperation {
 	f.t.Helper()
-	for deadline := time.Now().Add(180 * time.Second); time.Now().Before(deadline); {
-		op := databaseRunnerJSON[domain.HostingOperation](f, f.token, "GET", "/api/v1/hosting-operations/"+id, nil, 200)
-		if op.State == "succeeded" {
-			if op.Result == nil || !op.Result.Ready || op.Result.Uncertain || op.MutationHold || op.RestoreOwnershipHeld || op.CompleteReceipt == nil || op.Plan == nil || domain.ValidateHostingDatabasePlan(*op.Plan) != nil {
-				f.t.Fatal("database completion lacks exact healthy evidence")
+	op, reason := waitDatabaseRunnerOperation(f.t.Context(), f.process, func(ctx context.Context) (domain.HostingOperation, error) {
+		return f.operation(ctx, id)
+	})
+	exit := f.lastExit
+	if f.process != nil {
+		exit = f.process.status()
+	}
+	if reason != "" {
+		f.t.Fatalf("database wait failed reason=%s %s", reason, databaseRunnerDiagnostic(op, exit, &f.apiCounts))
+	}
+	if op.Result == nil || !op.Result.Ready || op.Result.Uncertain || op.MutationHold || op.RestoreOwnershipHeld || op.CompleteReceipt == nil || op.Plan == nil || domain.ValidateHostingDatabasePlan(*op.Plan) != nil {
+		f.t.Fatalf("database completion lacks exact healthy evidence %s", databaseRunnerDiagnostic(op, exit, &f.apiCounts))
+	}
+	return op
+}
+
+// Operation polling has a cancellable request context, so a runner exit also
+// interrupts an in-flight HTTP poll. All error details remain private.
+func (f *databaseRunnerFixture) operation(ctx context.Context, id string) (domain.HostingOperation, error) {
+	var op domain.HostingOperation
+	invalid := errors.New("operation poll unavailable")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.server.URL+"/api/v1/hosting-operations/"+id, nil)
+	if err != nil {
+		return op, invalid
+	}
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	response, err := f.client.Do(req)
+	if err != nil {
+		return op, invalid
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	defer clear(raw)
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil || len(raw) > 1<<20 || response.StatusCode != http.StatusOK || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || json.Unmarshal(raw, &op) != nil {
+		return domain.HostingOperation{}, invalid
+	}
+	return op, nil
+}
+
+func waitDatabaseRunnerOperation(parent context.Context, process *databaseRunnerProcess, fetch func(context.Context) (domain.HostingOperation, error)) (domain.HostingOperation, string) {
+	ctx, cancel := context.WithTimeout(parent, 180*time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	var done <-chan struct{}
+	if process != nil {
+		done = process.done
+	}
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		select {
+		case <-done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	defer func() { cancel(); <-joined }()
+	var op domain.HostingOperation
+	for {
+		if process.status().Exited {
+			return op, "runner_exited"
+		}
+		if ctx.Err() != nil {
+			if parent.Err() != nil {
+				return op, "canceled"
 			}
-			return op
+			return op, "deadline"
+		}
+		next, err := fetch(ctx)
+		if err != nil {
+			if process.status().Exited || ctx.Err() != nil {
+				continue
+			}
+			return op, "operation_poll"
+		}
+		op = next
+		if op.State == "succeeded" {
+			return op, ""
 		}
 		if op.State == "failed" || op.State == "canceled" || op.State == "reconciliation_required" {
-			f.t.Fatalf("database operation settled unsupported state=%s", op.State)
+			return op, "terminal_operation"
 		}
 		select {
-		case <-f.t.Context().Done():
-			f.t.Fatal("database wait canceled")
-		case <-time.After(100 * time.Millisecond):
+		case <-done:
+		case <-ctx.Done():
+		case <-ticker.C:
 		}
 	}
-	f.t.Fatal("database operation did not settle")
-	return domain.HostingOperation{}
 }
 
 // readDatabaseRunnerReveal is deliberately separate from public error helpers.
@@ -1049,6 +1274,117 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 		t.Fatal("fixture enrollment returned a different runner")
 	}
 	post("/api/v1/runners/heartbeat", credential, struct{}{}, http.StatusOK)
+	tlsServer := httptest.NewTLSServer(server)
+	t.Cleanup(tlsServer.Close)
+	client := runnerclient.New(tlsServer.URL, credential)
+	client.HTTP = tlsServer.Client()
+	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true})
+	if err != nil || id != enrolled.Runner.ID {
+		t.Fatal("real API/client rejected the enrolled database runtime identity")
+	}
+	if _, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{}); err == nil {
+		t.Fatal("real API/client accepted database capabilities without configured database mode")
+	}
+}
+
+func TestDatabaseRunnerExitChild(t *testing.T) {
+	if os.Getenv("NEROCD_DATABASE_DIAGNOSTIC_EXIT_CHILD") == "1" {
+		os.Exit(7)
+	}
+}
+
+func TestDatabaseRunnerEarlyExitRetainsCleanupStatus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDatabaseRunnerExitChild$")
+	cmd.Env = append(os.Environ(), "NEROCD_DATABASE_DIAGNOSTIC_EXIT_CHILD=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal("diagnostic child start failed")
+	}
+	p := newDatabaseRunnerProcess(cmd, cancel)
+	f := &databaseRunnerFixture{t: t, process: p}
+	t.Cleanup(f.stop)
+	started := time.Now()
+	op, reason := waitDatabaseRunnerOperation(ctx, p, func(context.Context) (domain.HostingOperation, error) {
+		return domain.HostingOperation{State: "dispatched"}, nil
+	})
+	if reason != "runner_exited" || (op.State != "" && op.State != "dispatched") || time.Since(started) > 2*time.Second {
+		t.Fatal("database await did not promptly detect the exited runner")
+	}
+	want := databaseRunnerExit{Exited: true, Kind: "process_exit", Code: 7}
+	first, second := p.status(), p.status()
+	if first != want || second != want {
+		t.Fatal("exit inspection consumed or changed retained status")
+	}
+	f.stop()
+	f.stop()
+	if f.process != nil || f.lastExit != want || p.status() != want || cmd.ProcessState.ExitCode() != 7 {
+		t.Fatal("cleanup lost or changed the runner exit result")
+	}
+}
+
+func TestDatabaseRunnerExitCancelsInflightPoll(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	p := &databaseRunnerProcess{done: make(chan struct{})}
+	blocked, published := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(published)
+		select {
+		case <-blocked:
+			p.exit = databaseRunnerExit{Exited: true, Kind: "success", Code: 0}
+			close(p.done)
+		case <-ctx.Done():
+		}
+	}()
+	defer func() { cancel(); <-published }()
+	calls := 0
+	started := time.Now()
+	op, reason := waitDatabaseRunnerOperation(ctx, p, func(request context.Context) (domain.HostingOperation, error) {
+		calls++
+		if calls == 1 {
+			return domain.HostingOperation{State: "prepared", Plan: &domain.HostingApplyPlan{}}, nil
+		}
+		close(blocked)
+		<-request.Done()
+		return domain.HostingOperation{}, errors.New("secret poll error must not be rendered")
+	})
+	if reason != "runner_exited" || op.State != "prepared" || op.Plan == nil || time.Since(started) > 2*time.Second {
+		t.Fatal("runner exit did not cancel the in-flight poll and retain the last operation")
+	}
+	if !p.status().Exited {
+		t.Fatal("in-flight poll consumed runner exit evidence")
+	}
+}
+
+func TestDatabaseRunnerDiagnosticWhitelistRedaction(t *testing.T) {
+	secret := "ncr_diagnostic_secret_\nhttps://private.invalid/?token=secret"
+	var counts databaseRunnerAPICounts
+	counts.record(secret, secret, 418)
+	counts.record("POST", "/api/v1/runners/claim?token="+secret, 200)
+	counts.record("GET", "/api/v1/hosting-operations/"+secret, 418)
+	for range 10050 {
+		counts.record("POST", "/api/v1/runners/claim", 401)
+	}
+	op := domain.HostingOperation{State: secret, ID: secret, RunID: secret, Snapshot: domain.HostingSnapshot{ImageReference: secret}, Plan: &domain.HostingApplyPlan{Hash: secret}, Result: &domain.HostingResult{Outcome: secret}, PreparedReceipt: &domain.HostingReceipt{ID: secret}}
+	got := databaseRunnerDiagnostic(op, databaseRunnerExit{Exited: true, Kind: secret, Code: 1000}, &counts)
+	want := "state=unknown release=false plan=true prepared=true result=true complete=false mutation_hold=false restore_hold=false runner_exited=true exit_kind=unknown exit_code=-1 api=[POST /api/v1/runners/claim 401=9999,GET /api/v1/hosting-operations/{id} 0=1]"
+	if got != want || strings.Contains(got, secret) {
+		t.Fatal("diagnostics escaped the fixed whitelist or count bound")
+	}
+	classified := databaseRunnerExitFor(errors.New(secret))
+	if classified != (databaseRunnerExit{Exited: true, Kind: "wait_error", Code: -1}) {
+		t.Fatal("runner error text escaped closed exit classification")
+	}
+	rec := httptest.NewRecorder()
+	w := &databaseRunnerStatusWriter{ResponseWriter: rec}
+	if _, err := w.Write([]byte(secret)); err != nil {
+		t.Fatal("status observer write failed")
+	}
+	w.WriteHeader(500)
+	if w.status != 200 || rec.Code != 200 || rec.Body.String() != secret {
+		t.Fatal("status observer changed API response semantics")
+	}
 }
 
 func TestDatabaseRunnerReplayInventoryRejectsStoppedResidue(t *testing.T) {
