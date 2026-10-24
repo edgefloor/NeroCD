@@ -35,6 +35,29 @@ func (s *PostgresStore) ConfigureStorageArchive(helper *domain.HostingStorageArc
 	return nil
 }
 
+// Existing row locks preserve roles, grants and revocation through commit.
+// Legacy token expiry still advances while those locks or later work wait.
+func archiveActorTransaction[T any](ctx context.Context, s *PostgresStore, actor string, f func(pgx.Tx) (T, error)) (T, error) {
+	return buildTransaction(ctx, s, func(tx pgx.Tx) (T, error) {
+		var zero T
+		value, err := f(tx)
+		if err != nil {
+			return zero, err
+		}
+		if err = archiveFinalizeActor(ctx, tx, actor); err != nil {
+			return zero, err
+		}
+		return value, nil
+	})
+}
+
+func archiveFinalizeActor(ctx context.Context, tx pgx.Tx, actor string) error {
+	if err := sqlcgen.New(tx).FlushStorageArchiveConstraints(ctx); err != nil {
+		return err
+	}
+	return proxyCheckLegacyToken(ctx, tx, actor)
+}
+
 func storageArchiveSchema(ctx context.Context, q *sqlcgen.Queries) error {
 	exists, err := q.StorageArchiveSchemaPresent(ctx)
 	if err != nil {
@@ -195,7 +218,10 @@ func (s *PostgresStore) archiveGate(ctx context.Context, tx pgx.Tx, op domain.Ho
 	if _, err = sqlcgen.New(tx).LockHostingOperation(ctx, op.ID); err != nil {
 		return err
 	}
-	return archiveRunner(ctx, tx, p)
+	if err = archiveRunner(ctx, tx, p); err != nil {
+		return err
+	}
+	return proxyCheckLegacyToken(ctx, tx, op.CreatedBy)
 }
 
 func archiveInsertPlan(ctx context.Context, tx pgx.Tx, p domain.HostingStorageArchivePlan, actor, key, requestHash string) error {
@@ -251,7 +277,7 @@ func (s *PostgresStore) RequestStorageBackup(ctx context.Context, id, resource, 
 	if in.Validate() != nil {
 		return domain.HostingStorageBackup{}, domain.ErrInvalidStorageArchive
 	}
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageBackup, error) {
+	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageBackup, error) {
 		var zero domain.HostingStorageBackup
 		q := sqlcgen.New(tx)
 		if err := s.archiveConfigured(ctx, q); err != nil {
@@ -376,7 +402,7 @@ func (s *PostgresStore) RequestStorageBackup(ctx context.Context, id, resource, 
 
 // GetStorageBackup rechecks current viewer membership and destination grant.
 func (s *PostgresStore) GetStorageBackup(ctx context.Context, actor, id string) (domain.HostingStorageBackup, error) {
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageBackup, error) {
+	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageBackup, error) {
 		var zero domain.HostingStorageBackup
 		q := sqlcgen.New(tx)
 		if err := storageArchiveSchema(ctx, q); err != nil {
@@ -395,7 +421,7 @@ func (s *PostgresStore) GetStorageBackup(ctx context.Context, actor, id string) 
 
 // ListStorageBackups pages only after current viewer and grant authorization.
 func (s *PostgresStore) ListStorageBackups(ctx context.Context, actor, resource string, page Page) (PageResult[domain.HostingStorageBackup], error) {
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (PageResult[domain.HostingStorageBackup], error) {
+	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (PageResult[domain.HostingStorageBackup], error) {
 		var result PageResult[domain.HostingStorageBackup]
 		q := sqlcgen.New(tx)
 		if err := storageArchiveSchema(ctx, q); err != nil {

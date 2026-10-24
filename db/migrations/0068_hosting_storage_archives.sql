@@ -187,8 +187,14 @@ DO $$ DECLARE table_name text; schema_name text:=current_schema(); BEGIN
   EXECUTE format('CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_storage_immutable()',table_name||'_immutable',table_name);
  END LOOP;
 END $$;
+-- sqlc does not generate utility-statement methods. Keep this archive-only
+-- final-return boundary in the schema so deferred waits finish before clocks.
+CREATE FUNCTION nerocd_storage_archive_flush_constraints() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+ SET CONSTRAINTS ALL IMMEDIATE;
+END $$;
 CREATE FUNCTION nerocd_storage_archive_schema_compatible() RETURNS boolean LANGUAGE sql STABLE AS $$
- SELECT nerocd_hosting_storage_materialization_schema_compatible() AND NOT EXISTS(SELECT 1 FROM (VALUES('hosting_storage_archive_plans'),('hosting_storage_backups'),('hosting_storage_restores'),('hosting_storage_archive_recoveries'),('hosting_storage_archive_task_targets'),('hosting_storage_archive_receipts'),('hosting_storage_archive_blobs'),('hosting_storage_restore_origins'),('hosting_storage_restore_materialized'),('hosting_storage_restore_use_admissions'),('hosting_storage_restore_use_receipts')) required(name) WHERE to_regclass(current_schema()||'.'||name) IS NULL OR NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(current_schema()||'.'||name) AND tgname=name||'_immutable' AND tgenabled IN('O','A')))
+ SELECT nerocd_hosting_storage_materialization_schema_compatible() AND to_regprocedure(current_schema()||'.nerocd_storage_archive_flush_constraints()') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM (VALUES('hosting_storage_archive_plans'),('hosting_storage_backups'),('hosting_storage_restores'),('hosting_storage_archive_recoveries'),('hosting_storage_archive_task_targets'),('hosting_storage_archive_receipts'),('hosting_storage_archive_blobs'),('hosting_storage_restore_origins'),('hosting_storage_restore_materialized'),('hosting_storage_restore_use_admissions'),('hosting_storage_restore_use_receipts')) required(name) WHERE to_regclass(current_schema()||'.'||name) IS NULL OR NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(current_schema()||'.'||name) AND tgname=name||'_immutable' AND tgenabled IN('O','A')))
  AND NOT EXISTS(SELECT 1 FROM (VALUES
  ('hosting_storage_restore_origins','hosting_storage_archive_origin_exclusive'),
  ('hosting_storage_materializations','hosting_storage_image_origin_exclusive'),
@@ -202,7 +208,7 @@ CREATE FUNCTION nerocd_storage_archive_schema_compatible() RETURNS boolean LANGU
  WHERE NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(current_schema()||'.'||table_name) AND tgname=trigger_name AND tgenabled IN('O','A')));
 $$;
 DO $$ DECLARE owner_schema text:=current_schema(); routine text; BEGIN
- FOREACH routine IN ARRAY ARRAY['nerocd_storage_archive_origin_exclusive()','nerocd_storage_archive_family_exclusive()','nerocd_storage_archive_consistent()','nerocd_storage_archive_lease()','nerocd_storage_archive_schema_compatible()'] LOOP
+ FOREACH routine IN ARRAY ARRAY['nerocd_storage_archive_origin_exclusive()','nerocd_storage_archive_family_exclusive()','nerocd_storage_archive_consistent()','nerocd_storage_archive_lease()','nerocd_storage_archive_schema_compatible()','nerocd_storage_archive_flush_constraints()'] LOOP
   EXECUTE format('ALTER FUNCTION %I.%s SET search_path=%I,pg_catalog,pg_temp',owner_schema,routine,owner_schema);
  END LOOP;
 END $$;

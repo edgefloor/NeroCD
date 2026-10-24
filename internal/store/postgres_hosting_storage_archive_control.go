@@ -23,11 +23,11 @@ func (s *PostgresStore) PrepareStorageArchive(ctx context.Context, id string) er
 		if !found {
 			return false, ErrNotFound
 		}
-		if op.State != "queued" {
-			return true, nil
-		}
 		if err = s.archiveGate(ctx, tx, op); err != nil {
 			return false, err
+		}
+		if op.State != "queued" {
+			return true, archiveFinalizeActor(ctx, tx, op.CreatedBy)
 		}
 		q := sqlcgen.New(tx)
 		state, err := q.LockHostingOperationState(ctx, id)
@@ -35,7 +35,7 @@ func (s *PostgresStore) PrepareStorageArchive(ctx context.Context, id string) er
 			return false, err
 		}
 		if state != "queued" {
-			return true, nil
+			return true, archiveFinalizeActor(ctx, tx, op.CreatedBy)
 		}
 		prefix := map[string]string{"backup": "backup_", "restore": "restore_", "recover": "archive_recover_"}[op.StorageArchive.Mode]
 		run := domain.TaskRun{ID: prefix + id, ProjectID: op.ProjectID, RunSpec: domain.RunSpec{Type: domain.RunTypeStorageArchive, Inputs: map[string]any{}, HostingOperationID: id, HostingMode: op.StorageArchive.Mode}}
@@ -58,7 +58,7 @@ func (s *PostgresStore) PrepareStorageArchive(ctx context.Context, id string) er
 		if err = archiveAudit(ctx, tx, op.CreatedBy, "dispatched", op); err != nil {
 			return false, err
 		}
-		return true, nil
+		return true, archiveFinalizeActor(ctx, tx, op.CreatedBy)
 	})
 	return err
 }
@@ -132,7 +132,7 @@ func (s *PostgresStore) RequestStorageArchiveRecovery(ctx context.Context, id, o
 	if in.Validate() != nil {
 		return domain.HostingOperation{}, domain.ErrInvalidStorageArchive
 	}
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingOperation, error) {
+	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingOperation, error) {
 		var zero domain.HostingOperation
 		q := sqlcgen.New(tx)
 		original, found, err := archiveOperation(ctx, tx, originalID)
@@ -348,7 +348,7 @@ func archiveCancel(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, a
 		return zero, err
 	}
 	if current.State == "succeeded" || current.State == "failed" || current.State == "canceled" || current.State == "cancel_requested" {
-		return current, nil
+		return current, archiveFinalizeActor(ctx, tx, actor)
 	}
 	state := "cancel_requested"
 	if p.Target == nil && archiveProgressByPhase(current, "stop_intent") == nil && p.Mode != "recover" {
@@ -372,7 +372,10 @@ func archiveCancel(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, a
 		return zero, err
 	}
 	result, _, err := archiveOperation(ctx, tx, op.ID)
-	return result, err
+	if err != nil {
+		return zero, err
+	}
+	return result, archiveFinalizeActor(ctx, tx, actor)
 }
 
 var _ hostingjobs.StorageArchiveHandler = (*PostgresStore)(nil)

@@ -10,9 +10,33 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store/sqlcgen"
 )
+
+// Lease rows and actor roles remain locked. This final database-clock query
+// checks expiry only after all fallible reads/writes and their possible waits.
+func archiveAuthorityClock(ctx context.Context, tx pgx.Tx, actor, lease string, active bool) error {
+	valid, err := sqlcgen.New(tx).CheckStorageArchiveAuthorityClock(ctx, sqlcgen.CheckStorageArchiveAuthorityClockParams{ActorID: actor, LeaseID: lease, RequireActive: active})
+	if err != nil {
+		return err
+	}
+	if !valid.ActorValid {
+		return auth.ErrForbidden
+	}
+	if !valid.LeaseValid {
+		return ErrConflict
+	}
+	return nil
+}
+
+func archiveFinalizeLease(ctx context.Context, tx pgx.Tx, actor, lease string, active bool) error {
+	if err := sqlcgen.New(tx).FlushStorageArchiveConstraints(ctx); err != nil {
+		return err
+	}
+	return archiveAuthorityClock(ctx, tx, actor, lease, active)
+}
 
 func (s *PostgresStore) archiveAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, live bool) (domain.HostingOperation, error) {
 	var zero domain.HostingOperation
@@ -39,7 +63,10 @@ func (s *PostgresStore) archiveAuthority(ctx context.Context, tx pgx.Tx, runner 
 	if _, err = q.CheckStorageArchiveAuthority(ctx, sqlcgen.CheckStorageArchiveAuthorityParams{ID: a.LeaseID, RunID: a.RunID, RunnerID: runner, Attempt: int32(a.Attempt), Fence: a.Fence, OperationID: a.OperationID, RequireLive: live}); err != nil {
 		return zero, hostingError(err)
 	}
-	return op, nil
+	if live {
+		return op, archiveAuthorityClock(ctx, tx, op.CreatedBy, a.LeaseID, true)
+	}
+	return op, proxyCheckLegacyToken(ctx, tx, op.CreatedBy)
 }
 
 func archiveReceiptReplay(ctx context.Context, tx pgx.Tx, a domain.HostingAuthority, phase, receipt string, body any) (bool, error) {
@@ -90,7 +117,8 @@ func (s *PostgresStore) archiveMutation(ctx context.Context, runner string, a do
 			return zero, err
 		}
 		if replay {
-			return op, nil
+			// A historical receipt is an ACK, not renewed effect permission.
+			return op, archiveFinalizeActor(ctx, tx, op.CreatedBy)
 		}
 		if _, err = s.archiveAuthority(ctx, tx, runner, a, true); err != nil {
 			return zero, err
@@ -108,21 +136,23 @@ func (s *PostgresStore) archiveMutation(ctx context.Context, runner string, a do
 		if _, err = s.archiveAuthority(ctx, tx, runner, a, phase != "complete"); err != nil {
 			return zero, err
 		}
-		live, err := sqlcgen.New(tx).HostingLeaseUnexpired(ctx, a.LeaseID)
+		updated, _, err := archiveOperation(ctx, tx, op.ID)
 		if err != nil {
 			return zero, err
 		}
-		if !live {
-			return zero, ErrConflict
-		}
-		updated, _, err := archiveOperation(ctx, tx, op.ID)
-		return updated, err
+		return updated, archiveFinalizeLease(ctx, tx, op.CreatedBy, a.LeaseID, phase != "complete")
 	})
 }
 
 // StorageArchivePlan returns only current live exact-target archive authority.
 func (s *PostgresStore) StorageArchivePlan(ctx context.Context, runner string, a domain.HostingAuthority) (domain.HostingOperation, error) {
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingOperation, error) { return s.archiveAuthority(ctx, tx, runner, a, true) })
+	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingOperation, error) {
+		op, err := s.archiveAuthority(ctx, tx, runner, a, true)
+		if err != nil {
+			return domain.HostingOperation{}, err
+		}
+		return op, archiveFinalizeLease(ctx, tx, op.CreatedBy, a.LeaseID, true)
+	})
 }
 
 // StorageArchivePrepared confirms the independently configured helper identity.

@@ -56,6 +56,30 @@ func (q *Queries) CheckStorageArchiveAuthority(ctx context.Context, arg CheckSto
 	return id, err
 }
 
+const checkStorageArchiveAuthorityClock = `-- name: CheckStorageArchiveAuthorityClock :one
+SELECT (SELECT COALESCE(bool_and(status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())),true)::boolean FROM api_tokens WHERE id=$1::text AND service_account_id IS NULL) AS actor_valid,
+ EXISTS(SELECT 1 FROM run_leases WHERE id=$2::text AND expires_at>clock_timestamp() AND (NOT $3::boolean OR status='active'))::boolean AS lease_valid
+`
+
+type CheckStorageArchiveAuthorityClockParams struct {
+	ActorID       string `json:"actor_id"`
+	LeaseID       string `json:"lease_id"`
+	RequireActive bool   `json:"require_active"`
+}
+
+type CheckStorageArchiveAuthorityClockRow struct {
+	ActorValid bool `json:"actor_valid"`
+	LeaseValid bool `json:"lease_valid"`
+}
+
+// Last read for new effects: evaluate both moving clocks after all lock waits.
+func (q *Queries) CheckStorageArchiveAuthorityClock(ctx context.Context, arg CheckStorageArchiveAuthorityClockParams) (CheckStorageArchiveAuthorityClockRow, error) {
+	row := q.db.QueryRow(ctx, checkStorageArchiveAuthorityClock, arg.ActorID, arg.LeaseID, arg.RequireActive)
+	var i CheckStorageArchiveAuthorityClockRow
+	err := row.Scan(&i.ActorValid, &i.LeaseValid)
+	return i, err
+}
+
 const countStorageBackups = `-- name: CountStorageBackups :one
 SELECT count(*) FROM hosting_storage_backups WHERE resource_id=$1
 `
@@ -85,6 +109,16 @@ func (q *Queries) CreateStorageArchiveTaskTarget(ctx context.Context, arg Create
 		arg.RunnerID,
 		arg.Mode,
 	)
+	return err
+}
+
+const flushStorageArchiveConstraints = `-- name: FlushStorageArchiveConstraints :exec
+SELECT nerocd_storage_archive_flush_constraints()
+`
+
+// Finish potentially blocking deferred checks before the final authority clock.
+func (q *Queries) FlushStorageArchiveConstraints(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, flushStorageArchiveConstraints)
 	return err
 }
 

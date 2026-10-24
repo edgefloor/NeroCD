@@ -113,7 +113,7 @@ func (s *PostgresStore) archiveStorageCreateBegin(ctx context.Context, tx pgx.Tx
 		if e != nil {
 			return zero, e
 		}
-		return domain.HostingStorageCreateAck{Storage: st, Materialization: m, CreatePermitted: false}, nil
+		return domain.HostingStorageCreateAck{Storage: st, Materialization: m, CreatePermitted: false}, archiveFinalizeActor(ctx, tx, op.CreatedBy)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return zero, err
@@ -132,7 +132,7 @@ func (s *PostgresStore) archiveStorageCreateBegin(ctx context.Context, tx pgx.Tx
 	if _, err = s.archiveAuthority(ctx, tx, runner, in.HostingAuthority, true); err != nil {
 		return zero, err
 	}
-	return domain.HostingStorageCreateAck{Storage: st, Materialization: m, CreatePermitted: true}, nil
+	return domain.HostingStorageCreateAck{Storage: st, Materialization: m, CreatePermitted: true}, archiveFinalizeLease(ctx, tx, op.CreatedBy, in.LeaseID, true)
 }
 
 func (s *PostgresStore) archiveStorageMaterialized(ctx context.Context, tx pgx.Tx, runner string, in domain.HostingStorageMaterializedRequest) (domain.HostingStorageMaterializedAck, error) {
@@ -167,7 +167,7 @@ func (s *PostgresStore) archiveStorageMaterialized(ctx context.Context, tx pgx.T
 		if prior.OperationID != op.ID || prior.ReceiptID != in.ReceiptID || prior.BodyHash != domain.HostingDocumentHash(in) {
 			return zero, ErrConflict
 		}
-		return domain.HostingStorageMaterializedAck{Materialization: m, Receipt: domain.HostingReceipt{ID: prior.ReceiptID, BodyHash: prior.BodyHash, CreatedAt: prior.CreatedAt}}, nil
+		return domain.HostingStorageMaterializedAck{Materialization: m, Receipt: domain.HostingReceipt{ID: prior.ReceiptID, BodyHash: prior.BodyHash, CreatedAt: prior.CreatedAt}}, archiveFinalizeActor(ctx, tx, op.CreatedBy)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return zero, err
@@ -192,5 +192,5 @@ func (s *PostgresStore) archiveStorageMaterialized(ctx context.Context, tx pgx.T
 	if _, err = s.archiveAuthority(ctx, tx, runner, in.HostingAuthority, true); err != nil {
 		return zero, err
 	}
-	return domain.HostingStorageMaterializedAck{Materialization: m, Receipt: domain.HostingReceipt{ID: row.ReceiptID, BodyHash: row.BodyHash, CreatedAt: row.CreatedAt}}, nil
+	return domain.HostingStorageMaterializedAck{Materialization: m, Receipt: domain.HostingReceipt{ID: row.ReceiptID, BodyHash: row.BodyHash, CreatedAt: row.CreatedAt}}, archiveFinalizeLease(ctx, tx, op.CreatedBy, in.LeaseID, true)
 }

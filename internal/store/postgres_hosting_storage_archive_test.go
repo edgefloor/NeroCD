@@ -336,8 +336,11 @@ func (f archiveControlFixture) finishBackup(t *testing.T, b domain.HostingStorag
 	if settled.State != "succeeded" || settled.MutationHold || settled.Result != nil || settled.CompleteReceipt == nil {
 		t.Fatal("backup did not settle independent safe outcome")
 	}
+	if _, err = f.db.Exec(f.ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.LeaseID); err != nil {
+		t.Fatal("historical lease expiry setup failed")
+	}
 	if _, err = f.service.RunnerStorageArchiveComplete(f.runnerContext, complete); err != nil {
-		t.Fatal("lost completion response could not replay")
+		t.Fatal("historical completion ACK incorrectly required a live lease")
 	}
 	if settled.CompleteReceipt.BodyHash != domain.HostingDocumentHash(complete) {
 		t.Fatal("completion receipt omitted full request identity")
@@ -626,5 +629,161 @@ func TestPostgresStorageArchiveRestoreHoldAndMaterialization(t *testing.T) {
 	var admissions, receipts, imageOrigins int
 	if f.db.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM hosting_storage_restore_use_admissions WHERE operation_id=$1),(SELECT count(*) FROM hosting_storage_restore_use_receipts WHERE operation_id=$1),(SELECT count(*) FROM hosting_storage_materializations WHERE storage_id=$2)`, deployment.ID, restored.Storage.ID).Scan(&admissions, &receipts, &imageOrigins) != nil || admissions != 1 || receipts != 1 || imageOrigins != 0 {
 		t.Fatal("restored volume did not retain separate one-shot origin and image use receipts")
+	}
+}
+
+func TestSecurityArchiveAdmissionRejectsExpiredActorAfterAuditWait(t *testing.T) {
+	testArchiveExpiredActorAfterWait(t, "audit")
+}
+
+func TestPostgresStorageArchiveActorExpiryAfterFinalWait(t *testing.T) {
+	for _, path := range []string{"deferred_constraint", "read", "list", "request_replay", "runner_plan", "receipt_replay"} {
+		t.Run(path, func(t *testing.T) { testArchiveExpiredActorAfterWait(t, path) })
+	}
+}
+
+func testArchiveExpiredActorAfterWait(t *testing.T, path string) {
+	t.Helper()
+	f := newArchiveControlFixture(t)
+	principal, _ := proxyLegacyToken(t, f.pg, f.service, "tok_archive_security_wait", []string{domain.RoleSystemAdmin})
+	ctx, cancel := context.WithTimeout(f.ctx, 20*time.Second)
+	defer cancel()
+	actor := auth.WithPrincipal(ctx, principal)
+	input := domain.HostingStorageBackupInput{RequestID: strings.Repeat("9", 32), ExpectedResourceGeneration: f.resource.Generation}
+	call := func() error { _, err := f.service.RequestStorageBackup(actor, f.resource.ID, input); return err }
+	var authority domain.HostingAuthority
+	if path != "audit" && path != "deferred_constraint" {
+		backup, err := f.service.RequestStorageBackup(actor, f.resource.ID, input)
+		if err != nil {
+			t.Fatal("authorized setup backup failed")
+		}
+		switch path {
+		case "read":
+			call = func() error { _, err := f.service.GetStorageBackup(actor, backup.ID); return err }
+		case "list":
+			call = func() error { _, err := f.service.ListStorageBackups(actor, f.resource.ID, store.Page{}); return err }
+		case "runner_plan", "receipt_replay":
+			op, a := f.claim(t, backup.OperationID, "backup")
+			authority = a
+			if path == "runner_plan" {
+				call = func() error { _, err := f.service.RunnerStorageArchivePlan(f.runnerContext, a); return err }
+			} else {
+				request := domain.HostingStorageArchivePreparedRequest{HostingAuthority: a, ReceiptID: "prepared_" + op.ID, PlanHash: op.StorageArchive.Plan.Hash, Helper: f.helper}
+				call = func() error { _, err := f.service.RunnerStorageArchivePrepared(f.runnerContext, request); return err }
+			}
+		}
+	}
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal("blocker setup")
+	}
+	joined, started := false, false
+	done := make(chan error, 1)
+	defer func() {
+		cancel()
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if e := blocker.Rollback(cleanup); e != nil && !errors.Is(e, pgx.ErrTxClosed) {
+			t.Error("blocker cleanup")
+		}
+		if started && !joined {
+			select {
+			case <-done:
+			case <-cleanup.Done():
+				t.Error("request did not join")
+			}
+		}
+	}()
+	var key int64
+	var pid int
+	if blocker.QueryRow(ctx, `SELECT hashtextextended(current_schema()||':archive-security-audit',0),pg_backend_pid()`).Scan(&key, &pid) != nil {
+		t.Fatal("blocker identity")
+	}
+	switch path {
+	case "audit", "deferred_constraint":
+		if _, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+			t.Fatal("blocker lock")
+		}
+		ddl := `CREATE FUNCTION archive_security_audit_wait() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hosting.storage_archive.requested' THEN PERFORM pg_advisory_xact_lock(hashtextextended(current_schema()||':archive-security-audit',0)); END IF; RETURN NEW; END $$; CREATE TRIGGER archive_security_audit_wait BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION archive_security_audit_wait()`
+		if path == "deferred_constraint" {
+			ddl = `CREATE FUNCTION archive_security_audit_wait() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(hashtextextended(current_schema()||':archive-security-audit',0)); RETURN NEW; END $$; CREATE CONSTRAINT TRIGGER archive_security_audit_wait AFTER INSERT ON hosting_storage_archive_plans DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION archive_security_audit_wait()`
+		}
+		if _, err = f.db.Exec(ctx, ddl); err != nil {
+			t.Fatal("wait fixture setup")
+		}
+	case "read", "list":
+		if _, err = blocker.Exec(ctx, `LOCK TABLE hosting_storage_archive_blobs IN ACCESS EXCLUSIVE MODE`); err != nil {
+			t.Fatal("read blocker")
+		}
+	case "request_replay":
+		if _, err = blocker.Exec(ctx, `LOCK TABLE hosting_storage_backups IN ACCESS EXCLUSIVE MODE`); err != nil {
+			t.Fatal("replay blocker")
+		}
+	case "runner_plan", "receipt_replay":
+		var locked string
+		if blocker.QueryRow(ctx, `SELECT id FROM run_leases WHERE id=$1 FOR UPDATE`, authority.LeaseID).Scan(&locked) != nil {
+			t.Fatal("authority blocker")
+		}
+	}
+	var expires time.Time
+	if f.db.QueryRow(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()+interval '1500 milliseconds' WHERE id=$1 RETURNING expires_at`, principal.ID).Scan(&expires) != nil {
+		t.Fatal("expiry setup")
+	}
+	started = true
+	go func() { done <- call() }()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) != nil {
+			t.Fatal("wait observation")
+		}
+		if waiting {
+			break
+		}
+		select {
+		case e := <-done:
+			joined = true
+			t.Fatalf("did not block: error_present=%t", e != nil)
+		case <-ctx.Done():
+			t.Fatal("wait deadline")
+		case <-ticker.C:
+		}
+	}
+	for {
+		var expired bool
+		if f.db.QueryRow(ctx, `SELECT clock_timestamp()>=$1`, expires).Scan(&expired) != nil {
+			t.Fatal("clock")
+		}
+		if expired {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("expiry deadline")
+		case <-ticker.C:
+		}
+	}
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal("release")
+	}
+	select {
+	case err = <-done:
+		joined = true
+		if !errors.Is(err, auth.ErrForbidden) {
+			t.Fatalf("expired actor was not denied: error_present=%t", err != nil)
+		}
+	case <-ctx.Done():
+		t.Fatal("request completion deadline")
+	}
+	if path == "audit" || path == "deferred_constraint" {
+		var effects int
+		if f.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_storage_backups WHERE created_by=$1)+(SELECT count(*) FROM hosting_operations WHERE created_by=$1)+(SELECT count(*) FROM audit_events WHERE actor_id=$1 AND action LIKE 'hosting.storage_archive.%')`, principal.ID).Scan(&effects) != nil || effects != 0 {
+			t.Fatal("expired admission retained transactional effects")
+		}
+		var held bool
+		if f.db.QueryRow(ctx, `SELECT hold_operation_id IS NOT NULL FROM hosting_binding_state WHERE binding_id=$1`, f.storage.BindingID).Scan(&held) != nil || held {
+			t.Fatal("expired admission retained mutation hold")
+		}
 	}
 }

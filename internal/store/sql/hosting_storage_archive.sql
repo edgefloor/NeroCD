@@ -96,3 +96,12 @@ SELECT EXISTS(SELECT 1 FROM hosting_storage_archive_plans p JOIN hosting_operati
 SELECT EXISTS(SELECT 1 FROM hosting_retained_releases WHERE state='cleanup_pending' AND body->'release'->>'daemon_id'=sqlc.arg(daemon_id)::text AND body->'release'->>'image_id'=sqlc.arg(image_id)::text)::boolean;
 -- name: ReserveStorageArchiveRestoreTarget :exec
 INSERT INTO hosting_binding_state(binding_id,destination_id,host_port,daemon_id,hold_operation_id,restore_admitted) VALUES($1,$2,$3,$4,$5,false);
+
+-- name: CheckStorageArchiveAuthorityClock :one
+-- Last read for new effects: evaluate both moving clocks after all lock waits.
+SELECT (SELECT COALESCE(bool_and(status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())),true)::boolean FROM api_tokens WHERE id=sqlc.arg(actor_id)::text AND service_account_id IS NULL) AS actor_valid,
+ EXISTS(SELECT 1 FROM run_leases WHERE id=sqlc.arg(lease_id)::text AND expires_at>clock_timestamp() AND (NOT sqlc.arg(require_active)::boolean OR status='active'))::boolean AS lease_valid;
+
+-- name: FlushStorageArchiveConstraints :exec
+-- Finish potentially blocking deferred checks before the final authority clock.
+SELECT nerocd_storage_archive_flush_constraints();

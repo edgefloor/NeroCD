@@ -30,7 +30,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 	if in.Validate() != nil || resourceID == "" || bindingID == "" {
 		return domain.HostingStorageRestore{}, domain.ErrInvalidStorageArchive
 	}
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageRestore, error) {
+	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageRestore, error) {
 		var zero domain.HostingStorageRestore
 		q := sqlcgen.New(tx)
 		if err := storageArchiveSchema(ctx, q); err != nil {
@@ -184,7 +184,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 
 // GetStorageRestore requires current viewer membership and both destination grants.
 func (s *PostgresStore) GetStorageRestore(ctx context.Context, actor, id string) (domain.HostingStorageRestore, error) {
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageRestore, error) {
+	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageRestore, error) {
 		var zero domain.HostingStorageRestore
 		q := sqlcgen.New(tx)
 		if err := storageArchiveSchema(ctx, q); err != nil {
