@@ -94,7 +94,7 @@ func databaseCurrentAuthority(s *attemptSupervisor, c runnerclient.Client, a dom
 	}
 }
 
-func executeDatabaseClaim(s *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string, config *DatabaseExecutionConfig) error {
+func executeDatabaseClaim(s *attemptSupervisor, journal *runner.AttemptJournal, drain func(context.Context) error, server, token string, claim domain.ClaimedRun, endpoint string, config *DatabaseExecutionConfig) error {
 	if config == nil || domain.ValidateDatabaseDeploymentTask(claim.Run) != nil || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 {
 		return errors.New("invalid or unconfigured typed database claim")
 	}
@@ -123,7 +123,7 @@ func executeDatabaseClaim(s *attemptSupervisor, journal *runner.AttemptJournal, 
 	if mode == "observe" {
 		return executeDatabaseObservation(s, c, engine, a, op, *config, engineConfig)
 	}
-	return executeDatabaseDeployment(s, journal, reporter.WaitEmpty, c, engine, a, claim.Lease, op, *config, engineConfig)
+	return executeDatabaseDeployment(s, journal, drain, c, engine, a, claim.Lease, op, *config, engineConfig)
 }
 
 // Runtime GOARCH selects the recipe platform. Check the actual daemon separately

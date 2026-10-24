@@ -558,7 +558,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return executeStorageArchiveClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.storageArchive)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
-		return executeDatabaseClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.database)
+		return executeDatabaseClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
 		return executeProxyClaim(supervisor, journal, reporter, server, token, claim, options.proxy)
@@ -728,6 +728,26 @@ func supervisedComplete(supervisor *attemptSupervisor, server, token string, lea
 	defer cancel()
 	return completeRunnerLeaseAPIContext(ctx, server, token, lease, status, completed)
 }
+
+// databaseCompletionDrain is called only after the engine has returned and the
+// exact result is durable. Keep authority workers alive through mutation and
+// event drain, then join them before our own completion makes the lease terminal.
+// The supervisor's original deadline and every server-side fence remain active.
+func databaseCompletionDrain(supervisor *attemptSupervisor, reporter *attemptReporter, watcher *leaseWatcher, renewer *leaseRenewer) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := reporter.WaitEmpty(ctx); err != nil {
+			return err
+		}
+		reporter.Stop()
+		watcher.Stop()
+		renewer.Stop()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return supervisor.Context().Err()
+	}
+}
+
 func completeAttempt(supervisor *attemptSupervisor, watcher *leaseWatcher, renewer *leaseRenewer, server, token string, lease domain.RunLease, status string, completed *domain.RunLease) error {
 	watcher.Stop()
 	renewer.Stop()

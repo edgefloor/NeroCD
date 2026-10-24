@@ -13,7 +13,7 @@ import (
 func validateDatabasePlatformConfig(DatabaseExecutionConfig) error {
 	return errors.New("database execution requires native Linux arm64")
 }
-func executeDatabaseClaim(*attemptSupervisor, *runner.AttemptJournal, *attemptReporter, string, string, domain.ClaimedRun, string, *DatabaseExecutionConfig) error {
+func executeDatabaseClaim(*attemptSupervisor, *runner.AttemptJournal, func(context.Context) error, string, string, domain.ClaimedRun, string, *DatabaseExecutionConfig) error {
 	return errors.New("database execution unsupported on this platform")
 }
 func reconcileHostingDatabaseJournal(_ context.Context, _ Config, j *runner.AttemptJournal) error {

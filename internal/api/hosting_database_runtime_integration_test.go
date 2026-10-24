@@ -521,13 +521,33 @@ func (f *databaseRunnerFixture) await(id string) domain.HostingOperation {
 	if f.process != nil {
 		exit = f.process.status()
 	}
+	op, finalSample := databaseRunnerFinalExitSample(f.t.Context(), op, reason, func(ctx context.Context) (domain.HostingOperation, error) { return f.operation(ctx, id) })
 	if reason != "" {
-		f.t.Fatalf("database wait failed reason=%s %s", reason, databaseRunnerDiagnostic(op, exit, &f.apiCounts))
+		f.t.Fatalf("database wait failed reason=%s final_sample=%s %s", reason, finalSample, databaseRunnerDiagnostic(op, exit, &f.apiCounts))
 	}
 	if op.Result == nil || !op.Result.Ready || op.Result.Uncertain || op.MutationHold || op.RestoreOwnershipHeld || op.CompleteReceipt == nil || op.Plan == nil || domain.ValidateHostingDatabasePlan(*op.Plan) != nil {
 		f.t.Fatalf("database completion lacks exact healthy evidence %s", databaseRunnerDiagnostic(op, exit, &f.apiCounts))
 	}
 	return op
+}
+
+// A joined process exit cancels ordinary polling, not the parent test. One
+// separately bounded read improves diagnostics without accepting a nonzero exit
+// or inferring that an older sample proves the final hold/result state.
+func databaseRunnerFinalExitSample(parent context.Context, previous domain.HostingOperation, reason string, fetch func(context.Context) (domain.HostingOperation, error)) (domain.HostingOperation, string) {
+	if reason != "runner_exited" {
+		return previous, "not_requested"
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	if ctx.Err() != nil {
+		return previous, "stale"
+	}
+	final, err := fetch(ctx)
+	if err != nil || ctx.Err() != nil {
+		return previous, "stale"
+	}
+	return final, "authoritative"
 }
 
 // Operation polling has a cancellable request context, so a runner exit also
@@ -1596,5 +1616,58 @@ func TestDatabaseRunnerProtectedRevealDecoder(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "private") {
 			t.Fatal("protected decoder accepted or exposed invalid body")
 		}
+	}
+}
+
+func TestDatabaseRunnerFinalExitSamplePreservesFailureAndCurrentState(t *testing.T) {
+	previous := domain.HostingOperation{State: "verifying", MutationHold: true}
+	for _, state := range []string{"succeeded", "failed", "reconciliation_required", "verifying"} {
+		t.Run(state, func(t *testing.T) {
+			final := domain.HostingOperation{State: state, MutationHold: state == "reconciliation_required" || state == "verifying"}
+			if state != "verifying" {
+				final.Result = &domain.HostingResult{Outcome: "failed", Uncertain: state == "reconciliation_required"}
+				final.CompleteReceipt = &domain.HostingReceipt{ID: "receipt"}
+				if state == "succeeded" {
+					final.Result.Outcome, final.Result.Ready = "succeeded", true
+				}
+			}
+			reason := "runner_exited"
+			calls := 0
+			got, label := databaseRunnerFinalExitSample(t.Context(), previous, reason, func(ctx context.Context) (domain.HostingOperation, error) {
+				calls++
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > 2*time.Second || ctx.Err() != nil {
+					t.Error("final read did not get a fresh bounded context")
+				}
+				return final, nil
+			})
+			if calls != 1 || label != "authoritative" || !reflect.DeepEqual(got, final) {
+				t.Fatal("final diagnostic changed failure or lost current predicates")
+			}
+		})
+	}
+	calls := 0
+	got, label := databaseRunnerFinalExitSample(t.Context(), previous, "runner_exited", func(context.Context) (domain.HostingOperation, error) {
+		calls++
+		return domain.HostingOperation{}, errors.New("private_final_read_canary")
+	})
+	if calls != 1 || label != "stale" || !reflect.DeepEqual(got, previous) {
+		t.Fatal("missing final sample asserted authority")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	got, label = databaseRunnerFinalExitSample(ctx, previous, "runner_exited", func(context.Context) (domain.HostingOperation, error) {
+		t.Fatal("canceled parent performed final read")
+		return domain.HostingOperation{}, nil
+	})
+	if label != "stale" || !reflect.DeepEqual(got, previous) {
+		t.Fatal("canceled diagnostic discarded retained evidence")
+	}
+	_, label = databaseRunnerFinalExitSample(t.Context(), previous, "deadline", func(context.Context) (domain.HostingOperation, error) {
+		t.Fatal("non-exit performed final read")
+		return domain.HostingOperation{}, nil
+	})
+	if label != "not_requested" {
+		t.Fatal("ordinary wait failure was reinterpreted")
 	}
 }
