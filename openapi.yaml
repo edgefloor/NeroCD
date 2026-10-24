@@ -21,6 +21,213 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  /api/v1/runners/database-network-captures/claim:
+    {
+      "post": {
+        "operationId": "claimHostingDatabaseNetworkCapture",
+        "summary": "Private read-only database network capture claim",
+        "description": "Dedicated current runner bearer and capture capability required. Exact capture ID only; no generic dispatch or public binding activation. Closed request JSON maximum 16384 bytes and response maximum 32768 bytes; no query parameters. Cache-Control: no-store on every response. Origin ACK replay binds the entire original request, including historical authority and sampling time; it is not a fresh observation.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseNetworkCaptureClaimInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated private capture metadata; do not cache",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseNetworkCaptureClaim"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  /api/v1/runners/database-network-captures/plan:
+    {
+      "post": {
+        "operationId": "hostingDatabaseNetworkCapturePlan",
+        "summary": "Private read-only database network capture plan",
+        "description": "Dedicated current runner bearer and capture capability required. Exact capture ID only; no generic dispatch or public binding activation. Closed request JSON maximum 16384 bytes and response maximum 32768 bytes; no query parameters. Cache-Control: no-store on every response. Origin ACK replay binds the entire original request, including historical authority and sampling time; it is not a fresh observation.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseNetworkCaptureAuthority"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated private capture metadata; do not cache",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseNetworkCapture"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  /api/v1/runners/database-network-captures/origin:
+    {
+      "post": {
+        "operationId": "recordHostingDatabaseNetworkOrigin",
+        "summary": "Private read-only database network capture origin",
+        "description": "Dedicated current runner bearer and capture capability required. Exact capture ID only; no generic dispatch or public binding activation. Closed request JSON maximum 16384 bytes and response maximum 32768 bytes; no query parameters. Cache-Control: no-store on every response. Origin ACK replay binds the entire original request, including historical authority and sampling time; it is not a fresh observation.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseNetworkOriginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated private capture metadata; do not cache",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseNetworkOriginReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
   /api/v1/resources/{id}/storage-backups:
     {
       "parameters": [
@@ -11242,3 +11449,444 @@ components:
         total:
           type: integer
           minimum: 0
+    HostingDatabaseNetworkCaptureClaimInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capture_id"
+        ],
+        "properties": {
+          "capture_id": {
+            "type": "string",
+            "pattern": "^hnc_[0-9a-f]{32}$"
+          }
+        }
+      }
+    HostingDatabaseNetworkOrigin:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "binding",
+          "destination",
+          "daemon",
+          "configuration",
+          "origin_operation",
+          "origin_plan",
+          "nonce",
+          "volume_nonce",
+          "volume_created_at",
+          "network_id",
+          "version",
+          "storage",
+          "init_ready"
+        ],
+        "properties": {
+          "binding": {
+            "type": "string"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "daemon": {
+            "type": "string"
+          },
+          "configuration": {
+            "type": "string"
+          },
+          "origin_operation": {
+            "type": "string"
+          },
+          "origin_plan": {
+            "type": "string"
+          },
+          "nonce": {
+            "type": "string"
+          },
+          "volume_nonce": {
+            "type": "string"
+          },
+          "volume_created_at": {
+            "type": "string"
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "storage": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "init_ready": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      }
+    HostingDatabaseNetworkCaptureCreation:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt",
+          "volume_name",
+          "driver",
+          "scope",
+          "labels",
+          "options"
+        ],
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/HostingReceipt"
+          },
+          "volume_name": {
+            "type": "string"
+          },
+          "driver": {
+            "type": "string",
+            "enum": [
+              "local"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "local"
+            ]
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        }
+      }
+    HostingDatabaseNetworkCapturePlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "source_operation_id",
+          "project_id",
+          "resource_id",
+          "binding_id",
+          "destination_id",
+          "server_id",
+          "runner_id",
+          "hash",
+          "version",
+          "source_plan",
+          "source_healthy",
+          "storage",
+          "materialization",
+          "creation"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "source_operation_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "resource_id": {
+            "type": "string"
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "runner_id": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "database-network.capture.v1"
+            ]
+          },
+          "source_plan": {
+            "$ref": "#/components/schemas/HostingApplyPlan"
+          },
+          "source_healthy": {
+            "$ref": "#/components/schemas/HostingHealthy"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/HostingStorage"
+          },
+          "materialization": {
+            "$ref": "#/components/schemas/HostingStorageMaterialization"
+          },
+          "creation": {
+            "$ref": "#/components/schemas/HostingDatabaseNetworkCaptureCreation"
+          }
+        }
+      }
+    HostingDatabaseNetworkCaptureAuthority:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "lease_id": {
+            "type": "string"
+          },
+          "fence": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        }
+      }
+    HostingDatabaseNetworkOriginRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "receipt_id",
+          "plan_hash",
+          "observed_at",
+          "origin"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "lease_id": {
+            "type": "string"
+          },
+          "fence": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "receipt_id": {
+            "type": "string"
+          },
+          "plan_hash": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/HostingDatabaseNetworkOrigin"
+          }
+        }
+      }
+    HostingDatabaseNetworkOriginReceipt:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "body_hash",
+          "operation_id",
+          "source_operation_id",
+          "plan_hash",
+          "origin_hash",
+          "runner_id",
+          "created_at",
+          "observed_at",
+          "origin"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "body_hash": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "source_operation_id": {
+            "type": "string"
+          },
+          "plan_hash": {
+            "type": "string"
+          },
+          "origin_hash": {
+            "type": "string"
+          },
+          "runner_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/HostingDatabaseNetworkOrigin"
+          }
+        }
+      }
+    HostingDatabaseNetworkCapture:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "run_id",
+          "state",
+          "created_by",
+          "plan",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "canceled"
+            ]
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/HostingDatabaseNetworkCapturePlan"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/HostingDatabaseNetworkOriginReceipt"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    HostingDatabaseNetworkCaptureLease:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "run_id",
+          "runner_id",
+          "status",
+          "fence",
+          "expires_at",
+          "created_at",
+          "attempt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "runner_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "fence": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        }
+      }
+    HostingDatabaseNetworkCaptureClaim:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capture",
+          "lease"
+        ],
+        "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/HostingDatabaseNetworkCapture"
+          },
+          "lease": {
+            "$ref": "#/components/schemas/HostingDatabaseNetworkCaptureLease"
+          }
+        }
+      }

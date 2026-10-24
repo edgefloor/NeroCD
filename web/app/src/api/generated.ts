@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/api/v1/runners/database-network-captures/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Private read-only database network capture claim
+         * @description Dedicated current runner bearer and capture capability required. Exact capture ID only; no generic dispatch or public binding activation. Closed request JSON maximum 16384 bytes and response maximum 32768 bytes; no query parameters. Cache-Control: no-store on every response. Origin ACK replay binds the entire original request, including historical authority and sampling time; it is not a fresh observation.
+         */
+        post: operations["claimHostingDatabaseNetworkCapture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/database-network-captures/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Private read-only database network capture plan
+         * @description Dedicated current runner bearer and capture capability required. Exact capture ID only; no generic dispatch or public binding activation. Closed request JSON maximum 16384 bytes and response maximum 32768 bytes; no query parameters. Cache-Control: no-store on every response. Origin ACK replay binds the entire original request, including historical authority and sampling time; it is not a fresh observation.
+         */
+        post: operations["hostingDatabaseNetworkCapturePlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/database-network-captures/origin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Private read-only database network capture origin
+         * @description Dedicated current runner bearer and capture capability required. Exact capture ID only; no generic dispatch or public binding activation. Closed request JSON maximum 16384 bytes and response maximum 32768 bytes; no query parameters. Cache-Control: no-store on every response. Origin ACK replay binds the entire original request, including historical authority and sampling time; it is not a fresh observation.
+         */
+        post: operations["recordHostingDatabaseNetworkOrigin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/storage-backups": {
         parameters: {
             query?: never;
@@ -6810,6 +6870,120 @@ export interface components {
             count: number;
             total: number;
         };
+        HostingDatabaseNetworkCaptureClaimInput: {
+            capture_id: string;
+        };
+        HostingDatabaseNetworkOrigin: {
+            binding: string;
+            destination: string;
+            daemon: string;
+            configuration: string;
+            origin_operation: string;
+            origin_plan: string;
+            nonce: string;
+            volume_nonce: string;
+            volume_created_at: string;
+            network_id: string;
+            /** @enum {integer} */
+            version: 1;
+            storage: components["schemas"]["HostingStorageRef"];
+            /** @enum {boolean} */
+            init_ready: true;
+        };
+        HostingDatabaseNetworkCaptureCreation: {
+            receipt: components["schemas"]["HostingReceipt"];
+            volume_name: string;
+            /** @enum {string} */
+            driver: "local";
+            /** @enum {string} */
+            scope: "local";
+            labels: {
+                [key: string]: string;
+            };
+            options: Record<string, never>;
+        };
+        HostingDatabaseNetworkCapturePlan: {
+            operation_id: string;
+            source_operation_id: string;
+            project_id: string;
+            resource_id: string;
+            binding_id: string;
+            destination_id: string;
+            server_id: string;
+            runner_id: string;
+            hash: string;
+            /** @enum {string} */
+            version: "database-network.capture.v1";
+            source_plan: components["schemas"]["HostingApplyPlan"];
+            source_healthy: components["schemas"]["HostingHealthy"];
+            storage: components["schemas"]["HostingStorage"];
+            materialization: components["schemas"]["HostingStorageMaterialization"];
+            creation: components["schemas"]["HostingDatabaseNetworkCaptureCreation"];
+        };
+        HostingDatabaseNetworkCaptureAuthority: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+        };
+        HostingDatabaseNetworkOriginRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            plan_hash: string;
+            /** Format: date-time */
+            observed_at: string;
+            origin: components["schemas"]["HostingDatabaseNetworkOrigin"];
+        };
+        HostingDatabaseNetworkOriginReceipt: {
+            id: string;
+            body_hash: string;
+            operation_id: string;
+            source_operation_id: string;
+            plan_hash: string;
+            origin_hash: string;
+            runner_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            observed_at: string;
+            origin: components["schemas"]["HostingDatabaseNetworkOrigin"];
+        };
+        HostingDatabaseNetworkCapture: {
+            id: string;
+            run_id: string;
+            /** @enum {string} */
+            state: "queued" | "running" | "succeeded" | "failed" | "canceled";
+            created_by: string;
+            plan: components["schemas"]["HostingDatabaseNetworkCapturePlan"];
+            receipt?: components["schemas"]["HostingDatabaseNetworkOriginReceipt"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        HostingDatabaseNetworkCaptureLease: {
+            id: string;
+            run_id: string;
+            runner_id: string;
+            status: string;
+            fence: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            completed_at?: string;
+            attempt: number;
+        };
+        HostingDatabaseNetworkCaptureClaim: {
+            capture: components["schemas"]["HostingDatabaseNetworkCapture"];
+            lease: components["schemas"]["HostingDatabaseNetworkCaptureLease"];
+        };
     };
     responses: {
         /** @description Stable error envelope. */
@@ -6836,6 +7010,105 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    claimHostingDatabaseNetworkCapture: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseNetworkCaptureClaimInput"];
+            };
+        };
+        responses: {
+            /** @description Authenticated private capture metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseNetworkCaptureClaim"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    hostingDatabaseNetworkCapturePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseNetworkCaptureAuthority"];
+            };
+        };
+        responses: {
+            /** @description Authenticated private capture metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseNetworkCapture"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recordHostingDatabaseNetworkOrigin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseNetworkOriginRequest"];
+            };
+        };
+        responses: {
+            /** @description Authenticated private capture metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseNetworkOriginReceipt"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     listStorageBackups: {
         parameters: {
             query?: {

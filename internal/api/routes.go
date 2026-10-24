@@ -3,6 +3,10 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/claim"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/origin"},
+
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backups"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backups"},
 	{Method: http.MethodGet, Path: "/api/v1/storage-backups/{id}"},
@@ -250,6 +254,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingStorageRestore
 	case "/api/v1/hosting-operations/{id}/storage-archive-recovery":
 		return s.requestStorageArchiveRecovery
+	case "/api/v1/runners/database-network-captures/claim":
+		return s.runnerClaimDatabaseNetworkCapture
+	case "/api/v1/runners/database-network-captures/plan":
+		return s.runnerDatabaseNetworkCapturePlan
+	case "/api/v1/runners/database-network-captures/origin":
+		return s.runnerRecordDatabaseNetworkOrigin
 	case "/api/v1/runners/hosting/storage-archive/plan":
 		return s.runnerStorageArchivePlan
 	case "/api/v1/runners/hosting/storage-archive/prepared":
