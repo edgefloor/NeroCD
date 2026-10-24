@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -32,6 +33,8 @@ import (
 type databaseCaptureRuntimeWire struct {
 	mu                               sync.Mutex
 	journalPath                      string
+	expectedCapture, expectedRunner  string
+	claimResponse                    databaseCaptureClaimDiagnostic
 	identity, claim, plan, forbidden int
 	suppressed200                    bool
 	bodies, acks                     [][]byte
@@ -47,7 +50,19 @@ func (c *databaseCaptureRuntimeWire) serve(w http.ResponseWriter, r *http.Reques
 		return false
 	case "/api/v1/runners/database-network-captures/claim":
 		c.claim++
-		return false
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		c.claimResponse = databaseCaptureObserveClaim(rec.Code, rec.Body.Bytes(), c.expectedCapture, c.expectedRunner, time.Now())
+		response := rec.Result()
+		for key, values := range response.Header {
+			w.Header()[key] = slices.Clone(values)
+		}
+		if response.Body.Close() != nil {
+			c.invalid = true
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+		return true
 	case "/api/v1/runners/database-network-captures/plan":
 		c.plan++
 		return false
@@ -341,7 +356,7 @@ func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 		inventory := f.replayInventory([]domain.HostingOperation{source}, source)
 		completeCount := f.completionCount(source.ID)
 		genericClaims, applies, deliveries := f.claimRequests.Load(), f.applyRequests.Load(), f.deliveryRequests.Load()
-		wire := &databaseCaptureRuntimeWire{journalPath: filepath.Join(f.root, "journal", "journal.json")}
+		wire := &databaseCaptureRuntimeWire{journalPath: filepath.Join(f.root, "journal", "journal.json"), expectedCapture: capture.ID, expectedRunner: capture.Plan.RunnerID}
 		if !f.capture.CompareAndSwap(nil, wire) {
 			t.Fatal("capture wire hook already active")
 		}
@@ -617,8 +632,9 @@ func databaseCaptureDiagnostic(checkpoint string, pid int, exit databaseRunnerEx
 	}
 	wire.mu.Lock()
 	counts := fmt.Sprintf("identity=%d claim=%d plan=%d origin=%d forbidden=%d committed200=%d suppressed200=%t invalid=%t", databaseCaptureBound(wire.identity), databaseCaptureBound(wire.claim), databaseCaptureBound(wire.plan), databaseCaptureBound(len(wire.bodies)), databaseCaptureBound(wire.forbidden), databaseCaptureBound(len(wire.acks)), wire.suppressed200, wire.invalid)
+	claim := wire.claimResponse.summary()
 	wire.mu.Unlock()
-	return fmt.Sprintf("process=%s pid=%d exited=%t exit_kind=%s exit_code=%d journal=[%s] wire_totals=[%s] log_categories=[%s]", checkpoint, pid, exit.Exited, kind, code, databaseCaptureJournalSummary(path), counts, databaseCaptureLogCategories(output))
+	return fmt.Sprintf("process=%s pid=%d exited=%t exit_kind=%s exit_code=%d journal=[%s] wire_totals=[%s] claim_response=[%s] log_categories=[%s]", checkpoint, pid, exit.Exited, kind, code, databaseCaptureJournalSummary(path), counts, claim, databaseCaptureLogCategories(output))
 }
 
 func (f *databaseRunnerFixture) captureLogCursor() int {
@@ -718,5 +734,142 @@ func TestDatabaseCaptureRuntimeDiagnosticRedactsCanaries(t *testing.T) {
 	}
 	if category := databaseCaptureLogCategories([]byte("capture credential unavailable: private_canary\nprivate_canary\n")); category != "unclassified" {
 		t.Fatal("diagnostic accepted partial error match")
+	}
+}
+
+// Only closed scalar observations leave the private claim decoder. Shape flags
+// mirror the referenced client/coordinator/journal checks; they do not prove a
+// journal append succeeds or authorize a claim that production rejected.
+type databaseCaptureClaimDiagnostic struct {
+	Status            int  `json:"status"`
+	BodyBytes         int  `json:"body_bytes"`
+	BodyWithinLimit   bool `json:"body_within_limit"`
+	Decoded           bool `json:"strict_decode"`
+	PlanValid         bool `json:"plan_valid"`
+	CaptureMatch      bool `json:"capture_match"`
+	OperationMatch    bool `json:"operation_match"`
+	RunMatch          bool `json:"run_match"`
+	RunnerMatch       bool `json:"runner_match"`
+	CreatorPresent    bool `json:"creator_present"`
+	CreatorClientID   bool `json:"creator_client_id"`
+	CreatorJournalID  bool `json:"creator_journal_id"`
+	CaptureTimes      bool `json:"capture_times"`
+	RunningNoReceipt  bool `json:"running_no_receipt"`
+	LeaseAuthority    bool `json:"lease_authority"`
+	LeaseActive       bool `json:"lease_active"`
+	CompletionAbsent  bool `json:"completion_absent"`
+	LeaseCreated      bool `json:"lease_created"`
+	LeaseOrdering     bool `json:"lease_ordering"`
+	LeaseDuration     bool `json:"lease_duration"`
+	LeaseLive         bool `json:"lease_live"`
+	ClientShape       bool `json:"client_shape"`
+	TargetShape       bool `json:"target_shape"`
+	JournalClaimShape bool `json:"journal_claim_shape"`
+}
+
+var databaseCaptureClientID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+var databaseCaptureJournalID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+
+func databaseCaptureObserveClaim(status int, raw []byte, id, runnerID string, now time.Time) databaseCaptureClaimDiagnostic {
+	d := databaseCaptureClaimDiagnostic{Status: status, BodyBytes: len(raw), BodyWithinLimit: len(raw) <= domain.HostingStorageProtocolJSONLimit}
+	if d.Status < 100 || d.Status > 599 {
+		d.Status = 0
+	}
+	if d.BodyBytes > domain.HostingStorageProtocolJSONLimit+1 {
+		d.BodyBytes = domain.HostingStorageProtocolJSONLimit + 1
+	}
+	var claim domain.HostingDatabaseNetworkCaptureClaim
+	if status != http.StatusOK || !d.BodyWithinLimit || domain.DecodeHostingStorageProtocolJSON(raw, &claim) != nil {
+		return d
+	}
+	d.Decoded = true
+	return databaseCaptureClaimShape(d, claim, id, runnerID, now)
+}
+
+func databaseCaptureClaimShape(d databaseCaptureClaimDiagnostic, claim domain.HostingDatabaseNetworkCaptureClaim, id, runnerID string, now time.Time) databaseCaptureClaimDiagnostic {
+	c, l := claim.Capture, claim.Lease
+	d.PlanValid = c.Plan.Validate() == nil
+	d.CaptureMatch = c.ID == id
+	d.OperationMatch = c.Plan.OperationID == id
+	d.RunMatch = c.RunID == "capture_"+id && l.RunID == c.RunID
+	d.RunnerMatch = c.Plan.RunnerID == runnerID && l.RunnerID == runnerID
+	d.CreatorPresent = c.CreatedBy != ""
+	d.CreatorClientID = databaseCaptureClientID.MatchString(c.CreatedBy)
+	d.CreatorJournalID = databaseCaptureJournalID.MatchString(c.CreatedBy)
+	d.CaptureTimes = !c.CreatedAt.IsZero() && !c.UpdatedAt.Before(c.CreatedAt)
+	d.RunningNoReceipt = c.State == "running" && c.Receipt == nil
+	d.LeaseAuthority = databaseCaptureClientID.MatchString(l.ID) && databaseCaptureClientID.MatchString(l.Fence) && databaseCaptureClientID.MatchString(l.RunID) && l.Attempt > 0 && l.Attempt <= 2147483647
+	d.LeaseActive = l.Status == domain.LeaseActive
+	d.CompletionAbsent = l.CompletedAt == nil && l.CompletionKey == ""
+	d.LeaseCreated = !l.CreatedAt.IsZero() && !l.CreatedAt.After(now.Add(30*time.Second))
+	d.LeaseOrdering = l.ExpiresAt.After(l.CreatedAt)
+	d.LeaseDuration = l.ExpiresAt.Sub(l.CreatedAt) <= 10*time.Minute
+	d.LeaseLive = l.ExpiresAt.After(now)
+	// The client checks completed_at but does not require completion_key to be
+	// empty. The journal requires both completion fields to be absent.
+	d.ClientShape = d.PlanValid && d.CaptureMatch && d.OperationMatch && d.RunMatch && d.RunnerMatch && databaseCaptureClientID.MatchString(runnerID) && d.CreatorClientID && d.CaptureTimes && d.RunningNoReceipt && d.LeaseAuthority && d.LeaseActive && l.CompletedAt == nil && d.LeaseCreated && d.LeaseOrdering && d.LeaseDuration && d.LeaseLive
+	d.TargetShape = d.PlanValid && d.CaptureMatch && d.OperationMatch && c.RunID == "capture_"+id && c.Plan.RunnerID == runnerID && d.CreatorPresent && d.CaptureTimes && d.RunningNoReceipt
+	d.JournalClaimShape = d.PlanValid && c.ID == c.Plan.OperationID && c.RunID == "capture_"+c.ID && d.CreatorJournalID && d.CaptureTimes && d.RunningNoReceipt && l.RunID == c.RunID && l.RunnerID == c.Plan.RunnerID && l.Attempt > 0 && l.Attempt <= 2147483647 && databaseCaptureJournalID.MatchString(l.ID) && databaseCaptureJournalID.MatchString(l.Fence) && d.LeaseActive && d.CompletionAbsent && !l.CreatedAt.IsZero() && d.LeaseOrdering && d.LeaseDuration
+	return d
+}
+
+func (d databaseCaptureClaimDiagnostic) summary() string {
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return "unavailable"
+	}
+	return string(raw)
+}
+
+func TestDatabaseCaptureRuntimeClaimRecorderForwardsUnchanged(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusConflict} {
+		wire := &databaseCaptureRuntimeWire{expectedCapture: "hnc_private_id_canary", expectedRunner: "runner_private_canary"}
+		body := []byte(`{"private":"ncr_bearer_canary https://private.invalid/?fence=canary"}`)
+		handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Add("X-Fixture", "first")
+			w.Header().Add("X-Fixture", "second")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(status)
+			_, _ = w.Write(body)
+		})
+		rec := httptest.NewRecorder()
+		if !wire.serve(rec, httptest.NewRequest("POST", "/api/v1/runners/database-network-captures/claim", strings.NewReader(`{"capture_id":"private"}`)), handler) || rec.Code != status || !bytes.Equal(rec.Body.Bytes(), body) || !reflect.DeepEqual(rec.Header().Values("X-Fixture"), []string{"first", "second"}) || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("claim recorder changed response status, headers or bytes")
+		}
+		if wire.claimResponse.Status != status || wire.claimResponse.BodyBytes != len(body) || wire.claimResponse.Decoded || wire.claim != 1 || wire.lost || len(wire.acks) != 0 {
+			t.Fatal("claim recorder confused rejected/malformed response with capture ACK fault")
+		}
+		summary := wire.claimResponse.summary()
+		for _, secret := range []string{"private", "canary", "ncr_", "https://", "fence"} {
+			if strings.Contains(summary, secret) {
+				t.Fatal("claim diagnostic exposed response or expected identity")
+			}
+		}
+	}
+}
+
+func TestDatabaseCaptureRuntimeClaimShapeUsesActualIdentityAndTime(t *testing.T) {
+	now := time.Now().UTC()
+	id, runnerID := "hnc_"+strings.Repeat("a", 32), "runner_fixture"
+	claim := domain.HostingDatabaseNetworkCaptureClaim{Capture: domain.HostingDatabaseNetworkCapture{ID: id, RunID: "capture_" + id, State: "running", CreatedBy: "_client_only", CreatedAt: now, UpdatedAt: now, Plan: domain.HostingDatabaseNetworkCapturePlan{OperationID: id, RunnerID: runnerID}}, Lease: domain.RunLease{ID: "lease_fixture", RunID: "capture_" + id, RunnerID: runnerID, Fence: "private_fence_canary", Attempt: 1, Status: domain.LeaseActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}}
+	d := databaseCaptureClaimShape(databaseCaptureClaimDiagnostic{}, claim, id, runnerID, now)
+	if !d.CreatorClientID || d.CreatorJournalID || !d.CaptureMatch || !d.OperationMatch || !d.RunMatch || !d.RunnerMatch || !d.CaptureTimes || !d.CompletionAbsent || !d.LeaseOrdering || !d.LeaseDuration || !d.LeaseLive {
+		t.Fatal("claim diagnostic omitted actual identity-profile or time distinction")
+	}
+	claim.Capture.CreatedBy = "usr_fixture"
+	claim.Lease.CompletionKey = "private_completion_canary"
+	claim.Lease.ExpiresAt = now.Add(-time.Second)
+	d = databaseCaptureClaimShape(databaseCaptureClaimDiagnostic{}, claim, id, runnerID, now)
+	if !d.CreatorJournalID || d.CompletionAbsent || d.LeaseLive || d.LeaseOrdering {
+		t.Fatal("claim diagnostic missed completion or expired lease")
+	}
+	raw := []byte(`{"capture":{},"capture":{},"lease":{}}`)
+	if databaseCaptureObserveClaim(200, raw, id, runnerID, now).Decoded {
+		t.Fatal("claim diagnostic bypassed strict duplicate-key decoder")
+	}
+	oversized := bytes.Repeat([]byte("x"), domain.HostingStorageProtocolJSONLimit+20)
+	bounded := databaseCaptureObserveClaim(900, oversized, id, runnerID, now)
+	if bounded.Status != 0 || bounded.BodyBytes != domain.HostingStorageProtocolJSONLimit+1 || bounded.BodyWithinLimit || bounded.Decoded {
+		t.Fatal("claim response diagnostics exceeded fixed bounds")
 	}
 }
