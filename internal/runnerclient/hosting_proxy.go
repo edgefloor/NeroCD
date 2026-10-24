@@ -67,6 +67,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
+	DatabaseNetworkCapture                                                                                                       bool
 	StorageArchive, StorageArchiveTrustedLoopbackHTTP                                                                            bool
 	Database, Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, Readiness, ProxyVerifiedSwitch bool
 	DatabaseTrustedLoopbackHTTP, ReadinessTrustedLoopbackHTTP                                                                    bool
@@ -77,7 +78,7 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if options.StorageArchive {
 		ctx = WithStorageArchiveTransport(ctx, StorageArchiveTransport{TrustedLoopbackHTTP: options.StorageArchiveTrustedLoopbackHTTP})
 	}
-	if options.Database {
+	if options.Database || options.DatabaseNetworkCapture {
 		ctx = WithDatabaseTransport(ctx, DatabaseTransport{TrustedLoopbackHTTP: options.DatabaseTrustedLoopbackHTTP})
 	}
 	if options.Readiness {
@@ -159,13 +160,20 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if readinessCap != options.Readiness || readinessCap && shellCapable {
 		return "", errors.New("authenticated readiness capability does not match explicit configuration")
 	}
+	captureCapable := false
+	for _, capability := range result.Capabilities {
+		captureCapable = captureCapable || capability == domain.HostingDatabaseNetworkCaptureCapability
+	}
+	if options.DatabaseNetworkCapture && (!captureCapable || options.Database || proxyConfigured || buildConfigured || localBuildConfigured || private || options.StorageArchive || options.RuntimeEnvironment || options.Observation || options.RuntimeLogs || options.Readiness || options.ProxyVerifiedSwitch) || captureCapable && shellCapable {
+		return "", errors.New("authenticated capture capability does not match explicit exact-ID configuration")
+	}
 	databaseCapable, databaseTask, storageCapable := false, false, false
 	for _, capability := range result.Capabilities {
 		databaseCapable = databaseCapable || capability == domain.HostingDatabaseCapability
 		databaseTask = databaseTask || capability == domain.RunTypeDatabaseDeploy
 		storageCapable = storageCapable || capability == domain.HostingOwnedStorageCapability
 	}
-	if databaseCapable != options.Database || databaseTask != options.Database || databaseCapable && (shellCapable || !storageCapable) {
+	if (!options.DatabaseNetworkCapture && (databaseCapable != options.Database || databaseTask != options.Database)) || (options.DatabaseNetworkCapture && databaseCapable != databaseTask) || databaseCapable && (shellCapable || !storageCapable) {
 		return "", errors.New("authenticated database capability does not match explicit configuration")
 	}
 	archiveCapability, archiveTask := false, false

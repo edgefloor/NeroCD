@@ -59,6 +59,7 @@ func runRunner(args []string) error {
 	hostingRuntimeLogs := fs.Bool("hosting-runtime-logs", false, "enable demand-driven hosting runtime log collection over HTTPS")
 	hostingReadiness := fs.Bool("hosting-readiness", false, "enable read-only basic image hosting readiness diagnostics over HTTPS")
 	hostingObservation := fs.Bool("hosting-observation", false, "enable independent read-only hosting status collection over HTTPS")
+	databaseCaptureID := fs.String("database-network-capture-id", "", "perform one exact-ID read-only database origin capture and return")
 	hostingDatabase := fs.Bool("hosting-database", false, "explicitly enable private database execution on a qualified native Linux arm64 host")
 	storageArchiveFile := fs.String("storage-archive-config-file", "", "explicit owned mode0600 qualified native helper configuration; storage archive execution is disabled when absent")
 	databaseStateRoot := fs.String("database-state-root", "", "persistent protected database engine state root")
@@ -69,6 +70,11 @@ func runRunner(args []string) error {
 	completeStatus := fs.String("complete-status", "", "optional status to immediately complete a claimed lease: succeeded, failed, or canceled")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	explicitCaptureFlags := map[string]bool{}
+	fs.Visit(func(option *flag.Flag) { explicitCaptureFlags[option.Name] = true })
+	if explicitCaptureFlags["database-network-capture-id"] {
+		return runRunnerDatabaseNetworkCapture(*databaseCaptureID, *server, *id, *credentialFile, *journalDir, *databaseStateRoot, *databaseSecretRoot, *imageDockerEndpoint, *execute, *completeStatus, explicitCaptureFlags)
 	}
 	databaseConfig, err := runnerDatabaseConfig(*hostingDatabase, *execute, *completeStatus, *databaseStateRoot, *databaseSecretRoot)
 	if err != nil {

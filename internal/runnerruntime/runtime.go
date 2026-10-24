@@ -166,28 +166,29 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
-	StorageArchive      *StorageArchiveExecutionConfig
-	Database            *DatabaseExecutionConfig
-	HostingReadiness    *HostingReadinessConfig
-	HostingObservation  *HostingObservationConfig
-	HostingRuntimeLogs  *HostingRuntimeLogsConfig
-	RuntimeEnvironment  *RuntimeEnvironmentConfig
-	LocalBuildDeploy    bool
-	Build               *BuildConfig
-	Proxy               ProxyConfig
-	ImageDockerEndpoint string
-	Server              string
-	Token               string
-	RunnerID            string
-	WorkDir             string
-	JournalDir          string
-	SecretRoot          string
-	ImagePolicy         string
-	Execute             bool
-	Once                bool
-	PollInterval        time.Duration
-	CancelPollInterval  time.Duration
-	CompleteStatus      string
+	StorageArchive         *StorageArchiveExecutionConfig
+	Database               *DatabaseExecutionConfig
+	DatabaseNetworkCapture *DatabaseNetworkCaptureExecutionConfig
+	HostingReadiness       *HostingReadinessConfig
+	HostingObservation     *HostingObservationConfig
+	HostingRuntimeLogs     *HostingRuntimeLogsConfig
+	RuntimeEnvironment     *RuntimeEnvironmentConfig
+	LocalBuildDeploy       bool
+	Build                  *BuildConfig
+	Proxy                  ProxyConfig
+	ImageDockerEndpoint    string
+	Server                 string
+	Token                  string
+	RunnerID               string
+	WorkDir                string
+	JournalDir             string
+	SecretRoot             string
+	ImagePolicy            string
+	Execute                bool
+	Once                   bool
+	PollInterval           time.Duration
+	CancelPollInterval     time.Duration
+	CompleteStatus         string
 }
 
 // Run owns the runner loop, durable replay, lease lifecycle, and execution.
@@ -196,6 +197,9 @@ func Run(config Config) error { return RunContext(context.Background(), config) 
 // RunContext joins attempt cleanup before returning after parent cancellation.
 // It retains unresolved journal evidence and never treats cancellation as success.
 func RunContext(ctx context.Context, config Config) error {
+	if config.DatabaseNetworkCapture != nil {
+		return runDatabaseNetworkCaptureRuntime(ctx, config)
+	}
 	if config.StorageArchive != nil {
 		ctx = runnerclient.WithStorageArchiveTransport(ctx, runnerclient.StorageArchiveTransport{TrustedLoopbackHTTP: config.StorageArchive.TrustedLoopbackHTTP})
 	}
@@ -263,6 +267,9 @@ func RunContext(ctx context.Context, config Config) error {
 		return fmt.Errorf("open runner journal: %w", err)
 	}
 	defer func() { _ = journal.Close() }()
+	if len(journal.Snapshot().DatabaseNetworkCapture) != 0 {
+		return errors.New("retained database network capture requires explicit exact-ID capture mode")
+	}
 	if err := validateLocalBuildJournalConfiguration(journal, config.LocalBuildDeploy); err != nil {
 		return err
 	}
