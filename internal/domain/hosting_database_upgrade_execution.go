@@ -112,6 +112,9 @@ func ValidateHostingDatabaseUpgradeOperation(op HostingOperation) error {
 		}
 		return nil
 	}
+	if op.ApplicationDatabase != nil || op.DatabaseMaintenance != nil {
+		return ErrInvalidHostingDatabaseUpgrade
+	}
 	proof := *op.DatabaseUpgrade
 	if proof.Validate() != nil || !validRuntimeReferenceID(op.ID) || op.ID == proof.PreviousHealthy.OperationID || op.ProjectID != proof.CapturePlan.ProjectID || op.ResourceID != proof.CapturePlan.ResourceID || op.BindingID != proof.CapturePlan.BindingID || op.Snapshot != proof.PreviousPlan.Snapshot || op.StorageArchive != nil || op.CleanupPlan != nil {
 		return ErrInvalidHostingDatabaseUpgrade

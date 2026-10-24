@@ -300,3 +300,16 @@ func TestDatabaseUpgradeEnvelopeSizes(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabaseUpgradeRejectsMixedExecutionSidecars(t *testing.T) {
+	_, queued := databaseUpgradeFixture(t, "postgresql", false)
+	for _, op := range []HostingOperation{queued, prepareDatabaseUpgrade(t, queued)} {
+		application := op
+		application.ApplicationDatabase = &HostingApplicationDatabaseExecutionProof{}
+		maintenance := op
+		maintenance.DatabaseMaintenance = &HostingDatabaseMaintenanceProof{}
+		if ValidateHostingDatabaseUpgradeOperation(application) == nil || ValidateHostingDatabaseUpgradeOperation(maintenance) == nil {
+			t.Fatal("upgrade accepted incompatible execution sidecar")
+		}
+	}
+}
