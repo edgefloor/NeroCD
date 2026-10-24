@@ -1,5 +1,21 @@
 # Configure the owned-upload archive controller
 
+Controller, startup configuration, public API and default-off runner code are
+accepted through `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, with migration 0068.
+Helper packaging is accepted at `b796ce483e99d0dec29bb3e769982dc30da64668`.
+The [API tests](../internal/api/hosting_storage_archive_handlers_test.go) and
+[runner tests](../internal/runnerruntime/hosting_storage_archive_controller_test.go)
+provide contract/lifecycle evidence. Actual PostgreSQL/River/controller tests use
+a fake engine; physical application archive backup/restore remains pending.
+Archive UI is integrating and unaccepted.
+
+The source-bound runner handoff is
+`/tmp/nerocd-archive-runner-integrated-handoff.json`, with promotion recorded in
+`/tmp/nerocd-main-archive-runner-promotion.json`. It records focused race, vet,
+introduced-code lint and Go build passes, not a whole-repository lint-clean or
+physical A26/A37 result. Previous database physical qualification remains at
+`c731f708e62e2376d174041957b8654fe83d5bcf`; R42 application binding remains open.
+
 The server's archive controller is disabled by default. Set
 `NEROCD_HOSTING_STORAGE_ARCHIVE_POLICY_FILE` to an operator-provisioned JSON file
 to enable admission with an explicit helper descriptor and limits. PostgreSQL
@@ -94,5 +110,5 @@ Archives use the versioned uncompressed `nerocd-storage-v1` format and remain in
 the destination-local private artifact store. This controller concerns owned
 upload volumes and restore into a new volume. It does not provide database
 backups, S3 storage, in-place restore, or application database bindings. Public
-API and runner integration acceptance, including A26 and A37, requires separate
-end-to-end evidence.
+API and runner code are accepted, but application-verified A26 and A37 require
+separate physical end-to-end evidence.

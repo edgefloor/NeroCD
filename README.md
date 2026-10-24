@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`3b34b3920378cc41613bc87ca69eea2d35d2f175`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`88887e92c0cf7b93b828d3696ec3a5af16547ea7`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0067, bootstrap administration,
+- PostgreSQL state, checked migrations through 0068, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -193,9 +193,12 @@ remains `adapter_unqualified` and application binding remains unfinished. Backup
   archive backup/restore, public ACME and complete A17 remain unfinished.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
-  Linux helper for strict USTAR `nerocd-storage-v1`. Controller/runner coordination,
-  archive API/UI, helper-image packaging and application-verified backup/restore
-  remain unfinished; this is not complete A26/A37.
+  Linux helper for strict USTAR `nerocd-storage-v1`. The
+  [archive controller/configuration/API/runner](docs/hosting-storage-archive.md)
+  are accepted through `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, alongside helper
+  packaging. The qualification image was removed; it is not an installed pin.
+  PostgreSQL/River tests use a fake engine. Physical application backup/restore,
+  archive UI and complete A26/A37 remain unqualified.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
