@@ -43,6 +43,42 @@ func main() {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("POST /metadata", func(w http.ResponseWriter, _ *http.Request) {
+		nested := filepath.Join(directory, "nested")
+		if err := os.MkdirAll(nested, 0750); err != nil {
+			http.Error(w, "metadata failed", 500)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(nested, "probe"), []byte("owned metadata probe\n"), 0640); err != nil {
+			http.Error(w, "metadata failed", 500)
+			return
+		}
+		for _, path := range []string{filepath.Join(directory, "saved"), nested, filepath.Join(nested, "probe")} {
+			mode := os.FileMode(0640)
+			if path == nested {
+				mode = 0750
+			}
+			if err := errors.Join(os.Chown(path, 12345, 12346), os.Chmod(path, mode)); err != nil {
+				http.Error(w, "metadata failed", 500)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /oversize", func(w http.ResponseWriter, _ *http.Request) {
+		if err := os.WriteFile(filepath.Join(directory, "oversized"), make([]byte, 262145), 0600); err != nil {
+			http.Error(w, "fixture write failed", 500)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+	mux.HandleFunc("DELETE /oversize", func(w http.ResponseWriter, _ *http.Request) {
+		if err := os.Remove(filepath.Join(directory, "oversized")); err != nil {
+			http.Error(w, "fixture remove failed", 500)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("GET /download", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join(directory, "saved")) })
 	server := &http.Server{Addr: ":8080", Handler: mux, ReadHeaderTimeout: 5e9, ReadTimeout: 10e9, WriteTimeout: 10e9, IdleTimeout: 10e9}
 	log.Fatal(server.ListenAndServe())

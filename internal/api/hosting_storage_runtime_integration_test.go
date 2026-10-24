@@ -35,9 +35,9 @@ import (
 	"nerocd/internal/runner"
 )
 
-const storageRuntimeOwner = "nerocd-storage-runtime-20261024-16ace"
+const storageRuntimeOwner = "nerocd-storage-archive-runtime-20261024-f0a618"
 const storageRuntimeLabel = "io.nerocd.storage-runtime.owner"
-const storageRuntimeImage = "127.0.0.1:25000/nerocd-storage-runtime-20261024-16ace:"
+const storageRuntimeImage = "127.0.0.1:25000/nerocd-storage-archive-runtime-20261024-f0a618:"
 
 // A fault drops a committed response while the real CLI is still awaiting it.
 // The test joins that process before releasing the handler and reopening its journal.
@@ -58,6 +58,9 @@ type storageRuntimeFixture struct {
 	roots                                               *x509.CertPool
 	fault                                               atomic.Pointer[storageRuntimeFault]
 	completions                                         atomic.Int64
+	archiveCompletions                                  atomic.Int64
+	capabilities                                        []string
+	archiveConfig                                       string
 }
 
 func storageRuntimeJSON[T any](f *storageRuntimeFixture, method, path string, body any, status int) T {
@@ -157,7 +160,7 @@ func storageRuntimeTrust(t *testing.T, root string) (*x509.CertPool, []byte) {
 	return nil, nil
 }
 
-func newStorageRuntimeFixture(t *testing.T) *storageRuntimeFixture {
+func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixture {
 	t.Helper()
 	if os.Getenv("NEROCD_STORAGE_RUNTIME") != "disposable-dind" {
 		t.Skip("requires owned storage runtime gate")
@@ -177,6 +180,9 @@ func newStorageRuntimeFixture(t *testing.T) *storageRuntimeFixture {
 	control := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runners/hosting/complete" {
 			f.completions.Add(1)
+		}
+		if r.URL.Path == "/api/v1/runners/hosting/storage-archive/complete" {
+			f.archiveCompletions.Add(1)
 		}
 		fault := f.fault.Load()
 		if fault == nil || r.URL.Path != fault.path || !f.fault.CompareAndSwap(fault, nil) {
@@ -220,6 +226,11 @@ func newStorageRuntimeFixture(t *testing.T) *storageRuntimeFixture {
 	}](f, "", http.MethodPost, "/api/v1/sessions", map[string]string{"email": "admin@example.local", "password": "admin"}, 201)
 	f.token = login.Token
 	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.HostingOwnedStorageCapability}
+	if len(archive) > 0 && archive[0] {
+		storageRuntimeConfigureArchive(t, f, pg)
+		caps = append(caps, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability)
+	}
+	f.capabilities = append([]string(nil), caps...)
 	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, http.MethodPost, "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)
 	credential := "ncr_storage_runtime_fixture_only"
 	digest := sha256.Sum256([]byte(credential))
@@ -318,12 +329,15 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 	if f.process != nil {
 		f.t.Fatal("runner already started")
 	}
-	capabilities := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.HostingOwnedStorageCapability}
+	capabilities := append([]string(nil), f.capabilities...)
 	if len(caps) > 0 {
 		capabilities = caps[0]
 	}
 	ctx, cancel := context.WithCancel(f.t.Context())
 	command := exec.CommandContext(ctx, "/fixture/nerocd-proxy-fixture", "runner", "--server", f.control.URL, "--credential-file", filepath.Join(f.root, "credential"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "runner"), "--poll-interval", "100ms", "--cancel-poll-interval", "100ms", "--capabilities", strings.Join(capabilities, ","), "--proxy-state-root", filepath.Join(f.root, "proxy"), "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion, "--proxy-verified-switch")
+	if f.archiveConfig != "" {
+		command.Args = append(command.Args, "--storage-archive-config-file", f.archiveConfig)
+	}
 	command.Env = append(os.Environ(), "NEROCD_MODE=development", "NEROCD_TOKEN=", "SSL_CERT_FILE="+filepath.Join(f.root, "api.pem"), "NEROCD_PROXY_FIXTURE_ROOT="+filepath.Join(f.root, "proxy-roots.pem"), "NEROCD_PROXY_COMPILED_FIXTURE=disposable-dind")
 	command.Stdout, command.Stderr = f.logs, f.logs
 	if err := command.Start(); err != nil {
@@ -384,7 +398,7 @@ func (f *storageRuntimeFixture) lose(fault *storageRuntimeFault, phase string, o
 	}
 	for _, entry := range snapshot.Hosting {
 		if entry.OperationID == operationID && entry.Phase == phase {
-			f.t.Logf("durable response-loss entry operation=%s phase=%s id=%s attempt=%d fence=%s", operationID, phase, entry.ID, entry.Attempt.Attempt, entry.Attempt.Fence)
+			f.t.Logf("durable response-loss entry operation=%s phase=%s id=%s attempt=%d", operationID, phase, entry.ID, entry.Attempt.Attempt)
 			return entry
 		}
 	}
@@ -593,10 +607,14 @@ func (f *storageRuntimeFixture) verifyVolume(storage domain.HostingStorage, orig
 }
 
 func TestHostingStorageCompiledRunnerHTTPS(t *testing.T) {
+	testHostingStorageCompiledRunnerHTTPS(t, false)
+}
+
+func testHostingStorageCompiledRunnerHTTPS(t *testing.T, archive bool) {
 	if os.Getenv("NEROCD_STORAGE_RUNTIME") != "disposable-dind" {
 		t.Skip("requires owned storage runtime gate")
 	}
-	f := newStorageRuntimeFixture(t)
+	f := newStorageRuntimeFixture(t, archive)
 	resource := f.resource("uploaded application A", "a")
 	storage := f.storage(resource, strings.Repeat("1", 32))
 	materializedLoss := f.arm("/api/v1/runners/hosting/storage-materialized")
@@ -690,6 +708,9 @@ func TestHostingStorageCompiledRunnerHTTPS(t *testing.T) {
 	}
 	loadedID := f.awaitContinuity(resource.ID, b.ID).SuccessorProxyOperationID
 	verifyBytes("B")
+	if archive {
+		storageRuntimeArchiveRoundtrip(t, f, resource, storage, origin, a, b, upload)
+	}
 	failed := f.await(f.deploy(resource, "storage-unready", "/unready", 20101, f.continuity(resource, b)).ID, "failed")
 	if failed.Result == nil || !failed.Result.Restored || failed.Result.Uncertain {
 		t.Fatal("failed readiness did not restore exact B", failed.Result)

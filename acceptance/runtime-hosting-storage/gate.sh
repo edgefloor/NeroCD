@@ -6,29 +6,119 @@ test -f "$repo_root/internal/api/hosting_storage_runtime_integration_test.go"
 [[ -z $(git status --porcelain) ]] || { echo 'gate requires a clean committed checkout' >&2; exit 1; }
 head_before=$(git rev-parse HEAD)
 tree_before=$(git rev-parse 'HEAD^{tree}')
-owner=nerocd-storage-runtime-20261024-16ace
+owner=nerocd-storage-archive-runtime-20261024-f0a618
 label=io.nerocd.storage-runtime.owner
 name=$owner-dind
 volume=$owner-docker-data
 docker_host=unix:///var/run/docker.sock
 daemon=e37dd219-b13f-47dd-99ed-21d79442ed0c
+archive=false
+case ${1:-} in
+ '') test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$';;
+ --archive) archive=true; test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS)$';;
+ *) echo 'usage: gate.sh [--archive]' >&2; exit 2;;
+esac
 outer=''
-created_volume=false
+volume_attempted=false
+outer_attempted=false
+returned_outer=''
+dind='docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489'
 evidence=$(mktemp -d /tmp/nerocd-storage-runtime-20261024.XXXXXX)
 exec > >(tee "$evidence/gate.log") 2>&1
 printf 'evidence=%s\nhead=%s\ntree=%s\nowner=%s\n' "$evidence" "$head_before" "$tree_before" "$owner"
 host_docker() { docker --host "$docker_host" "$@"; }
 inner_docker() { host_docker exec "$outer" docker --host unix:///var/run/docker.sock "$@"; }
+# Inventory failures are uncertainty, never proof that an exact name is absent.
+outer_inventory() {
+ if ! host_docker ps -a --no-trunc --format '{{.ID}} {{.Names}}' > "$evidence/outer-inventory"; then
+  echo 'outer inventory unavailable; preserving resources' >&2; return 1
+ fi
+ python3 -c '
+import re,sys
+rows=[]
+for line in open(sys.argv[1]):
+ fields=line.split()
+ if len(fields)!=2 or not re.fullmatch("[a-f0-9]{64}",fields[0]):raise SystemExit("invalid container inventory")
+ if fields[1]==sys.argv[2] or fields[0]==sys.argv[3]:rows.append(fields[0])
+if len(rows)>1:raise SystemExit("ambiguous outer inventory")
+if rows:print(rows[0])
+' "$evidence/outer-inventory" "$name" "$outer"
+}
+volume_inventory() {
+ if ! host_docker volume ls --format '{{.Name}}' > "$evidence/volume-inventory"; then
+  echo 'volume inventory unavailable; preserving resources' >&2; return 1
+ fi
+ python3 -c '
+import re,sys
+names=open(sys.argv[1]).read().splitlines()
+if any(not re.fullmatch("[A-Za-z0-9][A-Za-z0-9_.-]*",n) for n in names) or len(names)!=len(set(names)):raise SystemExit("invalid volume inventory")
+print("present" if sys.argv[2] in names else "absent")
+' "$evidence/volume-inventory" "$volume"
+}
+verify_volume() {
+ if ! host_docker volume inspect "$volume" > "$evidence/volume-current-inspect"; then return 1; fi
+ if ! host_docker ps -a --no-trunc --filter "volume=$volume" --format '{{.ID}}' > "$evidence/volume-current-users"; then return 1; fi
+ python3 -c '
+import json,re,sys
+items=json.load(open(sys.argv[1]));users=open(sys.argv[2]).read().splitlines()
+if len(items)!=1:raise SystemExit("ambiguous volume inspection")
+v=items[0]
+if v.get("Name")!=sys.argv[3] or v.get("Driver")!="local" or v.get("Scope")!="local" or v.get("Options") not in (None,{}) or v.get("Labels")!={sys.argv[4]:sys.argv[5]}:raise SystemExit("volume ownership/profile mismatch")
+if not isinstance(v.get("Mountpoint"),str) or not v["Mountpoint"].startswith("/"):raise SystemExit("invalid volume mountpoint")
+if any(not re.fullmatch("[a-f0-9]{64}",u) or u!=sys.argv[6] for u in users) or len(users)!=len(set(users)):raise SystemExit("volume has unowned users")
+' "$evidence/volume-current-inspect" "$evidence/volume-current-users" "$volume" "$label" "$owner" "${1:-}"
+}
+verify_outer() {
+ if ! host_docker inspect "$1" > "$evidence/outer-current-inspect"; then return 1; fi
+ python3 -c '
+import json,re,sys
+items=json.load(open(sys.argv[1]));images=json.load(open(sys.argv[2]));volumes=json.load(open(sys.argv[3]))
+if len(items)!=1 or len(images)!=3 or len(volumes)!=1:raise SystemExit("ambiguous outer dependencies")
+c=items[0];image=images[0];v=volumes[0];cfg=c.get("Config",{});h=c.get("HostConfig",{});state=c.get("State",{})
+identity,name,reference,label,owner,volume=sys.argv[4:]
+if not re.fullmatch("sha256:[a-f0-9]{64}",image.get("Id","")) or image.get("Os")!="linux" or image.get("Architecture")!="arm64":raise SystemExit("outer pinned image profile mismatch")
+if not re.fullmatch("[a-f0-9]{64}",identity) or c.get("Id")!=identity or c.get("Name")!="/"+name or c.get("Image")!=image.get("Id") or cfg.get("Image")!=reference:raise SystemExit("outer image/name identity mismatch")
+base=image.get("Config",{});labels=dict(base.get("Labels") or {});labels[label]=owner
+if cfg.get("Labels")!=labels or cfg.get("Cmd")!=["dockerd","--host=unix:///var/run/docker.sock","--feature=containerd-snapshotter=false","--storage-driver=overlay2"] or cfg.get("Entrypoint")!=base.get("Entrypoint") or cfg.get("User","")!=base.get("User","") or cfg.get("WorkingDir","")!=base.get("WorkingDir",""):raise SystemExit("outer launch profile mismatch")
+def environment(values):
+ result={}
+ for value in values:
+  k,sep,val=value.partition("=")
+  if not sep or k in result:raise SystemExit("ambiguous outer environment")
+  result[k]=val
+ return result
+env=environment(base.get("Env") or []);env["DOCKER_TLS_CERTDIR"]=""
+if environment(cfg.get("Env") or [])!=env:raise SystemExit("outer environment mismatch")
+expected={"Privileged":True,"Memory":6<<30,"MemorySwap":12<<30,"NanoCpus":4000000000,"PidsLimit":2048,"NetworkMode":"bridge","PidMode":"","IpcMode":"private","UsernsMode":"","UTSMode":"","CgroupnsMode":"private","PublishAllPorts":False,"AutoRemove":False,"ReadonlyRootfs":False,"RestartPolicy":{"Name":"no","MaximumRetryCount":0}}
+if any(h.get(k)!=value for k,value in expected.items()):raise SystemExit("outer resources/namespace profile mismatch")
+if any(h.get(k) for k in ["Binds","VolumesFrom","PortBindings","Devices","DeviceRequests","CapAdd","CapDrop","GroupAdd","ExtraHosts"]):raise SystemExit("outer has extra host access")
+if h.get("Mounts")!=[{"Type":"volume","Source":volume,"Target":"/var/lib/docker"}]:raise SystemExit("outer requested mount mismatch")
+mounts=c.get("Mounts") or []
+if len(mounts)!=1:raise SystemExit("outer actual mount count mismatch")
+m=mounts[0]
+if any(m.get(k)!=value for k,value in {"Type":"volume","Name":volume,"Driver":"local","Destination":"/var/lib/docker","Source":v["Mountpoint"],"RW":True}.items()):raise SystemExit("outer actual mount mismatch")
+if state.get("Paused") or state.get("Restarting") or state.get("Status") not in ["created","running","exited"] or state.get("Running")!=(state["Status"]=="running"):raise SystemExit("outer process state uncertain")
+' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume"
+}
+
 cleanup() {
  result=$?
  trap - EXIT INT TERM
- if [[ -n "$outer" ]]; then
-  if [[ $(host_docker inspect --format "{{.Id}} {{index .Config.Labels \"$label\"}}" "$outer" 2>/dev/null || true) != "$outer $owner" ]]; then
-   echo 'outer identity changed; preserving resources' >&2
-   exit 1
+ if [[ "$outer_attempted" == true ]]; then
+  observed=$(outer_inventory) || exit 1
+  if [[ -n "$observed" ]]; then
+   if [[ -n "$outer" && "$outer" != "$observed" ]] || ! verify_volume "$observed" || ! verify_outer "$observed"; then
+    echo 'outer identity/profile uncertain; preserving resources' >&2; exit 1
+   fi
+   outer=$observed
+  else
+   outer=''
   fi
+ fi
+ if [[ -n "$outer" ]]; then
   # Stop only binaries copied into this owned guest, then join before deleting it.
-  if ! host_docker exec "$outer" sh -ec '
+  running=$(python3 -c 'import json,sys;print(str(json.load(open(sys.argv[1]))[0]["State"]["Running"]).lower())' "$evidence/outer-current-inspect")
+  if [[ "$running" == true ]] && ! host_docker exec "$outer" sh -ec '
    for exe in /proc/[0-9]*/exe; do
     case $(readlink "$exe" 2>/dev/null || true) in /fixture/api.test|/fixture/nerocd-proxy-fixture)
      pid=${exe#/proc/}; pid=${pid%/exe}; kill -TERM "$pid";; esac
@@ -46,25 +136,35 @@ cleanup() {
    exit 1
   fi
   echo 'owned API and runner processes absent' | tee "$evidence/process-absence"
+  if [[ "$running" == true ]]; then
+  host_docker exec "$outer" df -Pk / /var/lib/docker /tmp > "$evidence/guest-filesystem-final" || result=1
   inner_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/inner-containers-final" || result=1
   inner_docker volume ls --format '{{json .}}' > "$evidence/inner-volumes-final" || result=1
   inner_docker image ls --no-trunc --digests --format '{{json .}}' > "$evidence/inner-images-final" || result=1
-  host_docker inspect "$outer" > "$evidence/outer-final-inspect"
-  if [[ $(host_docker inspect --format '{{range .Mounts}}{{.Type}} {{.Name}} {{.Destination}}{{end}}' "$outer") != "volume $volume /var/lib/docker" ]]; then
-   echo 'unexpected outer mount; preserving guest' >&2; exit 1
   fi
+  if ! verify_volume "$outer" || ! verify_outer "$outer"; then echo 'outer profile changed before removal; preserving guest' >&2; exit 1; fi
+  cp "$evidence/outer-current-inspect" "$evidence/outer-final-inspect"
   host_docker rm --force "$outer" || result=1
-  if host_docker inspect "$outer" >/dev/null 2>&1; then result=1; else echo "owned outer absent: $outer"; fi
+  remaining=$(outer_inventory) || exit 1
+  if [[ -n "$remaining" ]]; then echo 'owned outer absence not proven' >&2; exit 1; fi
+  echo "owned outer absent: $outer"
  fi
- if [[ "$created_volume" == true ]]; then
-  if [[ $(host_docker volume inspect --format "{{.Name}} {{.Driver}} {{index .Labels \"$label\"}}" "$volume" 2>/dev/null || true) != "$volume local $owner" || -n $(host_docker ps -aq --filter "volume=$volume") ]]; then
-   echo 'outer storage ownership/users changed; preserving volume' >&2; exit 1
+ if [[ "$volume_attempted" == true ]]; then
+  present=$(volume_inventory) || exit 1
+  if [[ "$present" == present ]]; then
+   if ! verify_volume; then echo 'outer storage ownership/users uncertain; preserving volume' >&2; exit 1; fi
+   host_docker volume rm "$volume" || result=1
+   present=$(volume_inventory) || exit 1
+   if [[ "$present" != absent ]]; then echo 'owned volume absence not proven' >&2; exit 1; fi
   fi
-  host_docker volume rm "$volume" || result=1
-  if host_docker volume inspect "$volume" >/dev/null 2>&1; then result=1; else echo "owned outer volume absent: $volume"; fi
+  echo "owned outer volume absent: $volume"
  fi
  host_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/host-containers-after" || result=1
  host_docker volume ls --format '{{json .}}' > "$evidence/host-volumes-after" || result=1
+ host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-after" || result=1
+ host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-after" || result=1
+ cmp "$evidence/host-container-ids-before" "$evidence/host-container-ids-after" || result=1
+ cmp "$evidence/host-volume-names-before" "$evidence/host-volume-names-after" || result=1
  git status --porcelain > "$evidence/status-after"
  [[ $(git rev-parse HEAD) == "$head_before" && $(git rev-parse 'HEAD^{tree}') == "$tree_before" && ! -s "$evidence/status-after" ]] || result=1
  printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"
@@ -75,11 +175,17 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 [[ $(host_docker info --format '{{.ID}} {{.OSType}} {{.Architecture}}') == "$daemon linux aarch64" ]]
-[[ -z $(host_docker ps -aq --filter "name=^/$name$") ]]
-if host_docker volume inspect "$volume" >/dev/null 2>&1; then echo 'owned outer volume already exists' >&2; exit 1; fi
+observed=$(outer_inventory)
+[[ -z "$observed" ]] || { echo 'outer name already exists' >&2; exit 1; }
+present=$(volume_inventory)
+[[ "$present" == absent ]] || { echo 'outer volume already exists' >&2; exit 1; }
+df -Pk "$evidence" > "$evidence/host-filesystem-before"
+df -Pi "$evidence" > "$evidence/host-inodes-before"
 host_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/host-containers-before"
+host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-before"
+host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-before"
 host_docker volume ls --format '{{json .}}' > "$evidence/host-volumes-before"
-git ls-files -s acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go > "$evidence/source-blobs"
+git ls-files -s acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags nerocd_proxy_fixture -c -o "$evidence/api.test" ./internal/api
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags nerocd_proxy_fixture -trimpath -o "$evidence/nerocd-proxy-fixture" ./cmd/nerocd
 mkdir "$evidence/a" "$evidence/b"
@@ -88,19 +194,32 @@ for version in a b; do
  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$display" -o "$evidence/$version/app" ./acceptance/image-hosting-storage-fixture
  cp acceptance/image-hosting-storage-fixture/Dockerfile "$evidence/$version/Dockerfile"
 done
+if [[ "$archive" == true ]]; then
+ mkdir "$evidence/archive-helper"
+ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o "$evidence/archive-helper/nerocd-storage-archive" ./cmd/nerocd-storage-archive
+ helper_sha=$(shasum -a 256 "$evidence/archive-helper/nerocd-storage-archive" | awk '{print $1}')
+ sed -e "s/@SOURCE_COMMIT@/$head_before/g" -e "s/@EXECUTABLE_SHA256@/$helper_sha/g" Dockerfile.storage-archive > "$evidence/archive-helper/Dockerfile"
+ printf 'source=%s\nexecutable_sha256=%s\n' "$head_before" "$helper_sha" > "$evidence/archive-helper-provenance"
+fi
 shasum -a 256 "$evidence/api.test" "$evidence/nerocd-proxy-fixture" "$evidence/a/app" "$evidence/b/app" | tee "$evidence/binary-sha256"
-dind=docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489
 postgres=postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
 registry=registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
 host_docker image inspect "$dind" "$postgres" "$registry" > "$evidence/pinned-host-images"
+volume_attempted=true
 host_docker volume create --driver local --label "$label=$owner" "$volume"
-created_volume=true
-outer=$(host_docker run --detach --privileged --name "$name" --label "$label=$owner" --mount "type=volume,src=$volume,dst=/var/lib/docker" --env DOCKER_TLS_CERTDIR= "$dind" dockerd --host=unix:///var/run/docker.sock)
-host_docker inspect "$outer" > "$evidence/outer-initial-inspect"
+verify_volume || { echo 'new volume not proven owned and unused; preserving it' >&2; exit 1; }
+outer_attempted=true
+returned_outer=$(host_docker run --detach --privileged --cpus 4 --memory 6g --pids-limit 2048 --name "$name" --label "$label=$owner" --mount "type=volume,src=$volume,dst=/var/lib/docker" --env DOCKER_TLS_CERTDIR= "$dind" dockerd --host=unix:///var/run/docker.sock --feature=containerd-snapshotter=false --storage-driver=overlay2)
+outer=$(outer_inventory)
+[[ -n "$outer" && "$returned_outer" == "$outer" ]] && verify_volume "$outer" && verify_outer "$outer" || { echo 'created outer identity/profile uncertain' >&2; exit 1; }
+cp "$evidence/outer-current-inspect" "$evidence/outer-initial-inspect"
 ready=false
 for _ in $(seq 1 60); do if inner_docker info >/dev/null 2>&1; then ready=true; break; fi; sleep 1; done
 [[ "$ready" == true ]]
 inner_docker info --format '{{.ID}} {{.OSType}} {{.Architecture}}' | tee "$evidence/inner-daemon"
+inner_docker info --format '{{.ID}} {{.OSType}} {{.Architecture}} {{.Driver}} {{json .DriverStatus}}' | tee "$evidence/inner-storage-profile"
+[[ $(inner_docker info --format '{{.Driver}}') == overlay2 ]]
+printf 'qualification_scope=classic-image-store-overlay2-only\ncontainerd_image_store=not_qualified\n' > "$evidence/image-store-scope"
 host_docker exec "$outer" mkdir -p /fixture /workspace/db/seeds /workspace/internal/api /workspace/acceptance/runtime-proxy-control
 for binary in api.test nerocd-proxy-fixture; do host_docker cp "$evidence/$binary" "$outer:/fixture/$binary"; done
 host_docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
@@ -112,8 +231,8 @@ host_docker exec "$outer" rm /fixture/base-images.tar
 for image in \
  docker.io/library/traefik@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a905f3fdb5b84f2c8619c33368 \
  ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199; do inner_docker pull "$image"; done
-pg=$(inner_docker run --detach --name "$owner-pg" --label "$label=$owner" --network host --tmpfs /var/lib/postgresql/data:rw --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_storage_runtime "$postgres")
-reg=$(inner_docker run --detach --name "$owner-registry" --label "$label=$owner" --network host --tmpfs /var/lib/registry:rw --env REGISTRY_HTTP_ADDR=127.0.0.1:25000 "$registry")
+pg=$(inner_docker run --detach --name "$owner-pg" --label "$label=$owner" --network host --memory 512m --cpus 1 --pids-limit 128 --tmpfs /var/lib/postgresql/data:rw,size=256m --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_storage_runtime "$postgres")
+reg=$(inner_docker run --detach --name "$owner-registry" --label "$label=$owner" --network host --memory 128m --cpus 1 --pids-limit 128 --tmpfs /var/lib/registry:rw,size=64m --env REGISTRY_HTTP_ADDR=127.0.0.1:25000 "$registry")
 printf 'inner_pg=%s\ninner_registry=%s\n' "$pg" "$reg" | tee "$evidence/inner-services"
 for version in a b; do
  host_docker cp "$evidence/$version" "$outer:/fixture/$version"
@@ -121,12 +240,34 @@ for version in a b; do
  inner_docker push "127.0.0.1:25000/$owner:$version"
  inner_docker image inspect "127.0.0.1:25000/$owner:$version" > "$evidence/app-$version-image"
 done
+if [[ "$archive" == true ]]; then
+ host_docker cp "$evidence/archive-helper" "$outer:/fixture/archive-helper"
+ inner_docker build --platform linux/arm64 --provenance=false --sbom=false --network none --iidfile /fixture/archive-helper-image-id /fixture/archive-helper
+ helper_image=$(host_docker exec "$outer" cat /fixture/archive-helper-image-id)
+ inner_docker image inspect "$helper_image" > "$evidence/archive-helper-image-inspect"
+ python3 -c "
+import hashlib,json,sys
+from pathlib import Path
+root=Path(sys.argv[1]);image=json.loads((root/'archive-helper-image-inspect').read_text())[0]
+daemon,os_name,arch=(root/'inner-daemon').read_text().split()
+assert os_name=='linux' and arch=='aarch64' and image['Os']=='linux' and image['Architecture']=='arm64'
+h={'mode':'local_image','recipe_version':'owned-upload.local-archive.v1','image_id':image['Id'],'executable_sha256':'sha256:'+sys.argv[3],'source_commit':sys.argv[2],'os':'linux','architecture':'arm64','daemon_id':daemon,'hash':''}
+h['hash']='sha256:'+hashlib.sha256(json.dumps(h,separators=(',',':')).encode()).hexdigest()
+(root/'archive-helper.json').write_text(json.dumps(h,separators=(',',':')))
+" "$evidence" "$head_before" "$helper_sha"
+ host_docker cp "$evidence/archive-helper.json" "$outer:/fixture/archive-helper.json"
+fi
 inner_docker image ls --no-trunc --digests --format '{{json .}}' > "$evidence/inner-images-before-test"
+host_docker exec "$outer" df -Pk / /var/lib/docker /tmp > "$evidence/guest-filesystem-before-test"
+host_docker exec "$outer" df -Pi / /var/lib/docker /tmp > "$evidence/guest-inodes-before-test"
+awk 'NR>1 && $4<2097152 {exit 1}' "$evidence/guest-filesystem-before-test"
 ready=false
 for _ in $(seq 1 60); do
  if [[ $(inner_docker exec --env PGPASSWORD=isolated_fixture_only "$pg" psql --host=127.0.0.1 --username=nerocd --dbname=nerocd_storage_runtime --no-psqlrc --tuples-only --no-align --command='SELECT current_database()' 2>/dev/null || true) == nerocd_storage_runtime ]]; then ready=true; break; fi
  sleep 1
 done
 [[ "$ready" == true ]]
-host_docker exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run '^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$' -test.timeout=12m
+archive_mode=''
+if [[ "$archive" == true ]]; then archive_mode=disposable-dind; fi
+host_docker exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=12m
 echo 'compiled storage runner / authenticated public API / trusted fixture-CA HTTPS gate passed'
