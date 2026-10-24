@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`, 2026-10-24, through migration 0070.
+`b7771468edf95f531c13d69b361ed901d9efbbc8`, 2026-10-24, through migration 0070.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -173,11 +173,25 @@ private DNS application reads/writes, retained volume/network/credentials and
 origin, reopened UID 999 ownership, and wrong-alias rejection. Combined local
 race, vet, changed-code lint, Linux arm64 compile and build checks passed.
 
-This fixture uses local materialization evidence and proves no controller
-provenance or API/River/runner-admission path. R42 still needs capability
-activation and generic dispatch, the upgrade controller, application membership
-ledger/API/UI, and connected application write/redeploy/read qualification.
-Database-native backup/restore, rotation and broader stateful parity remain open.
+This direct-engine fixture uses local materialization and proves no controller
+provenance for upgrades. Later accepted progress at
+`b7771468edf95f531c13d69b361ed901d9efbbc8` qualifies the compiled exact-ID capture
+CLI through real API/River source deployment and controller/materialization
+provenance. Both PostgreSQL and Redis passed capture/replay in 22.00 seconds and
+normal database recovery in 23.40 seconds without skips. Lost origin ACK leaves
+the format 13 claim/plan/origin chain retained; ordinary mode holds, and
+historical replay with the owned socket absent succeeds without repeating claim,
+plan load, observation or credential delivery. Source, volume, network and
+credentials remain unchanged. Completion authority-worker joining and persisted
+UTC JSON identity are fixed. The
+[compiled-runner contract](../acceptance/runtime-hosting-database-runner/README.md)
+records the native Linux arm64/trusted Docker/test-CA scope and limits.
+
+R42 still needs generic capture dispatch, the upgrade controller, application
+membership ledger/API/UI and connected application-binding qualification.
+Database-native backup/restore, rotation, full A17/A26/A37 and broader stateful
+parity remain open. Production ACME, untrusted workload isolation and broader
+host profiles are not qualified by this pass.
 
 The standalone archive helper is accepted at
 `3b34b3920378cc41613bc87ca69eea2d35d2f175`;

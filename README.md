@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`b7771468edf95f531c13d69b361ed901d9efbbc8`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -203,9 +203,23 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   [fixture contract](acceptance/runtime-hosting-database-origin-upgrade/README.md)
   and [accepted components and R42 limits](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
   Materialization is fixture-local, without controller provenance. This does
-  not qualify the connected API/River path. Capability activation, generic
-  dispatch, upgrade controller, application membership ledger/API/UI and full
-  R42 remain unfinished. Database-native backup/restore and rotation remain open.
+  not qualify the connected API/River path; later capture proof is below.
+  Generic dispatch, upgrade controller, application membership ledger/API/UI
+  and full R42 remain unfinished. Database-native backup/restore and rotation remain open.
+- Compiled capture/replay and normal PostgreSQL/Redis recovery are accepted at
+  `b7771468edf95f531c13d69b361ed901d9efbbc8`. Both engines passed without skips:
+  capture/replay in 22.00 seconds and normal recovery in 23.40 seconds, using
+  real API/River source deployment and the opt-in exact-ID capture CLI. Lost
+  origin ACK replay preserves the three-phase format 13 journal, holds ordinary
+  mode, then replays historical bytes with the owned Docker socket absent and
+  no repeated claim or observation. Source, volume, network and credentials
+  remain unchanged. Database completion now joins authority workers, and UTC
+  capture round trips compare persisted JSON identity. See the
+  [compiled-runner fixture](acceptance/runtime-hosting-database-runner/README.md).
+  This qualifies native Linux arm64/trusted Docker with a verified test CA.
+  Application binding, upgrade controller, membership ledger/API/UI,
+  database-native backup/restore, rotation and full R42/A17/A26/A37 remain open;
+  production ACME and untrusted workload isolation are unqualified.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The
