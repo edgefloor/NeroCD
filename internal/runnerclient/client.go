@@ -122,6 +122,15 @@ func (c Client) get(ctx context.Context, path string, result any) error {
 }
 
 func (c Client) do(ctx context.Context, method, path string, body io.Reader, result any) error {
+	policy, database := ctx.Value(databaseTransportKey{}).(DatabaseTransport)
+	if database {
+		secured, closeTransport, err := c.serverReadinessHTTP(ServerReadinessTransport(policy))
+		if err != nil {
+			return errors.New("invalid database controller transport")
+		}
+		defer closeTransport()
+		c = secured
+	}
 	rawURL := c.Server + path
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
@@ -137,12 +146,39 @@ func (c Client) do(ctx context.Context, method, path string, body io.Reader, res
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		if database {
+			// Keep cancellation classification without retaining a transport's
+			// URL-bearing diagnostic or a reflected capability.
+			cause := errors.New("database controller request failed")
+			if errors.Is(err, context.Canceled) {
+				cause = context.Canceled
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				cause = context.DeadlineExceeded
+			}
+			return &APIError{Method: method, URL: RequestLabel(rawURL), Err: cause}
+		}
 		return &APIError{Method: method, URL: RequestLabel(rawURL), Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= 400 || database && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return &APIError{Method: method, URL: RequestLabel(rawURL), StatusCode: resp.StatusCode, Status: resp.Status, Detail: strings.TrimSpace(string(detail))}
+		status, diagnostic := resp.Status, ""
+		if database {
+			status = fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+			diagnostic = ""
+			// Replay needs only the closed not-found code to recognize fencing.
+			var envelope struct {
+				Code string `json:"code"`
+			}
+			if resp.StatusCode == http.StatusNotFound && json.Unmarshal(detail, &envelope) == nil && envelope.Code == "not_found" {
+				diagnostic = `{"code":"not_found"}`
+			}
+			clear(detail)
+		} else {
+			diagnostic = strings.TrimSpace(string(detail))
+		}
+		return &APIError{Method: method, URL: RequestLabel(rawURL), StatusCode: resp.StatusCode, Status: status, Detail: diagnostic}
 	}
 	if result == nil {
 		return nil
@@ -155,6 +191,9 @@ func (c Client) do(ctx context.Context, method, path string, body io.Reader, res
 		err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(result)
 	}
 	if err != nil {
+		if database {
+			err = errors.New("invalid database controller response")
+		}
 		return &APIError{Method: method, URL: RequestLabel(rawURL), Err: err}
 	}
 	return nil

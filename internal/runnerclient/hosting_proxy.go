@@ -67,12 +67,15 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
-	Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, Readiness, ProxyVerifiedSwitch bool
-	ReadinessTrustedLoopbackHTTP                                                                                       bool
+	Database, Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, Readiness, ProxyVerifiedSwitch bool
+	DatabaseTrustedLoopbackHTTP, ReadinessTrustedLoopbackHTTP                                                                    bool
 }
 
 // RuntimeExecutionIdentityWithOptions checks every protected execution capability.
 func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options RuntimeExecutionOptions) (string, error) {
+	if options.Database {
+		ctx = WithDatabaseTransport(ctx, DatabaseTransport{TrustedLoopbackHTTP: options.DatabaseTrustedLoopbackHTTP})
+	}
 	if options.Readiness {
 		secured, closeTransport, err := c.serverReadinessHTTP(ServerReadinessTransport{TrustedLoopbackHTTP: options.ReadinessTrustedLoopbackHTTP})
 		if err != nil {
@@ -151,6 +154,15 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	}
 	if readinessCap != options.Readiness || readinessCap && shellCapable {
 		return "", errors.New("authenticated readiness capability does not match explicit configuration")
+	}
+	databaseCapable, databaseTask, storageCapable := false, false, false
+	for _, capability := range result.Capabilities {
+		databaseCapable = databaseCapable || capability == domain.HostingDatabaseCapability
+		databaseTask = databaseTask || capability == domain.RunTypeDatabaseDeploy
+		storageCapable = storageCapable || capability == domain.HostingOwnedStorageCapability
+	}
+	if databaseCapable != options.Database || databaseTask != options.Database || databaseCapable && (shellCapable || !storageCapable) {
+		return "", errors.New("authenticated database capability does not match explicit configuration")
 	}
 	if private != privateCapable {
 		return "", errors.New("authenticated private Git capability does not match explicit configuration")

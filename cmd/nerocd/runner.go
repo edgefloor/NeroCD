@@ -59,6 +59,9 @@ func runRunner(args []string) error {
 	hostingRuntimeLogs := fs.Bool("hosting-runtime-logs", false, "enable demand-driven hosting runtime log collection over HTTPS")
 	hostingReadiness := fs.Bool("hosting-readiness", false, "enable read-only basic image hosting readiness diagnostics over HTTPS")
 	hostingObservation := fs.Bool("hosting-observation", false, "enable independent read-only hosting status collection over HTTPS")
+	hostingDatabase := fs.Bool("hosting-database", false, "explicitly enable private database execution on a qualified native Linux arm64 host")
+	databaseStateRoot := fs.String("database-state-root", "", "persistent protected database engine state root")
+	databaseSecretRoot := fs.String("database-secret-root", "", "persistent protected database credential root")
 	hostingRuntimeEnv := fs.Bool("hosting-runtime-env", false, "explicitly enable protected hosting runtime environment delivery over HTTPS")
 	localBuildDeploy := fs.Bool("local-build-deploy", false, "explicitly enable same-host local build artifact deployment")
 	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
@@ -66,11 +69,24 @@ func runRunner(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	databaseConfig, err := runnerDatabaseConfig(*hostingDatabase, *execute, *completeStatus, *databaseStateRoot, *databaseSecretRoot)
+	if err != nil {
+		return err
+	}
 	runnerContext := context.Background()
-	if *hostingReadiness {
+	if *hostingReadiness || *hostingDatabase {
 		var stop context.CancelFunc
 		runnerContext, stop = signal.NotifyContext(runnerContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
+	}
+	if databaseConfig != nil {
+		runnerContext = runnerclient.WithDatabaseTransport(runnerContext, runnerclient.DatabaseTransport{})
+		if err := runnerclient.ValidateRuntimeEnvironmentServer(*server, runnerclient.RuntimeEnvironmentTransport{}); err != nil {
+			return err
+		}
+		if err := runnerruntime.ValidateDatabaseExecution(runnerContext, *databaseConfig, *imageDockerEndpoint); err != nil {
+			return err
+		}
 	}
 	buildConfig, err := loadRunnerBuildConfig(*buildConfigFile)
 	if err != nil {
@@ -157,6 +173,10 @@ func runRunner(args []string) error {
 			return err
 		}
 	}
+	registrationCapabilities, err = runnerDatabaseCapabilities(*hostingDatabase, capabilitiesSpecified || proxyConfig.Enabled() || buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv || *hostingObservation || *hostingRuntimeLogs, registrationCapabilities)
+	if err != nil {
+		return err
+	}
 	registrationCapabilities, err = runnerReadinessCapabilities(*hostingReadiness, *execute, *once, *completeStatus, capabilitiesSpecified, registrationCapabilities)
 	if err != nil {
 		return err
@@ -212,8 +232,8 @@ func runRunner(args []string) error {
 		var consumed app.ConsumedRunnerEnrollment
 		var consumeErr error
 		backoff := 100 * time.Millisecond
-		if *hostingReadiness {
-			consumeErr = postRunnerReadinessBootstrap(runnerContext, *server, "/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
+		if *hostingReadiness || *hostingDatabase {
+			consumeErr = postRunnerBootstrap(runnerContext, *hostingDatabase, *hostingReadiness, *server, "/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
 		} else {
 			for attempt := 0; attempt < 5; attempt++ {
 				consumeErr = postAPIInto(*server+"/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
@@ -246,12 +266,7 @@ func runRunner(args []string) error {
 		}
 		registerBody := runnerRegisterRequest{ID: *id, Name: *name, Tags: splitCSV(*tags), Capabilities: registrationCapabilities}
 		var registered runnerRegisterResponse
-		var registerErr error
-		if *hostingReadiness {
-			registerErr = postRunnerReadinessBootstrap(runnerContext, *server, "/api/v1/runners/register", registerBody, registrationToken, &registered)
-		} else {
-			registerErr = postAPIInto(*server+"/api/v1/runners/register", registerBody, registrationToken, &registered)
-		}
+		registerErr := postRunnerBootstrap(runnerContext, *hostingDatabase, *hostingReadiness, *server, "/api/v1/runners/register", registerBody, registrationToken, &registered)
 		if registerErr != nil {
 			return registerErr
 		}
@@ -268,19 +283,19 @@ func runRunner(args []string) error {
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{Database: *hostingDatabase, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}
 	if (idSpecified || buildConfig != nil) && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	runtimeConfig := runnerruntime.Config{HostingReadiness: readiness, HostingRuntimeLogs: runtimeLogs, HostingObservation: observation, RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
+	runtimeConfig := runnerruntime.Config{Database: databaseConfig, HostingReadiness: readiness, HostingRuntimeLogs: runtimeLogs, HostingObservation: observation, RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,
 	}
-	if *hostingObservation || *hostingRuntimeLogs || *hostingReadiness {
+	if *hostingDatabase || *hostingObservation || *hostingRuntimeLogs || *hostingReadiness {
 		return runnerruntime.RunContext(identityContext, runtimeConfig)
 	}
 	if runnerNeedsSignalContext(buildConfig != nil, *localBuildDeploy, *hostingRuntimeEnv, *proxyVerifiedSwitch) {

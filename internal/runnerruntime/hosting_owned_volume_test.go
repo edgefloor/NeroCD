@@ -545,3 +545,40 @@ func TestHostingOwnedVolumeDisposableDocker(t *testing.T) {
 	}
 	t.Logf("qualified exact volume=%s daemon=%s labels=%d driver=%s scope=%s; cleanup verifies ownership/users and absence", created.VolumeName, created.DaemonID, len(created.Labels), created.Driver, created.Scope)
 }
+
+func TestHostingOwnedVolumeChecksAuthorityAfterInspection(t *testing.T) {
+	for _, mode := range []string{"revoked", "canceled", "valid"} {
+		t.Run(mode, func(t *testing.T) {
+			req := ownedVolumeRequest(t)
+			req.CreatePermitted = true
+			e := testImageEngine(t)
+			fake := &ownedVolumeFake{req: req}
+			fake.install(t, e)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			checks := 0
+			_, err := e.ensureOwnedVolumeWithAuthority(ctx, req, func(context.Context) error {
+				checks++
+				inspected := false
+				for _, call := range fake.calls {
+					if strings.HasPrefix(call, "container ls") {
+						inspected = true
+					}
+				}
+				if !inspected {
+					t.Fatal("authority checked before fallible user inspection")
+				}
+				if mode == "revoked" {
+					return errors.New("authority revoked")
+				}
+				if mode == "canceled" {
+					cancel()
+				}
+				return nil
+			})
+			if checks != 1 || (err == nil) != (mode == "valid") || (fake.creates == 1) != (mode == "valid") {
+				t.Fatalf("mode=%s checks=%d creates=%d err=%v", mode, checks, fake.creates, err)
+			}
+		})
+	}
+}

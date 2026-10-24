@@ -378,3 +378,29 @@ func TestReadinessAndVerifiedSwitchIdentityCompose(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabaseExecutionIdentityRequiresExactConfigurationAndPrerequisites(t *testing.T) {
+	for _, tc := range []struct {
+		configured bool
+		caps       []string
+		valid      bool
+	}{
+		{false, nil, true},
+		{false, []string{domain.HostingDatabaseCapability}, false},
+		{false, []string{domain.RunTypeDatabaseDeploy}, false},
+		{true, []string{domain.HostingDatabaseCapability}, false},
+		{true, []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability}, false},
+		{true, []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}, true},
+		{true, []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, "shell"}, false},
+		{true, nil, false},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": tc.caps})
+		}))
+		_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Database: tc.configured, DatabaseTrustedLoopbackHTTP: true})
+		server.Close()
+		if (err == nil) != tc.valid {
+			t.Fatalf("database identity accepted mismatch configured=%v caps=%v err=%v", tc.configured, tc.caps, err)
+		}
+	}
+}
