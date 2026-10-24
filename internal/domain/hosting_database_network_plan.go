@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"slices"
@@ -150,6 +151,10 @@ func (n HostingDatabaseNetworkPlan) validate(s HostingSnapshot, r HostingRelease
 // Contextual proof and original predecessor checks require ValidateHostingDatabasePlanTransition.
 // Existing generic validators deliberately continue to reject this family.
 func ValidateHostingDatabasePlanV2(p HostingApplyPlan) error {
+	raw, err := json.Marshal(p)
+	if err != nil || len(raw) > 48<<10 {
+		return ErrInvalidHostingDatabaseNetworkPlan
+	}
 	if p.ApplicationDatabase != nil || p.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || p.CompilerVersion != HostingDatabaseNetworkCompilerVersion || p.Database == nil || p.Database.Network == nil || p.Storage == nil || p.PreviousHealthy == nil || p.RetainPrevious || len(p.RetainedReleases) != 0 || p.Database.Network.validate(p.Snapshot, p.Release) != nil || p.Database.Network.Predecessor.PlanHash != p.PreviousHealthy.PlanHash {
 		return ErrInvalidHostingDatabaseNetworkPlan
 	}
@@ -283,6 +288,10 @@ func CompileHostingDatabasePlanV2(s HostingSnapshot, r HostingRelease, previous 
 	n.Hash = n.DocumentHash()
 	p.Database.Network, p.CompilerVersion, p.Hash = n, HostingDatabaseNetworkCompilerVersion, ""
 	p.Hash = HostingDocumentHash(p)
+	raw, err := json.Marshal(p)
+	if err != nil || len(raw) > 48<<10 {
+		return HostingApplyPlan{}, ErrInvalidHostingDatabaseNetworkPlan
+	}
 	if ValidateHostingDatabasePlanTransition(p, previousPlan, in) != nil {
 		return HostingApplyPlan{}, ErrInvalidHostingDatabaseNetworkPlan
 	}

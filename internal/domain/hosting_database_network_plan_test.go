@@ -491,3 +491,23 @@ func fmtOriginRecord(o HostingDatabaseNetworkOrigin) string {
 	}
 	return string(raw)
 }
+
+func TestDatabaseNetworkFinalSerializedSizeBound(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			original, healthy, in := databaseNetworkFixture(t, engine)
+			p := compileDatabaseNetwork(t, original, healthy, in)
+			raw, err := json.Marshal(p)
+			if err != nil || len(raw) > 48<<10 || ValidateHostingDatabasePlanTransition(p, original, in) != nil {
+				t.Fatal("valid bounded final plan rejected", err)
+			}
+			// This forged document also violates namespace shape. The explicit size
+			// guard must reject it before relying on those independent validations.
+			p.Snapshot.RuntimeNamespace = strings.Repeat("n", 48<<10)
+			rehashDatabaseNetwork(&p)
+			if ValidateHostingDatabasePlanV2(p) == nil {
+				t.Fatal("oversized final plan accepted")
+			}
+		})
+	}
+}
