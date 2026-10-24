@@ -194,6 +194,43 @@ elif tool == "docker":
     elif args[:1] == ["exec"]:
         if args[1:4] == [identity, "docker", "--host"] and "info" in args:
             print(json.dumps(dict(ID="guest-daemon", OSType="linux", Architecture="aarch64")))
+        elif args[1:4] == [identity, "env", "-i"]:
+            assert "APK_CONFIG=/dev/null" in args
+            if "apk" in args:
+                assert args[args.index("--repositories-file") + 1] == "/dev/null"
+                assert args[args.index("--keys-dir") + 1] == "/etc/apk/keys"
+                assert "--allow-untrusted" not in args
+                if "fetch" in args:
+                    assert args[args.index("--repository") + 1] == "https://dl-cdn.alpinelinux.org/alpine/v3.23/main"
+                    if case == "procps_fetch_signal":
+                        block()
+                    if case == "procps_fetch_failure":
+                        sys.exit(29)
+                else:
+                    assert "--no-network" in args
+                if "verify" in args and case == "procps_signature_failure":
+                    sys.exit(32)
+                if "add" in args:
+                    if case == "procps_install_failure":
+                        sys.exit(31)
+                    state["outer"]["procps_installed"] = True
+                    save()
+                if "info" in args and case == "procps_version_failure":
+                    sys.exit(33)
+            elif "sh" in args:
+                assert "sha256sum -c" in args[-1]
+                if case == "procps_hash_failure":
+                    sys.exit(30)
+            elif args[-3:] == ["ps", "-eo", "pid,uid"]:
+                assert state["outer"].get("procps_installed")
+                if case == "procps_unsupported":
+                    print("ps: unsupported uid column", file=sys.stderr)
+                    sys.exit(28)
+                print({"procps_bad_header": "USER PID\n0 1", "procps_bad_uid": "PID UID\n1 root",
+                       "procps_duplicate_pid": "PID UID\n1 0\n1 0", "procps_bad_pid": "PID UID\n01 0",
+                       "procps_missing_rows": "PID UID", "procps_oversized": "x" * 8193}.get(case, "PID UID\n1 0\n2 999"))
+            else:
+                raise RuntimeError("unexpected provisioning exec")
         elif args[1:4] == [identity, "sh", "-ec"]:
             if case == "guest_join_failure":
                 sys.exit(26)
@@ -257,6 +294,14 @@ class GateTest(unittest.TestCase):
                 self.assertEqual(output.count("gate exit="), 1, output)
                 self.assertTrue((evidence / "host-images-after").is_file(), output)
                 self.assertTrue((evidence / "status-after").is_file(), output)
+                if (evidence / "procps-installed-closure").exists():
+                    closure = json.loads((evidence / "procps-installed-closure").read_text())
+                    self.assertTrue(closure["exact_installed_versions_verified"])
+                    self.assertEqual(closure["architecture"], "aarch64")
+                    self.assertEqual(closure["repository"], "https://dl-cdn.alpinelinux.org/alpine/v3.23/main")
+                    self.assertEqual(len(closure["packages"]), 8)
+                    self.assertIn({"name": "musl", "version": "1.2.5-r24",
+                                   "sha256": "d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98"}, closure["packages"])
                 if case in ("label_reordering", "label_value_changed", "comma_label_change", "comma_label_unchanged", "unrelated_network_change"):
                     before = json.loads((evidence / "host-networks-before-structured").read_text())
                     after = json.loads((evidence / "host-networks-after-structured").read_text())
@@ -444,6 +489,49 @@ class GateTest(unittest.TestCase):
         start = next(index for index, args in enumerate(commands) if args[:2] == ["container", "start"])
         self.assertTrue(any(args[:2] == ["volume", "inspect"] for args in commands[create + 1:start]))
         self.assertTrue(any(args[:2] == ["container", "inspect"] for args in commands[create + 1:start]))
+
+    def test_procps_preflight_precedes_database_execution(self):
+        state, commands, output = self.run_gate("success", 0)
+        self.assertEqual(state, {})
+        provision = [args for args in commands if args[:4] == ["exec", IDENTITY, "env", "-i"]]
+        fetch = next(args for args in provision if "fetch" in args)
+        packages = {"libintl=0.24.1-r1", "libncursesw=6.5_p20251123-r0", "libproc2=4.0.5-r0",
+                    "musl=1.2.5-r24", "ncurses-terminfo-base=6.5_p20251123-r0", "procps-ng=4.0.5-r0",
+                    "skalibs-libs=2.14.4.0-r0", "utmps-libs=0.1.3.1-r0"}
+        self.assertEqual(set(fetch[fetch.index("--output") + 2:]), packages)
+        stages = [next(stage for stage in ("fetch", "sh", "verify", "add", "info", "ps") if stage in args)
+                  for args in provision]
+        self.assertEqual(stages, ["fetch", "sh", "verify", "add", "info", "ps"])
+        probe = next(args for args in provision if args[-3:] == ["ps", "-eo", "pid,uid"])
+        runtime = next(args for args in commands if "NEROCD_DATABASE_ORIGIN_UPGRADE_RUNTIME=disposable-dind" in args)
+        self.assertLess(commands.index(probe), commands.index(runtime))
+        self.assertIn("numeric PID/UID process preflight passed", output)
+
+    def test_procps_provisioning_failure_cleans_owned_resources(self):
+        for case, expected in (("fetch", 29), ("hash", 30), ("signature", 32), ("install", 31), ("version", 33)):
+            with self.subTest(stage=case):
+                state, commands, output = self.run_gate("procps_" + case + "_failure", expected)
+                self.assertEqual(state, {})
+                self.assertIn("procps preflight failed:", output)
+                self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+                self.assertIn(["volume", "rm", VOLUME], commands)
+                self.assertFalse(any("NEROCD_DATABASE_ORIGIN_UPGRADE_RUNTIME=disposable-dind" in args for args in commands))
+
+    def test_procps_rejects_unsupported_or_malformed_numeric_profile(self):
+        for case in ("unsupported", "bad_header", "bad_uid", "duplicate_pid", "bad_pid", "missing_rows", "oversized"):
+            with self.subTest(case=case):
+                state, commands, output = self.run_gate("procps_" + case, 28 if case == "unsupported" else 1)
+                self.assertEqual(state, {})
+                self.assertIn("procps preflight failed:", output)
+                self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+                self.assertIn(["volume", "rm", VOLUME], commands)
+                self.assertFalse(any("NEROCD_DATABASE_ORIGIN_UPGRADE_RUNTIME=disposable-dind" in args for args in commands))
+
+    def test_sigterm_during_package_fetch_joins_and_cleans(self):
+        state, commands, _ = self.run_gate("procps_fetch_signal", 143, signal.SIGTERM)
+        self.assertEqual(state, {})
+        self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+        self.assertIn(["volume", "rm", VOLUME], commands)
 
 
 if __name__ == "__main__":

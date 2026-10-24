@@ -44,7 +44,10 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go test -c -o /tmp/nerocd-origin-upgrade.t
 
 The fault suite uses harmless CLI stubs, including ambiguous creation responses,
 foreign volumes, malformed identities, build failures, deadlines, signal delivery,
-process-group joining and cleanup failures. It does not contact Docker.
+process-group joining and cleanup failures. Package fetch, hash, signature,
+installation and version failures must clean the exact owned outer and volume.
+Unsupported, malformed or oversized numeric process output must fail before the
+database test. These checks do not contact Docker or install packages.
 
 ## Separately authorized physical run
 
@@ -69,9 +72,48 @@ preparation inside the nested daemon. The launcher builds only the static runtim
 test binary, copies it into the outer container, and selects exactly
 `^TestHostingDatabaseOriginUpgradeNativeRuntime$`. It never touches PG32967.
 
+The daemon host must support `ps -eo pid,uid` with numeric PID and UID columns.
+The pinned Alpine image's BusyBox `ps` rejects `uid`, so the launcher provisions
+[Alpine v3.23 main aarch64 procps-ng 4.0.5-r0](https://pkgs.alpinelinux.org/package/v3.23/main/aarch64/procps-ng)
+inside its disposable daemon before any database test. Production process
+ownership still requires every observed UID to equal 999, the inspected host PID
+to occur in the list, and container identity to remain stable across inspection.
+The preflight checks tool support, while the database test checks actual ownership.
+
+The complete package closure is fixed in `gate.sh`, including archive SHA-256
+identities. Its versions are:
+
+| Package | Version |
+| --- | --- |
+| procps-ng, libproc2 | 4.0.5-r0 |
+| libintl | 0.24.1-r1 |
+| libncursesw, ncurses-terminfo-base | 6.5_p20251123-r0 |
+| utmps-libs | 0.1.3.1-r0 |
+| skalibs-libs | 2.14.4.0-r0 |
+| musl | 1.2.5-r24 |
+
+Only `https://dl-cdn.alpinelinux.org/alpine/v3.23/main` supplies packages.
+Fetching uses exact version constraints, a clean environment, an empty repository
+configuration, the pinned image's `/etc/apk/keys`, a per-file shell size limit and
+a 120-second deadline. SHA-256 verification precedes explicit `apk verify` and
+offline installation of the eight local archives. Signature trust is required;
+the launcher does not permit untrusted packages or disable certificate checks.
+An exact installed-version check records the closure, including musl, before the
+bounded PID/UID-only probe. Every provisioning stage must succeed before the
+database test starts. Missing pinned archives or incompatible existing package
+constraints fail preflight and trigger the same owned-resource cleanup.
+
+This package set qualifies only this fixed disposable fixture profile. It does
+not establish support for other Docker hosts or Alpine versions. Package fetching
+is part of the separately reviewed and authorized physical run, and never installs
+anything on the outer host. The outer image, mount, network and port policy remain
+the fixed profile described above.
+
 Evidence is bounded under a new `/tmp/nerocd-database-origin-upgrade-20261024.*`
 directory: candidate/tree/source blobs, binary hash/build info, daemon profiles,
-physical test output, before/after inventories, process absence and cleanup result.
+package fetch/hash/signature/install/version output, the installed closure and
+numeric PID/UID probe, physical test output, before/after inventories, process
+absence and cleanup result.
 It verifies exact outer labels, image/configuration and the complete observed data
 volume metadata before removal. Ambiguous outcomes preserve reserved storage;
 inspection errors never establish absence. On interruption, task-owned host process

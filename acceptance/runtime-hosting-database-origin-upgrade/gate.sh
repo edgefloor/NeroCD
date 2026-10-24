@@ -21,6 +21,19 @@ NAME, VOLUME = OWNER + "-dind", OWNER + "-docker-data"
 ENDPOINT = "unix:///var/run/docker.sock"
 DAEMON = "e37dd219-b13f-47dd-99ed-21d79442ed0c"
 IMAGE = "docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489"
+# Complete signed v3.23/main/aarch64 dependency closure, including musl. The
+# pinned outer image's BusyBox ps cannot supply the required numeric uid column.
+PROCPS_REPOSITORY = "https://dl-cdn.alpinelinux.org/alpine/v3.23/main"
+PROCPS_PACKAGES = (
+    ("libintl", "0.24.1-r1", "291a89bbb0e511e9875ff7aa9d6d07dc9a2fec8bf94c2a686d1a9153b8c58903"),
+    ("libncursesw", "6.5_p20251123-r0", "7fe332c8af8b97579e89df56466f83f4abda5040a18e1842c07d684320bbef4b"),
+    ("libproc2", "4.0.5-r0", "9f3b7b5f3f27cd15b471ac8e14915d7f686968f53b9249168f0adf318edb1687"),
+    ("musl", "1.2.5-r24", "d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98"),
+    ("ncurses-terminfo-base", "6.5_p20251123-r0", "6952a6b39abaf7bbc498cb085f0f59bf23619b53b3f7328b08fe50c0198a2bd4"),
+    ("procps-ng", "4.0.5-r0", "be8701f46de45aa1876f0b50748c54d47d216e8d3f54793c350818c669e64bc8"),
+    ("skalibs-libs", "2.14.4.0-r0", "f1c33c73d842c98d99033833eaf681819b0f5b51310a6e286c2eb88b9a88ed97"),
+    ("utmps-libs", "0.1.3.1-r0", "dbaa260e4328738d51b2ec77fdda9037cdbd67047465de5b2a30dce9a66f8fff"),
+)
 evidence = Path(tempfile.mkdtemp(prefix="nerocd-database-origin-upgrade-20261024.", dir="/tmp"))
 log = (evidence / "gate.log").open("ab", buffering=0)
 volume_attempted = outer_attempted = False
@@ -272,6 +285,64 @@ def verified_outer(identity):
     return value
 
 
+def procps_numeric_profile(raw):
+    if len(raw.encode("utf-8")) > 8192:
+        return False
+    lines = raw.strip().splitlines()
+    if not 2 <= len(lines) <= 256 or lines[0].split() != ["PID", "UID"]:
+        return False
+    seen = set()
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) != 2 or any(not re.fullmatch(r"0|[1-9][0-9]{0,9}", value) for value in fields):
+            return False
+        pid = int(fields[0])
+        if pid < 1 or pid in seen:
+            return False
+        seen.add(pid)
+    return True
+
+
+def provision_procps():
+    # All mutations stay inside the exact disposable daemon. No ambient APK
+    # configuration, repositories, proxies or credentials enter these commands.
+    environment = ["env", "-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "APK_CONFIG=/dev/null"]
+    apk = ["apk", "--arch", "aarch64", "--no-cache", "--repositories-file", "/dev/null", "--keys-dir", "/etc/apk/keys"]
+    specs = [name + "=" + version for name, version, _ in PROCPS_PACKAGES]
+    filenames = [name + "-" + version + ".apk" for name, version, _ in PROCPS_PACKAGES]
+    files = ["/fixture/apk/" + filename for filename in filenames]
+    checksums = "\n".join(digest + "  " + filename for (_, _, digest), filename in zip(PROCPS_PACKAGES, filenames))
+    stages = (
+        # Alpine's shell limits each fetched archive/index file before apk runs;
+        # the complete fetch also has a fixed process deadline.
+        ("fetch", ["sh", "-ec", 'ulimit -f 2048; exec "$@"', "procps-fetch", *apk,
+                   "--repository", PROCPS_REPOSITORY, "--timeout", "20", "fetch", "--output", "/fixture/apk", *specs], 120),
+        ("hash", ["sh", "-ec", "cd /fixture/apk\nsha256sum -c <<'NEROCD_PROCPS_HASHES'\n" + checksums + "\nNEROCD_PROCPS_HASHES\n"], 20),
+        ("signature", [*apk, "--no-network", "verify", *files], 20),
+        ("install", [*apk, "--no-network", "add", *files], 60),
+        ("version", [*apk, "--no-network", "info", "--exists", *specs], 20),
+    )
+    for stage, args, timeout in stages:
+        verified_outer(outer)
+        try:
+            docker("exec", outer, *environment, *args, timeout=timeout, output="procps-" + stage)
+        except Failure as error:
+            raise Failure("procps preflight failed: " + stage, error.status) from error
+    # The successful exact-version check is distinct from the intended manifest.
+    (evidence / "procps-installed-closure").write_text(json.dumps(dict(
+        repository=PROCPS_REPOSITORY, architecture="aarch64", keys="/etc/apk/keys",
+        packages=[dict(name=name, version=version, sha256=digest) for name, version, digest in PROCPS_PACKAGES],
+        exact_installed_versions_verified=True), sort_keys=True) + "\n")
+    verified_outer(outer)
+    try:
+        raw = docker("exec", outer, *environment, "ps", "-eo", "pid,uid", timeout=20, output="procps-probe")
+    except Failure as error:
+        raise Failure("procps preflight failed: numeric PID/UID command", error.status) from error
+    if not procps_numeric_profile(raw):
+        raise Failure("procps preflight failed: malformed numeric PID/UID output")
+    say("numeric PID/UID process preflight passed")
+
+
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer
     if not Path("internal/runnerruntime/hosting_database_origin_upgrade_runtime_integration_test.go").is_file():
@@ -338,7 +409,8 @@ def main():
     if inner.get("OSType") != "linux" or inner.get("Architecture") not in ("arm64", "aarch64"):
         raise Failure("inner daemon/native architecture mismatch")
     (evidence / "native-profile").write_text("binary_goos=linux binary_goarch=arm64 emulation=false\n" + json.dumps(inner) + "\n")
-    docker("exec", outer, "mkdir", "-p", "/fixture")
+    docker("exec", outer, "mkdir", "-p", "/fixture/apk")
+    provision_procps()
     docker("cp", str(evidence / "runtime.test"), outer + ":/fixture/runtime.test")
     say(docker("exec", "--env", "NEROCD_DATABASE_ORIGIN_UPGRADE_RUNTIME=disposable-dind", outer, "/fixture/runtime.test",
                "-test.v", "-test.run", "^TestHostingDatabaseOriginUpgradeNativeRuntime$", "-test.timeout=20m",
