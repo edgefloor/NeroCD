@@ -166,6 +166,7 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
+	StorageArchive      *StorageArchiveExecutionConfig
 	Database            *DatabaseExecutionConfig
 	HostingReadiness    *HostingReadinessConfig
 	HostingObservation  *HostingObservationConfig
@@ -195,6 +196,9 @@ func Run(config Config) error { return RunContext(context.Background(), config) 
 // RunContext joins attempt cleanup before returning after parent cancellation.
 // It retains unresolved journal evidence and never treats cancellation as success.
 func RunContext(ctx context.Context, config Config) error {
+	if config.StorageArchive != nil {
+		ctx = runnerclient.WithStorageArchiveTransport(ctx, runnerclient.StorageArchiveTransport{TrustedLoopbackHTTP: config.StorageArchive.TrustedLoopbackHTTP})
+	}
 	if config.Database != nil {
 		ctx = runnerclient.WithDatabaseTransport(ctx, runnerclient.DatabaseTransport{TrustedLoopbackHTTP: config.Database.TrustedLoopbackHTTP})
 	}
@@ -202,6 +206,9 @@ func RunContext(ctx context.Context, config Config) error {
 		return ctx.Err()
 	}
 	if err := validateDatabaseExecutionConfig(config); err != nil {
+		return err
+	}
+	if err := validateStorageArchiveExecutionConfig(config); err != nil {
 		return err
 	}
 	if err := validateHostingReadinessConfig(config); err != nil {
@@ -233,7 +240,12 @@ func RunContext(ctx context.Context, config Config) error {
 			return err
 		}
 	}
-	if config.Database != nil || config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil || config.HostingObservation != nil || config.HostingRuntimeLogs != nil || config.HostingReadiness != nil {
+	if config.StorageArchive != nil {
+		if err := ValidateStorageArchiveExecution(ctx, *config.StorageArchive, config.ImageDockerEndpoint); err != nil {
+			return err
+		}
+	}
+	if config.StorageArchive != nil || config.Database != nil || config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil || config.HostingObservation != nil || config.HostingRuntimeLogs != nil || config.HostingReadiness != nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -264,6 +276,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, config.Proxy, ctx); err != nil {
 		return fmt.Errorf("reconcile proxy journal: %w", err)
 	}
+	if err := reconcileStorageArchiveJournal(ctx, config, journal); err != nil {
+		return err
+	}
 	if err := reconcileHostingDatabaseJournal(ctx, config, journal); err != nil {
 		return err
 	}
@@ -275,7 +290,7 @@ func RunContext(ctx context.Context, config Config) error {
 	}
 	// Preserve legacy uncertain-journal reconciliation before ordinary lifecycle
 	// reads. Configured build/proxy runners authenticate before their replay.
-	if config.Database == nil && !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil && config.HostingObservation == nil && config.HostingRuntimeLogs == nil && config.HostingReadiness == nil {
+	if config.StorageArchive == nil && config.Database == nil && !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil && config.HostingObservation == nil && config.HostingRuntimeLogs == nil && config.HostingReadiness == nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -338,6 +353,9 @@ func RunContext(ctx context.Context, config Config) error {
 		if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy && (config.Database == nil || !config.Execute || config.CompleteStatus != "") {
 			return errors.New("database_deploy requires configured execution; generic completion is forbidden")
 		}
+		if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive && (config.StorageArchive == nil || !config.Execute || config.CompleteStatus != "") {
+			return errors.New("storage_archive requires configured execution; generic completion is forbidden")
+		}
 		if claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy && (!config.LocalBuildDeploy || !config.Execute || config.CompleteStatus != "") {
 			return errors.New("local build deployment requires explicit execution; generic completion is forbidden")
 		}
@@ -345,7 +363,7 @@ func RunContext(ctx context.Context, config Config) error {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{database: config.Database, imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, runtimeEnvironment: config.RuntimeEnvironment}); err != nil {
+			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{storageArchive: config.StorageArchive, database: config.Database, imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, runtimeEnvironment: config.RuntimeEnvironment}); err != nil {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
@@ -408,6 +426,7 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 }
 
 type claimExecutionOptions struct {
+	storageArchive     *StorageArchiveExecutionConfig
 	database           *DatabaseExecutionConfig
 	runtimeEnvironment *RuntimeEnvironmentConfig
 	localBuild         bool
@@ -420,6 +439,9 @@ func executeClaimWithOptions(server string, token string, claim domain.ClaimedRu
 	return executeClaimWithOptionsContext(context.Background(), server, token, claim, workDir, cancelPollInterval, journal, secretRoot, imagePolicy, operational, options)
 }
 func executeClaimWithOptionsContext(parent context.Context, server string, token string, claim domain.ClaimedRun, workDir string, cancelPollInterval time.Duration, journal *runner.AttemptJournal, secretRoot string, imagePolicy composeImagePolicy, operational *runnerOperationalCounters, options claimExecutionOptions) error {
+	if options.storageArchive != nil {
+		parent = runnerclient.WithStorageArchiveTransport(parent, runnerclient.StorageArchiveTransport{TrustedLoopbackHTTP: options.storageArchive.TrustedLoopbackHTTP})
+	}
 	if options.database != nil {
 		parent = runnerclient.WithDatabaseTransport(parent, runnerclient.DatabaseTransport{TrustedLoopbackHTTP: options.database.TrustedLoopbackHTTP})
 	}
@@ -429,7 +451,11 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	if isBuildClaim(claim) {
 		return executeBuildClaim(parent, server, token, claim, claim.Lease.RunnerID, cancelPollInterval, options.build, operational)
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
+	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive {
+		if options.storageArchive == nil || domain.ValidateStorageArchiveTask(claim.Run) != nil {
+			return errors.New("invalid or unconfigured storage archive task")
+		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
 		if options.database == nil || domain.ValidateDatabaseDeploymentTask(claim.Run) != nil {
 			return errors.New("invalid or unconfigured database task")
 		}
@@ -502,7 +528,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
 	var validators []func(domain.RunLease) error
-	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
 		validate := exactBuildLease(claim.Lease)
 		if err := validate(initialRenew); err != nil {
 			return err
@@ -521,6 +547,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	defer watcher.Stop()
 	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
 	defer reporter.Stop()
+	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive {
+		return executeStorageArchiveClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.storageArchive)
+	}
 	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
 		return executeDatabaseClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.database)
 	}

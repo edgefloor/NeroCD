@@ -67,12 +67,16 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
+	StorageArchive, StorageArchiveTrustedLoopbackHTTP                                                                            bool
 	Database, Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, Readiness, ProxyVerifiedSwitch bool
 	DatabaseTrustedLoopbackHTTP, ReadinessTrustedLoopbackHTTP                                                                    bool
 }
 
 // RuntimeExecutionIdentityWithOptions checks every protected execution capability.
 func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options RuntimeExecutionOptions) (string, error) {
+	if options.StorageArchive {
+		ctx = WithStorageArchiveTransport(ctx, StorageArchiveTransport{TrustedLoopbackHTTP: options.StorageArchiveTrustedLoopbackHTTP})
+	}
 	if options.Database {
 		ctx = WithDatabaseTransport(ctx, DatabaseTransport{TrustedLoopbackHTTP: options.DatabaseTrustedLoopbackHTTP})
 	}
@@ -163,6 +167,14 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	}
 	if databaseCapable != options.Database || databaseTask != options.Database || databaseCapable && (shellCapable || !storageCapable) {
 		return "", errors.New("authenticated database capability does not match explicit configuration")
+	}
+	archiveCapability, archiveTask := false, false
+	for _, capability := range result.Capabilities {
+		archiveCapability = archiveCapability || capability == domain.HostingStorageArchiveCapability
+		archiveTask = archiveTask || capability == domain.RunTypeStorageArchive
+	}
+	if archiveCapability != options.StorageArchive || archiveTask != options.StorageArchive || archiveCapability && (shellCapable || !storageCapable) {
+		return "", errors.New("authenticated storage archive capability does not match explicit configuration")
 	}
 	if private != privateCapable {
 		return "", errors.New("authenticated private Git capability does not match explicit configuration")

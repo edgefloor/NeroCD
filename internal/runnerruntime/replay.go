@@ -319,6 +319,9 @@ func reconcileRunnerJournalWithCounters(server, token string, journal *runner.At
 	// Its request contains immutable evidence and must survive response loss
 	// without another checkout or source-policy evaluation.
 	for _, pending := range snapshot.Provenance {
+		if archiveAttemptInSnapshot(snapshot, pending.Attempt) {
+			continue
+		}
 		lease, fenced, err := probeReplayAuthority(server, token, pending.Attempt, parent)
 		if err != nil {
 			return err
@@ -351,6 +354,9 @@ func reconcileRunnerJournalWithCounters(server, token string, journal *runner.At
 	}
 	attempts := groupReplayAttempts(snapshot)
 	for _, pending := range attempts {
+		if archiveAttemptInSnapshot(snapshot, pending.authority) {
+			continue
+		}
 		lease, fenced, err := probeReplayAuthority(server, token, pending.authority, parent)
 		if err != nil {
 			return err

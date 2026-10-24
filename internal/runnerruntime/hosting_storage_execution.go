@@ -69,6 +69,9 @@ func executeHostingStoragePrepared(supervisor *attemptSupervisor, journal *runne
 	if !storageOperationMatches(op, a, op.Snapshot.Storage) || op.State != "prepared" || op.RestoreOwnershipHeld || op.Result != nil || op.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) || supervisor.Context().Err() != nil {
 		return errors.New("storage execution requires a live exact prepared plan")
 	}
+	if storageArchiveConflict(journal.Snapshot(), op.Snapshot.Storage, op.BindingID, op.ID, "") {
+		return errStorageArchiveHeld
+	}
 	plan := op.Plan
 	create := domain.HostingStorageCreateRequest{HostingAuthority: a, PlanHash: plan.Hash, StorageRef: op.Snapshot.Storage, CreationNonce: plan.Storage.CreationNonce}
 	entry := runner.JournalHosting{ID: attemptMutationKey("hosting_storage", a.LeaseID, a.Attempt, "create"), Attempt: journalAttemptIdentity(a.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "storage_create_intent", Plan: plan, StorageRef: op.Snapshot.Storage, StorageCreate: &create, CreatedAt: time.Now().UTC()}
@@ -214,6 +217,9 @@ func reconcileHostingStorageJournalWithEngine(server, token string, journal *run
 		if runner.HostingJournalUsesDatabase(first) || !runner.HostingJournalUsesStorage(first) || cleanup[storageEntryAuthority(first)] {
 			continue
 		}
+		if hostingEntryArchiveConflict(journal, first) {
+			continue
+		}
 		a := storageEntryAuthority(first)
 		if seen[a] {
 			continue
@@ -297,6 +303,11 @@ func reconcileStorageAttempt(parent context.Context, server, token string, clien
 	}
 	if !storageOperationMatches(op, a, first.StorageRef) {
 		return errors.New("storage recovery committed plan missing")
+	}
+	// Retain this conflicting image attempt while unrelated replay and claims
+	// continue. Only a fresh archive recovery may settle its storage exclusion.
+	if storageArchiveConflict(journal.Snapshot(), op.Snapshot.Storage, op.BindingID, op.ID, "") {
+		return nil
 	}
 	for _, entry := range journal.Snapshot().Hosting {
 		if storageEntryAuthority(entry) == a && entry.Plan != nil && domain.HostingDocumentHash(entry.Plan) != domain.HostingDocumentHash(op.Plan) {
