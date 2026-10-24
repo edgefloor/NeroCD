@@ -181,25 +181,26 @@ type HostingStorageArchiveTarget struct {
 // Writers are controller-derived eligible identities. Their actual initial states
 // must be snapshotted durably before the first stop intent is acknowledged.
 type HostingStorageArchivePlan struct {
-	OperationID           string                        `json:"operation_id"`
-	ProjectID             string                        `json:"project_id"`
-	ServerID              string                        `json:"server_id"`
-	DestinationID         string                        `json:"destination_id"`
-	RunnerID              string                        `json:"runner_id"`
-	Mode                  string                        `json:"mode"`
-	BackupID              string                        `json:"backup_id"`
-	RecoveryOfOperationID string                        `json:"recovery_of_operation_id,omitempty"`
-	SourceHealthy         HostingHealthy                `json:"source_healthy"`
-	SourceStorage         HostingStorage                `json:"source_storage"`
-	SourceMaterialization HostingStorageMaterialization `json:"source_materialization"`
-	Writers               []HostingHealthy              `json:"writers"`
-	Target                *HostingStorageArchiveTarget  `json:"target,omitempty"`
-	Helper                HostingStorageArchiveHelper   `json:"helper"`
-	Limits                HostingStorageArchiveLimits   `json:"limits"`
-	Blob                  *HostingStorageArchiveBlob    `json:"blob,omitempty"`
-	CompilerVersion       string                        `json:"compiler_version"`
-	PolicyVersion         string                        `json:"policy_version"`
-	Hash                  string                        `json:"hash"`
+	OperationID           string                                 `json:"operation_id"`
+	ProjectID             string                                 `json:"project_id"`
+	ServerID              string                                 `json:"server_id"`
+	DestinationID         string                                 `json:"destination_id"`
+	RunnerID              string                                 `json:"runner_id"`
+	Mode                  string                                 `json:"mode"`
+	BackupID              string                                 `json:"backup_id"`
+	RecoveryOfOperationID string                                 `json:"recovery_of_operation_id,omitempty"`
+	RecoveryEvidence      *HostingStorageArchiveRecoveryEvidence `json:"recovery_evidence,omitempty"`
+	SourceHealthy         HostingHealthy                         `json:"source_healthy"`
+	SourceStorage         HostingStorage                         `json:"source_storage"`
+	SourceMaterialization HostingStorageMaterialization          `json:"source_materialization"`
+	Writers               []HostingHealthy                       `json:"writers"`
+	Target                *HostingStorageArchiveTarget           `json:"target,omitempty"`
+	Helper                HostingStorageArchiveHelper            `json:"helper"`
+	Limits                HostingStorageArchiveLimits            `json:"limits"`
+	Blob                  *HostingStorageArchiveBlob             `json:"blob,omitempty"`
+	CompilerVersion       string                                 `json:"compiler_version"`
+	PolicyVersion         string                                 `json:"policy_version"`
+	Hash                  string                                 `json:"hash"`
 }
 
 // HostingStorageArchiveWriterState reports only the exact allowed container and
@@ -211,6 +212,15 @@ type HostingStorageArchiveWriterState struct {
 	PlanHash    string `json:"plan_hash"`
 	ReleaseHash string `json:"release_hash"`
 	Running     bool   `json:"running"`
+}
+
+// HostingStorageArchiveRecoveryEvidence is controller-derived immutable history,
+// never old lease authority. Only durable stop intents create resume obligations.
+type HostingStorageArchiveRecoveryEvidence struct {
+	OriginalPlanHash           string                             `json:"original_plan_hash"`
+	SnapshotReceiptID          string                             `json:"snapshot_receipt_id,omitempty"`
+	Writers                    []HostingStorageArchiveWriterState `json:"writers"`
+	ResumeRequiredContainerIDs []string                           `json:"resume_required_container_ids"`
 }
 
 // HostingStorageArchivePreparedRequest confirms the configured helper identity.
@@ -241,6 +251,18 @@ type HostingStorageArchiveProgress struct {
 	RestoreVerified   bool                               `json:"restore_verified"`
 }
 
+// HostingStorageArchiveProgressEvidence is safe operation history. Fenced runner
+// requests are retained privately; lease IDs, attempts and fences are not exposed.
+type HostingStorageArchiveProgressEvidence struct {
+	Receipt           HostingReceipt                     `json:"receipt"`
+	PlanHash          string                             `json:"plan_hash"`
+	Phase             string                             `json:"phase"`
+	Writers           []HostingStorageArchiveWriterState `json:"writers,omitempty"`
+	HelperContainerID string                             `json:"helper_container_id,omitempty"`
+	Blob              *HostingStorageArchiveBlob         `json:"blob,omitempty"`
+	RestoreVerified   bool                               `json:"restore_verified"`
+}
+
 // HostingStorageArchiveResult never implies that an application is Ready.
 type HostingStorageArchiveResult struct {
 	ArchiveOutcome  string                     `json:"archive_outcome"`
@@ -262,14 +284,14 @@ type HostingStorageArchiveCompleteRequest struct {
 // HostingStorageArchive is a typed sidecar. Generic image mutation endpoints
 // reject its presence and never decode it as HostingApplyPlan or HostingResult.
 type HostingStorageArchive struct {
-	Mode                  string                          `json:"mode"`
-	BackupID              string                          `json:"backup_id"`
-	RestoreID             string                          `json:"restore_id,omitempty"`
-	RecoveryOfOperationID string                          `json:"recovery_of_operation_id,omitempty"`
-	Plan                  HostingStorageArchivePlan       `json:"plan"`
-	PreparedReceipt       *HostingReceipt                 `json:"prepared_receipt,omitempty"`
-	Progress              []HostingStorageArchiveProgress `json:"progress"`
-	Result                *HostingStorageArchiveResult    `json:"result,omitempty"`
+	Mode                  string                                  `json:"mode"`
+	BackupID              string                                  `json:"backup_id"`
+	RestoreID             string                                  `json:"restore_id,omitempty"`
+	RecoveryOfOperationID string                                  `json:"recovery_of_operation_id,omitempty"`
+	Plan                  HostingStorageArchivePlan               `json:"plan"`
+	PreparedReceipt       *HostingReceipt                         `json:"prepared_receipt,omitempty"`
+	Progress              []HostingStorageArchiveProgressEvidence `json:"progress"`
+	Result                *HostingStorageArchiveResult            `json:"result,omitempty"`
 }
 
 // HostingStorageBackup exposes metadata only. Bytes remain private to the daemon.
@@ -329,6 +351,9 @@ func (p HostingStorageArchivePlan) Validate() error {
 	if h.Storage != nil && (h.Storage.Plan.CreationOperationID != p.SourceMaterialization.CreationOperationID || h.Storage.Plan.CreationNonce != p.SourceMaterialization.CreationNonce || h.Storage.Plan.DaemonID != p.SourceMaterialization.DaemonID) {
 		return ErrInvalidStorageArchive
 	}
+	if h.Storage != nil && (h.Storage.Plan.MountPath != p.SourceStorage.MountPath || h.Storage.Plan.VolumeName != p.SourceStorage.VolumeName) {
+		return ErrInvalidStorageArchive
+	}
 	if ValidateHostingRelease(h.Release) != nil || ValidateHostingHealthyStorage(h) != nil || h.Storage == nil || s.PolicyVersion != HostingOwnedStoragePolicyVersion || s.Database != (HostingDatabaseExecutionRef{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) || p.SourceStorage.ProjectID != p.ProjectID || p.SourceStorage.ResourceID != s.ResourceID || p.SourceStorage.BindingID != s.BindingID || p.SourceStorage.DestinationID != p.DestinationID || s.ServerID != p.ServerID || s.RunnerID != p.RunnerID || s.DestinationID != p.DestinationID || p.Helper.DaemonID != h.Release.DaemonID || p.SourceMaterialization.DaemonID != p.Helper.DaemonID || p.SourceMaterialization.StorageRef != s.Storage || p.SourceStorage.Reference() != s.Storage || h.Storage.CreationPlanHash != p.SourceMaterialization.CreationPlanHash {
 		return ErrInvalidStorageArchive
 	}
@@ -353,15 +378,15 @@ func (p HostingStorageArchivePlan) Validate() error {
 	}
 	switch p.Mode {
 	case "backup":
-		if p.Target != nil || p.Blob != nil || p.RecoveryOfOperationID != "" {
+		if p.Target != nil || p.Blob != nil || p.RecoveryOfOperationID != "" || p.RecoveryEvidence != nil {
 			return ErrInvalidStorageArchive
 		}
 	case "restore":
-		if p.Target == nil || p.Blob == nil || p.RecoveryOfOperationID != "" {
+		if p.Target == nil || p.Blob == nil || p.RecoveryOfOperationID != "" || p.RecoveryEvidence != nil {
 			return ErrInvalidStorageArchive
 		}
 	case "recover":
-		if !hostingProxyID.MatchString(p.RecoveryOfOperationID) || p.RecoveryOfOperationID == p.OperationID {
+		if !hostingProxyID.MatchString(p.RecoveryOfOperationID) || p.RecoveryOfOperationID == p.OperationID || p.RecoveryEvidence == nil || p.RecoveryEvidence.Validate(p.Writers) != nil {
 			return ErrInvalidStorageArchive
 		}
 	default:
@@ -390,6 +415,39 @@ func (p HostingStorageArchivePlan) Validate() error {
 	expected.Hash = ""
 	if p.Hash != HostingDocumentHash(expected) {
 		return ErrInvalidStorageArchive
+	}
+	return nil
+}
+
+// Validate requires canonical observed writer identities and a running-only
+// resume subset. Proven stop intent and resumed evidence are controller checks.
+func (e HostingStorageArchiveRecoveryEvidence) Validate(eligible []HostingHealthy) error {
+	if !imageSHA256.MatchString(e.OriginalPlanHash) || len(e.Writers) > 64 || len(e.ResumeRequiredContainerIDs) > len(e.Writers) {
+		return ErrInvalidStorageArchive
+	}
+	if len(e.Writers) == 0 {
+		if e.SnapshotReceiptID != "" || len(e.ResumeRequiredContainerIDs) != 0 {
+			return ErrInvalidStorageArchive
+		}
+		return nil
+	}
+	if !validRuntimeReferenceID(e.SnapshotReceiptID) || len(e.Writers) != len(eligible) {
+		return ErrInvalidStorageArchive
+	}
+	running := map[string]bool{}
+	for i, w := range e.Writers {
+		h := eligible[i]
+		if w.ContainerID != h.ContainerID || w.OperationID != h.OperationID || w.ImageID != h.Release.ImageID || w.PlanHash != h.PlanHash || w.ReleaseHash != h.Release.Hash {
+			return ErrInvalidStorageArchive
+		}
+		running[w.ContainerID] = w.Running
+	}
+	last := ""
+	for _, id := range e.ResumeRequiredContainerIDs {
+		if id <= last || !running[id] {
+			return ErrInvalidStorageArchive
+		}
+		last = id
 	}
 	return nil
 }

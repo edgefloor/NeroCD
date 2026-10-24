@@ -177,6 +177,7 @@ func TestStorageArchiveRestoreNeverAuthorizesSourceWriter(t *testing.T) {
 	})
 	p.Mode = "recover"
 	p.RecoveryOfOperationID = p.OperationID
+	p.RecoveryEvidence = &HostingStorageArchiveRecoveryEvidence{OriginalPlanHash: p.Hash}
 	p.OperationID = "recovery_operation"
 	p.Hash = ""
 	p.Hash = HostingDocumentHash(p)
@@ -191,6 +192,77 @@ func TestStorageArchiveRestoreNeverAuthorizesSourceWriter(t *testing.T) {
 	}
 }
 
+func TestStorageArchiveRecoveryEvidenceCannotAuthorizeEligibleWriters(t *testing.T) {
+	p := archiveDomainPlan(t)
+	h := p.SourceHealthy
+	state := HostingStorageArchiveWriterState{ContainerID: h.ContainerID, OperationID: h.OperationID, ImageID: h.Release.ImageID, PlanHash: h.PlanHash, ReleaseHash: h.Release.Hash, Running: true}
+	p.Mode = "recover"
+	p.RecoveryOfOperationID = p.OperationID
+	p.OperationID = "recovery"
+	p.RecoveryEvidence = &HostingStorageArchiveRecoveryEvidence{OriginalPlanHash: p.Hash, SnapshotReceiptID: "snapshot_receipt", Writers: []HostingStorageArchiveWriterState{state}, ResumeRequiredContainerIDs: []string{h.ContainerID}}
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() != nil {
+		t.Fatal("exact running-only recovery snapshot refused")
+	}
+	for name, change := range map[string]func(*HostingStorageArchiveRecoveryEvidence){
+		"unknown_writer": func(e *HostingStorageArchiveRecoveryEvidence) { e.Writers[0].ContainerID = "foreign" },
+		"stopped_writer": func(e *HostingStorageArchiveRecoveryEvidence) { e.Writers[0].Running = false },
+		"duplicate_resume": func(e *HostingStorageArchiveRecoveryEvidence) {
+			e.ResumeRequiredContainerIDs = append(e.ResumeRequiredContainerIDs, e.ResumeRequiredContainerIDs...)
+		},
+		"missing_snapshot":         func(e *HostingStorageArchiveRecoveryEvidence) { e.SnapshotReceiptID = "" },
+		"missing_observed_writers": func(e *HostingStorageArchiveRecoveryEvidence) { e.Writers = nil },
+		"unknown_resume": func(e *HostingStorageArchiveRecoveryEvidence) {
+			e.ResumeRequiredContainerIDs = []string{"merely_eligible"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var changed HostingStorageArchivePlan
+			if json.Unmarshal(raw, &changed) != nil {
+				t.Fatal("fixture decode")
+			}
+			change(changed.RecoveryEvidence)
+			changed.Hash = ""
+			changed.Hash = HostingDocumentHash(changed)
+			if changed.Validate() == nil {
+				t.Fatal("unproven recovery writer obligation accepted")
+			}
+		})
+	}
+	p.RecoveryEvidence = &HostingStorageArchiveRecoveryEvidence{OriginalPlanHash: p.RecoveryEvidence.OriginalPlanHash}
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() != nil {
+		t.Fatal("recovery without stop intent must have empty obligations")
+	}
+	p.Mode = "backup"
+	p.RecoveryOfOperationID = ""
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() == nil {
+		t.Fatal("non-recovery operation accepted recovery evidence")
+	}
+}
+
+func TestStorageArchiveOperationHistoryOmitsLeaseAuthority(t *testing.T) {
+	p := archiveDomainPlan(t)
+	op := HostingOperation{StorageArchive: &HostingStorageArchive{Mode: "backup", BackupID: p.BackupID, Plan: p, Progress: []HostingStorageArchiveProgressEvidence{{Receipt: HostingReceipt{ID: "progress_receipt", BodyHash: p.Hash, CreatedAt: time.Now().UTC()}, PlanHash: p.Hash, Phase: "writer_snapshot"}}}}
+	raw, err := json.Marshal(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"lease_id"`, `"fence"`, `"attempt"`, `"authority"`} {
+		if strings.Contains(string(raw), field) {
+			t.Fatal("public archive operation exposed lease authority")
+		}
+	}
+}
+
 func TestStorageArchiveOriginReferencesRemainCanonical(t *testing.T) {
 	p := archiveDomainPlan(t)
 	h := *p.SourceHealthy.Storage
@@ -202,6 +274,19 @@ func TestStorageArchiveOriginReferencesRemainCanonical(t *testing.T) {
 	p.Hash = HostingDocumentHash(p)
 	if p.Validate() == nil {
 		t.Fatal("source origin descriptor disagreed with committed materialization")
+	}
+}
+
+func TestStorageArchiveSourceMountMatchesImmutableStorage(t *testing.T) {
+	p := archiveDomainPlan(t)
+	h := *p.SourceHealthy.Storage
+	h.Plan.MountPath = "/other_uploads"
+	p.SourceHealthy.Storage = &h
+	p.Writers = []HostingHealthy{p.SourceHealthy}
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() == nil {
+		t.Fatal("archive source mount differs from immutable storage")
 	}
 }
 
