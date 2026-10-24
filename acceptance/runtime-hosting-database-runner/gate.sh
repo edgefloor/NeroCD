@@ -362,14 +362,29 @@ def main():
     run(["git", "ls-files", "-s", "acceptance/runtime-hosting-database-runner/",
          "acceptance/runtime-hosting-database-client/", "internal/api/hosting_database_runtime_integration_test.go",
          "internal/api/hosting_database_capture_runtime_integration_test.go",
-         "cmd/nerocd/runner.go", "internal/runnerruntime/hosting_database_network_capture_execution.go",
+         "internal/api/hosting_database_upgrade_runtime_integration_test.go",
+         "cmd/nerocd/runner.go", "cmd/nerocd/runner_database_config.go",
+         "internal/runnerruntime/hosting_database_network_capture_execution.go",
          "internal/runnerruntime/hosting_database_network_capture.go", "internal/runner/journal_database_network_capture.go",
          "internal/runnerclient/hosting_database_network_capture.go",
          "internal/runnerruntime/hosting_database_execution.go", "internal/runnerruntime/hosting_database_engine.go",
+         "internal/runnerruntime/hosting_database_execution_config.go", "internal/runnerruntime/hosting_database_replay.go",
+         "internal/runnerruntime/hosting_database_upgrade_execution.go", "internal/runnerruntime/hosting_database_network_upgrade.go",
+         "internal/runnerruntime/hosting_runtime_environment.go",
          "internal/runnerruntime/hosting_database_secrets.go", "internal/runnerruntime/hosting_database_network.go",
          "internal/runnerruntime/hosting_database_readiness.go", "internal/runnerruntime/hosting_owned_volume.go",
+         "internal/runner/journal.go", "internal/runner/journal_database.go",
+         "internal/runner/journal_hosting.go", "internal/runner/journal_storage.go",
+         "internal/runnerclient/hosting_execution.go", "internal/runnerclient/hosting_proxy.go",
          "internal/runnerclient/hosting_database_delivery.go", "internal/domain/hosting_database.go",
-         "internal/domain/hosting_database_execution.go"], output="source-blobs")
+         "internal/domain/hosting_database_execution.go", "internal/domain/hosting_database_upgrade_execution.go",
+         "internal/domain/hosting_database_network_plan.go", "internal/domain/hosting_execution.go",
+         "internal/app/hosting_database_upgrade_service.go", "internal/store/hosting_database_upgrade_repository.go",
+         "internal/store/postgres_hosting_database_delivery.go", "internal/store/postgres_hosting_database_execution.go",
+         "internal/store/postgres_hosting_database_upgrade.go", "internal/store/postgres_hosting_execution.go",
+         "internal/store/postgres_hosting_storage_materialization.go",
+         "internal/store/sql/hosting_database_network_upgrades.sql", "internal/store/sqlcgen/hosting_database_network_upgrades.sql.go",
+         "internal/store/sqlcgen/models.go", "db/migrations/0071_hosting_database_network_upgrades.sql"], output="source-blobs")
     environment = dict(os.environ, GOOS="linux", GOARCH="arm64", CGO_ENABLED="0")
     run(["go", "test", "-c", "-o", str(evidence / "api.test"), "./internal/api"], timeout=300, env=environment)
     run(["go", "build", "-trimpath", "-o", str(evidence / "nerocd"), "./cmd/nerocd"], timeout=300, env=environment)
@@ -443,15 +458,15 @@ def main():
     runtime_output = docker("exec", "--workdir", "/workspace/internal/api",
                "--env", "NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME=disposable-dind",
                "--env", "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_database_runner?sslmode=disable",
-               outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHostingDatabase(CompiledRunner|CaptureCompiledRunner)$", "-test.timeout=25m",
+               outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHostingDatabase(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)$", "-test.timeout=25m",
                timeout=1510, output="runtime-test")
     say(runtime_output)
-    for test in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner"):
+    for test in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner"):
         if not re.search(r"^--- PASS: " + test + r" ", runtime_output, re.MULTILINE):
             raise Failure("required physical test did not pass: " + test)
         if re.search(r"^--- SKIP: " + test + r" ", runtime_output, re.MULTILINE):
             raise Failure("required physical test skipped: " + test)
-    say("compiled database and capture runners / authenticated API / River / private PostgreSQL and Redis gate passed")
+    say("compiled database, capture and upgrade runners / authenticated API / River / private PostgreSQL and Redis gate passed")
 
 
 GUEST_JOIN = r"""

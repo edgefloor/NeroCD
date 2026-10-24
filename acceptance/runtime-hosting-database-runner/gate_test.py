@@ -143,6 +143,9 @@ if tool == "python3":
 elif tool == "git":
     if args[:1] == ["rev-parse"]:
         print("1" * 40 if args[1] == "HEAD" else "2" * 40)
+    elif args[:2] == ["ls-files", "-s"]:
+        for path in args[2:]:
+            print("100644 " + "a" * 40 + "\t" + path)
 elif tool == "go":
     if args[:2] == ["test", "-c"] or args[:1] == ["build"]:
         if case in ("sigint", "sigterm"):
@@ -276,6 +279,15 @@ elif tool == "docker":
                 print("--- SKIP: TestHostingDatabaseCaptureCompiledRunner (0.00s)")
             elif case != "capture_missing":
                 print("--- PASS: TestHostingDatabaseCaptureCompiledRunner (0.01s)")
+            if case == "upgrade_failed":
+                print("--- FAIL: TestHostingDatabaseUpgradeCompiledRunner (0.01s)")
+                sys.exit(37)
+            if case == "upgrade_skipped":
+                print("--- SKIP: TestHostingDatabaseUpgradeCompiledRunner (0.00s)")
+            elif case != "upgrade_missing":
+                print("--- PASS: TestHostingDatabaseUpgradeCompiledRunner (0.01s)")
+            if case == "upgrade_skipped_after_pass":
+                print("--- SKIP: TestHostingDatabaseUpgradeCompiledRunner (0.00s)")
         elif args[1:3] == [identity, "docker"]:
             if "--detach" in args:
                 print("e" * 64)
@@ -349,6 +361,17 @@ class GateTest(unittest.TestCase):
                 if blocked:
                     self.assertIn("owned process group joined: " + str(blocked[0]), output)
                 commands = [json.loads(line)[1:] for line in (root / "commands").read_text().splitlines()]
+                self.source_manifests = [args[2:] for args in commands if args[:2] == ["ls-files", "-s"]]
+                if expected == 0:
+                    self.assertIn("head=" + "1" * 40 + "\ntree=" + "2" * 40, output)
+                    recorded = [line.split("\t", 1)[1] for line in (evidence / "source-blobs").read_text().splitlines()]
+                    self.assertEqual(recorded, self.source_manifests[0])
+                    for name, binary in (("api.test", evidence / "api.test"), ("nerocd", evidence / "nerocd"),
+                                         ("client", evidence / "client/client")):
+                        self.assertEqual((evidence / (name + "-sha256")).read_text(),
+                                         hashlib.sha256(binary.read_bytes()).hexdigest() + "\n")
+                        self.assertIn(["version", "-m", str(binary)], commands)
+                        self.assertEqual((evidence / (name + "-build-info")).read_text(), "GOOS=linux GOARCH=arm64\n")
                 docker_commands = [args[2:] for args in commands if args[:2] == ["--host", "unix:///var/run/docker.sock"]]
                 self.download_commands = [args for args in commands if args[:2] == ["-I", "-c"]]
                 if (evidence / "procps-installed-closure").exists():
@@ -506,10 +529,72 @@ class GateTest(unittest.TestCase):
         self.assertEqual(state, {})
         self.assertIn(["container", "rm", "--force", IDENTITY], commands)
 
+    def test_missing_or_skipped_upgrade_cannot_qualify_deployment_and_capture_only(self):
+        for case in ("upgrade_missing", "upgrade_skipped", "upgrade_skipped_after_pass"):
+            with self.subTest(case=case):
+                state, commands, output = self.run_gate(case, 1)
+                self.assertEqual(state, {})
+                message = "required physical test skipped: " if case == "upgrade_skipped_after_pass" else "required physical test did not pass: "
+                self.assertIn(message + "TestHostingDatabaseUpgradeCompiledRunner", output)
+                self.assertNotIn("private PostgreSQL and Redis gate passed", output)
+                self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+                self.assertIn(["volume", "rm", VOLUME], commands)
+
+    def test_upgrade_failure_retains_exit_and_cleans_owned_fixture(self):
+        state, commands, output = self.run_gate("upgrade_failed", 37)
+        self.assertEqual(state, {})
+        self.assertNotIn("private PostgreSQL and Redis gate passed", output)
+        self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+        self.assertIn(["volume", "rm", VOLUME], commands)
+
     def test_sigterm_during_runtime_joins_child_and_cleans_owned_fixture(self):
         state, commands, _ = self.run_gate("runtime_sigterm", 143, signal.SIGTERM)
         self.assertEqual(state, {})
         self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+
+    def test_source_manifest_covers_upgrade_contract_and_production_inputs(self):
+        state, _, _ = self.run_gate("success", 0)
+        self.assertEqual(state, {})
+        self.assertEqual(len(self.source_manifests), 1)
+        manifest = self.source_manifests[0]
+        self.assertEqual(len(manifest), len(set(manifest)), "source evidence contains duplicate paths")
+        required = {
+            'cmd/nerocd/runner.go',
+            'cmd/nerocd/runner_database_config.go',
+            'db/migrations/0071_hosting_database_network_upgrades.sql',
+            'internal/api/hosting_database_capture_runtime_integration_test.go',
+            'internal/api/hosting_database_runtime_integration_test.go',
+            'internal/api/hosting_database_upgrade_runtime_integration_test.go',
+            'internal/app/hosting_database_upgrade_service.go',
+            'internal/domain/hosting_database_network_plan.go',
+            'internal/domain/hosting_database_upgrade_execution.go',
+            'internal/domain/hosting_execution.go',
+            'internal/runner/journal.go',
+            'internal/runner/journal_database.go',
+            'internal/runner/journal_database_network_capture.go',
+            'internal/runner/journal_hosting.go',
+            'internal/runner/journal_storage.go',
+            'internal/runnerclient/hosting_database_delivery.go',
+            'internal/runnerclient/hosting_execution.go',
+            'internal/runnerclient/hosting_proxy.go',
+            'internal/runnerruntime/hosting_database_execution.go',
+            'internal/runnerruntime/hosting_database_execution_config.go',
+            'internal/runnerruntime/hosting_database_network_upgrade.go',
+            'internal/runnerruntime/hosting_database_replay.go',
+            'internal/runnerruntime/hosting_database_upgrade_execution.go',
+            'internal/runnerruntime/hosting_runtime_environment.go',
+            'internal/store/hosting_database_upgrade_repository.go',
+            'internal/store/postgres_hosting_database_delivery.go',
+            'internal/store/postgres_hosting_database_execution.go',
+            'internal/store/postgres_hosting_database_upgrade.go',
+            'internal/store/postgres_hosting_execution.go',
+            'internal/store/postgres_hosting_storage_materialization.go',
+            'internal/store/sql/hosting_database_network_upgrades.sql',
+            'internal/store/sqlcgen/hosting_database_network_upgrades.sql.go',
+            'internal/store/sqlcgen/models.go',
+        }
+        self.assertFalse(required - set(manifest), "upgrade source evidence omitted: " + str(sorted(required - set(manifest))))
+
 
     def test_harmless_complete_model(self):
         state, commands, output = self.run_gate("success", 0)
@@ -517,7 +602,7 @@ class GateTest(unittest.TestCase):
         self.assertIn("harmless runtime model passed", output)
         runtime_command = next(args for args in commands if "/fixture/api.test" in args)
         self.assertEqual(runtime_command[runtime_command.index("-test.run") + 1],
-                         "^TestHostingDatabase(CompiledRunner|CaptureCompiledRunner)$")
+                         "^TestHostingDatabase(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)$")
         self.assertIn("-test.timeout=25m", runtime_command)
         self.assertEqual(sum("/fixture/api.test" in args for args in commands), 1)
         create = next(index for index, args in enumerate(commands) if args[:2] == ["container", "create"])
