@@ -135,14 +135,9 @@ func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 			return errJournalConnection
 		}
 		c.proof, c.snapshot, c.maintenance = proof, snapshot, maintenance
-		if proof != "" {
-			if validateApplicationDatabaseJournal(e) != nil {
-				return errJournalConnection
-			}
-			in, err := domain.HostingApplicationDatabaseExecutionPlanInput(*e.ApplicationDatabase)
-			if err != nil {
-				return errJournalConnection
-			}
+		if proof != "" || maintenance != "" {
+			// Both connection families retain one compiled plan and original
+			// delivery identity across every phase and response-loss replay.
 			if e.Plan != nil {
 				if c.plan != "" && c.plan != e.Plan.Hash {
 					return errJournalConnection
@@ -157,6 +152,15 @@ func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 					return errJournalConnection
 				}
 				c.delivery = e.DeliveryID
+			}
+		}
+		if proof != "" {
+			if validateApplicationDatabaseJournal(e) != nil {
+				return errJournalConnection
+			}
+			in, err := domain.HostingApplicationDatabaseExecutionPlanInput(*e.ApplicationDatabase)
+			if err != nil {
+				return errJournalConnection
 			}
 			if e.ApplicationCandidate != nil {
 				if c.delivery == "" || c.candidate != nil && *c.candidate != *e.ApplicationCandidate {

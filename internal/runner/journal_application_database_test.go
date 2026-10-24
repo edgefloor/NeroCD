@@ -242,7 +242,7 @@ func TestDatabaseMaintenanceJournalV15EveryPhase(t *testing.T) {
 	}
 }
 
-func checkMaintenanceJournal(t *testing.T, engine string) {
+func maintenanceConnectionJournalFixture(t *testing.T, engine string) []JournalHosting {
 	t.Helper()
 	entries := databaseJournalFixture(t)
 	capture := captureJournalFixture(t, engine)
@@ -262,7 +262,6 @@ func checkMaintenanceJournal(t *testing.T, engine string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	j, path := openBuildJournal(t)
 	for i := range entries {
 		e := &entries[i]
 		e.DatabaseUpgrade, e.DatabaseMaintenance = nil, &proof
@@ -286,6 +285,16 @@ func checkMaintenanceJournal(t *testing.T, engine string) {
 		if e.Result != nil {
 			e.Result.HostingAuthority = a
 		}
+	}
+	return entries
+}
+
+func checkMaintenanceJournal(t *testing.T, engine string) {
+	t.Helper()
+	entries := maintenanceConnectionJournalFixture(t, engine)
+	j, path := openBuildJournal(t)
+	for _, entry := range entries {
+		e := &entry
 		if _, err := j.AppendHosting(*e); err != nil {
 			t.Fatalf("%s: %v", e.Phase, err)
 		}
@@ -295,6 +304,7 @@ func checkMaintenanceJournal(t *testing.T, engine string) {
 		if err := j.Close(); err != nil {
 			t.Fatal(err)
 		}
+		var err error
 		j, err = OpenAttemptJournal(path)
 		if err != nil {
 			t.Fatal(err)
@@ -315,6 +325,63 @@ func checkMaintenanceJournal(t *testing.T, engine string) {
 	}
 	if err := j.AckHostingConnection(entries[4].Result.HostingAuthority); err != nil || len(j.Snapshot().Hosting) != 0 || j.state.Version >= 15 {
 		t.Fatal("settled maintenance did not retire atomically", err)
+	}
+}
+
+func TestDatabaseMaintenanceJournalFreezesPlanAndOriginalDelivery(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, mode := range []string{"delivery", "plan"} {
+			t.Run(engine+"/"+mode, func(t *testing.T) {
+				entries := maintenanceConnectionJournalFixture(t, engine)
+				j, path := openBuildJournal(t)
+				t.Cleanup(func() { _ = j.Close() })
+				for _, entry := range entries {
+					if _, err := j.AppendHosting(entry); err != nil {
+						t.Fatal(err)
+					}
+				}
+				changed := cloneJournalHosting(entries[3])
+				changed.ID = "changed_maintenance_" + mode
+				if mode == "delivery" {
+					changed.DeliveryID = strings.Repeat("b", 32)
+				} else {
+					s := changed.Plan.Snapshot
+					s.ResourceGeneration++
+					p, err := domain.CompileHostingDatabaseMaintenancePlan(s, changed.Plan.Release, *changed.DatabaseMaintenance)
+					if err != nil || p.Hash == changed.Plan.Hash {
+						t.Fatal("different valid desired-generation plan unavailable", err)
+					}
+					changed.Plan = &p
+				}
+				if err := validateJournalHosting(changed); err != nil {
+					t.Fatal("regression requires an individually valid conflicting entry", err)
+				}
+				before := j.Snapshot()
+				if _, err := j.AppendHosting(changed); err == nil || !reflect.DeepEqual(before, j.Snapshot()) {
+					t.Fatal("maintenance replay changed the frozen " + mode)
+				}
+				if _, err := j.AppendHosting(entries[3]); err != nil || !reflect.DeepEqual(before, j.Snapshot()) {
+					t.Fatal("exact original delivery replay changed retained evidence", err)
+				}
+				replay := cloneJournalHosting(entries[3])
+				replay.ID = "same_maintenance_plan_and_delivery"
+				if _, err := j.AppendHosting(replay); err != nil {
+					t.Fatal("same plan and delivery rejected under another retained entry ID", err)
+				}
+				before = j.Snapshot()
+				if err := j.Close(); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				j, err = OpenAttemptJournal(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(before, j.Snapshot()) {
+					t.Fatal("restart changed the original plan or delivery evidence")
+				}
+			})
+		}
 	}
 }
 
