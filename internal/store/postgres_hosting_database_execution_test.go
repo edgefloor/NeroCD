@@ -698,3 +698,110 @@ func TestHostingDatabaseExecutionPostgresStatusAndObservationRevocation(t *testi
 		}
 	}
 }
+
+func TestHostingDatabaseExecutionPostgresStatusRechecksAuthorityAfterRunnerLock(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, change := range []string{"actor_expiry", "database_capability", "storage_capability"} {
+			t.Run(engine+"/"+change, func(t *testing.T) {
+				f, service, admin := databaseExecutionFixture(t, engine)
+				principal, _ := proxyLegacyToken(t, f.pg, service, "tok_database_runner_wait", []string{domain.RoleSystemAdmin})
+				ctx, cancel := context.WithTimeout(auth.WithPrincipal(admin, principal), 10*time.Second)
+				defer cancel()
+				op, err := service.RequestHostingDatabaseDeployment(ctx, f.resource.ID, databaseExecutionInput("runner_wait"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				f = prepareDatabaseExecution(t, f, op)
+				ack, err := f.pg.HostingStorageCreateBegin(ctx, f.runner, f.request())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = f.pg.HostingStorageMaterialized(ctx, f.runner, f.proof(ack)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = f.pg.HostingApplyBegin(ctx, f.runner, f.authority); err != nil {
+					t.Fatal(err)
+				}
+				blocker, err := f.db.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rollback := cleanupContinuityTransaction(t, blocker)
+				var pid int
+				if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = blocker.Exec(ctx, `SELECT id FROM runners WHERE id=$1 FOR UPDATE`, f.runner); err != nil {
+					t.Fatal(err)
+				}
+				var expiry time.Time
+				if change == "actor_expiry" {
+					if err = f.db.QueryRow(ctx, `UPDATE api_tokens SET expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1 RETURNING expires_at`, principal.ID).Scan(&expiry); err != nil {
+						t.Fatal(err)
+					}
+				}
+				done := make(chan error, 1)
+				exited := make(chan struct{})
+				go func() {
+					defer close(exited)
+					_, e := f.pg.HostingStatus(ctx, f.runner, domain.HostingStatusRequest{HostingAuthority: f.authority, Phase: "verifying"})
+					done <- e
+				}()
+				defer func() {
+					cancel()
+					rollback()
+					select {
+					case <-exited:
+					case <-time.After(5 * time.Second):
+						t.Error("database status did not exit after cancellation")
+					}
+				}()
+				ticker := time.NewTicker(10 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					var waiting bool
+					if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%LockHostingExactRunner%')`, pid).Scan(&waiting); err != nil {
+						t.Fatal(err)
+					}
+					if waiting {
+						break
+					}
+					select {
+					case err = <-done:
+						t.Fatalf("database status did not reach runner lock: %v", err)
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-ticker.C:
+					}
+				}
+				if change == "actor_expiry" {
+					_, err = blocker.Exec(ctx, `SELECT pg_sleep(greatest(0,extract(epoch FROM ($1::timestamptz-clock_timestamp())))+0.05)`, expiry)
+				} else {
+					capability := domain.HostingDatabaseCapability
+					if change == "storage_capability" {
+						capability = domain.HostingOwnedStorageCapability
+					}
+					_, err = blocker.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, capability)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = blocker.Commit(ctx); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case err = <-done:
+					if !errors.Is(err, store.ErrConflict) {
+						t.Fatalf("database status used stale authority after runner wait: %v", err)
+					}
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+				current, err := f.pg.GetHostingOperation(ctx, op.ID)
+				if err != nil || current.State != "applying" || !current.MutationHold {
+					t.Fatalf("stale database status was not rolled back: %+v %v", current, err)
+				}
+			})
+		}
+	}
+}

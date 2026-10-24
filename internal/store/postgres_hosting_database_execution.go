@@ -64,14 +64,17 @@ func finalDatabaseAuthority(ctx context.Context, tx pgx.Tx, runner string, a dom
 	if err := hostingAuthorityExists(ctx, tx, runner, a, !settled); err != nil {
 		return err
 	}
-	if settled {
-		live, err := sqlcgen.New(tx).HostingLeaseUnexpired(ctx, a.LeaseID)
-		if err != nil {
-			return fmt.Errorf("check database settlement expiry: %w", err)
-		}
-		if !live {
-			return ErrConflict
-		}
+	// The target gate may wait for the runner SHARE lock after reading the
+	// actor and capabilities. Re-read both under the completed lock set.
+	if err := databaseOperationAuthority(ctx, tx, op, observe); err != nil {
+		return fmt.Errorf("recheck locked database authority: %w", err)
+	}
+	live, err := sqlcgen.New(tx).HostingLeaseUnexpired(ctx, a.LeaseID)
+	if err != nil {
+		return fmt.Errorf("check final database lease expiry: %w", err)
+	}
+	if !live {
+		return ErrConflict
 	}
 	return nil
 }
