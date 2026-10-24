@@ -99,6 +99,11 @@ func TestPostgresDatabaseConnectionMigrationUpgrade(t *testing.T) {
 	if err = database.QueryRow(ctx, history).Scan(&after); err != nil || before != after {
 		t.Fatal("upgrade changed historical resource or principal data", err)
 	}
+	upgraded, err := store.OpenPostgres(ctx, address)
+	if err != nil {
+		t.Fatal("open fully compatible upgraded schema", err)
+	}
+	t.Cleanup(func() { closePostgresStore(t, upgraded) })
 }
 
 func newConnectionFixture(t *testing.T, engine string) connectionFixture {
