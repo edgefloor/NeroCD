@@ -223,7 +223,7 @@ func databaseNetworkProofMembers(p, previousPlan HostingApplyPlan, in HostingDat
 	if n := previousPlan.Database.Network; n != nil {
 		prior, priorRevision = n.Members, n.MembershipRevision
 	}
-	if validateDatabaseNetworkRetirements(prior, members, priorRevision, in.MembershipRevision, in.Retired) != nil {
+	if validateDatabaseNetworkRetirements(previousPlan, in.Origin, prior, members, priorRevision, in.MembershipRevision, in.Retired) != nil {
 		return nil, ErrInvalidHostingDatabaseNetworkPlan
 	}
 	return members, nil

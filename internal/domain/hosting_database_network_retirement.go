@@ -27,6 +27,8 @@ func databaseNetworkAttachedMember(proof HostingDatabaseNetworkMemberProof) (Hos
 // ValidateHostingDatabaseNetworkRetirement checks complete historical evidence
 // against the exact baseline member and revision range. Revalidating the same
 // proof against the same retained baseline is deterministic, not live authority.
+// Contextual callers must also match the captured database plan to their retained
+// transition target and initialization provenance.
 func ValidateHostingDatabaseNetworkRetirement(proof HostingDatabaseNetworkRetirementProof, member HostingDatabaseNetworkMember, priorRevision, resultingRevision int64) error {
 	attached, err := databaseNetworkAttachedMember(proof.Attached)
 	b, p, intent, detached := proof.Attached.Binding, proof.RetirePlan, proof.RetireIntent, proof.Detached
@@ -39,7 +41,21 @@ func ValidateHostingDatabaseNetworkRetirement(proof HostingDatabaseNetworkRetire
 	return nil
 }
 
-func validateDatabaseNetworkRetirements(prior, resulting []HostingDatabaseNetworkMember, priorRevision, resultingRevision int64, retired []HostingDatabaseNetworkRetirementProof) error {
+func databaseNetworkRetirementContext(captured, current HostingApplyPlan, origin HostingDatabaseNetworkOrigin) bool {
+	if !databaseNetworkSameTarget(captured, current) || captured.Snapshot.ResourceGeneration > current.Snapshot.ResourceGeneration {
+		return false
+	}
+	creationPlan := captured.Hash
+	if captured.PreviousHealthy != nil {
+		if captured.PreviousHealthy.Storage == nil {
+			return false
+		}
+		creationPlan = captured.PreviousHealthy.Storage.CreationPlanHash
+	}
+	return creationPlan == origin.OriginPlan
+}
+
+func validateDatabaseNetworkRetirements(database HostingApplyPlan, origin HostingDatabaseNetworkOrigin, prior, resulting []HostingDatabaseNetworkMember, priorRevision, resultingRevision int64, retired []HostingDatabaseNetworkRetirementProof) error {
 	if len(retired) > 2 {
 		return ErrInvalidHostingDatabaseNetworkPlan
 	}
@@ -60,7 +76,7 @@ func validateDatabaseNetworkRetirements(prior, resulting []HostingDatabaseNetwor
 	}
 	for _, proof := range retired {
 		member, err := databaseNetworkAttachedMember(proof.Attached)
-		if err != nil || !removed[member] || ValidateHostingDatabaseNetworkRetirement(proof, member, priorRevision, resultingRevision) != nil || operations[proof.RetirePlan.OperationID] {
+		if err != nil || !databaseNetworkRetirementContext(proof.Attached.DatabasePlan, database, origin) || !removed[member] || ValidateHostingDatabaseNetworkRetirement(proof, member, priorRevision, resultingRevision) != nil || operations[proof.RetirePlan.OperationID] {
 			return ErrInvalidHostingDatabaseNetworkPlan
 		}
 		for _, current := range resulting {

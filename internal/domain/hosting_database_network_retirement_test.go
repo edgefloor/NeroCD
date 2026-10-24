@@ -327,3 +327,134 @@ func TestDatabaseNetworkRetirementExactMemberAndRevisionBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestRetirementRejectsForeignOriginalDatabaseContext(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, compiler := range []string{"database", "application"} {
+			t.Run(engine+"/"+compiler, func(t *testing.T) {
+				baseline, healthy, network := retirementFixture(t, engine, false)
+				app := retirementApplicationInput(baseline, healthy, network)
+				retired := retirementProof(network.Members[0], network.MembershipRevision+1)
+				network.MembershipRevision++
+				network.Members, network.Retired = nil, []HostingDatabaseNetworkRetirementProof{retired}
+				app.MembershipRevision, app.Members, app.Retired = network.MembershipRevision, nil, slices.Clone(network.Retired)
+				// Compile valid documents first, so contextual validation must reject
+				// the changed transient proof without depending on a stale plan hash.
+				dbPlan, err := retirementCompile(baseline, healthy, network)
+				if err != nil {
+					t.Fatal("valid database retirement rejected", err)
+				}
+				s, r := app.BindingApplicationSnapshot, retired.Attached.ApplicationHealthy.Release
+				s.PolicyVersion, s.HostPort = HostingApplicationDatabasePolicyVersion, 21003
+				s.ApplicationDatabase = HostingApplicationDatabaseRef{BindingID: app.Binding.ID, BindingHash: app.Binding.Hash}
+				appPlan, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, app)
+				if err != nil {
+					t.Fatal("valid application retirement rejected", err)
+				}
+				original := retired.Attached.DatabasePlan
+				storage := *original.Storage
+				storage.CreationOperationID = "foreign_database_creation"
+				storage.CreationNonce = HostingStorageCreationNonce(storage.Reference, storage.CreationOperationID, storage.DaemonID)
+				foreign, err := CompileHostingDatabasePlan(original.Snapshot, original.Release, nil, storage, *original.Database)
+				if err != nil || ValidateHostingDatabasePlan(foreign) != nil {
+					t.Fatal("substitution must be a locally valid original v1 plan", err)
+				}
+				retired.Attached.DatabasePlan = foreign
+				if ValidateHostingDatabaseNetworkRetirement(retired, baseline.Database.Network.Members[0], baseline.Database.Network.MembershipRevision, network.MembershipRevision) != nil {
+					t.Fatal("substitution did not isolate the missing contextual database check")
+				}
+				if compiler == "database" {
+					network.Retired[0] = retired
+					if _, err := retirementCompile(baseline, healthy, network); err == nil {
+						t.Error("database compiler accepted a self-consistent foreign creation origin")
+					}
+					if ValidateHostingDatabasePlanTransition(dbPlan, baseline, network) == nil {
+						t.Error("database validator accepted a foreign original database context")
+					}
+				} else {
+					app.Retired[0] = retired
+					if _, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, app); err == nil {
+						t.Error("application compiler accepted a self-consistent foreign creation origin")
+					}
+					if ValidateHostingApplicationDatabasePlan(appPlan, app) == nil {
+						t.Error("application validator accepted a foreign original database context")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestRetirementRedeployedDatabaseCapturePreservesInitialization(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			initial, healthy, network := databaseNetworkFixture(t, engine)
+			s := initial.Snapshot
+			s.ResourceGeneration++
+			capture, err := CompileHostingDatabasePlan(s, initial.Release, &healthy, *initial.Storage, *initial.Database)
+			if err != nil {
+				t.Fatal("valid redeployed v1 capture failed", err)
+			}
+			attached := network.Members[0]
+			attached.DatabasePlan = capture
+			attached.Binding.DatabaseResourceGeneration = capture.Snapshot.ResourceGeneration
+			attached.Binding.Hash = attached.Binding.DocumentHash()
+			attached.ApplicationHealthy.Snapshot.HostPort = 21001
+			attached.EndpointPlan.BindingHash = attached.Binding.Hash
+			attached.EndpointPlan.Hash = attached.EndpointPlan.DocumentHash()
+			attached.Receipt.BindingHash, attached.Receipt.PlanHash = attached.Binding.Hash, attached.EndpointPlan.Hash
+			attached.Receipt.Hash = attached.Receipt.DocumentHash()
+			network.Members[0] = attached
+			healthy.Snapshot, healthy.PlanHash, healthy.OperationID = capture.Snapshot, capture.Hash, "database_redeployed"
+			baseline := compileDatabaseNetwork(t, capture, healthy, network)
+			healthy.Snapshot, healthy.PlanHash, healthy.OperationID = baseline.Snapshot, baseline.Hash, "database_current"
+			app := retirementApplicationInput(baseline, healthy, network)
+			network.MembershipRevision++
+			network.Members = nil
+			network.Retired = []HostingDatabaseNetworkRetirementProof{retirementProof(attached, network.MembershipRevision)}
+			app.MembershipRevision, app.Members, app.Retired = network.MembershipRevision, nil, slices.Clone(network.Retired)
+			if capture.PreviousHealthy == nil || capture.Hash == network.Origin.OriginPlan || baseline.Snapshot.ResourceGeneration <= capture.Snapshot.ResourceGeneration {
+				t.Fatal("fixture does not preserve original initialization across advancing generations")
+			}
+			dbPlan, err := retirementCompile(baseline, healthy, network)
+			if err != nil || ValidateHostingDatabasePlanTransition(dbPlan, baseline, network) != nil {
+				t.Fatal("legitimate redeployed capture rejected after v2 generation advance", err)
+			}
+			s, r := app.BindingApplicationSnapshot, attached.ApplicationHealthy.Release
+			s.PolicyVersion, s.HostPort = HostingApplicationDatabasePolicyVersion, 21003
+			s.ApplicationDatabase = HostingApplicationDatabaseRef{BindingID: app.Binding.ID, BindingHash: app.Binding.Hash}
+			appPlan, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, app)
+			if err != nil || ValidateHostingApplicationDatabasePlan(appPlan, app) != nil {
+				t.Fatal("application retirement lost original redeployed capture provenance", err)
+			}
+			// This complete attachment is newer than the initial database plan.
+			// Target equality deliberately ignores generations; contextual checking
+			// must still reject a capture from the expected context's future.
+			member := baseline.Database.Network.Members[0]
+			if !databaseNetworkSameTarget(capture, initial) || ValidateHostingDatabaseNetworkRetirement(network.Retired[0], member, baseline.Database.Network.MembershipRevision, network.MembershipRevision) != nil {
+				t.Fatal("future-generation test did not reach contextual validation")
+			}
+			if validateDatabaseNetworkRetirements(initial, network.Origin, []HostingDatabaseNetworkMember{member}, nil, baseline.Database.Network.MembershipRevision, network.MembershipRevision, network.Retired) == nil {
+				t.Fatal("retired original capture from a future database generation accepted")
+			}
+			// Preserve the exact storage creation operation and nonce while forging
+			// only its predecessor's retained initialization plan hash.
+			predecessor := *capture.PreviousHealthy
+			storage := *predecessor.Storage
+			storage.CreationPlanHash = "sha256:" + strings.Repeat("0", 64)
+			predecessor.Storage = &storage
+			foreign, err := CompileHostingDatabasePlan(capture.Snapshot, capture.Release, &predecessor, *capture.Storage, *capture.Database)
+			if err != nil || ValidateHostingDatabasePlan(foreign) != nil {
+				t.Fatal("foreign retained provenance must be locally canonical", err)
+			}
+			network.Retired[0].Attached.DatabasePlan = foreign
+			app.Retired[0].Attached.DatabasePlan = foreign
+			if _, err := retirementCompile(baseline, healthy, network); err == nil || ValidateHostingDatabasePlanTransition(dbPlan, baseline, network) == nil {
+				t.Fatal("database retirement accepted unrelated initialization provenance")
+			}
+			if _, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, app); err == nil || ValidateHostingApplicationDatabasePlan(appPlan, app) == nil {
+				t.Fatal("application retirement accepted unrelated initialization provenance")
+			}
+		})
+	}
+}

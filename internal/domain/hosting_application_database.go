@@ -130,7 +130,7 @@ func applicationDatabaseMembers(in HostingApplicationDatabasePlanInput) ([]Hosti
 	if n := in.DatabasePlan.Database.Network; n != nil {
 		prior, priorRevision = n.Members, n.MembershipRevision
 	}
-	if validateDatabaseNetworkRetirements(prior, members, priorRevision, in.MembershipRevision, in.Retired) != nil {
+	if validateDatabaseNetworkRetirements(in.DatabasePlan, in.Origin, prior, members, priorRevision, in.MembershipRevision, in.Retired) != nil {
 		return nil, ErrInvalidHostingApplicationDatabasePlan
 	}
 	return members, nil
