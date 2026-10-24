@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`5ff5b7e114fc922e3c3f2a6e93670c133d205923`, 2026-10-24.
+`9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, 2026-10-25.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -127,9 +127,9 @@ compiled frontend builds, public production ACME, complete A03 or hosting parity
 ### R42 remains an unfinished hosting workflow
 
 The accepted internal prerequisites above passed integration checks and independent
-code hygiene, specification and critical security reviews. They do not establish
-application-to-database connectivity through the product. No connected R42 API/UI
-workflow is accepted. Direct-engine alias qualification is bounded below.
+code hygiene, specification and critical security reviews. Those historical
+prerequisites alone do not establish application connectivity. Later bounded
+image-application UI/API qualification is recorded below; full R42 remains open.
 
 The read-only origin observer, authenticated capture API/typed client, format 13
 journal and private exact-ID capture coordinator are now accepted. Direct
@@ -242,8 +242,37 @@ initial inventories. Root assets and index were preserved. Qualification remains
 bounded to the native Linux arm64 disposable private fixture. Earlier `563fb88`
 qualification and failed-run evidence above retain their original revisions.
 
-The durable application membership ledger/controller/runner, public binding
-API/UI and connected R42 workflow remain unfinished.
+The bounded image application/database workflow is physically qualified at
+`9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, tree
+`3ccede1d9e44531f70993a40840274ced78b5969`, with migration 0072.
+Owners use the UI or public API to connect an undeployed image application to
+one healthy PostgreSQL or Redis database on the same destination, redeploy the
+application, and replace the database while retaining membership. Generated
+credential references, the private network, volume and application records
+survive these operations. Same-attempt committed Complete-ACK loss recovers
+without repeated effects or credential delivery; terminal effect authorization
+is denied. Viewers can inspect progress and cannot submit changes.
+
+The live browser scenarios passed in 28.2 seconds for PostgreSQL and 26.9 seconds
+for Redis. The connected runtime group passed in 74.64 seconds; capture and
+normal database groups each passed in 23.19 seconds, and empty-network upgrade
+in 24.65 seconds. All four groups passed without skips; the gate took 174.487
+seconds. Cleanup completed and outer container/volume identities and canonical
+recorded fields matched. Root index and generated assets were preserved.
+Evidence remains in
+`/tmp/nerocd-application-database-final-c-integrated-physical-handoff.json` and
+`/tmp/nerocd-database-runner-20261024.wy_azrsp/runtime-test`.
+
+This qualifies the pinned native Linux arm64 private fixture with a verified
+test CA and responsive UI checks at 320/390/430/1440 widths. It supports one
+public-image application per database, with no existing application deployment,
+routes or application storage. Source builds, cross-server binding presentation,
+native database backups/restores, rotation, host-disk loss and public routing
+remain unqualified. Full R42/A17 and hosting parity remain incomplete. Earlier
+preflight and Redis replacement failures remain failed at their original
+revisions; the later pass does not reclassify them. See the
+[connection guide](hosting-database-connections.md) for actions and recovery limits.
+
 Database-native backup/restore, credential rotation, full A17/A26/A37 and complete
 hosting parity remain open.
 
@@ -701,7 +730,7 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; bounded GitHub build-on-push accepted; verified route-switch engine and guarded controller accepted; bounded read API/operator UI accepted; bounded completed-conflict recovery API accepted; bounded recovery administrator UI accepted; bounded automatic_unprotected deployment accepted; protected approval remains planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | partial: accepted metadata/admission, explicit storage capability, API/compiled-runner uploaded-file runtime and bounded unqueued-continuity recovery; metadata API/UI accepted; connected deployment-review/recovery UX accepted separately from physical runtime; broader directories/managed files/external files, backups and unknown-writer recovery planned | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
-| Databases | C7 | partial foundations: metadata/creation UI, private controller/engine helpers and protected credential delivery accepted; direct engine qualification/default-off coordinator accepted; standalone API/runner physical workflow accepted at its original revision and direct deployment UI accepted; internal R42 prerequisites include migration 0071 upgrade control/compiled execution accepted through 79b50e2 with actual PostgreSQL control tests; compiled exact-ID/automatic capture, recovery and empty-network upgrade/maintenance qualified at 5ff5b7e; earlier 563fb88 qualification retained; earlier b777 evidence retained at its original revision; connected application binding and database-native backup/restore unfinished; direct origin/alias-upgrade proof retained at d384; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
+| Databases | C7 | partial foundations: metadata/creation UI, private controller/engine helpers and protected credential delivery accepted; direct engine qualification/default-off coordinator accepted; standalone API/runner physical workflow accepted at its original revision and direct deployment UI accepted; internal R42 prerequisites include migration 0071 upgrade control/compiled execution accepted through 79b50e2 with actual PostgreSQL control tests; compiled exact-ID/automatic capture, recovery and empty-network upgrade/maintenance qualified at 5ff5b7e; earlier 563fb88 qualification retained; earlier b777 evidence retained at its original revision; bounded same-destination public-image application connections qualified at 9a69228; broader binding profiles and database-native backup/restore unfinished; direct origin/alias-upgrade proof retained at d384; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
 | Service catalog | C8 | planned: versioned definitions, stable generated values and explicit upgrades | A21, A22; catalog-version, component-upgrade | P11, P18; initial tested catalog expands through explicit version fixtures |
 | Variables and secrets | C16 | partial: runner_file execution plus encrypted project-managed versions, create/rotate/owner reveal/revoke and protected UI; bounded private Git and managed runtime delivery/execution accepted; broader delivery/scopes, recovery workflows and external providers planned | A03, A18, A35; scope-denial, redaction, key-recovery, revoked-version | P03; separate build/runtime/preview grants; external-provider versions explicit |
 | Ongoing operations | C9 | partial: run logs, runner evidence, typed build output/viewer and opt-in independent runtime collector; accepted bounded runtime-status dashboard; bounded live runtime logs/viewer are accepted; broader resource actions remain planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
@@ -717,8 +746,8 @@ The reference backup/restore distinctions below are retained from R44. PostgreSQ
 
 | Engine | Status | Reference scheduled backup | Reference dashboard restore | Supported limits and required outcome | Planned fixtures |
 | --- | --- | --- | --- | --- | --- |
-| PostgreSQL | partial, bounded private hosting and direct alias upgrade accepted | Yes | Yes | PostgreSQL 17.11 API/compiled-runner recovery, capture/replay and empty-network upgrade/maintenance accepted at 5ff5b7e with exact-ID/automatic capture; earlier 563fb88/b777 evidence retained; direct origin/empty-v2 A→B→C proof retained at d384; connected R42 binding, rotation, engine-native backup and new-resource restore unfinished | db-postgresql-lifecycle, db-postgresql-restore, A17, A18, A26 |
-| Redis | partial, bounded private hosting and direct alias upgrade accepted | No | No | Redis 8.2.10 API/compiled-runner recovery, capture/replay and empty-network upgrade/maintenance accepted at 5ff5b7e with exact-ID/automatic capture; earlier 563fb88/b777 evidence retained; direct origin/empty-v2 A→B→C persistence proof retained at d384; connected R42 binding, rotation and broader recovery unfinished | db-redis-lifecycle, db-redis-persistence |
+| PostgreSQL | partial, bounded private hosting and direct alias upgrade accepted | Yes | Yes | PostgreSQL 17.11 API/compiled-runner recovery, capture/replay and empty-network upgrade/maintenance accepted at 5ff5b7e with exact-ID/automatic capture; earlier 563fb88/b777 evidence retained; direct origin/empty-v2 A→B→C proof retained at d384; same-destination image-app binding qualified at 9a69228; broader R42, rotation, engine-native backup and new-resource restore unfinished | db-postgresql-lifecycle, db-postgresql-restore, A17, A18, A26 |
+| Redis | partial, bounded private hosting and direct alias upgrade accepted | No | No | Redis 8.2.10 API/compiled-runner recovery, capture/replay and empty-network upgrade/maintenance accepted at 5ff5b7e with exact-ID/automatic capture; earlier 563fb88/b777 evidence retained; direct origin/empty-v2 A→B→C persistence proof retained at d384; same-destination image-app binding qualified at 9a69228; broader R42, rotation and recovery unfinished | db-redis-lifecycle, db-redis-persistence |
 | MySQL | planned, M3 | Yes | Yes | Engine-specific backup/import and application verification | db-mysql-backup-restore, db-mysql-upgrade |
 | MariaDB | planned, M3 | Yes | Yes | Separate version/configuration tests from MySQL | db-mariadb-backup-restore, db-mariadb-upgrade |
 | MongoDB | planned, M3 | Yes | Yes | Supported authentication and dump/import formats | db-mongodb-auth, db-mongodb-backup-restore |

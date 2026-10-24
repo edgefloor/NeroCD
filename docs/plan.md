@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`5ff5b7e114fc922e3c3f2a6e93670c133d205923`, 2026-10-24, through migration 0071.
+`9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, 2026-10-25, through migration 0072.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,7 +29,7 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0071, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0072, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | Broader SSH/host qualification, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, protected reveal, private Git credential delivery and bounded managed runtime delivery/execution; separate runner-file execution | Broader delivery and variable scopes, provider coverage and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
@@ -216,8 +216,39 @@ it does not establish successful exit of the whole continuous runtime. Owned
 cleanup and outer inventories passed. See the
 [current evidence and limits](compatibility.md#r42-remains-an-unfinished-hosting-workflow).
 
-R42 still needs the durable application membership ledger/controller/runner and
-public binding API/UI, plus connected application qualification.
+The bounded image application/database workflow is physically qualified at
+`9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, tree
+`3ccede1d9e44531f70993a40840274ced78b5969`, with migration 0072.
+Owners use the UI or public API to connect an undeployed image application to
+one healthy PostgreSQL or Redis database on the same destination, redeploy the
+application, and replace the database while retaining membership. Generated
+credential references, the private network, volume and application records
+survive these operations. Same-attempt committed Complete-ACK loss recovers
+without repeated effects or credential delivery; terminal effect authorization
+is denied. Viewers can inspect progress and cannot submit changes.
+
+The live browser scenarios passed in 28.2 seconds for PostgreSQL and 26.9 seconds
+for Redis. The connected runtime group passed in 74.64 seconds; capture and
+normal database groups each passed in 23.19 seconds, and empty-network upgrade
+in 24.65 seconds. All four groups passed without skips; the gate took 174.487
+seconds. Cleanup completed and outer container/volume identities and canonical
+recorded fields matched. Root index and generated assets were preserved.
+Evidence remains in
+`/tmp/nerocd-application-database-final-c-integrated-physical-handoff.json` and
+`/tmp/nerocd-database-runner-20261024.wy_azrsp/runtime-test`.
+
+This qualifies the pinned native Linux arm64 private fixture with a verified
+test CA and responsive UI checks at 320/390/430/1440 widths. It supports one
+public-image application per database, with no existing application deployment,
+routes or application storage. Source builds, cross-server binding presentation,
+native database backups/restores, rotation, host-disk loss and public routing
+remain unqualified. Full R42/A17 and hosting parity remain incomplete. Earlier
+preflight and Redis replacement failures remain failed at their original
+revisions; the later pass does not reclassify them. See the
+[connection guide](hosting-database-connections.md) for actions and recovery limits.
+
+R42 still needs broader application profiles and explicit unreachable cross-server
+binding presentation. The bounded workflow does not complete the requirement.
 Database-native backup/restore, rotation, full A17/A26/A37 and broader stateful
 parity remain open. Production ACME, untrusted workload isolation and broader
 host profiles are not qualified by this pass.
@@ -227,7 +258,7 @@ The standalone archive helper is accepted at
 controller/config/API and default-off runner are accepted through
 `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, with migration 0068 and accepted helper
 packaging. Bounded physical uploaded-file recovery is accepted at `45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`;
-remaining stateful recovery cases and the connected R42 workflow are unfinished;
+remaining stateful recovery cases and broader R42 workflows are unfinished;
 current helper config-ID qualification targets the classic Docker image store,
 with a recorded containerd-store lookup failure and no runtime fallback;
 retained PostgreSQL/River tests use a fake engine. Archive UI is accepted at

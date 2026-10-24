@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "563fb88f707b75563d03f0408df0267e3af473e9"
+BASE = "9a69228f9a2a8324e25b1c366ee4eba913b8dba2"
 UPSTREAM = "b12d1386f3d458618b4c579babcd1e339c6c40b3"
 BASELINE_CRITERIA = 934
 BASELINE_ELIGIBLE = 933
@@ -232,7 +232,7 @@ def render(data, parents, criteria):
              "A missing verification artifact or affected/unknown historical dependency removes verified credit. A source test is implementation evidence until its actual pass is retained. `partial` has zero points. No runtime tests are implied by generating this report.", "",
              "Every source link points to an immutable excerpt appendix in this report, generated with `git show SHA:path`. Anchors include the full subject SHA, path hash and line range. Historical evidence has distinct targets even when its path and lines match the current source. No unpublished commit depends on a remote GitHub link. Read acceptance and matrix gates alongside the atomic checklist before making a release claim.", "",
              "## Reproduce", "", "Run from the repository root with Python 3 and Git. No network or third-party packages are required.", "", "```sh", "python3 -B scripts/parity_audit.py --write", "python3 -B scripts/parity_audit.py --check", "python3 -B scripts/parity_audit.py --self-test", "```", "",
-             "`--check` validates the original inventory at the audited SHA, frozen criterion manifest, links, source ranges, evidence subjects and embedded pass artifacts, then rejects a stale generated report. `--self-test` exercises rejected missing/duplicate scope, invalid evidence and stale-report cases. Fresh harmless unit-check JSON output is preserved in the checklist. Historical `/tmp` runtime artifacts receive no current verified credit. This audit does not run application/runtime tests.", "",
+             "`--check` validates the original inventory at the audited SHA, frozen criterion manifest, links, source ranges, evidence subjects and embedded pass artifacts, then rejects a stale generated report. `--self-test` exercises rejected missing/duplicate scope, invalid evidence and stale-report cases. Observed named-test output is preserved in the checklist, including current physical output converted with test2json. Historical receipts retain credit only after complete declared dependency equality. Generating this audit does not run application/runtime tests.", "",
              "## Coverage by area", "", "| Area | Verified / atomic | Coverage |", "| --- | ---: | ---: |"]
     areas = collections.defaultdict(list)
     for criterion in rows:

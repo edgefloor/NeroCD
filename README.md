@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`5ff5b7e114fc922e3c3f2a6e93670c133d205923`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, 2026-10-25. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0071, bootstrap administration,
+- PostgreSQL state, checked migrations through 0072, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -191,8 +191,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   That evidence stays at its original revision. Later shared database engine
   changes mean it does not qualify the current combined tree. See the
   [workflow fixture](acceptance/runtime-hosting-database-runner/README.md).
-  Default-off opt-in and metadata `adapter_unqualified` remain. Application binding,
-  database-native backup/restore, public ACME and complete A17 remain unfinished.
+  Default-off opt-in and metadata `adapter_unqualified` remain. Application binding
+  was absent at this checkpoint; later bounded proof is below. Database-native
+  backup/restore, public ACME and complete A17 remain unfinished.
 - Internal R42 prerequisites are accepted through
   `d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`, including the read-only origin
   observer, authenticated capture API/typed client, format 13 journal and private
@@ -204,7 +205,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   and [accepted components and R42 limits](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
   Materialization is fixture-local, without controller provenance. This does
   not qualify the connected API/River path; later capture proof is below.
-  Application membership ledger/API/UI and full R42 remain unfinished.
+  Application membership ledger/API/UI were absent at this checkpoint. Full R42 remains unfinished.
   Generic capture dispatch and the later upgrade controller are accepted
   separately below. Database-native backup/restore and rotation remain open.
 - Compiled capture/replay and normal PostgreSQL/Redis recovery are accepted at
@@ -218,8 +219,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   capture round trips compare persisted JSON identity. See the
   [compiled-runner fixture](acceptance/runtime-hosting-database-runner/README.md).
   This qualifies native Linux arm64/trusted Docker with a verified test CA.
-  Application binding, membership ledger/API/UI,
-  database-native backup/restore, rotation and full R42/A17/A26/A37 remain open;
+  Application binding and membership ledger/API/UI were absent at this checkpoint.
+  Database-native backup/restore, rotation and full R42/A17/A26/A37 remain open;
   production ACME and untrusted workload isolation are unqualified.
 - Private empty-v2 upgrade control and compiled execution are accepted through
   `79b50e245a756022b2fc0b8ac98428bb1acfcc3b`, with migration 0071.
@@ -235,8 +236,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   retained origin, alias reads/writes, exact Complete-ACK loss replay and
   single-writer checks. Owned cleanup and outer inventories were verified.
   This qualifies the native Linux arm64 disposable private fixture with a
-  verified test CA. Public application binding and
-  engine-version upgrades and full R42/A17 remain unfinished. See the
+  verified test CA. Public application binding was absent at this checkpoint;
+  later bounded proof is below. Engine-version upgrades and full R42/A17 remain
+  unfinished. See the
   [current evidence and limits](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
 - Automatic database capture is accepted at
   `5ff5b7e114fc922e3c3f2a6e93670c133d205923`. The default-off
@@ -247,9 +249,21 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   without skips. With Docker absent, retained origin ACK replay and journal
   retirement were proven before cancellation. This does not assert successful
   exit of the continuous runtime. Cleanup and outer inventories passed within
-  the native Linux arm64 private fixture. Public application binding, durable
-  application membership and complete R42/A17 remain unfinished. See the
+  the native Linux arm64 private fixture. Public application binding and durable
+  application membership were absent at this checkpoint; bounded later proof is
+  below. Complete R42/A17 remains unfinished. See the
   [qualification evidence](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
+- [Application/database connections](docs/hosting-database-connections.md) are
+  physically qualified at `9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, migration
+  0072. Owners connect an undeployed public-image app to one PostgreSQL or Redis
+  database on the same destination through UI/API, redeploy the app and maintain
+  the database with retained credentials, data, private network and membership.
+  Lost Complete-ACK replay does not repeat effects or credential delivery.
+  PostgreSQL/Redis live browser scenarios passed in 28.2/26.9 seconds; all four
+  compiled runtime groups passed without skips. This qualifies the native Linux
+  arm64 private fixture with a test CA. Source builds, existing app routes/storage,
+  cross-server presentation, rotation, native backup/restore, disk loss, public
+  routing and full R42/A17 remain open.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The
@@ -287,8 +301,8 @@ The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
 and extended compatibility. Automatic deployment and SSH onboarding are accepted within their stated limits.
 Stateful hosting remains active. Bounded uploaded-file persistence/recovery and
-standalone PostgreSQL/Redis hosting have accepted evidence; connected R42
-application binding, database-native recovery and broader stateful qualification
+standalone PostgreSQL/Redis hosting and bounded same-destination image-app
+connections have physical evidence; broader R42 application binding, database-native recovery and broader stateful qualification
 remain unfinished. Protected plans and production TLS remain open. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
