@@ -293,6 +293,78 @@ type databaseContainerIntent struct {
 	NetworkID string `json:"network_id"`
 }
 
+// Retirement belongs to one exact successor and predecessor. It is retained
+// after acknowledgment so a replay can explain absence without adopting an
+// unknown container or erasing storage creation history.
+type databaseRetirement struct {
+	Version              int                      `json:"version"`
+	Operation            string                   `json:"operation"`
+	Plan                 string                   `json:"plan"`
+	ReplacementID        string                   `json:"replacement_id"`
+	Binding              string                   `json:"binding"`
+	Destination          string                   `json:"destination"`
+	Daemon               string                   `json:"daemon"`
+	Storage              domain.HostingStorageRef `json:"storage"`
+	Volume               string                   `json:"volume"`
+	OriginOperation      string                   `json:"origin_operation"`
+	OriginPlan           string                   `json:"origin_plan"`
+	VolumeNonce          string                   `json:"volume_nonce"`
+	NetworkID            string                   `json:"network_id"`
+	PredecessorOperation string                   `json:"predecessor_operation"`
+	PredecessorPlan      string                   `json:"predecessor_plan"`
+	PredecessorID        string                   `json:"predecessor_id"`
+	PredecessorRelease   string                   `json:"predecessor_release"`
+	PredecessorHash      string                   `json:"predecessor_hash"`
+	Completed            bool                     `json:"completed"`
+}
+
+func databaseExpectedRetirement(operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, replacement string) databaseRetirement {
+	previous := plan.PreviousHealthy
+	return databaseRetirement{Version: 1, Operation: operation, Plan: plan.Hash, ReplacementID: replacement, Binding: plan.Snapshot.BindingID, Destination: plan.Snapshot.DestinationID, Daemon: plan.Release.DaemonID, Storage: plan.Snapshot.Storage, Volume: plan.Storage.VolumeName, OriginOperation: record.OriginOperation, OriginPlan: record.OriginPlan, VolumeNonce: record.VolumeNonce, NetworkID: record.NetworkID, PredecessorOperation: previous.OperationID, PredecessorPlan: previous.PlanHash, PredecessorID: previous.ContainerID, PredecessorRelease: previous.Release.Hash, PredecessorHash: domain.HostingDocumentHash(previous)}
+}
+
+func databaseRetirementName(operation string, plan domain.HostingApplyPlan) string {
+	return databaseGeneration(operation, plan) + ".retirement.json"
+}
+
+func (c DatabaseEngineConfig) readRetirement(operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, replacement string) (databaseRetirement, bool, error) {
+	var retirement databaseRetirement
+	if plan.PreviousHealthy == nil {
+		return retirement, false, nil
+	}
+	path := filepath.Join(c.stateRoot, databaseRetirementName(operation, plan))
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return retirement, false, nil
+	}
+	if err != nil {
+		return retirement, false, errors.New("database retirement history unavailable")
+	}
+	defer func() { _ = file.Close() }()
+	if databaseFilePolicy(path, 0o600, os.Geteuid(), os.Getegid(), false) != nil {
+		return retirement, false, errors.New("database retirement history policy changed")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, 8193))
+	if err != nil || len(raw) > 8192 || domain.DecodeHostingStorageProtocolJSON(raw, &retirement) != nil {
+		return retirement, false, errors.New("invalid database retirement history")
+	}
+	want := databaseExpectedRetirement(operation, plan, record, replacement)
+	comparison := retirement
+	comparison.Completed = false
+	if !dockerObjectID.MatchString(replacement) || comparison != want {
+		return retirement, false, errors.New("database retirement identity changed")
+	}
+	return retirement, true, nil
+}
+
+func (c DatabaseEngineConfig) writeRetirement(ctx context.Context, operation string, plan domain.HostingApplyPlan, retirement databaseRetirement, before func(context.Context) error) error {
+	raw, err := json.Marshal(retirement)
+	if err != nil || len(raw) > 8192 {
+		return errors.New("invalid database retirement history")
+	}
+	return c.writeHistory(ctx, databaseRetirementName(operation, plan), raw, before)
+}
+
 func (c DatabaseEngineConfig) admitContainer(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, present bool, before func(context.Context) error) error {
 	name := databaseGeneration(operation, plan) + ".json"
 	want := databaseContainerIntent{Version: 1, Operation: operation, Plan: plan.Hash, Binding: plan.Snapshot.BindingID, Daemon: plan.Release.DaemonID, NetworkID: record.NetworkID}

@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -20,19 +20,19 @@ import (
 )
 
 type databaseFake struct {
-	mu                                             sync.Mutex
-	t                                              *testing.T
-	e                                              *imageEngine
-	plan                                           domain.HostingApplyPlan
-	req                                            hostingOwnedVolumeRequest
-	config                                         DatabaseEngineConfig
-	network                                        map[string]any
-	containers                                     map[string]map[string]any
-	volume                                         hostingInspectedVolume
-	calls                                          []string
-	networkCreates, creates, starts, stops, probes int
-	authorized                                     bool
-	hook                                           func(context.Context, []string) ([]byte, error, bool)
+	mu                                                      sync.Mutex
+	t                                                       *testing.T
+	e                                                       *imageEngine
+	plan                                                    domain.HostingApplyPlan
+	req                                                     hostingOwnedVolumeRequest
+	config                                                  DatabaseEngineConfig
+	network                                                 map[string]any
+	containers                                              map[string]map[string]any
+	volume                                                  hostingInspectedVolume
+	calls                                                   []string
+	networkCreates, creates, starts, stops, probes, removes int
+	authorized                                              bool
+	hook                                                    func(context.Context, []string) ([]byte, error, bool)
 }
 
 func databaseFixture(t *testing.T, engine string) (*databaseFake, *DatabaseCredentials) {
@@ -154,7 +154,7 @@ func (f *databaseFake) commandLocked(ctx context.Context, name string, args []st
 			f.t.Fatal("secret/public port/shell escaped private recipe")
 		}
 	}
-	mutation := len(a) > 1 && (a[1] == "create" || a[1] == "start" || a[1] == "stop" || a[1] == "pull")
+	mutation := len(a) > 1 && (a[1] == "create" || a[1] == "start" || a[1] == "stop" || a[1] == "pull" || a[1] == "rm")
 	if mutation {
 		if !f.authorized {
 			f.t.Fatal("Docker mutation without current-authority callback")
@@ -202,7 +202,7 @@ func (f *databaseFake) commandLocked(ctx context.Context, name string, args []st
 		var ids []string
 		for id, container := range f.containers {
 			filter := a[len(a)-1]
-			if strings.HasPrefix(filter, "volume=") || filter == "name=^"+container["Name"].(string)+"$" {
+			if strings.HasPrefix(filter, "volume=") || filter == "name=^"+container["Name"].(string)+"$" || filter == "id="+id {
 				ids = append(ids, id)
 			}
 		}
@@ -216,7 +216,7 @@ func (f *databaseFake) commandLocked(ctx context.Context, name string, args []st
 		return []byte("999:999\n"), nil
 	case len(a) > 1 && a[0] == "container" && a[1] == "create":
 		f.creates++
-		id := strings.Repeat(string(rune('e'+f.creates-1)), 64)
+		id := fmt.Sprintf("%064x", f.creates)
 		labels := map[string]string{}
 		var env []string
 		for i := 0; i < len(a)-1; i++ {
@@ -243,6 +243,14 @@ func (f *databaseFake) commandLocked(ctx context.Context, name string, args []st
 		f.containers[id]["State"] = map[string]any{"Running": false, "Status": "exited"}
 		delete(f.network["Containers"].(map[string]any), id)
 		return []byte(id), nil
+	case len(a) > 1 && a[0] == "container" && a[1] == "rm":
+		if len(a) != 3 || f.containers[a[2]] == nil || f.containers[a[2]]["State"].(map[string]any)["Running"].(bool) {
+			f.t.Fatal("retirement attempted nonexact or running container removal")
+		}
+		f.removes++
+		delete(f.containers, a[2])
+		delete(f.network["Containers"].(map[string]any), a[2])
+		return []byte(a[2]), nil
 	default:
 		f.t.Fatalf("unexpected database command %q", strings.Join(a, " "))
 		return nil, errors.New("unexpected command")
@@ -302,8 +310,8 @@ func TestDatabaseEngineSecondReleaseStopsSameVolumeWriter(t *testing.T) {
 	if !result.Ready || result.Uncertain || result.PreviousContainerID != first.ContainerID || f.networkCreates != 1 || f.creates != 2 || f.starts != 2 || f.stops != 1 {
 		t.Fatalf("second release did not preserve stopped writer/volume: %+v counts %d/%d/%d/%d", result, f.networkCreates, f.creates, f.starts, f.stops)
 	}
-	if reflect.DeepEqual(f.containers[first.ContainerID]["State"], map[string]any{"Running": true, "Status": "running"}) {
-		t.Fatal("predecessor still running")
+	if f.containers[first.ContainerID] != nil || f.removes != 1 {
+		t.Fatal("proven stopped predecessor was not retired")
 	}
 	record, exists, err := f.config.readRecord(f.plan.Database.NetworkName + ".json")
 	if err != nil || !exists || record.OriginPlan != oldPlan.Hash || record.OriginPlan == f.plan.Hash || !record.InitReady {
@@ -655,5 +663,338 @@ func TestDatabaseEngineLostStartThenPreflightFailureRetainsHold(t *testing.T) {
 		if !container["State"].(map[string]any)["Running"].(bool) {
 			t.Fatal("fixture did not retain possible writer")
 		}
+	}
+}
+
+func databaseNextPlan(t *testing.T, f *databaseFake, previousOperation string, previous domain.HostingResult) *DatabaseCredentials {
+	t.Helper()
+	old := f.plan
+	healthy := domain.HostingHealthy{OperationID: previousOperation, ContainerID: previous.ContainerID, Snapshot: old.Snapshot, Release: old.Release, PlanHash: old.Hash, Storage: &domain.HostingHealthyStorage{Plan: *old.Storage, CreationPlanHash: f.req.OriginPlanHash}}
+	next := old.Snapshot
+	next.ResourceGeneration++
+	var err error
+	f.plan, err = domain.CompileHostingDatabasePlan(next, old.Release, &healthy, *old.Storage, *old.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return databaseFixtureCredentials(t, f.plan)
+}
+
+func TestDatabaseEngineThreeReleasesRetireOnlyStoppedPredecessors(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f, credentials := databaseFixture(t, engine)
+			previous := f.apply(context.Background(), credentials)
+			if !previous.Ready {
+				t.Fatal("release A failed", previous)
+			}
+			operation := f.req.OriginOperationID
+			for _, next := range []string{"hop_second", "hop_third"} {
+				credentials = databaseNextPlan(t, f, operation, previous)
+				result := f.e.ApplyDatabase(context.Background(), next, f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+				if !result.Ready || result.Uncertain {
+					t.Fatalf("release %s blocked by predecessor history: %+v", next, result)
+				}
+				operation, previous = next, result
+			}
+			if len(f.containers) != 1 || f.creates != 3 || f.starts != 3 || f.stops != 2 || f.networkCreates != 1 {
+				t.Fatal("retirement did not leave one writer with stable network/volume")
+			}
+			for _, call := range f.calls {
+				if strings.HasPrefix(call, "volume create") || strings.HasPrefix(call, "volume rm") || strings.Contains(call, "--force") || strings.Contains(call, "--volumes") {
+					t.Fatal("retirement changed volume or forced a container removal")
+				}
+			}
+		})
+	}
+}
+
+func TestDatabaseEngineRetirementLostResponseAndCompletedReplay(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f, credentials := databaseFixture(t, engine)
+			first := f.apply(context.Background(), credentials)
+			if !first.Ready {
+				t.Fatal(first)
+			}
+			credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+			lost := true
+			f.hook = func(ctx context.Context, args []string) ([]byte, error, bool) {
+				if len(args) > 1 && args[0] == "container" && args[1] == "rm" && lost {
+					lost = false
+					record, _, err := f.config.readRecord(f.plan.Database.NetworkName + ".json")
+					if err != nil {
+						t.Fatal(err)
+					}
+					intent, exists, err := f.config.readRetirement("hop_second", f.plan, record, fmt.Sprintf("%064x", 2))
+					if err != nil || !exists || intent.Completed || intent.PredecessorID != first.ContainerID {
+						t.Fatal("retirement side effect preceded exact durable intent")
+					}
+					hook := f.hook
+					f.hook = nil
+					f.authorized = true
+					_, err = f.commandLocked(ctx, "docker", append([]string{"--host", f.e.endpoint, "--config", f.e.configDir}, args...), f.e.configDir, nil)
+					f.hook = hook
+					if err != nil {
+						t.Fatal(err)
+					}
+					return nil, errors.New("retirement response lost"), true
+				}
+				return nil, nil, false
+			}
+			apply := func() domain.HostingResult {
+				return f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+			}
+			failed := apply()
+			if failed.Ready || !failed.Uncertain || failed.ContainerID == "" || f.removes != 1 || f.containers[first.ContainerID] != nil {
+				t.Fatal("lost removal response did not retain uncertainty", failed)
+			}
+			observation, err := f.e.ObserveDatabase(context.Background(), domain.HostingOperation{ID: "hop_second", Plan: &f.plan, Result: &failed}, credentials, f.config)
+			if !errors.Is(err, errDatabaseRetirementUnresolved) || observation.Ready || f.removes != 1 {
+				t.Fatal("readiness alone settled incomplete retirement", err)
+			}
+			for range 2 {
+				result := apply()
+				if !result.Ready || result.Uncertain || result.ContainerID != failed.ContainerID || result.PreviousContainerID != first.ContainerID || f.creates != 2 || f.starts != 2 || f.removes != 1 {
+					t.Fatal("retirement replay required missing predecessor or duplicated a writer", result)
+				}
+			}
+			record, _, err := f.config.readRecord(f.plan.Database.NetworkName + ".json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent, exists, err := f.config.readRetirement("hop_second", f.plan, record, failed.ContainerID)
+			if err != nil || !exists || !intent.Completed {
+				t.Fatal("confirmed retirement was not durably completed")
+			}
+			settled := apply()
+			observation, err = f.e.ObserveDatabase(context.Background(), domain.HostingOperation{ID: "hop_second", Plan: &f.plan, Result: &settled}, credentials, f.config)
+			if err != nil || !observation.Ready || f.removes != 1 {
+				t.Fatal("completed retirement could not be observed read-only", err)
+			}
+		})
+	}
+}
+
+func TestDatabaseEngineRetirementNeedsExactExistingReadyReplacement(t *testing.T) {
+	for _, kind := range []string{"missing_predecessor_no_intent", "missing_successor", "stopped_successor", "changed_intent", "foreign_user", "running_predecessor"} {
+		t.Run(kind, func(t *testing.T) {
+			f, credentials := databaseFixture(t, "redis")
+			first := f.apply(context.Background(), credentials)
+			if !first.Ready {
+				t.Fatal(first)
+			}
+			credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+			if kind == "missing_predecessor_no_intent" {
+				delete(f.containers, first.ContainerID)
+				delete(f.network["Containers"].(map[string]any), first.ContainerID)
+			} else {
+				f.hook = func(_ context.Context, args []string) ([]byte, error, bool) {
+					if len(args) > 1 && args[0] == "container" && args[1] == "rm" {
+						return nil, errors.New("retirement not acknowledged"), true
+					}
+					return nil, nil, false
+				}
+				failed := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+				if failed.Ready || !failed.Uncertain || failed.ContainerID == "" {
+					t.Fatal("fixture did not retain unresolved retirement", failed)
+				}
+				f.hook = nil
+				switch kind {
+				case "missing_successor":
+					delete(f.containers, failed.ContainerID)
+					delete(f.network["Containers"].(map[string]any), failed.ContainerID)
+				case "stopped_successor":
+					f.containers[failed.ContainerID]["State"] = map[string]any{"Running": false, "Status": "exited"}
+					delete(f.network["Containers"].(map[string]any), failed.ContainerID)
+				case "changed_intent":
+					name := databaseRetirementName("hop_second", f.plan)
+					raw, err := os.ReadFile(filepath.Join(f.config.stateRoot, name))
+					if err != nil {
+						t.Fatal(err)
+					}
+					var intent databaseRetirement
+					if json.Unmarshal(raw, &intent) != nil {
+						t.Fatal("invalid fixture intent")
+					}
+					intent.PredecessorPlan = "sha256:" + strings.Repeat("f", 64)
+					raw, err = json.Marshal(intent)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err = os.WriteFile(filepath.Join(f.config.stateRoot, name), raw, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				case "foreign_user":
+					f.containers[strings.Repeat("f", 64)] = f.containers[failed.ContainerID]
+				case "running_predecessor":
+					f.containers[first.ContainerID]["State"] = map[string]any{"Running": true, "Status": "running"}
+				}
+			}
+			creates, starts, removes := f.creates, f.starts, f.removes
+			result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+			if result.Ready || !result.Uncertain || f.creates != creates || f.starts != starts || f.removes != removes {
+				t.Fatal("unproven retirement caused mutation or settlement", result)
+			}
+		})
+	}
+}
+
+func TestDatabaseEngineFailedReplacementReadinessRetainsPredecessor(t *testing.T) {
+	f, credentials := databaseFixture(t, "postgresql")
+	first := f.apply(context.Background(), credentials)
+	if !first.Ready {
+		t.Fatal(first)
+	}
+	credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.config.readiness = func(context.Context, string, domain.HostingApplyPlan, []DatabaseCredentialValue, bool, bool, func(context.Context) error) error {
+		cancel()
+		return errDatabaseReadiness
+	}
+	failed := f.e.ApplyDatabase(ctx, "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+	if failed.Ready || !failed.Uncertain || f.removes != 0 || f.containers[first.ContainerID] == nil || f.containers[first.ContainerID]["State"].(map[string]any)["Running"].(bool) {
+		t.Fatal("failed readiness retired predecessor or fabricated restoration", failed)
+	}
+	if _, err := os.Stat(filepath.Join(f.config.stateRoot, databaseRetirementName("hop_second", f.plan))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("failed readiness admitted predecessor retirement")
+	}
+	f.config.readiness = func(context.Context, string, domain.HostingApplyPlan, []DatabaseCredentialValue, bool, bool, func(context.Context) error) error {
+		return nil
+	}
+	result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+	if !result.Ready || f.creates != 2 || f.starts != 2 || f.removes != 1 {
+		t.Fatal("authorized recovery failed to finish existing ready replacement", result)
+	}
+}
+
+func TestDatabaseEngineRetirementRetriesPresentStoppedTargetOnly(t *testing.T) {
+	f, credentials := databaseFixture(t, "redis")
+	first := f.apply(context.Background(), credentials)
+	if !first.Ready {
+		t.Fatal(first)
+	}
+	credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+	f.hook = func(_ context.Context, args []string) ([]byte, error, bool) {
+		if len(args) > 1 && args[0] == "container" && args[1] == "rm" {
+			return nil, errors.New("removal rejected"), true
+		}
+		return nil, nil, false
+	}
+	failed := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+	if failed.Ready || !failed.Uncertain || f.removes != 0 || f.containers[first.ContainerID] == nil {
+		t.Fatal("removal failure lost stopped predecessor", failed)
+	}
+	f.hook = nil
+	result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+	if !result.Ready || result.Uncertain || f.removes != 1 || f.creates != 2 || f.starts != 2 {
+		t.Fatal("safe exact removal retry failed", result)
+	}
+}
+
+func TestDatabaseEngineRetirementRevalidatesAfterIntent(t *testing.T) {
+	for _, kind := range []string{"authority_lost", "ownership_changed", "replacement_stopped"} {
+		t.Run(kind, func(t *testing.T) {
+			f, credentials := databaseFixture(t, "postgresql")
+			first := f.apply(context.Background(), credentials)
+			if !first.Ready {
+				t.Fatal(first)
+			}
+			credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+			changed := false
+			before := func(ctx context.Context) error {
+				if _, err := os.Stat(filepath.Join(f.config.stateRoot, databaseRetirementName("hop_second", f.plan))); err == nil && !changed {
+					changed = true
+					if kind == "authority_lost" {
+						return errors.New("stale lease")
+					}
+					if kind == "ownership_changed" {
+						f.containers[first.ContainerID]["Config"].(map[string]any)["Labels"].(map[string]string)["foreign"] = "label"
+					}
+					if kind == "replacement_stopped" {
+						for id, container := range f.containers {
+							if id != first.ContainerID {
+								container["State"] = map[string]any{"Running": false, "Status": "exited"}
+							}
+						}
+					}
+				}
+				return f.before(ctx)
+			}
+			result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, before)
+			if !changed || result.Ready || !result.Uncertain || f.removes != 0 || f.containers[first.ContainerID] == nil {
+				t.Fatal("retirement skipped post-intent authority/ownership proof", result)
+			}
+		})
+	}
+}
+
+func TestDatabaseEngineRetirementAbsenceNeedsSuccessfulListingAndRetainedIntent(t *testing.T) {
+	for _, kind := range []string{"listing_failed", "intent_missing", "completed_target_reappeared"} {
+		t.Run(kind, func(t *testing.T) {
+			f, credentials := databaseFixture(t, "redis")
+			first := f.apply(context.Background(), credentials)
+			if !first.Ready {
+				t.Fatal(first)
+			}
+			old := f.containers[first.ContainerID]
+			credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+			result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+			if !result.Ready {
+				t.Fatal(result)
+			}
+			switch kind {
+			case "listing_failed":
+				f.hook = func(_ context.Context, args []string) ([]byte, error, bool) {
+					if len(args) > 1 && args[0] == "container" && args[1] == "ls" && args[len(args)-1] == "id="+first.ContainerID {
+						return nil, errors.New("list unavailable"), true
+					}
+					return nil, nil, false
+				}
+			case "intent_missing":
+				if err := os.Remove(filepath.Join(f.config.stateRoot, databaseRetirementName("hop_second", f.plan))); err != nil {
+					t.Fatal(err)
+				}
+			case "completed_target_reappeared":
+				f.containers[first.ContainerID] = old
+			}
+			result = f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+			if result.Ready || !result.Uncertain || f.removes != 1 || f.creates != 2 || f.starts != 2 {
+				t.Fatal("unproven absence or completed permission reused", result)
+			}
+		})
+	}
+}
+
+func TestDatabaseEngineRetirementAbsenceMustBelongToPinnedDaemon(t *testing.T) {
+	f, credentials := databaseFixture(t, "redis")
+	first := f.apply(context.Background(), credentials)
+	if !first.Ready {
+		t.Fatal(first)
+	}
+	credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+	f.hook = func(_ context.Context, args []string) ([]byte, error, bool) {
+		if f.removes == 1 && slices.Equal(args, []string{"info", "--format", "{{json .ID}}"}) {
+			return []byte(`"different-daemon"`), nil, true
+		}
+		return nil, nil, false
+	}
+	result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+	if result.Ready || !result.Uncertain || f.removes != 1 {
+		t.Fatal("foreign-daemon absence settled retirement", result)
+	}
+	record, _, err := f.config.readRecord(f.plan.Database.NetworkName + ".json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, exists, err := f.config.readRetirement("hop_second", f.plan, record, result.ContainerID)
+	if err != nil || !exists || intent.Completed {
+		t.Fatal("foreign-daemon absence was durably completed")
+	}
+	f.hook = nil
+	result = f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+	if !result.Ready || f.removes != 1 || f.creates != 2 || f.starts != 2 {
+		t.Fatal("pinned-daemon exact absence could not reconcile", result)
 	}
 }
