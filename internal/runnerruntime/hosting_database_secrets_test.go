@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -150,5 +151,134 @@ func TestDatabaseSecretFilesRejectSymlinksAndPublicPermissions(t *testing.T) {
 				t.Fatal("unprotected credential path accepted")
 			}
 		})
+	}
+}
+
+func TestDatabaseCredentialsBusyBorrowDoesNotWaitPastContext(t *testing.T) {
+	for _, kind := range []string{"canceled", "short_deadline"} {
+		t.Run(kind, func(t *testing.T) {
+			f, credentials := databaseFixture(t, "redis")
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			firstDone := make(chan error, 1)
+			secondResult := make(chan error, 1)
+			secondDone := make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			t.Cleanup(func() {
+				unblock()
+				select {
+				case err := <-firstDone:
+					if err != nil {
+						t.Error("active credential borrower failed")
+					}
+				case <-time.After(time.Second):
+					t.Error("active credential borrower did not join")
+				}
+			})
+			go func() {
+				firstDone <- credentials.use(context.Background(), f.plan, func(context.Context, []DatabaseCredentialValue) error { close(entered); <-release; return nil })
+			}()
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("active borrower did not start")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			if kind == "canceled" {
+				cancel()
+			}
+			t.Cleanup(func() {
+				unblock()
+				select {
+				case <-secondDone:
+				case <-time.After(time.Second):
+					t.Error("rejected credential borrower did not join")
+				}
+			})
+			go func() {
+				defer close(secondDone)
+				secondResult <- credentials.use(ctx, f.plan, func(context.Context, []DatabaseCredentialValue) error {
+					t.Error("busy credential callback ran")
+					return nil
+				})
+			}()
+			select {
+			case err := <-secondResult:
+				if err == nil {
+					t.Fatal("busy credential borrow succeeded")
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Fatal("canceled/deadline borrower waited behind active use")
+			}
+		})
+	}
+}
+
+func TestDatabaseCredentialsCloseWaitsForBorrowThenErases(t *testing.T) {
+	f, credentials := databaseFixture(t, "redis")
+	borrowed := make(chan []byte, 1)
+	release := make(chan struct{})
+	borrowDone := make(chan error, 1)
+	closeDone := make(chan struct{})
+	closeStarted := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(func() {
+		unblock()
+		select {
+		case err := <-borrowDone:
+			if err != nil {
+				t.Error("active credential borrower failed during Close")
+			}
+		case <-time.After(time.Second):
+			t.Error("credential borrower did not join")
+		}
+		select {
+		case <-closeDone:
+		case <-time.After(time.Second):
+			t.Error("credential close did not join")
+		}
+	})
+	go func() {
+		borrowDone <- credentials.use(context.Background(), f.plan, func(_ context.Context, values []DatabaseCredentialValue) error {
+			borrowed <- values[0].value
+			<-release
+			return nil
+		})
+	}()
+	var owned []byte
+	select {
+	case owned = <-borrowed:
+	case <-time.After(time.Second):
+		t.Fatal("credential borrower did not start")
+	}
+	go func() { close(closeStarted); credentials.Close(); close(closeDone) }()
+	<-closeStarted
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned while credential bytes were borrowed")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if len(owned) < 32 || owned[0] == 0 {
+		t.Fatal("Close erased active borrower bytes")
+	}
+	unblock()
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after borrow")
+	}
+	for _, b := range owned {
+		if b != 0 {
+			t.Fatal("Close did not erase owned bytes")
+		}
+	}
+	if err := credentials.use(context.Background(), f.plan, func(context.Context, []DatabaseCredentialValue) error {
+		t.Error("closed credentials callback ran")
+		return nil
+	}); err == nil {
+		t.Fatal("closed credentials reused")
 	}
 }

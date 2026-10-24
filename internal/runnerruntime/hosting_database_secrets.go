@@ -58,7 +58,8 @@ func (DatabaseCredentialValue) Format(s fmt.State, _ rune) {
 func (DatabaseCredentialValue) MarshalJSON() ([]byte, error) { return nil, errDatabaseSecret }
 
 // DatabaseCredentials owns exact plan credential values until Close or UseUntil.
-// Calls borrow under a mutex so Close cannot race an in-flight bounded use.
+// A busy bundle rejects concurrent borrows immediately rather than waiting past
+// their context deadlines. Close waits for active use before erasing its bytes.
 type DatabaseCredentials struct {
 	mu       sync.Mutex
 	planHash string
@@ -118,10 +119,9 @@ func (*DatabaseCredentials) Format(s fmt.State, _ rune) {
 func (*DatabaseCredentials) MarshalJSON() ([]byte, error) { return nil, errDatabaseSecret }
 
 func (c *DatabaseCredentials) use(ctx context.Context, plan domain.HostingApplyPlan, fn func(context.Context, []DatabaseCredentialValue) error) error {
-	if c == nil {
+	if c == nil || ctx.Err() != nil || !c.mu.TryLock() {
 		return errDatabaseSecret
 	}
-	c.mu.Lock()
 	defer c.mu.Unlock()
 	if ctx.Err() != nil || plan.Database == nil || c.planHash != plan.Hash || len(c.values) != len(plan.Database.Credentials) || !time.Now().Before(c.until) {
 		return errDatabaseSecret
