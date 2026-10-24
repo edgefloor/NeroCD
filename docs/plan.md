@@ -155,8 +155,11 @@ the standalone archive helper is accepted at `3b34b3920378cc41613bc87ca69eea2d35
 controller/config/API and default-off runner are accepted through
 `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, with migration 0068 and accepted helper
 packaging. Next is physical application archive backup/restore qualification;
-retained PostgreSQL/River tests use a fake engine. Archive UI is integrating and
-not accepted. Application-verified A26/A37 remain unfinished; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
+current helper config-ID qualification targets the classic Docker image store,
+with a recorded containerd-store lookup failure and no runtime fallback;
+retained PostgreSQL/River tests use a fake engine. Archive UI is accepted at
+`a99a75517c018caa9aa9965cf451f9f826e7b3d6` with intercepted-browser evidence;
+physical application qualification remains pending. Application-verified A26/A37 remain unfinished; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
 under R17/R19 and applicable A09/A10 checks, production TLS and remaining parity
 remain separate unfinished work. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.

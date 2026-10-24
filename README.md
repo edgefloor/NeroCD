@@ -196,9 +196,13 @@ remains `adapter_unqualified` and application binding remains unfinished. Backup
   Linux helper for strict USTAR `nerocd-storage-v1`. The
   [archive controller/configuration/API/runner](docs/hosting-storage-archive.md)
   are accepted through `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, alongside helper
-  packaging. The qualification image was removed; it is not an installed pin.
+  packaging. Helper config-ID qualification targets the classic Docker image
+  store; containerd-store lookup failed and has no runtime fallback. The
+  qualification image was removed; it is not an installed pin.
   PostgreSQL/River tests use a fake engine. Physical application backup/restore,
-  archive UI and complete A26/A37 remain unqualified.
+  and complete A26/A37 remain unqualified. Archive UI is accepted at
+  `a99a75517c018caa9aa9965cf451f9f826e7b3d6` with intercepted-browser evidence;
+  that does not qualify physical application backup/restore.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon

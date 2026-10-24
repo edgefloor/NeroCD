@@ -7,7 +7,8 @@ The [API tests](../internal/api/hosting_storage_archive_handlers_test.go) and
 [runner tests](../internal/runnerruntime/hosting_storage_archive_controller_test.go)
 provide contract/lifecycle evidence. Actual PostgreSQL/River/controller tests use
 a fake engine; physical application archive backup/restore remains pending.
-Archive UI is integrating and unaccepted.
+Archive UI code/browser acceptance is recorded below; physical application
+backup/restore remains pending.
 
 The source-bound runner handoff is
 `/tmp/nerocd-archive-runner-integrated-handoff.json`, with promotion recorded in
@@ -28,6 +29,25 @@ Invalid configuration aborts startup. There is no reload, default helper,
 daemon discovery, image pull, or dependency on the hosting build policy.
 Leaving the variable unset disables new archive admission; it does not delete
 existing operations or retained archives.
+
+## UI acceptance and image-store boundary
+
+Archive UI source `d98e88c64f84924bd36fb2d4c7c29ad723e80ced` is accepted at
+`a99a75517c018caa9aa9965cf451f9f826e7b3d6`. Retained evidence records 1,426
+frontend tests, TypeScript, generated API, Go/frontend builds, a 75-file embedded
+manifest and 74 matching served assets. Browser responses are intercepted and
+qualify UI behavior, not physical archive backup/restore. Exact evidence is in
+`/tmp/nerocd-archive-ui-integrated-handoff.json` and
+`/tmp/nerocd-main-archive-ui-promotion.json`. The new built artifact remains in the
+integration checkout; root ignored assets were untouched.
+
+The current helper identity path uses a Docker image configuration ID. A Docker
+29 containerd image-store attempt could not inspect the BuildKit image by that
+configuration ID; the failed attempt remains at
+`/tmp/nerocd-storage-runtime-20261024.2LlLIL`. Current qualification targets an
+explicit classic Docker image store. No runtime fallback is implemented, no
+universal Docker 29 support is established, and no future physical test pass is
+claimed. Physical application A26/A37 remains pending.
 
 ## Provision an exact helper identity
 
