@@ -326,6 +326,9 @@ func (p HostingStorageArchivePlan) Validate() error {
 	}
 	h := p.SourceHealthy
 	s := h.Snapshot
+	if h.Storage != nil && (h.Storage.Plan.CreationOperationID != p.SourceMaterialization.CreationOperationID || h.Storage.Plan.CreationNonce != p.SourceMaterialization.CreationNonce || h.Storage.Plan.DaemonID != p.SourceMaterialization.DaemonID) {
+		return ErrInvalidStorageArchive
+	}
 	if ValidateHostingRelease(h.Release) != nil || ValidateHostingHealthyStorage(h) != nil || h.Storage == nil || s.PolicyVersion != HostingOwnedStoragePolicyVersion || s.Database != (HostingDatabaseExecutionRef{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) || p.SourceStorage.ProjectID != p.ProjectID || p.SourceStorage.ResourceID != s.ResourceID || p.SourceStorage.BindingID != s.BindingID || p.SourceStorage.DestinationID != p.DestinationID || s.ServerID != p.ServerID || s.RunnerID != p.RunnerID || s.DestinationID != p.DestinationID || p.Helper.DaemonID != h.Release.DaemonID || p.SourceMaterialization.DaemonID != p.Helper.DaemonID || p.SourceMaterialization.StorageRef != s.Storage || p.SourceStorage.Reference() != s.Storage || h.Storage.CreationPlanHash != p.SourceMaterialization.CreationPlanHash {
 		return ErrInvalidStorageArchive
 	}
@@ -370,6 +373,13 @@ func (p HostingStorageArchivePlan) Validate() error {
 	if p.Target != nil {
 		t := p.Target
 		if t.Storage.BindingID == p.SourceStorage.BindingID || t.Storage.ID == p.SourceStorage.ID || t.Storage.VolumeName == p.SourceStorage.VolumeName {
+			return ErrInvalidStorageArchive
+		}
+		origin := p.OperationID
+		if p.Mode == "recover" {
+			origin = p.RecoveryOfOperationID
+		}
+		if t.Plan.CreationOperationID != origin {
 			return ErrInvalidStorageArchive
 		}
 		if t.Storage.Validate() != nil || t.Resource.ID == s.ResourceID || t.Resource.ProjectID != p.ProjectID || t.Resource.Kind != "application" || t.Resource.Source.Kind != "image" || t.Resource.Source.Image.Reference != h.Release.CanonicalImage || t.Storage.ResourceID != t.Resource.ID || t.Storage.ProjectID != p.ProjectID || t.Storage.DestinationID != p.DestinationID || t.Storage.MountPath != p.SourceStorage.MountPath || t.Plan.Reference != (HostingStorageRef{StorageID: t.Storage.ID, Generation: t.Storage.Generation, Hash: t.Storage.Hash}) || t.Plan.VolumeName != t.Storage.VolumeName || t.Plan.MountPath != t.Storage.MountPath || t.Plan.CreationOperationID == "" || t.Plan.DaemonID != p.Helper.DaemonID || t.Plan.CreationNonce != HostingStorageCreationNonce(t.Plan.Reference, t.Plan.CreationOperationID, t.Plan.DaemonID) {

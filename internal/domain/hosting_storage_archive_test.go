@@ -176,7 +176,8 @@ func TestStorageArchiveRestoreNeverAuthorizesSourceWriter(t *testing.T) {
 		}
 	})
 	p.Mode = "recover"
-	p.RecoveryOfOperationID = "original_restore"
+	p.RecoveryOfOperationID = p.OperationID
+	p.OperationID = "recovery_operation"
 	p.Hash = ""
 	p.Hash = HostingDocumentHash(p)
 	if p.Validate() != nil {
@@ -187,6 +188,20 @@ func TestStorageArchiveRestoreNeverAuthorizesSourceWriter(t *testing.T) {
 	p.Hash = HostingDocumentHash(p)
 	if p.Validate() == nil {
 		t.Fatal("restore recovery gained source stop authority")
+	}
+}
+
+func TestStorageArchiveOriginReferencesRemainCanonical(t *testing.T) {
+	p := archiveDomainPlan(t)
+	h := *p.SourceHealthy.Storage
+	h.Plan.CreationOperationID = "another_origin"
+	h.Plan.CreationNonce = HostingStorageCreationNonce(h.Plan.Reference, h.Plan.CreationOperationID, h.Plan.DaemonID)
+	p.SourceHealthy.Storage = &h
+	p.Writers = []HostingHealthy{p.SourceHealthy}
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() == nil {
+		t.Fatal("source origin descriptor disagreed with committed materialization")
 	}
 }
 
