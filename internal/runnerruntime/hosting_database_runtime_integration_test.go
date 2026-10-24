@@ -650,8 +650,11 @@ func databaseRuntimePositive(t *testing.T, root, kind string) {
 	f.data(cPlan, c, "", expected)
 	beforeDenial := proxy.mutations.Load()
 	denied := f.apply(restarted, operationC, cPlan, true, databaseRuntimeAuthority)
-	if denied.Ready || !denied.Uncertain || proxy.mutations.Load() != beforeDenial || !maps.Equal(stateBefore, databaseRuntimeTree(t, f.config.stateRoot)) || !maps.Equal(secretsBefore, databaseRuntimeTree(t, f.config.secretRoot)) {
-		t.Fatal("changed credential was accepted or modified protected state")
+	mutationsUnchanged := proxy.mutations.Load() == beforeDenial
+	stateUnchanged := maps.Equal(stateBefore, databaseRuntimeTree(t, f.config.stateRoot))
+	secretsUnchanged := maps.Equal(secretsBefore, databaseRuntimeTree(t, f.config.secretRoot))
+	if denied.Ready || !denied.Uncertain || !mutationsUnchanged || !stateUnchanged || !secretsUnchanged {
+		t.Fatalf("changed-credential denial: ready=%t uncertain=%t docker_mutations_unchanged=%t state_unchanged=%t secrets_unchanged=%t", denied.Ready, denied.Uncertain, mutationsUnchanged, stateUnchanged, secretsUnchanged)
 	}
 	dPlan := f.next(operationC, cPlan, c)
 	revoked := f.apply(restarted, "hop_db7319_"+kind+"_main_denied", dPlan, false, func(context.Context) error { return errors.New("fixture authority revoked") })

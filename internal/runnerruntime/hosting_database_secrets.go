@@ -218,24 +218,28 @@ func databaseProtectedParents(path string) error {
 	}
 }
 
+func databaseCheckFile(root *os.Root, name string, data []byte, uid, gid int) error {
+	path := filepath.Join(root.Name(), name)
+	if databaseFilePolicy(path, 0o600, uid, gid, false) != nil {
+		return errors.New("database protected file changed")
+	}
+	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return errors.New("database protected file unavailable")
+	}
+	defer func() { _ = file.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(file, 16<<10))
+	defer clear(raw)
+	if err != nil || !bytes.Equal(raw, data) {
+		return errors.New("database protected file contents changed")
+	}
+	return nil
+}
+
 func databaseFile(root *os.Root, name string, data []byte, uid, gid int) error {
 	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		path := filepath.Join(root.Name(), name)
-		if databaseFilePolicy(path, 0o600, uid, gid, false) != nil {
-			return errors.New("database protected file changed")
-		}
-		file, err = root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-		if err != nil {
-			return errors.New("database protected file unavailable")
-		}
-		defer func() { _ = file.Close() }()
-		raw, err := io.ReadAll(io.LimitReader(file, 16<<10))
-		defer clear(raw)
-		if err != nil || !bytes.Equal(raw, data) {
-			return errors.New("database protected file contents changed")
-		}
-		return nil
+		return databaseCheckFile(root, name, data, uid, gid)
 	}
 	if err != nil {
 		return errors.New("database protected file creation failed")
@@ -255,6 +259,50 @@ func databaseFile(root *os.Root, name string, data []byte, uid, gid int) error {
 
 func databaseGeneration(operation string, plan domain.HostingApplyPlan) string {
 	return "generation_" + domain.HostingDocumentHash(struct{ Operation, Plan string }{operation, plan.Hash})[7:39]
+}
+
+func databaseSecretFiles(operation string, plan domain.HostingApplyPlan, values []DatabaseCredentialValue) map[string][]byte {
+	files := map[string][]byte{}
+	if plan.Database.Reference.Engine == "postgresql" {
+		files["admin-password"] = bytes.Clone(databasePassword(values, "admin"))
+	} else {
+		app := sha256.Sum256(databasePassword(values, "app"))
+		probe := sha256.Sum256(databasePassword(values, "probe"))
+		files["users.acl"] = []byte("user default off\nuser ncd_app on #" + hex.EncodeToString(app[:]) + " ~* -@all +@read +@write +ping -@dangerous\nuser ncd_probe on #" + hex.EncodeToString(probe[:]) + " -@all +ping\n")
+		files["redis.conf"] = []byte("bind 0.0.0.0\nprotected-mode yes\nport 6379\ndir /data\naclfile /run/nerocd-db/users.acl\nappendonly yes\nappendfsync everysec\nappenddirname appendonlydir\nno-appendfsync-on-rewrite no\naof-load-truncated no\nsave \"\"\nlogfile \"\"\n")
+	}
+	identity, _ := json.Marshal(struct{ Operation, Plan string }{operation, plan.Hash})
+	files["identity.json"] = identity
+	return files
+}
+
+// Retirement replay must reject changed protected files before readiness can
+// create a Docker exec for process-ownership inspection. This never repairs files.
+func (c DatabaseEngineConfig) checkSecretFiles(ctx context.Context, operation string, plan domain.HostingApplyPlan, values []DatabaseCredentialValue) error {
+	path := filepath.Join(c.secretRoot, databaseGeneration(operation, plan))
+	if ctx.Err() != nil || databaseFilePolicy(path, 0o700, c.uid, c.gid, true) != nil {
+		return errDatabaseSecret
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return errDatabaseSecret
+	}
+	defer func() { _ = root.Close() }()
+	files := databaseSecretFiles(operation, plan, values)
+	defer func() {
+		for _, raw := range files {
+			clear(raw)
+		}
+	}()
+	for name, data := range files {
+		if ctx.Err() != nil {
+			return errDatabaseSecret
+		}
+		if err := databaseCheckFile(root, name, data, c.uid, c.gid); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
 func (c DatabaseEngineConfig) secrets(ctx context.Context, operation string, plan domain.HostingApplyPlan, values []DatabaseCredentialValue, before func(context.Context) error) (string, error) {
@@ -281,22 +329,12 @@ func (c DatabaseEngineConfig) secrets(ctx context.Context, operation string, pla
 		return "", errors.New("database credential generation unavailable")
 	}
 	defer func() { _ = root.Close() }()
-	files := map[string][]byte{}
+	files := databaseSecretFiles(operation, plan, values)
 	defer func() {
 		for _, raw := range files {
 			clear(raw)
 		}
 	}()
-	if plan.Database.Reference.Engine == "postgresql" {
-		files["admin-password"] = bytes.Clone(databasePassword(values, "admin"))
-	} else {
-		app := sha256.Sum256(databasePassword(values, "app"))
-		probe := sha256.Sum256(databasePassword(values, "probe"))
-		files["users.acl"] = []byte("user default off\nuser ncd_app on #" + hex.EncodeToString(app[:]) + " ~* -@all +@read +@write +ping -@dangerous\nuser ncd_probe on #" + hex.EncodeToString(probe[:]) + " -@all +ping\n")
-		files["redis.conf"] = []byte("bind 0.0.0.0\nprotected-mode yes\nport 6379\ndir /data\naclfile /run/nerocd-db/users.acl\nappendonly yes\nappendfsync everysec\nappenddirname appendonlydir\nno-appendfsync-on-rewrite no\naof-load-truncated no\nsave \"\"\nlogfile \"\"\n")
-	}
-	identity, _ := json.Marshal(struct{ Operation, Plan string }{operation, plan.Hash})
-	files["identity.json"] = identity
 	for name, data := range files {
 		if err := databaseAuthorize(ctx, before); err != nil {
 			return "", err

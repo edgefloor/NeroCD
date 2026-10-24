@@ -394,8 +394,13 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 	if err != nil {
 		return err
 	}
-	if retirementExists && e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values) != nil {
-		return errors.New("database retirement requires existing ready replacement")
+	if retirementExists {
+		if err := c.checkSecretFiles(ctx, operation, plan, values); err != nil {
+			return err
+		}
+		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values) != nil {
+			return errors.New("database retirement requires existing ready replacement")
+		}
 	}
 	secretPath, err := c.secrets(ctx, operation, plan, values, before)
 	if err != nil {

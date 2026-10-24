@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,6 +152,86 @@ func TestDatabaseSecretFilesRejectSymlinksAndPublicPermissions(t *testing.T) {
 				t.Fatal("unprotected credential path accepted")
 			}
 		})
+	}
+}
+
+func TestDatabaseSecretFilesCheckNeverCreatesOrRepairs(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, kind := range []string{"valid", "changed_credential", "missing_generation", "missing_file", "changed_file", "public_file", "file_symlink", "canceled"} {
+			t.Run(engine+"/"+kind, func(t *testing.T) {
+				f, credentials := databaseFixture(t, engine)
+				path := filepath.Join(f.config.secretRoot, databaseGeneration(f.req.OriginOperationID, f.plan))
+				if kind != "missing_generation" {
+					if err := credentials.use(t.Context(), f.plan, func(ctx context.Context, values []DatabaseCredentialValue) error {
+						_, err := f.config.secrets(ctx, f.req.OriginOperationID, f.plan, values, f.before)
+						return err
+					}); err != nil {
+						t.Fatal("protected fixture generation failed")
+					}
+				}
+				name := "admin-password"
+				if engine == "redis" {
+					name = "users.acl"
+				}
+				file := filepath.Join(path, name)
+				switch kind {
+				case "changed_credential":
+					credentials.values[0].value[0] = 'z'
+				case "missing_file", "file_symlink":
+					if err := os.Remove(file); err != nil {
+						t.Fatal("fixture file removal failed")
+					}
+					if kind == "file_symlink" {
+						target := filepath.Join(t.TempDir(), "foreign")
+						if err := os.WriteFile(target, []byte("foreign fixture bytes"), 0o600); err != nil {
+							t.Fatal("foreign fixture file creation failed")
+						}
+						if err := os.Symlink(target, file); err != nil {
+							t.Fatal("fixture symlink creation failed")
+						}
+					}
+				case "changed_file":
+					if err := os.WriteFile(file, []byte("changed fixture bytes"), 0o600); err != nil {
+						t.Fatal("fixture file change failed")
+					}
+				case "public_file":
+					if err := os.Chmod(file, 0o644); err != nil {
+						t.Fatal("fixture file mode change failed")
+					}
+				}
+				modes := func() map[string]os.FileMode {
+					result := map[string]os.FileMode{}
+					if err := filepath.WalkDir(f.config.secretRoot, func(path string, entry os.DirEntry, walkErr error) error {
+						if walkErr != nil {
+							return walkErr
+						}
+						info, err := entry.Info()
+						if err == nil {
+							result[path] = info.Mode()
+						}
+						return err
+					}); err != nil {
+						t.Fatal("protected fixture mode inspection failed")
+					}
+					return result
+				}
+				beforeTree, beforeModes := databaseRuntimeTree(t, f.config.secretRoot), modes()
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				if kind == "canceled" {
+					cancel()
+				}
+				err := credentials.use(t.Context(), f.plan, func(_ context.Context, values []DatabaseCredentialValue) error {
+					return f.config.checkSecretFiles(ctx, f.req.OriginOperationID, f.plan, values)
+				})
+				if (err == nil) != (kind == "valid") {
+					t.Fatal("protected credential check accepted invalid evidence or rejected exact evidence")
+				}
+				if !maps.Equal(beforeTree, databaseRuntimeTree(t, f.config.secretRoot)) || !maps.Equal(beforeModes, modes()) {
+					t.Fatal("read-only credential check created or repaired protected files")
+				}
+			})
+		}
 	}
 }
 

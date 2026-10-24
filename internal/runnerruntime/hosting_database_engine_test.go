@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -741,6 +742,58 @@ func TestDatabaseEngineThreeReleasesRetireOnlyStoppedPredecessors(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestDatabaseEngineChangedAdminReplayRejectsBeforeExec(t *testing.T) {
+	f, credentials := databaseFixture(t, "postgresql")
+	previous := f.apply(t.Context(), credentials)
+	if !previous.Ready {
+		t.Fatal("release A failed")
+	}
+	operation := f.req.OriginOperationID
+	for _, next := range []string{"hop_second", "hop_third"} {
+		credentials = databaseNextPlan(t, f, operation, previous)
+		previous = f.e.ApplyDatabase(t.Context(), next, f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+		if !previous.Ready {
+			t.Fatal("successor release failed")
+		}
+		operation = next
+	}
+	if err := f.e.Close(); err != nil {
+		t.Fatal("engine did not close before credential replay")
+	}
+	reopened, err := newImageEngine("")
+	if err != nil {
+		t.Fatal("engine did not reopen for credential replay")
+	}
+	t.Cleanup(func() {
+		if err := reopened.Close(); err != nil {
+			t.Error("reopened engine did not close")
+		}
+	})
+	f.e = reopened
+	reopened.command = imageCommandFunc(f.command)
+	changed := databaseFixtureCredentials(t, f.plan)
+	if changed.values[0].reference.Role != "admin" {
+		t.Fatal("fixture must change only PostgreSQL admin")
+	}
+	changed.values[0].value[0] = 'z'
+	stateBefore, secretsBefore := databaseRuntimeTree(t, f.config.stateRoot), databaseRuntimeTree(t, f.config.secretRoot)
+	callsBefore := len(f.calls)
+	mutationsBefore := [5]int{f.networkCreates, f.creates, f.starts, f.stops, f.removes}
+	denied := f.e.ApplyDatabase(t.Context(), operation, f.plan, f.req, f.evidence(), changed, f.config, f.before)
+	execs := 0
+	for _, call := range f.calls[callsBefore:] {
+		if strings.HasPrefix(call, "container exec ") {
+			execs++
+		}
+	}
+	stateUnchanged := maps.Equal(stateBefore, databaseRuntimeTree(t, f.config.stateRoot))
+	secretsUnchanged := maps.Equal(secretsBefore, databaseRuntimeTree(t, f.config.secretRoot))
+	mutationsUnchanged := mutationsBefore == [5]int{f.networkCreates, f.creates, f.starts, f.stops, f.removes}
+	if denied.Ready || !denied.Uncertain || execs != 0 || !mutationsUnchanged || !stateUnchanged || !secretsUnchanged {
+		t.Fatalf("changed-admin denial: ready=%t uncertain=%t execs=%d mutations_unchanged=%t state_unchanged=%t secrets_unchanged=%t", denied.Ready, denied.Uncertain, execs, mutationsUnchanged, stateUnchanged, secretsUnchanged)
 	}
 }
 
