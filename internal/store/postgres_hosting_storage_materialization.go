@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -52,6 +53,9 @@ func requireHostingStorageAgent(ctx context.Context, tx pgx.Tx, snap domain.Host
 	}
 	if snap.Storage == (domain.HostingStorageRef{}) {
 		return nil
+	}
+	if snap.Database != (domain.HostingDatabaseExecutionRef{}) {
+		return requireHostingDatabaseAgent(ctx, tx, snap)
 	}
 	if err := requireHostingReleaseAgent(ctx, tx, snap.RunnerID); err != nil {
 		return err
@@ -128,6 +132,17 @@ func compileHostingStoragePlan(ctx context.Context, tx pgx.Tx, op domain.Hosting
 		descriptor.CreationOperationID, descriptor.CreationNonce = origin.CreationOperationID, origin.CreationNonce
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.HostingApplyPlan{}, err
+	}
+	if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
+		if len(retained) != 0 {
+			return domain.HostingApplyPlan{}, ErrConflict
+		}
+		view, readErr := hostingDatabaseLoad(ctx, sqlcgen.New(tx), op.ResourceID)
+		if readErr != nil {
+			return domain.HostingApplyPlan{}, fmt.Errorf("read database credential references for plan: %w", readErr)
+		}
+		database := domain.HostingDatabasePlan{Reference: op.Snapshot.Database, NetworkName: domain.HostingDatabaseNetworkName(op.BindingID), Credentials: view.Credentials}
+		return domain.CompileHostingDatabasePlan(op.Snapshot, release, previous, descriptor, database)
 	}
 	return domain.CompileHostingOwnedStoragePlan(op.Snapshot, release, previous, retained, descriptor)
 }

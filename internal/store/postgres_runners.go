@@ -400,7 +400,7 @@ func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.
 			return domain.ClaimedRun{}, err
 		}
 	}
-	if claimedRun.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+	if claimedRun.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claimedRun.RunSpec.Type == domain.RunTypeDatabaseDeploy {
 		op, err := hostingOperation(ctx, tx, claimedRun.RunSpec.HostingOperationID)
 		if err != nil {
 			return domain.ClaimedRun{}, err

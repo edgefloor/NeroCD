@@ -45,6 +45,32 @@ paths:
         "404": {$ref: "#/components/responses/Error"}
         "409": {$ref: "#/components/responses/Error"}
         "503": {$ref: "#/components/responses/Error"}
+  "/api/v1/resources/{id}/database/deployments":
+    post:
+      operationId: requestHostingDatabaseDeployment
+      summary: Queue an immutable private database deployment
+      description: Requires current project maintainer and destination grant authority. Pins the saved recipe, owned storage and credential versions; uses no public host port. Runtime metadata remains adapter_unqualified pending separate engine qualification.
+      parameters:
+        - {name: id, in: path, required: true, schema: {$ref: "#/components/schemas/HostingIdentifier"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/HostingDatabaseDeploymentInput"}
+      responses:
+        "202":
+          description: Durable private database operation, including exact actor-bound replay
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingOperation"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   "/api/v1/resources/{id}/database":
     get:
       operationId: getHostingDatabase
@@ -5882,6 +5908,14 @@ components:
           type: integer
           minimum: 1
           maximum: 120
+    HostingDatabaseReadiness:
+      type: object
+      additionalProperties: false
+      description: Private database snapshots carry no HTTP probe. Authenticated engine readiness belongs to the qualified database runtime.
+      required: [path, timeout_seconds]
+      properties:
+        path: {type: string, enum: [""]}
+        timeout_seconds: {type: integer, enum: [0]}
     HostingDeploymentInput:
       type: object
       additionalProperties: false
@@ -6561,9 +6595,60 @@ components:
           }
         }
       }
+    HostingDatabaseDeploymentInput:
+      type: object
+      additionalProperties: false
+      required: [expected_generation, idempotency_key]
+      properties:
+        expected_generation: {type: integer, format: int64, minimum: 1}
+        idempotency_key: {type: string, minLength: 1, maxLength: 128, pattern: '^[^\s\p{Cc}]+$'}
+    HostingDatabaseExecutionRef:
+      type: object
+      additionalProperties: false
+      required: [engine, recipe_version, configuration_hash]
+      properties:
+        engine: {type: string, enum: [postgresql, redis]}
+        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1]}
+        configuration_hash: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    HostingDatabasePlan:
+      type: object
+      additionalProperties: false
+      required: [reference, network_name, credentials]
+      properties:
+        reference: {$ref: '#/components/schemas/HostingDatabaseExecutionRef'}
+        network_name: {type: string, pattern: '^ncdn_[0-9a-f]{32}$'}
+        credentials:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: {$ref: '#/components/schemas/HostingDatabaseCredentialRef'}
     HostingSnapshot:
       type: object
       additionalProperties: false
+      oneOf:
+        - required: [database, storage]
+          properties:
+            policy_version: {type: string, enum: [database.private.owned-storage.v1]}
+            host_port: {type: integer, enum: [0]}
+            container_port: {type: integer, enum: [5432, 6379]}
+            readiness: {$ref: '#/components/schemas/HostingDatabaseReadiness'}
+          not:
+            anyOf:
+              - required: [local_build]
+              - required: [runtime_configuration]
+              - required: [storage_route_continuity]
+        - not: {required: [database]}
+          properties:
+            policy_version:
+              type: string
+              enum:
+                - public-image.loopback.v1
+                - public-image.release-ports.v1
+                - local-build.release-ports.v1
+                - public-image.runtime-env.release-ports.v1
+                - local-build.runtime-env.release-ports.v1
+                - public-image.owned-storage.release-ports.v1
+            readiness: {$ref: '#/components/schemas/HostingReadiness'}
       required:
         - resource_id
         - image_reference
@@ -6578,6 +6663,7 @@ components:
         - readiness
         - policy_version
       properties:
+        database: {$ref: "#/components/schemas/HostingDatabaseExecutionRef"}
         storage_route_continuity: {$ref: "#/components/schemas/HostingStorageRouteContinuityRef"}
         storage: {$ref: '#/components/schemas/HostingStorageRef'}
         runtime_configuration: {$ref: '#/components/schemas/HostingRuntimeConfigurationRef'}
@@ -6604,7 +6690,9 @@ components:
         host_port:
           type: integer
         readiness:
-          $ref: '#/components/schemas/HostingReadiness'
+          oneOf:
+            - {$ref: '#/components/schemas/HostingReadiness'}
+            - {$ref: '#/components/schemas/HostingDatabaseReadiness'}
         policy_version:
           type: string
           enum:
@@ -6614,6 +6702,7 @@ components:
             - public-image.runtime-env.release-ports.v1
             - local-build.runtime-env.release-ports.v1
             - public-image.owned-storage.release-ports.v1
+            - database.private.owned-storage.v1
     HostingRelease:
       type: object
       additionalProperties: false
@@ -6713,6 +6802,7 @@ components:
         - compiler_version
         - hash
       properties:
+        database: {$ref: "#/components/schemas/HostingDatabasePlan"}
         storage: {$ref: '#/components/schemas/HostingStoragePlan'}
         retained_releases:
           type: array
@@ -6736,6 +6826,7 @@ components:
             - image-hosting.runtime-env.v1
             - local-build-hosting.runtime-env.v1
             - image-hosting.owned-storage.v1
+            - database-hosting.private.owned-storage.v1
         hash:
           type: string
     HostingReceipt:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"nerocd/internal/auth"
@@ -201,6 +202,9 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 }
 
 func hostingSnapshotTaskType(snap domain.HostingSnapshot) string {
+	if snap.Database != (domain.HostingDatabaseExecutionRef{}) {
+		return domain.RunTypeDatabaseDeploy
+	}
 	if snap.LocalBuild != (domain.HostingLocalBuildSource{}) {
 		return domain.RunTypeLocalBuildDeploy
 	}
@@ -222,6 +226,9 @@ func hostingRetainedPolicy(snap domain.HostingSnapshot) string {
 	return domain.HostingReleasePolicyVersion
 }
 func validateHostingDeploymentTask(run domain.TaskRun) error {
+	if run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
+		return domain.ValidateDatabaseDeploymentTask(run)
+	}
 	if run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
 		return domain.ValidateLocalBuildDeploymentTask(run)
 	}
@@ -273,6 +280,9 @@ func localHostingOperationAuthority(ctx context.Context, tx pgx.Tx, op domain.Ho
 }
 
 func hostingOperationTargetGate(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, observe bool) error {
+	if err := databaseOperationAuthority(ctx, tx, op, observe); err != nil {
+		return fmt.Errorf("check database operation authority: %w", err)
+	}
 	if err := localHostingOperationAuthority(ctx, tx, op, observe); err != nil {
 		return err
 	}
@@ -280,6 +290,9 @@ func hostingOperationTargetGate(ctx context.Context, tx pgx.Tx, op domain.Hostin
 }
 
 func finalLocalHostingAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation, observe bool) error {
+	if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
+		return finalDatabaseAuthority(ctx, tx, runner, a, op, observe, false)
+	}
 	if op.Snapshot.LocalBuild == (domain.HostingLocalBuildSource{}) {
 		return nil
 	}
@@ -299,6 +312,9 @@ func finalLocalHostingAuthority(ctx context.Context, tx pgx.Tx, runner string, a
 // tuple and current DB expiry without mistaking our own completion for revocation.
 // Concurrent cancellation cannot pass the task/lease locks held by this transaction.
 func finalLocalHostingObservationReportAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation) error {
+	if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
+		return finalDatabaseAuthority(ctx, tx, runner, a, op, true, true)
+	}
 	if op.Snapshot.LocalBuild == (domain.HostingLocalBuildSource{}) {
 		return nil
 	}
