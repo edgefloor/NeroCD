@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`88887e92c0cf7b93b828d3696ec3a5af16547ea7`, 2026-10-24, through migration 0068.
+`45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, 2026-10-24, through migration 0068.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -154,12 +154,13 @@ binding and further stateful lifecycle work, including archive backup/restore;
 the standalone archive helper is accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`;
 controller/config/API and default-off runner are accepted through
 `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, with migration 0068 and accepted helper
-packaging. Next is physical application archive backup/restore qualification;
+packaging. Bounded physical uploaded-file recovery is accepted at `45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`;
+next are remaining stateful recovery cases and R42 application binding, still unaccepted;
 current helper config-ID qualification targets the classic Docker image store,
 with a recorded containerd-store lookup failure and no runtime fallback;
 retained PostgreSQL/River tests use a fake engine. Archive UI is accepted at
 `a99a75517c018caa9aa9965cf451f9f826e7b3d6` with intercepted-browser evidence;
-physical application qualification remains pending. Application-verified A26/A37 remain unfinished; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
+bounded physical uploaded-file qualification is accepted at `45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`; broader application qualification remains unfinished. Application-verified A26/A37 remain unfinished; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
 under R17/R19 and applicable A09/A10 checks, production TLS and remaining parity
 remain separate unfinished work. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.

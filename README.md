@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`88887e92c0cf7b93b828d3696ec3a5af16547ea7`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -199,8 +199,12 @@ remains `adapter_unqualified` and application binding remains unfinished. Backup
   packaging. Helper config-ID qualification targets the classic Docker image
   store; containerd-store lookup failed and has no runtime fallback. The
   qualification image was removed; it is not an installed pin.
-  PostgreSQL/River tests use a fake engine. Physical application backup/restore,
-  and complete A26/A37 remain unqualified. Archive UI is accepted at
+  Earlier PostgreSQL/River tests use a fake engine. Bounded physical uploaded-file
+  recovery is now accepted at `45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`: backup/
+  restore ACK loss recovers with one helper start each, and a new resource/volume
+  proves restored reads/new writes with source metadata preserved. This qualifies
+  native arm64/classic-store same-host uploads, not database backups, S3, host disk
+  loss, in-place restore, containerd, production TLS or complete A26/A37. Archive UI is accepted at
   `a99a75517c018caa9aa9965cf451f9f826e7b3d6` with intercepted-browser evidence;
   that does not qualify physical application backup/restore.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its

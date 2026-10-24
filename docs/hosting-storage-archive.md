@@ -6,7 +6,7 @@ Helper packaging is accepted at `b796ce483e99d0dec29bb3e769982dc30da64668`.
 The [API tests](../internal/api/hosting_storage_archive_handlers_test.go) and
 [runner tests](../internal/runnerruntime/hosting_storage_archive_controller_test.go)
 provide contract/lifecycle evidence. Actual PostgreSQL/River/controller tests use
-a fake engine; physical application archive backup/restore remains pending.
+a fake engine; later bounded physical uploaded-file recovery is accepted below.
 Archive UI code/browser acceptance is recorded below; physical application
 backup/restore remains pending.
 
@@ -47,7 +47,29 @@ configuration ID; the failed attempt remains at
 `/tmp/nerocd-storage-runtime-20261024.2LlLIL`. Current qualification targets an
 explicit classic Docker image store. No runtime fallback is implemented, no
 universal Docker 29 support is established, and no future physical test pass is
-claimed. Physical application A26/A37 remains pending.
+claimed. The bounded physical uploaded-file slice is accepted below; full A26/A37 remains incomplete.
+
+Bounded physical uploaded-file recovery is accepted at
+`45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, with exact source/tree equality to
+`2ba8041359576a32d616d7f83e0c7eafe4ee4d91`. The 25.38-second pass is retained in
+`/tmp/nerocd-storage-runtime-20261024.iWwXss/gate.log`, with
+`/tmp/nerocd-archive-physical-integrated-handoff.json`,
+`/tmp/nerocd-archive-physical-integrated-physical-retention.json` and
+`/tmp/nerocd-archive-physical-integrated-main-promotion.json`. The application
+retains 65,537 uploaded bytes through redeploy. Committed backup and restore ACK
+loss each recover with one helper start. A new resource/volume reads restored
+application data and accepts a new write; the source remains unchanged with
+UID 12345/GID 12346, files 0640 and directories 0750. Oversized backup failure
+resumes only originally running workloads; failed-readiness rollback and
+missing-volume hold also pass. Owned objects/processes are absent after cleanup
+and host inventories are unchanged. The tested helper image was removed and is
+not an installed reusable pin. Earlier failures remain historical.
+
+This is native Linux arm64, rootful same-host owned uploads on the classic Docker
+image store/overlay2 with trusted fixture CA and local CAS. It does not qualify
+database backup, S3, host disk loss, in-place restore, containerd image store,
+production TLS, browser-to-real-archive flow, full A26/A37 or full parity. R42
+PostgreSQL/Redis application binding is under implementation and unaccepted.
 
 ## Provision an exact helper identity
 
