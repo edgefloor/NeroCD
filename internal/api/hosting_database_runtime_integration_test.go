@@ -922,7 +922,7 @@ func databaseRunnerClientMismatch(got databaseRunnerContainer, id, name, image, 
 		return "label_count"
 	case got.Config.Labels[databaseRunnerLabel] != databaseRunnerOwner:
 		return "owner"
-	case len(got.Config.Env) != 0:
+	case len(got.Config.Env) != 2 || !slices.Contains(got.Config.Env, "PATH=/nonexistent") || !slices.Contains(got.Config.Env, "HOME=/nonexistent"):
 		return "environment"
 	case len(got.Config.Cmd) != 0:
 		return "command"
@@ -952,19 +952,31 @@ func TestDatabaseRunnerClientIdentityBeforeSecretStdin(t *testing.T) {
 	network := "ncdn_fixture"
 	valid := databaseRunnerContainer{ID: id, Name: "/" + name, Image: image}
 	valid.Config.Labels = map[string]string{databaseRunnerLabel: databaseRunnerOwner}
+	valid.Config.Env = []string{"PATH=/nonexistent", "HOME=/nonexistent"}
 	valid.Config.Entrypoint = []string{"/client"}
 	valid.HostConfig.NetworkMode = network
 	valid.NetworkSettings.Networks = map[string]struct{ NetworkID, IPAddress string }{network: {}}
 	if !databaseRunnerClientMatches(valid, id, name, image, network) {
 		t.Fatal("owned private client refused")
 	}
+	t.Run("environment_order", func(t *testing.T) {
+		reordered := valid
+		reordered.Config.Env = []string{"HOME=/nonexistent", "PATH=/nonexistent"}
+		if !databaseRunnerClientMatches(reordered, id, name, image, network) {
+			t.Fatal("owned private client refused reordered environment")
+		}
+	})
 	poison := "synthetic-protected-value\nAuthorization: Bearer never-print-this\x00%+v"
 	for change, want := range map[string]string{
 		"expected_length": "expected_id_length", "expected_case": "expected_id_case", "expected_encoding": "expected_id_encoding",
 		"identity": "container_id", "name": "container_name", "image": "image", "owner": "owner",
 		"missing_labels": "label_count", "extra_label": "label_count", "network": "network_mode",
 		"privilege": "privileged", "environment": "environment", "command": "command", "entrypoint": "entrypoint",
-		"mount": "mounts", "port": "port_bindings", "network_count": "network_count", "network_attachment": "network_attachment",
+		"environment_empty": "environment", "environment_missing_path": "environment", "environment_missing_home": "environment",
+		"environment_unexpected": "environment", "environment_duplicate_path": "environment", "environment_duplicate_home": "environment",
+		"environment_extra_duplicate": "environment", "environment_changed_path": "environment", "environment_changed_home": "environment",
+		"environment_malformed": "environment",
+		"mount":                 "mounts", "port": "port_bindings", "network_count": "network_count", "network_attachment": "network_attachment",
 		"expected_name": "container_name", "expected_image": "image", "expected_network": "network_mode",
 	} {
 		t.Run(change, func(t *testing.T) {
@@ -1014,6 +1026,26 @@ func TestDatabaseRunnerClientIdentityBeforeSecretStdin(t *testing.T) {
 				got.HostConfig.Privileged = true
 			case "environment":
 				got.Config.Env = []string{poison}
+			case "environment_empty":
+				got.Config.Env = nil
+			case "environment_missing_path":
+				got.Config.Env = []string{"HOME=/nonexistent"}
+			case "environment_missing_home":
+				got.Config.Env = []string{"PATH=/nonexistent"}
+			case "environment_unexpected":
+				got.Config.Env = append(got.Config.Env, "PASSWORD="+poison)
+			case "environment_duplicate_path":
+				got.Config.Env = []string{"PATH=/nonexistent", "PATH=/nonexistent"}
+			case "environment_duplicate_home":
+				got.Config.Env = []string{"HOME=/nonexistent", "HOME=/nonexistent"}
+			case "environment_extra_duplicate":
+				got.Config.Env = append(got.Config.Env, "PATH=/nonexistent")
+			case "environment_changed_path":
+				got.Config.Env = []string{"PATH=" + poison, "HOME=/nonexistent"}
+			case "environment_changed_home":
+				got.Config.Env = []string{"PATH=/nonexistent", "HOME=" + poison}
+			case "environment_malformed":
+				got.Config.Env = []string{"PATH", "HOME=/nonexistent"}
 			case "command":
 				got.Config.Cmd = []string{poison}
 			case "entrypoint":
@@ -1124,7 +1156,7 @@ func (f *databaseRunnerFixture) marker(view domain.HostingDatabase, op domain.Ho
 			f.t.Fatalf("verified client cleanup refused classification=%s", mismatch)
 		}
 	}()
-	created, e := databaseRunnerDocker(f.t.Context(), nil, "container", "create", "--interactive", "--name", name, "--label", databaseRunnerLabel+"="+databaseRunnerOwner, "--network", op.Plan.Database.NetworkName, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", imageProof.ID)
+	created, e := databaseRunnerDocker(f.t.Context(), nil, "container", "create", "--interactive", "--name", name, "--label", databaseRunnerLabel+"="+databaseRunnerOwner, "--network", op.Plan.Database.NetworkName, "--env", "PATH=/nonexistent", "--env", "HOME=/nonexistent", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", imageProof.ID)
 	if e != nil {
 		f.t.Fatal("private client creation failed")
 	}
