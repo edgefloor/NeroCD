@@ -18,30 +18,20 @@ import (
 
 func main() { os.Exit(command()) }
 
+var errUnsupportedStream = errors.New("archive helper requires owned FIFO or socket streams")
+
 func command() int { return commandReady(nil) }
 
-func commandReady(ready func()) int {
+func commandReady(blocked func(string)) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	joined := make(chan struct{})
-	interrupt := context.AfterFunc(ctx, func() {
-		// This process owns these streams. Closing them interrupts blocked pipe
-		// IO; package APIs do not promise this for arbitrary caller streams.
-		_ = os.Stdin.Close()
-		_ = os.Stdout.Close()
-		close(joined)
-	})
-	defer func() {
-		if !interrupt() {
-			<-joined
-		}
-	}()
-	if ready != nil {
-		ready()
-	}
-	if err := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.OpenRoot, "/tmp"); err != nil {
+	if err := runOwned(ctx, os.Args[1:], os.Stdin, os.Stdout, blocked); err != nil {
 		// Upload names, contents and parser/OS errors never enter diagnostics.
-		_, _ = fmt.Fprintln(os.Stderr, "storage archive helper failed")
+		message := "storage archive helper failed"
+		if errors.Is(err, errUnsupportedStream) {
+			message = "storage archive helper requires FIFO or socket stdin/stdout"
+		}
+		_, _ = fmt.Fprintln(os.Stderr, message)
 		return 1
 	}
 	return 0
