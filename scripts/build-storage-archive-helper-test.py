@@ -7,11 +7,13 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -183,6 +185,119 @@ else:
             packager.run([sys.executable, "-c", "print('x'*100000)"], self.root, env, limit=1024)
         # The current process remains alive and is never in a child session.
         self.assertNotEqual(os.getpgrp(), pid)
+
+    def test_launcher_signals_terminate_and_join_compiler_even_during_cleanup(self):
+        self.write("scripts/build-storage-archive-helper.py", (ROOT / "scripts/build-storage-archive-helper.py").read_text())
+        self.commit()
+        for requested, close_output in ((signal.SIGTERM, False), (signal.SIGINT, True)):
+            with self.subTest(signal=requested):
+                ready = self.root / f"ready-{requested}"
+                cleaning = self.root / f"cleaning-{requested}"
+                receipt = self.root / f"joined-{requested}"
+                self.go.write_text(f"#!{sys.executable}\n" + f"""
+import json, os, pathlib, sys, time
+if sys.argv[1:] == ['version']:
+    print('go version go1.26.10 fixture/host')
+else:
+    if {close_output!r}:
+        os.close(1)
+        os.close(2)
+    pathlib.Path({str(ready)!r}).write_text(json.dumps({{'pid': os.getpid(), 'group': os.getpgrp()}}))
+    time.sleep(30)
+""")
+                wrapper = self.root / f"launcher-{requested}.py"
+                # A guard outside main makes the old implementation stall on
+                # SIGTERM instead of orphaning the compiler during a red run.
+                # SIGUSR1 requests bounded test cleanup through Python finally.
+                wrapper.write_text(f"""
+import importlib.util, json, os, pathlib, signal, subprocess, sys, time
+spec = importlib.util.spec_from_file_location('subject', {str(self.repo / 'scripts/build-storage-archive-helper.py')!r})
+subject = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(subject)
+children = []
+original = subprocess.Popen
+def launch(*args, **kwargs):
+    process = original(*args, **kwargs)
+    children.append(process)
+    if args[0][:2] == [{str(self.go)!r}, 'build']:
+        original_wait = process.wait
+        def wait(*args, **kwargs):
+            if kwargs.get('timeout') == 5:
+                pathlib.Path({str(cleaning)!r}).write_text('cleanup entered')
+                time.sleep(0.2)
+            return original_wait(*args, **kwargs)
+        process.wait = wait
+    return process
+subprocess.Popen = launch
+def guard(signum, frame):
+    pass
+class CleanupRequested(BaseException):
+    pass
+def cleanup(signum, frame):
+    raise CleanupRequested()
+signal.signal(signal.SIGTERM, guard)
+signal.signal(signal.SIGINT, guard)
+signal.signal(signal.SIGUSR1, cleanup)
+code = 1
+try:
+    subject.main()
+    code = 0
+except SystemExit as error:
+    code = error.code
+except CleanupRequested:
+    pass
+finally:
+    signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+    for process in children:
+        if process.returncode is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.wait(timeout=5)
+    pathlib.Path({str(receipt)!r}).write_text(json.dumps([{{'pid': p.pid, 'returncode': p.returncode}} for p in children]))
+sys.exit(code)
+""")
+                process = subprocess.Popen([sys.executable, "-B", str(wrapper), "--output", str(self.output),
+                                            "--go", str(self.go)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+                def join_launcher(process=process):
+                    if process.poll() is None:
+                        process.send_signal(signal.SIGUSR1)
+                    process.communicate(timeout=5)
+
+                self.addCleanup(join_launcher)
+                deadline = time.monotonic() + 3
+                while not ready.exists() and time.monotonic() < deadline and process.poll() is None:
+                    time.sleep(0.005)
+                self.assertTrue(ready.exists(), "compiler did not start")
+                identity = json.loads(ready.read_text())
+                self.assertEqual(identity["pid"], identity["group"])
+                # The SIGINT case closes both compiler output descriptors;
+                # allow the watchdog to enter its separate wait-after-EOF path.
+                if close_output:
+                    time.sleep(0.1)
+                begin = time.monotonic()
+                process.send_signal(requested)
+                deadline = begin + 1
+                while not cleaning.exists() and time.monotonic() < deadline and process.poll() is None:
+                    time.sleep(0.005)
+                if not cleaning.exists():
+                    join_launcher()
+                    self.fail("termination did not enter owned compiler cleanup; guard joined child")
+                # These arrive while the child's wait is deliberately delayed.
+                process.send_signal(signal.SIGTERM)
+                process.send_signal(signal.SIGINT)
+                stdout, stderr = process.communicate(timeout=3)
+                self.assertLess(time.monotonic() - begin, 2)
+                self.assertEqual(process.returncode, 128 + requested)
+                self.assertEqual(stdout, b"")
+                self.assertEqual(stderr, b"storage archive image preparation interrupted\n")
+                joined = json.loads(receipt.read_text())
+                self.assertIn({"pid": identity["pid"], "returncode": -signal.SIGKILL}, joined)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(identity["pid"], 0)
+                self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

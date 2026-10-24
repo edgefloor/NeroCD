@@ -23,23 +23,45 @@ SOURCE_PATHS = ("go.mod", "go.sum", "cmd/nerocd-storage-archive", "internal/stor
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
 MAX_EXECUTABLE_BYTES = 16 * 1024 * 1024
 MAX_MEMBERS = 128
+_termination_signal = None
 
 
 class PreparationError(Exception):
     pass
 
 
+class PreparationInterrupted(BaseException):
+    def __init__(self, number):
+        self.number = number
+
+
+def request_termination(number, _frame):
+    global _termination_signal
+    # Handlers only record the first request. They cannot interrupt Popen's
+    # transfer of child ownership or a kill/wait already in progress.
+    if _termination_signal is None:
+        _termination_signal = number
+
+
+def check_termination():
+    if _termination_signal is not None:
+        raise PreparationInterrupted(_termination_signal)
+
+
 def run(command, cwd, env, timeout=60, limit=65536):
     """Bound output and lifetime; kill and join only this new process group."""
+    check_termination()
     process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                start_new_session=True)
     data = bytearray()
     deadline = time.monotonic() + timeout
     try:
+        check_termination()
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
             while selector.get_map():
+                check_termination()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise PreparationError("preparation subprocess timed out")
@@ -51,7 +73,17 @@ def run(command, cwd, env, timeout=60, limit=65536):
                     if len(data) + len(chunk) > limit:
                         raise PreparationError("preparation subprocess exceeded output budget")
                     data.extend(chunk)
-        status = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        while True:
+            check_termination()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PreparationError("preparation subprocess timed out")
+            try:
+                status = process.wait(timeout=min(remaining, 0.1))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        check_termination()
         if status:
             raise PreparationError("preparation subprocess failed")
         return bytes(data)
@@ -128,6 +160,7 @@ def export_source(archive, target):
     total = 0
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as source:
         for member in source:
+            check_termination()
             path = PurePosixPath(member.name.rstrip("/"))
             if (str(path) != member.name.rstrip("/") or path.is_absolute() or ".." in path.parts
                     or member.name in seen or len(seen) >= MAX_MEMBERS
@@ -202,6 +235,7 @@ def prepare(repo, output, go):
                 raise PreparationError("invalid fixed image recipe placeholder")
             rendered = rendered.replace(token, value.encode())
         check_source(repo, env, revision)
+        check_termination()
         metadata = {"schema_version": 1, "recipe": RECIPE, "platform": "linux/arm64",
                     "source_commit": revision, "source_date_epoch": int(epoch), "go_version": version,
                     "executable_sha256": digest, "recipe_sha256": hashlib.sha256(recipe).hexdigest(),
@@ -224,16 +258,28 @@ def prepare(repo, output, go):
 
 
 def main():
+    global _termination_signal
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
     parser.add_argument("--go", default=shutil.which("go"))
     args = parser.parse_args()
+    previous = {number: signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGINT)}
+    _termination_signal = None
     try:
+        for number in previous:
+            signal.signal(number, request_termination)
         if args.go is None:
             raise PreparationError("a local Go executable is required")
         prepare(Path(__file__).resolve().parent.parent, args.output, args.go)
+        check_termination()
+    except PreparationInterrupted as interrupted:
+        parser.exit(128 + interrupted.number, "storage archive image preparation interrupted\n")
     except (PreparationError, OSError, ValueError, tarfile.TarError) as error:
         parser.exit(1, f"storage archive image preparation failed: {error}\n")
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+        _termination_signal = None
 
 
 if __name__ == "__main__":
