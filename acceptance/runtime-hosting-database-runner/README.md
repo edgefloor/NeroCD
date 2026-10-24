@@ -4,6 +4,8 @@ This fixture connects the authenticated public API, River, the compiled producti
 
 The fixed outer target is `nerocd-database-runner-20261024-dbr7319-dind`, with volume `nerocd-database-runner-20261024-dbr7319-docker-data` and owner label `io.nerocd.database-runner.owner=nerocd-database-runner-20261024-dbr7319`. The launcher requires daemon `e37dd219-b13f-47dd-99ed-21d79442ed0c` through `unix:///var/run/docker.sock`, native Linux arm64, and the pinned Docker 29.4.0 DinD image. It attaches one owned Docker-data volume and publishes no host ports. It does not bind the host Docker socket or source checkout into the guest.
 
+Before database execution, the launcher installs the exact eight-package procps closure used by the [private origin-upgrade gate](../runtime-hosting-database-origin-upgrade/gate.sh). The closure pins `libintl`, `libncursesw`, `libproc2`, `musl`, `ncurses-terminfo-base`, `procps-ng`, `skalibs-libs`, and `utmps-libs` by version and SHA-256. Downloads use fixed Alpine v3.23/main/aarch64 HTTPS URLs, verified TLS, no redirects or ambient proxy, a one-MiB archive limit, and bounded deadlines. Inside the verified owned guest, APK signature verification, offline installation, and exact installed-version checks use the image's trusted keys and no configured repositories. A bounded numeric `ps -eo pid,uid` probe must pass before either compiled test runs. Fetch, verification, installation, version, or process-inspection failure retains the existing ownership and cleanup rules. The gate records fetch output, each APK stage, the installed closure, and the process probe under its evidence directory.
+
 After separate physical authorization, run from a clean committed checkout:
 
 ```sh
