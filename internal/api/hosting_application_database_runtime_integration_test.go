@@ -171,6 +171,40 @@ func (f *databaseRunnerFixture) applicationContainer(op domain.HostingOperation)
 	return applicationDatabaseInspection{Container: c, Endpoints: detail.NetworkSettings.Networks, ProcessID: detail.State.Pid, StartedAt: detail.State.StartedAt}
 }
 
+// Each engine has isolated controller metadata but shares the owned DinD daemon.
+// Release only its verified final app, so the next schema can reuse its ports.
+func cleanupApplicationDatabaseFinal(ctx context.Context, op domain.HostingOperation, docker func(context.Context, ...string) ([]byte, error)) error {
+	invalid := errors.New("final fixture application cleanup identity or absence unconfirmed")
+	if op.Result == nil || op.Plan == nil || op.Release == nil || op.ID == "" || op.BindingID == "" || op.Plan.Hash == "" || op.Release.Hash == "" || op.Release.DaemonID == "" || op.Result.PlanHash != op.Plan.Hash || op.Result.ImageID != op.Release.ImageID || op.Result.DaemonID != op.Release.DaemonID || len(op.Result.ContainerID) != 64 || strings.Trim(op.Result.ContainerID, "0123456789abcdef") != "" {
+		return invalid
+	}
+	daemon := func() bool {
+		raw, err := docker(ctx, "info", "--format", "{{.ID}}")
+		return err == nil && strings.TrimSpace(string(raw)) == op.Release.DaemonID
+	}
+	if !daemon() {
+		return invalid
+	}
+	const format = `{"Id":{{json .Id}},"Image":{{json .Image}},"Config":{"Labels":{{json .Config.Labels}}}}`
+	raw, err := docker(ctx, "container", "inspect", op.Result.ContainerID, "--format", format)
+	defer clear(raw)
+	var container struct {
+		ID, Image string
+		Config    struct{ Labels map[string]string }
+	}
+	if err != nil || json.Unmarshal(raw, &container) != nil || container.ID != op.Result.ContainerID || container.Image != op.Release.ImageID || container.Config.Labels["io.nerocd.binding"] != op.BindingID || container.Config.Labels["io.nerocd.operation"] != op.ID || container.Config.Labels["io.nerocd.plan"] != op.Plan.Hash || container.Config.Labels["io.nerocd.release"] != op.Release.Hash || !daemon() {
+		return invalid
+	}
+	if _, err = docker(ctx, "container", "rm", "--force", op.Result.ContainerID); err != nil {
+		return invalid
+	}
+	remaining, err := docker(ctx, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "id="+op.Result.ContainerID)
+	if err != nil || len(bytes.TrimSpace(remaining)) != 0 || !daemon() {
+		return invalid
+	}
+	return nil
+}
+
 func (f *databaseRunnerFixture) appRecord(op domain.HostingOperation, method, key, value string) {
 	f.t.Helper()
 	if applicationDatabaseHTTPRecord(f.t.Context(), op, method, key, value) != nil {
@@ -482,7 +516,105 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				browser.advance("finish", finalConnection.MembershipRevision, c, map[string]string{"a": "retained_a", "b": "retained_b", "db_replaced": "retained_database_replacement", "c": "retained_c"})
 				browser.awaitFinished()
 			}
+			if f.process != nil {
+				t.Fatal("final fixture cleanup requires joined runner")
+			}
+			cleanup, stopCleanup := context.WithTimeout(t.Context(), 15*time.Second)
+			err = cleanupApplicationDatabaseFinal(cleanup, c, func(ctx context.Context, args ...string) ([]byte, error) {
+				return databaseRunnerDocker(ctx, nil, args...)
+			})
+			stopCleanup()
+			if err != nil {
+				t.Fatal("verified final application cleanup failed")
+			}
+			port, portErr := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(c.Snapshot.HostPort))
+			if portErr != nil {
+				t.Fatal("final application loopback port was not released")
+			}
+			if port.Close() != nil {
+				t.Fatal("final application port proof did not close")
+			}
 			t.Logf("connected HTTP app verified engine=%s capture=%s upgrade=%s app=%s database=%s revision=%d", engine, connection.CaptureID, upgrade.ID, c.ID, maintained.ID, active.MembershipRevision)
+		})
+	}
+}
+
+func TestApplicationDatabaseRuntimeFinalCleanupIsolation(t *testing.T) {
+	for _, mode := range []string{"shared_port", "foreign_daemon", "changed_daemon", "foreign_id", "foreign_image", "foreign_binding", "foreign_operation", "foreign_plan", "foreign_release", "inspect_error", "remove_error", "inventory_error", "residue"} {
+		t.Run(mode, func(t *testing.T) {
+			id := strings.Repeat("a", 64)
+			other := strings.Repeat("b", 64)
+			op := domain.HostingOperation{ID: "final_c", BindingID: "app_binding", Plan: &domain.HostingApplyPlan{Hash: "plan"}, Release: &domain.HostingRelease{Hash: "release", ImageID: "image", DaemonID: "daemon"}, Result: &domain.HostingResult{ContainerID: id, PlanHash: "plan", ImageID: "image", DaemonID: "daemon"}}
+			labels := map[string]string{"io.nerocd.binding": op.BindingID, "io.nerocd.operation": op.ID, "io.nerocd.plan": op.Plan.Hash, "io.nerocd.release": op.Release.Hash}
+			container := map[string]any{"Id": id, "Image": op.Release.ImageID, "Config": map[string]any{"Labels": labels}}
+			switch mode {
+			case "foreign_id":
+				container["Id"] = other
+			case "foreign_image":
+				container["Image"] = "foreign"
+			case "foreign_binding":
+				labels["io.nerocd.binding"] = "foreign"
+			case "foreign_operation":
+				labels["io.nerocd.operation"] = "foreign"
+			case "foreign_plan":
+				labels["io.nerocd.plan"] = "foreign"
+			case "foreign_release":
+				labels["io.nerocd.release"] = "foreign"
+			}
+			// The second schema can allocate the same third port. The daemon
+			// cannot start Redis C while the first schema's PG C still owns it.
+			occupied := map[int]string{20002: id, 21000: other}
+			removals, daemonChecks := 0, 0
+			docker := func(_ context.Context, args ...string) ([]byte, error) {
+				switch {
+				case slices.Equal(args, []string{"info", "--format", "{{.ID}}"}):
+					daemonChecks++
+					if mode == "foreign_daemon" || mode == "changed_daemon" && daemonChecks > 1 {
+						return []byte("foreign"), nil
+					}
+					return []byte("daemon"), nil
+				case len(args) == 5 && slices.Equal(args[:3], []string{"container", "inspect", id}) && args[3] == "--format":
+					if mode == "inspect_error" {
+						return nil, errors.New("SECRET-CANARY")
+					}
+					return json.Marshal(container)
+				case slices.Equal(args, []string{"container", "rm", "--force", id}):
+					removals++
+					if mode == "remove_error" {
+						return nil, errors.New("SECRET-CANARY")
+					}
+					if mode != "residue" {
+						delete(occupied, 20002)
+					}
+					return []byte(id), nil
+				case slices.Equal(args, []string{"container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "id=" + id}):
+					if mode == "inventory_error" {
+						return nil, errors.New("SECRET-CANARY")
+					}
+					return []byte(occupied[20002]), nil
+				default:
+					t.Error("cleanup attempted a command outside exact final-C scope")
+					return nil, errors.New("unexpected command")
+				}
+			}
+			if occupied[20002] == "" {
+				t.Fatal("regression model lost shared occupied port")
+			}
+			err := cleanupApplicationDatabaseFinal(t.Context(), op, docker)
+			if (err == nil) != (mode == "shared_port") || err != nil && strings.Contains(err.Error(), "CANARY") {
+				t.Fatal("cleanup did not fail closed with sanitized error")
+			}
+			if occupied[21000] != other {
+				t.Fatal("cleanup touched unrelated container")
+			}
+			if mode == "shared_port" {
+				if occupied[20002] != "" || removals != 1 {
+					t.Fatal("verified PG C still blocks Redis C's port")
+				}
+				occupied[20002] = "redis_c"
+			} else if !slices.Contains([]string{"remove_error", "inventory_error", "residue"}, mode) && (removals != 0 || occupied[20002] != id) {
+				t.Fatal("failed inspection or foreign identity was treated as absence or removal authority")
+			}
 		})
 	}
 }
