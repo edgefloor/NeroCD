@@ -656,6 +656,10 @@ func databaseRuntimePositive(t *testing.T, root, kind string) {
 	if denied.Ready || !denied.Uncertain || !mutationsUnchanged || !stateUnchanged || !secretsUnchanged {
 		t.Fatalf("changed-credential denial: ready=%t uncertain=%t docker_mutations_unchanged=%t state_unchanged=%t secrets_unchanged=%t", denied.Ready, denied.Uncertain, mutationsUnchanged, stateUnchanged, secretsUnchanged)
 	}
+	revokedReplay := f.apply(restarted, operationC, cPlan, false, func(context.Context) error { return errors.New("fixture authority revoked") })
+	if revokedReplay.Ready || !revokedReplay.Uncertain || proxy.mutations.Load() != beforeDenial || !maps.Equal(stateBefore, databaseRuntimeTree(t, f.config.stateRoot)) || !maps.Equal(secretsBefore, databaseRuntimeTree(t, f.config.secretRoot)) {
+		t.Fatal("revoked exact replay modified protected state or executed a process")
+	}
 	dPlan := f.next(operationC, cPlan, c)
 	revoked := f.apply(restarted, "hop_db7319_"+kind+"_main_denied", dPlan, false, func(context.Context) error { return errors.New("fixture authority revoked") })
 	if revoked.Ready || !revoked.Uncertain || proxy.mutations.Load() != beforeDenial || !maps.Equal(stateBefore, databaseRuntimeTree(t, f.config.stateRoot)) || !maps.Equal(secretsBefore, databaseRuntimeTree(t, f.config.secretRoot)) {
@@ -663,7 +667,7 @@ func databaseRuntimePositive(t *testing.T, root, kind string) {
 	}
 	f.live(operationC, cPlan, c, b.ContainerID)
 	f.data(cPlan, c, "", expected)
-	t.Logf("database continuity engine=%s A=%s B=%s C=%s same_volume=true same_network=true credential_bytes_unchanged=true protected_observation_read_only=true retirement_response_losses=1 retirement_actual_removals=1 replay_creates=0 replay_starts=0 revoked_denied=true changed_credential_denied=true", kind, a.ContainerID, b.ContainerID, c.ContainerID)
+	t.Logf("database continuity engine=%s A=%s B=%s C=%s same_volume=true same_network=true credential_bytes_unchanged=true protected_observation_read_only=true retirement_response_losses=1 retirement_actual_removals=1 replay_creates=0 replay_starts=0 revoked_denied=true revoked_exact_replay_denied=true changed_credential_denied=true", kind, a.ContainerID, b.ContainerID, c.ContainerID)
 }
 
 func databaseRuntimeNegative(t *testing.T, root, kind, caseName string) {

@@ -797,6 +797,73 @@ func TestDatabaseEngineChangedAdminReplayRejectsBeforeExec(t *testing.T) {
 	}
 }
 
+func TestDatabaseEngineCompletedReplayChecksAuthorityBeforeExec(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, kind := range []string{"revoked", "revoked_during_readiness", "revoked_during_daemon_inspection", "canceled", "canceled_during_daemon_inspection"} {
+			t.Run(engine+"/"+kind, func(t *testing.T) {
+				f, credentials := databaseFixture(t, engine)
+				first := f.apply(t.Context(), credentials)
+				if !first.Ready {
+					t.Fatal("release A failed")
+				}
+				credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+				settled := f.e.ApplyDatabase(t.Context(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+				if !settled.Ready || settled.Uncertain {
+					t.Fatal("completed retirement fixture failed")
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				revoked, probed := kind == "revoked", false
+				probe := f.config.readiness
+				f.config.readiness = func(ctx context.Context, address string, plan domain.HostingApplyPlan, values []DatabaseCredentialValue, readOnly, initialize bool, before func(context.Context) error) error {
+					err := probe(ctx, address, plan, values, readOnly, initialize, before)
+					probed = true
+					if kind == "revoked_during_readiness" {
+						revoked = true
+					}
+					return err
+				}
+				f.hook = func(_ context.Context, args []string) ([]byte, error, bool) {
+					if probed && slices.Equal(args, []string{"info", "--format", "{{json .ID}}"}) {
+						switch kind {
+						case "revoked_during_daemon_inspection":
+							revoked = true
+						case "canceled_during_daemon_inspection":
+							cancel()
+						}
+					}
+					return nil, nil, false
+				}
+				before := func(ctx context.Context) error {
+					if revoked {
+						return errors.New("fixture authority revoked")
+					}
+					return f.before(ctx)
+				}
+				if kind == "canceled" {
+					cancel()
+				}
+				stateBefore, secretsBefore := databaseRuntimeTree(t, f.config.stateRoot), databaseRuntimeTree(t, f.config.secretRoot)
+				callsBefore := len(f.calls)
+				mutationsBefore := [5]int{f.networkCreates, f.creates, f.starts, f.stops, f.removes}
+				denied := f.e.ApplyDatabase(ctx, "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, before)
+				execs := 0
+				for _, call := range f.calls[callsBefore:] {
+					if strings.HasPrefix(call, "container exec ") {
+						execs++
+					}
+				}
+				mutationsUnchanged := mutationsBefore == [5]int{f.networkCreates, f.creates, f.starts, f.stops, f.removes}
+				stateUnchanged := maps.Equal(stateBefore, databaseRuntimeTree(t, f.config.stateRoot))
+				secretsUnchanged := maps.Equal(secretsBefore, databaseRuntimeTree(t, f.config.secretRoot))
+				if denied.Ready || !denied.Uncertain || execs != 0 || !mutationsUnchanged || !stateUnchanged || !secretsUnchanged {
+					t.Fatalf("revoked/canceled replay: ready=%t uncertain=%t execs=%d mutations_unchanged=%t state_unchanged=%t secrets_unchanged=%t", denied.Ready, denied.Uncertain, execs, mutationsUnchanged, stateUnchanged, secretsUnchanged)
+				}
+			})
+		}
+	}
+}
+
 func TestDatabaseEngineRetirementLostResponseAndCompletedReplay(t *testing.T) {
 	for _, engine := range []string{"postgresql", "redis"} {
 		t.Run(engine, func(t *testing.T) {

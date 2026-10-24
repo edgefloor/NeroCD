@@ -398,7 +398,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 		if err := c.checkSecretFiles(ctx, operation, plan, values); err != nil {
 			return err
 		}
-		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values) != nil {
+		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before) != nil {
 			return errors.New("database retirement requires existing ready replacement")
 		}
 	}
@@ -427,7 +427,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 			return err
 		}
 		if !present {
-			if !retirementExists || e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values) != nil {
+			if !retirementExists || e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before) != nil {
 				return errors.New("database predecessor absent without exact retirement and ready replacement")
 			}
 		} else {
@@ -538,7 +538,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	if e.databaseProcessOwnership(ctx, req.DaemonID, candidate) != nil {
+	if e.databaseProcessOwnershipForApply(ctx, req.DaemonID, candidate, before) != nil {
 		return errors.New("database runtime identity not confirmed")
 	}
 	if err = verifyVolume(); err != nil {
@@ -572,7 +572,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false); err != nil {
 		return err
 	}
-	if plan.PreviousHealthy != nil && e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values) != nil {
+	if plan.PreviousHealthy != nil && e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before) != nil {
 		return errors.New("database replacement readiness changed after retirement")
 	}
 	return nil
@@ -593,7 +593,7 @@ func (e *imageEngine) databaseContainerPresent(ctx context.Context, id string) (
 	return len(ids) == 1, nil
 }
 
-func (e *imageEngine) databaseReplacementReady(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, candidate string, values []DatabaseCredentialValue) error {
+func (e *imageEngine) databaseReplacementReady(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, candidate string, values []DatabaseCredentialValue, before func(context.Context) error) error {
 	container, err := e.inspectDatabaseContainer(ctx, candidate)
 	if err != nil || !record.InitReady || !container.State.Running || !databaseContainerMatches(container, operation, plan, record, filepath.Join(c.secretRoot, databaseGeneration(operation, plan))) {
 		return errors.New("database retirement replacement identity unavailable")
@@ -606,7 +606,7 @@ func (e *imageEngine) databaseReplacementReady(ctx context.Context, operation st
 	if err != nil {
 		return err
 	}
-	if c.probe(ctx, address, plan, values, true, false, nil) != nil || e.databaseProcessOwnership(ctx, plan.Release.DaemonID, candidate) != nil || ctx.Err() != nil {
+	if c.probe(ctx, address, plan, values, true, false, nil) != nil || e.databaseProcessOwnershipForApply(ctx, plan.Release.DaemonID, candidate, before) != nil || ctx.Err() != nil {
 		return errors.New("database retirement replacement readiness unconfirmed")
 	}
 	return nil
@@ -640,7 +640,7 @@ func (e *imageEngine) retireDatabasePredecessor(ctx context.Context, operation s
 		if !matchesStopped() {
 			return errors.New("database retirement requires exact stopped predecessor")
 		}
-		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values) != nil {
+		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before) != nil {
 			return errors.New("database retirement replacement readiness changed")
 		}
 		if !exists {
@@ -818,10 +818,24 @@ func databaseHostCapabilities(status []byte) bool {
 }
 
 func (e *imageEngine) databaseProcessOwnership(parent context.Context, daemon, id string) error {
+	// Observation has no mutation authority; retain its bounded read-only probe.
+	return e.databaseProcessOwnershipChecked(parent, daemon, id, func(ctx context.Context) error { return ctx.Err() })
+}
+
+func (e *imageEngine) databaseProcessOwnershipForApply(parent context.Context, daemon, id string, before func(context.Context) error) error {
+	return e.databaseProcessOwnershipChecked(parent, daemon, id, func(ctx context.Context) error { return databaseAuthorize(ctx, before) })
+}
+
+func (e *imageEngine) databaseProcessOwnershipChecked(parent context.Context, daemon, id string, check func(context.Context) error) error {
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
 	if !dockerObjectID.MatchString(id) || e.verifyDaemon(ctx, daemon) != nil {
 		return errors.New("database process identity unavailable")
+	}
+	// Exec creates a Docker process. Apply authority must be checked after the
+	// fallible inspections, immediately before issuing that request.
+	if check == nil || check(ctx) != nil {
+		return errors.New("database process execution unavailable")
 	}
 	raw, err := e.ownedVolumeDocker(ctx, 64, "container", "exec", "--user", "0:0", id, "stat", "-c", "%u:%g", "/proc/1")
 	if err != nil || strings.TrimSpace(string(raw)) != "999:999" || e.verifyDaemon(ctx, daemon) != nil || ctx.Err() != nil {
