@@ -130,6 +130,9 @@ func (s *PostgresStore) PutHostingRuntimeConfiguration(ctx context.Context, acto
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
 		}
+		if err = databaseBindingPendingGate(ctx, tx, resource); err != nil {
+			return zero, err
+		}
 		if generation != in.ExpectedRuntimeGeneration {
 			return zero, ErrConflict
 		}

@@ -80,6 +80,9 @@ func hostingFreshRuntimeGate(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 	if op.CleanupPlan != nil {
 		return nil
 	}
+	if err := databaseBindingPendingGate(ctx, tx, op.ResourceID); err != nil {
+		return err
+	}
 	if err := validateStorageContinuityFresh(ctx, tx, op); err != nil {
 		return err
 	}

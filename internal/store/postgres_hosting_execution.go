@@ -257,6 +257,9 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.HostingOperation{}, err
 	}
+	if err = databaseBindingPendingGate(ctx, tx, resourceID); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	if snap.ResourceGeneration != in.ExpectedGeneration {
 		return domain.HostingOperation{}, ErrConflict
 	}
