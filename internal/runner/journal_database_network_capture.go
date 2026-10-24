@@ -244,7 +244,9 @@ func (j *AttemptJournal) AppendDatabaseNetworkCapture(e JournalDatabaseNetworkCa
 	}
 	version := j.state.Version
 	previous := j.state.DatabaseNetworkCapture
-	j.state.Version = 13
+	if j.state.Version < 13 {
+		j.state.Version = 13
+	}
 	j.state.DatabaseNetworkCapture = append(j.state.DatabaseNetworkCapture, e)
 	err = validateJournalState(j.state)
 	if err == nil {

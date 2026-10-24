@@ -58,3 +58,27 @@ func postRunnerBootstrap(ctx context.Context, database, readiness bool, server, 
 	}
 	return postAPIInto(server+path, in, token, out)
 }
+
+func runnerDatabaseUpgradeConfig(enabled bool, config *runnerruntime.DatabaseExecutionConfig) error {
+	if enabled && config == nil {
+		return errors.New("database network upgrades require --hosting-database")
+	}
+	if config != nil {
+		config.NetworkUpgrade = enabled
+	}
+	return nil
+}
+
+func runnerDatabaseUpgradeCapabilities(enabled, database bool, capabilities []string) ([]string, error) {
+	has := false
+	for _, cap := range capabilities {
+		has = has || cap == domain.HostingDatabaseUpgradeCapability
+	}
+	if enabled && !database || has && !enabled {
+		return nil, errors.New("database network upgrade capability requires explicit database upgrade execution")
+	}
+	if enabled && !has {
+		capabilities = append(capabilities, domain.HostingDatabaseUpgradeCapability)
+	}
+	return capabilities, nil
+}

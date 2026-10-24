@@ -21,8 +21,24 @@ var ErrDatabaseCredentials = errors.New("hosting database credentials unavailabl
 // plan is the previously accepted prepared plan, never response-derived data.
 // runnerID must be the configured runner identity, never a response-derived value.
 func (c Client) HostingDatabaseCredentials(ctx context.Context, runnerID string, in domain.HostingDatabaseCredentialRequest, plan domain.HostingApplyPlan, options RuntimeEnvironmentTransport) (*hostingdatabaseprotocol.Credentials, error) {
+	return c.hostingDatabaseCredentials(ctx, runnerID, in, plan, options, domain.ValidateHostingDatabasePlan(plan) == nil)
+}
+
+// HostingDatabaseUpgradeCredentials keeps v2 delivery behind the full accepted proof.
+// The request and protected response wire contracts are unchanged.
+func (c Client) HostingDatabaseUpgradeCredentials(ctx context.Context, runnerID string, in domain.HostingDatabaseCredentialRequest, op domain.HostingOperation, options RuntimeEnvironmentTransport) (*hostingdatabaseprotocol.Credentials, error) {
+	if op.DatabaseUpgrade == nil || op.Plan == nil || domain.ValidateHostingDatabaseUpgradeOperation(op) != nil || op.ID != in.Authority.OperationID || op.Snapshot.RunnerID != runnerID || op.TaskMode != in.Mode || op.RestoreOwnershipHeld {
+		return nil, ErrDatabaseCredentials
+	}
+	if in.Mode == "deploy" && (op.RunID != in.Authority.RunID || op.State != "prepared" || op.Result != nil) || in.Mode == "observe" && (op.ReconciliationRunID != in.Authority.RunID || !op.ReconcileRequested || op.Result == nil || op.Result.ContainerID == "") {
+		return nil, ErrDatabaseCredentials
+	}
+	return c.hostingDatabaseCredentials(ctx, runnerID, in, *op.Plan, options, true)
+}
+
+func (c Client) hostingDatabaseCredentials(ctx context.Context, runnerID string, in domain.HostingDatabaseCredentialRequest, plan domain.HostingApplyPlan, options RuntimeEnvironmentTransport, valid bool) (*hostingdatabaseprotocol.Credentials, error) {
 	var zero *hostingdatabaseprotocol.Credentials
-	if runnerID == "" || in.Validate() != nil || domain.ValidateHostingDatabasePlan(plan) != nil || plan.Database == nil || plan.Hash != in.PlanHash {
+	if !valid || runnerID == "" || in.Validate() != nil || plan.Database == nil || plan.Hash != in.PlanHash {
 		return zero, ErrDatabaseCredentials
 	}
 	if ValidateRuntimeEnvironmentServer(c.Server, options) != nil {

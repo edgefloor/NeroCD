@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 // JournalHosting is nonsecret immutable prepare, apply-intent, or result
 // evidence. Apply intent is never discarded merely because its lease is stale.
 type JournalHosting struct {
+	DatabaseUpgrade      *domain.HostingDatabaseUpgradeProof       `json:"database_upgrade,omitempty"`
 	Database             bool                                      `json:"database,omitempty"`
 	DatabaseRef          domain.HostingDatabaseExecutionRef        `json:"database_ref,omitzero"`
 	StorageRef           domain.HostingStorageRef                  `json:"storage_ref,omitzero"`
@@ -65,6 +67,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	if j.entryCountLocked() >= journalMaxEntries {
 		return JournalHosting{}, errors.New("runner journal entry limit reached")
 	}
+	if err := validateDatabaseUpgradeJournalChain(append(slices.Clone(j.state.Hosting), entry)); err != nil {
+		return JournalHosting{}, err
+	}
 	oldVersion := j.state.Version
 	if j.state.Version < 2 {
 		j.state.Version = 2
@@ -83,6 +88,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	}
 	if HostingJournalUsesDatabase(entry) && j.state.Version < 11 {
 		j.state.Version = 11
+	}
+	if entry.DatabaseUpgrade != nil && j.state.Version < 14 {
+		j.state.Version = 14
 	}
 	j.state.Hosting = append(j.state.Hosting, entry)
 	if err = j.persistLocked(); err != nil {

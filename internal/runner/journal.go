@@ -121,7 +121,7 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 				_ = store.Close()
 				return nil, err
 			}
-		case 10, 11:
+		case 10, 11, 14:
 			if err := decodeStorageJournal(contents, &j.state); err != nil {
 				_ = store.Close()
 				return nil, err
@@ -415,6 +415,9 @@ func (j *AttemptJournal) persistLocked() error {
 		return err
 	}
 	state := j.state
+	if state.Version == 14 && !journalStateUsesDatabaseUpgrade(state) {
+		state.Version = 13
+	}
 	if state.Version == 13 && len(state.DatabaseNetworkCapture) == 0 {
 		state.Version = 12
 	}
@@ -451,20 +454,23 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
+	if err := validateDatabaseUpgradeJournalChain(state.Hosting); err != nil {
+		return err
+	}
 	if err := validateJournalDatabaseNetworkCaptures(state); err != nil {
 		return err
 	}
 	if err := validateJournalStorageArchives(state); err != nil {
 		return err
 	}
-	if state.Version < journalFormatVersion || state.Version > 13 {
+	if state.Version < journalFormatVersion || state.Version > 14 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
 	if len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
 	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))
-	if len(state.DatabaseNetworkCapture) > 0 && state.Version != 13 || state.Version == 13 && len(state.DatabaseNetworkCapture) == 0 {
+	if len(state.DatabaseNetworkCapture) > 0 && state.Version < 13 || state.Version == 13 && len(state.DatabaseNetworkCapture) == 0 {
 		return errors.New("capture journal requires marked version 13 evidence")
 	}
 	for _, entry := range state.DatabaseNetworkCapture {
@@ -515,7 +521,13 @@ func validateJournalState(state journalState) error {
 	if len(state.Hosting) > 0 && state.Version < 2 {
 		return errors.New("hosting journal requires version2")
 	}
+	if state.Version == 14 && !journalStateUsesDatabaseUpgrade(state) {
+		return errors.New("journal version 14 requires database upgrade evidence")
+	}
 	for _, entry := range state.Hosting {
+		if entry.DatabaseUpgrade != nil && state.Version < 14 {
+			return errors.New("database upgrade journal requires version 14")
+		}
 		if state.Version < 11 && HostingJournalUsesDatabase(entry) {
 			return errors.New("database journal requires version 11")
 		}

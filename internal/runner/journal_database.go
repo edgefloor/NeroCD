@@ -14,7 +14,7 @@ import (
 // HostingJournalUsesDatabase detects database evidence at every retained level.
 // The marker and reference also protect receipts without embedded snapshots.
 func HostingJournalUsesDatabase(entry JournalHosting) bool {
-	if entry.Database || entry.DatabaseRef != (domain.HostingDatabaseExecutionRef{}) || entry.Plan != nil && (entry.Plan.Database != nil || entry.Plan.CompilerVersion == domain.HostingDatabaseCompilerVersion) {
+	if entry.DatabaseUpgrade != nil || entry.Database || entry.DatabaseRef != (domain.HostingDatabaseExecutionRef{}) || entry.Plan != nil && (entry.Plan.Database != nil || entry.Plan.CompilerVersion == domain.HostingDatabaseCompilerVersion) {
 		return true
 	}
 	for _, snapshot := range hostingJournalSnapshots(entry) {
@@ -50,7 +50,19 @@ func validateHostingJournalDatabase(entry JournalHosting) error {
 			return errors.New("journal database snapshot family mismatch")
 		}
 	}
-	if entry.Plan != nil && domain.ValidateHostingDatabasePlan(*entry.Plan) != nil {
+	if entry.DatabaseUpgrade != nil {
+		proof := entry.DatabaseUpgrade
+		if proof.Validate() != nil || proof.PreviousPlan.Snapshot.Database != ref || proof.PreviousPlan.Snapshot.Storage != entry.StorageRef || entry.OperationID == proof.PreviousHealthy.OperationID {
+			return errors.New("journal database upgrade proof mismatch")
+		}
+		op := domain.HostingOperation{ID: entry.OperationID, ProjectID: proof.CapturePlan.ProjectID, ResourceID: proof.CapturePlan.ResourceID, BindingID: proof.CapturePlan.BindingID, Snapshot: proof.PreviousPlan.Snapshot, DatabaseUpgrade: proof, Plan: entry.Plan}
+		if entry.Plan != nil {
+			op.Release = &entry.Plan.Release
+		}
+		if domain.ValidateHostingDatabaseUpgradeOperation(op) != nil || entry.Prepared != nil && entry.Prepared.Release != proof.PreviousPlan.Release {
+			return errors.New("journal database upgrade document mismatch")
+		}
+	} else if entry.Plan != nil && domain.ValidateHostingDatabasePlan(*entry.Plan) != nil {
 		return errors.New("journal database plan mismatch")
 	}
 	if entry.Prepared != nil {
@@ -134,4 +146,33 @@ func databaseJournalUnique(d *json.Decoder) bool {
 	}
 	end, err := d.Token()
 	return err == nil && (delim == '{' && end == json.Delim('}') || delim == '[' && end == json.Delim(']'))
+}
+
+func journalStateUsesDatabaseUpgrade(state journalState) bool {
+	for _, entry := range state.Hosting {
+		if entry.DatabaseUpgrade != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func validateDatabaseUpgradeJournalChain(entries []JournalHosting) error {
+	type identity struct {
+		operation, run, lease, fence string
+		attempt                      int
+	}
+	proofs := map[identity]string{}
+	for _, entry := range entries {
+		key := identity{entry.OperationID, entry.Attempt.RunID, entry.Attempt.LeaseID, entry.Attempt.Fence, entry.Attempt.Attempt}
+		hash := ""
+		if entry.DatabaseUpgrade != nil {
+			hash = domain.HostingDocumentHash(entry.DatabaseUpgrade)
+		}
+		if prior, ok := proofs[key]; ok && prior != hash {
+			return errors.New("database journal upgrade proof changed between phases")
+		}
+		proofs[key] = hash
+	}
+	return nil
 }

@@ -13,6 +13,7 @@ import (
 type DatabaseExecutionConfig struct {
 	StateRoot, SecretRoot string
 	TrustedLoopbackHTTP   bool
+	NetworkUpgrade        bool
 }
 
 // Format redacts protected host paths for every formatting verb.
