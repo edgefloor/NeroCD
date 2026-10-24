@@ -223,6 +223,8 @@ type databaseRunnerFixture struct {
 	owner                                 context.Context
 	database                              *pgxpool.Pool
 	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
+	upgrade                               bool
+	upgradeComplete                       atomic.Pointer[databaseUpgradeCompleteWire]
 	t                                     *testing.T
 	server                                *httptest.Server
 	client                                *http.Client
@@ -297,6 +299,11 @@ func newDatabaseRunnerFixture(t *testing.T) *databaseRunnerFixture {
 
 func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRunnerFixture {
 	t.Helper()
+	return newDatabaseRunnerFixtureWithProfile(t, capture, false)
+}
+
+func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool) *databaseRunnerFixture {
+	t.Helper()
 	_, pg, database := newHostingBuildAPIFixture(t)
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
@@ -320,7 +327,7 @@ func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRu
 			t.Error("fixture root cleanup failed")
 		}
 	})
-	f := &databaseRunnerFixture{t: t, root: root, service: service, database: database, logs: &databaseRunnerLog{}, completeCounts: map[string]int{}}
+	f := &databaseRunnerFixture{t: t, root: root, upgrade: upgrade, service: service, database: database, logs: &databaseRunnerLog{}, completeCounts: map[string]int{}}
 	handler := NewServer(service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static())
 	f.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		observed := &databaseRunnerStatusWriter{ResponseWriter: w}
@@ -337,6 +344,9 @@ func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRu
 		}
 		if r.URL.Path == "/api/v1/runners/hosting/database-credentials" {
 			f.deliveryRequests.Add(1)
+		}
+		if wire := f.upgradeComplete.Load(); wire != nil && wire.serve(w, r, handler) {
+			return
 		}
 		if r.URL.Path != "/api/v1/runners/hosting/complete" {
 			handler.ServeHTTP(w, r)
@@ -396,6 +406,9 @@ func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRu
 		}
 		f.owner = auth.WithCredentialSource(auth.WithPrincipal(t.Context(), principal), auth.CredentialSourceBearer)
 		caps = append(caps, domain.RunTypeComposeDeploy, domain.HostingDatabaseNetworkCaptureCapability)
+	}
+	if upgrade {
+		caps = append(caps, domain.HostingDatabaseUpgradeCapability)
 	}
 	enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, 201)
 	credential := "ncr_database_runner_fixture_only"
@@ -461,7 +474,15 @@ func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRu
 
 func (f *databaseRunnerFixture) start() {
 	f.t.Helper()
-	f.startRunner([]string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--hosting-database", "--execute", "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "work"), "--image-docker-endpoint", "unix:///var/run/docker.sock", "--poll-interval", "100ms", "--cancel-poll-interval", "100ms"})
+	f.startRunner(databaseRunnerArguments(f))
+}
+
+func databaseRunnerArguments(f *databaseRunnerFixture) []string {
+	args := []string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--hosting-database", "--execute", "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "work"), "--image-docker-endpoint", "unix:///var/run/docker.sock", "--poll-interval", "100ms", "--cancel-poll-interval", "100ms"}
+	if f.upgrade {
+		args = append(args, "--hosting-database-network-upgrade")
+	}
+	return args
 }
 
 func (f *databaseRunnerFixture) startRunner(args []string) {
@@ -525,7 +546,7 @@ func (f *databaseRunnerFixture) await(id string) domain.HostingOperation {
 	if reason != "" {
 		f.t.Fatalf("database wait failed reason=%s final_sample=%s %s", reason, finalSample, databaseRunnerDiagnostic(op, exit, &f.apiCounts))
 	}
-	if op.Result == nil || !op.Result.Ready || op.Result.Uncertain || op.MutationHold || op.RestoreOwnershipHeld || op.CompleteReceipt == nil || op.Plan == nil || domain.ValidateHostingDatabasePlan(*op.Plan) != nil {
+	if op.Result == nil || !op.Result.Ready || op.Result.Uncertain || op.MutationHold || op.RestoreOwnershipHeld || op.CompleteReceipt == nil || op.Plan == nil || databaseRunnerValidatePlan(op) != nil {
 		f.t.Fatalf("database completion lacks exact healthy evidence %s", databaseRunnerDiagnostic(op, exit, &f.apiCounts))
 	}
 	return op
@@ -1122,6 +1143,11 @@ func TestDatabaseRunnerClientIdentityBeforeSecretStdin(t *testing.T) {
 
 func (f *databaseRunnerFixture) marker(view domain.HostingDatabase, op domain.HostingOperation, marker string, write bool) {
 	f.t.Helper()
+	f.markerAt(view, op, marker, write, false)
+}
+
+func (f *databaseRunnerFixture) markerAt(view domain.HostingDatabase, op domain.HostingOperation, marker string, write, alias bool) {
+	f.t.Helper()
 	container := f.inspect(op)
 	endpoint := container.NetworkSettings.Networks[op.Plan.Database.NetworkName].IPAddress
 	var ref domain.HostingDatabaseCredentialRef
@@ -1142,7 +1168,15 @@ func (f *databaseRunnerFixture) marker(view domain.HostingDatabase, op domain.Ho
 		Write                  bool
 	}{view.Engine, endpoint, ref.Username, password, marker, write}
 	// Lower-case wire keys are explicit; this payload is sent only to stdin.
-	raw, err := json.Marshal(map[string]any{"engine": input.Engine, "host": input.Host, "username": input.Username, "password": input.Password, "marker": input.Marker, "write": input.Write})
+	payload := map[string]any{"engine": input.Engine, "host": input.Host, "username": input.Username, "password": input.Password, "marker": input.Marker, "write": input.Write}
+	if alias {
+		host, address, err := databaseUpgradeClientEndpoint(op, endpoint)
+		if err != nil {
+			f.t.Fatal("private alias client target invalid")
+		}
+		payload["host"], payload["address"] = host, address
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		f.t.Fatal("protected client payload failed")
 	}

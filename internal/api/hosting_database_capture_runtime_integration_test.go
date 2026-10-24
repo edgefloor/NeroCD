@@ -321,6 +321,112 @@ func (f *databaseRunnerFixture) capturePhysical(source domain.HostingOperation, 
 	return origin
 }
 
+// captureWithRecovery reuses the actual compiled capture commit/lost-ACK/replay
+// sequence. Its caller has already joined the ordinary source runner.
+func (f *databaseRunnerFixture) captureWithRecovery(source domain.HostingOperation) (domain.HostingDatabaseNetworkCapture, databaseCaptureStored, map[string]map[string]databaseCaptureTreeEntry) {
+	f.t.Helper()
+	before, err := f.operation(f.t.Context(), source.ID)
+	if err != nil || before.State != "succeeded" || before.Result == nil || before.CompleteReceipt == nil {
+		f.t.Fatal("capture source not settled")
+	}
+	capture, err := f.service.RequestHostingDatabaseNetworkCapture(f.owner, source.ID)
+	if err != nil {
+		f.t.Fatal("authenticated owner capture request failed")
+	}
+	physical := f.capturePhysical(source, capture.Plan)
+	trees := f.captureTrees()
+	inventory := f.replayInventory([]domain.HostingOperation{source}, source)
+	completeCount := f.completionCount(source.ID)
+	genericClaims, applies, deliveries := f.claimRequests.Load(), f.applyRequests.Load(), f.deliveryRequests.Load()
+	wire := &databaseCaptureRuntimeWire{journalPath: filepath.Join(f.root, "journal", "journal.json"), expectedCapture: capture.ID, expectedRunner: capture.Plan.RunnerID}
+	if !f.capture.CompareAndSwap(nil, wire) {
+		f.t.Fatal("capture wire hook already active")
+	}
+	args := databaseCaptureArguments(f, capture.ID, "unix:///var/run/docker.sock")
+	cursor := f.captureLogCursor()
+	f.startRunner(args)
+	diagnostic := f.awaitCaptureExit(false, "initial", cursor, wire)
+	if !wire.committedACKLost() {
+		f.t.Fatalf("initial capture did not satisfy the committed ACK-loss boundary: %s", diagnostic)
+	}
+	chain := f.captureChain()
+	if stage := databaseCaptureChainStage(chain); stage != "origin_pending_ack" {
+		f.t.Fatalf("compiled ACK loss journal stage=%s %s", stage, diagnostic)
+	}
+	original := *chain[2].Origin
+	stored := f.captureStored(capture.ID)
+	if !reflect.DeepEqual(stored.Request, original) || stored.Authority != original.HostingAuthority || stored.Hash != domain.HostingDocumentHash(original) || stored.Receipt.BodyHash != stored.Hash || stored.Receipt.ID != original.ReceiptID || stored.Receipt.Origin != physical || stored.Receipt.OriginHash != physical.DocumentHash() || !stored.Receipt.ObservedAt.Equal(original.ObservedAt) || stored.Receipt.PlanHash != capture.Plan.Hash {
+		f.t.Fatal("committed capture differs from real origin and exact durable request")
+	}
+	if !reflect.DeepEqual(trees, f.captureTrees()) {
+		f.t.Fatal("initial capture observation changed protected trees")
+	}
+	// Ordinary mode must not poll around unresolved capture state.
+	claimCount, planCount, originCount, forbidden := wire.counts()
+	if claimCount != 1 || planCount == 0 || originCount != 1 || forbidden != 0 {
+		f.t.Fatal("dedicated capture used unexpected API authority")
+	}
+	cursor = f.captureLogCursor()
+	f.start()
+	f.awaitCaptureExit(false, "ordinary_hold", cursor, wire)
+	if !reflect.DeepEqual(chain, f.captureChain()) {
+		f.t.Fatal("ordinary mode discarded unresolved capture state")
+	}
+	if c, p, o, b := wire.counts(); c != claimCount || p != planCount || o != originCount || b != 0 {
+		f.t.Fatal("ordinary mode bypassed unresolved capture hold")
+	}
+	// Keep all original arguments except the socket. An absent fixture-owned
+	// socket proves persisted-origin replay does not construct the host observer.
+	absent := filepath.Join(f.root, "absent-capture.sock")
+	if _, err := os.Lstat(absent); !errors.Is(err, os.ErrNotExist) {
+		f.t.Fatal("replay absence proof socket already exists")
+	}
+	replayArgs := databaseCaptureArguments(f, capture.ID, "unix://"+absent)
+	cursor = f.captureLogCursor()
+	f.startRunner(replayArgs)
+	f.awaitCaptureExit(true, "historical_replay", cursor, wire)
+	if len(f.captureChain()) != 0 || !wire.exactReplay() {
+		f.t.Fatal("compiled historical replay changed wire body/ACK or failed durable retirement")
+	}
+	if c, p, o, b := wire.counts(); c != claimCount || p != planCount || o != originCount+1 || b != 0 {
+		f.t.Fatal("historical replay reclaimed, refreshed plan or used generic runner APIs")
+	}
+	if !reflect.DeepEqual(stored, f.captureStored(capture.ID)) || !reflect.DeepEqual(trees, f.captureTrees()) {
+		f.t.Fatal("capture replay changed immutable receipt or protected trees")
+	}
+	afterInventory := f.replayInventory([]domain.HostingOperation{source}, source)
+	if databaseRunnerReplayInventoryMatches(inventory, afterInventory, []domain.HostingOperation{source}, source) != nil || f.completionCount(source.ID) != completeCount || f.claimRequests.Load() != genericClaims || f.applyRequests.Load() != applies || f.deliveryRequests.Load() != deliveries {
+		f.t.Fatal("capture changed workload residue or repeated database execution/delivery")
+	}
+	f.capturePhysical(source, capture.Plan)
+	after, err := f.operation(f.t.Context(), source.ID)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		f.t.Fatal("capture changed source operation/result")
+	}
+	if !f.capture.CompareAndSwap(wire, nil) {
+		f.t.Fatal("capture wire hook identity changed")
+	}
+	credential, err := os.ReadFile(filepath.Join(f.root, "credential"))
+	if err != nil {
+		f.t.Fatal("historical plan probe credential unavailable")
+	}
+	client := runnerclient.New(f.server.URL, strings.TrimSpace(string(credential)))
+	clear(credential)
+	client.HTTP = f.client
+	if _, err := client.HostingDatabaseNetworkCapturePlan(f.t.Context(), capture.Plan.RunnerID, original.HostingAuthority); err == nil {
+		f.t.Fatal("historical capture completion regained current plan authority")
+	}
+	f.assertRedacted()
+	output := f.logs.snapshot()
+	for _, private := range []string{original.Fence, original.LeaseID, "capture_ack_loss_canary"} {
+		if bytes.Contains(output, []byte(private)) {
+			f.t.Fatal("capture output exposed private authority or response diagnostics")
+		}
+	}
+	clear(output)
+	return capture, stored, trees
+}
+
 func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 	if os.Getenv("NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME") != "disposable-dind" {
 		t.Skip("run reviewed acceptance/runtime-hosting-database-runner/gate.sh after exact physical authorization")
@@ -343,97 +449,7 @@ func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 		f.marker(view, source, marker, true)
 		f.awaitSourceJournalRetired()
 		f.stop()
-		before, err := f.operation(t.Context(), source.ID)
-		if err != nil || before.State != "succeeded" || before.Result == nil || before.CompleteReceipt == nil {
-			t.Fatal("capture source not settled")
-		}
-		capture, err := f.service.RequestHostingDatabaseNetworkCapture(f.owner, source.ID)
-		if err != nil {
-			t.Fatal("authenticated owner capture request failed")
-		}
-		physical := f.capturePhysical(source, capture.Plan)
-		trees := f.captureTrees()
-		inventory := f.replayInventory([]domain.HostingOperation{source}, source)
-		completeCount := f.completionCount(source.ID)
-		genericClaims, applies, deliveries := f.claimRequests.Load(), f.applyRequests.Load(), f.deliveryRequests.Load()
-		wire := &databaseCaptureRuntimeWire{journalPath: filepath.Join(f.root, "journal", "journal.json"), expectedCapture: capture.ID, expectedRunner: capture.Plan.RunnerID}
-		if !f.capture.CompareAndSwap(nil, wire) {
-			t.Fatal("capture wire hook already active")
-		}
-		args := databaseCaptureArguments(f, capture.ID, "unix:///var/run/docker.sock")
-		cursor := f.captureLogCursor()
-		f.startRunner(args)
-		diagnostic := f.awaitCaptureExit(false, "initial", cursor, wire)
-		if !wire.committedACKLost() {
-			t.Fatalf("initial capture did not satisfy the committed ACK-loss boundary: %s", diagnostic)
-		}
-		chain := f.captureChain()
-		if stage := databaseCaptureChainStage(chain); stage != "origin_pending_ack" {
-			t.Fatalf("compiled ACK loss journal stage=%s %s", stage, diagnostic)
-		}
-		original := *chain[2].Origin
-		stored := f.captureStored(capture.ID)
-		if !reflect.DeepEqual(stored.Request, original) || stored.Authority != original.HostingAuthority || stored.Hash != domain.HostingDocumentHash(original) || stored.Receipt.BodyHash != stored.Hash || stored.Receipt.ID != original.ReceiptID || stored.Receipt.Origin != physical || stored.Receipt.OriginHash != physical.DocumentHash() || !stored.Receipt.ObservedAt.Equal(original.ObservedAt) || stored.Receipt.PlanHash != capture.Plan.Hash {
-			t.Fatal("committed capture differs from real origin and exact durable request")
-		}
-		if !reflect.DeepEqual(trees, f.captureTrees()) {
-			t.Fatal("initial capture observation changed protected trees")
-		}
-		// Ordinary mode must not poll around unresolved capture state.
-		claimCount, planCount, originCount, forbidden := wire.counts()
-		if claimCount != 1 || planCount == 0 || originCount != 1 || forbidden != 0 {
-			t.Fatal("dedicated capture used unexpected API authority")
-		}
-		cursor = f.captureLogCursor()
-		f.start()
-		f.awaitCaptureExit(false, "ordinary_hold", cursor, wire)
-		if !reflect.DeepEqual(chain, f.captureChain()) {
-			t.Fatal("ordinary mode discarded unresolved capture state")
-		}
-		if c, p, o, b := wire.counts(); c != claimCount || p != planCount || o != originCount || b != 0 {
-			t.Fatal("ordinary mode bypassed unresolved capture hold")
-		}
-		// Keep all original arguments except the socket. An absent fixture-owned
-		// socket proves persisted-origin replay does not construct the host observer.
-		absent := filepath.Join(f.root, "absent-capture.sock")
-		if _, err := os.Lstat(absent); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("replay absence proof socket already exists")
-		}
-		replayArgs := databaseCaptureArguments(f, capture.ID, "unix://"+absent)
-		cursor = f.captureLogCursor()
-		f.startRunner(replayArgs)
-		f.awaitCaptureExit(true, "historical_replay", cursor, wire)
-		if len(f.captureChain()) != 0 || !wire.exactReplay() {
-			t.Fatal("compiled historical replay changed wire body/ACK or failed durable retirement")
-		}
-		if c, p, o, b := wire.counts(); c != claimCount || p != planCount || o != originCount+1 || b != 0 {
-			t.Fatal("historical replay reclaimed, refreshed plan or used generic runner APIs")
-		}
-		if !reflect.DeepEqual(stored, f.captureStored(capture.ID)) || !reflect.DeepEqual(trees, f.captureTrees()) {
-			t.Fatal("capture replay changed immutable receipt or protected trees")
-		}
-		afterInventory := f.replayInventory([]domain.HostingOperation{source}, source)
-		if databaseRunnerReplayInventoryMatches(inventory, afterInventory, []domain.HostingOperation{source}, source) != nil || f.completionCount(source.ID) != completeCount || f.claimRequests.Load() != genericClaims || f.applyRequests.Load() != applies || f.deliveryRequests.Load() != deliveries {
-			t.Fatal("capture changed workload residue or repeated database execution/delivery")
-		}
-		f.capturePhysical(source, capture.Plan)
-		after, err := f.operation(t.Context(), source.ID)
-		if err != nil || !reflect.DeepEqual(before, after) {
-			t.Fatal("capture changed source operation/result")
-		}
-		if !f.capture.CompareAndSwap(wire, nil) {
-			t.Fatal("capture wire hook identity changed")
-		}
-		credential, err := os.ReadFile(filepath.Join(f.root, "credential"))
-		if err != nil {
-			t.Fatal("historical plan probe credential unavailable")
-		}
-		client := runnerclient.New(f.server.URL, strings.TrimSpace(string(credential)))
-		clear(credential)
-		client.HTTP = f.client
-		if _, err := client.HostingDatabaseNetworkCapturePlan(t.Context(), capture.Plan.RunnerID, original.HostingAuthority); err == nil {
-			t.Fatal("historical capture completion regained current plan authority")
-		}
+		capture, stored, trees := f.captureWithRecovery(source)
 		f.marker(view, source, marker, false)
 		freshMarker := "capture_physical_" + engine + "_after"
 		f.marker(view, source, freshMarker, true)
@@ -442,14 +458,7 @@ func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 			t.Fatal("post-capture application access changed protected roots")
 		}
 		f.assertRedacted()
-		output := f.logs.snapshot()
-		for _, private := range []string{original.Fence, original.LeaseID, "capture_ack_loss_canary"} {
-			if bytes.Contains(output, []byte(private)) {
-				t.Fatal("capture output exposed private authority or response diagnostics")
-			}
-		}
-		clear(output)
-		t.Logf("physical capture engine=%s source=%s capture=%s original_receipt=%s container=%s volume=%s network=%s lazy_replay_absent_socket=true", engine, source.ID, capture.ID, stored.Receipt.ID, source.Result.ContainerID, source.Plan.Storage.VolumeName, physical.NetworkID)
+		t.Logf("physical capture engine=%s source=%s capture=%s original_receipt=%s container=%s volume=%s network=%s lazy_replay_absent_socket=true", engine, source.ID, capture.ID, stored.Receipt.ID, source.Result.ContainerID, source.Plan.Storage.VolumeName, stored.Receipt.Origin.NetworkID)
 	}
 }
 
