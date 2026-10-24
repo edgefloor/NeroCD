@@ -1201,6 +1201,12 @@ func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 // dependencies above 0046 so older missing-layer tests retain their assertions.
 func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_database_network_capture_lease ON run_leases;
+ DROP TABLE hosting_database_network_origin_receipts;
+ DROP TABLE hosting_database_network_captures;
+ DROP FUNCTION nerocd_database_network_capture_consistent(),nerocd_database_network_capture_lease(),nerocd_database_network_capture_flush(),nerocd_database_network_capture_schema_compatible();`); err != nil {
+		t.Fatal(err)
+	}
 	// Pending bindings reference database, runtime, operation and audit records.
 	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_binding_pending_runtime ON hosting_runtime_configuration_versions;
  DROP TRIGGER hosting_binding_pending_operation ON hosting_operations;

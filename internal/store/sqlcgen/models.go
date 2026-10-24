@@ -376,6 +376,29 @@ type HostingDatabaseDeployment struct {
 	Credentials   json.RawMessage `json:"credentials"`
 }
 
+type HostingDatabaseNetworkCapture struct {
+	ID                string          `json:"id"`
+	SourceOperationID string          `json:"source_operation_id"`
+	ResourceID        string          `json:"resource_id"`
+	BindingID         string          `json:"binding_id"`
+	ProjectID         string          `json:"project_id"`
+	RunID             string          `json:"run_id"`
+	Plan              json.RawMessage `json:"plan"`
+	PlanHash          string          `json:"plan_hash"`
+	CreatedBy         string          `json:"created_by"`
+	CreatedAt         time.Time       `json:"created_at"`
+}
+
+type HostingDatabaseNetworkOriginReceipt struct {
+	CaptureID string          `json:"capture_id"`
+	ReceiptID string          `json:"receipt_id"`
+	Authority json.RawMessage `json:"authority"`
+	Body      json.RawMessage `json:"body"`
+	BodyHash  string          `json:"body_hash"`
+	Receipt   json.RawMessage `json:"receipt"`
+	AuditID   string          `json:"audit_id"`
+}
+
 type HostingDatabaseReceipt struct {
 	ProjectID       string          `json:"project_id"`
 	RequestID       string          `json:"request_id"`
