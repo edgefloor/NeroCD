@@ -5,6 +5,7 @@ package runnerruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,94 @@ import (
 	"nerocd/internal/runner"
 	"nerocd/internal/runnerclient"
 )
+
+func TestDatabaseMaintenanceSavedCompletionPrecedesHostAndPreservesHolds(t *testing.T) {
+	for _, mode := range []string{"settled", "foreign-ack", "malformed-proof", "malformed-result", "disabled", "capture-mixed"} {
+		t.Run(mode, func(t *testing.T) {
+			f, j, c, e := maintenanceCoordinatorFixture(t, "redis")
+			c.lostComplete = true
+			foreign := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if foreign && r.URL.Path == "/api/v1/runners/hosting/complete" {
+					ack := c.op
+					receipt := *ack.CompleteReceipt
+					receipt.ID = "foreign_complete"
+					ack.CompleteReceipt = &receipt
+					if err := json.NewEncoder(w).Encode(ack); err != nil {
+						t.Error(err)
+					}
+					return
+				}
+				serveDatabaseUpgrade(c, w, r)
+			}))
+			defer server.Close()
+			s := newAttemptSupervisorFrom(t.Context(), c.lease)
+			err := executeDatabaseDeployment(s, j, func(context.Context) error { return nil }, runnerclient.New(server.URL, "fixture"), e, c.a, c.lease, c.op, DatabaseExecutionConfig{MembershipMaintenance: true, TrustedLoopbackHTTP: true}, f.db.config)
+			s.Close()
+			if err == nil || !c.hasPhase("result") {
+				t.Fatal("missing retained complete fixture")
+			}
+			c.lostComplete = false
+			cfg := databaseReplayConfig(server.URL, c)
+			cfg.Database.MembershipMaintenance = mode != "disabled"
+			snapshot := j.Snapshot()
+			if mode == "malformed-proof" {
+				snapshot.Hosting[0].DatabaseMaintenance.Hash = "sha256:" + strings.Repeat("f", 64)
+			}
+			if mode == "malformed-result" {
+				for i := range snapshot.Hosting {
+					if snapshot.Hosting[i].Result != nil {
+						snapshot.Hosting[i].Result.Result.ImageID = "sha256:" + strings.Repeat("f", 64)
+					}
+				}
+			}
+			if mode == "capture-mixed" {
+				snapshot.DatabaseNetworkCapture = []runner.JournalDatabaseNetworkCapture{{}}
+			}
+			foreign = mode == "foreign-ack"
+			preflights, ordinary, replays := 0, 0, 0
+			original := domain.HostingDocumentHash(j.Snapshot())
+			// This is the exact zero-capture startup seam used by Run before its
+			// automatic capture dispatcher can invoke a daemon preflight.
+			err = reconcileConnectedBeforeCapture(t.Context(), snapshot, func(ctx context.Context) error {
+				replays++
+				return replaySavedDatabaseMaintenanceSnapshot(ctx, cfg, j, snapshot)
+			})
+			if mode == "settled" {
+				if err != nil || replays != 1 || len(j.Snapshot().Hosting) != 0 || e.applyCalls != 1 {
+					t.Fatal("saved Complete did not retire before daemon", err)
+				}
+				preflight := func() error {
+					preflights++
+					if len(j.Snapshot().Hosting) != 0 {
+						t.Error("daemon preceded saved completion")
+					}
+					return errors.New("Docker unavailable")
+				}
+				if preflight() == nil {
+					ordinary++
+				}
+				if preflights != 1 || ordinary != 0 {
+					t.Fatal("host failure admitted ordinary work")
+				}
+			} else {
+				if mode == "capture-mixed" {
+					if err != nil || replays != 0 {
+						t.Fatal("mixed capture bypassed its first dispatcher")
+					}
+					if replaySavedDatabaseMaintenanceSnapshot(t.Context(), cfg, j, snapshot) == nil {
+						t.Fatal("mixed capture permitted direct retirement")
+					}
+				} else if err == nil {
+					t.Fatal("foreign or unsupported completion retired")
+				}
+				if preflights != 0 || ordinary != 0 || domain.HostingDocumentHash(j.Snapshot()) != original || e.applyCalls != 1 {
+					t.Fatal("failed replay cleared hold or repeated effects")
+				}
+			}
+		})
+	}
+}
 
 type maintenanceCoordinatorEngine struct {
 	*databaseCoordinatorEngine

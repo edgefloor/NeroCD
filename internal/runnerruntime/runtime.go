@@ -269,7 +269,12 @@ func RunContext(ctx context.Context, config Config) error {
 	defer func() { _ = journal.Close() }()
 	// A saved connected completion needs no daemon. Capture chains retain their
 	// dedicated first dispatch and mixed-evidence hold before any other replay.
-	if err := reconcileConnectedBeforeCapture(ctx, journal.Snapshot(), func(ctx context.Context) error { return reconcileApplicationDatabaseJournal(ctx, config, journal) }); err != nil {
+	if err := reconcileConnectedBeforeCapture(ctx, journal.Snapshot(), func(ctx context.Context) error {
+		if err := replaySavedDatabaseMaintenanceCompletions(ctx, config, journal); err != nil {
+			return err
+		}
+		return reconcileApplicationDatabaseJournal(ctx, config, journal)
+	}); err != nil {
 		return err
 	}
 	captureDispatcher, err := newAutomaticDatabaseNetworkCaptureDispatcher(config, journal)

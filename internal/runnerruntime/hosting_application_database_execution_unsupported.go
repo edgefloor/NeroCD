@@ -22,3 +22,12 @@ func reconcileApplicationDatabaseJournal(_ context.Context, _ Config, j *runner.
 	}
 	return nil
 }
+
+func replaySavedDatabaseMaintenanceCompletions(_ context.Context, _ Config, j *runner.AttemptJournal) error {
+	for _, e := range j.Snapshot().Hosting {
+		if e.DatabaseMaintenance != nil {
+			return errors.New("database maintenance journal unsupported on this platform")
+		}
+	}
+	return nil
+}
