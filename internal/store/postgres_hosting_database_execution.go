@@ -146,8 +146,10 @@ func databaseOperationAuthorityMode(ctx context.Context, tx pgx.Tx, op domain.Ho
 	if err = requireHostingDatabaseAgent(ctx, tx, op.Snapshot); err != nil {
 		return err
 	}
-	if err = databaseUpgradeAuthority(ctx, tx, op, observe || historical); err != nil {
-		return err
+	if !historical || op.DatabaseUpgrade != nil {
+		if err = databaseUpgradeAuthority(ctx, tx, op, observe || historical); err != nil {
+			return err
+		}
 	}
 	if op.DatabaseUpgrade != nil {
 		// Capture, credential and materialization reads can wait after the
@@ -223,7 +225,7 @@ func (s *PostgresStore) RequestHostingDatabaseDeployment(ctx context.Context, id
 		if op.Snapshot != snap || op.CreatedBy != actor {
 			return zero, ErrConflict
 		}
-		if err = databaseOperationAuthority(ctx, tx, op, false); err != nil {
+		if err = databaseOperationAuthorityMode(ctx, tx, op, false, true); err != nil {
 			return zero, err
 		}
 		return op, proxyCheckLegacyToken(ctx, tx, actor)

@@ -93,6 +93,7 @@ func TestPostgresDatabaseUpgradeLifecycleAndMaintenance(t *testing.T) {
 	for _, engine := range []string{"postgresql", "redis"} {
 		t.Run(engine, func(t *testing.T) {
 			f, in := upgradeFixture(t, engine)
+			sourceID := f.op.ID
 			application, err := f.pg.GetResource(f.ctx, "resource_image_web")
 			if err != nil {
 				t.Fatal(err)
@@ -111,6 +112,7 @@ func TestPostgresDatabaseUpgradeLifecycleAndMaintenance(t *testing.T) {
 				t.Fatal("upgrade admission", err)
 			}
 			f = settleUpgrade(t, prepareUpgrade(t, f, op))
+			first := f
 			if f.op.Plan.Database.Network.MembershipRevision != 1 {
 				t.Fatal("initial empty membership revision changed")
 			}
@@ -134,8 +136,48 @@ func TestPostgresDatabaseUpgradeLifecycleAndMaintenance(t *testing.T) {
 			if upgradeCounts(t, f) != before {
 				t.Fatal("replay minted operation or authority")
 			}
+			if replay, e := f.service.RequestHostingDatabaseDeployment(f.ctx, f.resource.ID, databaseExecutionInput("capture_source")); e != nil || replay.ID != sourceID {
+				t.Fatal("original v1 request receipt rejected after upgrade", e)
+			}
+			if _, e := f.db.Exec(f.ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, first.authority.LeaseID); e != nil {
+				t.Fatal(e)
+			}
+			if _, e := f.pg.HostingPrepared(f.ctx, f.runner, domain.HostingPreparedRequest{HostingAuthority: first.authority, ReceiptID: "prepared_" + first.op.ID, Release: *first.op.Release}); e != nil {
+				t.Fatal("historical prepared receipt acquired current-predecessor requirement", e)
+			}
+			if _, e := f.pg.HostingComplete(f.ctx, f.runner, domain.HostingCompleteRequest{HostingAuthority: first.authority, ReceiptID: "complete_" + first.op.ID, Result: *first.op.Result}); e != nil {
+				t.Fatal("historical complete receipt rejected after maintenance", e)
+			}
+			materialized := first.proof(domain.HostingStorageCreateAck{Materialization: first.op.DatabaseUpgrade.CapturePlan.Materialization})
+			if _, e := f.pg.HostingStorageMaterialized(f.ctx, f.runner, materialized); e != nil {
+				t.Fatal("historical materialization receipt rejected after maintenance", e)
+			}
+			if _, e := f.pg.HostingApplyBegin(f.ctx, f.runner, first.authority); e == nil {
+				t.Fatal("historical receipt revived writer authority")
+			}
 			if _, e := f.service.RequestHostingDatabaseDeployment(f.ctx, f.resource.ID, databaseExecutionInput("downgrade")); !errors.Is(e, store.ErrConflict) {
 				t.Fatal("ordinary v1 deployment accepted against v2", e)
+			}
+			tx, e := f.db.Begin(f.ctx)
+			if e != nil {
+				t.Fatal(e)
+			}
+			for _, query := range []string{
+				`INSERT INTO hosting_database_deployments SELECT operation_id||'_downgrade',resource_id,binding_id,destination_id,reference,credentials FROM hosting_database_deployments WHERE operation_id=$1`,
+				`INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,created_by) SELECT id||'_downgrade',project_id,resource_id,binding_id,idempotency_key||'_downgrade',request_hash,created_by FROM hosting_operations WHERE id=$1`,
+				`INSERT INTO hosting_snapshots(operation_id,body,body_hash) SELECT operation_id||'_downgrade',body,body_hash FROM hosting_snapshots WHERE operation_id=$1`,
+			} {
+				if _, e = tx.Exec(f.ctx, query, sourceID); e != nil {
+					_ = tx.Rollback(f.ctx)
+					t.Fatal("SQL downgrade setup failed", e)
+				}
+			}
+			_, e = tx.Exec(f.ctx, `SET CONSTRAINTS ALL IMMEDIATE`)
+			if cleanupErr := tx.Rollback(f.ctx); cleanupErr != nil {
+				t.Fatal(cleanupErr)
+			}
+			if e == nil {
+				t.Fatal("direct SQL accepted v1 operation against current v2")
 			}
 			var afterProof []byte
 			if f.db.QueryRow(f.ctx, `SELECT body FROM hosting_apply_plans WHERE operation_id=(SELECT database_operation_id FROM hosting_database_bindings WHERE application_resource_id=$1)`, application.ID).Scan(&afterProof) != nil || string(originalProof) != string(afterProof) {
@@ -357,7 +399,7 @@ func TestPostgresDatabaseUpgradeDirectSQLConstraints(t *testing.T) {
 }
 
 func TestPostgresDatabaseUpgradeRevokedCapabilityBoundaries(t *testing.T) {
-	for _, stage := range []string{"dispatch", "claim", "prepare", "delivery", "status", "storage"} {
+	for _, stage := range []string{"dispatch", "claim", "prepare", "delivery", "status", "storage", "receipt"} {
 		t.Run(stage, func(t *testing.T) {
 			f, in := upgradeFixture(t, "postgresql")
 			op, err := f.service.RequestHostingDatabaseNetworkUpgrade(f.ctx, f.resource.ID, in)
@@ -376,8 +418,11 @@ func TestPostgresDatabaseUpgradeRevokedCapabilityBoundaries(t *testing.T) {
 				}
 				f.authority = domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
 			}
-			if stage == "delivery" || stage == "storage" {
+			if stage == "delivery" || stage == "storage" || stage == "receipt" {
 				f = prepareUpgrade(t, f, op)
+			}
+			if stage == "receipt" {
+				f = settleUpgrade(t, f)
 			}
 			if _, err = f.db.Exec(f.ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingDatabaseUpgradeCapability); err != nil {
 				t.Fatal(err)
@@ -387,8 +432,15 @@ func TestPostgresDatabaseUpgradeRevokedCapabilityBoundaries(t *testing.T) {
 				err = f.pg.PrepareDeployment(f.ctx, op.ID)
 				if err == nil {
 					var state string
-					if f.db.QueryRow(f.ctx, `SELECT state FROM hosting_operations WHERE id=$1`, op.ID).Scan(&state) != nil || state != "failed" {
-						t.Fatal("revoked capability dispatched upgrade")
+					if f.db.QueryRow(f.ctx, `SELECT state FROM hosting_operations WHERE id=$1`, op.ID).Scan(&state) != nil {
+						t.Fatal("dispatch state read failed")
+					}
+					if state != "failed" {
+						// River may have committed the dispatch before revocation.
+						// That existing task must still fail current claim admission.
+						if _, e := f.pg.ClaimRun(f.ctx, f.runner, time.Now(), time.Minute); e == nil {
+							t.Fatal("revoked capability claimed dispatched upgrade")
+						}
 					}
 					return
 				}
@@ -404,6 +456,8 @@ func TestPostgresDatabaseUpgradeRevokedCapabilityBoundaries(t *testing.T) {
 				_, err = f.pg.GetHostingOperation(f.ctx, op.ID)
 			case "storage":
 				_, err = f.pg.HostingStorageCreateBegin(f.ctx, f.runner, f.requestStorage())
+			case "receipt":
+				_, err = f.pg.HostingComplete(f.ctx, f.runner, domain.HostingCompleteRequest{HostingAuthority: f.authority, ReceiptID: "complete_" + f.op.ID, Result: *f.op.Result})
 			}
 			if err == nil {
 				t.Fatal("revoked upgrade capability accepted at", stage)
@@ -542,6 +596,98 @@ func TestPostgresDatabaseUpgradeAuthorityAfterWait(t *testing.T) {
 			}
 			if upgradeCounts(t, f) != before {
 				t.Fatal("expired request leaked durable effects")
+			}
+		})
+	}
+}
+
+func TestPostgresDatabaseUpgradeCapabilityAfterRunnerWait(t *testing.T) {
+	for _, stage := range []string{"request", "status"} {
+		t.Run(stage, func(t *testing.T) {
+			f, in := upgradeFixture(t, "postgresql")
+			ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+			defer cancel()
+			var op domain.HostingOperation
+			if stage == "status" {
+				var err error
+				op, err = f.service.RequestHostingDatabaseNetworkUpgrade(ctx, f.resource.ID, in)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f = settleUpgrade(t, prepareUpgrade(t, f, op))
+			}
+			before := upgradeCounts(t, f)
+			blocker, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			started, joined := false, false
+			defer func() {
+				cancel()
+				cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stop()
+				if e := blocker.Rollback(cleanup); e != nil && !errors.Is(e, pgx.ErrTxClosed) {
+					t.Error(e)
+				}
+				if started && !joined {
+					select {
+					case <-done:
+					case <-cleanup.Done():
+						t.Error("runner waiter did not join")
+					}
+				}
+			}()
+			var pid int
+			if blocker.QueryRow(ctx, `SELECT pg_backend_pid() FROM runners WHERE id=$1 FOR UPDATE`, f.runner).Scan(&pid) != nil {
+				t.Fatal("runner blocker failed")
+			}
+			started = true
+			go func() {
+				var e error
+				if stage == "request" {
+					_, e = f.service.RequestHostingDatabaseNetworkUpgrade(ctx, f.resource.ID, in)
+				} else {
+					_, e = f.pg.GetHostingOperation(ctx, op.ID)
+				}
+				done <- e
+			}()
+			ticker := time.NewTicker(10 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				var waiting bool
+				if f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) != nil {
+					t.Fatal("runner wait observation failed")
+				}
+				if waiting {
+					break
+				}
+				select {
+				case e := <-done:
+					joined = true
+					t.Fatal("upgrade escaped runner lock", e)
+				case <-ticker.C:
+				case <-ctx.Done():
+					t.Fatal("runner barrier deadline")
+				}
+			}
+			if _, err = blocker.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingDatabaseUpgradeCapability); err != nil {
+				t.Fatal(err)
+			}
+			if err = blocker.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case e := <-done:
+				joined = true
+				if e == nil {
+					t.Fatal("upgrade used capability read before runner lock")
+				}
+			case <-ctx.Done():
+				t.Fatal("runner waiter deadline")
+			}
+			if upgradeCounts(t, f) != before {
+				t.Fatal("runner revocation leaked upgrade effects")
 			}
 		})
 	}

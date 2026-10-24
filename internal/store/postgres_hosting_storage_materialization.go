@@ -391,6 +391,11 @@ func (s *PostgresStore) HostingStorageMaterialized(ctx context.Context, runner s
 			if readErr != nil || in.Matches(storage, origin) != nil {
 				return zero, ErrConflict
 			}
+			if op.DatabaseUpgrade != nil {
+				if readErr = databaseUpgradeHistoricalRead(ctx, tx, op); readErr != nil {
+					return zero, readErr
+				}
+			}
 			return domain.HostingStorageMaterializedAck{Materialization: origin, Receipt: storageReceipt(prior)}, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {

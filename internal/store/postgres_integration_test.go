@@ -4003,7 +4003,9 @@ func openPostgresIntegrationStore(t *testing.T, ctx context.Context, label strin
 	if databaseURL == "" {
 		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
 	}
-	schema := fmt.Sprintf("nerocd_%s_%s", label, strings.ToLower(rand.Text()))
+	// River prefixes notification topics with this schema. Keep the random
+	// suffix at 80 bits so hosting fixture names fit its 46-character limit.
+	schema := fmt.Sprintf("nerocd_%s_%s", label, strings.ToLower(rand.Text()[:16]))
 	adminDB, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		t.Fatal(err)

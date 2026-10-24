@@ -725,6 +725,15 @@ func replayHostingReceipt(ctx context.Context, tx pgx.Tx, a domain.HostingAuthor
 	if old != a || storedID != id || storedHash != hash {
 		return false, ErrConflict
 	}
+	op, err := hostingOperation(ctx, tx, a.OperationID)
+	if err != nil {
+		return false, err
+	}
+	if op.DatabaseUpgrade != nil {
+		if err = databaseUpgradeHistoricalRead(ctx, tx, op); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
 }
 
@@ -1445,6 +1454,11 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 	if err == nil {
 		if committedHash != domain.HostingDocumentHash(in) {
 			return domain.HostingOperation{}, ErrConflict
+		}
+		if before.DatabaseUpgrade != nil {
+			if err = databaseUpgradeHistoricalRead(ctx, tx, before); err != nil {
+				return domain.HostingOperation{}, err
+			}
 		}
 		return hostingTaskOperation(ctx, tx, in.HostingAuthority)
 	}
