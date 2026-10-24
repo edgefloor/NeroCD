@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/distribution/reference"
 	"nerocd/internal/domain"
 )
 
@@ -144,7 +145,15 @@ func (e *imageEngine) PrepareDatabase(parent context.Context, snapshot domain.Ho
 	if err != nil {
 		return zero, errors.New("database prepared image unavailable")
 	}
-	if !slices.Contains(image.RepoDigests, canonical) {
+	found := false
+	for _, candidate := range image.RepoDigests {
+		parsed, err := reference.ParseNormalizedNamed(candidate)
+		if err == nil && parsed.String() == canonical {
+			found = true
+			break
+		}
+	}
+	if !found {
 		return zero, errors.New("database image lacks exact child manifest digest")
 	}
 	release := domain.HostingRelease{CanonicalImage: canonical, ImageID: image.ID, OS: image.OS, Architecture: image.Architecture, Variant: image.Variant, DaemonID: daemon}

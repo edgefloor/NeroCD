@@ -72,6 +72,51 @@ func databaseRuntimeDocker(t *testing.T, engine *imageEngine, args ...string) []
 	return raw
 }
 
+// Only closed labels may enter qualification output, including for future errors.
+func databaseRuntimePreparationStage(message string) string {
+	switch message {
+	case "invalid database preparation profile":
+		return "profile_validation"
+	case "unsupported database recipe":
+		return "recipe_selection"
+	case "database native image platform unsupported":
+		return "native_platform_selection"
+	case "database daemon unavailable":
+		return "daemon_identity"
+	case "database image pull authority unavailable":
+		return "image_pull_authority"
+	case "database image pull not confirmed":
+		return "image_pull"
+	case "database prepared image unavailable":
+		return "prepared_image_inspection"
+	case "database image lacks exact child manifest digest":
+		return "child_manifest_digest"
+	case "database prepared release changed":
+		return "release_verification"
+	default:
+		return "unclassified"
+	}
+}
+
+func TestDatabaseRuntimePreparationStage(t *testing.T) {
+	for message, want := range map[string]string{
+		"invalid database preparation profile":                     "profile_validation",
+		"unsupported database recipe":                              "recipe_selection",
+		"database native image platform unsupported":               "native_platform_selection",
+		"database daemon unavailable":                              "daemon_identity",
+		"database image pull authority unavailable":                "image_pull_authority",
+		"database image pull not confirmed":                        "image_pull",
+		"database prepared image unavailable":                      "prepared_image_inspection",
+		"database image lacks exact child manifest digest":         "child_manifest_digest",
+		"database prepared release changed":                        "release_verification",
+		"unexpected error: synthetic credential and header values": "unclassified",
+	} {
+		if got := databaseRuntimePreparationStage(message); got != want {
+			t.Errorf("preparation stage = %q, want %q", got, want)
+		}
+	}
+}
+
 func newDatabaseRuntimeFixture(t *testing.T, root, kind, suffix string, materialize bool) *databaseRuntimeFixture {
 	t.Helper()
 	version := domain.HostingDatabasePostgresRecipe
@@ -125,7 +170,7 @@ func newDatabaseRuntimeFixture(t *testing.T, root, kind, suffix string, material
 	}
 	release, err := engine.PrepareDatabase(t.Context(), snapshot, config, databaseRuntimeAuthority)
 	if err != nil {
-		t.Fatal("production pinned database preparation failed")
+		t.Fatalf("production pinned database preparation failed: stage=%s", databaseRuntimePreparationStage(err.Error()))
 	}
 	if domain.ValidateHostingDatabaseRelease(snapshot, release) != nil || release.Architecture != "arm64" {
 		t.Fatal("prepared database recipe/platform mismatch")
