@@ -28,7 +28,16 @@ func (r *hostingOperationResponse) decodeResponse(body io.Reader) error {
 	if err = decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return errors.New("hosting response requires one JSON document")
 	}
-	return domain.ValidateHostingDatabaseUpgradeOperation(domain.HostingOperation(*r))
+	op := domain.HostingOperation(*r)
+	if op.ApplicationDatabase != nil || op.DatabaseMaintenance != nil || op.Snapshot.ApplicationDatabase != (domain.HostingApplicationDatabaseRef{}) || op.Plan != nil && op.Plan.ApplicationDatabase != nil {
+		var closed domain.HostingOperation
+		if decodeConnectionResponse(contents, &closed) != nil || !connectionOperationValid(closed) {
+			return errDatabaseConnection
+		}
+		*r = hostingOperationResponse(closed)
+		return nil
+	}
+	return domain.ValidateHostingDatabaseUpgradeOperation(op)
 }
 func (c Client) hostingPost(ctx context.Context, path string, in any) (domain.HostingOperation, error) {
 	var response hostingOperationResponse
