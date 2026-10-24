@@ -103,7 +103,9 @@ func newCaptureHTTPFixture(t *testing.T) *captureHTTPFixture {
 	}
 	config.MaxConns = 1
 	config.ConnConfig.RuntimeParams["application_name"] = "nerocd_capture_transport_inventory"
-	admin, err := pgxpool.NewWithConfig(ctx, config)
+	// pgxpool retains its config. Later schema configuration must not mutate
+	// the live inventory pool's connection parameters.
+	admin, err := pgxpool.NewWithConfig(ctx, config.Copy())
 	if err != nil {
 		t.Fatal("fixture inventory pool failed")
 	}
