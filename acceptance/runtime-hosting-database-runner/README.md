@@ -52,3 +52,23 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/database-client ./accepta
 Gate tests use executable CLI stubs. They require every physical result, reject foreign registry ownership, non-loopback publication and foreign digests, and preserve checks for source and binary identities, failed commands, cancellation, and joined process groups. A skip is never a physical pass.
 
 Cleanup joins only task-owned process groups, revalidates exact container and volume ownership and users, and removes only the owned outer container and its Docker-data volume. Removing that owned DinD also removes its inner registry and app fixtures. There is no prune or global cleanup. Unknown outer-create outcomes reserve the volume. Ownership mismatch or foreign volume use preserves resources and fails. A failed guest-process join stops the verified owned outer container and preserves it for inspection. Evidence remains under `/tmp/nerocd-database-runner-20261024.*`.
+
+## Verify the live UI against the same workflow
+
+The optional browser mode requires the reviewed connected UI, controller, runtime, bearer-context bridge, and this fixture in one combined checkout. Its gate builds the real UI before compiling the API test binary, records a deterministic `browser-ui-manifest.json`, and serves those embedded bytes. A standalone fixture checkout without the connected UI source fails this prerequisite. Source-only TypeScript checks do not verify the rendered panel.
+
+After separate authorization of the exact combined candidate and browser bridge target, run:
+
+```sh
+NEROCD_DATABASE_CONNECTION_BROWSER=1 bash acceptance/runtime-hosting-database-runner/gate.sh
+```
+
+Browser mode adds exactly one outer publication: container port `18080/tcp` to a dynamically assigned host `127.0.0.1` port. Normal mode still requires zero outer ports. Both configured and assigned publications are validated, and a changed origin, public bind, or extra port fails the gate. The bridge serves a test-only cookie API over owned loopback HTTP. The compiled runner continues using its separate verified TLS API and protected credential roots.
+
+`browser-driver.mjs` reads bounded, nonsecret fixture metadata and runs the real Playwright spec once for PostgreSQL and once for Redis. Metadata contains only the exact origin, engine, project/environment labels, resource IDs, and a random nonce control path. Unknown fields, duplicate engines, a different origin, malformed paths, missing results, and child failures fail closed. Fixture and browser process groups have bounded, joined cleanup on failure, timeout, or cancellation. The gate also requires exactly one successful browser result for each engine.
+
+The browser signs in through the actual UI. It selects the existing database, connects the application, redeploys B, requests database maintenance, and admits C for the existing committed-Complete response-loss exercise. There is no route interception or synthetic runner receipt. Go releases each next phase only after the existing HTTP record, container, endpoint, membership, and replay assertions pass. Nonce-scoped controls require the current owner cookie, current project-owner role, exact Origin and Host, empty bodies and no query. Their proofs read the actual running app; they cannot apply or settle a hosting operation.
+
+Fixture setup uses public APIs for resources, project ownership, and viewer membership. One explicit isolated-schema exception demotes exactly the seeded admin to an ordinary user after public setup, with affected-row and resulting-role checks. This proves project-owner actions; it does not qualify self-service account provisioning. The viewer inspects the settled connection but cannot submit Connect, app redeployment, maintenance, or fixture controls. An anonymous request and an owner request for a separately owned private project must fail. The spec checks keyboard activation and panel containment at 320, 390, 430, and 1440 pixels. Browser traces and automatic screenshots/video are disabled; explicit screenshots cover only the nonsecret connection panel after login.
+
+Harmless gate tests exercise the bridge profile and UI-build-before-embedding order with executable stubs. Driver tests run local fixture/browser stubs and verify that child PIDs are gone after success, rejection, and cancellation. They never start a physical browser, Docker daemon, or database. Actual browser and combined physical results remain `not_run` until explicitly authorized and passed.

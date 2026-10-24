@@ -86,6 +86,8 @@ volume_attempted = outer_attempted = False
 volume_pin = image = None
 outer = ""
 head = tree = None
+browser_origin = ""
+browser_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_BROWSER", "0")
 
 
 class Failure(Exception):
@@ -128,7 +130,7 @@ def join_owned(process):
     if group_exists(process.pid):
         os.killpg(process.pid, signal.SIGTERM)
     try:
-        process.wait(timeout=2)
+        process.wait(timeout=10 if browser_mode == "1" else 2)
     except subprocess.TimeoutExpired:
         if group_exists(process.pid):
             os.killpg(process.pid, signal.SIGKILL)
@@ -249,6 +251,7 @@ def verified_volume(allowed_user=""):
 
 
 def verified_outer(identity):
+    global browser_origin
     value = inspect("container", identity, "outer-latest-inspect")
     host, config = value.get("HostConfig", {}), value.get("Config", {})
     expected_labels = dict((image.get("Config") or {}).get("Labels") or {})
@@ -258,9 +261,28 @@ def verified_outer(identity):
             value.get("Image") != image["Id"] or config.get("Labels") != expected_labels or
             config.get("Cmd") != ["dockerd", "--host=unix:///var/run/docker.sock"] or
             host.get("Privileged") is not True or host.get("PidMode") or host.get("UsernsMode") or
-            host.get("Binds") or host.get("PortBindings") or host.get("PublishAllPorts") or
+            host.get("Binds") or host.get("PublishAllPorts") or
             host.get("NetworkMode") not in ("default", "bridge") or len(mounts) != 1):
         raise Failure("outer identity/configuration mismatch; preserving resources")
+    ports = host.get("PortBindings") or {}
+    assigned = value.get("NetworkSettings", {}).get("Ports") or {}
+    if browser_mode == "1":
+        publication = ports.get("18080/tcp", [])
+        if len(ports) != 1 or len(publication) != 1 or publication[0] != {"HostIp": "127.0.0.1", "HostPort": ""}:
+            raise Failure("browser bridge publication mismatch; preserving resources")
+        if value.get("State", {}).get("Running"):
+            live = assigned.get("18080/tcp", [])
+            if len(assigned) != 1 or len(live) != 1 or live[0].get("HostIp") != "127.0.0.1" or not re.fullmatch(r"[1-9][0-9]{3,4}", live[0].get("HostPort", "")):
+                raise Failure("browser bridge assigned port mismatch; preserving resources")
+            port = int(live[0]["HostPort"])
+            if not 1024 <= port <= 65535:
+                raise Failure("browser bridge port out of bounds")
+            observed = "http://127.0.0.1:" + str(port)
+            if browser_origin and browser_origin != observed:
+                raise Failure("browser bridge port changed; preserving resources")
+            browser_origin = observed
+    elif ports or assigned:
+        raise Failure("unexpected outer publication; preserving resources")
     mount = mounts[0]
     if (mount.get("Type") != "volume" or mount.get("Name") != VOLUME or
             mount.get("Driver") != "local" or mount.get("Destination") != "/var/lib/docker" or
@@ -344,6 +366,8 @@ def provision_procps():
 
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer
+    if browser_mode not in ("0", "1"):
+        raise Failure("invalid browser mode")
     if not Path("internal/api/hosting_database_runtime_integration_test.go").is_file():
         raise Failure("run from the assigned repository root")
     if run(["git", "status", "--porcelain"]).strip():
@@ -364,7 +388,8 @@ def main():
          "internal/api/hosting_database_capture_runtime_integration_test.go",
          "internal/api/hosting_database_upgrade_runtime_integration_test.go",
          "internal/api/hosting_application_database_runtime_integration_test.go",
-         "internal/api/hosting_database_connection*.go",
+         "internal/api/hosting_database_connection*.go", "web/app/src/pages/ResourceDatabaseConnections.tsx",
+         "web/app/tests/browser/database-connection-live.spec.ts", "web/app/src/api/hosting-database-connections.ts", "web/app/package.json", "web/app/bun.lock",
          "internal/app/hosting_database_connection_service.go", "internal/store/postgres_hosting_database_connection*.go",
          "internal/store/sql/hosting_database_connection.sql", "internal/store/sqlcgen/hosting_database_connection.sql.go",
          "db/migrations/0072_hosting_application_database_connections.sql",
@@ -396,6 +421,15 @@ def main():
          "internal/store/postgres_hosting_storage_materialization.go",
          "internal/store/sql/hosting_database_network_upgrades.sql", "internal/store/sqlcgen/hosting_database_network_upgrades.sql.go",
          "internal/store/sqlcgen/models.go", "db/migrations/0071_hosting_database_network_upgrades.sql"], output="source-blobs")
+    if browser_mode == "1":
+        if not Path("web/app/src/pages/ResourceDatabaseConnections.tsx").is_file():
+            raise Failure("browser mode requires the reviewed connected UI source")
+        run(["bun", "run", "--cwd", "web/app", "build"], timeout=300, output="browser-ui-build")
+        files = sorted(path for path in Path("web/dist").rglob("*") if path.is_file())
+        if not Path("web/dist/index.html").is_file() or len(files) > 2048 or any(path.is_symlink() for path in files):
+            raise Failure("browser UI artifact unavailable or unsafe")
+        manifest = [{"path": str(path.relative_to("web/dist")), "size": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in files]
+        (evidence / "browser-ui-manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
     environment = dict(os.environ, GOOS="linux", GOARCH="arm64", CGO_ENABLED="0")
     run(["go", "test", "-c", "-o", str(evidence / "api.test"), "./internal/api"], timeout=300, env=environment)
     run(["go", "build", "-trimpath", "-o", str(evidence / "nerocd"), "./cmd/nerocd"], timeout=300, env=environment)
@@ -415,7 +449,8 @@ def main():
         raise Failure("unexpected volume creation response")
     verified_volume()
     outer_attempted = True
-    response = docker("container", "create", "--privileged", "--name", NAME, "--label", LABEL + "=" + OWNER,
+    publication = ["--publish", "127.0.0.1::18080"] if browser_mode == "1" else []
+    response = docker("container", "create", *publication, "--privileged", "--name", NAME, "--label", LABEL + "=" + OWNER,
                       "--mount", "type=volume,src=" + VOLUME + ",dst=/var/lib/docker",
                       "--env", "DOCKER_TLS_CERTDIR=", IMAGE, "dockerd", "--host=unix:///var/run/docker.sock").strip()
     if not re.fullmatch(r"[a-f0-9]{64}", response):
@@ -516,18 +551,31 @@ def main():
             raise Failure("control PostgreSQL did not become ready")
         time.sleep(1)
     docker("exec", outer, "docker", "--host", ENDPOINT, "image", "ls", "--no-trunc", "--digests", "--format", "{{json .}}", output="inner-images-before-test")
-    runtime_output = docker("exec", "--workdir", "/workspace/internal/api",
+    runtime_args = ["docker", "--host", ENDPOINT, "exec", "--workdir", "/workspace/internal/api",
                "--env", "NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME=disposable-dind",
                "--env", "NEROCD_DATABASE_HTTP_APP_IMAGE=" + app_image,
-               "--env", "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_database_runner?sslmode=disable",
-               outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner)$", "-test.timeout=40m",
-               timeout=2410, output="runtime-test")
+               "--env", "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_database_runner?sslmode=disable"]
+    if browser_mode == "1":
+        verified_outer(outer)
+        if not browser_origin:
+            raise Failure("browser bridge origin missing")
+        runtime_args += ["--env", "NEROCD_DATABASE_CONNECTION_BROWSER=1", "--env", "NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN=" + browser_origin]
+    runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner)$", "-test.timeout=40m"]
+    if browser_mode == "1":
+        runtime_output = run(["node", "acceptance/runtime-hosting-database-runner/browser-driver.mjs", browser_origin,
+                              str(evidence / "browser-results"), "--", *runtime_args], timeout=2410, output="runtime-test")
+    else:
+        runtime_output = run(runtime_args, timeout=2410, output="runtime-test")
     say(runtime_output)
     for test in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"):
         if not re.search(r"^--- PASS: " + test + r" ", runtime_output, re.MULTILINE):
             raise Failure("required physical test did not pass: " + test)
         if re.search(r"^--- SKIP: " + test + r" ", runtime_output, re.MULTILINE):
             raise Failure("required physical test skipped: " + test)
+    if browser_mode == "1":
+        for engine in ("postgresql", "redis"):
+            if runtime_output.splitlines().count("DATABASE_CONNECTION_BROWSER_PASS " + engine) != 1:
+                raise Failure("required live browser result missing or repeated: " + engine)
     say("compiled database, capture, upgrade and connected HTTP app runners / authenticated API / River / private PostgreSQL and Redis gate passed")
 
 

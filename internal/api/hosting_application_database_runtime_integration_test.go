@@ -3,10 +3,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,11 +21,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
+	"nerocd/web"
 )
 
 func applicationDatabaseFixtureImage(reference string) error {
@@ -153,23 +159,30 @@ func (f *databaseRunnerFixture) applicationContainer(op domain.HostingOperation)
 
 func (f *databaseRunnerFixture) appRecord(op domain.HostingOperation, method, key, value string) {
 	f.t.Helper()
+	if applicationDatabaseHTTPRecord(f.t.Context(), op, method, key, value) != nil {
+		f.t.Fatal("application read/write failed")
+	}
+}
+
+func applicationDatabaseHTTPRecord(ctx context.Context, op domain.HostingOperation, method, key, value string) error {
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 7 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	req, err := http.NewRequestWithContext(f.t.Context(), method, "http://127.0.0.1:"+strconv.Itoa(op.Snapshot.HostPort)+"/records/"+key, strings.NewReader(value))
+	req, err := http.NewRequestWithContext(ctx, method, "http://127.0.0.1:"+strconv.Itoa(op.Snapshot.HostPort)+"/records/"+key, strings.NewReader(value))
 	if err != nil {
-		f.t.Fatal("HTTP fixture request invalid")
+		return errors.New("HTTP fixture request invalid")
 	}
 	response, err := client.Do(req)
 	if err != nil {
-		f.t.Fatal("running application HTTP request failed")
+		return errors.New("running application HTTP request failed")
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(response.Body, 4097))
 	defer clear(raw)
 	closeErr := response.Body.Close()
 	if readErr != nil || closeErr != nil || response.StatusCode != 200 || len(raw) > 4096 || string(raw) != value {
-		f.t.Fatalf("application read/write failed method=%s key=%s status=%d", method, key, response.StatusCode)
+		return errors.New("application read/write failed")
 	}
+	return nil
 }
 
 func (f *databaseRunnerFixture) exactMembers(application, database domain.HostingOperation) {
@@ -227,6 +240,9 @@ func (f *databaseRunnerFixture) assertConnectionJournalRetired(id string) {
 }
 
 func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
+	if mode := os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER"); mode != "" && mode != "0" && mode != "1" {
+		t.Fatal("invalid browser mode")
+	}
 	if os.Getenv("NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME") != "disposable-dind" {
 		t.Skip("requires explicit combined-candidate physical gate authorization")
 	}
@@ -265,7 +281,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			stale.Binding.ExpectedDatabaseGeneration++
 			databaseRunnerJSON[json.RawMessage](f, f.token, "POST", path, stale, 409)
 			// A distinct destination cannot borrow this database's private network.
-			enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_foreign_acceptance", RunnerName: "foreign metadata", Capabilities: []string{domain.RunTypeImageDeploy}}, 201)
+			// Real server admission requires the canonical compose capability even
+			// for this metadata-only foreign placement; shell remains absent.
+			enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_foreign_acceptance", RunnerName: "foreign metadata", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy}}, 201)
 			f.protected = append(f.protected, []byte(enrollment.Token), []byte("ncr_foreign_fixture_only"))
 			foreignRunner := databaseRunnerJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", databaseRunnerEnrollmentConsumeInput("ncr_foreign_fixture_only"), 200)
 			other := databaseRunnerJSON[app.ServerDetail](f, f.token, "POST", "/api/v1/servers", app.ServerInput{Name: "foreign destination", RunnerID: foreignRunner.Runner.ID}, 201)
@@ -276,7 +294,14 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			cross.Binding.ExpectedRuntimeGeneration = 0
 			cross.Deployment.ExpectedRuntimeConfigurationGeneration = 0
 			databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/resources/"+foreign.ID+"/database-connections", cross, 409)
-			connection := databaseRunnerJSON[domain.HostingDatabaseConnection](f, f.token, "POST", path, in, 202)
+			var browser *applicationDatabaseBrowser
+			var connection domain.HostingDatabaseConnection
+			if os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER") == "1" {
+				browser = f.startApplicationDatabaseBrowser(resource, view, engine)
+				connection = browser.await("connect").Connection
+			} else {
+				connection = databaseRunnerJSON[domain.HostingDatabaseConnection](f, f.token, "POST", path, in, 202)
+			}
 			if connection.CaptureID == "" || connection.UpgradeOperationID == "" || connection.ApplicationOperationID == "" {
 				t.Fatal("public Connect omitted automatic workflow identities")
 			}
@@ -291,7 +316,14 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.appRecord(a, "GET", "a", "retained_a")
 			deployment.ExpectedRuntimeConfigurationGeneration = a.Snapshot.RuntimeConfiguration.Generation
 			deployment.IdempotencyKey = "connected_b"
-			b := f.awaitConnectionOperation(databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", deployment, 202).ID)
+			var bRequest domain.HostingOperation
+			if browser != nil {
+				browser.advance("redeploy", active.MembershipRevision, a, map[string]string{"a": "retained_a"})
+				bRequest = browser.await("redeploy").Operation
+			} else {
+				bRequest = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", deployment, 202)
+			}
+			b := f.awaitConnectionOperation(bRequest.ID)
 			if b.Result.ContainerID == a.Result.ContainerID || b.Result.PreviousContainerID != a.Result.ContainerID {
 				t.Fatal("app replacement did not retire exact predecessor")
 			}
@@ -301,7 +333,14 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.appRecord(b, "PUT", "b", "retained_b")
 			active = f.connection(resource.ID)
 			maintain := domain.HostingDatabaseMaintenanceInput{ExpectedGeneration: view.Resource.Generation, ExpectedMembershipRevision: active.MembershipRevision, IdempotencyKey: "connected_database_replacement"}
-			maintained := f.awaitConnectionOperation(databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+view.Resource.ID+"/database/maintenance", maintain, 202).ID)
+			var maintenanceRequest domain.HostingOperation
+			if browser != nil {
+				browser.advance("maintenance", active.MembershipRevision, b, map[string]string{"a": "retained_a", "b": "retained_b"})
+				maintenanceRequest = browser.await("maintenance").Operation
+			} else {
+				maintenanceRequest = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+view.Resource.ID+"/database/maintenance", maintain, 202)
+			}
+			maintained := f.awaitConnectionOperation(maintenanceRequest.ID)
 			if maintained.Result.ContainerID == upgrade.Result.ContainerID || maintained.DatabaseMaintenance == nil || len(maintained.Plan.Database.Network.Members) != 1 || !reflect.DeepEqual(maintained.Plan.Storage, source.Plan.Storage) || !reflect.DeepEqual(maintained.Plan.Database.Credentials, source.Plan.Database.Credentials) || maintained.Plan.Database.Network.NetworkID != upgrade.Plan.Database.Network.NetworkID || f.volumeProof(maintained) != volume || f.credentialMetadata(view) != credentials {
 				t.Fatal("database maintenance changed retained identity")
 			}
@@ -315,7 +354,13 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.appRecord(b, "PUT", "db_replaced", "retained_database_replacement")
 			f.stop()
 			deployment.IdempotencyKey = "connected_c"
-			third := databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", deployment, 202)
+			var third domain.HostingOperation
+			if browser != nil {
+				browser.advance("replay", active.MembershipRevision, b, map[string]string{"a": "retained_a", "b": "retained_b", "db_replaced": "retained_database_replacement"})
+				third = browser.await("replay").Operation
+			} else {
+				third = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", deployment, 202)
+			}
 			wire := newDatabaseUpgradeCompleteWire(third.ID)
 			f.upgradeComplete.Store(wire)
 			f.start()
@@ -391,6 +436,10 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			if f.credentialMetadata(view) != credentials || databaseUpgradeAuthorityLogCheck(f.logs.snapshot(), original.HostingAuthority, f.protected) != nil {
 				t.Fatal("credential identity or output redaction failed")
 			}
+			if browser != nil {
+				browser.advance("finish", finalConnection.MembershipRevision, c, map[string]string{"a": "retained_a", "b": "retained_b", "db_replaced": "retained_database_replacement", "c": "retained_c"})
+				browser.awaitFinished()
+			}
 			t.Logf("connected HTTP app verified engine=%s capture=%s upgrade=%s app=%s database=%s revision=%d", engine, connection.CaptureID, upgrade.ID, c.ID, maintained.ID, active.MembershipRevision)
 		})
 	}
@@ -444,5 +493,324 @@ func TestApplicationDatabaseRuntimeProfileFlags(t *testing.T) {
 	}
 	if applicationDatabaseCompleted(domain.HostingOperation{State: "succeeded"}) {
 		t.Fatal("missing family evidence accepted")
+	}
+}
+
+// The browser controls only ordinary public UI admissions. These channels record
+// real API responses; they never prepare, apply or settle an operation.
+type applicationDatabaseBrowserAdmission struct {
+	Phase      string
+	Connection domain.HostingDatabaseConnection
+	Operation  domain.HostingOperation
+}
+type applicationDatabaseBrowserSeen struct {
+	Request     [32]byte
+	OperationID string
+}
+
+type applicationDatabaseBrowserProof struct {
+	Operation domain.HostingOperation
+	Records   map[string]string
+}
+type applicationDatabaseBrowser struct {
+	f          *databaseRunnerFixture
+	ctx        context.Context
+	mu         sync.Mutex
+	phase      string
+	revision   int64
+	operation  string
+	invalid    bool
+	seen       map[string]applicationDatabaseBrowserSeen
+	proofs     map[string]applicationDatabaseBrowserProof
+	admissions chan applicationDatabaseBrowserAdmission
+	finished   chan struct{}
+	failed     chan struct{}
+	fail       sync.Once
+	finish     sync.Once
+}
+
+func applicationDatabaseBrowserOrigin(origin string) bool {
+	if !strings.HasPrefix(origin, "http://127.0.0.1:") {
+		return false
+	}
+	port := strings.TrimPrefix(origin, "http://127.0.0.1:")
+	n, err := strconv.Atoi(port)
+	return err == nil && n >= 1024 && n <= 65535 && strconv.Itoa(n) == port
+}
+
+func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.Resource, database domain.HostingDatabase, engine string) *applicationDatabaseBrowser {
+	f.t.Helper()
+	origin := os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN")
+	if !applicationDatabaseBrowserOrigin(origin) {
+		f.t.Fatal("browser requires exact owned loopback origin")
+	}
+	// Public setup establishes explicit ordinary owner/viewer memberships.
+	for _, member := range []app.ProjectMemberInput{{ProjectID: resource.ProjectID, Email: "admin@example.local", Role: "owner"}, {ProjectID: resource.ProjectID, Email: "viewer@example.local", Role: "viewer"}} {
+		saved := databaseRunnerJSON[domain.ProjectMember](f, f.token, "POST", "/api/v1/project-members", member, 200)
+		if saved.ProjectID != member.ProjectID || saved.Role != member.Role || saved.Email != member.Email {
+			f.t.Fatal("browser project membership did not match public setup")
+		}
+	}
+	viewer := databaseRunnerJSON[struct {
+		Token string `json:"token"`
+	}](f, "", "POST", "/api/v1/sessions", map[string]string{"email": "viewer@example.local", "password": "viewer"}, 201)
+	f.protected = append(f.protected, []byte(viewer.Token))
+	private := databaseRunnerJSON[domain.Project](f, viewer.Token, "POST", "/api/v1/projects", app.ProjectInput{Name: "browser private project"}, 201)
+	privateEnvironment := databaseRunnerJSON[domain.ProjectEnvironment](f, viewer.Token, "POST", "/api/v1/project-environments", app.ProjectEnvironmentInput{ProjectID: private.ID, Name: "private"}, 201)
+	foreign := databaseRunnerJSON[domain.Resource](f, viewer.Token, "POST", "/api/v1/resources", app.ResourceInput{ProjectID: private.ID, ProjectEnvironmentID: privateEnvironment.ID, Name: "private app", Kind: "application", Source: resource.Source}, 201)
+	// Fixture-only exception: the public API has no local-user role update. This
+	// exact isolated seed demotion proves owner authorization, not provisioning.
+	changed, err := f.database.Exec(f.t.Context(), `UPDATE users SET global_role='user' WHERE id='usr_bootstrap' AND global_role='system_admin'`)
+	if err != nil || changed.RowsAffected() != 1 {
+		f.t.Fatal("browser owner demotion did not affect exactly the seeded admin")
+	}
+	var global, role string
+	if f.database.QueryRow(f.t.Context(), `SELECT u.global_role,m.role FROM users u JOIN project_members m ON m.user_id=u.id AND m.project_id=$1 WHERE u.id='usr_bootstrap'`, resource.ProjectID).Scan(&global, &role) != nil || global != "user" || role != "owner" {
+		f.t.Fatal("browser does not have exact ordinary project-owner authority")
+	}
+	ctx, cancel := context.WithTimeout(f.t.Context(), 12*time.Minute)
+	b := &applicationDatabaseBrowser{f: f, ctx: ctx, phase: "connect", seen: map[string]applicationDatabaseBrowserSeen{}, proofs: map[string]applicationDatabaseBrowserProof{}, admissions: make(chan applicationDatabaseBrowserAdmission, 4), finished: make(chan struct{}), failed: make(chan struct{})}
+	nonce := make([]byte, 16)
+	if _, err = rand.Read(nonce); err != nil {
+		cancel()
+		f.t.Fatal("browser nonce unavailable")
+	}
+	prefix := "/api/v1/fixture/database-connection/" + hex.EncodeToString(nonce)
+	api := NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static(), ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
+	ownerOnly := api.authenticateBrowser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, e := f.service.CurrentPrincipal(r.Context())
+		projectRole, roleErr := f.service.ProjectRole(r.Context(), resource.ProjectID)
+		if e != nil || roleErr != nil || principal.ID != "usr_bootstrap" || projectRole.Role != "owner" || r.Header.Get("Origin") != origin || r.Host != strings.TrimPrefix(origin, "http://") || r.URL.RawQuery != "" || r.URL.ForceQuery || r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
+			w.WriteHeader(403)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method == "GET" && r.URL.Path == prefix+"/state" {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			writeJSON(w, 200, map[string]any{"phase": b.phase, "revision": b.revision, "operation_id": b.operation})
+			return
+		}
+		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, prefix+"/proof/") {
+			id := strings.TrimPrefix(r.URL.Path, prefix+"/proof/")
+			b.mu.Lock()
+			proof, exists := b.proofs[id]
+			b.mu.Unlock()
+			if !exists {
+				w.WriteHeader(404)
+				return
+			}
+			for key, value := range proof.Records {
+				if applicationDatabaseHTTPRecord(r.Context(), proof.Operation, "GET", key, value) != nil {
+					w.WriteHeader(502)
+					return
+				}
+			}
+			writeJSON(w, 200, map[string]any{"verified": true, "container_id": proof.Operation.Result.ContainerID, "record_count": len(proof.Records)})
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == prefix+"/finish" {
+			b.mu.Lock()
+			valid := b.phase == "finish" && len(b.seen) == 4 && !b.invalid
+			b.mu.Unlock()
+			if !valid {
+				w.WriteHeader(409)
+				return
+			}
+			w.WriteHeader(204)
+			b.finish.Do(func() { close(b.finished) })
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, prefix+"/") {
+			ownerOnly.ServeHTTP(w, r)
+			return
+		}
+		action := ""
+		if r.Method == "POST" {
+			switch r.URL.Path {
+			case "/api/v1/resources/" + resource.ID + "/database-connections":
+				action = "connect"
+			case "/api/v1/resources/" + resource.ID + "/database-connection/deployments":
+				action = "deploy"
+			case "/api/v1/resources/" + database.Resource.ID + "/database/maintenance":
+				action = "maintenance"
+			}
+		}
+		if action == "" {
+			api.ServeHTTP(w, r)
+			return
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(r.Body, domain.HostingDatabaseConnectionJSONLimit+1))
+		defer clear(raw)
+		if readErr != nil || len(raw) > domain.HostingDatabaseConnectionJSONLimit {
+			w.WriteHeader(400)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		rec := httptest.NewRecorder()
+		api.ServeHTTP(rec, r)
+		for key, values := range rec.Header() {
+			w.Header()[key] = slices.Clone(values)
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+		if rec.Code != 202 {
+			return
+		}
+		b.observe(action, raw, rec.Body.Bytes(), resource.ProjectID, resource.ID, database.Resource.ID)
+	})
+	listener, err := net.Listen("tcp", "0.0.0.0:18080")
+	if err != nil {
+		cancel()
+		f.t.Fatal("owned browser listener unavailable")
+	}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8192}
+	joined := make(chan error, 1)
+	go func() { joined <- server.Serve(listener) }()
+	f.t.Cleanup(func() {
+		cancel()
+		shutdown, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stop()
+		if server.Shutdown(shutdown) != nil {
+			_ = server.Close()
+		}
+		if e := <-joined; !errors.Is(e, http.ErrServerClosed) {
+			f.t.Error("browser listener did not join")
+		}
+	})
+	metadata := map[string]any{"origin": origin, "engine": engine, "project_id": resource.ProjectID, "environment": "database runner acceptance", "application_resource_id": resource.ID, "application_name": resource.Name, "database_resource_id": database.Resource.ID, "foreign_resource_id": foreign.ID, "control_path": prefix}
+	raw, metadataErr := json.Marshal(metadata)
+	if metadataErr != nil {
+		f.t.Fatal("browser metadata encoding failed")
+	}
+	fmt.Printf("DATABASE_CONNECTION_BROWSER_READY %s\n", raw)
+	return b
+}
+
+func (b *applicationDatabaseBrowser) await(phase string) applicationDatabaseBrowserAdmission {
+	b.f.t.Helper()
+	select {
+	case admitted := <-b.admissions:
+		if admitted.Phase != phase {
+			b.f.t.Fatal("browser admission phase mismatch")
+		}
+		return admitted
+	case <-b.failed:
+		b.f.t.Fatal("browser admission correlation failed")
+		return applicationDatabaseBrowserAdmission{}
+	case <-b.ctx.Done():
+		b.f.t.Fatal("browser admission timed out")
+		return applicationDatabaseBrowserAdmission{}
+	}
+}
+func (b *applicationDatabaseBrowser) advance(phase string, revision int64, op domain.HostingOperation, records map[string]string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.phase, b.revision, b.operation = phase, revision, op.ID
+	b.proofs[op.ID] = applicationDatabaseBrowserProof{Operation: op, Records: records}
+}
+func (b *applicationDatabaseBrowser) awaitFinished() {
+	b.f.t.Helper()
+	select {
+	case <-b.finished:
+	case <-b.failed:
+		b.f.t.Fatal("browser admission correlation failed")
+	case <-b.ctx.Done():
+		b.f.t.Fatal("browser did not finish live UI assertions")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.invalid || len(b.seen) != 4 {
+		b.f.t.Fatal("browser admitted an unexpected mutation")
+	}
+}
+
+func TestApplicationDatabaseRuntimeBrowserOrigin(t *testing.T) {
+	for _, origin := range []string{"http://127.0.0.1:18080", "http://127.0.0.1:65535"} {
+		if !applicationDatabaseBrowserOrigin(origin) {
+			t.Fatal("owned origin rejected")
+		}
+	}
+	for _, origin := range []string{"", "https://127.0.0.1:18080", "http://localhost:18080", "http://127.0.0.1:80", "http://127.0.0.1:018080", "http://127.0.0.1:18080/", "http://127.0.0.1:18080?x=1"} {
+		if applicationDatabaseBrowserOrigin(origin) {
+			t.Fatal("foreign browser origin accepted")
+		}
+	}
+}
+
+func (b *applicationDatabaseBrowser) observe(action string, raw, response []byte, project, application, database string) {
+	b.mu.Lock()
+	defer func() {
+		if b.invalid && b.failed != nil {
+			b.fail.Do(func() { close(b.failed) })
+		}
+		b.mu.Unlock()
+	}()
+	phase := b.phase
+	if action == "deploy" && phase != "redeploy" && phase != "replay" || action != "deploy" && action != phase || len(response) > domain.HostingApplicationDatabaseJournalJSONLimit {
+		b.invalid = true
+		return
+	}
+	admitted := applicationDatabaseBrowserAdmission{Phase: phase}
+	id := ""
+	if action == "connect" {
+		if domain.DecodeHostingStorageProtocolJSON(response, &admitted.Connection) != nil || admitted.Connection.ProjectID != project || admitted.Connection.ApplicationResourceID != application || admitted.Connection.DatabaseResourceID != database || admitted.Connection.ID == "" || admitted.Connection.CaptureID == "" || admitted.Connection.UpgradeOperationID == "" || admitted.Connection.ApplicationOperationID == "" {
+			b.invalid = true
+			return
+		}
+		id = admitted.Connection.ApplicationOperationID
+	} else {
+		target := application
+		if action == "maintenance" {
+			target = database
+		}
+		if domain.DecodeHostingStorageProtocolJSON(response, &admitted.Operation) != nil || admitted.Operation.ID == "" || admitted.Operation.ProjectID != project || admitted.Operation.ResourceID != target || admitted.Operation.Snapshot.ResourceID != target {
+			b.invalid = true
+			return
+		}
+		id = admitted.Operation.ID
+	}
+	evidence := applicationDatabaseBrowserSeen{Request: sha256.Sum256(raw), OperationID: id}
+	if old, seen := b.seen[phase]; seen {
+		if old != evidence {
+			b.invalid = true
+		}
+		return
+	}
+	b.seen[phase] = evidence
+	select {
+	case b.admissions <- admitted:
+	default:
+		b.invalid = true
+	}
+}
+
+func TestApplicationDatabaseRuntimeBrowserAdmissionCorrelation(t *testing.T) {
+	response, _ := json.Marshal(domain.HostingOperation{ID: "operation", ProjectID: "project", ResourceID: "application", Snapshot: domain.HostingSnapshot{ResourceID: "application"}})
+	for _, change := range []string{"exact_retry", "changed_request", "changed_operation", "foreign_project", "foreign_resource", "wrong_phase"} {
+		t.Run(change, func(t *testing.T) {
+			b := &applicationDatabaseBrowser{phase: "redeploy", seen: map[string]applicationDatabaseBrowserSeen{}, admissions: make(chan applicationDatabaseBrowserAdmission, 4)}
+			b.observe("deploy", []byte("original"), response, "project", "application", "database")
+			raw, reply := []byte("original"), bytes.Clone(response)
+			switch change {
+			case "changed_request":
+				raw = []byte("changed")
+			case "changed_operation":
+				reply = bytes.ReplaceAll(reply, []byte(`"operation"`), []byte(`"other"`))
+			case "foreign_project":
+				reply = bytes.ReplaceAll(reply, []byte(`"project"`), []byte(`"foreign"`))
+			case "foreign_resource":
+				reply = bytes.ReplaceAll(reply, []byte(`"application"`), []byte(`"foreign"`))
+			case "wrong_phase":
+				b.phase = "maintenance"
+			}
+			b.observe("deploy", raw, reply, "project", "application", "database")
+			if b.invalid != (change != "exact_retry") || len(b.admissions) != 1 {
+				t.Fatal("browser admission changed phase, target, request or operation correlation")
+			}
+		})
 	}
 }

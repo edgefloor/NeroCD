@@ -146,6 +146,25 @@ elif tool == "git":
     elif args[:2] == ["ls-files", "-s"]:
         for path in args[2:]:
             print("100644 " + "a" * 40 + "\t" + path)
+elif tool == "bun":
+    assert args == ["run", "--cwd", "web/app", "build"]
+    if case == "browser_build_failure":
+        sys.exit(16)
+    built = root / "web/dist/index.html"
+    built.parent.mkdir(parents=True)
+    built.write_text("harmless built UI artifact")
+elif tool == "node":
+    assert args[0] == "acceptance/runtime-hosting-database-runner/browser-driver.mjs"
+    assert args[1] == "http://127.0.0.1:35002"
+    assert "NEROCD_DATABASE_CONNECTION_BROWSER=1" in args
+    assert "NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN=http://127.0.0.1:35002" in args
+    for name in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"):
+        print("--- PASS: " + name + " (0.01s)")
+    print("DATABASE_CONNECTION_BROWSER_PASS postgresql")
+    if case != "browser_missing_result":
+        print("DATABASE_CONNECTION_BROWSER_PASS redis")
+    if case == "browser_driver_failure":
+        sys.exit(39)
 elif tool == "go":
     if args[:2] == ["test", "-c"] or args[:1] == ["build"]:
         if case in ("sigint", "sigterm"):
@@ -202,6 +221,15 @@ elif tool == "docker":
                             PortBindings={}, PublishAllPorts=False, NetworkMode="default"),
             Mounts=[dict(Type="volume", Name=volume, Driver="local", Destination="/var/lib/docker", RW=True)],
             State=dict(Running=False))
+        if "--publish" in args:
+            assert args[args.index("--publish") + 1] == "127.0.0.1::18080"
+            state["outer"]["HostConfig"]["PortBindings"] = {"18080/tcp":[dict(HostIp="127.0.0.1",HostPort="")]}
+        if case == "browser_public":
+            state["outer"]["HostConfig"]["PortBindings"]["18080/tcp"][0]["HostIp"]="0.0.0.0"
+        if case == "browser_extra":
+            state["outer"]["HostConfig"]["PortBindings"]["18081/tcp"]=[dict(HostIp="127.0.0.1",HostPort="")]
+        if case == "outer_unexpected_port":
+            state["outer"]["HostConfig"]["PortBindings"]={"18080/tcp":[dict(HostIp="127.0.0.1",HostPort="")]}
         if case == "outer_mismatch":
             state["outer"]["Config"]["Labels"] = {label: "somebody-else"}
         save()
@@ -216,6 +244,8 @@ elif tool == "docker":
     elif args[:2] == ["container", "start"]:
         assert args[2] == identity
         state["outer"]["State"]["Running"] = True
+        if state["outer"]["HostConfig"]["PortBindings"]:
+            state["outer"]["NetworkSettings"] = dict(Ports={"18080/tcp":[dict(HostIp="127.0.0.1",HostPort="35002")]})
         save()
         if case == "start_response_loss":
             sys.exit(25)
@@ -322,7 +352,7 @@ else:
 
 
 class GateTest(unittest.TestCase):
-    def run_gate(self, case, expected, delivered_signal=None):
+    def run_gate(self, case, expected, delivered_signal=None, browser=False):
         self.installed_closure = None
         gate = Path(os.environ.get("DATABASE_GATE_UNDER_TEST", Path(__file__).with_name("gate.sh"))).resolve()
         with tempfile.TemporaryDirectory(prefix="nerocd-database-gate-test-") as temporary:
@@ -330,6 +360,10 @@ class GateTest(unittest.TestCase):
             fixture = root / "internal/api/hosting_database_runtime_integration_test.go"
             fixture.parent.mkdir(parents=True)
             fixture.touch()
+            ui = root / "web/app/src/pages/ResourceDatabaseConnections.tsx"
+            ui.parent.mkdir(parents=True)
+            if case != "browser_source_missing":
+                ui.touch()
             client = root / "acceptance/runtime-hosting-database-client"
             client.mkdir(parents=True)
             (client / "Dockerfile").write_text("FROM scratch\nCOPY client /client\n")
@@ -343,12 +377,12 @@ class GateTest(unittest.TestCase):
             (root / "case").write_text(case)
             binary = root / "bin"
             binary.mkdir()
-            for name in ("git", "go", "docker", "python3"):
+            for name in ("git", "go", "docker", "python3", "bun", "node"):
                 executable = binary / name
                 executable.write_text("#!" + sys.executable + "\n" + STUB)
                 executable.chmod(0o700)
             environment = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"], TMPDIR=str(root),
-                               DATABASE_GATE_TEST_ROOT=str(root), DATABASE_GATE_TEST_CASE=case)
+                               DATABASE_GATE_TEST_ROOT=str(root), DATABASE_GATE_TEST_CASE=case, NEROCD_DATABASE_CONNECTION_BROWSER="bad" if case=="browser_bad_mode" else "1" if browser else "0")
             process = subprocess.Popen(["bash", str(gate)], cwd=root, env=environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, start_new_session=True)
@@ -377,6 +411,7 @@ class GateTest(unittest.TestCase):
                 if blocked:
                     self.assertIn("owned process group joined: " + str(blocked[0]), output)
                 commands = [json.loads(line)[1:] for line in (root / "commands").read_text().splitlines()]
+                self.all_commands = commands
                 self.source_manifests = [args[2:] for args in commands if args[:2] == ["ls-files", "-s"]]
                 if expected == 0:
                     self.assertIn("head=" + "1" * 40 + "\ntree=" + "2" * 40, output)
@@ -522,7 +557,7 @@ class GateTest(unittest.TestCase):
             messages = []
             with (root / "stderr").open("wb") as log:
                 namespace = dict(os=os, signal=signal, subprocess=subprocess, time=time, tempfile=tempfile,
-                                 log=log, evidence=root, say=messages.append)
+                                 log=log, evidence=root, say=messages.append, browser_mode="0")
                 exec(compile(ast.Module(body=definitions, type_ignores=[]), str(script), "exec"), namespace)
                 with self.assertRaisesRegex(namespace["Failure"], "command deadline exceeded"):
                     namespace["run"]([sys.executable, str(script), str(root / "pids")], timeout=0.5)
@@ -649,6 +684,34 @@ class GateTest(unittest.TestCase):
                          "internal/runnerruntime/hosting_application_database_execution.go",
                          "internal/runnerruntime/hosting_database_maintenance_execution.go"}.issubset(self.source_manifests[0]))
 
+    def test_browser_bridge_and_embedding_order(self):
+        state, commands, _ = self.run_gate("success", 0, browser=True)
+        self.assertEqual(state,{})
+        create=next(args for args in commands if args[:2]==["container","create"])
+        self.assertEqual(create[create.index("--publish")+1],"127.0.0.1::18080")
+        build=next(i for i,args in enumerate(self.all_commands) if args==["run","--cwd","web/app","build"])
+        compile=next(i for i,args in enumerate(self.all_commands) if args[:2]==["test","-c"])
+        self.assertLess(build,compile)
+        driver=next(args for args in self.all_commands if args[:1]==["acceptance/runtime-hosting-database-runner/browser-driver.mjs"])
+        self.assertEqual(driver[1],"http://127.0.0.1:35002")
+
+    def test_browser_profile_rejects_extra_or_public_ports(self):
+        for case in ("browser_public","browser_extra"):
+            with self.subTest(case=case):
+                state,commands,_=self.run_gate(case,1,browser=True)
+                self.assertIn("outer",state)
+                self.assertFalse(any("/fixture/api.test" in args for args in commands))
+        state,_,_=self.run_gate("outer_unexpected_port",1)
+        self.assertIn("outer",state)
+
+    def test_browser_prerequisite_and_driver_failures(self):
+        for case,expected in (("browser_bad_mode",1),("browser_source_missing",1),("browser_build_failure",16),("browser_missing_result",1),("browser_driver_failure",39)):
+            with self.subTest(case=case):
+                state,commands,_=self.run_gate(case,expected,browser=True)
+                self.assertEqual(state,{})
+                if case in ("browser_bad_mode","browser_source_missing","browser_build_failure"):
+                    self.assert_no_creation(commands)
+
     def test_harmless_complete_model(self):
         state, commands, output = self.run_gate("success", 0)
         self.assertEqual(state, {})
@@ -722,6 +785,96 @@ class GateTest(unittest.TestCase):
         self.assertEqual(state, {})
         self.assertIn(["container", "rm", "--force", IDENTITY], commands)
         self.assertIn(["volume", "rm", VOLUME], commands)
+
+
+DRIVER_FIXTURE = r'''
+import json, pathlib, signal, subprocess, sys, time
+root=pathlib.Path(sys.argv[1]);case=(root/'case').read_text()
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])
+with (root/'pids').open('a') as out: out.write(str(__import__('os').getpid())+'\n'+str(child.pid)+'\n')
+def stop(*_):
+ child.terminate();child.wait(timeout=2);sys.exit(1)
+signal.signal(signal.SIGTERM,stop)
+try:
+ for engine in ('postgresql','redis'):
+  meta=dict(origin='http://127.0.0.1:35002',engine=engine,project_id='project',environment='environment',application_resource_id='application',application_name='application',database_resource_id='database',foreign_resource_id='foreign',control_path='/api/v1/fixture/database-connection/'+'a'*32)
+  if case=='foreign_origin':meta['origin']='http://127.0.0.1:35003'
+  if case=='metadata_secret':meta['password']='SENSITIVE-CANARY'
+  print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
+  if case=='duplicate':print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
+  while not (root/('done-'+engine)).exists():time.sleep(.01)
+  if case=='missing_second':break
+finally:
+ child.terminate();child.wait(timeout=2)
+'''
+
+DRIVER_BROWSER = r'''
+import json, os, pathlib, signal, subprocess, sys, time
+root=pathlib.Path(__file__).resolve().parent.parent
+case=(root/'case').read_text();meta=json.loads(os.environ['NEROCD_DATABASE_CONNECTION_BROWSER_META'])
+assert 'NEROCD_TEST_DATABASE_URL' not in os.environ
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])
+with (root/'pids').open('a') as out:out.write(str(os.getpid())+'\n'+str(child.pid)+'\n')
+def stop(*_):
+ child.terminate();child.wait(timeout=2);sys.exit(1)
+signal.signal(signal.SIGTERM,stop)
+if case=='cancel':
+ (root/'blocked').touch()
+ while True:time.sleep(.01)
+child.terminate();child.wait(timeout=2)
+if case=='browser_failure':sys.exit(9)
+(root/('done-'+meta['engine'])).touch()
+'''
+
+class BrowserDriverTest(unittest.TestCase):
+    def run_driver(self, case, expected, cancel=False):
+        node=shutil.which('node')
+        self.assertIsNotNone(node)
+        driver=Path(__file__).with_name('browser-driver.mjs').resolve()
+        with tempfile.TemporaryDirectory(prefix='nerocd-browser-driver-test-') as temporary:
+            root=Path(temporary);(root/'case').write_text(case)
+            fixture=root/'fixture.py';fixture.write_text(DRIVER_FIXTURE)
+            (root/'bin').mkdir();browser=root/'bin/bun'
+            browser.write_text('#!'+sys.executable+'\n'+DRIVER_BROWSER);browser.chmod(0o700)
+            environment=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'],NEROCD_TEST_DATABASE_URL='SENSITIVE-CANARY')
+            process=subprocess.Popen([node,str(driver),'http://127.0.0.1:35002',str(root/'evidence'),'--',sys.executable,str(fixture),str(root)],cwd=Path(__file__).resolve().parents[2],env=environment,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
+            pids=[]
+            try:
+                if cancel:
+                    deadline=time.monotonic()+5
+                    while not (root/'blocked').exists() and time.monotonic()<deadline:time.sleep(.01)
+                    self.assertTrue((root/'blocked').exists())
+                    process.send_signal(signal.SIGTERM)
+                output,_=process.communicate(timeout=12)
+                self.assertEqual(process.returncode,expected,output)
+                self.assertNotIn('SENSITIVE-CANARY',output)
+                if expected==0:
+                    self.assertEqual(output.count('DATABASE_CONNECTION_BROWSER_PASS postgresql'),1)
+                    self.assertEqual(output.count('DATABASE_CONNECTION_BROWSER_PASS redis'),1)
+                pids=[int(pid) for pid in (root/'pids').read_text().splitlines()]
+                for pid in pids:
+                    with self.assertRaises(ProcessLookupError,msg=output):os.kill(pid,0)
+            finally:
+                if process.poll() is None:
+                    process.send_signal(signal.SIGTERM)
+                    try:process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid,signal.SIGKILL);process.communicate(timeout=2)
+                # Exact PIDs belong to these private executable unit-test stubs.
+                if (root/'pids').exists():
+                    for pid in [int(pid) for pid in (root/'pids').read_text().splitlines()]:
+                        try:os.kill(pid,signal.SIGTERM)
+                        except ProcessLookupError:pass
+
+    def test_successful_two_engine_driver(self):
+        self.run_driver('success',0)
+
+    def test_rejects_metadata_and_missing_results(self):
+        for case in ('foreign_origin','metadata_secret','duplicate','missing_second','browser_failure'):
+            with self.subTest(case=case):self.run_driver(case,1)
+
+    def test_cancellation_joins_fixture_browser_and_children(self):
+        self.run_driver('cancel',1,cancel=True)
 
 
 if __name__ == "__main__":
