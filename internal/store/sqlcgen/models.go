@@ -328,6 +328,37 @@ type HostingDatabase struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type HostingDatabaseBinding struct {
+	ID                    string          `json:"id"`
+	ApplicationResourceID string          `json:"application_resource_id"`
+	ApplicationBindingID  string          `json:"application_binding_id"`
+	DatabaseResourceID    string          `json:"database_resource_id"`
+	DatabaseBindingID     string          `json:"database_binding_id"`
+	ProjectID             string          `json:"project_id"`
+	DestinationID         string          `json:"destination_id"`
+	DatabaseOperationID   string          `json:"database_operation_id"`
+	RuntimeGeneration     int64           `json:"runtime_generation"`
+	RuntimeHash           string          `json:"runtime_hash"`
+	CredentialSecretID    string          `json:"credential_secret_id"`
+	CredentialVersion     int64           `json:"credential_version"`
+	Body                  json.RawMessage `json:"body"`
+	BodyHash              string          `json:"body_hash"`
+	CreatedBy             string          `json:"created_by"`
+	CreatedAt             time.Time       `json:"created_at"`
+}
+
+type HostingDatabaseBindingReceipt struct {
+	ApplicationResourceID string          `json:"application_resource_id"`
+	RequestID             string          `json:"request_id"`
+	ActorID               string          `json:"actor_id"`
+	AcceptedRequest       json.RawMessage `json:"accepted_request"`
+	RequestHash           string          `json:"request_hash"`
+	BindingHash           string          `json:"binding_hash"`
+	RuntimeGeneration     int64           `json:"runtime_generation"`
+	RuntimeHash           string          `json:"runtime_hash"`
+	AuditID               string          `json:"audit_id"`
+}
+
 type HostingDatabaseCredential struct {
 	ResourceID string `json:"resource_id"`
 	Role       string `json:"role"`
