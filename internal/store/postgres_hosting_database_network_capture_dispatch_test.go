@@ -218,7 +218,7 @@ func TestPostgresDatabaseNetworkCaptureClaimNextBoundedContention(t *testing.T) 
 }
 
 func TestPostgresDatabaseNetworkCaptureClaimNextRevocationAfterSelection(t *testing.T) {
-	for _, path := range []string{"source", "grant", "capability", "credential", "enrollment", "actor"} {
+	for _, path := range []string{"current_healthy_source", "grant", "capability", "credential", "enrollment", "actor"} {
 		t.Run(path, func(t *testing.T) {
 			f := newNetworkCaptureFixture(t, "postgresql")
 			actor, _ := proxyLegacyToken(t, f.pg, f.service, "tok_capture_next", []string{domain.RoleSystemAdmin})
@@ -278,8 +278,14 @@ func TestPostgresDatabaseNetworkCaptureClaimNextRevocationAfterSelection(t *test
 				}
 			}
 			switch path {
-			case "source":
-				_, err = blocker.Exec(ctx, `UPDATE resources SET generation=generation+1 WHERE id=$1`, f.resource.ID)
+			case "current_healthy_source":
+				// Remove only the expected current healthy pointer. The immutable
+				// source operation, resource generation and receipts remain intact.
+				changed, sourceErr := blocker.Exec(ctx, `UPDATE hosting_binding_state SET healthy=NULL WHERE binding_id=$1 AND healthy->>'operation_id'=$2`, f.op.BindingID, f.op.ID)
+				err = sourceErr
+				if err == nil && changed.RowsAffected() != 1 {
+					t.Fatal("expected current healthy source was not removed")
+				}
 			case "grant":
 				_, err = blocker.Exec(ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1 AND project_id=$2`, f.op.Snapshot.DestinationID, f.op.ProjectID)
 			case "capability":
