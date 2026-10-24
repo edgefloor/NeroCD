@@ -53,6 +53,7 @@ func newDatabaseNetworkUpgradeCredentials(in databaseNetworkUpgradeInput, values
 type databaseUpgradeInspection struct {
 	Previous domain.HostingApplyPlan
 	Origin   domain.HostingDatabaseNetworkOrigin
+	members  *databaseMemberInspection
 }
 
 // record is existing-only. No fallback can create, reconstruct or update the
@@ -117,6 +118,10 @@ func (e *imageEngine) databaseUpgradeProcessOwnership(ctx context.Context, opera
 	if err != nil || !current.State.Running || current.State.Pid != container.State.Pid || !databaseContainerMatchesWithInspection(current, operation, plan, record, filepath.Join(c.secretRoot, databaseGeneration(operation, plan)), in) || e.verifyDaemon(ctx, plan.Release.DaemonID) != nil || ctx.Err() != nil {
 		return errors.New("database upgrade observed process restarted or changed")
 	}
+	if in.members != nil {
+		_, err = e.databaseNetworkForInspection(ctx, operation, plan, record, c, databaseKnownContainers(plan, container.ID), in)
+		return err
+	}
 	return nil
 }
 
@@ -130,7 +135,7 @@ func databaseContainerMatchesWithInspection(container databaseContainer, operati
 	n := container.NetworkSettings.Networks[plan.Database.NetworkName]
 	var aliases []string
 	if plan.CompilerVersion == domain.HostingDatabaseNetworkCompilerVersion {
-		if plan.Database.Network == nil || len(plan.Database.Network.Members) != 0 || plan.Database.Network.Alias != domain.HostingDatabaseBindingAlias(plan.Snapshot.BindingID) {
+		if plan.Database.Network == nil || in.members == nil && len(plan.Database.Network.Members) != 0 || plan.Database.Network.Alias != domain.HostingDatabaseBindingAlias(plan.Snapshot.BindingID) {
 			return false
 		}
 		aliases = []string{plan.Database.Network.Alias}
@@ -167,6 +172,9 @@ func (e *imageEngine) databaseNetworkForInspection(ctx context.Context, operatio
 		if current, err := in.record(c); err != nil || current != record {
 			return databaseNetwork{}, errors.New("database upgrade retained origin changed")
 		}
+	}
+	if in != nil && in.members != nil {
+		return e.databaseMemberNetwork(ctx, operation, plan, record, c, known, in)
 	}
 	n, err := e.inspectDatabaseNetwork(ctx, plan.Database.NetworkName, record, known)
 	if err != nil || in == nil {

@@ -194,12 +194,19 @@ func (e *imageEngine) databaseNetworkPresent(ctx context.Context, name string) (
 }
 
 func (e *imageEngine) inspectDatabaseNetwork(ctx context.Context, name string, record databaseNetworkRecord, known map[string]bool) (databaseNetwork, error) {
+	return e.inspectDatabaseNetworkBounded(ctx, name, record, known, 2)
+}
+
+func (e *imageEngine) inspectDatabaseNetworkBounded(ctx context.Context, name string, record databaseNetworkRecord, known map[string]bool, limit int) (databaseNetwork, error) {
 	var network databaseNetwork
+	if limit < 2 || limit > 4 {
+		return network, errors.New("invalid database network inspection bound")
+	}
 	raw, err := e.ownedVolumeDocker(ctx, 256<<10, "network", "inspect", name, "--format", "{{json .}}")
 	if err != nil {
 		return network, err
 	}
-	if json.Unmarshal(raw, &network) != nil || network.Name != name || !dockerObjectID.MatchString(network.ID) || record.NetworkID != "" && network.ID != record.NetworkID || network.Driver != "bridge" || network.Scope != "local" || !network.Internal || network.Attachable || network.Ingress || network.EnableIPv6 || network.ConfigOnly || len(network.Options) != 0 || !maps.Equal(network.Labels, record.labels()) || network.IPAM.Driver != "default" || len(network.IPAM.Options) != 0 || len(network.IPAM.Config) != 1 || len(network.Containers) > 2 {
+	if json.Unmarshal(raw, &network) != nil || network.Name != name || !dockerObjectID.MatchString(network.ID) || record.NetworkID != "" && network.ID != record.NetworkID || network.Driver != "bridge" || network.Scope != "local" || !network.Internal || network.Attachable || network.Ingress || network.EnableIPv6 || network.ConfigOnly || len(network.Options) != 0 || !maps.Equal(network.Labels, record.labels()) || network.IPAM.Driver != "default" || len(network.IPAM.Options) != 0 || len(network.IPAM.Config) != 1 || len(network.Containers) > limit {
 		return network, errors.New("database private network ownership or policy mismatch")
 	}
 	ipam := network.IPAM.Config[0]
