@@ -420,3 +420,80 @@ test.each([401, 403, 503])("shared authority %s preserves safe identity and fenc
   } else await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
 });
+
+test.each((["membership", "resource"] as const).flatMap(source =>
+  [401, 403].flatMap(status => ["ordinary-first", "denial-first"].map(order => ({ source, status, order }))),
+))(
+  "$source $status outranks principal 503 ($order) and permanently fences a pending intent",
+  async ({ source, status, order }) => {
+    let resolve!: (value: Response) => void;
+    let signal: AbortSignal | null | undefined;
+    const { fetch, rerender } = setup("owner", (url, init) =>
+      url === "/api/v1/databases"
+        ? ((signal = init.signal), new Promise<Response>((done) => { resolve = done; }))
+        : undefined,
+    );
+    await draft();
+    fireEvent.submit(screen.getByRole("form"));
+    await waitFor(() => expect(resolve).toBeTypeOf("function"));
+    const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === "POST")![1].body as string);
+    const protectedKey = ["hostingDatabase", JSON.stringify(["oidc", "owner"]), "project", "env", "existing"];
+    client.setQueryData(protectedKey, response(body));
+    const ordinaryFailure = () => act(async () => {
+      await client.fetchQuery({ queryKey: queryKeys.principal, staleTime: 0, retry: false,
+        queryFn: async () => { throw new ApiError(503, "ordinary failure", "principal-error"); },
+      }).catch(() => {});
+    });
+    const denial = async () => {
+      if (source === "membership") await act(async () => {
+        await client.fetchQuery({ queryKey: queryKeys.allProjectMembers, staleTime: 0, retry: false,
+          queryFn: async () => { throw new ApiError(status, "denied", "member-error"); },
+        }).catch(() => {});
+      });
+      else rerender(<QueryClientProvider client={client}><DatabaseCreateForm projectID="project" environmentID="env" accessError={new ApiError(status, "denied", "resource-error")} /></QueryClientProvider>);
+    };
+    if (order === "ordinary-first") { await ordinaryFailure(); await denial(); }
+    else { await denial(); await ordinaryFailure(); }
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    expect(signal?.aborted).toBe(true);
+    expect(client.getQueryData(protectedKey)).toBeUndefined();
+    expect(screen.getByRole("alert").textContent).toContain(body.request_id);
+    // The denied source recovering first must not revive the retained intent.
+    await act(async () => {
+      if (source === "membership") client.setQueryData(queryKeys.allProjectMembers, [{ user_id: "owner", project_id: "project", role: "owner" }]);
+    });
+    if (source === "resource") rerender(<QueryClientProvider client={client}><DatabaseCreateForm projectID="project" environmentID="env" /></QueryClientProvider>);
+    await act(async () => {
+      resolve(json(response(body), 201));
+      client.setQueryData(queryKeys.principal, { id: "owner", provider: "oidc", roles: [] });
+    });
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Saved database metadata for Data" })).toBeNull();
+    expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+    expect(fetch.mock.calls.filter(([url]) => url !== "/api/v1/databases")).toHaveLength(1);
+  },
+);
+
+test("a 503-only authority refresh preserves an uncertain intent for exact retry", async () => {
+  let first = true;
+  const { fetch } = setup("owner", (url) => {
+    if (url === "/api/v1/databases" && first) { first = false; throw new TypeError("lost response"); }
+    return undefined;
+  });
+  await draft();
+  fireEvent.submit(screen.getByRole("form"));
+  await screen.findByRole("button", { name: "Retry identical database request" });
+  const body = fetch.mock.calls.find(([, init]) => init.method === "POST")![1].body;
+  await act(async () => {
+    await client.fetchQuery({ queryKey: queryKeys.principal, staleTime: 0, retry: false,
+      queryFn: async () => { throw new ApiError(503, "ordinary failure", "principal-error"); },
+    }).catch(() => {});
+  });
+  expect((screen.getByLabelText("Database name") as HTMLInputElement).value).toBe("Data");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Retry identical database request" }).hasAttribute("disabled")).toBe(true));
+  await act(async () => { client.setQueryData(queryKeys.principal, { id: "owner", provider: "oidc", roles: [] }); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Retry identical database request" }).hasAttribute("disabled")).toBe(false));
+  fireEvent.submit(screen.getByRole("form"));
+  await screen.findByRole("region", { name: "Saved database metadata for Data" });
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")[1]![1].body).toBe(body);
+});

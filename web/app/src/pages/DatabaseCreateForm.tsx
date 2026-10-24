@@ -30,6 +30,8 @@ export function DatabaseCreateForm({
   accessError?: unknown;
 }) {
   const access = useDatabaseAccess(projectID, environmentID);
+  const currentError = [access.error, accessError].find(databaseDenied)
+    ?? access.error ?? accessError;
   const [denied, setDenied] = useState<{
     epoch: string;
     identity: string;
@@ -56,7 +58,7 @@ export function DatabaseCreateForm({
       scope={access.scope}
       blocked={blocked}
       refreshing={access.refreshing}
-      accessError={access.error ?? accessError}
+      accessError={currentError}
       onDenied={(identity, error) =>
         setDenied({ epoch: access.epoch, identity, error })
       }
@@ -127,6 +129,11 @@ function Create({
       }, context.signal),
   });
   const deny = useCallback((cause: unknown, identity = attempt?.request_id ?? acceptedID) => {
+    active.current = false;
+    request.current?.abort();
+    refresh.current?.abort();
+    setAttempt(undefined);
+    setCreated(undefined);
     client.removeQueries({
       queryKey: [
         "hostingDatabase",

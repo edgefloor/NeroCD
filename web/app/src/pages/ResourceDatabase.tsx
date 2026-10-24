@@ -33,10 +33,14 @@ export function useDatabaseAccess(project: string, environment: string) {
       )),
   );
   const owner = canOwnProject(principal, members.data ?? [], project);
+  const errors = [
+    identity.isError ? identity.error : undefined,
+    members.isError ? members.error : undefined,
+  ];
   return {
     ready,
     refreshing: identity.isFetching || members.isFetching || identity.isError || members.isError,
-    error: identity.isError ? identity.error : members.isError ? members.error : undefined,
+    error: errors.find(databaseDenied) ?? errors.find(Boolean),
     viewer,
     owner,
     scope: { actor, project, environment },
