@@ -14,10 +14,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "563fb88f707b75563d03f0408df0267e3af473e9"
 UPSTREAM = "b12d1386f3d458618b4c579babcd1e339c6c40b3"
-BASELINE_CRITERIA = 955
-BASELINE_ELIGIBLE = 954
-BASELINE_MANIFEST = "ac0a90accece92290e15dffdcaa7c890c8b569609bea72bb42f424915948c87f"
-BASELINE_PARENT_MANIFEST = "370e34f1084b5ce2ab22fadf55f26034dcc6f0de178961532eb77171ab8e1b4e"
+BASELINE_CRITERIA = 934
+BASELINE_ELIGIBLE = 933
+BASELINE_MANIFEST = '86c2cdd843ce78f2a9e33417f9fb59c64285e8f63308b778e0e651f56fd053a3'
+BASELINE_PARENT_MANIFEST = '61070857bb0fef33a0802f752afbf7e13f59f4381b0289785d141f7bc211efe7'
 COUNTS = {"requirement": 68, "acceptance": 37, "area": 19, "database": 9,
           "source": 10, "secret": 3, "builder": 7, "proxy": 4, "notification": 6}
 STATES = {"missing", "partial", "implemented", "verified", "evidence_unavailable", "failed"}
@@ -157,6 +157,15 @@ def validate(data):
     require(data["criterion_history"] == [{"version": "hosting-atomic-v1", "added": [c["id"] for c in criteria], "removed": []}], "invalid baseline criterion history")
     require(data["baseline_criterion_count"] == len(criteria), "incorrect frozen criterion total")
     require(data["baseline_eligible_count"] == BASELINE_ELIGIBLE == sum(c["eligibility"] == "hosting" for c in criteria), "incorrect eligible hosting total")
+    trigger_criteria = [f"R10-C{i:02}" for i in range(1, 7)]
+    trigger_gates = {"GitHub": "SRC01", "GitLab": "SRC02", "Gitea": "SRC03",
+                     "Bitbucket": "SRC04", "Signed manual deploy webhook": "SRC06"}
+    realizations = data["trigger_realizations"]
+    require(len(realizations) == len(trigger_gates) and {r["provider"]: r["gate"] for r in realizations} == trigger_gates, "missing declared trigger realization")
+    for realization in realizations:
+        require(realization["scored"] is False and realization["criteria"] == trigger_criteria, "trigger realization duplicates points or drops contract clauses")
+        require(set(trigger_criteria) <= set(parent_map[realization["gate"]]["criteria"]), "provider gate omits trigger contract")
+    require(all(row["boundary"] and set(row["scored"]) <= criterion_map.keys() for row in data["dedup_family_review"]), "invalid semantic family review links")
     covered = collections.Counter()
     for criterion in criteria:
         cid = criterion["id"]
@@ -216,6 +225,7 @@ def render(data, parents, criteria):
              f"Definition inventory: {len(data['criteria'])}; eligible hosting outcomes: {len(rows)}. Deferred Task-derived preview R54-C03 is retained outside this numerator, denominator and hosting-gate boundary.", "",
              "Original inventory: 68 requirement parents, 37 acceptance parents, and 58 matrix parents: 19 areas, 9 databases, 10 sources, 3 secret providers, 7 builders, 4 proxies, and 6 notification channels. Parent/gate rows receive no extra score.", "",
              f"Fully complete requirement parents: {sum(complete(p) for p in data['parents'] if p['kind'] == 'requirement')}/68. Acceptance gates passed: {sum(p['state'] == 'verified' for p in data['parents'] if p['kind'] == 'acceptance')}/37. Matrix gates passed: {sum(p['state'] == 'verified' for p in data['parents'] if p['kind'] not in {'acceptance', 'requirement'})}/58.", "",
+             "Full parity is not accepted until all applicable requirement, acceptance and matrix release gates pass. A future 100% atomic score alone does not establish release acceptance.", "",
              "## Method and scope", "", *data["methodology"], "", *data["semantic_review_notes"], "", "Scope exclusions and imported safety obligations:", "",
              *["- " + s for s in data["scope_notes"]], "", "Evidence certainty and known contradictions:", "",
              *["- " + s for s in data["evidence_notes"]], "",
@@ -230,6 +240,14 @@ def render(data, parents, criteria):
     for area, group in areas.items():
         count = sum(c["state"] == "verified" for c in group)
         lines.append(f"| {area} | {count}/{len(group)} | {100 * count / len(group):.2f}% |")
+    lines.extend(["", "## Semantic duplication review", "", "Shared contracts score once. Their provider or resource realizations remain required acceptance boundaries without an additional point for the same observable outcome.", "",
+                  "| Family | Scored contract or distinct boundary IDs | Why the retained boundaries differ |", "| --- | --- | --- |"])
+    for family in data["dedup_family_review"]:
+        lines.append(f"| {cell(family['family'])} | {', '.join(family['scored'])} | {cell(family['boundary'])} |")
+    lines.extend(["", "Trigger realization gates add zero primary points. Each actual provider/manual path must satisfy authentication, durable delivery identity, replay deduplication, intended revision, queued supersession and protection of the active newer release.", "",
+                  "| Trigger realization | Unscored acceptance gate | Shared scored contract |", "| --- | --- | --- |"])
+    for realization in data["trigger_realizations"]:
+        lines.append(f"| {cell(realization['provider'])} | {realization['gate']} | {', '.join(realization['criteria'])} |")
     lines.extend(["", "## Atomic checklist", "", "Every row names a mandatory outcome and its next acceptance. Implementation presence and verification status have separate columns.", ""])
     for parent in data["parents"]:
         if parent["kind"] != "requirement":
@@ -324,6 +342,9 @@ def self_test(data):
         "relinked passing gate": lambda d: next(p for p in d["parents"] if p["id"] == "A01").update(criteria=["R11-C01"], state="verified", gate_verification={"result": "failed", "exit_code": 1}),
         "removed required gate mapping": lambda d: next(p for p in d["parents"] if p["id"] == "R03").update(gates=[]),
         "incorrect eligible denominator": lambda d: d.update(baseline_eligible_count=1),
+        "missing trigger realization": lambda d: d["trigger_realizations"].pop(),
+        "extra score for trigger realization": lambda d: d["trigger_realizations"][0].update(scored=True),
+        "missing provider trigger clause": lambda d: d["trigger_realizations"][0].update(criteria=["R10-C01"]),
     }
     for name, mutate in mutations.items():
         candidate = copy.deepcopy(data)
@@ -406,6 +427,7 @@ def main():
         eligible = [c for c in data["criteria"] if c["eligibility"] == "hosting"]
         verified = sum(c["state"] == "verified" for c in eligible)
         print(f"passed: 68 requirements + 37 acceptance + 58 matrix; {verified}/{len(eligible)} = {100 * verified / len(eligible):.2f}% verified; {len(criteria)} definitions")
+        print("Full parity requires all applicable R/A/matrix release gates; an atomic score alone is not acceptance.")
     except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
         print(f"parity audit failed: {error}", file=sys.stderr)
         return 1
