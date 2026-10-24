@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -474,6 +475,86 @@ func TestDatabaseNetworkCapturePostgresAuthenticatedClient(t *testing.T) {
 				if bytes.Contains(encoded, []byte(secret)) {
 					t.Fatal("origin receipt exposed bearer or private authority")
 				}
+			}
+		})
+	}
+}
+
+// Initialize the real pgx time.Local=UTC scan representation in a separate
+// process, without replacing time.Local while other tests may use it.
+func TestDatabaseNetworkCapturePostgresUTCIdentity(t *testing.T) {
+	if os.Getenv("NEROCD_TEST_DATABASE_URL") == "" {
+		t.Skip("requires explicitly leased disposable PostgreSQL fixture")
+	}
+	if os.Getenv("NEROCD_CAPTURE_PG_UTC_CHILD") != "1" {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDatabaseNetworkCapturePostgresUTCIdentity$", "-test.timeout=90s")
+		for _, value := range os.Environ() {
+			if !strings.HasPrefix(value, "TZ=") && !strings.HasPrefix(value, "NEROCD_CAPTURE_PG_UTC_CHILD=") {
+				cmd.Env = append(cmd.Env, value)
+			}
+		}
+		cmd.Env = append(cmd.Env, "TZ=UTC", "NEROCD_CAPTURE_PG_UTC_CHILD=1")
+		// A failed driver/server diagnostic may contain connection details. The
+		// parent exposes only the fixed outcome, never raw child output.
+		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+		cmd.WaitDelay = 5 * time.Second
+		if cmd.Run() != nil {
+			t.Fatal("UTC PostgreSQL capture identity child failed")
+		}
+		t.Log("UTC PostgreSQL request, claim, plan, origin and historical replay passed for both engines")
+		return
+	}
+	if time.Unix(0, 0).Location() != time.Local || time.Local == time.UTC {
+		t.Fatal("UTC PostgreSQL process did not retain Local scan representation")
+	}
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f := newCaptureHTTPFixture(t)
+			source := f.source(t, engine)
+			capture, err := f.service.RequestHostingDatabaseNetworkCapture(f.admin, source.ID)
+			if err != nil {
+				t.Fatal("UTC capture request failed")
+			}
+			var storageTime, receiptTime time.Time
+			if f.pool.QueryRow(f.admin, `SELECT s.created_at,r.created_at FROM hosting_storage s JOIN hosting_storage_materialized_receipts r ON r.storage_id=s.id WHERE s.id=$1 AND r.receipt_id=$2`, capture.Plan.Storage.ID, capture.Plan.Creation.Receipt.ID).Scan(&storageTime, &receiptTime) != nil || storageTime.Location() != time.Local || receiptTime.Location() != time.Local || capture.Plan.Storage.CreatedAt.Location() != time.UTC || capture.Plan.Creation.Receipt.CreatedAt.Location() != time.UTC || !storageTime.Equal(capture.Plan.Storage.CreatedAt) || !receiptTime.Equal(capture.Plan.Creation.Receipt.CreatedAt) {
+				t.Fatal("UTC fixture did not reproduce SQL Local versus JSON UTC identity")
+			}
+			duplicate, err := f.service.RequestHostingDatabaseNetworkCapture(f.admin, source.ID)
+			if err != nil || duplicate.ID != capture.ID || duplicate.Plan.Hash != capture.Plan.Hash {
+				t.Fatal("UTC pending capture request replay conflicted")
+			}
+			server := httptest.NewTLSServer(NewServer(f.service, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+			t.Cleanup(server.Close)
+			client := runnerclient.New(server.URL, f.token)
+			client.HTTP = server.Client()
+			claim, err := client.ClaimHostingDatabaseNetworkCapture(f.admin, f.runner, capture.ID)
+			if err != nil {
+				t.Fatal("UTC capture claim conflicted")
+			}
+			a := domain.HostingAuthority{OperationID: capture.ID, RunID: claim.Lease.RunID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+			plan, err := client.HostingDatabaseNetworkCapturePlan(f.admin, f.runner, a)
+			if err != nil || plan.Plan.Hash != capture.Plan.Hash {
+				t.Fatal("UTC current capture plan conflicted")
+			}
+			p := plan.Plan
+			origin := domain.HostingDatabaseNetworkOrigin{Version: 1, Binding: p.BindingID, Destination: p.DestinationID, Daemon: p.Materialization.DaemonID, Configuration: p.SourcePlan.Snapshot.Database.ConfigurationHash, OriginOperation: p.Materialization.CreationOperationID, OriginPlan: p.Materialization.CreationPlanHash, Nonce: strings.Repeat("c", 32), Storage: p.Materialization.StorageRef, VolumeNonce: p.Materialization.CreationNonce, VolumeCreatedAt: "2026-10-24T00:00:00Z", NetworkID: strings.Repeat("d", 64), InitReady: true}
+			in := domain.HostingDatabaseNetworkOriginRequest{HostingAuthority: a, ReceiptID: "utc_origin_" + capture.ID, PlanHash: p.Hash, ObservedAt: time.Now().UTC(), Origin: origin}
+			ack, err := client.RecordHostingDatabaseNetworkOrigin(f.admin, f.runner, in, p)
+			if err != nil {
+				t.Fatal("UTC origin record conflicted")
+			}
+			replay, err := client.RecordHostingDatabaseNetworkOrigin(f.admin, f.runner, in, p)
+			if err != nil || domain.HostingDocumentHash(ack) != domain.HostingDocumentHash(replay) {
+				t.Fatal("UTC historical origin replay changed full receipt")
+			}
+			final, err := f.service.RequestHostingDatabaseNetworkCapture(f.admin, source.ID)
+			if err != nil || final.Receipt == nil || domain.HostingDocumentHash(*final.Receipt) != domain.HostingDocumentHash(ack) {
+				t.Fatal("UTC historical request replay conflicted")
+			}
+			if _, err := client.HostingDatabaseNetworkCapturePlan(f.admin, f.runner, a); err == nil {
+				t.Fatal("UTC historical receipt regained live plan authority")
 			}
 		})
 	}

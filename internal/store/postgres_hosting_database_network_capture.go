@@ -1,10 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"slices"
 	"time"
 
@@ -162,11 +162,11 @@ func networkCaptureHistorical(ctx context.Context, tx pgx.Tx, c domain.HostingDa
 		return err
 	}
 	storage, err := currentHostingStorage(ctx, tx, p.ProjectID, p.ResourceID)
-	if err != nil || !reflect.DeepEqual(storage, p.Storage) {
+	if err != nil || storage.Validate() != nil || p.Storage.Validate() != nil || storage.Hash != p.Storage.Hash || !networkCaptureDocumentEqual(storage, p.Storage) {
 		return ErrConflict
 	}
 	materialization, err := readHostingStorageMaterialization(ctx, tx, storage)
-	if err != nil || !reflect.DeepEqual(materialization, p.Materialization) {
+	if err != nil || materialization.Validate(storage) != nil || p.Materialization.Validate(p.Storage) != nil || !networkCaptureDocumentEqual(materialization, p.Materialization) {
 		return ErrConflict
 	}
 	refs := make([]domain.HostingRuntimeSecretReference, 0, len(p.SourcePlan.Database.Credentials))
@@ -219,7 +219,7 @@ func (s *PostgresStore) RequestHostingDatabaseNetworkCapture(ctx context.Context
 			}
 			if c.Receipt == nil {
 				p, e := networkCaptureSource(ctx, tx, source, actor)
-				if e != nil || !reflect.DeepEqual(c.Plan, p) {
+				if e != nil || !networkCapturePlanEqual(c.Plan, p) {
 					return zero, ErrConflict
 				}
 			}
@@ -237,7 +237,7 @@ func (s *PostgresStore) RequestHostingDatabaseNetworkCapture(ctx context.Context
 		// authorization, before inserting the deterministic task/capture IDs.
 		c, err = readNetworkCapture(ctx, q, p.OperationID)
 		if err == nil {
-			if c.CreatedBy != actor || !reflect.DeepEqual(c.Plan, p) {
+			if c.CreatedBy != actor || !networkCapturePlanEqual(c.Plan, p) {
 				return zero, ErrConflict
 			}
 			return c, finalizeNetworkCapture(ctx, tx, c, "", false)
@@ -292,7 +292,7 @@ func lockNetworkCapture(ctx context.Context, tx pgx.Tx, id string, current bool)
 		}
 	} else {
 		p, e := networkCaptureSource(ctx, tx, c.Plan.SourceOperationID, c.CreatedBy)
-		if e != nil || !reflect.DeepEqual(p, c.Plan) {
+		if e != nil || !networkCapturePlanEqual(p, c.Plan) {
 			return zero, ErrConflict
 		}
 	}
@@ -451,4 +451,20 @@ func (s *PostgresStore) RecordHostingDatabaseNetworkOrigin(ctx context.Context, 
 		}
 		return result, finalizeNetworkCapture(ctx, tx, c, in.LeaseID, true)
 	})
+}
+
+// Compare the complete stable JSON documents used by HostingDocumentHash. pgx
+// may scan a UTC instant with time.Local while JSON restores time.UTC; their
+// Go location pointers are not part of the persisted identity contract.
+func networkCaptureDocumentEqual(left, right any) bool {
+	a, err := json.Marshal(left)
+	if err != nil {
+		return false
+	}
+	b, err := json.Marshal(right)
+	return err == nil && bytes.Equal(a, b)
+}
+
+func networkCapturePlanEqual(left, right domain.HostingDatabaseNetworkCapturePlan) bool {
+	return left.Validate() == nil && right.Validate() == nil && left.Hash == right.Hash && networkCaptureDocumentEqual(left, right)
 }
