@@ -12,6 +12,7 @@ import {
   requestArchiveBackup,
   requestArchiveRecovery,
   requestArchiveRestore,
+  refreshArchiveConfiguration,
   type ArchiveOperation,
   type ArchiveRestore,
   type ArchiveScope,
@@ -83,6 +84,9 @@ export function StorageArchives({
   const [lost, setLost] = useState(false);
   const [recovery, setRecovery] = useState<ArchiveOperation>();
   const [polling, setPolling] = useState(true);
+  const [reviewedGeneration, setReviewedGeneration] = useState<number>();
+  const generation = reviewedGeneration ?? resource.generation;
+  useEffect(() => setReviewedGeneration(undefined), [resource.generation]);
   const controller = useRef<AbortController | undefined>(undefined);
   const lock = useRef(false);
   const mounted = useRef(true);
@@ -106,10 +110,17 @@ export function StorageArchives({
   });
   const eligibility = useQuery({
     ...base,
-    queryKey: [...key, "eligible", resource.generation, storage.hash],
+    queryKey: [...key, "eligible", generation, storage.hash],
     enabled: owner,
     queryFn: ({ signal }) =>
-      archiveBackupEligible(scope, storage, resource.generation, signal),
+      archiveBackupEligible(scope, storage, generation, signal),
+  });
+  const configuration = useQuery({
+    ...base,
+    queryKey: [...key, "configuration", storage.hash],
+    enabled: false,
+    queryFn: ({ signal }) =>
+      refreshArchiveConfiguration(scope, storage, signal),
   });
   const backup = useQuery({
     ...base,
@@ -174,6 +185,7 @@ export function StorageArchives({
     detail,
     restored,
     recovered,
+    configuration,
     ...(owner ? [eligibility] : []),
   ];
   const accessLost = lost || queries.some((q) => denied(q.error));
@@ -259,10 +271,17 @@ export function StorageArchives({
       }
     }
   }
-  function refresh() {
+  async function refresh() {
     if (busy || accessLost) return;
     setPolling(true);
-    for (const query of queries) if (query.isEnabled) void query.refetch();
+    const current = await configuration.refetch();
+    if (!mounted.current || current.isError || !current.data) return;
+    setReviewedGeneration(current.data.generation);
+    setConfirmed(false);
+    for (const query of [history, backup, detail, restored, recovered])
+      if (query.isEnabled) void query.refetch();
+    if (current.data.generation === generation && owner)
+      void eligibility.refetch();
   }
   function readRestore() {
     if (busy || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(restoreDraft)) return;
@@ -301,6 +320,13 @@ export function StorageArchives({
       >
         Refresh archive status
       </Button>
+      {reviewedGeneration !== undefined && !configuration.isError ? (
+        <p role="status">
+          Reviewed current resource generation {reviewedGeneration}. A separate
+          backup submission uses this generation. Any saved retry keeps its
+          original inputs.
+        </p>
+      ) : null}
       {!polling ? (
         <p role="status">
           Automatic status reads stopped after one minute. Status may be stale
@@ -403,7 +429,7 @@ export function StorageArchives({
                 kind: "backup",
                 body: {
                   request_id: storageRequestID(),
-                  expected_resource_generation: resource.generation,
+                  expected_resource_generation: generation,
                 },
               })
             }
@@ -634,14 +660,12 @@ function RestoreDetails({ value }: { value: ArchiveRestore }) {
   return (
     <p className="min-w-0 break-all">
       New resource {value.name} ({value.resource}).{" "}
-      <a
-        className="underline"
-        href={`/projects#storage-${encodeURIComponent(value.resource)}`}
-      >
-        Open restored resource storage
+      <a className="underline" href="/projects">
+        Open Projects
       </a>
-      . Select its project and environment in Hosting applications to review and
-      deploy it. Restore operation {value.operation.id}.
+      . In Project hosting, select the source project and environment, then find{" "}
+      {value.name} by resource ID {value.resource} to review and deploy it.
+      Restore operation {value.operation.id}.
     </p>
   );
 }

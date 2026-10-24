@@ -22,6 +22,7 @@ vi.mock("@/api/hosting-storage-archives", () => ({
   requestArchiveBackup: vi.fn(),
   requestArchiveRestore: vi.fn(),
   requestArchiveRecovery: vi.fn(),
+  refreshArchiveConfiguration: vi.fn(),
 }));
 const hash = `sha256:${"a".repeat(64)}`;
 const resource = {
@@ -65,6 +66,7 @@ const operation: api.ArchiveOperation = {
 let client: QueryClient;
 beforeEach(() => {
   vi.mocked(api.archiveBackupEligible).mockResolvedValue(true);
+  vi.mocked(api.refreshArchiveConfiguration).mockResolvedValue(resource);
   vi.mocked(api.listArchiveBackups).mockResolvedValue({
     items: [backup],
     limit: 20,
@@ -216,14 +218,46 @@ test("restore always names a new resource, retains inputs on retry and links its
   await screen.findByText(/Delivery or current status is unknown/);
   click("Retry identical archive request");
   expect(
-    await screen.findByRole("link", { name: "Open restored resource storage" }),
-  ).toHaveProperty("hash", "#storage-new");
+    await screen.findByRole("link", { name: "Open Projects" }),
+  ).toHaveProperty("pathname", "/projects");
   expect(
     screen.getByText(/Restore file validation: verified/).textContent,
   ).toContain("Application read/write verification remains pending");
   const calls = vi.mocked(api.requestArchiveRestore).mock.calls;
   expect(calls[0]![2]).toBe(calls[1]![2]);
   expect(calls[0]![2].name).toBe("Recovered uploads");
+});
+test("409 refresh reviews remote generation without changing the saved retry; explicit new submission uses generation 3", async () => {
+  vi.mocked(api.requestArchiveBackup)
+    .mockRejectedValueOnce(new ApiError(409, "changed", null))
+    .mockRejectedValueOnce(new ApiError(409, "changed", null));
+  vi.mocked(api.refreshArchiveConfiguration).mockResolvedValue({
+    ...resource,
+    generation: 3,
+  });
+  setup();
+  await loaded();
+  fireEvent.click(screen.getByRole("checkbox"));
+  click("Request upload backup");
+  await screen.findByText(/The resource, backup or hold changed/);
+  const original = vi.mocked(api.requestArchiveBackup).mock.calls[0]![1];
+  click("Refresh archive status");
+  await screen.findByText(/Reviewed current resource generation 3/);
+  await loaded();
+  expect(api.requestArchiveBackup).toHaveBeenCalledTimes(1);
+  click("Retry identical archive request");
+  await screen.findByText(/The resource, backup or hold changed/);
+  expect(vi.mocked(api.requestArchiveBackup).mock.calls[1]![1]).toBe(original);
+  expect(original.expected_resource_generation).toBe(2);
+  click("Discard saved request and review a separate submission");
+  fireEvent.click(screen.getByRole("checkbox"));
+  click("Request upload backup");
+  await waitFor(() =>
+    expect(api.requestArchiveBackup).toHaveBeenCalledTimes(3),
+  );
+  const separate = vi.mocked(api.requestArchiveBackup).mock.calls[2]![1];
+  expect(separate.expected_resource_generation).toBe(3);
+  expect(separate.request_id).not.toBe(original.request_id);
 });
 test("uncertain resume and held mutation require explicit exact-plan recovery", async () => {
   vi.mocked(api.getArchiveOperation).mockResolvedValue({

@@ -258,6 +258,7 @@ test("upload archive owner workflow, identical retries and new restore across wi
     },
   };
   let lose = true;
+  let restoredResourceCreated = false;
   const writes: string[] = [];
   const reply = (
     route: import("@playwright/test").Route,
@@ -337,8 +338,24 @@ test("upload archive owner workflow, identical retries and new restore across wi
   );
   await page.route(
     "**/api/v1/storage-backups/backup_fixture/restores",
-    (route) => {
+    async (route) => {
       writes.push(route.request().postData()!);
+      if (!restoredResourceCreated) {
+        // Materialize only the resource metadata fixture so the manual Projects
+        // navigation is checked against a real saved resource. Archive execution
+        // remains intercepted and is not qualified by this browser test.
+        const saved = await post<{ id: string }>(page, "/api/v1/resources", {
+          project_id: project.id,
+          project_environment_id: env.id,
+          name: target.name,
+          kind: "application",
+          source: target.source,
+        });
+        target.id = saved.id;
+        targetStorage.resource_id = saved.id;
+        restore.operation.resource_id = saved.id;
+        restoredResourceCreated = true;
+      }
       return reply(route, restore, 202);
     },
   );
@@ -393,13 +410,9 @@ test("upload archive owner workflow, identical retries and new restore across wi
       .getByRole("button", { name: "Restore into new resource", exact: true })
       .click();
     const link = panel.getByRole("link", {
-      name: "Open restored resource storage",
+      name: "Open Projects",
       exact: true,
     });
-    await expect(link).toHaveAttribute(
-      "href",
-      "/projects#storage-restored_fixture",
-    );
     await expect(
       panel.getByText(/Restore file validation: verified/),
     ).toBeVisible();
@@ -419,5 +432,19 @@ test("upload archive owner workflow, identical retries and new restore across wi
     const bounds = await panel.boundingBox();
     expect(bounds).not.toBeNull();
     expect(bounds!.width).toBeLessThanOrEqual(width);
+    await link.click();
+    await expect(page).toHaveURL(/\/projects$/);
+    await hosting
+      .getByLabel("Hosting project", { exact: true })
+      .selectOption(project.id);
+    await hosting.getByRole("button", { name: "Uploads", exact: true }).click();
+    const restoredArticle = hosting.getByRole("article", {
+      name: "Restored uploads",
+      exact: true,
+    });
+    await expect(restoredArticle).toBeVisible();
+    await expect(
+      restoredArticle.locator(`#storage-${target.id}`),
+    ).toBeVisible();
   }
 });

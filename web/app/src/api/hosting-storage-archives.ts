@@ -357,6 +357,34 @@ const read = <T,>(path: string, signal?: AbortSignal) =>
     (s) => request<T>(path, { signal: s, cache: "no-store" }),
     signal,
   );
+export async function refreshArchiveConfiguration(
+  scope: ArchiveScope,
+  storage: HostingStorage,
+  signal?: AbortSignal,
+) {
+  const path = `/api/v1/resources/${encodeURIComponent(scope.resource)}`;
+  const [resource, currentStorage, binding] = await Promise.all([
+    read<components["schemas"]["Resource"]>(path, signal),
+    read<HostingStorage>(`${path}/storage`, signal),
+    read<components["schemas"]["ResourceBinding"]>(`${path}/binding`, signal),
+  ]);
+  if (
+    resource.id !== scope.resource ||
+    resource.project_id !== scope.project ||
+    resource.kind !== "application" ||
+    resource.source.kind !== "image" ||
+    !Number.isSafeInteger(resource.generation) ||
+    resource.generation < 1 ||
+    binding.id !== scope.binding ||
+    binding.resource_id !== scope.resource ||
+    binding.destination_id !== scope.destination
+  )
+    fail();
+  storageScope(currentStorage, scope, scope.resource, scope.binding);
+  if (currentStorage.id !== storage.id || currentStorage.hash !== storage.hash)
+    fail();
+  return resource;
+}
 function write<T>(
   path: string,
   body: BackupInput | RestoreInput | RecoveryInput,

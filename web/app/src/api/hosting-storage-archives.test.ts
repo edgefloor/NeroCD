@@ -9,6 +9,7 @@ import {
   requestArchiveBackup,
   requestArchiveRecovery,
   requestArchiveRestore,
+  refreshArchiveConfiguration,
   type ArchiveScope,
 } from "./hosting-storage-archives";
 import type { components } from "./generated";
@@ -298,6 +299,41 @@ test("stalled read times out even when transport ignores abort", async () => {
   );
   await vi.advanceTimersByTimeAsync(30001);
   await pending;
+});
+test("configuration refresh reads authoritative resource, storage and binding with scope validation", async () => {
+  const resource = {
+    id: "r",
+    project_id: "p",
+    generation: 3,
+    kind: "application",
+    source: { kind: "image" },
+  };
+  const binding = { id: "b", resource_id: "r", destination_id: "d" };
+  const check = async (r: unknown, s: unknown, b: unknown) => {
+    const fetch = vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path.endsWith("/storage") ? s : path.endsWith("/binding") ? b : r,
+          ),
+        ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    return refreshArchiveConfiguration(
+      scope,
+      storage as components["schemas"]["HostingStorage"],
+    );
+  };
+  expect((await check(resource, storage, binding)).generation).toBe(3);
+  await expect(
+    check({ ...resource, project_id: "foreign" }, storage, binding),
+  ).rejects.toThrow();
+  await expect(
+    check(resource, { ...storage, hash: `sha256:${"b".repeat(64)}` }, binding),
+  ).rejects.toThrow();
+  await expect(
+    check(resource, storage, { ...binding, destination_id: "foreign" }),
+  ).rejects.toThrow();
 });
 test("eligibility rejects foreign operation identity and excludes local builds and database policy", async () => {
   const options = {
