@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0068, bootstrap administration,
+- PostgreSQL state, checked migrations through 0070, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -169,10 +169,10 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   Metadata API/UI is accepted at `2f8beb9b555e651bcccb47d3c0dbc7ccfdb268db`;
   saving mount intent alone does not materialize or mount a volume.
   Storage deployment-review/recovery UI is accepted with UX-only limits below.
-Direct database engine qualification and default-off runner coordination are
-accepted below; the later exact API/runner workflow and direct UI are accepted below; metadata
-remains `adapter_unqualified` and application binding remains unfinished. Backups/restore,
-  unknown-writer recovery, production ACME and complete A19/A26 remain open.
+  Standalone database qualification and direct UI are recorded below. Metadata
+  remains `adapter_unqualified` and connected application binding is unfinished.
+  Database-native backup/restore, unknown-writer recovery, production ACME and
+  complete A19/A26 remain open. Bounded uploaded-file recovery is accepted below.
 - Storage deployment-review/recovery UI is accepted at
   `77be63a03c9caf3e95239a751045f0fe7b5918cf`. Its browser qualification covers
   connected review/retry UX with intercepted operation responses; physical upload
@@ -188,9 +188,21 @@ remains `adapter_unqualified` and application binding remains unfinished. Backup
   The exact authenticated API/River/compiled-runner workflow at
   `c731f708e62e2376d174041957b8654fe83d5bcf` physically passed PostgreSQL/Redis
   write, redeploy/read and lost-completion-ACK restart/read in 29.75 seconds.
-  See the [workflow fixture](acceptance/runtime-hosting-database-runner/README.md).
+  That evidence stays at its original revision. Later shared database engine
+  changes mean it does not qualify the current combined tree. See the
+  [workflow fixture](acceptance/runtime-hosting-database-runner/README.md).
   Default-off opt-in and metadata `adapter_unqualified` remain. Application binding,
-  archive backup/restore, public ACME and complete A17 remain unfinished.
+  database-native backup/restore, public ACME and complete A17 remain unfinished.
+- Internal R42 prerequisites are accepted through
+  `c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`: the binding controller, network
+  retirement proof, private application/database adapter, origin capture
+  controller and private empty-v2 alias upgrade engine. See the
+  [accepted components and remaining R42 work](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
+  These are internal components. Connected API/UI application binding and
+  physical alias qualification remain unfinished. The actual runner capture
+  observer and typed transport, upgrade controller, application network ledger,
+  and PostgreSQL/Redis application write/redeploy/read qualification are still
+  required. Database-native backup/restore and rotation also remain open.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The
@@ -227,8 +239,10 @@ remains `adapter_unqualified` and application binding remains unfinished. Backup
 The active sequence is practical repository/image-to-HTTPS hosting and
 operation/recovery, useful stateful hosting, remaining core parity, then migration
 and extended compatibility. Automatic deployment and SSH onboarding are accepted within their stated limits.
-Stateful hosting is next: managed volumes, broader storage runtime and deployment-review/recovery UI, PostgreSQL and Redis. Protected plans and production TLS
-remain visible unfinished work. Broader
+Stateful hosting remains active. Bounded uploaded-file persistence/recovery and
+standalone PostgreSQL/Redis hosting have accepted evidence; connected R42
+application binding, database-native recovery and broader stateful qualification
+remain unfinished. Protected plans and production TLS remain open. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
 schedules and notifications remain open.
 

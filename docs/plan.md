@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, 2026-10-24, through migration 0068.
+`c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`, 2026-10-24, through migration 0070.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,7 +29,7 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0068, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0070, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | Broader SSH/host qualification, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, protected reveal, private Git credential delivery and bounded managed runtime delivery/execution; separate runner-file execution | Broader delivery and variable scopes, provider coverage and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
@@ -131,7 +131,9 @@ Servers and runners leading direct hosting and advanced workflows preserved.
 See the [navigation evidence and limits](compatibility.md#accepted-foundations-and-evidence).
 
 Automatic deployment and SSH onboarding have bounded accepted evidence. Proceed
-to H2 stateful hosting next: managed volumes, broader storage runtime and deployment-review/recovery UI and PostgreSQL/Redis.
+with H2 stateful hosting. Bounded uploaded-file persistence/recovery and
+standalone PostgreSQL/Redis hosting have accepted evidence; connected application
+binding and broader stateful qualification remain unfinished.
 Storage metadata, the private helper and durable materialization admission are
 accepted through `8e00631aac26e0787a43398332e31a35980f067d`, with migrations
 0062–0063. The opt-in API/compiled-runner uploaded-file workflow now has physical
@@ -147,20 +149,43 @@ credential delivery are accepted through `33a7506f8b5f92f88f455e3cc4029629dfb6c7
 Direct engine qualification is accepted at `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`;
 default-off runner coordination is accepted at `f4a54506f388339ffe8acdd6b8ec4133690188fa`.
 The exact combined authenticated API/River/compiled-runner PostgreSQL/Redis
-workflow is physically qualified at `c731f708e62e2376d174041957b8654fe83d5bcf`.
-Direct deployment UI is accepted with separate intercepted-browser evidence.
-Default-off opt-in and metadata `adapter_unqualified` remain. Next is application
-binding and further stateful lifecycle work, including archive backup/restore;
-the standalone archive helper is accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`;
+workflow was physically qualified at `c731f708e62e2376d174041957b8654fe83d5bcf`.
+That evidence remains at its original revision. Later shared database engine
+changes mean it does not qualify the current combined tree. Direct deployment UI
+is accepted with separate intercepted-browser evidence.
+Default-off opt-in and metadata `adapter_unqualified` remain. Internal R42
+prerequisites are accepted through `c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`:
+the binding controller through `15fe8877d2e7ee22602d8cc20fb8db29fc83de0c`,
+retirement proof at `a87bb68373016509d24724aba6d127738012638c`, private
+application/database adapter at `621af78038f7231b43f7d7a7a899b17bde5c06e4`,
+origin capture controller at `584cb6c7f4a62821308acad4a5e67192e3608e11`, and
+private empty-v2 alias upgrade engine at the current assessment. Their
+integration checks and code hygiene, specification and critical security reviews
+passed. The [component ledger](compatibility.md#r42-remains-an-unfinished-hosting-workflow)
+links source and tests and records the limits.
+
+R42 still needs the actual runner capture observer with typed API/client,
+journal and dispatch, the upgrade controller, application network ledger and
+API/UI, and physical application write/redeploy/read qualification for both
+PostgreSQL and Redis on the combined candidate. Internal components do not
+complete application binding. Database-native backup/restore, rotation and
+broader stateful parity remain open.
+
+The standalone archive helper is accepted at
+`3b34b3920378cc41613bc87ca69eea2d35d2f175`;
 controller/config/API and default-off runner are accepted through
 `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, with migration 0068 and accepted helper
 packaging. Bounded physical uploaded-file recovery is accepted at `45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`;
-next are remaining stateful recovery cases and R42 application binding, still unaccepted;
+remaining stateful recovery cases and the connected R42 workflow are unfinished;
 current helper config-ID qualification targets the classic Docker image store,
 with a recorded containerd-store lookup failure and no runtime fallback;
 retained PostgreSQL/River tests use a fake engine. Archive UI is accepted at
 `a99a75517c018caa9aa9965cf451f9f826e7b3d6` with intercepted-browser evidence;
-bounded physical uploaded-file qualification is accepted at `45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`; broader application qualification remains unfinished. Application-verified A26/A37 remain unfinished; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
+bounded physical uploaded-file qualification is accepted at
+`45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`; broader application qualification
+remains unfinished. Full application-verified
+A26/A37, database-native backup/restore, unknown-writer recovery and complete
+A19/A26 remain open. Protected plans
 under R17/R19 and applicable A09/A10 checks, production TLS and remaining parity
 remain separate unfinished work. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.
