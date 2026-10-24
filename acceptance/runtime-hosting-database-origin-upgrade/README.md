@@ -23,7 +23,11 @@ alias before C. Observation commands are restricted to inspect/list/info/top and
 must preserve all protected state and secret files. The exact owned-volume listing
 used by the engine is permitted; other volume actions remain refused. Failed B/C
 applications retain a bounded sequence of closed command tags and candidate shape
-booleans/counts, excluding raw command arguments, paths and credentials. Client credential JSON travels
+booleans/counts, excluding raw command arguments, paths and credentials. Source
+comparisons independently validate both unique mounts against the inspected owned
+volume and protected credential directory before normalizing mount order; all
+other fields, state, PID and network identity remain exact. Cleanup uses its own
+bounded uncanceled context and reports unconfirmed identity/removal/absence. Client credential JSON travels
 only over Docker exec stdin, and client diagnostics are discarded. The local
 redaction test verifies malformed/oversized inputs cannot echo credential markers.
 

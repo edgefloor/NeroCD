@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -409,6 +410,94 @@ func databaseOriginReadOnly(t *testing.T, f *databaseRuntimeFixture, run func())
 	}
 }
 
+type databaseOriginMountExpectation struct {
+	Volume, DataSource, DataDestination, SecretSource string
+}
+
+func databaseOriginSourceProjection(c databaseContainer, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, mounts databaseOriginMountExpectation) (databaseContainer, bool) {
+	inspection := &databaseUpgradeInspection{Previous: plan, Origin: domain.HostingDatabaseNetworkOrigin(record)}
+	if !c.State.Running || c.State.Status != "running" || c.State.Pid < 1 || !databaseContainerMatchesWithInspection(c, operation, plan, record, mounts.SecretSource, inspection) || len(c.Mounts) != 2 || mounts.DataSource == "" || !filepath.IsAbs(mounts.DataSource) || filepath.Clean(mounts.DataSource) != mounts.DataSource {
+		return c, false
+	}
+	seen := map[string]bool{}
+	for _, mount := range c.Mounts {
+		if seen[mount.Destination] {
+			return c, false
+		}
+		seen[mount.Destination] = true
+		switch mount.Destination {
+		case mounts.DataDestination:
+			if mount.Type != "volume" || mount.Name != mounts.Volume || mount.Driver != "local" || mount.Source != mounts.DataSource || !mount.RW {
+				return c, false
+			}
+		case databaseSecretMount:
+			if mount.Type != "bind" || mount.Source != mounts.SecretSource || mount.RW || mount.Name != "" || mount.Driver != "" {
+				return c, false
+			}
+		default:
+			return c, false
+		}
+	}
+	if !seen[mounts.DataDestination] || !seen[databaseSecretMount] {
+		return c, false
+	}
+	c.Mounts = slices.Clone(c.Mounts)
+	sort.Slice(c.Mounts, func(i, j int) bool { return c.Mounts[i].Destination < c.Mounts[j].Destination })
+	return c, true
+}
+
+func databaseOriginClosedState(state string) string {
+	switch state {
+	case "created", "running", "exited", "dead", "paused", "restarting":
+		return state
+	default:
+		return "unclassified"
+	}
+}
+
+type databaseOriginSourceDiagnostic struct {
+	Inspected, BeforeValid, AfterValid                                    bool
+	IdentityEqual, ConfigEqual, HostConfigEqual, StateEqual, NetworkEqual bool
+	MountOrderEqual, ValidatedMountSetEqual                               bool
+	PIDBefore, PIDAfter                                                   int
+	StateBefore, StateAfter                                               string
+	RunningBefore, RunningAfter                                           bool
+}
+
+func databaseOriginSourceDifference(before, current databaseContainer, normalizedBefore, normalizedCurrent databaseContainer, inspected, beforeValid, afterValid bool) databaseOriginSourceDiagnostic {
+	return databaseOriginSourceDiagnostic{Inspected: inspected, BeforeValid: beforeValid, AfterValid: afterValid, IdentityEqual: before.ID == current.ID && before.Name == current.Name && before.Image == current.Image, ConfigEqual: domain.HostingDocumentHash(before.Config) == domain.HostingDocumentHash(current.Config), HostConfigEqual: domain.HostingDocumentHash(before.HostConfig) == domain.HostingDocumentHash(current.HostConfig), StateEqual: before.State == current.State, NetworkEqual: domain.HostingDocumentHash(before.NetworkSettings) == domain.HostingDocumentHash(current.NetworkSettings), MountOrderEqual: domain.HostingDocumentHash(before.Mounts) == domain.HostingDocumentHash(current.Mounts), ValidatedMountSetEqual: beforeValid && afterValid && domain.HostingDocumentHash(normalizedBefore.Mounts) == domain.HostingDocumentHash(normalizedCurrent.Mounts), PIDBefore: before.State.Pid, PIDAfter: current.State.Pid, StateBefore: databaseOriginClosedState(before.State.Status), StateAfter: databaseOriginClosedState(current.State.Status), RunningBefore: before.State.Running, RunningAfter: current.State.Running}
+}
+
+// Cleanup has its own bound because testing cancels t.Context before Cleanup.
+// Every CLI action uses the engine's joined process-group command runner. An
+// ambiguous inspect/remove/list outcome remains an error, never inferred absence.
+func databaseOriginRemoveClient(parent context.Context, engine *imageEngine, id, name string, plan domain.HostingApplyPlan) error {
+	if !dockerObjectID.MatchString(id) {
+		return errors.New("private client cleanup identity unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
+	defer cancel()
+	raw, err := engine.ownedVolumeDocker(ctx, 64<<10, "container", "inspect", id, "--format", "{{json .}}")
+	var container struct {
+		ID          string `json:"Id"`
+		Name, Image string
+		Config      struct{ Labels map[string]string }
+		HostConfig  struct{ NetworkMode string }
+	}
+	if err != nil || json.Unmarshal(raw, &container) != nil || !dockerObjectID.MatchString(id) || container.ID != id || container.Name != "/"+name || container.Image != plan.Release.ImageID || container.Config.Labels["io.nerocd.origin-upgrade.client"] != databaseOriginUpgradeOwner || container.HostConfig.NetworkMode != plan.Database.NetworkName {
+		return errors.New("private client cleanup identity unavailable")
+	}
+	raw, err = engine.ownedVolumeDocker(ctx, 1024, "container", "rm", "--force", "--volumes", id)
+	if err != nil || strings.TrimSpace(string(raw)) != id {
+		return errors.New("private client removal not confirmed")
+	}
+	raw, err = engine.ownedVolumeDocker(ctx, 16<<10, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "id="+id)
+	if err != nil || strings.TrimSpace(string(raw)) != "" {
+		return errors.New("private client absence not confirmed")
+	}
+	return nil
+}
+
 func databaseOriginTemporaryClient(f *databaseRuntimeFixture, plan domain.HostingApplyPlan, run func(string)) {
 	f.t.Helper()
 	name := "ncd-origin-client-" + f.recipe.Engine
@@ -417,13 +506,21 @@ func databaseOriginTemporaryClient(f *databaseRuntimeFixture, plan domain.Hostin
 		f.t.Fatal("private client create identity unavailable")
 	}
 	removed := false
-	remove := func() {
-		if !removed {
-			databaseRuntimeDocker(f.t, f.engine, "container", "rm", "--force", id)
-			removed = true
+	remove := func() error {
+		if removed {
+			return nil
 		}
+		if err := databaseOriginRemoveClient(f.t.Context(), f.engine, id, name, plan); err != nil {
+			return err
+		}
+		removed = true
+		return nil
 	}
-	f.t.Cleanup(remove)
+	f.t.Cleanup(func() {
+		if remove() != nil {
+			f.t.Error("private client cleanup not confirmed")
+		}
+	})
 	databaseRuntimeDocker(f.t, f.engine, "container", "start", id)
 	executable, err := os.Executable()
 	if err != nil {
@@ -431,10 +528,10 @@ func databaseOriginTemporaryClient(f *databaseRuntimeFixture, plan domain.Hostin
 	}
 	databaseRuntimeDocker(f.t, f.engine, "cp", executable, id+":/tmp/origin-client.test")
 	run(id)
-	remove()
-	if strings.TrimSpace(string(databaseRuntimeDocker(f.t, f.engine, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "id="+id))) != "" {
-		f.t.Fatal("private client remained attached")
+	if remove() != nil {
+		f.t.Fatal("private client cleanup not confirmed")
 	}
+
 }
 
 func databaseOriginDNSData(f *databaseRuntimeFixture, plan domain.HostingApplyPlan, result domain.HostingResult, stage string, expected map[string][]byte) {
@@ -509,11 +606,31 @@ func databaseOriginUpgradePhysical(t *testing.T, root, kind string) {
 	if err != nil {
 		t.Fatal("source identity unavailable before denials")
 	}
-	sourceHash := domain.HostingDocumentHash(source)
+	var physicalVolume struct {
+		Name, Mountpoint, CreatedAt, Driver, Scope string
+		Labels                                     map[string]string
+		Options                                    map[string]string
+	}
+	if json.Unmarshal(databaseRuntimeDocker(t, f.engine, "volume", "inspect", f.evidence.VolumeName, "--format", "{{json .}}"), &physicalVolume) != nil || physicalVolume.Name != f.evidence.VolumeName || physicalVolume.CreatedAt != f.evidence.CreatedAt || physicalVolume.Driver != "local" || physicalVolume.Scope != "local" || !maps.Equal(physicalVolume.Labels, f.evidence.Labels) || len(physicalVolume.Options) != 0 {
+		t.Fatal("source mount volume identity unavailable")
+	}
+	mounts := databaseOriginMountExpectation{Volume: f.evidence.VolumeName, DataSource: physicalVolume.Mountpoint, DataDestination: f.plan.Storage.MountPath, SecretSource: filepath.Join(f.config.secretRoot, databaseGeneration(opA, f.plan))}
+	normalizedSource, sourceValid := databaseOriginSourceProjection(source, opA, f.plan, record, mounts)
+	if !sourceValid {
+		t.Fatal("source identity or exact mount policy unavailable")
+	}
+	sourceHash := domain.HostingDocumentHash(normalizedSource)
 	assertSource := func() {
 		t.Helper()
 		current, err := f.engine.inspectDatabaseContainer(t.Context(), a.ContainerID)
-		if err != nil || !current.State.Running || domain.HostingDocumentHash(current) != sourceHash {
+		normalizedCurrent, currentValid := databaseOriginSourceProjection(current, opA, f.plan, record, mounts)
+		if err != nil || !currentValid || domain.HostingDocumentHash(normalizedCurrent) != sourceHash {
+			diagnostic := databaseOriginSourceDifference(source, current, normalizedSource, normalizedCurrent, err == nil, sourceValid, currentValid)
+			raw, encodeErr := json.Marshal(diagnostic)
+			if encodeErr != nil {
+				t.Fatal("closed source diagnostics unavailable")
+			}
+			t.Logf("denial_source_difference=%s", raw)
 			t.Fatal("denial changed source writer")
 		}
 		raw, err := os.ReadFile(filepath.Join(f.config.stateRoot, f.plan.Database.NetworkName+".json"))
@@ -648,5 +765,171 @@ func TestHostingDatabaseOriginUpgradeNativeRuntime(t *testing.T) {
 	}
 	for _, kind := range []string{"postgresql", "redis"} {
 		t.Run(kind, func(t *testing.T) { databaseOriginUpgradePhysical(t, root, kind) })
+	}
+}
+
+func TestDatabaseOriginUpgradeSourceComparison(t *testing.T) {
+	f, in, credentials := upgradeFixture(t, "redis")
+	credentials.Close()
+	previous := in.Plan.PreviousHealthy
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	source, err := f.e.inspectDatabaseContainer(ctx, previous.ContainerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounts := databaseOriginMountExpectation{Volume: in.PreviousPlan.Storage.VolumeName, DataSource: filepath.Join(t.TempDir(), "owned-data"), DataDestination: in.PreviousPlan.Storage.MountPath, SecretSource: filepath.Join(f.config.secretRoot, databaseGeneration(previous.OperationID, in.PreviousPlan))}
+	for i := range source.Mounts {
+		if source.Mounts[i].Destination == mounts.DataDestination {
+			source.Mounts[i].Source = mounts.DataSource
+		}
+	}
+	record := databaseNetworkRecord(in.Proof.Origin)
+	normalized, valid := databaseOriginSourceProjection(source, previous.OperationID, in.PreviousPlan, record, mounts)
+	if !valid {
+		t.Fatal("source comparison fixture invalid")
+	}
+	raw, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"same", "mount_order", "duplicate_mount", "foreign_volume", "foreign_data_source", "data_readonly", "secret_writable", "foreign_secret_source", "foreign_driver", "pid", "state", "network", "config", "host_policy"} {
+		t.Run(mode, func(t *testing.T) {
+			var current databaseContainer
+			if json.Unmarshal(raw, &current) != nil {
+				t.Fatal("source clone failed")
+			}
+			current.imageEnvironment = append([]string(nil), source.imageEnvironment...)
+			data, secret := -1, -1
+			for i, m := range current.Mounts {
+				if m.Destination == mounts.DataDestination {
+					data = i
+				}
+				if m.Destination == databaseSecretMount {
+					secret = i
+				}
+			}
+			want := false
+			switch mode {
+			case "same":
+				want = true
+			case "mount_order":
+				current.Mounts[0], current.Mounts[1] = current.Mounts[1], current.Mounts[0]
+				want = true
+			case "duplicate_mount":
+				current.Mounts[secret] = current.Mounts[data]
+			case "foreign_volume":
+				current.Mounts[data].Name = "foreign"
+			case "foreign_data_source":
+				current.Mounts[data].Source = filepath.Join(t.TempDir(), "foreign")
+			case "data_readonly":
+				current.Mounts[data].RW = false
+			case "secret_writable":
+				current.Mounts[secret].RW = true
+			case "foreign_secret_source":
+				current.Mounts[secret].Source = filepath.Join(t.TempDir(), "foreign")
+			case "foreign_driver":
+				current.Mounts[data].Driver = "foreign"
+			case "pid":
+				current.State.Pid++
+			case "state":
+				current.State.Status = "paused"
+			case "network":
+				n := current.NetworkSettings.Networks[in.PreviousPlan.Database.NetworkName]
+				n.IPAddress = "172.28.0.88"
+				current.NetworkSettings.Networks[in.PreviousPlan.Database.NetworkName] = n
+			case "config":
+				current.Config.User = "root"
+			case "host_policy":
+				current.HostConfig.Privileged = true
+			}
+			projected, currentValid := databaseOriginSourceProjection(current, previous.OperationID, in.PreviousPlan, record, mounts)
+			got := currentValid && domain.HostingDocumentHash(projected) == domain.HostingDocumentHash(normalized)
+			if got != want {
+				t.Fatalf("source identity comparison %s accepted=%t want=%t", mode, got, want)
+			}
+			if mode == "mount_order" {
+				difference := databaseOriginSourceDifference(source, current, normalized, projected, true, valid, currentValid)
+				if difference.MountOrderEqual || !difference.ValidatedMountSetEqual || !difference.StateEqual || !difference.NetworkEqual {
+					t.Fatal("mount-order diagnostic flags mismatch")
+				}
+			}
+		})
+	}
+	marker := "SENSITIVE-SOURCE-DIAGNOSTIC"
+	current := source
+	current.Name = marker
+	current.State.Status = marker
+	current.Config.User = marker
+	diagnostic := databaseOriginSourceDifference(source, current, normalized, current, true, true, false)
+	encoded, err := json.Marshal(diagnostic)
+	if err != nil || bytes.Contains(encoded, []byte(marker)) || diagnostic.StateAfter != "unclassified" {
+		t.Fatal("source diagnostic leaked private content")
+	}
+}
+
+func TestDatabaseOriginUpgradeCleanupAfterCancellation(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	image := "sha256:" + strings.Repeat("b", 64)
+	plan := domain.HostingApplyPlan{Release: domain.HostingRelease{ImageID: image}, Database: &domain.HostingDatabasePlan{NetworkName: "private_fixture_network"}}
+	for _, mode := range []string{"canceled_parent", "foreign_label", "wrong_id", "inspect_error", "remove_response_lost", "still_present"} {
+		t.Run(mode, func(t *testing.T) {
+			parent, cancel := context.WithCancel(t.Context())
+			cancel()
+			calls := 0
+			engine := &imageEngine{endpoint: "unix://fixture", configDir: t.TempDir()}
+			engine.command = imageCommandFunc(func(ctx context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+				calls++
+				deadline, ok := ctx.Deadline()
+				if ctx.Err() != nil || !ok || time.Until(deadline) > 10*time.Second || time.Until(deadline) <= 0 {
+					t.Error("cleanup context canceled or unbounded")
+					return nil, errors.New("invalid cleanup context")
+				}
+				a := args[4:]
+				if len(a) > 1 && a[0] == "container" && a[1] == "inspect" {
+					if mode == "inspect_error" {
+						return nil, errors.New("SENSITIVE-CLEANUP-DIAGNOSTIC")
+					}
+					identity, owner := id, databaseOriginUpgradeOwner
+					if mode == "wrong_id" {
+						identity = strings.Repeat("c", 64)
+					}
+					if mode == "foreign_label" {
+						owner = "foreign"
+					}
+					return json.Marshal(map[string]any{"Id": identity, "Name": "/private_client", "Image": image, "Config": map[string]any{"Labels": map[string]string{"io.nerocd.origin-upgrade.client": owner}}, "HostConfig": map[string]any{"NetworkMode": plan.Database.NetworkName}})
+				}
+				if slices.Equal(a, []string{"container", "rm", "--force", "--volumes", id}) {
+					if mode == "remove_response_lost" {
+						return nil, errors.New("SENSITIVE-CLEANUP-DIAGNOSTIC")
+					}
+					return []byte(id + "\n"), nil
+				}
+				if slices.Equal(a, []string{"container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "id=" + id}) {
+					if mode == "still_present" {
+						return []byte(id), nil
+					}
+					return nil, nil
+				}
+				t.Error("unexpected cleanup action")
+				return nil, errors.New("unexpected cleanup action")
+			})
+			err := databaseOriginRemoveClient(parent, engine, id, "private_client", plan)
+			if mode == "canceled_parent" {
+				if err != nil || calls != 3 {
+					t.Fatal("canceled-parent cleanup did not complete")
+				}
+			} else {
+				if err == nil || strings.Contains(err.Error(), "SENSITIVE-CLEANUP-DIAGNOSTIC") {
+					t.Fatal("cleanup failed open or leaked private error")
+				}
+			}
+			if (mode == "foreign_label" || mode == "wrong_id" || mode == "inspect_error") && calls != 1 {
+				t.Fatal("unconfirmed client identity reached removal")
+			}
+			if mode == "remove_response_lost" && calls != 2 {
+				t.Fatal("ambiguous removal was retried or accepted")
+			}
+		})
 	}
 }
