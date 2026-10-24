@@ -4538,6 +4538,13 @@ export interface components {
             path: string;
             timeout_seconds: number;
         };
+        /** @description Private database snapshots carry no HTTP probe. Authenticated engine readiness belongs to the qualified database runtime. */
+        HostingDatabaseReadiness: {
+            /** @enum {string} */
+            path: "";
+            /** @enum {integer} */
+            timeout_seconds: 0;
+        };
         HostingDeploymentInput: {
             storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityInput"];
             /**
@@ -4759,10 +4766,22 @@ export interface components {
             resource_generation: number;
             container_port: number;
             host_port: number;
-            readiness: components["schemas"]["HostingReadiness"];
+            readiness: components["schemas"]["HostingReadiness"] | components["schemas"]["HostingDatabaseReadiness"];
             /** @enum {string} */
             policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "database.private.owned-storage.v1";
-        };
+        } & ({
+            /** @enum {string} */
+            policy_version?: "database.private.owned-storage.v1";
+            /** @enum {integer} */
+            host_port?: 0;
+            /** @enum {integer} */
+            container_port?: 5432 | 6379;
+            readiness?: components["schemas"]["HostingDatabaseReadiness"];
+        } | {
+            /** @enum {string} */
+            policy_version?: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1";
+            readiness?: components["schemas"]["HostingReadiness"];
+        });
         HostingRelease: {
             local_build?: components["schemas"]["HostingLocalBuildArtifact"];
             canonical_image: string;

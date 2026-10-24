@@ -5908,6 +5908,14 @@ components:
           type: integer
           minimum: 1
           maximum: 120
+    HostingDatabaseReadiness:
+      type: object
+      additionalProperties: false
+      description: Private database snapshots carry no HTTP probe. Authenticated engine readiness belongs to the qualified database runtime.
+      required: [path, timeout_seconds]
+      properties:
+        path: {type: string, enum: [""]}
+        timeout_seconds: {type: integer, enum: [0]}
     HostingDeploymentInput:
       type: object
       additionalProperties: false
@@ -6617,6 +6625,30 @@ components:
     HostingSnapshot:
       type: object
       additionalProperties: false
+      oneOf:
+        - required: [database, storage]
+          properties:
+            policy_version: {type: string, enum: [database.private.owned-storage.v1]}
+            host_port: {type: integer, enum: [0]}
+            container_port: {type: integer, enum: [5432, 6379]}
+            readiness: {$ref: '#/components/schemas/HostingDatabaseReadiness'}
+          not:
+            anyOf:
+              - required: [local_build]
+              - required: [runtime_configuration]
+              - required: [storage_route_continuity]
+        - not: {required: [database]}
+          properties:
+            policy_version:
+              type: string
+              enum:
+                - public-image.loopback.v1
+                - public-image.release-ports.v1
+                - local-build.release-ports.v1
+                - public-image.runtime-env.release-ports.v1
+                - local-build.runtime-env.release-ports.v1
+                - public-image.owned-storage.release-ports.v1
+            readiness: {$ref: '#/components/schemas/HostingReadiness'}
       required:
         - resource_id
         - image_reference
@@ -6658,7 +6690,9 @@ components:
         host_port:
           type: integer
         readiness:
-          $ref: '#/components/schemas/HostingReadiness'
+          oneOf:
+            - {$ref: '#/components/schemas/HostingReadiness'}
+            - {$ref: '#/components/schemas/HostingDatabaseReadiness'}
         policy_version:
           type: string
           enum:
