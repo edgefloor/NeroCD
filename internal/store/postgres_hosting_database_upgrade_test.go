@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
 )
@@ -164,7 +165,7 @@ func TestPostgresDatabaseUpgradeLifecycleAndMaintenance(t *testing.T) {
 			}
 			for _, query := range []string{
 				`INSERT INTO hosting_database_deployments SELECT operation_id||'_downgrade',resource_id,binding_id,destination_id,reference,credentials FROM hosting_database_deployments WHERE operation_id=$1`,
-				`INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,created_by) SELECT id||'_downgrade',project_id,resource_id,binding_id,idempotency_key||'_downgrade',request_hash,created_by FROM hosting_operations WHERE id=$1`,
+				`INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,created_by,state) SELECT id||'_downgrade',project_id,resource_id,binding_id,idempotency_key||'_downgrade',request_hash,created_by,'queued' FROM hosting_operations WHERE id=$1`,
 				`INSERT INTO hosting_snapshots(operation_id,body,body_hash) SELECT operation_id||'_downgrade',body,body_hash FROM hosting_snapshots WHERE operation_id=$1`,
 			} {
 				if _, e = tx.Exec(f.ctx, query, sourceID); e != nil {
@@ -176,8 +177,9 @@ func TestPostgresDatabaseUpgradeLifecycleAndMaintenance(t *testing.T) {
 			if cleanupErr := tx.Rollback(f.ctx); cleanupErr != nil {
 				t.Fatal(cleanupErr)
 			}
-			if e == nil {
-				t.Fatal("direct SQL accepted v1 operation against current v2")
+			var denial *pgconn.PgError
+			if !errors.As(e, &denial) || denial.Code != "23514" || denial.Message != "database v1 downgrade denied" {
+				t.Fatal("direct SQL did not reach the v1 downgrade guard", e)
 			}
 			var afterProof []byte
 			if f.db.QueryRow(f.ctx, `SELECT body FROM hosting_apply_plans WHERE operation_id=(SELECT database_operation_id FROM hosting_database_bindings WHERE application_resource_id=$1)`, application.ID).Scan(&afterProof) != nil || string(originalProof) != string(afterProof) {
@@ -341,7 +343,7 @@ func TestPostgresDatabaseUpgradeDirectSQLConstraints(t *testing.T) {
 			defer func() { _ = tx.Rollback(f.ctx) }()
 			for _, query := range []string{
 				`INSERT INTO hosting_database_deployments SELECT operation_id||'_forged',resource_id,binding_id,destination_id,reference,credentials FROM hosting_database_deployments WHERE operation_id=$1`,
-				`INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,created_by) SELECT id||'_forged',project_id,resource_id,binding_id,idempotency_key||'_forged',request_hash,created_by FROM hosting_operations WHERE id=$1`,
+				`INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,created_by,state) SELECT id||'_forged',project_id,resource_id,binding_id,idempotency_key||'_forged',request_hash,created_by,'queued' FROM hosting_operations WHERE id=$1`,
 				`INSERT INTO hosting_snapshots(operation_id,body,body_hash) SELECT operation_id||'_forged',body,body_hash FROM hosting_snapshots WHERE operation_id=$1`,
 				`INSERT INTO audit_events(id,actor_id,action,target_id,metadata,created_at) SELECT a.id||'_forged',a.actor_id,a.action,a.target_id||'_forged',a.metadata,a.created_at FROM audit_events a JOIN hosting_database_network_upgrades u ON u.audit_id=a.id WHERE u.operation_id=$1`,
 			} {
@@ -382,8 +384,19 @@ func TestPostgresDatabaseUpgradeDirectSQLConstraints(t *testing.T) {
 					t.Fatal("forged plan setup failed", e)
 				}
 			}
-			if _, e = tx.Exec(f.ctx, `SET CONSTRAINTS ALL IMMEDIATE`); e == nil {
-				t.Fatal("direct SQL accepted forged upgrade family", mutation)
+			_, e = tx.Exec(f.ctx, `SET CONSTRAINTS ALL IMMEDIATE`)
+			expected := "database network upgrade proof association mismatch"
+			switch mutation {
+			case "previous_healthy":
+				expected = "database network upgrade receipt or audit mismatch"
+			case "v2_without_proof":
+				expected = "database v2 requires immutable upgrade proof"
+			case "nonempty_members", "new_origin":
+				expected = "database upgrade plan substitution"
+			}
+			var denial *pgconn.PgError
+			if !errors.As(e, &denial) || denial.Code != "23514" || denial.Message != expected {
+				t.Fatal("direct SQL did not reach the intended upgrade guard", mutation, e)
 			}
 		})
 	}
@@ -417,6 +430,9 @@ func TestPostgresDatabaseUpgradeRevokedCapabilityBoundaries(t *testing.T) {
 					t.Fatal(e)
 				}
 				f.authority = domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+				if _, e = f.pg.HostingRunnerPlan(f.ctx, f.runner, f.authority); e != nil {
+					t.Fatal("valid preparation authority failed before capability fault", e)
+				}
 			}
 			if stage == "delivery" || stage == "storage" || stage == "receipt" {
 				f = prepareUpgrade(t, f, op)
@@ -493,6 +509,9 @@ func TestPostgresDatabaseUpgradeAuthorityAfterWait(t *testing.T) {
 						t.Fatal(e)
 					}
 					f.authority = domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+					if _, e = f.pg.HostingRunnerPlan(ctx, f.runner, f.authority); e != nil {
+						t.Fatal("valid preparation authority failed before expiry fault", e)
+					}
 				}
 			}
 			blocker, err := f.db.Begin(ctx)
