@@ -34,6 +34,52 @@ PROCPS_PACKAGES = (
     ("skalibs-libs", "2.14.4.0-r0", "f1c33c73d842c98d99033833eaf681819b0f5b51310a6e286c2eb88b9a88ed97"),
     ("utmps-libs", "0.1.3.1-r0", "dbaa260e4328738d51b2ec77fdda9037cdbd67047465de5b2a30dce9a66f8fff"),
 )
+# Run in an isolated, deadline-owned helper process. Its only input URLs are the
+# eight fixed official archive identities above; no repository solver is used.
+PROCPS_DOWNLOAD = r'''
+import hashlib
+from pathlib import Path
+import re
+import ssl
+import sys
+import urllib.request
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("redirect refused")
+
+def download_archive(url, destination, digest):
+    prefix = "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/"
+    filename = Path(destination).name
+    if (url != prefix + filename or not re.fullmatch(r"[a-z0-9][a-z0-9_.+-]*\.apk", filename)
+            or not re.fullmatch(r"[a-f0-9]{64}", digest)):
+        raise ValueError("archive identity refused")
+    context = ssl.create_default_context()
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                        urllib.request.HTTPSHandler(context=context), NoRedirect())
+    with opener.open(url, timeout=10) as response:
+        if response.status != 200 or response.geturl() != url:
+            raise ValueError("response refused")
+        raw = response.read((1 << 20) + 1)
+    if len(raw) > 1 << 20:
+        raise ValueError("archive exceeds byte bound")
+    if hashlib.sha256(raw).hexdigest() != digest:
+        raise ValueError("archive hash mismatch")
+    # Never publish an unverified archive or replace an existing evidence file.
+    with open(destination, "xb") as output:
+        output.write(raw)
+
+if __name__ == "__main__":
+    try:
+        download_archive(*sys.argv[1:])
+    except Exception as error:
+        reasons = {"redirect refused", "archive identity refused", "response refused",
+                   "archive exceeds byte bound", "archive hash mismatch"}
+        reason = str(error) if type(error) is ValueError and str(error) in reasons else "network or filesystem error"
+        print("pinned archive fetch failed: " + reason, file=sys.stderr)
+        sys.exit(1)
+    print("pinned archive hash verified")
+'''
 evidence = Path(tempfile.mkdtemp(prefix="nerocd-database-origin-upgrade-20261024.", dir="/tmp"))
 log = (evidence / "gate.log").open("ab", buffering=0)
 volume_attempted = outer_attempted = False
@@ -304,20 +350,35 @@ def procps_numeric_profile(raw):
 
 
 def provision_procps():
-    # All mutations stay inside the exact disposable daemon. No ambient APK
-    # configuration, repositories, proxies or credentials enter these commands.
+    # Download only fixed HTTPS identities to bounded evidence. The isolated
+    # helper receives no ambient proxy, credentials, TLS or Python configuration.
+    archives = evidence / "apk"
+    archives.mkdir(mode=0o700)
+    deadline = time.monotonic() + 120
+    for name, version, digest in PROCPS_PACKAGES:
+        filename = name + "-" + version + ".apk"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise Failure("procps preflight failed: archive fetch deadline")
+        try:
+            run(["python3", "-I", "-c", PROCPS_DOWNLOAD, PROCPS_REPOSITORY + "/aarch64/" + filename,
+                 str(archives / filename), digest], timeout=min(25, remaining),
+                output="procps-fetch-" + name, env={"PATH": os.environ.get("PATH", os.defpath)})
+        except Failure as error:
+            raise Failure("procps preflight failed: archive fetch " + name, error.status) from error
+    verified_outer(outer)
+    try:
+        docker("cp", str(archives) + "/.", outer + ":/fixture/apk", timeout=30, output="procps-copy")
+    except Failure as error:
+        raise Failure("procps preflight failed: archive copy", error.status) from error
+    # APK mutations stay inside the exact disposable daemon, without ambient
+    # configuration or repositories. Signatures remain independently required.
     environment = ["env", "-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "APK_CONFIG=/dev/null"]
     apk = ["apk", "--arch", "aarch64", "--no-cache", "--repositories-file", "/dev/null", "--keys-dir", "/etc/apk/keys"]
     specs = [name + "=" + version for name, version, _ in PROCPS_PACKAGES]
     filenames = [name + "-" + version + ".apk" for name, version, _ in PROCPS_PACKAGES]
     files = ["/fixture/apk/" + filename for filename in filenames]
-    checksums = "\n".join(digest + "  " + filename for (_, _, digest), filename in zip(PROCPS_PACKAGES, filenames))
     stages = (
-        # Alpine's shell limits each fetched archive/index file before apk runs;
-        # the complete fetch also has a fixed process deadline.
-        ("fetch", ["sh", "-ec", 'ulimit -f 2048; exec "$@"', "procps-fetch", *apk,
-                   "--repository", PROCPS_REPOSITORY, "--timeout", "20", "fetch", "--output", "/fixture/apk", *specs], 120),
-        ("hash", ["sh", "-ec", "cd /fixture/apk\nsha256sum -c <<'NEROCD_PROCPS_HASHES'\n" + checksums + "\nNEROCD_PROCPS_HASHES\n"], 20),
         ("signature", [*apk, "--no-network", "verify", *files], 20),
         ("install", [*apk, "--no-network", "add", *files], 60),
         ("version", [*apk, "--no-network", "info", "--exists", *specs], 20),

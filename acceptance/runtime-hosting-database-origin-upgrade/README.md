@@ -44,7 +44,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go test -c -o /tmp/nerocd-origin-upgrade.t
 
 The fault suite uses harmless CLI stubs, including ambiguous creation responses,
 foreign volumes, malformed identities, build failures, deadlines, signal delivery,
-process-group joining and cleanup failures. Package fetch, hash, signature,
+process-group joining and cleanup failures. Archive fetch, size, hash, signature,
 installation and version failures must clean the exact owned outer and volume.
 Unsupported, malformed or oversized numeric process output must fail before the
 database test. These checks do not contact Docker or install packages.
@@ -92,11 +92,21 @@ identities. Its versions are:
 | skalibs-libs | 2.14.4.0-r0 |
 | musl | 1.2.5-r24 |
 
-Only `https://dl-cdn.alpinelinux.org/alpine/v3.23/main` supplies packages.
-Fetching uses exact version constraints, a clean environment, an empty repository
-configuration, the pinned image's `/etc/apk/keys`, a per-file shell size limit and
-a 120-second deadline. SHA-256 verification precedes explicit `apk verify` and
-offline installation of the eight local archives. Signature trust is required;
+Only the eight fixed archive URLs under
+`https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/` supply packages.
+An isolated Python helper downloads each archive into the host's new evidence
+directory and verifies its SHA-256 before publishing the file. Its environment
+contains only the trusted tool PATH; Python configuration, proxy and credential
+environment variables are excluded. The helper explicitly disables proxies and
+redirects and requires HTTPS certificate and hostname verification. Each archive
+is limited to one MiB, each helper to 25 seconds, and all downloads share a
+120-second budget. The existing process-group runner bounds and joins a stalled
+helper. Downloads do not use an APK repository index or package solver.
+
+After all eight hashes pass, the launcher copies the archives into the exact
+owned daemon. Explicit `apk verify` uses the pinned image's `/etc/apk/keys` before
+offline installation of the eight local archives. APK commands use a clean
+environment and an empty repository configuration. Signature trust is required;
 the launcher does not permit untrusted packages or disable certificate checks.
 An exact installed-version check records the closure, including musl, before the
 bounded PID/UID-only probe. Every provisioning stage must succeed before the
@@ -111,7 +121,8 @@ the fixed profile described above.
 
 Evidence is bounded under a new `/tmp/nerocd-database-origin-upgrade-20261024.*`
 directory: candidate/tree/source blobs, binary hash/build info, daemon profiles,
-package fetch/hash/signature/install/version output, the installed closure and
+verified downloaded archives, per-archive fetch output,
+signature/install/version output, the installed closure and
 numeric PID/UID probe, physical test output, before/after inventories, process
 absence and cleanup result.
 It verifies exact outer labels, image/configuration and the complete observed data
