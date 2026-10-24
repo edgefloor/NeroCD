@@ -5,6 +5,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 test.use({ trace: "off", screenshot: "off", video: "off" });
 type Metadata = { origin: string; engine: string; project_id: string; environment: string; application_resource_id: string; application_name: string; database_resource_id: string; foreign_resource_id: string; control_path: string };
 type Progress = { phase: string; revision: number; operation_id: string };
+type PublicRouteProof = { route_id: string; http_ready: boolean; https_ready: boolean; certificate_status: string; selected_release_operation_id: string; https_verified: boolean };
 const raw = process.env.NEROCD_DATABASE_CONNECTION_BROWSER_META;
 const meta = raw ? JSON.parse(raw) as Metadata : undefined;
 const headers = (m: Metadata) => ({ Origin: m.origin, "X-NeroCD-CSRF": "1" });
@@ -76,19 +77,38 @@ async function settled(connection: Locator, state: Progress) {
 async function proof(page: Page, m: Metadata, state: Progress, count: number) {
   const response = await request(page, "get", m.control_path + "/proof/" + state.operation_id, { headers: headers(m) });
   expect(response.status()).toBe(200);
-  const body = await response.json() as { verified: boolean; container_id: string; record_count: number };
+  const body = await response.json() as { verified: boolean; container_id: string; record_count: number; route?: PublicRouteProof };
   expect(body.verified).toBe(true); expect(body.container_id).toMatch(/^[a-f0-9]{64}$/); expect(body.record_count).toBe(count);
-  return body.container_id;
+  if (body.route) {
+    expect(body.route.route_id).not.toBe(""); expect(body.route.http_ready).toBe(true); expect(body.route.https_ready).toBe(true);
+    expect(body.route.certificate_status).toBe("trusted"); expect(body.route.https_verified).toBe(true);
+    expect(body.route.selected_release_operation_id).toBe(state.operation_id);
+  }
+  return body;
+}
+async function continueRoutes(connection: Locator, enabled: boolean) {
+  if (!enabled) return;
+  const checkbox = connection.getByRole("checkbox", { name: "Continue all reviewed public routes when redeploying the connected application.", exact: true });
+  await expect(checkbox).toBeVisible(); await checkbox.focus(); await checkbox.press("Space"); await expect(checkbox).toBeChecked();
 }
 async function admit(page: Page, connection: Locator, name: string, path: string) {
   const form = connection.getByRole("form", { name: "Review database connection request", exact: true });
-  await form.getByRole("checkbox").focus(); await page.keyboard.press("Space");
-  await expect(form.getByRole("checkbox")).toBeChecked();
+  const approval = form.getByRole("checkbox", { name: "I reviewed the selected database and application settings and approve this request.", exact: true });
+  await approval.focus(); await page.keyboard.press("Space");
+  await expect(approval).toBeChecked();
   const response = page.waitForResponse((r) => new URL(r.url()).pathname === path && r.request().method() === "POST", { timeout: 180_000 });
   const button = connection.getByRole("button", { name, exact: true });
   await expect(button).toBeEnabled(); await button.focus(); await page.keyboard.press("Enter");
   const received = await response; expect(received.status()).toBe(202);
-  return received.request().postDataJSON() as Record<string, unknown>;
+  const submitted = received.request().postDataJSON() as Record<string, unknown>;
+  if (submitted.application_database_route_continuity) {
+    const accepted = await received.json() as { id: string };
+    expect(accepted.id).not.toBe("");
+    const progress = connection.getByRole("region", { name: "Connected application deployment progress", exact: true });
+    await expect(progress).toBeVisible();
+    await expect(progress).toContainText(`Application deployment ${accepted.id}:`);
+  }
+  return submitted;
 }
 
 test("live owner connects, redeploys and maintains a retained database; viewer only inspects", async ({ page, browser }, info) => {
@@ -110,7 +130,7 @@ test("live owner connects, redeploys and maintains a retained database; viewer o
     const maintenancePath = `/api/v1/resources/${m.database_resource_id}/database/maintenance`;
     const connectBody = await admit(page, connection, "Connect database and deploy application", connectPath);
     const first = await progress(page, m, "redeploy"); await settled(connection, first);
-    const a = await proof(page, m, first, 1);
+    const firstProof = await proof(page, m, first, 1); const a = firstProof.container_id; const routes = !!firstProof.route;
     for (const width of [320, 390, 430, 1440]) {
       await page.setViewportSize({ width, height: 1000 });
       await expect(connection.getByRole("button", { name: "Redeploy connected application", exact: true })).toBeVisible();
@@ -118,15 +138,18 @@ test("live owner connects, redeploys and maintains a retained database; viewer o
       expect(await connection.evaluate((node) => { const bounds = node.getBoundingClientRect(); return [...node.querySelectorAll("button,input,select")].every((control) => { const box = control.getBoundingClientRect(); return box.left >= bounds.left && box.right <= bounds.right + 1; }); })).toBe(true);
       await connection.screenshot({ path: info.outputPath(`live-${m.engine}-connection-${width}.png`), animations: "disabled" });
     }
+    await continueRoutes(connection, routes);
     const deployBody = await admit(page, connection, "Redeploy connected application", deployPath);
+    if (routes) expect(deployBody.application_database_route_continuity).toBeTruthy();
     const second = await progress(page, m, "maintenance"); await settled(connection, second);
-    const b = await proof(page, m, second, 2); expect(b).not.toBe(a);
+    const secondProof = await proof(page, m, second, 2); const b = secondProof.container_id; expect(b).not.toBe(a); expect(!!secondProof.route).toBe(routes);
     const maintenanceBody = await admit(page, connection, "Redeploy connected database", maintenancePath);
     const maintained = await progress(page, m, "replay"); await settled(connection, maintained);
-    expect(await proof(page, m, maintained, 3)).toBe(b);
+    expect((await proof(page, m, maintained, 3)).container_id).toBe(b);
+    await continueRoutes(connection, routes);
     await admit(page, connection, "Redeploy connected application", deployPath);
     const final = await progress(page, m, "finish"); await settled(connection, final);
-    const c = await proof(page, m, final, 4); expect(c).not.toBe(b);
+    const finalProof = await proof(page, m, final, 4); const c = finalProof.container_id; expect(c).not.toBe(b); expect(!!finalProof.route).toBe(routes);
     const viewerContext = await browser.newContext({ baseURL: m.origin, viewport: { width: 390, height: 1000 } });
     try {
       const viewer = await viewerContext.newPage(); await login(viewer, true); const read = await panel(viewer, m);

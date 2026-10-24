@@ -269,6 +269,11 @@ type databaseRunnerFixture struct {
 	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
 	upgrade                               bool
 	connected                             bool
+	routes                                *applicationDatabaseRouteFixture
+	routeYield                            atomic.Pointer[applicationDatabaseRouteYieldWire]
+	routeProxyComplete                    atomic.Pointer[applicationDatabaseRouteYieldWire]
+	serverID                              string
+	adminToken                            string
 	upgradeComplete                       atomic.Pointer[databaseUpgradeCompleteWire]
 	t                                     *testing.T
 	server                                *httptest.Server
@@ -389,6 +394,12 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 		if wire := f.capture.Load(); wire != nil && wire.serve(w, r, handler) {
 			return
 		}
+		if wire := f.routeYield.Load(); wire != nil && wire.serve(w, r, handler) {
+			return
+		}
+		if wire := f.routeProxyComplete.Load(); wire != nil && wire.serve(w, r, handler) {
+			return
+		}
 		if r.URL.Path == "/api/v1/runners/claim" {
 			f.claimRequests.Add(1)
 		}
@@ -457,6 +468,7 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 		Token string `json:"token"`
 	}](f, "", "POST", "/api/v1/sessions", map[string]string{"email": "admin@example.local", "password": "admin"}, 201)
 	f.token = login.Token
+	f.adminToken = login.Token
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
 	if capture {
 		principal, err := service.AuthenticateSessionToken(t.Context(), f.token)
@@ -471,6 +483,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 	}
 	if connected {
 		caps = append(caps, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingApplicationDatabaseCapability, domain.HostingDatabaseMaintenanceCapability)
+		if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
+			caps = append(caps, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, "hosting_application_database_route_continuity_v1")
+		}
 	}
 	enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, 201)
 	credential := "ncr_database_runner_fixture_only"
@@ -481,6 +496,7 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 	f.protected = append(f.protected, []byte(credential), []byte(f.token), []byte(enrollment.Token))
 	target := databaseRunnerJSON[app.ServerDetail](f, f.token, "POST", "/api/v1/servers", app.ServerInput{Name: "database runner acceptance", RunnerID: enrolled.Runner.ID}, 201)
 	f.destination = target.Destination.ID
+	f.serverID = target.Server.ID
 	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/destinations/"+f.destination+"/project-grants", app.DestinationProjectInput{ProjectID: "proj_platform"}, 201)
 	env := databaseRunnerJSON[domain.ProjectEnvironment](f, f.token, "POST", "/api/v1/project-environments", app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "database runner acceptance"}, 201)
 	f.environment = env.ID
@@ -546,6 +562,9 @@ func databaseRunnerArguments(f *databaseRunnerFixture) []string {
 	}
 	if f.connected {
 		args = append(args, "--hosting-database-network-capture", "--hosting-runtime-env", "--hosting-application-database", "--hosting-database-membership-maintenance")
+		if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
+			args = append(args, "--proxy-state-root", filepath.Join(f.root, "proxy"), "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion, "--proxy-verified-switch", "--hosting-application-database-route-continuity")
+		}
 	}
 	return args
 }

@@ -392,14 +392,54 @@ func httpDatabaseHandler(record func(context.Context, string, string, string) (s
 	})
 }
 
+func httpDatabaseInstanceHandler(instance string, application http.Handler) (http.Handler, error) {
+	if len(instance) != 12 || strings.Trim(instance, "0123456789abcdef") != "" || application == nil {
+		return nil, errors.New("fixture container identity unavailable")
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-NeroCD-Fixture-Instance", instance)
+		application.ServeHTTP(w, r)
+	}), nil
+}
+
+func httpFixtureRecord(getenv func(string) string) (func(context.Context, string, string, string) (string, error), error) {
+	if getenv("FIXTURE_DATABASE_ENGINE") == "unrelated" {
+		if getenv("FIXTURE_DATABASE_NAMESPACE") != "route_isolation" {
+			return nil, errors.New("unrelated fixture namespace invalid")
+		}
+		return func(_ context.Context, action, key, _ string) (string, error) {
+			if action == "ready" {
+				return "ready", nil
+			}
+			if action == "get" && key == "unrelated" {
+				return "unrelated_route", nil
+			}
+			return "", errors.New("unrelated fixture is read only")
+		}, nil
+	}
+	cfg, err := httpDatabaseEnvironment(getenv)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.record, nil
+}
+
 func serve() error {
-	cfg, err := httpDatabaseEnvironment(os.Getenv)
+	record, err := httpFixtureRecord(os.Getenv)
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	server := &http.Server{Addr: ":8080", Handler: httpDatabaseHandler(cfg.record), ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 6 * time.Second, WriteTimeout: 6 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
+	instance, err := os.Hostname()
+	if err != nil {
+		return errors.New("fixture container identity unavailable")
+	}
+	application, err := httpDatabaseInstanceHandler(instance, httpDatabaseHandler(record))
+	if err != nil {
+		return err
+	}
+	server := &http.Server{Addr: ":8080", Handler: application, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 6 * time.Second, WriteTimeout: 6 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	select {

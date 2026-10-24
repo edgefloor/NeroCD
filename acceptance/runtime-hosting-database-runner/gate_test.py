@@ -163,6 +163,15 @@ elif tool == "node":
     print("DATABASE_CONNECTION_BROWSER_PASS postgresql")
     if case != "browser_missing_result":
         print("DATABASE_CONNECTION_BROWSER_PASS redis")
+    if "NEROCD_DATABASE_CONNECTION_ROUTES=1" in args:
+        print("DATABASE_CONNECTION_ROUTE_PASS postgresql")
+        if case != "route_missing_result": print("DATABASE_CONNECTION_ROUTE_PASS redis")
+        print("--- PASS: TestHostingApplicationDatabaseRouteFailuresCompiledRunner (0.01s)")
+        for engine in ("postgresql", "redis"):
+            for fault in ("readiness", "cutover"):
+                if case != "route_missing_failure": print("DATABASE_CONNECTION_ROUTE_FAILURE_PASS " + engine + " " + fault)
+            for phase in ("success", "readiness", "cutover"):
+                if case != "route_missing_capacity": print("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " " + phase)
     if case == "browser_driver_failure":
         sys.exit(39)
 elif tool == "go":
@@ -329,6 +338,16 @@ elif tool == "docker":
                 print("--- SKIP: TestHostingApplicationDatabaseCompiledRunner (0.00s)")
             if case == "upgrade_skipped_after_pass":
                 print("--- SKIP: TestHostingDatabaseUpgradeCompiledRunner (0.00s)")
+            if "NEROCD_DATABASE_CONNECTION_ROUTES=1" in args:
+                print("DATABASE_CONNECTION_ROUTE_PASS postgresql")
+                if case != "route_missing_result": print("DATABASE_CONNECTION_ROUTE_PASS redis")
+                if case == "route_duplicate_result": print("DATABASE_CONNECTION_ROUTE_PASS redis")
+                if case != "route_missing_failure_test": print("--- PASS: TestHostingApplicationDatabaseRouteFailuresCompiledRunner (0.01s)")
+                for engine in ("postgresql", "redis"):
+                    for fault in ("readiness", "cutover"):
+                        if case != "route_missing_failure": print("DATABASE_CONNECTION_ROUTE_FAILURE_PASS " + engine + " " + fault)
+                    for phase in ("success", "readiness", "cutover"):
+                        if case != "route_missing_capacity": print("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " " + phase)
         elif args[1:3] == [identity, "docker"]:
             if "container" in args and "inspect" in args and "e" * 64 in args:
                 print(json.dumps(dict(Id="e" * 64, Name="/"+owner+"-registry", Config=dict(Image="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",Labels={label:"foreign" if case=="registry_foreign" else owner}), State=dict(Running=True), HostConfig=dict(Privileged=False,PortBindings={"5000/tcp":[dict(HostIp="0.0.0.0" if case=="registry_public" else "127.0.0.1",HostPort="")]}), NetworkSettings=dict(Ports={"5000/tcp":[dict(HostIp="127.0.0.1",HostPort="35001")]}))))
@@ -354,7 +373,7 @@ else:
 
 
 class GateTest(unittest.TestCase):
-    def run_gate(self, case, expected, delivered_signal=None, browser=False):
+    def run_gate(self, case, expected, delivered_signal=None, browser=False, routes=False):
         self.installed_closure = None
         gate = Path(os.environ.get("DATABASE_GATE_UNDER_TEST", Path(__file__).with_name("gate.sh"))).resolve()
         with tempfile.TemporaryDirectory(prefix="nerocd-database-gate-test-") as temporary:
@@ -370,6 +389,9 @@ class GateTest(unittest.TestCase):
             client.mkdir(parents=True)
             (client / "Dockerfile").write_text("FROM scratch\nCOPY client /client\n")
             (client / "Dockerfile.http").write_text("FROM scratch\nCOPY client /client\nENTRYPOINT [\"/client\",\"serve\"]\n")
+            proxy = root / "acceptance/runtime-proxy-control"
+            proxy.mkdir(parents=True)
+            (proxy / "pebble.json").write_text('{"pebble":{"listenAddress":"127.0.0.1:14000"}}\n')
             initial = {}
             if case == "preexisting_foreign":
                 initial["volume"] = {"Name": VOLUME, "Labels": {LABEL: "foreign"}}
@@ -384,7 +406,7 @@ class GateTest(unittest.TestCase):
                 executable.write_text("#!" + sys.executable + "\n" + STUB)
                 executable.chmod(0o700)
             environment = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"], TMPDIR=str(root),
-                               DATABASE_GATE_TEST_ROOT=str(root), DATABASE_GATE_TEST_CASE=case, NEROCD_DATABASE_CONNECTION_BROWSER="bad" if case=="browser_bad_mode" else "1" if browser else "0")
+                               DATABASE_GATE_TEST_ROOT=str(root), DATABASE_GATE_TEST_CASE=case, NEROCD_DATABASE_CONNECTION_BROWSER="bad" if case=="browser_bad_mode" else "1" if browser else "0", NEROCD_DATABASE_CONNECTION_ROUTES="bad" if case=="route_bad_mode" else "1" if routes else "0")
             process = subprocess.Popen(["bash", str(gate)], cwd=root, env=environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, start_new_session=True)
@@ -696,6 +718,32 @@ class GateTest(unittest.TestCase):
         self.assertLess(build,compile)
         driver=next(args for args in self.all_commands if args[:1]==["acceptance/runtime-hosting-database-runner/browser-driver.mjs"])
         self.assertEqual(driver[1],"http://127.0.0.1:35002")
+
+    def test_trusted_route_profile_uses_existing_contained_tls_fixture(self):
+        state, commands, output = self.run_gate("route_success", 0, routes=True)
+        self.assertEqual(state, {})
+        builds = [args for args in self.all_commands if args[:2] == ["test", "-c"] or args[:1] == ["build"]]
+        for args in builds[:2]:
+            self.assertIn("nerocd_proxy_fixture", args)
+        self.assertNotIn("nerocd_proxy_fixture", builds[2])
+        pebble = "ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199"
+        self.assertIn(["exec", IDENTITY, "docker", "--host", "unix:///var/run/docker.sock", "pull", pebble], commands)
+        self.assertIn(["cp", "acceptance/runtime-proxy-control/pebble.json", IDENTITY+":/fixture/pebble.json"], commands)
+        outer = next(args for args in commands if args[:2] == ["container", "create"])
+        self.assertNotIn("--publish", outer)
+        runtime = next(args for args in commands if "/fixture/api.test" in args)
+        self.assertIn("NEROCD_DATABASE_CONNECTION_ROUTES=1", runtime)
+        self.assertIn("-test.failfast", runtime)
+        self.assertIn("DATABASE_CONNECTION_ROUTE_PASS postgresql", output)
+        self.assertIn("DATABASE_CONNECTION_ROUTE_PASS redis", output)
+
+    def test_trusted_route_results_and_explicit_mode_are_required(self):
+        for case in ("route_missing_result", "route_duplicate_result", "route_missing_failure", "route_missing_failure_test", "route_missing_capacity", "route_bad_mode"):
+            with self.subTest(case=case):
+                state, commands, _ = self.run_gate(case, 1, routes=True)
+                self.assertEqual(state, {})
+                if case == "route_bad_mode": self.assert_no_creation(commands)
+
 
     def test_browser_profile_rejects_extra_or_public_ports(self):
         for case in ("browser_public","browser_extra"):

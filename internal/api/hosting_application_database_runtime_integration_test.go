@@ -302,7 +302,13 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 		t.Fatal("owned registry HTTP image digest required")
 	}
 	for i, engine := range []string{"postgresql", "redis"} {
-		t.Run(engine, func(t *testing.T) {
+		if !t.Run(engine, func(t *testing.T) {
+			var routeTrust *applicationDatabaseRouteFixture
+			if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
+				applicationDatabaseRouteCapacity(t)
+				roots, public := newApplicationDatabaseRouteTrust(t)
+				routeTrust = &applicationDatabaseRouteFixture{roots: roots, publicRoot: public}
+			}
 			f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
 			view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseCreateInput(engine, f.environment, f.destination), 201)
 			source := f.await(f.deploy(view, "connected_source_v1").ID)
@@ -362,14 +368,27 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			}
 			f.appRecord(a, "PUT", "a", "retained_a")
 			f.appRecord(a, "GET", "a", "retained_a")
+			if routeTrust != nil {
+				f.initialApplicationDatabaseRoute(a, engine, routeTrust.roots, routeTrust.publicRoot)
+			}
 			deployment.ExpectedRuntimeConfigurationGeneration = a.Snapshot.RuntimeConfiguration.Generation
 			deployment.IdempotencyKey = "connected_b"
+			if f.routes != nil {
+				f.stop()
+			}
 			var bRequest domain.HostingOperation
 			if browser != nil {
 				browser.advance("redeploy", active.MembershipRevision, a, map[string]string{"a": "retained_a"})
 				bRequest = browser.await("redeploy").Operation
 			} else {
-				bRequest = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", deployment, 202)
+				var input any = deployment
+				if f.routes != nil {
+					input = f.routes.deployment(deployment)
+				}
+				bRequest = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", input, 202)
+			}
+			if f.routes != nil {
+				f.routes.recoverYield(bRequest, a, active.MembershipRevision)
 			}
 			b := f.awaitConnectionOperation(bRequest.ID)
 			if b.Result.ContainerID == a.Result.ContainerID || b.Result.PreviousContainerID != a.Result.ContainerID {
@@ -379,6 +398,12 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.exactMembers(b, upgrade)
 			f.appRecord(b, "GET", "a", "retained_a")
 			f.appRecord(b, "PUT", "b", "retained_b")
+			if f.routes != nil {
+				f.routes.assertSelected(b)
+				f.routes.record(t.Context(), b, "GET", "https_a", "retained_https_a")
+				f.routes.record(t.Context(), b, "PUT", "https_b", "retained_https_b")
+				f.routes.record(t.Context(), b, "GET", "https_b", "retained_https_b")
+			}
 			active = f.connection(resource.ID)
 			maintain := domain.HostingDatabaseMaintenanceInput{ExpectedGeneration: view.Resource.Generation, ExpectedMembershipRevision: active.MembershipRevision, IdempotencyKey: "connected_database_replacement"}
 			var maintenanceRequest domain.HostingOperation
@@ -400,6 +425,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.appRecord(b, "GET", "a", "retained_a")
 			f.appRecord(b, "GET", "b", "retained_b")
 			f.appRecord(b, "PUT", "db_replaced", "retained_database_replacement")
+			if f.routes != nil {
+				f.routes.record(t.Context(), b, "GET", "db_replaced", "retained_database_replacement")
+			}
 			f.stop()
 			deployment.IdempotencyKey = "connected_c"
 			var third domain.HostingOperation
@@ -407,7 +435,11 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				browser.advance("replay", active.MembershipRevision, b, map[string]string{"a": "retained_a", "b": "retained_b", "db_replaced": "retained_database_replacement"})
 				third = browser.await("replay").Operation
 			} else {
-				third = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", deployment, 202)
+				var input any = deployment
+				if f.routes != nil {
+					input = f.routes.deployment(deployment)
+				}
+				third = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", input, 202)
 			}
 			wire := newDatabaseUpgradeCompleteWire(third.ID)
 			f.upgradeComplete.Store(wire)
@@ -509,6 +541,17 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.appRecord(c, "GET", "db_replaced", "retained_database_replacement")
 			f.appRecord(c, "PUT", "c", "retained_c")
 			f.appRecord(c, "GET", "c", "retained_c")
+			if f.routes != nil {
+				f.routes.assertSelected(c)
+				for key, value := range map[string]string{"https_a": "retained_https_a", "https_b": "retained_https_b", "a": "retained_a", "b": "retained_b", "db_replaced": "retained_database_replacement", "c": "retained_c"} {
+					f.routes.record(t.Context(), c, "GET", key, value)
+				}
+				var retirements int
+				if f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_application_database_retirements WHERE operation_id IN ($1,$2)`, b.ID, c.ID).Scan(&retirements) != nil || retirements != 2 {
+					t.Fatal("route continuations did not retire each exact predecessor once")
+				}
+				fmt.Println("DATABASE_CONNECTION_ROUTE_PASS " + engine)
+			}
 			if f.credentialMetadata(view) != credentials || databaseUpgradeAuthorityLogCheck(f.logs.snapshot(), original.HostingAuthority, f.protected) != nil {
 				t.Fatal("credential identity or output redaction failed")
 			}
@@ -535,7 +578,13 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				t.Fatal("final application port proof did not close")
 			}
 			t.Logf("connected HTTP app verified engine=%s capture=%s upgrade=%s app=%s database=%s revision=%d", engine, connection.CaptureID, upgrade.ID, c.ID, maintained.ID, active.MembershipRevision)
-		})
+		}) {
+			return
+		}
+		if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
+			applicationDatabaseRouteCapacity(t)
+			fmt.Println("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " success")
+		}
 	}
 }
 
@@ -749,6 +798,12 @@ type applicationDatabaseBrowserSeen struct {
 type applicationDatabaseBrowserProof struct {
 	Operation domain.HostingOperation
 	Records   map[string]string
+	Route     *applicationDatabaseBrowserRouteProof
+}
+
+type applicationDatabaseBrowserRouteProof struct {
+	Fixture *applicationDatabaseRouteFixture
+	Route   domain.HostingRoute
 }
 type applicationDatabaseBrowser struct {
 	f               *databaseRunnerFixture
@@ -956,6 +1011,13 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 	if err != nil || administrator.ID == "" || administrator.ID == "usr_bootstrap" || administrator.ID == "usr_viewer" || administrator.GlobalRole != domain.RoleSystemAdmin {
 		f.t.Fatal("browser installation bootstrap did not create a distinct administrator")
 	}
+	if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
+		administratorSession := databaseRunnerJSON[struct {
+			Token string `json:"token"`
+		}](f, "", "POST", "/api/v1/sessions", map[string]string{"email": "database-bootstrap@example.local", "password": bootstrapPassword}, 201)
+		f.adminToken = administratorSession.Token
+		f.protected = append(f.protected, []byte(administratorSession.Token))
+	}
 	// Public setup establishes explicit ordinary owner/viewer memberships.
 	for _, member := range []app.ProjectMemberInput{{ProjectID: resource.ProjectID, Email: "admin@example.local", Role: "owner"}, {ProjectID: resource.ProjectID, Email: "viewer@example.local", Role: "viewer"}} {
 		saved := databaseRunnerJSON[domain.ProjectMember](f, f.token, "POST", "/api/v1/project-members", member, 200)
@@ -1022,8 +1084,16 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 					w.WriteHeader(502)
 					return
 				}
+				if proof.Route != nil && applicationDatabaseRouteHTTPRecord(r.Context(), proof.Route.Fixture.roots, proof.Route.Fixture.hostname, proof.Route.Route.Certificate.Fingerprint, proof.Operation, "GET", key, value) != nil {
+					w.WriteHeader(502)
+					return
+				}
 			}
-			writeJSON(w, 200, map[string]any{"verified": true, "container_id": proof.Operation.Result.ContainerID, "record_count": len(proof.Records)})
+			response := map[string]any{"verified": true, "container_id": proof.Operation.Result.ContainerID, "record_count": len(proof.Records)}
+			if proof.Route != nil {
+				response["route"] = map[string]any{"route_id": proof.Route.Route.ID, "http_ready": proof.Route.Route.HTTPReady, "https_ready": proof.Route.Route.HTTPSReady, "certificate_status": proof.Route.Route.Certificate.Status, "selected_release_operation_id": proof.Route.Route.SelectedReleaseOperationID, "https_verified": true}
+			}
+			writeJSON(w, 200, response)
 			return
 		}
 		if r.Method == "POST" && r.URL.Path == prefix+"/finish" {
@@ -1133,6 +1203,11 @@ func (b *applicationDatabaseBrowser) advance(phase string, revision int64, op do
 	defer b.mu.Unlock()
 	b.phase, b.revision, b.operation = phase, revision, op.ID
 	b.proofs[op.ID] = applicationDatabaseBrowserProof{Operation: op, Records: records}
+	if b.f.routes != nil {
+		proof := b.proofs[op.ID]
+		proof.Route = &applicationDatabaseBrowserRouteProof{Fixture: b.f.routes, Route: b.f.routes.route}
+		b.proofs[op.ID] = proof
+	}
 }
 func (b *applicationDatabaseBrowser) awaitFinished() {
 	b.f.t.Helper()

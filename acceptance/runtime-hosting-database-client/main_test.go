@@ -81,6 +81,60 @@ func TestHTTPDatabaseHandlerRequestsAndBounds(t *testing.T) {
 	}
 }
 
+func TestHTTPDatabaseInstanceIdentity(t *testing.T) {
+	for _, instance := range []string{"", "foreign-name", strings.Repeat("a", 64), "abcdef01234g"} {
+		if _, err := httpDatabaseInstanceHandler(instance, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})); err == nil {
+			t.Fatal("unqualified container identity accepted")
+		}
+	}
+	for _, instance := range []string{"abcdef012345", "012345abcdef"} {
+		handler, err := httpDatabaseInstanceHandler(instance, httpDatabaseHandler(func(context.Context, string, string, string) (string, error) { return "retained_a", nil }))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", "/records/a", nil))
+		if response.Code != 200 || response.Body.String() != "retained_a" || response.Header().Get("X-NeroCD-Fixture-Instance") != instance {
+			t.Fatal("instance identity changed application response")
+		}
+	}
+}
+
+func TestUnrelatedHTTPFixtureRejectsDatabaseAccessAndWrites(t *testing.T) {
+	getenv := func(name string) string {
+		switch name {
+		case "FIXTURE_DATABASE_ENGINE":
+			return "unrelated"
+		case "FIXTURE_DATABASE_NAMESPACE":
+			return "route_isolation"
+		default:
+			t.Fatal("unrelated fixture read database configuration")
+			return ""
+		}
+	}
+	record, err := httpFixtureRecord(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		action, key, want string
+		ok                bool
+	}{{"ready", "", "ready", true}, {"get", "unrelated", "unrelated_route", true}, {"put", "unrelated", "", false}, {"get", "foreign", "", false}} {
+		got, err := record(t.Context(), test.action, test.key, "attempted_write")
+		if got != test.want || (err == nil) != test.ok {
+			t.Fatal("unrelated fixture escaped its read-only scope")
+		}
+	}
+	if _, err := httpFixtureRecord(func(name string) string {
+		if name == "FIXTURE_DATABASE_ENGINE" {
+			return "unrelated"
+		}
+		return "foreign"
+	}); err == nil {
+		t.Fatal("unrelated namespace accepted")
+	}
+}
+
 func TestHTTPDatabaseHandlerCancellationAndResponseBounds(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

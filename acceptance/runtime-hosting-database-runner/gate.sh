@@ -88,6 +88,8 @@ outer = ""
 head = tree = None
 browser_origin = ""
 browser_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_BROWSER", "0")
+routes_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_ROUTES", "0")
+PEBBLE_IMAGE = "ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199"
 
 
 class Failure(Exception):
@@ -381,6 +383,8 @@ def main():
     global head, tree, image, volume_attempted, outer_attempted, outer
     if browser_mode not in ("0", "1"):
         raise Failure("invalid browser mode")
+    if routes_mode not in ("0", "1"):
+        raise Failure("invalid route mode")
     if not Path("internal/api/hosting_database_runtime_integration_test.go").is_file():
         raise Failure("run from the assigned repository root")
     if run(["git", "status", "--porcelain"]).strip():
@@ -401,6 +405,14 @@ def main():
          "internal/api/hosting_database_capture_runtime_integration_test.go",
          "internal/api/hosting_database_upgrade_runtime_integration_test.go",
          "internal/api/hosting_application_database_runtime_integration_test.go",
+         "internal/api/hosting_application_database_route_runtime_integration_test.go",
+         "acceptance/runtime-proxy-control/pebble.json", "internal/runnerruntime/hosting_proxy_engine_fixture.go",
+         "db/migrations/0073_hosting_application_database_route_continuity.sql", "internal/domain/hosting_application_database_route_continuity.go",
+         "internal/hostingjobs/application_database_route.go", "internal/store/postgres_hosting_application_database_route_continuity.go",
+         "internal/store/postgres_hosting_database_connection_authority.go", "internal/store/postgres_hosting_database_connection_complete.go",
+         "internal/store/postgres_hosting_database_connection_execution.go", "internal/store/postgres_hosting_database_connection_runner.go",
+         "internal/store/postgres_hosting_proxy.go", "internal/store/postgres_hosting_route_switch.go", "internal/hostingjobs/jobs.go",
+         "internal/domain/hosting_route_switch.go", "internal/api/routes.go", "openapi.yaml", "web/app/src/api/generated.ts",
          "internal/api/hosting_database_connection*.go", "web/app/src/pages/ResourceDatabaseConnections.tsx",
          "web/app/tests/browser/database-connection-live.spec.ts", "web/app/src/api/hosting-database-connections.ts", "web/app/package.json", "web/app/bun.lock",
          "internal/app/hosting_database_connection_service.go", "internal/store/postgres_hosting_database_connection*.go",
@@ -444,8 +456,9 @@ def main():
         manifest = [{"path": str(path.relative_to("web/dist")), "size": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in files]
         (evidence / "browser-ui-manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
     environment = dict(os.environ, GOOS="linux", GOARCH="arm64", CGO_ENABLED="0")
-    run(["go", "test", "-c", "-o", str(evidence / "api.test"), "./internal/api"], timeout=300, env=environment)
-    run(["go", "build", "-trimpath", "-o", str(evidence / "nerocd"), "./cmd/nerocd"], timeout=300, env=environment)
+    fixture_tags = ["-tags", "nerocd_proxy_fixture"] if routes_mode == "1" else []
+    run(["go", "test", "-c", *fixture_tags, "-o", str(evidence / "api.test"), "./internal/api"], timeout=300, env=environment)
+    run(["go", "build", "-trimpath", *fixture_tags, "-o", str(evidence / "nerocd"), "./cmd/nerocd"], timeout=300, env=environment)
     client_context = evidence / "client"
     client_context.mkdir()
     run(["go", "build", "-trimpath", "-o", str(client_context / "client"), "./acceptance/runtime-hosting-database-client"], timeout=300, env=environment)
@@ -490,6 +503,12 @@ def main():
     for binary in ("api.test", "nerocd"):
         docker("cp", str(evidence / binary), outer + ":/fixture/" + binary)
     docker("cp", "db/seeds/dev.sql", outer + ":/workspace/db/seeds/dev.sql")
+    if routes_mode == "1":
+        # Copy bytes only into owned DinD. No outer-host bind or socket mount.
+        config = Path("acceptance/runtime-proxy-control/pebble.json")
+        (evidence / "pebble-config-sha256").write_text(hashlib.sha256(config.read_bytes()).hexdigest() + "\n")
+        docker("cp", str(config), outer + ":/fixture/pebble.json")
+        docker("exec", outer, "docker", "--host", ENDPOINT, "pull", PEBBLE_IMAGE, timeout=180, output="fixture-pebble-pull")
     docker("cp", str(client_context), outer + ":/fixture/client")
     docker("exec", outer, "docker", "--host", ENDPOINT, "build", "--build-arg", "FIXTURE_OWNER=" + OWNER,
            "--tag", "nerocd-database-client:" + OWNER, "/fixture/client", timeout=120, output="client-image-build")
@@ -573,14 +592,24 @@ def main():
         if not browser_origin:
             raise Failure("browser bridge origin missing")
         runtime_args += ["--env", "NEROCD_DATABASE_CONNECTION_BROWSER=1", "--env", "NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN=" + browser_origin]
-    runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner)$", "-test.timeout=40m"]
+    if routes_mode == "1":
+        runtime_args += ["--env", "NEROCD_DATABASE_CONNECTION_ROUTES=1"]
+    pattern = "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner)$"
+    if routes_mode == "1":
+        pattern = "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner|ApplicationDatabaseRouteFailuresCompiledRunner)$"
+    runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", pattern, "-test.timeout=40m"]
+    if routes_mode == "1":
+        runtime_args += ["-test.failfast"]
     if browser_mode == "1":
         runtime_output = run(["node", "acceptance/runtime-hosting-database-runner/browser-driver.mjs", browser_origin,
                               str(evidence / "browser-results"), "--", *runtime_args], timeout=2410, output="runtime-test")
     else:
         runtime_output = run(runtime_args, timeout=2410, output="runtime-test")
     say(runtime_output)
-    for test in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"):
+    required = ["TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"]
+    if routes_mode == "1":
+        required.append("TestHostingApplicationDatabaseRouteFailuresCompiledRunner")
+    for test in required:
         if not re.search(r"^--- PASS: " + test + r" ", runtime_output, re.MULTILINE):
             raise Failure("required physical test did not pass: " + test)
         if re.search(r"^--- SKIP: " + test + r" ", runtime_output, re.MULTILINE):
@@ -589,6 +618,16 @@ def main():
         for engine in ("postgresql", "redis"):
             if runtime_output.splitlines().count("DATABASE_CONNECTION_BROWSER_PASS " + engine) != 1:
                 raise Failure("required live browser result missing or repeated: " + engine)
+    if routes_mode == "1":
+        for engine in ("postgresql", "redis"):
+            if runtime_output.splitlines().count("DATABASE_CONNECTION_ROUTE_PASS " + engine) != 1:
+                raise Failure("required trusted HTTPS route result missing or repeated: " + engine)
+            for case in ("readiness", "cutover"):
+                if runtime_output.splitlines().count("DATABASE_CONNECTION_ROUTE_FAILURE_PASS " + engine + " " + case) != 1:
+                    raise Failure("required trusted HTTPS failure result missing or repeated: " + engine + " " + case)
+            for case in ("success", "readiness", "cutover"):
+                if runtime_output.splitlines().count("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " " + case) != 1:
+                    raise Failure("required post-cleanup route capacity proof missing or repeated: " + engine + " " + case)
     say("compiled database, capture, upgrade and connected HTTP app runners / authenticated API / River / private PostgreSQL and Redis gate passed")
 
 
