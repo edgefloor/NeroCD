@@ -120,3 +120,26 @@ func TestDatabaseNetworkCaptureClosedDocumentsAndGenericDenial(t *testing.T) {
 		t.Fatal("expanded task accepted")
 	}
 }
+
+func TestDatabaseNetworkCaptureEquivalentPersistedEvidence(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			p, _ := captureDomainFixture(t, engine)
+			p.Creation.Receipt.CreatedAt = p.Creation.Receipt.CreatedAt.In(time.FixedZone("same instant", 0))
+			p.Hash = p.DocumentHash()
+			if p.Validate() != nil {
+				t.Fatal("equivalent receipt instant rejected")
+			}
+			raw, err := json.Marshal(p)
+			var persisted HostingDatabaseNetworkCapturePlan
+			if err != nil || json.Unmarshal(raw, &persisted) != nil || persisted.Validate() != nil {
+				t.Fatal("persisted equivalent evidence rejected", err)
+			}
+			persisted.Creation.Receipt.CreatedAt = persisted.Creation.Receipt.CreatedAt.Add(time.Nanosecond)
+			persisted.Hash = persisted.DocumentHash()
+			if persisted.Validate() == nil {
+				t.Fatal("different receipt instant accepted")
+			}
+		})
+	}
+}
