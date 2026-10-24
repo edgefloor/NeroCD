@@ -1201,6 +1201,49 @@ func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 // dependencies above 0046 so older missing-layer tests retain their assertions.
 func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
+	// Pending bindings reference database, runtime, operation and audit records.
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_binding_pending_runtime ON hosting_runtime_configuration_versions;
+ DROP TRIGGER hosting_binding_pending_operation ON hosting_operations;
+ DROP TRIGGER hosting_binding_pending_release ON hosting_releases;
+ DROP TRIGGER hosting_binding_pending_plan ON hosting_apply_plans;
+ DROP TRIGGER hosting_binding_pending_admission ON hosting_apply_admissions;
+ DROP TRIGGER hosting_binding_pending_target ON hosting_task_targets;
+ DROP TRIGGER hosting_binding_pending_lease ON run_leases;
+ DROP TRIGGER hosting_binding_pending_delivery ON audit_events;
+ DROP TRIGGER hosting_runtime_configuration_versions_binding_pending_commit ON hosting_runtime_configuration_versions;
+ DROP TRIGGER hosting_operations_binding_pending_commit ON hosting_operations;
+ DROP TRIGGER hosting_releases_binding_pending_commit ON hosting_releases;
+ DROP TRIGGER hosting_apply_plans_binding_pending_commit ON hosting_apply_plans;
+ DROP TRIGGER hosting_apply_admissions_binding_pending_commit ON hosting_apply_admissions;
+ DROP TRIGGER hosting_task_targets_binding_pending_commit ON hosting_task_targets;
+ DROP TRIGGER run_leases_binding_pending_commit ON run_leases;
+ DROP TRIGGER audit_events_binding_pending_commit ON audit_events;
+ DROP TABLE hosting_database_binding_receipts,hosting_database_bindings;
+ DROP FUNCTION nerocd_database_binding_hash(jsonb),nerocd_database_binding_request_hash(text,text,jsonb),nerocd_database_binding_consistent(),nerocd_database_binding_pending_effect(),nerocd_database_binding_flush_constraints(),nerocd_database_binding_schema_compatible();`); err != nil {
+		t.Fatal(err)
+	}
+	// Archive restore origins also retain the older storage and apply-plan keys.
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_storage_image_origin_exclusive ON hosting_storage_materializations;
+ DROP TRIGGER hosting_archive_no_apply_plan ON hosting_apply_plans;
+ DROP TRIGGER hosting_archive_no_release ON hosting_releases;
+ DROP TRIGGER hosting_archive_no_generic_receipt ON hosting_receipts;
+ DROP TRIGGER hosting_archive_no_generic_admission ON hosting_apply_admissions;
+ DROP TRIGGER hosting_archive_no_generic_target ON hosting_task_targets;
+ DROP TRIGGER hosting_storage_archive_lease ON run_leases;
+ DROP TABLE hosting_storage_restore_use_receipts;
+ DROP TABLE hosting_storage_restore_use_admissions;
+ DROP TABLE hosting_storage_restore_materialized;
+ DROP TABLE hosting_storage_restore_origins;
+ DROP TABLE hosting_storage_archive_blobs;
+ DROP TABLE hosting_storage_archive_receipts;
+ DROP TABLE hosting_storage_restores;
+ DROP TABLE hosting_storage_backups;
+ DROP TABLE hosting_storage_archive_recoveries;
+ DROP TABLE hosting_storage_archive_task_targets;
+ DROP TABLE hosting_storage_archive_plans;
+ DROP FUNCTION nerocd_storage_archive_origin_exclusive(),nerocd_storage_archive_family_exclusive(),nerocd_storage_archive_consistent(),nerocd_storage_archive_lease(),nerocd_storage_archive_flush_constraints(),nerocd_storage_archive_schema_compatible();`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_database_snapshot_consistent ON hosting_snapshots;
  DROP TRIGGER hosting_database_private_binding ON hosting_binding_state;
  DROP TRIGGER hosting_database_public_slot_guard ON hosting_release_slots;
