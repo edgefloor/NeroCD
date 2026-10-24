@@ -7,8 +7,9 @@ The [API tests](../internal/api/hosting_storage_archive_handlers_test.go) and
 [runner tests](../internal/runnerruntime/hosting_storage_archive_controller_test.go)
 provide contract/lifecycle evidence. Actual PostgreSQL/River/controller tests use
 a fake engine; later bounded physical uploaded-file recovery is accepted below.
-Archive UI code/browser acceptance is recorded below; physical application
-backup/restore remains pending.
+Archive UI code/browser acceptance is recorded below. Bounded native Linux arm64,
+classic-store owned-upload application backup/new-target restore is physically
+accepted; broader recovery and full A26/A37 remain unfinished.
 
 The source-bound runner handoff is
 `/tmp/nerocd-archive-runner-integrated-handoff.json`, with promotion recorded in

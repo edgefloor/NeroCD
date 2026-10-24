@@ -972,8 +972,9 @@ Docker 29 containerd-store lookup failed and has no runtime fallback. The strict
 helper-environment repair is accepted at `33702968ce7544cd3797d8ec8a19df96e9ac1ee4`,
 with canonical capability spelling at `11d38a347938dbe53e53e3d0474f857a2294fb47`;
 the later bounded physical pass is recorded below.
-R42 application binding, archive backup/restore qualification and full parity
-remain unfinished. Root assets remain historical; qualified UI artifacts are
+Bounded native Linux arm64, classic-store owned-upload application backup/new-target
+restore is physically accepted. R42 application binding, broader recovery, full
+A26/A37 and full parity remain unfinished. Root assets remain historical; qualified UI artifacts are
 retained in their integration checkout.
 
 Bounded physical uploaded-file recovery is accepted at
