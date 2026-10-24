@@ -5,7 +5,7 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `c731f708e62e2376d174041957b8654fe83d5bcf`, reviewed on 2026-10-24. Native migrations extend through 0067. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `3b34b3920378cc41613bc87ca69eea2d35d2f175`, reviewed on 2026-10-24. Native migrations extend through 0067. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -890,7 +890,7 @@ The earlier revision 3 instruction to make Task collaboration and D0–D3 the fi
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0067, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `c731f708e62e2376d174041957b8654fe83d5bcf`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0067, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `3b34b3920378cc41613bc87ca69eea2d35d2f175`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -938,6 +938,7 @@ The implementation campaign changed application code and exercised real infrastr
 | Direct private database engine qualification | Accepted `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`; [physical fixture contract](../acceptance/runtime-hosting-database/README.md) | Six native Linux arm64 engine cases, PostgreSQL 17.11/Redis 8.2.10, passed in 30.52 seconds; A/B/C data continuity on the same volume/private bridge, changed credentials and revoked exact replay denied, lost retirement ACK recovered, missing/foreign-volume negatives; direct engine only, not API/runner workflow, archive restore, AMD64 or full A17 |
 | Default-off database runner coordinator | Source `9040572132e60787186fd59ffddc57d765d6c752`, accepted `f4a54506f388339ffe8acdd6b8ec4133690188fa`; [typed coordinator](../internal/runnerruntime/hosting_database_execution.go), [replay tests](../internal/runnerruntime/hosting_database_replay_test.go), [CLI configuration tests](../cmd/nerocd/runner_database_config_test.go) | Journal v11, protected delivery before ApplyBegin, current-authority callback, native Linux arm64 and verified HTTPS for database runner-to-control-plane requests; capability disabled by default; accepted code and race/build evidence, API/runner physical workflow and direct deployment UI were not qualified at this coordinator checkpoint; later accepted evidence is below |
 | Private database API/runner workflow and direct UI | Accepted `c731f708e62e2376d174041957b8654fe83d5bcf`; [compiled-runner fixture contract](../acceptance/runtime-hosting-database-runner/README.md), [actual API/runtime fixture](../internal/api/hosting_database_runtime_integration_test.go), [UI browser scenarios](../web/app/tests/browser/database-deployments.spec.ts) | Authenticated API/River/compiled runner physically qualified for private PostgreSQL and Redis on native Linux arm64: A write, B redeploy/read, C restart and committed Complete-ACK loss/read retain volume/network/credential references and the same operation receipt, without repeated Apply or secret delivery; direct UI accepted separately with intercepted four-width browser evidence; default-off opt-in and metadata `adapter_unqualified` remain; no application binding, archive restore or full A17 |
+| Internal upload archive helper | Accepted `3b34b3920378cc41613bc87ca69eea2d35d2f175`; [format and ownership contract](../internal/storagearchive/README.md), [CLI tests](../cmd/nerocd-storage-archive/main_test.go) | Standalone fixed-root Linux helper using strict USTAR `nerocd-storage-v1`; package filesystem and CLI/vector evidence only; no controller/runner coordination, archive API/UI, user backup/restore workflow or application-verified A26/A37; helper-image packaging remains in progress |
 | Compiled Vite SPA qualification | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Exact pinned source compiles with Node 22.22.0, Bun 1.3.6, Vite 8.2.2 and Caddy 2.10.2; runtime 141.87 seconds/default regression 42.72 seconds; genuine parser failure preserves the prior serving application; HTTP browser bridge and independent TLS probe are separate evidence; earlier unexplained failures remain a reliability limit; not complete A04 or production ACME |
 
 Private Railpack qualification is now accepted at
@@ -953,6 +954,19 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
+Archive-helper integration evidence is recorded in
+`/tmp/nerocd-main-upload-archive-promotion.json` and
+`/tmp/nerocd-upload-archive-integrated-handoff.json`. Linux filesystem package
+qualification retains 11 cases at its original source revision; native Linux CLI
+qualification retains 14 cases without skips, plus the corrected standalone
+vector check, in `/tmp/nerocd-upload-archive-streams-physical/final-handoff.json`
+and `/tmp/nerocd-upload-archive-vector-physical/final-handoff.json`. The initial
+read-only-transfer failure and invalid-vector failure remain separate historical
+failures; later passes do not relabel them. Owned commands joined and cleanup
+preserved host state. Integration retained the six root graph files and 75 UI
+files; no new installed artifact or UI qualification is claimed. This accepted
+helper is a prerequisite, not completed application backup/recovery.
+
 Exact combined physical qualification at `c731f708e62e2376d174041957b8654fe83d5bcf` passed in
 29.75 seconds, with both clients and owned outer cleanup passing. Source evidence
 is `/tmp/nerocd-database-client-environment-physical-handoff.json` and
@@ -967,7 +981,8 @@ recorded in `/tmp/nerocd-database-ui-claim-handoff.json`. These UI checks do not
 replace physical API/runtime proof. The workflow remains default-off and opt-in;
 metadata stays `adapter_unqualified`. Application binding is missing, so complete
 A17 is not claimed. Archive backup/restore, public ACME and full parity remain
-unfinished; archive helper work is in progress and unaccepted.
+unfinished; the internal archive helper is accepted below; user backup/restore coordination
+remains unfinished.
 
 Direct-engine evidence in `/tmp/nerocd-database-qualified-physical-handoff.json`
 belongs to `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`: six cases passed in

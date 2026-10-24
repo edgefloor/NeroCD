@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`c731f708e62e2376d174041957b8654fe83d5bcf`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`3b34b3920378cc41613bc87ca69eea2d35d2f175`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -191,6 +191,11 @@ remains `adapter_unqualified` and application binding remains unfinished. Backup
   See the [workflow fixture](acceptance/runtime-hosting-database-runner/README.md).
   Default-off opt-in and metadata `adapter_unqualified` remain. Application binding,
   archive backup/restore, public ACME and complete A17 remain unfinished.
+- The [internal upload archive helper](internal/storagearchive/README.md) is
+  accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
+  Linux helper for strict USTAR `nerocd-storage-v1`. Controller/runner coordination,
+  archive API/UI, helper-image packaging and application-verified backup/restore
+  remain unfinished; this is not complete A26/A37.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon

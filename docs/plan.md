@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`c731f708e62e2376d174041957b8654fe83d5bcf`, 2026-10-24, through migration 0067.
+`3b34b3920378cc41613bc87ca69eea2d35d2f175`, 2026-10-24, through migration 0067.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -151,7 +151,8 @@ workflow is physically qualified at `c731f708e62e2376d174041957b8654fe83d5bcf`.
 Direct deployment UI is accepted with separate intercepted-browser evidence.
 Default-off opt-in and metadata `adapter_unqualified` remain. Next is application
 binding and further stateful lifecycle work, including archive backup/restore;
-archive helper work remains in progress and unaccepted; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
+the standalone archive helper is accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`;
+controller/runner coordination, archive API/UI and application-verified A26/A37 remain unfinished; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
 under R17/R19 and applicable A09/A10 checks, production TLS and remaining parity
 remain separate unfinished work. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.
