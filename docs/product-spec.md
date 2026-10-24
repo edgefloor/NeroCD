@@ -5,7 +5,7 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `563fb88f707b75563d03f0408df0267e3af473e9`, reviewed on 2026-10-24. Native migrations extend through 0071. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `5ff5b7e114fc922e3c3f2a6e93670c133d205923`, reviewed on 2026-10-24. Native migrations extend through 0071. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -890,7 +890,7 @@ The earlier revision 3 instruction to make Task collaboration and D0–D3 the fi
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0071, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `563fb88f707b75563d03f0408df0267e3af473e9`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0071, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `5ff5b7e114fc922e3c3f2a6e93670c133d205923`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -941,11 +941,11 @@ The implementation campaign changed application code and exercised real infrastr
 | Internal application/database binding controller | Accepted through `15fe8877d2e7ee22602d8cc20fb8db29fc83de0c`; [binding service](../internal/app/hosting_database_binding_service.go), [PostgreSQL controller tests](../internal/store/postgres_hosting_database_binding_test.go) | Migration 0069; pending binding, runtime-version and request-receipt persistence only; actual endpoint ledger remains pending; no connected R42 API/UI or runner workflow |
 | Database network retirement proof | Accepted `a87bb68373016509d24724aba6d127738012638c`; [retirement proof](../internal/domain/hosting_database_network_retirement.go), [proof tests](../internal/domain/hosting_database_network_retirement_test.go) | Validates retained endpoint attachment, retirement intent and observed absence across replacements; historical proof grants no new live authority |
 | Private application/database engine adapter | Accepted `621af78038f7231b43f7d7a7a899b17bde5c06e4`; [adapter](../internal/runnerruntime/hosting_application_database_engine.go), [adapter tests](../internal/runnerruntime/hosting_application_database_engine_test.go) | Private, unregistered adapter for application container/network effects and protected environment delivery; no advertised capability or physical Docker qualification |
-| Internal database network origin capture controller | Accepted `584cb6c7f4a62821308acad4a5e67192e3608e11`; [capture service](../internal/app/hosting_database_network_capture_service.go), [PostgreSQL capture tests](../internal/store/postgres_hosting_database_network_capture_test.go) | Migration 0070; internal read-only capture contract/controller with actual PostgreSQL tests; origin creation, network and initialization fields remain runner attestations; observer/API/dispatch were absent at this controller checkpoint; accepted observer and dedicated transport are recorded below; generic dispatch remains inactive |
+| Internal database network origin capture controller | Accepted `584cb6c7f4a62821308acad4a5e67192e3608e11`; [capture service](../internal/app/hosting_database_network_capture_service.go), [PostgreSQL capture tests](../internal/store/postgres_hosting_database_network_capture_test.go) | Migration 0070; internal read-only capture contract/controller with actual PostgreSQL tests; origin creation, network and initialization fields remain runner attestations; observer/API/dispatch were absent at this controller checkpoint; accepted observer and dedicated transport are recorded below; generic dispatch was inactive at this checkpoint |
 | Private empty-v2 database alias upgrade engine | Accepted `c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`; [upgrade engine](../internal/runnerruntime/hosting_database_network_upgrade.go), [upgrade tests](../internal/runnerruntime/hosting_database_network_upgrade_test.go) | Existing-only empty-member network upgrade with the full previous plan and retained origin; legacy v1 guards remain strict; physical alias qualification was absent at this engine checkpoint; later accepted proof is below; upgrade controller and capability activation were absent at this checkpoint; later accepted implementation is below |
 | Read-only database network origin observer | Accepted `b0847ffcbf68a54a2eab9acbbfd08afceebd1717`; [observer](../internal/runnerruntime/hosting_database_network_capture.go), [observer tests](../internal/runnerruntime/hosting_database_network_capture_test.go) | Inspects the retained initialized origin and exact database/network ownership without mutation; later direct-engine physical proof is below |
 | Authenticated capture API and typed client | Accepted through `2968bfbb709b475be0de3adaf499774650bba3b3`; [API tests](../internal/api/hosting_database_network_capture_handlers_test.go), [typed client](../internal/runnerclient/hosting_database_network_capture.go) | Dedicated authenticated capture transport and client accepted; connected physical qualification was absent at this transport checkpoint; later proof is below; no R42 application-binding UI |
-| Durable capture journal and private coordinator | Journal `12a58d5d241630b74ac6dd01da4d06e8a920e747`, coordinator `b0255e4c5458e483e3746a2878a0d14c1061c477`; [journal tests](../internal/runner/journal_database_network_capture_test.go), [coordinator](../internal/runnerruntime/hosting_database_network_capture_execution.go), [replay tests](../internal/runnerruntime/hosting_database_network_capture_replay_test.go) | Journal format 13 and exact-ID capture execution/replay accepted; private coordinator was unwired at this checkpoint; later exact-ID CLI activation is below; generic dispatch remains inactive |
+| Durable capture journal and private coordinator | Journal `12a58d5d241630b74ac6dd01da4d06e8a920e747`, coordinator `b0255e4c5458e483e3746a2878a0d14c1061c477`; [journal tests](../internal/runner/journal_database_network_capture_test.go), [coordinator](../internal/runnerruntime/hosting_database_network_capture_execution.go), [replay tests](../internal/runnerruntime/hosting_database_network_capture_replay_test.go) | Journal format 13 and exact-ID capture execution/replay accepted; private coordinator was unwired at this checkpoint; later exact-ID CLI activation is below; generic dispatch was inactive at this checkpoint |
 | Direct origin capture and empty-v2 alias upgrade qualification | Accepted `d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`; [fixture contract](../acceptance/runtime-hosting-database-origin-upgrade/README.md), [physical assertions](../internal/runnerruntime/hosting_database_origin_upgrade_runtime_integration_test.go) | Native Linux arm64 direct private-engine PostgreSQL 17.11 and Redis 8.2.10 A→B→C persistence, private DNS, retained origin and UID 999 ownership; includes owned pre-start endpoint repair; fixture-local materialization, no controller provenance, API/River activation or full R42 |
 | Compiled database capture/replay and recovery | Accepted `b7771468edf95f531c13d69b361ed901d9efbbc8`; [compiled-runner contract](../acceptance/runtime-hosting-database-runner/README.md), [capture/replay assertions](../internal/api/hosting_database_capture_runtime_integration_test.go), [normal database assertions](../internal/api/hosting_database_runtime_integration_test.go) | Exact-ID capture CLI is wired; real API/River/compiled runner passed capture/replay in 22.00 seconds and normal database recovery in 23.40 seconds, both PostgreSQL and Redis without skips; actual controller/materialization provenance and historical ACK replay checked; no application binding, upgrade controller, membership ledger or full R42 at this checkpoint |
 | Private empty-v2 upgrade controller and compiled execution | Accepted through `79b50e245a756022b2fc0b8ac98428bb1acfcc3b`; [upgrade service](../internal/app/hosting_database_upgrade_service.go), [controller tests](../internal/store/postgres_hosting_database_upgrade_test.go), [compiled execution](../internal/runnerruntime/hosting_database_upgrade_execution.go), [migration 0071](../db/migrations/0071_hosting_database_network_upgrades.sql) | Owner-scoped retained capture/origin proof, initial empty-v2 upgrade and maintenance, durable idempotency and historical ACK replay; explicit runner opt-in/capability; actual PostgreSQL control tests passed without skips, store 104.040 seconds/API 15.104 seconds with exact cleanup; physical qualification is recorded separately below; no public binding or connected application workflow |
@@ -1079,11 +1079,37 @@ Earlier failed runs remain failed historical evidence at
 `/tmp/nerocd-database-runner-20261024.fay75smx`,
 `/tmp/nerocd-database-runner-20261024._zlle73z` and
 `/tmp/nerocd-database-runner-20261024.2sn80_4i`. The later passing revision does
-not relabel those runs. Automatic capture dispatch is next work and is not
-accepted at this cutoff.
+not relabel those runs. Automatic capture qualification is recorded below.
 
-Generic capture dispatch, the durable application membership ledger/controller/
-runner, public binding API/UI and connected R42 workflow remain unfinished.
+Automatic database capture is accepted at
+`5ff5b7e114fc922e3c3f2a6e93670c133d205923`, tree
+`5b5a819b2c06442487012619fe52ac7c2a804dc9`. The default-off
+`--hosting-database-network-capture` flag uses bounded claim-next selection under
+current authority and reuses the original claim after a lost response. Retained
+origin ACK replay and journal retirement precede Docker observation. Actual
+PostgreSQL controller evidence remains attributed to
+`013386a353612350e731cc4615ea89f63299aac2`, with 19 selected tests and no skips.
+
+The physical three-fixture gate at the new cutoff passed without skips.
+Capture took 32.92 seconds, with exact-ID mode in 19.46 seconds and automatic
+mode in 13.46 seconds. Normal database recovery took 23.71 seconds and upgrade
+28.23 seconds. Both PostgreSQL and Redis passed both capture modes, including
+same-claim recovery after response loss. With the Docker socket absent, the
+automatic replay phase proved the retained origin ACK and journal retirement
+before cancellation. This does not assert successful exit of the whole continuous
+runtime. Normal recovery and empty-network upgrade/maintenance retained their
+data, alias reads/writes, exact Complete replay and single-writer assertions.
+
+Evidence remains in
+`/tmp/nerocd-automatic-capture-fixture-integrated-physical-handoff.json` and
+`/tmp/nerocd-database-runner-20261024.ahaf28ci/runtime-test`. Owned cleanup passed;
+outer container/volume identities and canonical recorded fields matched the
+initial inventories. Root assets and index were preserved. Qualification remains
+bounded to the native Linux arm64 disposable private fixture. Earlier `563fb88`
+qualification and failed-run evidence above retain their original revisions.
+
+The durable application membership ledger/controller/runner, public binding
+API/UI and connected R42 workflow remain unfinished.
 Database-native backup/restore, credential rotation, full A17/A26/A37 and complete
 hosting parity remain open.
 

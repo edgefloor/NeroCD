@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`563fb88f707b75563d03f0408df0267e3af473e9`, 2026-10-24, through migration 0071.
+`5ff5b7e114fc922e3c3f2a6e93670c133d205923`, 2026-10-24, through migration 0071.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -201,12 +201,23 @@ passed initial upgrade and maintenance, retained origin, alias reads/writes,
 exact Complete-ACK loss replay and single-writer checks. Owned cleanup and outer
 inventories were verified. Qualification remains bounded to the native Linux
 arm64 disposable private fixture with a verified test CA. Engine-version upgrades
-remain open. Automatic capture dispatch is next work, not accepted behavior.
+remain open. Automatic capture dispatch is accepted separately below.
 See the [current evidence and limits](compatibility.md#r42-remains-an-unfinished-hosting-workflow).
 
-R42 still needs generic capture dispatch, the durable application membership
-ledger/controller/runner and public binding API/UI, plus connected application
-qualification.
+Automatic database capture is accepted at
+`5ff5b7e114fc922e3c3f2a6e93670c133d205923`. The default-off
+`--hosting-database-network-capture` flag uses bounded claim-next selection under
+current authority, same-claim response-loss recovery, and retained ACK replay
+before Docker observation. The physical gate passed both PostgreSQL and Redis
+in exact-ID and automatic capture modes, capture 32.92 seconds, normal recovery
+23.71 seconds and upgrade 28.23 seconds, without skips. Automatic replay proved
+the origin ACK and journal retirement with Docker absent before cancellation;
+it does not establish successful exit of the whole continuous runtime. Owned
+cleanup and outer inventories passed. See the
+[current evidence and limits](compatibility.md#r42-remains-an-unfinished-hosting-workflow).
+
+R42 still needs the durable application membership ledger/controller/runner and
+public binding API/UI, plus connected application qualification.
 Database-native backup/restore, rotation, full A17/A26/A37 and broader stateful
 parity remain open. Production ACME, untrusted workload isolation and broader
 host profiles are not qualified by this pass.

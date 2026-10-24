@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`563fb88f707b75563d03f0408df0267e3af473e9`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`5ff5b7e114fc922e3c3f2a6e93670c133d205923`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -204,9 +204,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   and [accepted components and R42 limits](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
   Materialization is fixture-local, without controller provenance. This does
   not qualify the connected API/River path; later capture proof is below.
-  Generic capture dispatch, application membership ledger/API/UI
-  and full R42 remain unfinished. Later upgrade controller implementation is
-  below. Database-native backup/restore and rotation remain open.
+  Application membership ledger/API/UI and full R42 remain unfinished.
+  Generic capture dispatch and the later upgrade controller are accepted
+  separately below. Database-native backup/restore and rotation remain open.
 - Compiled capture/replay and normal PostgreSQL/Redis recovery are accepted at
   `b7771468edf95f531c13d69b361ed901d9efbbc8`. Both engines passed without skips:
   capture/replay in 22.00 seconds and normal recovery in 23.40 seconds, using
@@ -235,9 +235,21 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   retained origin, alias reads/writes, exact Complete-ACK loss replay and
   single-writer checks. Owned cleanup and outer inventories were verified.
   This qualifies the native Linux arm64 disposable private fixture with a
-  verified test CA. Public application binding, automatic capture dispatch,
+  verified test CA. Public application binding and
   engine-version upgrades and full R42/A17 remain unfinished. See the
   [current evidence and limits](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
+- Automatic database capture is accepted at
+  `5ff5b7e114fc922e3c3f2a6e93670c133d205923`. The default-off
+  `--hosting-database-network-capture` flag uses bounded claim-next selection
+  under current authority and reuses the same claim after response loss.
+  Both PostgreSQL and Redis passed exact-ID and automatic capture in 32.92
+  seconds, normal recovery in 23.71 seconds and upgrade in 28.23 seconds,
+  without skips. With Docker absent, retained origin ACK replay and journal
+  retirement were proven before cancellation. This does not assert successful
+  exit of the continuous runtime. Cleanup and outer inventories passed within
+  the native Linux arm64 private fixture. Public application binding, durable
+  application membership and complete R42/A17 remain unfinished. See the
+  [qualification evidence](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The
