@@ -311,59 +311,123 @@ func lockNetworkCapture(ctx context.Context, tx pgx.Tx, id string, current bool)
 // It is deliberately not registered with generic ClaimRun or runtime adapters.
 func (s *PostgresStore) ClaimHostingDatabaseNetworkCapture(ctx context.Context, runner, credential, id string, ttl time.Duration) (domain.HostingDatabaseNetworkCaptureClaim, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseNetworkCaptureClaim, error) {
-		var zero domain.HostingDatabaseNetworkCaptureClaim
-		if ttl <= 0 || ttl > 10*time.Minute {
+		return claimNetworkCapture(ctx, tx, runner, credential, id, ttl, false)
+	})
+}
+
+// claimNetworkCapture shares the exact-ID authority checks. Automatic selection
+// never expires or resets uncertain work; explicit recovery retains that behavior.
+func claimNetworkCapture(ctx context.Context, tx pgx.Tx, runner, credential, id string, ttl time.Duration, automatic bool) (domain.HostingDatabaseNetworkCaptureClaim, error) {
+	var zero domain.HostingDatabaseNetworkCaptureClaim
+	if ttl <= 0 || ttl > 10*time.Minute {
+		return zero, ErrConflict
+	}
+	c, err := lockNetworkCapture(ctx, tx, id, true)
+	if err != nil {
+		return zero, err
+	}
+	q := sqlcgen.New(tx)
+	if err = networkCaptureRunner(ctx, q, runner, credential, c.Plan); err != nil {
+		return zero, err
+	}
+	if c.Receipt != nil {
+		return zero, ErrConflict
+	}
+	existing, err := q.GetActiveLeaseForRun(ctx, c.RunID)
+	if err == nil {
+		if existing.RunnerID != runner || automatic && c.State != "running" {
 			return zero, ErrConflict
 		}
-		c, err := lockNetworkCapture(ctx, tx, id, true)
-		if err != nil {
-			return zero, err
+		return domain.HostingDatabaseNetworkCaptureClaim{Capture: c, Lease: runLeaseFromSQLC(existing)}, finalizeNetworkCapture(ctx, tx, c, existing.ID, true)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return zero, err
+	}
+	if automatic {
+		prior, e := q.DatabaseNetworkCaptureHasLease(ctx, c.RunID)
+		if e != nil {
+			return zero, e
 		}
-		q := sqlcgen.New(tx)
-		if err = networkCaptureRunner(ctx, q, runner, credential, c.Plan); err != nil {
-			return zero, err
-		}
-		if c.Receipt != nil {
+		if c.State != "queued" || prior {
 			return zero, ErrConflict
 		}
-		existing, err := q.GetActiveLeaseForRun(ctx, c.RunID)
-		if err == nil {
-			if existing.RunnerID != runner {
-				return zero, ErrConflict
-			}
-			return domain.HostingDatabaseNetworkCaptureClaim{Capture: c, Lease: runLeaseFromSQLC(existing)}, finalizeNetworkCapture(ctx, tx, c, existing.ID, true)
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return zero, err
-		}
+	} else {
 		if _, err = q.ExpireHostingObservationLease(ctx, c.RunID); err != nil {
 			return zero, err
 		}
 		if _, err = q.ResetHostingObservation(ctx, c.RunID); err != nil {
 			return zero, err
 		}
-		attempt, err := q.ClaimQueuedRun(ctx, sqlcgen.ClaimQueuedRunParams{RunID: c.RunID, RunnerID: &runner})
-		if err != nil {
-			return zero, err
+	}
+	attempt, err := q.ClaimQueuedRun(ctx, sqlcgen.ClaimQueuedRunParams{RunID: c.RunID, RunnerID: &runner})
+	if err != nil {
+		return zero, err
+	}
+	lease, err := newLeaseToken("lease")
+	if err != nil {
+		return zero, err
+	}
+	fence, err := newLeaseToken("fence")
+	if err != nil {
+		return zero, err
+	}
+	row, err := q.CreateActiveRunLease(ctx, sqlcgen.CreateActiveRunLeaseParams{ID: lease, RunID: c.RunID, RunnerID: runner, Status: domain.LeaseActive, TtlMicroseconds: ttl.Microseconds(), Attempt: attempt, Fence: fence})
+	if err != nil {
+		return zero, err
+	}
+	if err = createAuditWithQueries(ctx, q, domain.AuditEvent{ID: "aud_capture_claim_" + lease, ActorID: runner, Action: "hosting.database_network_capture.claimed", TargetID: c.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"plan_hash": c.Plan.Hash}}); err != nil {
+		return zero, err
+	}
+	c.State = "running"
+	return domain.HostingDatabaseNetworkCaptureClaim{Capture: c, Lease: runLeaseFromSQLC(row)}, finalizeNetworkCapture(ctx, tx, c, lease, true)
+}
+
+// ClaimNextHostingDatabaseNetworkCapture checks at most 32 ordered candidates.
+// Live replay has priority. The bounded window does not promise queue fairness;
+// a full or contended scan returns a retryable conflict rather than false emptiness.
+func (s *PostgresStore) ClaimNextHostingDatabaseNetworkCapture(ctx context.Context, runner, credential string, ttl time.Duration) (domain.HostingDatabaseNetworkCaptureClaim, error) {
+	var zero domain.HostingDatabaseNetworkCaptureClaim
+	if runner == "" || credential == "" || ttl <= 0 || ttl > 10*time.Minute {
+		return zero, ErrConflict
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	q := sqlcgen.New(s.pool)
+	if err := networkCaptureSchema(ctx, q); err != nil {
+		return zero, err
+	}
+	ids, err := q.ListDatabaseNetworkCaptureCandidates(ctx, sqlcgen.ListDatabaseNetworkCaptureCandidatesParams{RunnerID: runner, CredentialHash: credential})
+	if err != nil {
+		return zero, err
+	}
+	contended := false
+	for i, id := range ids {
+		if i == 32 {
+			return zero, ErrConflict
 		}
-		lease, err := newLeaseToken("lease")
-		if err != nil {
-			return zero, err
+		claim, e := buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseNetworkCaptureClaim, error) {
+			if _, lockErr := sqlcgen.New(tx).LockDatabaseNetworkCaptureCandidate(ctx, sqlcgen.LockDatabaseNetworkCaptureCandidateParams{CaptureID: id, RunnerID: runner}); lockErr != nil {
+				if errors.Is(lockErr, pgx.ErrNoRows) {
+					contended = true
+					return zero, ErrNotFound
+				}
+				return zero, lockErr
+			}
+			return claimNetworkCapture(ctx, tx, runner, credential, id, ttl, true)
+		})
+		if e == nil {
+			return claim, nil
 		}
-		fence, err := newLeaseToken("fence")
-		if err != nil {
-			return zero, err
+		// Every rejected candidate transaction has rolled back before the next
+		// task is inspected, so placement and principal locks cannot accumulate.
+		if !errors.Is(e, ErrConflict) && !errors.Is(e, ErrNotFound) && !errors.Is(e, auth.ErrForbidden) && !errors.Is(e, auth.ErrUnauthenticated) {
+			return zero, e
 		}
-		row, err := q.CreateActiveRunLease(ctx, sqlcgen.CreateActiveRunLeaseParams{ID: lease, RunID: c.RunID, RunnerID: runner, Status: domain.LeaseActive, TtlMicroseconds: ttl.Microseconds(), Attempt: attempt, Fence: fence})
-		if err != nil {
-			return zero, err
-		}
-		if err = createAuditWithQueries(ctx, q, domain.AuditEvent{ID: "aud_capture_claim_" + lease, ActorID: runner, Action: "hosting.database_network_capture.claimed", TargetID: c.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"plan_hash": c.Plan.Hash}}); err != nil {
-			return zero, err
-		}
-		c.State = "running"
-		return domain.HostingDatabaseNetworkCaptureClaim{Capture: c, Lease: runLeaseFromSQLC(row)}, finalizeNetworkCapture(ctx, tx, c, lease, true)
-	})
+	}
+	if contended {
+		return zero, ErrConflict
+	}
+	return zero, ErrNotFound
 }
 
 func networkCaptureAuthority(ctx context.Context, tx pgx.Tx, runner, credential string, a domain.HostingAuthority, live bool) (domain.HostingDatabaseNetworkCapture, sqlcgen.RunLease, error) {

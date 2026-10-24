@@ -20,3 +20,11 @@ type HostingDatabaseNetworkCaptureRepository interface {
 }
 
 var _ HostingDatabaseNetworkCaptureRepository = (*PostgresStore)(nil)
+
+// HostingDatabaseNetworkCaptureClaimRepository selects existing queued captures
+// without requiring the runner to know their controller-assigned IDs.
+type HostingDatabaseNetworkCaptureClaimRepository interface {
+	ClaimNextHostingDatabaseNetworkCapture(context.Context, string, string, time.Duration) (domain.HostingDatabaseNetworkCaptureClaim, error)
+}
+
+var _ HostingDatabaseNetworkCaptureClaimRepository = (*PostgresStore)(nil)

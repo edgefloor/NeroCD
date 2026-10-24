@@ -14,7 +14,7 @@ var captureID = regexp.MustCompile(`^hnc_[0-9a-f]{32}$`)
 
 func databaseNetworkCapturePath(path string) bool {
 	switch path {
-	case "/api/v1/runners/database-network-captures/claim", "/api/v1/runners/database-network-captures/plan", "/api/v1/runners/database-network-captures/origin":
+	case "/api/v1/runners/database-network-captures/claim", "/api/v1/runners/database-network-captures/claim-next", "/api/v1/runners/database-network-captures/plan", "/api/v1/runners/database-network-captures/origin":
 		return true
 	default:
 		return false
@@ -52,6 +52,16 @@ func (s *Server) runnerClaimDatabaseNetworkCapture(w http.ResponseWriter, r *htt
 	}
 	token, _ := bearerToken(r.Header.Get("Authorization"))
 	out, err := s.app.RunnerClaimHostingDatabaseNetworkCapture(r.Context(), token, in.CaptureID)
+	proxyResponse(w, http.StatusOK, out, err)
+}
+
+func (s *Server) runnerClaimNextDatabaseNetworkCapture(w http.ResponseWriter, r *http.Request) {
+	var in struct{}
+	if !decodeDatabaseNetworkCapture(w, r, &in) {
+		return
+	}
+	token, _ := bearerToken(r.Header.Get("Authorization"))
+	out, err := s.app.RunnerClaimNextHostingDatabaseNetworkCapture(r.Context(), token)
 	proxyResponse(w, http.StatusOK, out, err)
 }
 

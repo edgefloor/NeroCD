@@ -3,6 +3,7 @@ package runnerclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -237,7 +238,7 @@ func TestDatabaseNetworkCaptureClientRejectsMalformedAndForeignResponses(t *test
 func TestDatabaseNetworkCaptureClientProtectsEveryRoute(t *testing.T) {
 	claim, in := captureClientFixture(t, "redis")
 	p := claim.Capture.Plan
-	for _, phase := range []string{"claim", "plan", "origin"} {
+	for _, phase := range []string{"claim", "claim-next", "plan", "origin"} {
 		t.Run(phase, func(t *testing.T) {
 			var received atomic.Int32
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { received.Add(1); w.WriteHeader(500) }))
@@ -248,6 +249,9 @@ func TestDatabaseNetworkCaptureClientProtectsEveryRoute(t *testing.T) {
 			defer redirect.Close()
 			call := func(client Client) error {
 				switch phase {
+				case "claim-next":
+					_, err := client.ClaimNextHostingDatabaseNetworkCapture(context.Background(), p.RunnerID)
+					return err
 				case "claim":
 					_, err := client.ClaimHostingDatabaseNetworkCapture(context.Background(), p.RunnerID, p.OperationID)
 					return err
@@ -266,6 +270,103 @@ func TestDatabaseNetworkCaptureClientProtectsEveryRoute(t *testing.T) {
 			}
 			if err := call(New(target.URL, "private_bearer_canary")); err == nil || received.Load() != 0 {
 				t.Fatal("unverified HTTP reached controller")
+			}
+		})
+	}
+}
+
+func TestDatabaseNetworkCaptureClaimNextClientSelection(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			claim, _ := captureClientFixture(t, engine)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, e := io.ReadAll(r.Body)
+				if e != nil || r.URL.Path != "/api/v1/runners/database-network-captures/claim-next" || strings.TrimSpace(string(body)) != "{}" || r.Header.Get("Authorization") != "Bearer capture_next_bearer" {
+					t.Error("claim-next sent identity or lost authenticated framing")
+				}
+				if e = json.NewEncoder(w).Encode(claim); e != nil {
+					t.Error(e)
+				}
+			}))
+			defer server.Close()
+			client := New(server.URL, "capture_next_bearer")
+			client.HTTP = server.Client()
+			v, e := client.ClaimNextHostingDatabaseNetworkCapture(t.Context(), claim.Lease.RunnerID)
+			if e != nil || v.Capture.ID != claim.Capture.ID || v.Lease.ID != claim.Lease.ID {
+				t.Fatal("server-selected claim rejected", e)
+			}
+		})
+	}
+}
+
+func TestDatabaseNetworkCaptureClaimNextClientRejectsResponse(t *testing.T) {
+	claim, _ := captureClientFixture(t, "postgresql")
+	for _, mode := range []string{"id", "plan", "runner", "lease_runner", "lease_run", "lease_id", "attempt", "fence", "expired", "future", "long", "complete", "receipt", "null", "unknown", "duplicate", "oversize", "no_work"} {
+		t.Run(mode, func(t *testing.T) {
+			v := claim
+			switch mode {
+			case "id":
+				v.Capture.ID = "foreign"
+			case "plan":
+				v.Capture.Plan.Hash = "sha256:" + strings.Repeat("0", 64)
+			case "runner":
+				v.Capture.Plan.RunnerID = "foreign"
+			case "lease_runner":
+				v.Lease.RunnerID = "foreign"
+			case "lease_run":
+				v.Lease.RunID = "foreign"
+			case "lease_id":
+				v.Lease.ID = ""
+			case "attempt":
+				v.Lease.Attempt = 0
+			case "fence":
+				v.Lease.Fence = ""
+			case "expired":
+				v.Lease.ExpiresAt = time.Now().Add(-time.Minute)
+			case "future":
+				v.Lease.CreatedAt = time.Now().Add(time.Hour)
+				v.Lease.ExpiresAt = v.Lease.CreatedAt.Add(time.Minute)
+			case "long":
+				v.Lease.ExpiresAt = v.Lease.CreatedAt.Add(11 * time.Minute)
+			case "complete":
+				v.Lease.Status = "succeeded"
+			case "receipt":
+				v.Capture.Receipt = &domain.HostingDatabaseNetworkOriginReceipt{}
+			}
+			raw, e := json.Marshal(v)
+			if e != nil {
+				t.Fatal(e)
+			}
+			switch mode {
+			case "null":
+				raw = []byte("null")
+			case "unknown":
+				raw = append(raw[:len(raw)-1], []byte(`,"private_canary":1}`)...)
+			case "duplicate":
+				raw = append(raw[:len(raw)-1], []byte(`,"lease":{},"lease":{}}`)...)
+			case "oversize":
+				raw = append([]byte(strings.Repeat(" ", domain.HostingStorageProtocolJSONLimit+1)), raw...)
+			}
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if mode == "no_work" {
+					w.WriteHeader(404)
+					_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"private_canary"}}`))
+					return
+				}
+				_, _ = w.Write(raw)
+			}))
+			defer server.Close()
+			client := New(server.URL, "capture_bearer_canary")
+			client.HTTP = server.Client()
+			_, e = client.ClaimNextHostingDatabaseNetworkCapture(t.Context(), claim.Lease.RunnerID)
+			if e == nil || strings.Contains(e.Error(), "private_canary") || strings.Contains(e.Error(), claim.Lease.Fence) {
+				t.Fatal("claim-next accepted or leaked bad response", e)
+			}
+			if mode == "no_work" {
+				var typed *APIError
+				if !errors.As(e, &typed) || !HTTPStatus(e, 404) || typed.Detail != "" {
+					t.Fatal("typed no-work status lost", e)
+				}
 			}
 		})
 	}

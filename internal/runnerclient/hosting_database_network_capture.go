@@ -70,16 +70,36 @@ func (c Client) ClaimHostingDatabaseNetworkCapture(ctx context.Context, runner, 
 	err := c.networkCapturePost(ctx, "claim", struct {
 		CaptureID string `json:"capture_id"`
 	}{id}, &response)
-	v := response.value
-	l := v.Lease
-	now := time.Now()
-	if err == nil && (!validateNetworkCapture(v.Capture, runner, id) || l.RunnerID != runner || l.RunID != v.Capture.RunID || !networkCaptureAuthority(domain.HostingAuthority{OperationID: id, RunID: l.RunID, LeaseID: l.ID, Attempt: l.Attempt, Fence: l.Fence}) || l.Status != domain.LeaseActive || l.CompletedAt != nil || l.CreatedAt.IsZero() || l.CreatedAt.After(now.Add(30*time.Second)) || !l.ExpiresAt.After(l.CreatedAt) || l.ExpiresAt.Sub(l.CreatedAt) > 10*time.Minute || !l.ExpiresAt.After(now)) {
+	if err == nil && !validNetworkCaptureClaim(response.value, runner, id) {
 		err = errDatabaseNetworkCapture
 	}
 	if err != nil {
 		return domain.HostingDatabaseNetworkCaptureClaim{}, err
 	}
-	return v, nil
+	return response.value, nil
+}
+
+func validNetworkCaptureClaim(v domain.HostingDatabaseNetworkCaptureClaim, runner, id string) bool {
+	l := v.Lease
+	now := time.Now()
+	return networkCaptureID.MatchString(id) && validateNetworkCapture(v.Capture, runner, id) && l.RunnerID == runner && l.RunID == v.Capture.RunID && networkCaptureAuthority(domain.HostingAuthority{OperationID: id, RunID: l.RunID, LeaseID: l.ID, Attempt: l.Attempt, Fence: l.Fence}) && l.Status == domain.LeaseActive && l.CompletedAt == nil && !l.CreatedAt.IsZero() && !l.CreatedAt.After(now.Add(30*time.Second)) && l.ExpiresAt.After(l.CreatedAt) && l.ExpiresAt.Sub(l.CreatedAt) <= 10*time.Minute && l.ExpiresAt.After(now)
+}
+
+// ClaimNextHostingDatabaseNetworkCapture polls existing work for this runner.
+// A typed 404 means no eligible capture; no capture identity is supplied by the caller.
+func (c Client) ClaimNextHostingDatabaseNetworkCapture(ctx context.Context, runner string) (domain.HostingDatabaseNetworkCaptureClaim, error) {
+	var response networkCaptureResponse[domain.HostingDatabaseNetworkCaptureClaim]
+	if !readinessResponseID.MatchString(runner) {
+		return response.value, errDatabaseNetworkCapture
+	}
+	err := c.networkCapturePost(ctx, "claim-next", struct{}{}, &response)
+	if err == nil && !validNetworkCaptureClaim(response.value, runner, response.value.Capture.ID) {
+		err = errDatabaseNetworkCapture
+	}
+	if err != nil {
+		return domain.HostingDatabaseNetworkCaptureClaim{}, err
+	}
+	return response.value, nil
 }
 
 // HostingDatabaseNetworkCapturePlan loads the exact target under current authority.

@@ -16,6 +16,12 @@ type networkCaptureServiceRepository struct {
 	calls                  int
 }
 
+func (r *networkCaptureServiceRepository) ClaimNextHostingDatabaseNetworkCapture(_ context.Context, runner, credential string, _ time.Duration) (domain.HostingDatabaseNetworkCaptureClaim, error) {
+	r.calls++
+	r.runner, r.credential = runner, credential
+	return domain.HostingDatabaseNetworkCaptureClaim{}, store.ErrNotFound
+}
+
 func (r *networkCaptureServiceRepository) RequestHostingDatabaseNetworkCapture(context.Context, string, string, domain.AuditEvent) (domain.HostingDatabaseNetworkCapture, error) {
 	return domain.HostingDatabaseNetworkCapture{}, nil
 }
@@ -68,5 +74,31 @@ func TestDatabaseNetworkCaptureServiceRunnerIdentityAndUnavailable(t *testing.T)
 	}
 	if _, err = s.RunnerRecordHostingDatabaseNetworkOrigin(ctx, registered.Token, domain.HostingDatabaseNetworkOriginRequest{}); !errors.Is(err, ErrInvalidInput) || repo.calls != 1 {
 		t.Fatal("invalid origin reached repository")
+	}
+}
+
+func TestDatabaseNetworkCaptureClaimNextServiceIdentity(t *testing.T) {
+	s, _ := newServiceAccountTestService(t)
+	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	registered, err := s.RegisterRunner(admin, RunnerInput{ID: "runner_capture", Name: "capture", Capabilities: []string{domain.HostingDatabaseNetworkCaptureCapability}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := auth.WithPrincipal(t.Context(), auth.Principal{ID: registered.Runner.ID, Provider: domain.PrincipalRunner, Roles: []string{domain.RoleRunner}})
+	if _, err = s.RunnerClaimNextHostingDatabaseNetworkCapture(ctx, registered.Token); !errors.Is(err, store.ErrHostingDatabaseNetworkCaptureUnavailable) {
+		t.Fatal("memory backend selected capture", err)
+	}
+	repo := &networkCaptureServiceRepository{RunRepository: s.runs}
+	s.runs = repo
+	if _, err = s.RunnerClaimNextHostingDatabaseNetworkCapture(ctx, registered.Token); !errors.Is(err, store.ErrNotFound) || repo.calls != 1 || repo.runner != registered.Runner.ID || repo.credential != runnerTokenHash(registered.Token) || repo.credential == registered.Token {
+		t.Fatal("claim-next did not bind current credential or preserve no-work", err)
+	}
+	for _, invalid := range []context.Context{admin, t.Context(), auth.WithPrincipal(t.Context(), auth.Principal{ID: "foreign", Provider: domain.PrincipalRunner, Roles: []string{domain.RoleRunner}})} {
+		if _, err = s.RunnerClaimNextHostingDatabaseNetworkCapture(invalid, registered.Token); err == nil || repo.calls != 1 {
+			t.Fatal("foreign actor selected work", err)
+		}
+	}
+	if _, err = s.RunnerClaimNextHostingDatabaseNetworkCapture(ctx, "wrong"); err == nil || repo.calls != 1 {
+		t.Fatal("wrong bearer selected work", err)
 	}
 }

@@ -75,6 +75,17 @@ func (q *Queries) DatabaseNetworkCaptureFinalClock(ctx context.Context, arg Data
 	return i, err
 }
 
+const databaseNetworkCaptureHasLease = `-- name: DatabaseNetworkCaptureHasLease :one
+SELECT EXISTS(SELECT 1 FROM run_leases WHERE run_id=$1)
+`
+
+func (q *Queries) DatabaseNetworkCaptureHasLease(ctx context.Context, runID string) (bool, error) {
+	row := q.db.QueryRow(ctx, databaseNetworkCaptureHasLease, runID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const databaseNetworkCaptureSchema = `-- name: DatabaseNetworkCaptureSchema :one
 SELECT nerocd_database_network_capture_schema_compatible()::boolean
 `
@@ -151,6 +162,80 @@ func (q *Queries) InsertDatabaseNetworkOriginReceipt(ctx context.Context, arg In
 		arg.AuditID,
 	)
 	return err
+}
+
+const listDatabaseNetworkCaptureCandidates = `-- name: ListDatabaseNetworkCaptureCandidates :many
+SELECT c.id FROM hosting_database_network_captures c
+JOIN task_runs t ON t.id=c.run_id
+JOIN hosting_operations source ON source.id=c.source_operation_id
+JOIN resources resource ON resource.id=c.resource_id
+JOIN projects project ON project.id=c.project_id
+JOIN hosting_binding_state state ON state.binding_id=c.binding_id
+JOIN destination_project_grants grant_row ON grant_row.destination_id=c.plan->>'destination_id' AND grant_row.project_id=c.project_id
+JOIN runners runner ON runner.id=c.plan->>'runner_id'
+WHERE runner.id=$1::text AND runner.token_hash=$2::text AND runner.status='active'
+ AND 'hosting_database_network_capture_v1'=ANY(runner.capabilities) AND NOT('shell'=ANY(runner.capabilities))
+ AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=runner.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=runner.token_hash)
+ AND project.archived_at IS NULL AND grant_row.revoked_at IS NULL
+ AND source.state='succeeded' AND state.healthy->>'operation_id'=source.id
+ AND resource.generation::text=c.plan->'source_plan'->'snapshot'->>'resource_generation'
+ AND state.hold_operation_id IS NULL AND state.restore_admitted
+ AND NOT EXISTS(SELECT 1 FROM hosting_binding_restore_holds h WHERE h.binding_id=c.binding_id)
+ AND NOT EXISTS(SELECT 1 FROM hosting_operations o WHERE o.binding_id=c.binding_id AND o.state NOT IN('succeeded','failed','canceled'))
+ AND NOT EXISTS(SELECT 1 FROM hosting_database_network_origin_receipts r WHERE r.capture_id=c.id)
+ AND ((t.status='queued' AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=t.id))
+ OR (t.status='running' AND t.runner_id=runner.id AND EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=t.id AND l.runner_id=runner.id AND l.status='active' AND l.expires_at>clock_timestamp())))
+ORDER BY CASE WHEN t.status='running' THEN 0 ELSE 1 END,c.created_at,c.id LIMIT 33
+`
+
+type ListDatabaseNetworkCaptureCandidatesParams struct {
+	RunnerID       string `json:"runner_id"`
+	CredentialHash string `json:"credential_hash"`
+}
+
+// The bounded candidate list is an optimization, never current authorization.
+// Returning one extra ID distinguishes a full scan window from queue exhaustion.
+func (q *Queries) ListDatabaseNetworkCaptureCandidates(ctx context.Context, arg ListDatabaseNetworkCaptureCandidatesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listDatabaseNetworkCaptureCandidates, arg.RunnerID, arg.CredentialHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockDatabaseNetworkCaptureCandidate = `-- name: LockDatabaseNetworkCaptureCandidate :one
+SELECT c.id FROM hosting_database_network_captures c JOIN task_runs t ON t.id=c.run_id
+WHERE c.id=$1::text AND c.plan->>'runner_id'=$2::text
+ AND NOT EXISTS(SELECT 1 FROM hosting_database_network_origin_receipts r WHERE r.capture_id=c.id)
+ AND ((t.status='queued' AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=t.id))
+ OR (t.status='running' AND t.runner_id=$2::text AND EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=t.id AND l.runner_id=$2::text AND l.status='active' AND l.expires_at>clock_timestamp())))
+FOR UPDATE OF t SKIP LOCKED
+`
+
+type LockDatabaseNetworkCaptureCandidateParams struct {
+	CaptureID string `json:"capture_id"`
+	RunnerID  string `json:"runner_id"`
+}
+
+// Lock only the task first. Later source, placement and runner checks are shared
+// with exact-ID claims. A contended task is retried by a later polling request.
+func (q *Queries) LockDatabaseNetworkCaptureCandidate(ctx context.Context, arg LockDatabaseNetworkCaptureCandidateParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockDatabaseNetworkCaptureCandidate, arg.CaptureID, arg.RunnerID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const readDatabaseNetworkCapture = `-- name: ReadDatabaseNetworkCapture :one

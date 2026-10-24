@@ -4,6 +4,7 @@ import "net/http"
 
 var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/claim"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/claim-next"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/plan"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/origin"},
 
@@ -256,6 +257,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.requestStorageArchiveRecovery
 	case "/api/v1/runners/database-network-captures/claim":
 		return s.runnerClaimDatabaseNetworkCapture
+	case "/api/v1/runners/database-network-captures/claim-next":
+		return s.runnerClaimNextDatabaseNetworkCapture
 	case "/api/v1/runners/database-network-captures/plan":
 		return s.runnerDatabaseNetworkCapturePlan
 	case "/api/v1/runners/database-network-captures/origin":

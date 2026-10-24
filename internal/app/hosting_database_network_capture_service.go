@@ -51,6 +51,20 @@ func (s *Service) RunnerClaimHostingDatabaseNetworkCapture(ctx context.Context, 
 	return repo.ClaimHostingDatabaseNetworkCapture(ctx, runner, hash, id, s.leaseTTL)
 }
 
+// RunnerClaimNextHostingDatabaseNetworkCapture selects work only for the current bearer.
+func (s *Service) RunnerClaimNextHostingDatabaseNetworkCapture(ctx context.Context, token string) (domain.HostingDatabaseNetworkCaptureClaim, error) {
+	var zero domain.HostingDatabaseNetworkCaptureClaim
+	runner, hash, err := s.observationRunner(ctx, token)
+	if err != nil {
+		return zero, err
+	}
+	repo, ok := s.runs.(store.HostingDatabaseNetworkCaptureClaimRepository)
+	if !ok {
+		return zero, store.ErrHostingDatabaseNetworkCaptureUnavailable
+	}
+	return repo.ClaimNextHostingDatabaseNetworkCapture(ctx, runner, hash, s.leaseTTL)
+}
+
 // RunnerHostingDatabaseNetworkCapturePlan loads the exact read-only target under fresh authority.
 func (s *Service) RunnerHostingDatabaseNetworkCapturePlan(ctx context.Context, token string, a domain.HostingAuthority) (domain.HostingDatabaseNetworkCapture, error) {
 	var zero domain.HostingDatabaseNetworkCapture

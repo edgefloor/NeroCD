@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -74,6 +75,91 @@ func TestDatabaseNetworkCaptureHTTPClosedRoutes(t *testing.T) {
 		}
 		call(token, valid, "?capture_id=foreign", 400)
 		call(token, strings.Repeat(" ", domain.HostingDatabaseBindingJSONLimit+1)+valid, "", 413)
+	}
+}
+
+func TestDatabaseNetworkCaptureClaimNextHTTPClosedBody(t *testing.T) {
+	s, mem := newTestServer()
+	user := createTestSession(t, s)
+	token := "capture_next_runner_canary"
+	if _, err := mem.RegisterRunner(t.Context(), domain.Runner{ID: "runner_capture_next", Name: "capture", TokenHash: fmt.Sprintf("%x", sha256.Sum256([]byte(token))), Status: domain.RunnerActive, RegisteredAt: time.Now(), LastHeartbeatAt: time.Now(), Capabilities: []string{domain.HostingDatabaseNetworkCaptureCapability}}); err != nil {
+		t.Fatal(err)
+	}
+	call := func(credential, body, suffix string, want int) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/runners/database-network-captures/claim-next"+suffix, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		if credential != "" {
+			r.Header.Set("Authorization", "Bearer "+credential)
+		}
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code != want || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), token) {
+			t.Fatalf("closed claim-next status=%d want=%d", w.Code, want)
+		}
+	}
+	call("", "{}", "", 401)
+	call(user, "{}", "", 401)
+	call(token, "{}", "", 503)
+	for _, body := range []string{"", `null`, `[]`, `{"capture_id":"foreign"}`, `{"runner_id":"foreign"}`, `{"unknown":1}`, `{"unknown":1,"unknown":2}`, `{"Unknown":1}`, `{} {}`, `{"field":null}`} {
+		call(token, body, "", 400)
+	}
+	call(token, "{}", "?capture_id=foreign", 400)
+	call(token, strings.Repeat(" ", domain.HostingDatabaseBindingJSONLimit+1)+"{}", "", 413)
+}
+
+func TestDatabaseNetworkCaptureClaimNextPostgresAuthenticatedClient(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f := newCaptureHTTPFixture(t)
+			source := f.source(t, engine)
+			capture, err := f.service.RequestHostingDatabaseNetworkCapture(f.admin, source.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handler := NewServer(f.service, slog.New(slog.NewTextHandler(&f.logs, nil)), web.Static())
+			var lose atomic.Bool
+			lose.Store(true)
+			tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/runners/database-network-captures/claim-next" && lose.CompareAndSwap(true, false) {
+					rec := httptest.NewRecorder()
+					handler.ServeHTTP(rec, r)
+					if rec.Code != 200 {
+						t.Error("claim loss fault did not follow commit")
+						w.WriteHeader(rec.Code)
+						return
+					}
+					w.WriteHeader(503)
+					return
+				}
+				handler.ServeHTTP(w, r)
+			}))
+			defer tls.Close()
+			client := runnerclient.New(tls.URL, f.token)
+			client.HTTP = tls.Client()
+			if _, err = client.ClaimNextHostingDatabaseNetworkCapture(f.admin, f.runner); !runnerclient.HTTPStatus(err, 503) {
+				t.Fatal("lost claim response was not injected", err)
+			}
+			claim, err := client.ClaimNextHostingDatabaseNetworkCapture(f.admin, f.runner)
+			if err != nil || claim.Capture.ID != capture.ID || claim.Lease.Attempt != 1 {
+				t.Fatal("automatic selected claim replay failed", err)
+			}
+			again, err := client.ClaimNextHostingDatabaseNetworkCapture(f.admin, f.runner)
+			if err != nil || again.Lease.ID != claim.Lease.ID || again.Lease.Fence != claim.Lease.Fence || again.Lease.Attempt != claim.Lease.Attempt {
+				t.Fatal("poll replay changed authority", err)
+			}
+			p := claim.Capture.Plan
+			m := p.Materialization
+			in := domain.HostingDatabaseNetworkOriginRequest{HostingAuthority: domain.HostingAuthority{OperationID: capture.ID, RunID: claim.Lease.RunID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}, ReceiptID: "automatic_origin", PlanHash: p.Hash, ObservedAt: time.Now().UTC(), Origin: domain.HostingDatabaseNetworkOrigin{Version: 1, Binding: p.BindingID, Destination: p.DestinationID, Daemon: m.DaemonID, Configuration: p.SourcePlan.Snapshot.Database.ConfigurationHash, OriginOperation: m.CreationOperationID, OriginPlan: m.CreationPlanHash, Nonce: strings.Repeat("b", 32), Storage: m.StorageRef, VolumeNonce: m.CreationNonce, VolumeCreatedAt: "2026-10-23T00:00:00Z", NetworkID: strings.Repeat("c", 64), InitReady: true}}
+			if _, err = client.RecordHostingDatabaseNetworkOrigin(f.admin, f.runner, in, p); err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.ClaimNextHostingDatabaseNetworkCapture(f.admin, f.runner)
+			var status *runnerclient.APIError
+			if !errors.As(err, &status) || !runnerclient.HTTPStatus(err, 404) || status.Detail != "" {
+				t.Fatal("committed capture did not yield typed empty queue", err)
+			}
+		})
 	}
 }
 
