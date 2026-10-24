@@ -373,7 +373,7 @@ func (s *PostgresStore) StorageArchiveComplete(ctx context.Context, runner strin
 		q := sqlcgen.New(tx)
 		if clearHold {
 			if p.Target != nil {
-				if _, err := tx.Exec(ctx, `UPDATE hosting_binding_state SET restore_admitted=true WHERE binding_id=$1 AND hold_operation_id=$2`, op.BindingID, op.ID); err != nil {
+				if err := q.ResolveStorageArchiveTargetHold(ctx, sqlcgen.ResolveStorageArchiveTargetHoldParams{BindingID: op.BindingID, OperationID: op.ID}); err != nil {
 					return err
 				}
 			}
@@ -395,8 +395,8 @@ func (s *PostgresStore) StorageArchiveComplete(ctx context.Context, runner strin
 		}
 		if p.Mode == "recover" && clearHold {
 			originalState := "failed"
-			var published bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_storage_archive_blobs WHERE operation_id=$1)`, p.RecoveryOfOperationID).Scan(&published); err != nil {
+			published, err := q.StorageArchiveHasPublishedBlob(ctx, p.RecoveryOfOperationID)
+			if err != nil {
 				return err
 			}
 			if published || p.Target != nil && r.RestoreVerified {

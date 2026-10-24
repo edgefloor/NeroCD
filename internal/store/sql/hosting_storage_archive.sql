@@ -65,3 +65,34 @@ INSERT INTO hosting_storage_restore_use_admissions(operation_id,storage_id,plan_
 SELECT * FROM hosting_storage_restore_use_receipts WHERE operation_id=$1;
 -- name: InsertStorageRestoreUseReceipt :one
 INSERT INTO hosting_storage_restore_use_receipts(operation_id,storage_id,receipt_id,authority,body,body_hash,audit_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *;
+
+-- name: ReadStorageArchiveHolds :one
+SELECT EXISTS(SELECT 1 FROM hosting_binding_state WHERE hold_operation_id=sqlc.arg(operation_id)::text)::boolean AS mutation_hold,
+ EXISTS(SELECT 1 FROM hosting_binding_state WHERE binding_id=sqlc.arg(binding_id)::text AND NOT restore_admitted)::boolean AS restore_ownership_held;
+-- name: LockStorageArchiveRunner :one
+SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN projects project ON project.id=sqlc.arg(project_id)::text
+WHERE r.id=sqlc.arg(runner_id)::text AND s.id=sqlc.arg(server_id)::text AND d.id=sqlc.arg(destination_id)::text AND project.archived_at IS NULL AND r.status='active' AND r.token_hash<>''
+AND 'storage_archive'=ANY(r.capabilities) AND 'hosting_storage_archive_v1'=ANY(r.capabilities) AND 'hosting_owned_storage_v1'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities))
+AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r;
+-- name: AdmitStorageArchiveHold :exec
+UPDATE hosting_binding_state SET hold_operation_id=sqlc.arg(operation_id)::text WHERE binding_id=sqlc.arg(binding_id)::text AND hold_operation_id IS NULL;
+-- name: ReadStorageArchiveHoldOwner :one
+SELECT coalesce(hold_operation_id,'')::text FROM hosting_binding_state WHERE binding_id=$1;
+-- name: TransferStorageArchiveHold :execrows
+UPDATE hosting_binding_state SET hold_operation_id=sqlc.arg(operation_id)::text WHERE binding_id=sqlc.arg(binding_id)::text AND hold_operation_id=sqlc.arg(previous_operation_id)::text;
+-- name: LockStorageArchiveStorage :one
+SELECT id FROM hosting_storage WHERE id=$1 FOR UPDATE;
+-- name: ResolveStorageArchiveTargetHold :exec
+UPDATE hosting_binding_state SET restore_admitted=true WHERE binding_id=sqlc.arg(binding_id)::text AND hold_operation_id=sqlc.arg(operation_id)::text;
+-- name: StorageArchiveHasPublishedBlob :one
+SELECT EXISTS(SELECT 1 FROM hosting_storage_archive_blobs WHERE operation_id=$1)::boolean;
+-- name: LockStorageArchiveImage :exec
+SELECT pg_advisory_xact_lock(hashtextextended('nerocd-archive-image:'||sqlc.arg(daemon_id)::text||':'||sqlc.arg(image_id)::text,0));
+-- name: StorageArchiveImageReferenced :one
+SELECT EXISTS(SELECT 1 FROM hosting_storage_archive_plans p JOIN hosting_operations o ON o.id=p.operation_id
+ WHERE p.body->'source_healthy'->'release'->>'daemon_id'=sqlc.arg(daemon_id)::text AND p.body->'source_healthy'->'release'->>'image_id'=sqlc.arg(image_id)::text
+ AND (EXISTS(SELECT 1 FROM hosting_storage_backups b WHERE b.operation_id=p.operation_id) OR (p.target_resource_id IS NOT NULL AND o.state NOT IN ('succeeded','failed','canceled'))))::boolean;
+-- name: StorageArchiveImageCleanupPending :one
+SELECT EXISTS(SELECT 1 FROM hosting_retained_releases WHERE state='cleanup_pending' AND body->'release'->>'daemon_id'=sqlc.arg(daemon_id)::text AND body->'release'->>'image_id'=sqlc.arg(image_id)::text)::boolean;
+-- name: ReserveStorageArchiveRestoreTarget :exec
+INSERT INTO hosting_binding_state(binding_id,destination_id,host_port,daemon_id,hold_operation_id,restore_admitted) VALUES($1,$2,$3,$4,$5,false);

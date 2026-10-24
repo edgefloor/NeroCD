@@ -144,8 +144,8 @@ func (s *PostgresStore) RequestStorageArchiveRecovery(ctx context.Context, id, o
 		}
 		// Read the hold owner before taking task locks. Recheck under the
 		// destination/resource/binding locks before granting any authority.
-		var heldID string
-		if err = tx.QueryRow(ctx, `SELECT coalesce(hold_operation_id,'') FROM hosting_binding_state WHERE binding_id=$1`, original.BindingID).Scan(&heldID); err != nil {
+		heldID, err := q.ReadStorageArchiveHoldOwner(ctx, original.BindingID)
+		if err != nil {
 			return zero, err
 		}
 		held := original
@@ -246,11 +246,11 @@ func (s *PostgresStore) RequestStorageArchiveRecovery(ctx context.Context, id, o
 		if err = q.InsertStorageArchiveRecovery(ctx, sqlcgen.InsertStorageArchiveRecoveryParams{OperationID: id, OriginalOperationID: originalID, RequestID: in.RequestID, RequestHash: hash, CreatedBy: actor}); err != nil {
 			return zero, err
 		}
-		updated, err := tx.Exec(ctx, `UPDATE hosting_binding_state SET hold_operation_id=$2 WHERE binding_id=$1 AND hold_operation_id=$3`, original.BindingID, id, heldID)
+		updated, err := q.TransferStorageArchiveHold(ctx, sqlcgen.TransferStorageArchiveHoldParams{BindingID: original.BindingID, OperationID: id, PreviousOperationID: heldID})
 		if err != nil {
 			return zero, err
 		}
-		if updated.RowsAffected() != 1 {
+		if updated != 1 {
 			return zero, ErrConflict
 		}
 		if held.RunID != "" {

@@ -100,8 +100,7 @@ func (s *PostgresStore) archiveStorageCreateBegin(ctx context.Context, tx pgx.Tx
 	}
 	q := sqlcgen.New(tx)
 	st := p.Target.Storage
-	var locked string
-	if err = tx.QueryRow(ctx, `SELECT id FROM hosting_storage WHERE id=$1 FOR UPDATE`, st.ID).Scan(&locked); err != nil {
+	if _, err = q.LockStorageArchiveStorage(ctx, st.ID); err != nil {
 		return zero, err
 	}
 	prior, err := q.ReadStorageRestoreOrigin(ctx, st.ID)
@@ -148,8 +147,7 @@ func (s *PostgresStore) archiveStorageMaterialized(ctx context.Context, tx pgx.T
 	}
 	q := sqlcgen.New(tx)
 	st := p.Target.Storage
-	var locked string
-	if err = tx.QueryRow(ctx, `SELECT id FROM hosting_storage WHERE id=$1 FOR UPDATE`, st.ID).Scan(&locked); err != nil {
+	if _, err = q.LockStorageArchiveStorage(ctx, st.ID); err != nil {
 		return zero, err
 	}
 	origin, err := q.ReadStorageRestoreOrigin(ctx, st.ID)

@@ -10,6 +10,20 @@ import (
 	"encoding/json"
 )
 
+const admitStorageArchiveHold = `-- name: AdmitStorageArchiveHold :exec
+UPDATE hosting_binding_state SET hold_operation_id=$1::text WHERE binding_id=$2::text AND hold_operation_id IS NULL
+`
+
+type AdmitStorageArchiveHoldParams struct {
+	OperationID string `json:"operation_id"`
+	BindingID   string `json:"binding_id"`
+}
+
+func (q *Queries) AdmitStorageArchiveHold(ctx context.Context, arg AdmitStorageArchiveHoldParams) error {
+	_, err := q.db.Exec(ctx, admitStorageArchiveHold, arg.OperationID, arg.BindingID)
+	return err
+}
+
 const checkStorageArchiveAuthority = `-- name: CheckStorageArchiveAuthority :one
 SELECT l.id FROM run_leases l JOIN hosting_storage_archive_task_targets t ON t.run_id=l.run_id JOIN hosting_storage_archive_plans p ON p.operation_id=t.operation_id JOIN task_runs tr ON tr.id=t.run_id
 WHERE l.id=$1 AND l.run_id=$2 AND l.runner_id=$3 AND l.attempt=$4 AND l.fence=$5 AND t.operation_id=$6 AND t.runner_id=$3 AND t.mode=p.mode
@@ -403,6 +417,56 @@ func (q *Queries) ListStorageBackups(ctx context.Context, arg ListStorageBackups
 	return items, nil
 }
 
+const lockStorageArchiveImage = `-- name: LockStorageArchiveImage :exec
+SELECT pg_advisory_xact_lock(hashtextextended('nerocd-archive-image:'||$1::text||':'||$2::text,0))
+`
+
+type LockStorageArchiveImageParams struct {
+	DaemonID string `json:"daemon_id"`
+	ImageID  string `json:"image_id"`
+}
+
+func (q *Queries) LockStorageArchiveImage(ctx context.Context, arg LockStorageArchiveImageParams) error {
+	_, err := q.db.Exec(ctx, lockStorageArchiveImage, arg.DaemonID, arg.ImageID)
+	return err
+}
+
+const lockStorageArchiveRunner = `-- name: LockStorageArchiveRunner :one
+SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN projects project ON project.id=$1::text
+WHERE r.id=$2::text AND s.id=$3::text AND d.id=$4::text AND project.archived_at IS NULL AND r.status='active' AND r.token_hash<>''
+AND 'storage_archive'=ANY(r.capabilities) AND 'hosting_storage_archive_v1'=ANY(r.capabilities) AND 'hosting_owned_storage_v1'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities))
+AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
+`
+
+type LockStorageArchiveRunnerParams struct {
+	ProjectID     string `json:"project_id"`
+	RunnerID      string `json:"runner_id"`
+	ServerID      string `json:"server_id"`
+	DestinationID string `json:"destination_id"`
+}
+
+func (q *Queries) LockStorageArchiveRunner(ctx context.Context, arg LockStorageArchiveRunnerParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockStorageArchiveRunner,
+		arg.ProjectID,
+		arg.RunnerID,
+		arg.ServerID,
+		arg.DestinationID,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockStorageArchiveStorage = `-- name: LockStorageArchiveStorage :one
+SELECT id FROM hosting_storage WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockStorageArchiveStorage(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockStorageArchiveStorage, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const readStorageArchiveBlob = `-- name: ReadStorageArchiveBlob :one
 SELECT body FROM hosting_storage_archive_blobs WHERE backup_id=$1
 `
@@ -412,6 +476,39 @@ func (q *Queries) ReadStorageArchiveBlob(ctx context.Context, backupID string) (
 	var body json.RawMessage
 	err := row.Scan(&body)
 	return body, err
+}
+
+const readStorageArchiveHoldOwner = `-- name: ReadStorageArchiveHoldOwner :one
+SELECT coalesce(hold_operation_id,'')::text FROM hosting_binding_state WHERE binding_id=$1
+`
+
+func (q *Queries) ReadStorageArchiveHoldOwner(ctx context.Context, bindingID string) (string, error) {
+	row := q.db.QueryRow(ctx, readStorageArchiveHoldOwner, bindingID)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const readStorageArchiveHolds = `-- name: ReadStorageArchiveHolds :one
+SELECT EXISTS(SELECT 1 FROM hosting_binding_state WHERE hold_operation_id=$1::text)::boolean AS mutation_hold,
+ EXISTS(SELECT 1 FROM hosting_binding_state WHERE binding_id=$2::text AND NOT restore_admitted)::boolean AS restore_ownership_held
+`
+
+type ReadStorageArchiveHoldsParams struct {
+	OperationID string `json:"operation_id"`
+	BindingID   string `json:"binding_id"`
+}
+
+type ReadStorageArchiveHoldsRow struct {
+	MutationHold         bool `json:"mutation_hold"`
+	RestoreOwnershipHeld bool `json:"restore_ownership_held"`
+}
+
+func (q *Queries) ReadStorageArchiveHolds(ctx context.Context, arg ReadStorageArchiveHoldsParams) (ReadStorageArchiveHoldsRow, error) {
+	row := q.db.QueryRow(ctx, readStorageArchiveHolds, arg.OperationID, arg.BindingID)
+	var i ReadStorageArchiveHoldsRow
+	err := row.Scan(&i.MutationHold, &i.RestoreOwnershipHeld)
+	return i, err
 }
 
 const readStorageArchiveOperation = `-- name: ReadStorageArchiveOperation :one
@@ -748,6 +845,88 @@ func (q *Queries) RecoverQueuedStorageArchives(ctx context.Context) ([]string, e
 	return items, nil
 }
 
+const reserveStorageArchiveRestoreTarget = `-- name: ReserveStorageArchiveRestoreTarget :exec
+INSERT INTO hosting_binding_state(binding_id,destination_id,host_port,daemon_id,hold_operation_id,restore_admitted) VALUES($1,$2,$3,$4,$5,false)
+`
+
+type ReserveStorageArchiveRestoreTargetParams struct {
+	BindingID       string  `json:"binding_id"`
+	DestinationID   string  `json:"destination_id"`
+	HostPort        int32   `json:"host_port"`
+	DaemonID        *string `json:"daemon_id"`
+	HoldOperationID *string `json:"hold_operation_id"`
+}
+
+func (q *Queries) ReserveStorageArchiveRestoreTarget(ctx context.Context, arg ReserveStorageArchiveRestoreTargetParams) error {
+	_, err := q.db.Exec(ctx, reserveStorageArchiveRestoreTarget,
+		arg.BindingID,
+		arg.DestinationID,
+		arg.HostPort,
+		arg.DaemonID,
+		arg.HoldOperationID,
+	)
+	return err
+}
+
+const resolveStorageArchiveTargetHold = `-- name: ResolveStorageArchiveTargetHold :exec
+UPDATE hosting_binding_state SET restore_admitted=true WHERE binding_id=$1::text AND hold_operation_id=$2::text
+`
+
+type ResolveStorageArchiveTargetHoldParams struct {
+	BindingID   string `json:"binding_id"`
+	OperationID string `json:"operation_id"`
+}
+
+func (q *Queries) ResolveStorageArchiveTargetHold(ctx context.Context, arg ResolveStorageArchiveTargetHoldParams) error {
+	_, err := q.db.Exec(ctx, resolveStorageArchiveTargetHold, arg.BindingID, arg.OperationID)
+	return err
+}
+
+const storageArchiveHasPublishedBlob = `-- name: StorageArchiveHasPublishedBlob :one
+SELECT EXISTS(SELECT 1 FROM hosting_storage_archive_blobs WHERE operation_id=$1)::boolean
+`
+
+func (q *Queries) StorageArchiveHasPublishedBlob(ctx context.Context, operationID string) (bool, error) {
+	row := q.db.QueryRow(ctx, storageArchiveHasPublishedBlob, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const storageArchiveImageCleanupPending = `-- name: StorageArchiveImageCleanupPending :one
+SELECT EXISTS(SELECT 1 FROM hosting_retained_releases WHERE state='cleanup_pending' AND body->'release'->>'daemon_id'=$1::text AND body->'release'->>'image_id'=$2::text)::boolean
+`
+
+type StorageArchiveImageCleanupPendingParams struct {
+	DaemonID string `json:"daemon_id"`
+	ImageID  string `json:"image_id"`
+}
+
+func (q *Queries) StorageArchiveImageCleanupPending(ctx context.Context, arg StorageArchiveImageCleanupPendingParams) (bool, error) {
+	row := q.db.QueryRow(ctx, storageArchiveImageCleanupPending, arg.DaemonID, arg.ImageID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const storageArchiveImageReferenced = `-- name: StorageArchiveImageReferenced :one
+SELECT EXISTS(SELECT 1 FROM hosting_storage_archive_plans p JOIN hosting_operations o ON o.id=p.operation_id
+ WHERE p.body->'source_healthy'->'release'->>'daemon_id'=$1::text AND p.body->'source_healthy'->'release'->>'image_id'=$2::text
+ AND (EXISTS(SELECT 1 FROM hosting_storage_backups b WHERE b.operation_id=p.operation_id) OR (p.target_resource_id IS NOT NULL AND o.state NOT IN ('succeeded','failed','canceled'))))::boolean
+`
+
+type StorageArchiveImageReferencedParams struct {
+	DaemonID string `json:"daemon_id"`
+	ImageID  string `json:"image_id"`
+}
+
+func (q *Queries) StorageArchiveImageReferenced(ctx context.Context, arg StorageArchiveImageReferencedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, storageArchiveImageReferenced, arg.DaemonID, arg.ImageID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const storageArchiveSchemaCompatible = `-- name: StorageArchiveSchemaCompatible :one
 SELECT nerocd_storage_archive_schema_compatible()::boolean
 `
@@ -768,4 +947,22 @@ func (q *Queries) StorageArchiveSchemaPresent(ctx context.Context) (bool, error)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const transferStorageArchiveHold = `-- name: TransferStorageArchiveHold :execrows
+UPDATE hosting_binding_state SET hold_operation_id=$1::text WHERE binding_id=$2::text AND hold_operation_id=$3::text
+`
+
+type TransferStorageArchiveHoldParams struct {
+	OperationID         string `json:"operation_id"`
+	BindingID           string `json:"binding_id"`
+	PreviousOperationID string `json:"previous_operation_id"`
+}
+
+func (q *Queries) TransferStorageArchiveHold(ctx context.Context, arg TransferStorageArchiveHoldParams) (int64, error) {
+	result, err := q.db.Exec(ctx, transferStorageArchiveHold, arg.OperationID, arg.BindingID, arg.PreviousOperationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

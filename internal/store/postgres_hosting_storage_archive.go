@@ -105,9 +105,11 @@ func archiveOperation(ctx context.Context, db sqlcgen.DBTX, id string) (domain.H
 			op.StorageArchive.Progress = append(op.StorageArchive.Progress, domain.HostingStorageArchiveProgressEvidence{Receipt: domain.HostingReceipt{ID: r.ReceiptID, BodyHash: r.BodyHash, CreatedAt: r.CreatedAt}, PlanHash: in.PlanHash, Phase: in.Phase, Writers: in.Writers, HelperContainerID: in.HelperContainerID, Blob: in.Blob, RestoreVerified: in.RestoreVerified})
 		}
 	}
-	if err = db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_binding_state WHERE hold_operation_id=$1),EXISTS(SELECT 1 FROM hosting_binding_state WHERE binding_id=$2 AND NOT restore_admitted)`, id, op.BindingID).Scan(&op.MutationHold, &op.RestoreOwnershipHeld); err != nil {
+	holds, err := q.ReadStorageArchiveHolds(ctx, sqlcgen.ReadStorageArchiveHoldsParams{OperationID: id, BindingID: op.BindingID})
+	if err != nil {
 		return zero, true, err
 	}
+	op.MutationHold, op.RestoreOwnershipHeld = holds.MutationHold, holds.RestoreOwnershipHeld
 	return op, true, nil
 }
 
@@ -138,8 +140,7 @@ func archivePrelock(ctx context.Context, tx pgx.Tx, destination string, resource
 }
 
 func archiveRunner(ctx context.Context, tx pgx.Tx, p domain.HostingStorageArchivePlan) error {
-	var id string
-	err := tx.QueryRow(ctx, `SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN projects project ON project.id=$4 WHERE r.id=$1 AND s.id=$2 AND d.id=$3 AND project.archived_at IS NULL AND r.status='active' AND r.token_hash<>'' AND 'storage_archive'=ANY(r.capabilities) AND 'hosting_storage_archive_v1'=ANY(r.capabilities) AND 'hosting_owned_storage_v1'=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r`, p.RunnerID, p.ServerID, p.DestinationID, p.ProjectID).Scan(&id)
+	_, err := sqlcgen.New(tx).LockStorageArchiveRunner(ctx, sqlcgen.LockStorageArchiveRunnerParams{RunnerID: p.RunnerID, ServerID: p.ServerID, DestinationID: p.DestinationID, ProjectID: p.ProjectID})
 	return hostingError(err)
 }
 
@@ -351,7 +352,7 @@ func (s *PostgresStore) RequestStorageBackup(ctx context.Context, id, resource, 
 		if err = q.InsertStorageBackup(ctx, sqlcgen.InsertStorageBackupParams{ID: backupID, OperationID: id, ProjectID: r.ProjectID, ResourceID: resource, RequestID: in.RequestID, RequestHash: hash, CreatedBy: actor}); err != nil {
 			return zero, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE hosting_binding_state SET hold_operation_id=$2 WHERE binding_id=$1 AND hold_operation_id IS NULL`, b.ID, id); err != nil {
+		if err = q.AdmitStorageArchiveHold(ctx, sqlcgen.AdmitStorageArchiveHoldParams{BindingID: b.ID, OperationID: id}); err != nil {
 			return zero, err
 		}
 		op, _, err := archiveOperation(ctx, tx, id)

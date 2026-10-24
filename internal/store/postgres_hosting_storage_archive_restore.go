@@ -164,7 +164,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		if err = s.resolveHostingReleasePort(ctx, tx, &snap, 0); err != nil {
 			return zero, err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO hosting_binding_state(binding_id,destination_id,host_port,daemon_id,hold_operation_id,restore_admitted) VALUES($1,$2,$3,$4,$5,false)`, bindingID, p.DestinationID, snap.HostPort, p.Helper.DaemonID, id); err != nil {
+		if err = q.ReserveStorageArchiveRestoreTarget(ctx, sqlcgen.ReserveStorageArchiveRestoreTargetParams{BindingID: bindingID, DestinationID: p.DestinationID, HostPort: int32(snap.HostPort), DaemonID: &p.Helper.DaemonID, HoldOperationID: &id}); err != nil {
 			return zero, err
 		}
 		op, _, err := archiveOperation(ctx, tx, id)

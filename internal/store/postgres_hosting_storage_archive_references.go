@@ -12,8 +12,7 @@ import (
 // image identity. This shared admission lock also serializes different bindings
 // on the same daemon without granting authority over those bindings.
 func archiveImageLock(ctx context.Context, tx pgx.Tx, release domain.HostingRelease) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-archive-image:'||$1::text||':'||$2::text,0))`, release.DaemonID, release.ImageID)
-	return err
+	return sqlcgen.New(tx).LockStorageArchiveImage(ctx, sqlcgen.LockStorageArchiveImageParams{DaemonID: release.DaemonID, ImageID: release.ImageID})
 }
 
 func archiveImageReferenced(ctx context.Context, tx pgx.Tx, h domain.HostingHealthy) error {
@@ -24,8 +23,7 @@ func archiveImageReferenced(ctx context.Context, tx pgx.Tx, h domain.HostingHeal
 	if err = archiveImageLock(ctx, tx, h.Release); err != nil {
 		return err
 	}
-	var referenced bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_storage_archive_plans p JOIN hosting_operations o ON o.id=p.operation_id WHERE p.body->'source_healthy'->'release'->>'daemon_id'=$1 AND p.body->'source_healthy'->'release'->>'image_id'=$2 AND (EXISTS(SELECT 1 FROM hosting_storage_backups b WHERE b.operation_id=p.operation_id) OR (p.target_resource_id IS NOT NULL AND o.state NOT IN ('succeeded','failed','canceled'))))`, h.Release.DaemonID, h.Release.ImageID).Scan(&referenced)
+	referenced, err := sqlcgen.New(tx).StorageArchiveImageReferenced(ctx, sqlcgen.StorageArchiveImageReferencedParams{DaemonID: h.Release.DaemonID, ImageID: h.Release.ImageID})
 	if err != nil {
 		return err
 	}
@@ -39,8 +37,7 @@ func archiveImageCleanupPending(ctx context.Context, tx pgx.Tx, h domain.Hosting
 	if err := archiveImageLock(ctx, tx, h.Release); err != nil {
 		return err
 	}
-	var pending bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_retained_releases WHERE state='cleanup_pending' AND body->'release'->>'daemon_id'=$1 AND body->'release'->>'image_id'=$2)`, h.Release.DaemonID, h.Release.ImageID).Scan(&pending)
+	pending, err := sqlcgen.New(tx).StorageArchiveImageCleanupPending(ctx, sqlcgen.StorageArchiveImageCleanupPendingParams{DaemonID: h.Release.DaemonID, ImageID: h.Release.ImageID})
 	if err != nil {
 		return err
 	}
