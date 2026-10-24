@@ -4,6 +4,220 @@
  */
 
 export interface paths {
+    "/api/v1/resources/{id}/storage-backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List retained upload backup metadata
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Owner mutations and viewer reads. Raw JSON maximum 4096 bytes; duplicate/unknown fields, paths and URLs are rejected.
+         */
+        get: operations["listStorageBackups"];
+        put?: never;
+        /**
+         * Request immediate destination-local upload backup
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Owner mutations and viewer reads. Raw JSON maximum 4096 bytes; duplicate/unknown fields, paths and URLs are rejected.
+         */
+        post: operations["requestStorageBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage-backups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read retained backup metadata
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Owner mutations and viewer reads. Raw JSON maximum 4096 bytes; duplicate/unknown fields, paths and URLs are rejected.
+         */
+        get: operations["getStorageBackup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage-backups/{id}/restores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore files into a new held resource
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Owner mutations and viewer reads. Raw JSON maximum 4096 bytes; duplicate/unknown fields, paths and URLs are rejected.
+         */
+        post: operations["requestStorageRestore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage-restores/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read file restoration metadata
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Owner mutations and viewer reads. Raw JSON maximum 4096 bytes; duplicate/unknown fields, paths and URLs are rejected.
+         */
+        get: operations["getStorageRestore"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting-operations/{id}/storage-archive-recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request fresh narrow archive recovery authority
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Owner mutations and viewer reads. Raw JSON maximum 4096 bytes; duplicate/unknown fields, paths and URLs are rejected.
+         */
+        post: operations["requestStorageArchiveRecovery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-archive/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced archive plan
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Dedicated runner credential and exact fenced lease required. Raw JSON maximum 32768 bytes.
+         */
+        post: operations["runnerStorageArchivePlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-archive/prepared": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced archive prepared
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Dedicated runner credential and exact fenced lease required. Raw JSON maximum 32768 bytes.
+         */
+        post: operations["runnerStorageArchivePrepared"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-archive/apply-begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced archive apply-begin
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Dedicated runner credential and exact fenced lease required. Raw JSON maximum 32768 bytes.
+         */
+        post: operations["runnerStorageArchiveApplyBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-archive/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced archive progress
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Dedicated runner credential and exact fenced lease required. Raw JSON maximum 32768 bytes.
+         */
+        post: operations["runnerStorageArchiveProgress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-archive/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fenced archive complete
+         * @description Metadata only. Current authorization is rechecked, including exact replay. Cache-Control: no-store. Dedicated runner credential and exact fenced lease required. Raw JSON maximum 32768 bytes.
+         */
+        post: operations["runnerStorageArchiveComplete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/databases": {
         parameters: {
             query?: never;
@@ -4959,7 +5173,7 @@ export interface components {
             created_by: string;
             /** @enum {string} */
             state: "queued" | "dispatched" | "preparing" | "prepared" | "applying" | "verifying" | "succeeded" | "failed" | "canceled" | "cancel_requested" | "reconciliation_required";
-            snapshot: components["schemas"]["HostingSnapshot"];
+            snapshot: components["schemas"]["HostingSnapshot"] | components["schemas"]["HostingStorageArchiveZeroSnapshot"];
             cleanup_plan?: components["schemas"]["HostingCleanupPlan"];
             release?: components["schemas"]["HostingRelease"];
             plan?: components["schemas"]["HostingApplyPlan"];
@@ -4975,10 +5189,253 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup";
+            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover";
             observation_lease?: components["schemas"]["RunLease"];
             reconciliation_healthy?: components["schemas"]["HostingHealthy"];
+            storage_archive?: components["schemas"]["HostingStorageArchive"];
+        } & ({
+            snapshot?: components["schemas"]["HostingSnapshot"];
+            /** @enum {string} */
+            task_mode?: "deploy" | "observe" | "cleanup";
+        } | {
+            snapshot?: components["schemas"]["HostingStorageArchiveZeroSnapshot"];
+            /** @enum {string} */
+            task_mode: "backup" | "restore" | "recover";
+        });
+        HostingStorageBackupInput: {
+            request_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
         };
+        HostingStorageRestoreInput: {
+            request_id: string;
+            name: string;
+        };
+        HostingStorageArchiveRecoveryInput: {
+            request_id: string;
+            expected_plan_hash: string;
+        };
+        HostingStorageArchiveHelper: {
+            /** @enum {string} */
+            mode: "local_image";
+            /** @enum {string} */
+            recipe_version: "owned-upload.local-archive.v1";
+            image_id: string;
+            executable_sha256: string;
+            source_commit: string;
+            /** @enum {string} */
+            os: "linux";
+            /** @enum {string} */
+            architecture: "arm64";
+            /** @enum {string} */
+            variant?: "";
+            daemon_id: string;
+            hash: string;
+        };
+        /** @description All six limits are explicit. file_bytes <= data_bytes <= archive_bytes. Zero is never a default or unbounded. */
+        HostingStorageArchiveLimits: {
+            archive_bytes: number;
+            data_bytes: number;
+            file_bytes: number;
+            members: number;
+            depth: number;
+            path_bytes: number;
+        };
+        /** @description Private destination+daemon artifact identity, without any filesystem path, URL or byte-download authority. */
+        HostingStorageArchiveBlob: {
+            backup_id: string;
+            destination_id: string;
+            daemon_id: string;
+            sha256: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** @enum {string} */
+            format: "nerocd-storage-v1";
+        };
+        HostingStorageArchiveTarget: {
+            resource: components["schemas"]["Resource"];
+            storage: components["schemas"]["HostingStorage"];
+            plan: components["schemas"]["HostingStoragePlan"];
+        };
+        /** @description Immutable dedicated authority. Backup writers are eligible platform-owned identities; runner snapshots actual states before stop. Restore writers are empty and source evidence grants no source stop/resume authority. */
+        HostingStorageArchivePlan: {
+            operation_id: string;
+            project_id: string;
+            server_id: string;
+            destination_id: string;
+            runner_id: string;
+            /** @enum {string} */
+            mode: "backup" | "restore" | "recover";
+            backup_id: string;
+            recovery_of_operation_id?: string;
+            recovery_evidence?: components["schemas"]["HostingStorageArchiveRecoveryEvidence"];
+            source_healthy: components["schemas"]["HostingHealthy"];
+            source_storage: components["schemas"]["HostingStorage"];
+            source_materialization: components["schemas"]["HostingStorageMaterialization"];
+            writers: components["schemas"]["HostingHealthy"][] | null;
+            target?: components["schemas"]["HostingStorageArchiveTarget"];
+            helper: components["schemas"]["HostingStorageArchiveHelper"];
+            limits: components["schemas"]["HostingStorageArchiveLimits"];
+            blob?: components["schemas"]["HostingStorageArchiveBlob"];
+            /** @enum {string} */
+            compiler_version: "owned-upload.local-archive.v1";
+            /** @enum {string} */
+            policy_version: "owned-upload.local-archive.v1";
+            hash: string;
+        };
+        HostingStorageArchiveWriterState: {
+            container_id: string;
+            operation_id: string;
+            image_id: string;
+            plan_hash: string;
+            release_hash: string;
+            running: boolean;
+        };
+        /** @description Controller-derived original snapshot and remaining resume obligations. No old authority, lease or fence. */
+        HostingStorageArchiveRecoveryEvidence: {
+            original_plan_hash: string;
+            snapshot_receipt_id?: string;
+            writers: components["schemas"]["HostingStorageArchiveWriterState"][];
+            resume_required_container_ids: string[];
+        };
+        HostingStorageArchivePreparedRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            plan_hash: string;
+            helper: components["schemas"]["HostingStorageArchiveHelper"];
+        };
+        HostingStorageArchiveApplyBeginRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            plan_hash: string;
+        };
+        HostingStorageArchiveProgress: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            phase: "writer_snapshot" | "stop_intent" | "stopped" | "helper_intent" | "helper_identified" | "archive_published" | "restore_verified" | "resume_intent" | "resumed";
+            writers?: components["schemas"]["HostingStorageArchiveWriterState"][];
+            helper_container_id?: string;
+            blob?: components["schemas"]["HostingStorageArchiveBlob"];
+            restore_verified: boolean;
+        };
+        /** @description Safe public receipt identity/hash and phase evidence only. Private fenced request bodies are never projected. */
+        HostingStorageArchiveProgressEvidence: {
+            receipt: components["schemas"]["HostingReceipt"];
+            plan_hash: string;
+            /** @enum {string} */
+            phase: "writer_snapshot" | "stop_intent" | "stopped" | "helper_intent" | "helper_identified" | "archive_published" | "restore_verified" | "resume_intent" | "resumed";
+            writers?: components["schemas"]["HostingStorageArchiveWriterState"][];
+            helper_container_id?: string;
+            blob?: components["schemas"]["HostingStorageArchiveBlob"];
+            restore_verified: boolean;
+        };
+        /** @description Independent archive result, never application Ready. restore_verified proves bounded file validation/extraction and metadata only; application read/write verification remains pending. */
+        HostingStorageArchiveResult: {
+            /** @enum {string} */
+            archive_outcome: "succeeded" | "failed" | "not_attempted";
+            /** @enum {string} */
+            resume_outcome: "resumed" | "not_needed" | "uncertain";
+            blob?: components["schemas"]["HostingStorageArchiveBlob"];
+            restore_verified: boolean;
+            uncertain: boolean;
+            /** @enum {string} */
+            failure_code?: "" | "authority_lost" | "ownership_mismatch" | "helper_failed" | "archive_invalid" | "limit_exceeded" | "resume_failed" | "canceled" | "interrupted";
+        };
+        HostingStorageArchiveCompleteRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            plan_hash: string;
+            result: components["schemas"]["HostingStorageArchiveResult"];
+        };
+        HostingStorageArchive: {
+            /** @enum {string} */
+            mode: "backup" | "restore" | "recover";
+            backup_id: string;
+            restore_id?: string;
+            recovery_of_operation_id?: string;
+            plan: components["schemas"]["HostingStorageArchivePlan"];
+            prepared_receipt?: components["schemas"]["HostingReceipt"];
+            progress: components["schemas"]["HostingStorageArchiveProgressEvidence"][];
+            result?: components["schemas"]["HostingStorageArchiveResult"];
+        };
+        HostingStorageBackup: {
+            id: string;
+            project_id: string;
+            resource_id: string;
+            operation_id: string;
+            state: string;
+            blob?: components["schemas"]["HostingStorageArchiveBlob"];
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        HostingStorageRestore: {
+            resource: components["schemas"]["Resource"];
+            storage: components["schemas"]["HostingStorage"];
+            operation: components["schemas"]["HostingStorageArchiveOperation"];
+        };
+        HostingStorageBackupList: {
+            items: components["schemas"]["HostingStorageBackup"][];
+            limit: number;
+            offset: number;
+            count: number;
+            total: number;
+        };
+        /** @description Exact Go zero-value generic snapshot for archive operations. The dedicated storage_archive sidecar carries authority. */
+        HostingStorageArchiveZeroSnapshot: {
+            database?: components["schemas"]["HostingDatabaseExecutionRef"];
+            storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityRef"];
+            storage?: components["schemas"]["HostingStorageRef"];
+            runtime_configuration?: components["schemas"]["HostingRuntimeConfigurationRef"];
+            local_build?: components["schemas"]["HostingLocalBuildSource"];
+            /** @enum {string} */
+            resource_id: "";
+            /** @enum {string} */
+            image_reference: "";
+            /** @enum {string} */
+            binding_id: "";
+            /** @enum {string} */
+            destination_id: "";
+            /** @enum {string} */
+            server_id: "";
+            /** @enum {string} */
+            runner_id: "";
+            /** @enum {string} */
+            runtime_namespace: "";
+            /** @enum {integer} */
+            resource_generation: 0;
+            /** @enum {integer} */
+            container_port: 0;
+            /** @enum {integer} */
+            host_port: 0;
+            readiness: {
+                /** @enum {string} */
+                path: "";
+                /** @enum {integer} */
+                timeout_seconds: 0;
+            };
+            /** @enum {string} */
+            policy_version: "";
+        };
+        HostingStorageArchiveOperation: components["schemas"]["HostingOperation"] & unknown;
         RunnerIdentity: {
             runner_id: string;
             /** @description Current persisted capabilities of this authenticated runner; no heartbeat is performed. */
@@ -6379,6 +6836,374 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listStorageBackups: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return (0-100). Omit to use the bounded default. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Number of items to skip from the filtered result. */
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestStorageBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageBackupInput"];
+            };
+        };
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackup"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getStorageBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackup"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestStorageRestore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageRestoreInput"];
+            };
+        };
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageRestore"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getStorageRestore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageRestore"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    requestStorageArchiveRecovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["HostingIdentifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageArchiveRecoveryInput"];
+            };
+        };
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageArchiveOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerStorageArchivePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageArchiveOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerStorageArchivePrepared: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageArchivePreparedRequest"];
+            };
+        };
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageArchiveOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerStorageArchiveApplyBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageArchiveApplyBeginRequest"];
+            };
+        };
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageArchiveOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerStorageArchiveProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageArchiveProgress"];
+            };
+        };
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageArchiveOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerStorageArchiveComplete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageArchiveCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Typed archive metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageArchiveOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     createHostingDatabase: {
         parameters: {
             query?: never;

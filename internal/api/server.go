@@ -245,7 +245,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if hostingDatabasePath(r.URL.Path) || hostingDatabaseDeploymentPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if hostingStoragePath(r.URL.Path) {
+	// Generic operation reads also carry the safe archive progress sidecar.
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/hosting-operations/") {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	if hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if hostingStorageRouteRecoveryPath(r.URL.Path) {
@@ -343,8 +347,11 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	limit := maxJSONBodyBytes
-	if hostingStoragePath(r.URL.Path) {
+	if hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) {
 		limit = 4096
+	}
+	if hostingStorageArchiveRunnerPath(r.URL.Path) {
+		limit = domain.HostingStorageProtocolJSONLimit
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") {
 		limit = domain.ServerReadinessJSONLimit
@@ -458,6 +465,9 @@ func requiresAuth(path string) bool {
 }
 
 func requiresRunnerAuth(path string) bool {
+	if hostingStorageArchiveRunnerPath(path) {
+		return true
+	}
 	switch path {
 	case "/api/v1/runner/server-readiness/challenge", "/api/v1/runner/server-readiness/report":
 		return true
@@ -662,6 +672,9 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
+	case errors.Is(err, store.ErrStorageArchiveUnavailable):
+		status = http.StatusServiceUnavailable
+		code = "hosting_storage_archive_unavailable"
 	case errors.Is(err, store.ErrHostingStorageUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_storage_unavailable"
@@ -700,19 +713,20 @@ func writeError(w http.ResponseWriter, err error) {
 		code = "bad_request"
 	}
 	message := map[string]string{
-		"hosting_control_project_in_use": "this project controls a configured managed proxy and cannot be archived",
-		"hosting_restore_held":           "restored hosting ownership remains held; trusted local journal and process recovery proof is not yet supported",
-		"unauthenticated":                "authentication is required",
-		"forbidden":                      "access is denied",
-		"rate_limited":                   "request rate is limited",
-		"invalid_credentials":            "invalid credentials",
-		"not_found":                      "resource not found",
-		"conflict":                       "request conflicts with current state",
-		"bad_request":                    "invalid request",
-		"internal_error":                 "internal server error",
-		"unavailable":                    "managed secrets are unavailable",
-		"hosting_storage_unavailable":    "persistent storage metadata requires compatible PostgreSQL storage",
-		"hosting_unavailable":            "hosting execution requires PostgreSQL and a migrated River consumer",
+		"hosting_control_project_in_use":      "this project controls a configured managed proxy and cannot be archived",
+		"hosting_restore_held":                "restored hosting ownership remains held; trusted local journal and process recovery proof is not yet supported",
+		"unauthenticated":                     "authentication is required",
+		"forbidden":                           "access is denied",
+		"rate_limited":                        "request rate is limited",
+		"invalid_credentials":                 "invalid credentials",
+		"not_found":                           "resource not found",
+		"conflict":                            "request conflicts with current state",
+		"bad_request":                         "invalid request",
+		"internal_error":                      "internal server error",
+		"unavailable":                         "managed secrets are unavailable",
+		"hosting_storage_archive_unavailable": "storage archives require qualified configuration and compatible PostgreSQL metadata",
+		"hosting_storage_unavailable":         "persistent storage metadata requires compatible PostgreSQL storage",
+		"hosting_unavailable":                 "hosting execution requires PostgreSQL and a migrated River consumer",
 	}[code]
 	writeErrorEnvelope(w, status, code, message)
 }

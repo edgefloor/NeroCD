@@ -3,6 +3,18 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backups"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backups"},
+	{Method: http.MethodGet, Path: "/api/v1/storage-backups/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/storage-backups/{id}/restores"},
+	{Method: http.MethodGet, Path: "/api/v1/storage-restores/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/hosting-operations/{id}/storage-archive-recovery"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-archive/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-archive/prepared"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-archive/apply-begin"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-archive/progress"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-archive/complete"},
+
 	{Method: http.MethodPost, Path: "/api/v1/databases"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database/deployments"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database"},
@@ -228,6 +240,27 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/resources/{id}/storage-backups":
+		return s.hostingStorageBackups
+	case "/api/v1/storage-backups/{id}":
+		return s.hostingStorageBackup
+	case "/api/v1/storage-backups/{id}/restores":
+		return s.requestStorageRestore
+	case "/api/v1/storage-restores/{id}":
+		return s.hostingStorageRestore
+	case "/api/v1/hosting-operations/{id}/storage-archive-recovery":
+		return s.requestStorageArchiveRecovery
+	case "/api/v1/runners/hosting/storage-archive/plan":
+		return s.runnerStorageArchivePlan
+	case "/api/v1/runners/hosting/storage-archive/prepared":
+		return s.runnerStorageArchivePrepared
+	case "/api/v1/runners/hosting/storage-archive/apply-begin":
+		return s.runnerStorageArchiveApplyBegin
+	case "/api/v1/runners/hosting/storage-archive/progress":
+		return s.runnerStorageArchiveProgress
+	case "/api/v1/runners/hosting/storage-archive/complete":
+		return s.runnerStorageArchiveComplete
+
 	case "/api/v1/databases":
 		return s.createHostingDatabase
 	case "/api/v1/resources/{id}/database/deployments":
